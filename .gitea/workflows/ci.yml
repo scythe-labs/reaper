@@ -26,33 +26,30 @@ jobs:
       - name: Assert lockfile is current
         run: uv lock --check
 
-      # Install from the committed lockfile, not the `>=` floors, so CI tests the same
-      # hash-pinned tree the image ships. `--no-emit-project` leaves reaper out of the
-      # exported set; it is installed editable (with --no-deps) in the next step.
+      # Install from the committed lockfile into a project-local venv. `uv sync` creates
+      # the venv automatically; subsequent steps use `uv run` so the venv is always on
+      # PATH without needing --system (which PEP 668 externally-managed distros reject).
       - name: Install
-        run: |
-          uv export --frozen --extra dev --no-emit-project -o requirements-dev.txt
-          uv pip install --system -r requirements-dev.txt
-          uv pip install --system --no-deps -e .
+        run: uv sync --frozen --extra dev
 
       - name: Lint
-        run: ruff check .
+        run: uv run ruff check .
 
       - name: Format
-        run: ruff format --check .
+        run: uv run ruff format --check .
 
       - name: Typecheck
-        run: mypy src/reaper
+        run: uv run mypy src/reaper
 
       - name: Test
-        run: pytest --cov --cov-report=term-missing
+        run: uv run pytest --cov --cov-report=term-missing
 
       # A model change without a migration is the classic way to ship a schema
       # that only exists on the developer's laptop.
       - name: Assert no un-migrated model changes
         run: |
-          alembic upgrade head
-          alembic check
+          uv run alembic upgrade head
+          uv run alembic check
 
   frontend:
     runs-on: ubuntu-latest
