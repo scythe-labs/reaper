@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "reaper-api",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "uvicorn", "reaper.main:create_app", "--factory", "--reload", "--port", "8420"],
+      "port": 8420
+    },
+    {
+      "name": "reaper-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
+      "port": 5173
+    }
+  ]
+}

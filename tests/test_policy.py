@@ -1,0 +1,247 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Policy: the hash, the floors, and the things that cannot be spelled.
+
+An approval is bound to a policy hash. So the hash must change when the *meaning*
+changes and must not change when it does not -- otherwise approvals either void
+themselves at random, or (far worse) silently survive an edit the human never saw.
+"""
+
+from __future__ import annotations
+
+import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
+from pydantic import ValidationError
+
+from reaper.engine.gates import GateId
+from reaper.engine.policy import (
+    DEFAULT_MOVIE_POLICY,
+    GateSetting,
+    PolicyBody,
+    ProfileSettings,
+    SignalSetting,
+    inspect,
+)
+from reaper.engine.signals import SignalId
+
+
+def _policy(**overrides: object) -> PolicyBody:
+    base = {
+        "media_type": "movie",
+        "condemn_at": 70,
+        "gates": (GateSetting(gate=GateId.WHITELISTED),),
+        "signals": (SignalSetting(signal=SignalId.UNWATCHED, weight=50, saturate_at=730),),
+    }
+    return PolicyBody(**{**base, **overrides})  # type: ignore[arg-type]
+
+
+class TestTheHash:
+    def test_the_same_policy_hashes_the_same(self) -> None:
+        assert _policy().policy_hash() == _policy().policy_hash()
+
+    def test_changing_a_threshold_changes_the_hash(self) -> None:
+        """It must. The threshold is what the human approved against."""
+        assert _policy(condemn_at=70).policy_hash() != _policy(condemn_at=60).policy_hash()
+
+    def test_changing_a_weight_changes_the_hash(self) -> None:
+        a = _policy(signals=(SignalSetting(signal=SignalId.UNWATCHED, weight=50, saturate_at=730),))
+        b = _policy(signals=(SignalSetting(signal=SignalId.UNWATCHED, weight=40, saturate_at=730),))
+        assert a.policy_hash() != b.policy_hash()
+
+    def test_disabling_a_gate_changes_the_hash(self) -> None:
+        a = _policy(gates=(GateSetting(gate=GateId.WHITELISTED, enabled=True),))
+        b = _policy(gates=(GateSetting(gate=GateId.WHITELISTED, enabled=False),))
+        assert a.policy_hash() != b.policy_hash()
+
+    def test_the_canonical_json_is_byte_stable(self) -> None:
+        """Sorted keys, tight separators, integers only. The same policy must
+        produce the same bytes on any machine and any Python."""
+        assert _policy().canonical_json() == _policy().canonical_json()
+        assert " " not in _policy().canonical_json()
+
+    def test_the_body_contains_no_floats(self) -> None:
+        """Floats do not canonicalise: 0.1 + 0.2 != 0.3, and json.dumps of a float
+        is platform-dependent. A hash over a float is not a hash."""
+        import json
+
+        def has_float(node: object) -> bool:
+            if isinstance(node, float):
+                return True
+            if isinstance(node, dict):
+                return any(has_float(v) for v in node.values())
+            if isinstance(node, list):
+                return any(has_float(v) for v in node)
+            return False
+
+        assert not has_float(json.loads(DEFAULT_MOVIE_POLICY.canonical_json()))
+
+    @given(condemn_at=st.integers(min_value=1, max_value=100))
+    @settings(max_examples=50)
+    def test_every_distinct_policy_hashes_distinctly(self, condemn_at: int) -> None:
+        assert (
+            _policy(condemn_at=condemn_at).policy_hash()
+            == _policy(condemn_at=condemn_at).policy_hash()
+        )
+
+
+class TestFloorsThatCannotBeZero:
+    """0 never means 'disabled' and blank never means 'unlimited'.
+
+    Both idioms are how a half-finished config becomes an unbounded deletion.
+    Janitorr's `movie-expiration: {100: 10d}` was read by its author as 'when 100%
+    full' and by the code as 'always' -- and it deleted half a library.
+    """
+
+    def test_a_vote_floor_of_zero_is_refused(self) -> None:
+        """A rating floor without a vote floor protects an 8.3 drawn from a few
+        hundred votes -- a number that means nothing at all."""
+        with pytest.raises(ValidationError, match="vote floor of 0"):
+            GateSetting(gate=GateId.RATING_FLOOR, threshold=75, secondary=0)
+
+    def test_a_rating_floor_out_of_range_is_refused(self) -> None:
+        """A Tomatometer percentage above 100 cannot even be spelled."""
+        with pytest.raises(ValidationError, match="tenths"):
+            GateSetting(gate=GateId.RATING_FLOOR, threshold=150, secondary=1000)
+
+    def test_a_watcher_floor_of_zero_is_refused(self) -> None:
+        """It would protect every item on the server -- which looks safe, until the
+        owner wonders why Reaper never finds anything and disables the gate."""
+        with pytest.raises(ValidationError, match="protect your whole library"):
+            GateSetting(gate=GateId.SERVER_POPULARITY, threshold=0)
+
+    def test_a_disabled_gate_skips_the_floors(self) -> None:
+        """Turning a protection OFF is legitimate and explicit. It is spelling
+        'off' as a zero threshold that is banned."""
+        assert GateSetting(gate=GateId.RATING_FLOOR, enabled=False, secondary=0)
+
+    def test_condemn_at_zero_is_refused(self) -> None:
+        """A threshold of 0 condemns everything the gates do not save."""
+        with pytest.raises(ValidationError):
+            _policy(condemn_at=0)
+
+    def test_an_all_zero_weight_policy_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="every item would score 0"):
+            _policy(signals=(SignalSetting(signal=SignalId.UNWATCHED, weight=0, saturate_at=730),))
+
+    def test_a_duplicate_gate_is_refused(self) -> None:
+        """Otherwise the second silently wins and the UI shows the first."""
+        with pytest.raises(ValidationError, match="configured twice"):
+            _policy(
+                gates=(
+                    GateSetting(gate=GateId.WHITELISTED),
+                    GateSetting(gate=GateId.WHITELISTED, enabled=False),
+                )
+            )
+
+    def test_a_signal_floor_above_saturation_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="must be below saturate_at"):
+            SignalSetting(signal=SignalId.UNWATCHED, weight=10, saturate_at=10, floor=20)
+
+
+class TestCaps:
+    """Four caps, not two. The rolling BYTE cap is what makes a multi-terabyte
+    incident arithmetically unreachable: no sequence of runs can exceed it."""
+
+    def test_defaults_are_conservative(self) -> None:
+        settings_ = ProfileSettings()
+        assert settings_.max_items_per_run == 10
+        assert settings_.max_bytes_per_run == 500_000_000_000
+        assert settings_.require_approval is True
+
+    def test_a_run_cap_larger_than_the_rolling_cap_is_refused(self) -> None:
+        """Otherwise the rolling cap is decorative."""
+        with pytest.raises(ValidationError, match="rolling cap would be meaningless"):
+            ProfileSettings(max_items_per_run=500, max_items_per_30d=100)
+
+    def test_a_run_byte_cap_larger_than_the_rolling_byte_cap_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="entire 30-day budget"):
+            ProfileSettings(
+                max_bytes_per_run=3_000_000_000_000,
+                max_bytes_per_30d=2_000_000_000_000,
+            )
+
+    def test_a_grace_period_under_a_week_is_refused(self) -> None:
+        """Shorter than a week is one your users cannot realistically act on."""
+        with pytest.raises(ValidationError):
+            ProfileSettings(grace_days=1)
+
+    def test_caps_cannot_be_unlimited(self) -> None:
+        """There is no way to spell 'no limit'. That is the point."""
+        with pytest.raises(ValidationError):
+            ProfileSettings(max_items_per_run=0)
+
+
+class TestDefaultPolicy:
+    def test_the_shipped_default_is_valid(self) -> None:
+        assert DEFAULT_MOVIE_POLICY.policy_hash()
+
+    def test_the_shipped_default_protects_before_it_condemns(self) -> None:
+        """Every protection the owner asked for is on by default."""
+        enabled = {g.gate for g in DEFAULT_MOVIE_POLICY.gates if g.enabled}
+
+        assert GateId.WHITELISTED in enabled
+        assert GateId.STREAMING_NOW in enabled
+        assert GateId.RATING_FLOOR in enabled
+        assert GateId.SERVER_POPULARITY in enabled
+        assert GateId.DATA_HORIZON in enabled
+        assert GateId.UNMANAGED in enabled
+
+    def test_the_default_rating_gate_has_a_real_vote_floor(self) -> None:
+        rating = next(g for g in DEFAULT_MOVIE_POLICY.gates if g.gate is GateId.RATING_FLOOR)
+        assert rating.threshold == 75  # 7.5, in tenths
+        assert rating.secondary == 1000
+
+
+class TestTheDangerousConfigDetector:
+    """Validation refuses what is PROVABLY wrong. This catches what is merely
+    PROBABLY wrong -- and no validator can tell them apart, because the values are
+    legal either way."""
+
+    def test_a_tomatometer_typed_into_the_imdb_field_is_flagged(self) -> None:
+        """The archetype. A user thinking in Rotten Tomatoes types 96. That is a
+        legal IMDb floor (9.6) which protects almost nothing -- and it is
+        indistinguishable, to a validator, from someone who genuinely wants 9.6.
+        So we say so instead of pretending to know."""
+        body = _policy(gates=(GateSetting(gate=GateId.RATING_FLOOR, threshold=96, secondary=1000),))
+
+        warnings = inspect(body, ProfileSettings())
+
+        assert any("Rotten Tomatoes" in w.message for w in warnings)
+
+    def test_a_floor_typed_in_whole_points_is_flagged(self) -> None:
+        """Typing 7 meaning 7.0 gives a floor of 0.7, which protects everything."""
+        body = _policy(gates=(GateSetting(gate=GateId.RATING_FLOOR, threshold=7, secondary=1000),))
+
+        warnings = inspect(body, ProfileSettings())
+
+        assert any("Did you mean 7.0" in w.message for w in warnings)
+
+    def test_disabling_the_streaming_gate_is_dangerous(self) -> None:
+        body = _policy(gates=(GateSetting(gate=GateId.STREAMING_NOW, enabled=False),))
+
+        warnings = inspect(body, ProfileSettings())
+
+        assert any(w.severity == "danger" and "watching it" in w.message for w in warnings)
+
+    def test_disabling_the_data_horizon_gate_is_dangerous(self) -> None:
+        """The #1 mass-deletion vector: Tautulli cannot import pre-install history,
+        so everything watched before it looks never-watched."""
+        body = _policy(gates=(GateSetting(gate=GateId.DATA_HORIZON, enabled=False),))
+
+        warnings = inspect(body, ProfileSettings())
+
+        assert any(w.severity == "danger" for w in warnings)
+
+    def test_a_very_low_threshold_is_dangerous(self) -> None:
+        warnings = inspect(_policy(condemn_at=20), ProfileSettings())
+
+        assert any(w.field == "condemn_at" and w.severity == "danger" for w in warnings)
+
+    def test_unattended_deletion_is_always_flagged(self) -> None:
+        warnings = inspect(_policy(), ProfileSettings(require_approval=False))
+
+        assert any(w.field == "require_approval" and w.severity == "danger" for w in warnings)
+
+    def test_the_shipped_default_raises_no_warnings(self) -> None:
+        """A user who changes nothing should see a clean policy."""
+        assert inspect(DEFAULT_MOVIE_POLICY, ProfileSettings()) == []

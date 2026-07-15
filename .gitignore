@@ -5,7 +5,8 @@
 .LSOverride
 
 # Icon must end with two \r
-Icon
+Icon
+
 
 # Thumbnails
 ._*
@@ -202,3 +203,25 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
+
+# ---> Reaper
+# Local secrets — API keys, Fernet key, Plex token. NEVER commit.
+# Deliberately broad: .env.backup, .env.bak, .env.save and friends all hold
+# real credentials, and a narrow pattern is how they get committed by accident.
+.env
+.env.*
+!.env.example
+
+# Runtime data (SQLite DB, IMDb dataset cache, logs)
+/data/
+
+# The auto-generated encryption key. Normally inside /data/, but named
+# explicitly so a custom REAPER_DATA_DIR cannot cause it to be committed.
+secret.key
+*.db
+*.db-shm
+*.db-wal
+
+# Frontend
+node_modules/
+frontend/dist/

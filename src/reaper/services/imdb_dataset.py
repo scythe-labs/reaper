@@ -1,0 +1,296 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""The IMDb ratings dataset.
+
+``https://datasets.imdbws.com/title.ratings.tsv.gz`` -- 8.2 MB gzipped, ~1.69M
+rows, refreshed daily, no API key. Columns: ``tconst``, ``averageRating``,
+``numVotes``.
+
+Why this rather than an API: it is the source of truth, it is free, it needs no
+key or rate-limit budget, and -- uniquely -- it covers **TV series and individual
+episodes**, not just movies. It also gives us the **vote count**, without which a
+rating floor is meaningless: a 9.5 from 12 votes is noise, and a rule that
+protects on rating alone would preserve junk.
+
+## The failure direction that matters
+
+Every other unknown in Reaper protects an item. **A missing rating does the
+opposite.** The rule is "do not delete this if IMDb >= 7.5", so an absent rating
+means the protection cannot fire, and a well-rated film becomes deletable. An
+empty or half-loaded table would therefore silently strip protection from the
+entire library -- the worst possible failure, arriving quietly.
+
+Two defences:
+
+* **The load is atomic.** Rows go into a staging table and are swapped in only
+  once every row has landed. A download that dies halfway leaves the previous
+  data intact rather than a partial one.
+* **Degradation is loud and fails closed.** If the table is empty, or the data is
+  older than ``max_age_days``, ``ImdbRatings.degraded`` is true -- and the rating
+  gate must then protect everything rather than quietly protect nothing. Callers
+  cannot forget this: ``lookup`` refuses to answer while degraded.
+"""
+
+from __future__ import annotations
+
+import gzip
+from collections.abc import Iterator
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import IO
+
+import httpx
+import structlog
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from reaper.clock import utcnow
+
+log = structlog.get_logger(__name__)
+
+DATASET_URL = "https://datasets.imdbws.com/title.ratings.tsv.gz"
+
+# Ratings move slowly, but a dataset stuck for a fortnight means the nightly job
+# has been silently failing, and that is worth surfacing.
+DEFAULT_MAX_AGE = timedelta(days=14)
+
+_CHUNK = 65_536
+
+
+@dataclass(frozen=True)
+class ImdbRating:
+    tconst: str
+    average_rating: float
+    num_votes: int
+
+
+@dataclass(frozen=True)
+class DatasetState:
+    row_count: int
+    synced_at: datetime | None
+
+    def degraded(
+        self, *, max_age: timedelta = DEFAULT_MAX_AGE, now: datetime | None = None
+    ) -> bool:
+        if self.row_count == 0 or self.synced_at is None:
+            return True
+        return (now or utcnow()) - self.synced_at > max_age
+
+
+class DatasetDegradedError(RuntimeError):
+    """The ratings data is missing or stale.
+
+    Raised rather than returning None, because a None here would be read as "this
+    film has no rating" -- and therefore "no rating protection applies" -- which
+    would strip protection from every title at once.
+    """
+
+
+def parse_rows(stream: IO[bytes]) -> Iterator[tuple[str, float, int]]:
+    """Parse the gzipped TSV without holding it in memory.
+
+    Rows with ``\\N`` (IMDb's null) or malformed numbers are skipped rather than
+    coerced: a rating of 0.0 would read as "terrible film, delete it".
+    """
+    with gzip.open(stream, "rt", encoding="utf-8") as handle:
+        header = handle.readline()
+        if not header.startswith("tconst"):
+            raise ValueError(f"Unexpected IMDb dataset header: {header[:60]!r}")
+
+        for line in handle:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) != 3:
+                continue
+            tconst, rating, votes = parts
+            if not tconst.startswith("tt"):
+                continue
+            try:
+                yield tconst, float(rating), int(votes)
+            except ValueError:
+                continue  # \N or junk -- absent, not zero
+
+
+async def download(destination: Path, *, url: str = DATASET_URL) -> Path:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    tmp = destination.with_suffix(".part")
+
+    async with (
+        httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client,
+        client.stream("GET", url) as response,
+    ):
+        response.raise_for_status()
+        with tmp.open("wb") as handle:
+            async for chunk in response.aiter_bytes(_CHUNK):
+                handle.write(chunk)
+
+    # Rename only once the whole file is on disk, so a killed process cannot leave
+    # a truncated archive that parses as a short but valid dataset.
+    tmp.replace(destination)
+    log.info("imdb.downloaded", path=str(destination))
+    return destination
+
+
+async def load(engine: AsyncEngine, archive: Path) -> int:
+    """Load the dataset, swapping it in atomically.
+
+    The multi-minute parse+insert populates a *staging* table in many short transactions,
+    each committed on its own, so no write lock is held across the parse. The cache DB is
+    WAL with a 5s ``busy_timeout``, which allows concurrent readers but only one writer; a
+    single transaction spanning the whole load would make every other cache writer
+    (``history_sync`` during a scan, ``lists.sync``, the nightly curated refresh) wait out
+    the timeout and fail with 'database is locked'. Only the final swap must be atomic, and
+    it holds the write lock for well under a second.
+
+    Crash safety is unchanged. The previous ``imdb_rating`` stays live until the swap, so a
+    process killed mid-populate leaves only a partial ``imdb_rating_staging`` -- which the
+    next run's ``DROP TABLE IF EXISTS imdb_rating_staging`` below clears before starting.
+    """
+    insert = text(
+        "INSERT OR REPLACE INTO imdb_rating_staging (tconst, average_rating, num_votes) "
+        "VALUES (:tconst, :average_rating, :num_votes)"
+    )
+
+    # -- staging, rebuilt from scratch each run (its own short transaction) --------
+    async with engine.begin() as conn:
+        await conn.execute(text("DROP TABLE IF EXISTS imdb_rating_staging"))
+        await conn.execute(
+            text(
+                "CREATE TABLE imdb_rating_staging ("
+                "  tconst TEXT PRIMARY KEY,"
+                "  average_rating REAL NOT NULL,"
+                "  num_votes INTEGER NOT NULL"
+                ")"
+            )
+        )
+
+    # -- populate staging: one short transaction per batch, no lock held across the parse --
+    rows = 0
+    batch: list[dict[str, object]] = []
+    with archive.open("rb") as handle:
+        for tconst, rating, votes in parse_rows(handle):
+            batch.append({"tconst": tconst, "average_rating": rating, "num_votes": votes})
+            if len(batch) >= 10_000:
+                async with engine.begin() as conn:
+                    await conn.execute(insert, batch)
+                rows += len(batch)
+                batch.clear()
+
+    if batch:
+        async with engine.begin() as conn:
+            await conn.execute(insert, batch)
+        rows += len(batch)
+
+    if rows == 0:
+        # Never swap in an empty table: it would look exactly like "nothing is rated",
+        # and every rating protection in the library would stop firing. The partial (empty)
+        # staging table is left for the next run's DROP to clear; imdb_rating stays live.
+        raise ValueError("IMDb dataset parsed to zero rows; refusing to swap it in.")
+
+    # -- the swap: the only part that must be atomic, and it is sub-second ---------
+    # Until this single short transaction commits, the previous data is still live.
+    async with engine.begin() as conn:
+        await conn.execute(text("DROP TABLE IF EXISTS imdb_rating"))
+        await conn.execute(text("ALTER TABLE imdb_rating_staging RENAME TO imdb_rating"))
+        await conn.execute(
+            text("CREATE INDEX IF NOT EXISTS ix_imdb_rating_votes ON imdb_rating (num_votes)")
+        )
+
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS imdb_dataset_sync ("
+                "  id INTEGER PRIMARY KEY CHECK (id = 1),"
+                "  synced_at INTEGER NOT NULL,"
+                "  row_count INTEGER NOT NULL"
+                ")"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT OR REPLACE INTO imdb_dataset_sync (id, synced_at, row_count) "
+                "VALUES (1, :synced_at, :row_count)"
+            ),
+            {"synced_at": int(utcnow().timestamp()), "row_count": rows},
+        )
+
+    log.info("imdb.loaded", rows=rows)
+    return rows
+
+
+class ImdbRatings:
+    """Read access to the loaded dataset."""
+
+    def __init__(self, engine: AsyncEngine, *, max_age: timedelta = DEFAULT_MAX_AGE) -> None:
+        self._engine = engine
+        self._max_age = max_age
+
+    async def state(self) -> DatasetState:
+        async with self._engine.connect() as conn:
+            exists = await conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='imdb_rating'")
+            )
+            if exists.first() is None:
+                return DatasetState(row_count=0, synced_at=None)
+
+            row = (
+                await conn.execute(
+                    text("SELECT synced_at, row_count FROM imdb_dataset_sync WHERE id = 1")
+                )
+            ).first()
+
+        if row is None:
+            return DatasetState(row_count=0, synced_at=None)
+
+        from datetime import UTC
+
+        return DatasetState(
+            row_count=int(row.row_count),
+            synced_at=datetime.fromtimestamp(int(row.synced_at), tz=UTC),
+        )
+
+    async def lookup(self, imdb_ids: list[str]) -> dict[str, ImdbRating]:
+        """Ratings for a batch of IMDb ids.
+
+        Raises ``DatasetDegradedError`` when the data is missing or stale. It does
+        *not* quietly return an empty mapping: the caller would read that as "none
+        of these are rated", conclude that no rating protection applies, and make
+        the entire library deletable.
+        """
+        state = await self.state()
+        if state.degraded(max_age=self._max_age):
+            raise DatasetDegradedError(
+                f"The IMDb ratings dataset is missing or stale "
+                f"(rows={state.row_count}, synced_at={state.synced_at}). "
+                "Rating protections cannot be evaluated, so nothing may be reaped on "
+                "rating grounds until it is refreshed."
+            )
+
+        if not imdb_ids:
+            return {}
+
+        out: dict[str, ImdbRating] = {}
+        async with self._engine.connect() as conn:
+            # Chunked to stay well under SQLite's variable limit.
+            for start in range(0, len(imdb_ids), 500):
+                chunk = imdb_ids[start : start + 500]
+                placeholders = ", ".join(f":id{i}" for i in range(len(chunk)))
+                params = {f"id{i}": value for i, value in enumerate(chunk)}
+                # The interpolated fragment is ":id0, :id1, ..." -- generated here,
+                # never user input. The ids themselves are bound parameters.
+                query = (
+                    "SELECT tconst, average_rating, num_votes FROM imdb_rating "  # noqa: S608
+                    f"WHERE tconst IN ({placeholders})"
+                )
+                result = await conn.execute(text(query), params)
+                for row in result:
+                    out[row.tconst] = ImdbRating(
+                        tconst=row.tconst,
+                        average_rating=float(row.average_rating),
+                        num_votes=int(row.num_votes),
+                    )
+        return out
+
+
+async def refresh(engine: AsyncEngine, data_dir: Path) -> int:
+    """Download and load. The nightly job."""
+    archive = await download(data_dir / "title.ratings.tsv.gz")
+    return await load(engine, archive)

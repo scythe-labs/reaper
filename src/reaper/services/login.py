@@ -1,0 +1,319 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Logging in: Plex OAuth (with the ownership check) and the local fallback.
+
+This is distinct from :mod:`reaper.services.plex_link`, which *links the server*.
+Linking is a one-time setup act; logging in happens every session. They share the
+plex.tv PIN mechanics and the ownership decision, but nothing else.
+
+Three shapes of sign-in resolve to the same thing -- a minted session for a
+verified admin:
+
+* **Plex login.** The server is already linked, so we know its machine id. The
+  user signs in on plex.tv, and we require *their own* token to report this
+  machine as ``owned``. Authenticating is not enough; a stranger with a valid
+  Plex account, or one of the hundred people you share the library with, must be
+  turned away. (See :meth:`PlexTvClient.owns_server`.)
+
+* **Plex setup.** No server is linked yet. The first owner to sign in claims the
+  server: we link it (refusing anyone who owns no server, or more than one) and
+  create their admin account in the same step. Once a server is linked this path
+  is unreachable, so it cannot be used to hijack an already-configured Reaper.
+
+* **Local login.** Username and Argon2id password. The anti-lockout account, and
+  the way in when plex.tv is down. Failures are deliberately indistinguishable
+  from each other, and take the same time whether or not the user exists.
+
+The browser never handles a Plex token. It is told to open an auth URL; the
+*backend* polls plex.tv for approval. (Overseerr posts the token from the page to
+its own API, exposing a full-power account credential to anything running in the
+tab. We do not.)
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import timedelta
+
+import structlog
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from reaper.auth.passwords import generate_password, hash_password, verify_password
+from reaper.auth.sessions import open_session
+from reaper.clients.base import IntegrationError
+from reaper.clients.plextv import PlexAccount, PlexTvClient
+from reaper.clock import expiry, utcnow
+from reaper.config import RuntimeSafety
+from reaper.crypto import SecretBox
+from reaper.db.models import AppUser, AuthProvider, PendingPlexLogin, PlexServer
+from reaper.services.plex_link import PlexLinkError, client_identifier, complete_link
+
+log = structlog.get_logger(__name__)
+
+# The browser is given this long to complete the plex.tv sign-in. A little longer
+# than PlexTvClient.PIN_TIMEOUT so the pending row outlives the poll window rather
+# than expiring underneath a user who is still typing their password.
+PLEX_LOGIN_TTL = timedelta(minutes=10)
+
+# A precomputed hash to verify against when the account does not exist, so a login
+# attempt costs the same Argon2 work whether or not the username is real. Without
+# it, "no such user" returns fast and "wrong password" returns slow, and the
+# difference enumerates valid usernames.
+_DUMMY_HASH = hash_password(generate_password())
+
+
+class LoginError(RuntimeError):
+    """Sign-in did not succeed. The message is safe to show the user."""
+
+
+@dataclass(frozen=True)
+class UserView:
+    """The admin, as the frontend sees them. No secrets."""
+
+    id: int
+    username: str
+    provider: str
+    email: str | None
+    thumb_url: str | None
+
+
+@dataclass(frozen=True)
+class LoginResult:
+    session_token: str
+    user: UserView
+    # True when this sign-in also performed first-run setup (linked the server).
+    setup: bool = False
+
+
+@dataclass(frozen=True)
+class PlexLoginStart:
+    pin_id: int
+    auth_url: str
+
+
+def _view(user: AppUser) -> UserView:
+    return UserView(
+        id=user.id,
+        username=user.username,
+        provider=str(user.provider),
+        email=user.email,
+        thumb_url=user.thumb_url,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Plex
+# ---------------------------------------------------------------------------
+
+
+async def start_plex_login(
+    session_factory: async_sessionmaker[AsyncSession], *, safety: RuntimeSafety
+) -> PlexLoginStart:
+    """Create a PIN and return the URL to open. Records the pending login."""
+    async with session_factory() as session:
+        cid = await client_identifier(session)
+        # Opportunistically drop stale pendings so the table cannot grow without
+        # bound from abandoned sign-ins.
+        await session.execute(
+            delete(PendingPlexLogin).where(PendingPlexLogin.expires_at <= utcnow())
+        )
+        await session.commit()
+
+    async with PlexTvClient(cid, safety=safety) as plextv:
+        pin = await plextv.create_pin()
+
+    async with session_factory() as session:
+        session.add(
+            PendingPlexLogin(
+                pin_id=pin.pin_id,
+                pin_code=pin.code,
+                purpose="login",
+                created_at=utcnow(),
+                expires_at=expiry(PLEX_LOGIN_TTL),
+            )
+        )
+        await session.commit()
+
+    return PlexLoginStart(pin_id=pin.pin_id, auth_url=pin.auth_url(cid))
+
+
+async def poll_plex_login(
+    session_factory: async_sessionmaker[AsyncSession],
+    box: SecretBox,
+    *,
+    pin_id: int,
+    safety: RuntimeSafety,
+    user_agent: str | None = None,
+) -> LoginResult | None:
+    """Check a pending Plex login once.
+
+    Returns ``None`` while the user has not yet approved (the frontend keeps
+    polling), a :class:`LoginResult` once they have and the checks pass, and
+    raises :class:`LoginError` on any refusal. A refused attempt consumes its
+    pending row, so a rejected token cannot be replayed.
+    """
+    async with session_factory() as session:
+        pending = await session.scalar(
+            select(PendingPlexLogin).where(
+                PendingPlexLogin.pin_id == pin_id, PendingPlexLogin.purpose == "login"
+            )
+        )
+        if pending is None:
+            raise LoginError("This sign-in is no longer valid. Please start again.")
+        expired = pending.expires_at <= utcnow()
+        cid = await client_identifier(session)
+        if expired:
+            await session.delete(pending)
+        await session.commit()
+
+    if expired:
+        raise LoginError("This sign-in timed out. Please start again.")
+
+    async with PlexTvClient(cid, safety=safety) as plextv:
+        try:
+            token = await plextv.check_pin(pin_id)
+        except IntegrationError as exc:
+            if exc.status == 429:
+                # We polled plex.tv too eagerly. Not a failure -- tell the browser
+                # to try again shortly.
+                return None
+            raise LoginError("Could not reach Plex to check the sign-in.") from exc
+
+        if not token:
+            return None  # not approved yet
+
+        try:
+            account = await plextv.account(token)
+            owned = await plextv.owned_servers(token)
+        except IntegrationError as exc:
+            raise LoginError("Signed in to Plex, but could not read the account.") from exc
+
+    async with session_factory() as session:
+        server = (await session.execute(select(PlexServer).limit(1))).scalar_one_or_none()
+
+    if server is not None:
+        # LOGIN: authorize against the machine id we already trust.
+        if not any(r.client_identifier == server.machine_identifier for r in owned):
+            await _consume_pending(session_factory, pin_id)
+            log.warning("login.plex_not_owner", account=account.account_id)
+            raise LoginError(
+                "That Plex account does not own this server, so it cannot administer "
+                "Reaper. Sign in as the server owner, or use a local account."
+            )
+    else:
+        # SETUP: the first owner claims the server. complete_link refuses a
+        # non-owner or a multi-server account, and persists the link.
+        try:
+            await complete_link(session_factory, box, token=token, account=account, owned=owned)
+        except PlexLinkError as exc:
+            await _consume_pending(session_factory, pin_id)
+            raise LoginError(str(exc)) from exc
+
+    async with session_factory() as session:
+        user = await _upsert_plex_user(session, account)
+        if not user.is_active:
+            await _delete_pending(session, pin_id)
+            await session.commit()
+            raise LoginError("This account has been deactivated.")
+
+        await _delete_pending(session, pin_id)
+        token_str = await open_session(session, user, user_agent=user_agent)
+        result = LoginResult(session_token=token_str, user=_view(user), setup=server is None)
+        await session.commit()
+
+    log.info("login.plex", user=result.user.username, setup=result.setup)
+    return result
+
+
+async def _upsert_plex_user(session: AsyncSession, account: PlexAccount) -> AppUser:
+    """Find this Plex account's admin row, or create it. Refreshes the profile."""
+    user = await session.scalar(
+        select(AppUser).where(AppUser.plex_account_id == account.account_id)
+    )
+    if user is not None:
+        user.email = account.email or user.email
+        user.thumb_url = account.thumb or user.thumb_url
+        return user
+
+    user = AppUser(
+        provider=AuthProvider.PLEX,
+        plex_account_id=account.account_id,
+        username=await _unique_username(session, account.username),
+        email=account.email,
+        thumb_url=account.thumb,
+        is_active=True,
+        created_at=utcnow(),
+    )
+    session.add(user)
+    await session.flush()
+    return user
+
+
+async def _unique_username(session: AsyncSession, desired: str) -> str:
+    """A username not already taken. Plex usernames are unique on Plex, but a
+    local admin might happen to share one, and ``username`` is unique here."""
+    base = desired.strip() or "plex-user"
+    candidate = base
+    suffix = 2
+    while await session.scalar(select(AppUser.id).where(AppUser.username == candidate)):
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    return candidate
+
+
+async def _delete_pending(session: AsyncSession, pin_id: int) -> None:
+    await session.execute(delete(PendingPlexLogin).where(PendingPlexLogin.pin_id == pin_id))
+
+
+async def _consume_pending(session_factory: async_sessionmaker[AsyncSession], pin_id: int) -> None:
+    async with session_factory() as session:
+        await _delete_pending(session, pin_id)
+        await session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Local
+# ---------------------------------------------------------------------------
+
+
+async def login_local(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    username: str,
+    password: str,
+    user_agent: str | None = None,
+) -> LoginResult:
+    """Verify a local username/password and mint a session.
+
+    Every failure -- unknown user, Plex-only account, deactivated, wrong password
+    -- returns the same message and takes the same time, so nothing here tells an
+    attacker which usernames exist.
+    """
+    async with session_factory() as session:
+        user = await session.scalar(select(AppUser).where(AppUser.username == username))
+
+        usable = (
+            user is not None
+            and user.is_active
+            and user.provider == AuthProvider.LOCAL
+            and user.password_hash is not None
+        )
+        # Always run a verify, against the real hash if we have one and a decoy
+        # otherwise, so timing does not distinguish the branches.
+        stored_hash = user.password_hash if usable and user is not None else _DUMMY_HASH
+        ok, new_hash = verify_password(password, stored_hash or _DUMMY_HASH)
+
+        if not usable or not ok or user is None:
+            log.info("login.local_rejected", username=username[:64])
+            raise LoginError("Wrong username or password.")
+
+        if new_hash is not None:
+            # Argon2 parameters were raised since this hash was written; rewrite it.
+            user.password_hash = new_hash
+
+        token = await open_session(session, user, user_agent=user_agent)
+        result = LoginResult(session_token=token, user=_view(user), setup=False)
+        await session.commit()
+
+    log.info("login.local", user=result.user.username)
+    return result

@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# Keep the build context small, and -- much more importantly -- keep secrets and local
+# state out of the image entirely. A `COPY . .` that sweeps up a .env or a populated
+# data/ bakes credentials and someone's watch history into a layer that gets pushed to
+# a registry.
+
+# Secrets and local state. Never, under any circumstances.
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-wal
+*.db-shm
+*.key
+
+# Build artefacts. The image builds the frontend itself; copying a local node_modules
+# in would both bloat the context and risk shipping host-native binaries.
+frontend/node_modules/
+frontend/dist/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+
+# Repository furniture the runtime has no use for.
+.git/
+.github/
+.gitea/
+docs/
+tests/
+*.md
+!README.md

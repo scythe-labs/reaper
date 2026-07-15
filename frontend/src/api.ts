@@ -1,0 +1,630 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// The wire types, mirrored from reaper/api/schemas.py.
+//
+// Hand-written rather than generated. The set is small, it changes rarely, and a
+// codegen step is one more thing that can silently drift out of date in CI. If these
+// grow much past this size, generate them from /openapi.json instead.
+
+export type Verdict = "condemn" | "protect" | "abstain";
+
+export interface Health {
+  status: string;
+  version: string;
+  destructive_actions_enabled: boolean;
+  safety_note: string | null;
+}
+
+export interface Snapshot {
+  id: number;
+  created_at: string;
+  policy_hash: string;
+  horizon_at: string;
+  item_count: number;
+  degraded: boolean;
+  degraded_reason: string | null;
+  condemned: number;
+  protected: number;
+  abstained: number;
+  reclaimable_bytes: number;
+}
+
+export interface Candidate {
+  id: number;
+  media_key: string;
+  title: string;
+  media_type: string;
+  size_bytes: number;
+  verdict: Verdict;
+  score: number;
+  coverage_bp: number;
+  first_flagged_at: string | null;
+  // Display fields captured at scan time. None affect the verdict.
+  year: number | null;
+  summary: string | null;
+  poster_url: string | null;
+  requested_by: string | null;
+  group_key: string | null;
+  group_title: string | null;
+  /** The one-line "why", drawn from the explanation: the protection keeping a spared item,
+   *  or the strongest reason a reaped one scored. What the card shows instead of a synopsis. */
+  reason: string | null;
+  spared: boolean;
+  /** The owner's manual decision on this item -- "spare", "reap", or null. Set the moment
+   *  they click, so the card shows the pending intent before the next scan bakes it in.
+   *  Inherited from the show for a season the owner overrode whole. */
+  override: Override | null;
+}
+
+export type Override = "spare" | "reap";
+
+/** One page of candidates, plus the full-set totals the server measured before the page
+ *  window -- what the queue header counts and sizes. */
+export interface CandidatePage {
+  items: Candidate[];
+  total: number;
+  totalBytes: number;
+  offset: number;
+}
+
+export type RequestedFilter = "any" | "yes" | "no";
+export type SortKey = "score" | "size" | "year" | "title";
+export type SortOrder = "asc" | "desc";
+
+export interface CandidateQuery {
+  search?: string;
+  media_type?: string;
+  requested?: RequestedFilter;
+  sort?: SortKey;
+  order?: SortOrder;
+}
+
+export interface SignalContribution {
+  id: string;
+  contribution: number;
+  weight: number;
+  detail: string;
+  /** False means the input was Unknown. Its weight still counts in the denominator, so
+   *  an unevaluated signal drags the score DOWN, never up. */
+  evaluated: boolean;
+}
+
+export interface GateOutcome {
+  gate: string;
+  detail: string;
+}
+
+export interface Explanation {
+  score: number;
+  threshold: number;
+  coverage: number;
+  signals: SignalContribution[];
+  /** Why it is being kept. */
+  protections_fired: GateOutcome[];
+  /** Protections evaluated that did NOT fire -- with the actual numbers. */
+  protections_checked: GateOutcome[];
+  /** Protections that could not be checked. "We could not look" is not "we looked and
+   *  it was fine", and rendering them alike is the entire Deleterr failure class. */
+  protections_unknown: GateOutcome[];
+}
+
+export interface CandidateDetail extends Candidate {
+  explanation: Explanation;
+}
+
+export interface GateSetting {
+  gate: string;
+  enabled: boolean;
+  threshold: number;
+  secondary: number;
+  window_days: number;
+}
+
+export interface SignalSetting {
+  signal: string;
+  weight: number;
+  saturate_at: number;
+  floor: number;
+}
+
+export interface Condition {
+  field: string;
+  op: string;
+  value: number | string | boolean;
+}
+
+export interface PolicyBody {
+  name: string;
+  media_type: string;
+  condemn_at: number;
+  coverage_floor_bp: number;
+  keep_last_seasons: number;
+  keep_first_season: boolean;
+  gates: GateSetting[];
+  signals: SignalSetting[];
+  protect_conditions: Condition[];
+  keep_tags: string[];
+  keep_tags_match: "any" | "all";
+}
+
+/** One field the owner may write a protect condition about (from the vocabulary endpoint). */
+export interface VocabField {
+  key: string;
+  label: string;
+  help_text: string;
+  type: string;
+  unit_suffix: string;
+  ops: string[];
+}
+export interface Vocabulary {
+  lane: string;
+  fields: VocabField[];
+}
+
+export interface PolicyWarning {
+  field: string;
+  message: string;
+  severity: string;
+}
+
+export interface Policy {
+  policy_hash: string;
+  name: string;
+  body: PolicyBody;
+  warnings: PolicyWarning[];
+}
+
+export interface Simulation {
+  /** Whether these numbers actually answer the question that was asked. False when the
+   *  candidate policy changed a weight or a gate, in which case the stored scores were
+   *  produced by a different policy and every count below is zeroed. */
+  exact: boolean;
+  stale_reason: string | null;
+  condemned: number;
+  protected: number;
+  abstained: number;
+  reclaimable_bytes: number;
+  newly_condemned: number;
+  no_longer_condemned: number;
+  histogram: number[];
+}
+
+export interface ActionStep {
+  media_key: string;
+  ordinal: number;
+  kind: string;
+  method: string;
+  path: string;
+  body: Record<string, unknown> | null;
+  state: string;
+  is_canary: boolean;
+}
+
+export interface Run {
+  id: number;
+  snapshot_id: number;
+  policy_hash: string;
+  state: string;
+  item_count: number;
+  total_bytes: number;
+  confirmation_phrase: string;
+  approved_manifest_hash: string;
+  approved_by: string;
+  approved_at: string;
+  steps: ActionStep[];
+}
+
+export interface RunCheck {
+  label: string;
+  ok: boolean;
+}
+
+export interface RunOutcome {
+  media_key: string;
+  title: string;
+  kind: string;
+  state: string; // verified | failed | skipped
+  detail: string;
+  checks: RunCheck[];
+}
+
+export interface RunReport {
+  run_id: number;
+  dry_run: boolean;
+  state: string;
+  aborted_reason: string | null;
+  would_delete_items: number;
+  deleted_bytes: number;
+  skipped: number;
+  outcomes: RunOutcome[];
+}
+
+export interface ProfileSettings {
+  max_items_per_run: number;
+  max_bytes_per_run: number;
+  max_items_per_30d: number;
+  max_bytes_per_30d: number;
+  grace_days: number;
+  require_approval: boolean;
+}
+
+export interface WhitelistEntry {
+  media_key: string;
+  title: string;
+  note: string | null;
+  decision: Override;
+  created_at: string;
+}
+
+export interface GraceItem {
+  media_key: string;
+  title: string;
+  size_bytes: number;
+  grace_ends_at: string;
+  days_remaining: number;
+  in_grace: boolean;
+}
+
+export interface GraceReport {
+  grace_days: number;
+  in_grace_count: number;
+  ready_count: number;
+  total_bytes_in_grace: number;
+  total_bytes_ready: number;
+  in_grace: GraceItem[];
+  ready: GraceItem[];
+}
+
+export interface LeavingSoonResult {
+  to_add_count: number;
+  to_remove_count: number;
+  applied: boolean;
+  notified: boolean;
+  sample_added: string[];
+}
+
+export interface RequesterRow {
+  name: string;
+  requests_made: number;
+  gb_granted_bytes: number;
+  played_by_them: number;
+  reclaimable_items: number;
+  reclaimable_bytes: number;
+  unwatched_titles: string[];
+}
+
+export interface FairnessReport {
+  total_requests: number;
+  total_reclaimable_bytes: number;
+  total_reclaimable_items: number;
+  unmatched_requests: number;
+  rows: RequesterRow[];
+}
+
+export interface Progress {
+  phase: string;
+  done: number;
+  total: number;
+  detail: string;
+}
+
+export interface ScanStatus {
+  running: boolean;
+  phase: string;
+  done: number;
+  total: number;
+  detail: string;
+  error: string | null;
+  snapshot_id: number | null;
+}
+
+export interface AuthUser {
+  id: number;
+  username: string;
+  provider: string;
+  email: string | null;
+  thumb_url: string | null;
+}
+
+export interface AuthContext {
+  setup_needed: boolean;
+  plex_linked: boolean;
+  local_login_available: boolean;
+}
+
+export interface PlexStart {
+  pin_id: number;
+  auth_url: string;
+}
+
+export interface PlexPoll {
+  status: "pending" | "ok";
+  user: AuthUser | null;
+  setup: boolean;
+}
+
+// --- setup + settings ------------------------------------------------------
+
+export interface SetupStatus {
+  admin_exists: boolean;
+  plex_linked: boolean;
+  instances: Record<string, number>;
+  has_radarr: boolean;
+  has_tautulli: boolean;
+  has_seerr: boolean;
+  has_scanned: boolean;
+  scan_ready: boolean;
+  complete: boolean;
+}
+
+export type InstanceKind = "radarr" | "sonarr" | "tautulli" | "seerr";
+
+export interface Instance {
+  id: number;
+  kind: string;
+  name: string;
+  base_url: string;
+  enabled: boolean;
+  has_key: boolean;
+  api_path_prefix: string;
+  detected_version: string | null;
+  last_ok_at: string | null;
+  last_error: string | null;
+}
+
+export interface InstanceTest {
+  ok: boolean;
+  detail: string;
+  version: string | null;
+}
+
+export interface PlexStatus {
+  linked: boolean;
+  name: string | null;
+  connection_uri: string | null;
+  last_ok_at: string | null;
+}
+
+export interface PlexLinkStart {
+  pin_id: number;
+  auth_url: string;
+}
+
+export interface PlexLinkPoll {
+  status: "pending" | "ok";
+  server: PlexStatus | null;
+}
+
+export interface ScheduledJob {
+  id: string;
+  label: string;
+  next_run_at: string | null;
+  trigger: string;
+}
+
+export interface Schedule {
+  scan_cron: string | null;
+  jobs: ScheduledJob[];
+}
+
+export interface Safety {
+  destructive_enabled: boolean;
+  has_password: boolean;
+  note: string | null;
+}
+
+export interface Notifications {
+  /** Whether a Discord webhook is stored. The URL itself is a write-only credential and is
+   *  never returned -- exactly like an instance API key, only its presence is reported. */
+  has_webhook: boolean;
+}
+
+// ---------------------------------------------------------------------------
+
+/** A header our own frontend sends on every request. It is the load-bearing half
+ *  of the CSRF defence: a cross-origin page cannot set a custom header without a
+ *  CORS preflight, which this server never grants. See reaper/api/middleware.py. */
+const CSRF_HEADER = { "X-Reaper-CSRF": "1" };
+
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+/** Pull a human-readable reason out of a FastAPI error body.
+ *
+ *  `detail` is a string for HTTPException and a list of {loc, msg} for a validation
+ *  failure. The domain's refusals arrive as the latter, and they are the most useful
+ *  messages in the product ("a vote floor of 0 makes the rating floor meaningless") --
+ *  so it would be a shame to render them as "[object Object]". */
+function reason(status: number, body: unknown): string {
+  const detail = (body as { detail?: unknown } | null)?.detail;
+
+  if (typeof detail === "string") return detail;
+
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((e) => (e as { msg?: string }).msg)
+      .filter((m): m is string => Boolean(m));
+    if (messages.length) return messages.join(" ");
+  }
+
+  return `Request failed (${status}).`;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...CSRF_HEADER, ...init?.headers },
+  });
+
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => null);
+    throw new ApiError(response.status, reason(response.status, body));
+  }
+  // Tolerate empty bodies the way the error branch above does. Every endpoint returns JSON
+  // today, but the client is hand-maintained: the day someone adds a 204 No Content or an
+  // empty-body 200, `response.json()` would throw a raw "Unexpected end of JSON input"
+  // SyntaxError instead of resolving cleanly. Parse only when there is something to parse.
+  if (response.status === 204) return undefined as T;
+  const text = await response.text();
+  return (text ? JSON.parse(text) : undefined) as T;
+}
+
+const post = <T>(path: string, body: unknown): Promise<T> =>
+  request<T>(path, { method: "POST", body: JSON.stringify(body) });
+
+const put = <T>(path: string, body: unknown): Promise<T> =>
+  request<T>(path, { method: "PUT", body: JSON.stringify(body) });
+
+const del = <T>(path: string): Promise<T> => request<T>(path, { method: "DELETE" });
+
+export const api = {
+  health: () => request<Health>("/api/health"),
+  latestSnapshot: () => request<Snapshot>("/api/snapshots/latest"),
+  /** One page of the review queue. The full filtered totals (count + bytes, before the page
+   *  window) ride along in response headers, so the queue can show "[redacted] items · [redacted]"
+   *  without loading them all. Paged because a library runs to thousands of protected titles. */
+  candidates: async (
+    verdict: Verdict,
+    q: CandidateQuery = {},
+    limit = 100,
+    offset = 0,
+  ): Promise<CandidatePage> => {
+    const params = new URLSearchParams({ verdict });
+    if (q.search) params.set("search", q.search);
+    if (q.media_type) params.set("media_type", q.media_type);
+    if (q.requested && q.requested !== "any") params.set("requested", q.requested);
+    if (q.sort) params.set("sort", q.sort);
+    if (q.order) params.set("order", q.order);
+    params.set("limit", String(limit));
+    params.set("offset", String(offset));
+
+    const response = await fetch(`/api/candidates?${params.toString()}`, {
+      headers: { "Content-Type": "application/json", ...CSRF_HEADER },
+    });
+    if (!response.ok) {
+      const body: unknown = await response.json().catch(() => null);
+      throw new ApiError(response.status, reason(response.status, body));
+    }
+    const items = (await response.json()) as Candidate[];
+    return {
+      items,
+      total: Number(response.headers.get("X-Total-Count") ?? items.length),
+      totalBytes: Number(response.headers.get("X-Total-Bytes") ?? 0),
+      offset,
+    };
+  },
+  candidate: (id: number) => request<CandidateDetail>(`/api/candidates/${id}`),
+
+  // --- setup + settings ---------------------------------------------------
+  setupStatus: () => request<SetupStatus>("/api/setup/status"),
+
+  instances: () => request<Instance[]>("/api/settings/instances"),
+  createInstance: (body: {
+    kind: string;
+    name: string;
+    base_url: string;
+    api_key: string;
+  }) => post<Instance>("/api/settings/instances", body),
+  updateInstance: (
+    id: number,
+    body: { name?: string; base_url?: string; api_key?: string; enabled?: boolean },
+  ) => put<Instance>(`/api/settings/instances/${id}`, body),
+  deleteInstance: (id: number) => del<{ removed: boolean }>(`/api/settings/instances/${id}`),
+  testInstance: (body: { kind: string; base_url: string; api_key: string }) =>
+    post<InstanceTest>("/api/settings/instances/test", body),
+  testSavedInstance: (id: number) =>
+    post<InstanceTest>(`/api/settings/instances/${id}/test`, {}),
+
+  plexStatus: () => request<PlexStatus>("/api/settings/plex"),
+  plexLinkStart: () => post<PlexLinkStart>("/api/settings/plex/link/start", {}),
+  plexLinkPoll: (pin_id: number) =>
+    post<PlexLinkPoll>("/api/settings/plex/link/poll", { pin_id }),
+  plexUnlink: () => del<{ removed: boolean }>("/api/settings/plex"),
+
+  schedule: () => request<Schedule>("/api/settings/schedule"),
+  saveSchedule: (scan_cron: string | null) =>
+    put<Schedule>("/api/settings/schedule", { scan_cron }),
+  runJob: (id: string) => post<{ status: string; job: string }>(`/api/settings/jobs/${id}/run`, {}),
+
+  safety: () => request<Safety>("/api/settings/safety"),
+  setDeletion: (enabled: boolean, password?: string) =>
+    put<Safety>("/api/settings/safety", { enabled, password: password ?? null }),
+  setAdminPassword: (password: string) =>
+    post<{ ok: boolean }>("/api/settings/admin-password", { password }),
+
+  // The Discord webhook is the one channel that actually warns the household before a title
+  // is deleted. Like an API key it is write-only: `has_webhook` says only whether one is set.
+  notifications: () => request<Notifications>("/api/settings/notifications"),
+  setWebhook: (webhook_url: string) =>
+    put<Notifications>("/api/settings/notifications", { webhook_url }),
+  clearWebhook: () => del<Notifications>("/api/settings/notifications"),
+  /** Post a sample embed. Pass the URL about to be saved to test it, or null to test the
+   *  already-stored webhook without re-pasting the secret. Reuses the connection-test shape. */
+  testWebhook: (webhook_url: string | null) =>
+    post<InstanceTest>("/api/settings/notifications/test", { webhook_url }),
+
+  policy: (mediaType: "movie" | "tv" = "movie") =>
+    request<Policy>(`/api/policy?media_type=${mediaType}`),
+  vocabulary: (lane: "protect" | "condemn") =>
+    request<Vocabulary>(`/api/vocabulary?lane=${lane}`),
+  savePolicy: (body: PolicyBody) => post<Policy>("/api/policy", body),
+  validatePolicy: (body: PolicyBody) => post<Policy>("/api/policy/validate", body),
+  simulate: (body: PolicyBody) => post<Simulation>("/api/policy/simulate", body),
+
+  startScan: () => post<ScanStatus>("/api/scan/start", {}),
+  scanStatus: () => request<ScanStatus>("/api/scan/status"),
+
+  runs: () => request<Run[]>("/api/runs"),
+  /** Build a plan. With no keys it covers the whole condemned set; with `mediaKeys` it
+   *  reaps just those items -- the safe path for a first, hand-picked deletion. */
+  createRun: (mediaKeys?: string[]) =>
+    post<Run>("/api/runs", mediaKeys && mediaKeys.length ? { media_keys: mediaKeys } : {}),
+  dryRun: (id: number) => post<RunReport>(`/api/runs/${id}/dry-run`, {}),
+  /** Execute a real reap. Requires deletion armed on the host and the exact content-bound
+   *  confirmation phrase -- the server recomputes and refuses anything else. */
+  executeRun: (id: number, confirmationPhrase: string) =>
+    post<RunReport>(`/api/runs/${id}/execute`, { confirmation_phrase: confirmationPhrase }),
+
+  profile: () => request<ProfileSettings>("/api/profile"),
+  saveProfile: (s: ProfileSettings) =>
+    request<ProfileSettings>("/api/profile", { method: "PUT", body: JSON.stringify(s) }),
+
+  fairness: () => request<FairnessReport>("/api/fairness"),
+  grace: () => request<GraceReport>("/api/grace"),
+  syncLeavingSoon: () => post<LeavingSoonResult>("/api/leaving-soon/sync", {}),
+
+  whitelist: () => request<WhitelistEntry[]>("/api/whitelist"),
+  spare: (media_key: string, note?: string) =>
+    post<WhitelistEntry>("/api/whitelist", { media_key, note: note ?? null }),
+  /** Override a verdict by hand -- spare (keep) or reap (force onto the list). A show's
+   *  media_key covers all its seasons. */
+  override: (media_key: string, decision: Override, note?: string) =>
+    post<WhitelistEntry>("/api/override", { media_key, decision, note: note ?? null }),
+  /** Clear any override (spare or reap). Does not delete anything -- the item is judged by
+   *  the policy again on the next scan. */
+  clearOverride: (media_key: string) =>
+    request<{ removed: boolean }>(`/api/override/${encodeURIComponent(media_key)}`, {
+      method: "DELETE",
+    }),
+  unspare: (media_key: string) =>
+    request<{ removed: boolean }>(`/api/whitelist/${encodeURIComponent(media_key)}`, {
+      method: "DELETE",
+    }),
+
+  // --- auth ---------------------------------------------------------------
+  me: () => request<AuthUser>("/api/auth/me"),
+  authContext: () => request<AuthContext>("/api/auth/context"),
+  plexStart: () => post<PlexStart>("/api/auth/plex/start", {}),
+  plexPoll: (pin_id: number) => post<PlexPoll>("/api/auth/plex/poll", { pin_id }),
+  localLogin: (username: string, password: string) =>
+    post<AuthUser>("/api/auth/local", { username, password }),
+  recover: (token: string) => post<AuthUser>("/api/auth/recover", { token }),
+  logout: () => post<{ ok: boolean }>("/api/auth/logout", {}),
+};

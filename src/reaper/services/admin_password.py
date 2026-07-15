@@ -1,0 +1,127 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""The admin password -- the key that turns deletion on.
+
+Turning deletion on is the one destructive-action control the UI is allowed to flip, and
+it is gated on this password so that a stray click, a shared session, or a stale browser
+tab cannot arm the tool by accident. It is the local admin password: the same one that
+serves as the anti-lockout fallback (see ``auth.admins``), so an install always has one to
+verify against once it has been set.
+
+Turning deletion *off* is never gated -- making Reaper safer should always be one click.
+"""
+
+from __future__ import annotations
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from reaper.auth.passwords import generate_password, hash_password, verify_password
+from reaper.auth.sessions import close_all_for_user
+from reaper.auth.tokens import hash_token
+from reaper.clock import utcnow
+from reaper.db.models import AppUser, AuthProvider
+
+# The admin password arms deletion, so it earns a stronger floor than a throwaway login
+# would. Length is the single biggest factor in resistance to guessing; 12 is the modern
+# baseline. Only applied when a password is *set* -- existing shorter passwords still log
+# in, and the auto-generated one (GENERATED_PASSWORD_LENGTH = 24) clears it comfortably.
+MIN_PASSWORD_LENGTH = 12
+
+#: A decoy hash to verify against when no local admin exists, so "wrong password" and "no
+#: password set yet" take the same time and neither is distinguishable by timing.
+_DECOY = hash_password(generate_password())
+
+
+class PasswordError(RuntimeError):
+    """A password could not be set (too short, etc.). The message is safe to show."""
+
+
+async def _local_admins(session: AsyncSession) -> list[AppUser]:
+    return list(
+        (
+            await session.execute(
+                select(AppUser)
+                .where(
+                    AppUser.provider == AuthProvider.LOCAL,
+                    AppUser.is_active.is_(True),
+                    AppUser.password_hash.is_not(None),
+                )
+                .order_by(AppUser.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
+async def has_password(session: AsyncSession) -> bool:
+    """Whether an admin password has been set (i.e. an active local admin exists)."""
+    return bool(await _local_admins(session))
+
+
+async def verify(session: AsyncSession, password: str) -> bool:
+    """Check ``password`` against every local admin. Runs a constant amount of hashing
+    whether or not one matches, so timing does not leak whether a password is set."""
+    admins = await _local_admins(session)
+    matched = False
+    for user in admins:
+        ok, _ = verify_password(password, user.password_hash or _DECOY)
+        matched = matched or ok
+    if not admins:
+        verify_password(password, _DECOY)  # keep the timing even with no admins
+    return matched
+
+
+async def _unique_username(session: AsyncSession, desired: str) -> str:
+    base = desired.strip() or "admin"
+    candidate, suffix = base, 2
+    while await session.scalar(select(AppUser.id).where(AppUser.username == candidate)):
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    return candidate
+
+
+async def set_password(
+    session: AsyncSession,
+    password: str,
+    *,
+    username_hint: str = "admin",
+    keep_session_token: str | None = None,
+) -> str:
+    """Set (or create) the admin password. Returns the local admin's username.
+
+    Updates the first existing local admin if there is one, otherwise creates a local admin
+    -- so a Plex-only install can set a password without touching the CLI. Refuses a
+    password shorter than :data:`MIN_PASSWORD_LENGTH`.
+
+    Changing an existing password revokes that admin's other sessions: the intuitive
+    "reset my password" after a suspected cookie theft must actually lock the thief out,
+    and validating a cookie never touches ``password_hash``, so nothing else would. Pass
+    ``keep_session_token`` (the acting admin's own cookie) to spare the current tab.
+    """
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise PasswordError(f"Use at least {MIN_PASSWORD_LENGTH} characters.")
+
+    admins = await _local_admins(session)
+    if admins:
+        admins[0].password_hash = hash_password(password)
+        # A password change must invalidate every session the old password could have
+        # authorised -- except, optionally, the one making the change.
+        await close_all_for_user(
+            session,
+            admins[0].id,
+            except_token_hash=hash_token(keep_session_token) if keep_session_token else None,
+        )
+        await session.flush()
+        return admins[0].username
+
+    user = AppUser(
+        provider=AuthProvider.LOCAL,
+        username=await _unique_username(session, username_hint),
+        password_hash=hash_password(password),
+        is_active=True,
+        created_at=utcnow(),
+    )
+    session.add(user)
+    await session.flush()
+    return user.username

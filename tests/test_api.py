@@ -1,0 +1,669 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""The REST surface.
+
+Almost entirely read-only. The single exception is ``POST /runs/{id}/execute``, which is
+gated hard -- deletion must be enabled on the host and the caller must echo the plan's
+content-bound confirmation phrase -- and even then ``GuardedTransport`` refuses any call
+that was not journalled first. The tests below exercise those gates; the delete mechanics
+themselves live in ``test_reap_loop`` against fakes.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy.orm import Session
+
+from reaper.clock import utcnow
+from reaper.config import Settings
+from reaper.db.base import Base
+from reaper.db.models import Candidate, FirstFlagged, Snapshot
+from reaper.engine.policy import (
+    DEFAULT_TV_POLICY,
+    GateSetting,
+    PolicyBody,
+    SignalSetting,
+    combine_hashes,
+)
+from reaper.main import create_app
+
+from ._auth import login
+
+DEFAULT_GATES = [
+    {"gate": "whitelisted"},
+    {"gate": "min_dormancy", "threshold": 1095},
+    {"gate": "rating_floor", "threshold": 75, "secondary": 1000},
+    {"gate": "server_popularity", "threshold": 3},
+]
+DEFAULT_SIGNALS = [{"signal": "unwatched", "weight": 70, "saturate_at": 1825, "floor": 365}]
+
+
+def _policy(condemn_at: int = 70, **overrides: object) -> dict[str, object]:
+    return {
+        "condemn_at": condemn_at,
+        "gates": DEFAULT_GATES,
+        "signals": DEFAULT_SIGNALS,
+        **overrides,
+    }
+
+
+def _fixture_scoring_hash() -> str:
+    """The scoring hash of the policies the fixture snapshot was 'scored' with.
+
+    The simulator refuses to re-decide a snapshot whose scores came from a *different* set of
+    signals and gates, so the fixture has to be self-consistent -- exactly as a real snapshot
+    is. Movies and TV are scored under separate policies now, so the stored hash is the
+    combination of both (movie first, then the default TV policy, since none is saved here).
+    """
+    movie = PolicyBody(
+        condemn_at=70,
+        gates=tuple(GateSetting.model_validate(g) for g in DEFAULT_GATES),
+        signals=tuple(SignalSetting.model_validate(s) for s in DEFAULT_SIGNALS),
+    )
+    return combine_hashes(movie.scoring_hash(), DEFAULT_TV_POLICY.scoring_hash())
+
+
+def _explanation(score: float) -> str:
+    return json.dumps(
+        {
+            "score": score,
+            "threshold": 70,
+            "coverage": 1.0,
+            "signals": [
+                {
+                    "id": "unwatched",
+                    "contribution": score,
+                    "weight": 70,
+                    "detail": "unwatched for 2059 days",
+                    "evaluated": True,
+                }
+            ],
+            "protections_fired": [],
+            "protections_checked": [
+                {
+                    "gate": "server_popularity",
+                    "detail": "checked: popular here -- 0 distinct watchers, your floor is 3",
+                }
+            ],
+            "protections_unknown": [],
+        }
+    )
+
+
+@pytest.fixture
+def client(tmp_path: Path) -> Iterator[TestClient]:
+    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    engine = sa_create_engine(settings.sync_database_url)
+    Base.metadata.create_all(engine)
+
+    now = utcnow()
+    with Session(engine) as session:
+        snapshot = Snapshot(
+            created_at=now,
+            policy_hash="a" * 64,
+            scoring_hash=_fixture_scoring_hash(),
+            horizon_at=now,
+            item_count=3,
+            degraded=False,
+        )
+        session.add(snapshot)
+        session.flush()
+
+        # A condemned item, a protected one, and one we could not judge.
+        session.add_all(
+            [
+                Candidate(
+                    snapshot_id=snapshot.id,
+                    media_key="radarr:1:10",
+                    title="Example Movie",
+                    media_type="movie",
+                    size_bytes=5_900_000_000,
+                    verdict="condemn",
+                    score=91,
+                    coverage_bp=10_000,
+                    explanation_json=_explanation(91),
+                    created_at=now,
+                ),
+                Candidate(
+                    snapshot_id=snapshot.id,
+                    media_key="radarr:1:11",
+                    title="Example Classic",
+                    media_type="movie",
+                    size_bytes=8_000_000_000,
+                    verdict="protect",
+                    score=90,
+                    coverage_bp=10_000,
+                    explanation_json=json.dumps(
+                        {
+                            **json.loads(_explanation(90)),
+                            "protections_fired": [
+                                {
+                                    "gate": "rating_floor",
+                                    "detail": "IMDb 8.0 from 250,000 votes (>= your 7.5 floor)",
+                                }
+                            ],
+                        }
+                    ),
+                    created_at=now,
+                ),
+                Candidate(
+                    snapshot_id=snapshot.id,
+                    media_key="radarr:1:12",
+                    title="Unmatched",
+                    media_type="movie",
+                    size_bytes=1_000_000_000,
+                    verdict="abstain",
+                    score=50,
+                    coverage_bp=2_000,  # below the coverage floor
+                    explanation_json=_explanation(50),
+                    created_at=now,
+                ),
+            ]
+        )
+        session.add(
+            FirstFlagged(media_key="radarr:1:10", first_flagged_at=now, last_seen_condemned_at=now)
+        )
+        session.commit()
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+class TestTheRunsApi:
+    """Building, reviewing and dry-running a plan through the API. Nothing deletes."""
+
+    def test_a_plan_shows_the_literal_steps_and_the_confirmation_phrase(
+        self, client: TestClient
+    ) -> None:
+        """The plan is the why-panel's third block made real: the exact request each
+        deletion would issue, plus the content-bound confirmation the owner approves."""
+        run = client.post("/api/runs").json()
+
+        assert run["state"] == "planned"
+        assert run["item_count"] == 1  # the single condemned movie
+        # The confirmation is bound to what would be deleted: 1 item, ~5.5 GiB.
+        assert run["confirmation_phrase"].startswith("REAP 1 ITEMS")
+
+        step = run["steps"][0]
+        assert step["method"] == "DELETE"
+        assert step["path"] == "/api/v3/movie/10"  # radarr:1:10 -> movie 10
+        assert step["is_canary"] is True
+        assert step["body"] == {"deleteFiles": True, "addImportExclusion": True}
+        # No credential is ever in a journalled step.
+        assert "api_key" not in json.dumps(step).lower()
+
+    def test_a_dry_run_walks_the_plan_and_deletes_nothing(self, client: TestClient) -> None:
+        run = client.post("/api/runs").json()
+
+        report = client.post(f"/api/runs/{run['id']}/dry-run").json()
+
+        assert report["dry_run"] is True
+        assert report["state"] == "completed"
+        assert report["would_delete_items"] == 0  # nothing actually deleted
+        assert report["outcomes"][0]["state"] == "skipped"
+        assert "would DELETE /api/v3/movie/10" in report["outcomes"][0]["detail"]
+
+    def test_a_plan_appears_in_the_run_list(self, client: TestClient) -> None:
+        created = client.post("/api/runs").json()
+        listed = client.get("/api/runs").json()
+        assert any(r["id"] == created["id"] for r in listed)
+
+    def test_dry_running_a_missing_run_is_a_404(self, client: TestClient) -> None:
+        assert client.post("/api/runs/9999/dry-run").status_code == 404
+
+    def test_execute_is_refused_while_deletion_is_off(self, client: TestClient) -> None:
+        """The default client is read-only. Even the correct confirmation phrase cannot
+        execute a real reap while deletion is disabled -- the arm gate comes first."""
+        run = client.post("/api/runs").json()
+        resp = client.post(
+            f"/api/runs/{run['id']}/execute",
+            json={"confirmation_phrase": run["confirmation_phrase"]},
+        )
+        assert resp.status_code == 403
+        assert "deletion is turned off" in resp.json()["detail"].lower()
+
+
+@pytest.fixture
+def armed_client(tmp_path: Path) -> Iterator[TestClient]:
+    """A client armed at the host default (``destructive_actions_enabled=True``), with one
+    condemned movie but no *arr/Plex/Tautulli instances configured. Enough to exercise the
+    execute endpoint's confirmation and client-presence gates without any live service."""
+    settings = Settings(  # type: ignore[call-arg]
+        data_dir=tmp_path, secret_key="k", destructive_actions_enabled=True
+    )
+    engine = sa_create_engine(settings.sync_database_url)
+    Base.metadata.create_all(engine)
+
+    now = utcnow()
+    with Session(engine) as session:
+        snapshot = Snapshot(
+            created_at=now,
+            policy_hash="a" * 64,
+            scoring_hash=_fixture_scoring_hash(),
+            horizon_at=now,
+            item_count=1,
+            degraded=False,
+        )
+        session.add(snapshot)
+        session.flush()
+        session.add(
+            Candidate(
+                snapshot_id=snapshot.id,
+                media_key="radarr:1:10",
+                title="Worthless Movie",
+                media_type="movie",
+                size_bytes=5_900_000_000,
+                verdict="condemn",
+                score=91,
+                coverage_bp=10_000,
+                explanation_json=_explanation(91),
+                created_at=now,
+            )
+        )
+        session.add(
+            FirstFlagged(media_key="radarr:1:10", first_flagged_at=now, last_seen_condemned_at=now)
+        )
+        session.commit()
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+class TestExecuteGates:
+    """The four gates on the one endpoint that deletes. None of these tests reaches a live
+    service: the confirmation gate refuses first, and the client-presence gate refuses
+    before any HTTP is attempted."""
+
+    def test_a_wrong_confirmation_phrase_is_refused(self, armed_client: TestClient) -> None:
+        run = armed_client.post("/api/runs").json()
+        resp = armed_client.post(
+            f"/api/runs/{run['id']}/execute",
+            json={"confirmation_phrase": "REAP 999 ITEMS 999 GB"},
+        )
+        assert resp.status_code == 409
+        assert "does not match" in resp.json()["detail"].lower()
+
+    def test_the_right_phrase_but_no_plex_is_refused_before_any_delete(
+        self, armed_client: TestClient
+    ) -> None:
+        """Armed and the phrase matches -- but with no Plex configured the streaming veto
+        cannot run, so the executor refuses rather than deleting blind. Proves the happy
+        path reaches the executor and stops at the right interlock."""
+        run = armed_client.post("/api/runs").json()
+        resp = armed_client.post(
+            f"/api/runs/{run['id']}/execute",
+            json={"confirmation_phrase": run["confirmation_phrase"]},
+        )
+        assert resp.status_code == 409
+        assert "without plex" in resp.json()["detail"].lower()
+
+    def test_executing_a_missing_run_is_a_404(self, armed_client: TestClient) -> None:
+        resp = armed_client.post(
+            "/api/runs/9999/execute", json={"confirmation_phrase": "REAP 0 ITEMS 0 GB"}
+        )
+        assert resp.status_code == 404
+
+
+class TestTheProfileControlsTheCaps:
+    """The reap caps are the owner's decision, read from the profile -- not a hardcoded
+    default. This is what lets a real condemned set be simulated at all."""
+
+    def test_it_opens_on_cautious_defaults(self, client: TestClient) -> None:
+        body = client.get("/api/profile").json()
+        assert body["max_items_per_run"] == 10  # the cautious built-in
+        assert body["require_approval"] is True
+
+    def test_settings_round_trip_and_persist(self, client: TestClient) -> None:
+        current = client.get("/api/profile").json()
+        current["max_items_per_run"] = 25
+        current["grace_days"] = 21
+
+        saved = client.put("/api/profile", json=current)
+        assert saved.status_code == 200
+        assert saved.json()["max_items_per_run"] == 25
+
+        # Read back in a fresh request -- it was persisted, not just echoed.
+        assert client.get("/api/profile").json()["grace_days"] == 21
+
+    def test_the_dry_run_uses_the_saved_cap(self, client: TestClient) -> None:
+        """The executor's cap must come from the profile. With one condemned item and a
+        cap of 1, the dry run completes -- proving the saved cap is what it obeys (a
+        hardcoded larger default would also pass, so the abort case is covered by the
+        executor's own unit tests, where a multi-item plan can be built)."""
+        settings = client.get("/api/profile").json()
+        settings["max_items_per_run"] = 1
+        settings["max_items_per_30d"] = 1
+        client.put("/api/profile", json=settings)
+
+        run = client.post("/api/runs").json()
+        report = client.post(f"/api/runs/{run['id']}/dry-run").json()
+        assert report["state"] == "completed"  # 1 item, cap 1
+
+    def test_an_invalid_cap_combination_is_a_422(self, client: TestClient) -> None:
+        """A per-run cap above the rolling 30-day cap makes the rolling cap meaningless.
+        The domain refuses it, with the reason -- not a silent clamp."""
+        settings = client.get("/api/profile").json()
+        settings["max_items_per_run"] = 500
+        settings["max_items_per_30d"] = 100  # smaller than per-run: nonsensical
+
+        response = client.put("/api/profile", json=settings)
+        assert response.status_code == 422
+
+    def test_a_grace_period_under_a_week_is_refused(self, client: TestClient) -> None:
+        settings = client.get("/api/profile").json()
+        settings["grace_days"] = 3
+        assert client.put("/api/profile", json=settings).status_code == 422
+
+
+class TestSnapshot:
+    def test_it_reports_the_split_and_the_reclaimable_bytes(self, client: TestClient) -> None:
+        body = client.get("/api/snapshots/latest").json()
+
+        assert body["condemned"] == 1
+        assert body["protected"] == 1
+        assert body["abstained"] == 1
+        assert body["reclaimable_bytes"] == 5_900_000_000  # condemned only
+
+    def test_the_horizon_is_exposed(self, client: TestClient) -> None:
+        """Media older than this has no watch evidence either way. The owner needs to
+        see it -- a fresh Tautulli install would make the whole library look abandoned."""
+        assert client.get("/api/snapshots/latest").json()["horizon_at"]
+
+
+class TestTheWhyPanel:
+    def test_a_condemned_item_shows_the_protections_that_did_not_fire(
+        self, client: TestClient
+    ) -> None:
+        """The block no competitor shows. Every protection evaluated, with the ACTUAL
+        NUMBERS -- not just which rules matched."""
+        candidates = client.get("/api/candidates?verdict=condemn").json()
+        detail = client.get(f"/api/candidates/{candidates[0]['id']}").json()
+
+        checked = detail["explanation"]["protections_checked"]
+        assert checked
+        assert "0 distinct watchers, your floor is 3" in checked[0]["detail"]
+
+    def test_a_protected_item_explains_the_keep(self, client: TestClient) -> None:
+        """A tool that only explains its deletions cannot be trusted about its keeps.
+
+        The protected fixture scores 90 -- it would be deleted on score alone -- and
+        the panel must say both: why it scored that, and why it is kept anyway."""
+        protected = client.get("/api/candidates?verdict=protect").json()
+        detail = client.get(f"/api/candidates/{protected[0]['id']}").json()
+
+        assert detail["verdict"] == "protect"
+        assert detail["score"] == 90  # the score it is overriding
+        fired = detail["explanation"]["protections_fired"]
+        assert fired
+        assert "7.5 floor" in fired[0]["detail"]
+
+    def test_the_grace_clock_is_exposed(self, client: TestClient) -> None:
+        candidates = client.get("/api/candidates?verdict=condemn").json()
+
+        assert candidates[0]["first_flagged_at"]
+
+    def test_a_missing_candidate_is_a_404(self, client: TestClient) -> None:
+        assert client.get("/api/candidates/9999").status_code == 404
+
+
+class TestTheSimulator:
+    """Re-scores the last snapshot under a candidate policy with ZERO API calls, so the
+    knob and its blast radius sit in the same viewport."""
+
+    def _simulate(self, client: TestClient, condemn_at: int) -> dict[str, object]:
+        return client.post(
+            "/api/policy/simulate",
+            json={
+                "condemn_at": condemn_at,
+                "gates": DEFAULT_GATES,
+                "signals": DEFAULT_SIGNALS,
+            },
+        ).json()
+
+    def test_lowering_the_threshold_condemns_more(self, client: TestClient) -> None:
+        strict = self._simulate(client, 95)
+        loose = self._simulate(client, 40)
+
+        assert loose["condemned"] > strict["condemned"]
+
+    def test_it_reports_what_a_change_would_newly_condemn(self, client: TestClient) -> None:
+        """The number the owner actually needs before saving: not the total, but the
+        delta from what they have already reviewed."""
+        result = self._simulate(client, 95)  # stricter than the stored 91
+
+        assert result["no_longer_condemned"] == 1
+        assert result["newly_condemned"] == 0
+
+    def test_a_protection_wins_at_every_threshold(self, client: TestClient) -> None:
+        """The protected fixture scores 90. No threshold, however low, may condemn it
+        -- a protection always beats the score."""
+        for threshold in (1, 50, 100):
+            assert self._simulate(client, threshold)["protected"] == 1
+
+    def test_an_item_below_the_coverage_floor_is_never_condemned(self, client: TestClient) -> None:
+        """We can barely see it. Judging it on fragments is how you delete something you
+        know nothing about."""
+        result = client.post(
+            "/api/policy/simulate",
+            json={
+                "condemn_at": 1,  # would condemn anything
+                "coverage_floor_bp": 5000,
+                "gates": DEFAULT_GATES,
+                "signals": DEFAULT_SIGNALS,
+            },
+        ).json()
+
+        # The 20%-coverage item stays out, even at a threshold of 1.
+        assert result["condemned"] == 1  # only the 100%-coverage condemned one
+
+    def test_the_histogram_covers_every_item(self, client: TestClient) -> None:
+        result = self._simulate(client, 70)
+
+        assert sum(result["histogram"]) == 3  # type: ignore[arg-type]
+
+    def test_a_threshold_only_change_is_exact(self, client: TestClient) -> None:
+        """The whole point. Moving condemn_at re-compares a STORED score against a new
+        number, which needs no API call and is not an approximation."""
+        assert self._simulate(client, 50)["exact"] is True
+
+
+class TestTheSimulatorRefusesToGuess:
+    """The trap this class exists to close.
+
+    The simulator re-decides a snapshot by re-comparing **stored** scores and verdicts
+    against new thresholds. That is exact for ``condemn_at`` and ``coverage_floor_bp``.
+    It is simply wrong for anything else: change a signal weight or a gate, and every
+    stored score was produced by the *old* ones. The snapshot cannot answer the new
+    question, and no amount of arithmetic over it can.
+
+    A policy editor that let you drag a weight and then showed a confident count would
+    be the single most dangerous screen in the product -- the number would look exactly
+    as authoritative as the true one. So the API returns the reason and no numbers.
+    """
+
+    def _simulate(self, client: TestClient, policy: dict[str, object]) -> dict[str, object]:
+        return client.post("/api/policy/simulate", json=policy).json()
+
+    def test_changing_a_signal_weight_refuses_to_report_numbers(self, client: TestClient) -> None:
+        result = self._simulate(
+            client,
+            _policy(signals=[{"signal": "unwatched", "weight": 40, "saturate_at": 1825}]),
+        )
+
+        assert result["exact"] is False
+        assert result["condemned"] == 0
+        assert result["reclaimable_bytes"] == 0
+        assert sum(result["histogram"]) == 0  # type: ignore[arg-type]
+
+    def test_the_refusal_says_what_to_do_about_it(self, client: TestClient) -> None:
+        """An error the owner cannot act on is only marginally better than a wrong
+        answer."""
+        result = self._simulate(
+            client,
+            _policy(signals=[{"signal": "unwatched", "weight": 40, "saturate_at": 1825}]),
+        )
+
+        assert "scan" in str(result["stale_reason"]).lower()
+
+    def test_changing_a_gate_also_refuses(self, client: TestClient) -> None:
+        """Gates decide the *verdict*, and the verdict is stored too. Loosening the
+        rating floor would un-protect items the snapshot still records as protected."""
+        loosened = [
+            {"gate": "whitelisted"},
+            {"gate": "min_dormancy", "threshold": 1095},
+            {"gate": "rating_floor", "threshold": 60, "secondary": 1000},  # was 75
+            {"gate": "server_popularity", "threshold": 3},
+        ]
+        result = self._simulate(client, _policy(gates=loosened))
+
+        assert result["exact"] is False
+
+    def test_disabling_a_protection_refuses(self, client: TestClient) -> None:
+        """The most dangerous edit of all, and the one most likely to be made while
+        watching the condemned count."""
+        without = [g for g in DEFAULT_GATES if g["gate"] != "rating_floor"]
+        result = self._simulate(client, _policy(gates=without))
+
+        assert result["exact"] is False
+
+
+class TestPolicyPersistence:
+    """The editor needs something to open on, and saving must actually take effect."""
+
+    def test_it_opens_on_the_built_in_default_before_anything_is_saved(
+        self, client: TestClient
+    ) -> None:
+        body = client.get("/api/policy").json()
+
+        assert body["name"] == "default"
+        assert len(body["policy_hash"]) == 64
+        assert body["body"]["gates"]
+
+    def test_a_saved_policy_is_what_loads_next(self, client: TestClient) -> None:
+        client.post("/api/policy", json=_policy(condemn_at=55, name="mine"))
+
+        body = client.get("/api/policy").json()
+
+        assert body["name"] == "mine"
+        assert body["body"]["condemn_at"] == 55
+
+    def test_saving_is_append_only_and_idempotent(self, client: TestClient) -> None:
+        """The hash is the identity. Opening the editor and saving without changing
+        anything must not fork the audit trail -- snapshots and approvals point at
+        these rows and have to stay interpretable."""
+        first = client.post("/api/policy", json=_policy(condemn_at=55)).json()
+        second = client.post("/api/policy", json=_policy(condemn_at=55)).json()
+
+        assert first["policy_hash"] == second["policy_hash"]
+
+    def test_an_invalid_policy_is_never_persisted(self, client: TestClient) -> None:
+        """A dormancy floor under a year is refused by the domain, and the refusal must
+        happen before the row is written -- not after."""
+        response = client.post("/api/policy", json=_policy(gates=[{"gate": "min_dormancy"}]))
+
+        assert response.status_code == 422
+        assert client.get("/api/policy").json()["name"] == "default"  # nothing saved
+
+    def test_a_protect_condition_round_trips(self, client: TestClient) -> None:
+        """A user-authored protection saves, comes back intact, and changes the policy hash."""
+        cond = {"field": "imdb_votes", "op": "gte", "value": 1_000_000}
+        before = client.get("/api/policy").json()["policy_hash"]
+        saved = client.post("/api/policy", json=_policy(protect_conditions=[cond]))
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["body"]["protect_conditions"] == [cond]
+        assert saved.json()["policy_hash"] != before  # it changes what Reaper decides
+
+    def test_a_protect_condition_with_a_bad_operator_is_refused(self, client: TestClient) -> None:
+        # "whitelisted" is a yes/no field -- ">=" is not one of its operators, so this
+        # condition is unconstructable, not merely wrong.
+        body = _policy(protect_conditions=[{"field": "whitelisted", "op": "gte", "value": True}])
+        assert client.post("/api/policy", json=body).status_code == 422
+
+
+class TestPolicyValidation:
+    def test_a_valid_policy_is_hashed(self, client: TestClient) -> None:
+        body = client.post(
+            "/api/policy/validate",
+            json={"condemn_at": 70, "gates": DEFAULT_GATES, "signals": DEFAULT_SIGNALS},
+        ).json()
+
+        assert len(body["policy_hash"]) == 64
+
+    def test_a_tomatometer_in_the_imdb_field_is_warned_about(self, client: TestClient) -> None:
+        """No validator can tell an IMDb floor of 96 (a legal 9.6) from a Rotten
+        Tomatoes 96 typed into the wrong box. So it says so instead of pretending."""
+        body = client.post(
+            "/api/policy/validate",
+            json={
+                "condemn_at": 70,
+                "gates": [
+                    {"gate": "rating_floor", "threshold": 96, "secondary": 1000},
+                    {"gate": "min_dormancy", "threshold": 1095},
+                ],
+                "signals": DEFAULT_SIGNALS,
+            },
+        ).json()
+
+        assert any("Rotten Tomatoes" in w["message"] for w in body["warnings"])
+
+    def test_a_zero_vote_floor_is_refused_outright(self, client: TestClient) -> None:
+        """Provably wrong, so it is a 422 rather than a warning: a rating floor with no
+        vote floor protects an 8.3 drawn from 388 votes."""
+        response = client.post(
+            "/api/policy/validate",
+            json={
+                "condemn_at": 70,
+                "gates": [{"gate": "rating_floor", "threshold": 75, "secondary": 0}],
+                "signals": DEFAULT_SIGNALS,
+            },
+        )
+
+        assert response.status_code == 422
+        # ...and the owner is TOLD WHY, not handed an Internal Server Error.
+        assert "vote floor of 0" in json.dumps(response.json())
+
+
+class TestVocabularyIsFilteredServerSide:
+    """A protect-only field is never even OFFERED to the condemn editor, so a dangerous
+    condition is not merely rejected -- it is unconstructable."""
+
+    def test_the_condemn_lane_hides_protect_only_fields(self, client: TestClient) -> None:
+        keys = {f["key"] for f in client.get("/api/vocabulary?lane=condemn").json()["fields"]}
+
+        assert "watchers_all_time" not in keys
+        assert "imdb_votes" not in keys
+        assert "whitelisted" not in keys
+
+    def test_the_protect_lane_is_a_superset(self, client: TestClient) -> None:
+        condemn = {f["key"] for f in client.get("/api/vocabulary?lane=condemn").json()["fields"]}
+        protect = {f["key"] for f in client.get("/api/vocabulary?lane=protect").json()["fields"]}
+
+        assert condemn < protect
+
+    def test_every_field_carries_its_units(self, client: TestClient) -> None:
+        """A bare number is how a 7.5 rating floor meets a Tomatometer of 96."""
+        for field in client.get("/api/vocabulary?lane=protect").json()["fields"]:
+            assert field["label"]
+            assert field["help_text"]
+
+
+class TestNothingCanDelete:
+    def test_there_is_no_execution_route(self, client: TestClient) -> None:
+        """Read-only by construction. If this ever fails, a delete path was added and
+        every safety property in the engine needs re-examining."""
+        from fastapi.routing import APIRoute
+
+        for route in client.app.routes:  # type: ignore[attr-defined]
+            if isinstance(route, APIRoute):
+                assert route.methods <= {"GET", "POST", "HEAD", "OPTIONS"}
+                assert "delete" not in route.path.lower()
+                assert "execute" not in route.path.lower()
