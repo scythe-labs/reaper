@@ -311,6 +311,12 @@ class Candidate(Base):
     has not matched has none, and it is a snapshot-time snapshot -- rating keys move across
     library rebuilds, so this is never treated as stable identity (that is media_key)."""
 
+    poster_rating_key: Mapped[int | None] = mapped_column(Integer, default=None)
+    """The Plex rating key to draw the card's poster from. For a season this is the SHOW's
+    key, not the season's -- a show always has a poster, whereas many seasons do not (the
+    proxy 404s and the card falls back to a placeholder). Null for a movie, whose own
+    ``plex_rating_key`` is its poster. Display only; never identity or a gate."""
+
     title: Mapped[str] = mapped_column(String(500))
     media_type: Mapped[str] = mapped_column(String(10))
     size_bytes: Mapped[int] = mapped_column(Integer, default=0)

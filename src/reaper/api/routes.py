@@ -251,10 +251,12 @@ def _primary_reason(explanation_json: str, verdict: str) -> str | None:
         signals = [s for s in exp.get("signals") or [] if s.get("evaluated")]
         signals.sort(key=lambda s: s.get("contribution", 0), reverse=True)
         return signals[0]["detail"] if signals else None
-    # abstain: a protection that could not be checked, else "scored too low".
+    # abstain: something Reaper left for the owner to decide (a keep-rule conflict, or a
+    # source it couldn't reach), else "scored too low". The detail is already a plain,
+    # self-contained sentence, so no prefix -- a jargon prefix only muddies it.
     unknown = exp.get("protections_unknown") or []
     if unknown:
-        return f"Couldn't check: {unknown[0]['detail']}"
+        return str(unknown[0]["detail"])
     return "Scored below your threshold."
 
 
@@ -274,8 +276,13 @@ def _candidate_out(
         year=r.year,
         summary=r.summary,
         # The poster comes from Plex, proxied by our own image route (see api/poster.py) --
-        # never the *arr's stale art. Only items Plex has matched (a rating key) have one.
-        poster_url=(f"/api/poster/{r.plex_rating_key}" if r.plex_rating_key else None),
+        # never the *arr's stale art. For a season this is the SHOW's key (poster_rating_key),
+        # since many seasons have no poster of their own; a movie falls back to its own key.
+        poster_url=(
+            f"/api/poster/{r.poster_rating_key or r.plex_rating_key}"
+            if (r.poster_rating_key or r.plex_rating_key)
+            else None
+        ),
         requested_by=r.requested_by,
         group_key=r.group_key,
         group_title=r.group_title,

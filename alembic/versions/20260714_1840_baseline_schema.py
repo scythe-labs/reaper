@@ -161,6 +161,7 @@ def upgrade() -> None:
     sa.Column('snapshot_id', sa.Integer(), nullable=False),
     sa.Column('media_key', sa.String(length=100), nullable=False),
     sa.Column('plex_rating_key', sa.Integer(), nullable=True),
+    sa.Column('poster_rating_key', sa.Integer(), nullable=True),
     sa.Column('title', sa.String(length=500), nullable=False),
     sa.Column('media_type', sa.String(length=10), nullable=False),
     sa.Column('size_bytes', sa.Integer(), nullable=False),

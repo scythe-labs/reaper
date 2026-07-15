@@ -107,6 +107,9 @@ class RawItem:
     matched_by: identity.MatchedBy | None = None
     match_detail: str | None = None
     match_status: identity.MatchStatus | None = None
+    # The matched Plex item's imdb id -- a fallback rating key when Radarr's imdbId is
+    # missing or does not resolve in the IMDb dataset.
+    plex_imdb_id: str | None = None
 
 
 async def build_facts(
@@ -155,7 +158,9 @@ async def build_facts(
     # --- ratings ------------------------------------------------------------
     rating: Observation[int]
     votes: Observation[int]
-    entry = imdb.get(item.imdb_id or "")
+    # Radarr's imdbId first, then the Plex-matched imdb id as a fallback (Radarr may lack
+    # it, or carry one the IMDb dataset doesn't have).
+    entry = imdb.get(item.imdb_id or "") or imdb.get(item.plex_imdb_id or "")
     if entry is not None:
         rating = Known(value=int(entry.average_rating * 10), source="imdb")
         votes = Known(value=int(entry.num_votes), source="imdb")
@@ -310,7 +315,6 @@ async def scan(
     plex_index = await build_movie_index(tautulli, plex, degrade=context.degrade)
 
     items: list[RawItem] = []
-    all_movies: list[dict[str, Any]] = []
     for source in radarrs:
         emit(Progress("gathering", 2, 5, f"movies from Radarr ({source.name})"))
         try:
@@ -320,12 +324,13 @@ async def scan(
             # may execute against a snapshot that is missing an entire *arr.
             context.degrade(f"radarr '{source.name}' unreachable: {exc}")
             continue
-        all_movies.extend(movies)
         items.extend(_raw_items(movies, plex_index, source.instance_id, requested))
         log.info("snapshot.radarr", instance=source.name, movies=len(movies))
 
     emit(Progress("gathering", 4, 5, "IMDb ratings"))
-    imdb_ids = [m["imdbId"] for m in all_movies if m.get("imdbId")]
+    # Look up by BOTH Radarr's imdbId and the matched Plex item's imdb id, so a film whose
+    # Radarr record lacks (or has a wrong) imdbId still gets its rating when Plex knows it.
+    imdb_ids = [x for i in items for x in (i.imdb_id, i.plex_imdb_id) if x]
     try:
         imdb = await ImdbRatings(engine).lookup(imdb_ids)
     except DatasetDegradedError as exc:
@@ -454,6 +459,8 @@ async def scan(
             snapshot_id=snapshot.id,
             media_key=judgement.media_key,
             plex_rating_key=judgement.plex_rating_key,
+            # A season's poster is the SHOW's, not the season's -- shows always have one.
+            poster_rating_key=judgement.poster_rating_key,
             title=judgement.title,
             media_type="season",
             size_bytes=judgement.size_bytes,
@@ -518,6 +525,7 @@ async def _judge_item(
     snapshot_id: int,
     media_key: str,
     plex_rating_key: int | None,
+    poster_rating_key: int | None = None,
     title: str,
     media_type: str,
     size_bytes: int,
@@ -572,6 +580,7 @@ async def _judge_item(
             snapshot_id=snapshot_id,
             media_key=media_key,
             plex_rating_key=plex_rating_key,
+            poster_rating_key=poster_rating_key,
             title=title,
             media_type=media_type,
             size_bytes=size_bytes,
@@ -901,6 +910,7 @@ def _raw_items(
                 matched_by=resolution.matched_by,
                 match_detail=resolution.detail,
                 match_status=resolution.status,
+                plex_imdb_id=matched.ids.imdb if matched is not None else None,
             )
         )
     return items

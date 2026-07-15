@@ -549,6 +549,18 @@ def _source(client: Any) -> season_scan.SonarrSource:
     return season_scan.SonarrSource(client=client, instance_id=1, name="hd")
 
 
+class _FakePlexGuids:
+    """A stand-in for the plexapi GUID sweep: rating_key -> (ExternalIds, basename)."""
+
+    def __init__(self, guids: dict[int, tuple[identity.ExternalIds, str | None]]) -> None:
+        self._guids = guids
+
+    async def library_guid_index(
+        self, *, section_type: str
+    ) -> dict[int, tuple[identity.ExternalIds, str | None]]:
+        return self._guids
+
+
 class TestGatherEndToEnd:
     async def test_a_matched_prunable_season_is_gathered_with_its_plex_key(
         self, cache_engine: AsyncEngine
@@ -588,9 +600,88 @@ class TestGatherEndToEnd:
         # Season 3 is prunable (outside keep-last 2, not the first): resolved to its Plex key.
         assert "sonarr:1:42:3" in by_key
         assert by_key["sonarr:1:42:3"].plex_rating_key == 903
+        # The card poster comes from the SHOW's key (900), never the season's -- a season
+        # often has no poster of its own, so the season key would 404 to a placeholder.
+        assert by_key["sonarr:1:42:3"].poster_rating_key == 900
         # The first and last-two seasons are protected, and emitted so the panel shows why.
         assert by_key["sonarr:1:42:1"].guard_result.outcome == PROTECT
         assert by_key["sonarr:1:42:5"].guard_result.outcome == PROTECT
+
+    async def test_plex_supplies_the_rating_and_poster_when_sonarr_cannot(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """Sonarr has no imdbId (common for reality/recent shows), but the show matches Plex
+        by tvdb and Plex carries the imdb id. The rating comes through on the Plex id, and
+        the card poster uses the show's key -- so neither the rating nor the poster is lost
+        to a Sonarr/TVDB metadata gap."""
+        async with cache_engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS imdb_rating "
+                    "(tconst TEXT PRIMARY KEY, average_rating REAL, num_votes INTEGER)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS imdb_dataset_sync (id INTEGER PRIMARY KEY, "
+                    "synced_at INTEGER NOT NULL, row_count INTEGER NOT NULL)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "INSERT OR REPLACE INTO imdb_dataset_sync (id, synced_at, row_count) "
+                    "VALUES (1, :ts, :n)"
+                ),
+                {"ts": int(utcnow().timestamp()), "n": 1_000_000},
+            )
+            await conn.execute(
+                text(
+                    "INSERT OR REPLACE INTO imdb_rating (tconst, average_rating, num_votes) "
+                    "VALUES ('tt7777', 7.1, 38)"
+                )
+            )
+        series = [
+            {
+                "id": 55,
+                "title": "Reality Show",
+                "year": 2020,
+                "status": "ended",
+                "ended": True,
+                "tvdbId": 4242,  # matches Plex by tvdb; NO imdbId from Sonarr
+                "seasons": [_season_payload(n) for n in range(1, 6)],
+            }
+        ]
+        tautulli = _FakeTautulli(
+            shows=[
+                {"rating_key": 800, "title": "Reality Show", "year": 2020, "added_at": "1000000"}
+            ],
+            children={800: [{"media_index": n, "rating_key": 800 + n} for n in range(1, 6)]},
+        )
+        plex = _FakePlexGuids({800: (identity.ExternalIds.of(tvdb=4242, imdb="tt7777"), None)})
+        _reasons, degrade = _degrade_sink()
+
+        judgements = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(_FakeSonarr(series))],
+            tautulli=tautulli,  # type: ignore[arg-type]
+            plex=plex,  # type: ignore[arg-type]
+            horizon=utcnow() - timedelta(days=4000),
+            active_rating_keys=set(),
+            activity_degraded=False,
+            keep_last_seasons=2,
+            keep_first_season=True,
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+        )
+
+        pruned = next(j for j in judgements if j.media_key == "sonarr:1:55:3")
+        # Rating resolved via the Plex-supplied imdb id, even though Sonarr had none.
+        assert isinstance(pruned.facts.imdb_rating_tenths, Known)
+        assert pruned.facts.imdb_rating_tenths.value == 71
+        # Poster uses the show's key (800), not the season's (803).
+        assert pruned.poster_rating_key == 800
+        assert pruned.plex_rating_key == 803
 
     async def test_an_unmatched_series_yields_unresolved_seasons(
         self, cache_engine: AsyncEngine

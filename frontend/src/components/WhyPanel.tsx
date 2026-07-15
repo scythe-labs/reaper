@@ -165,7 +165,9 @@ function Gates({
 }) {
   if (outcomes.length === 0) return null;
 
-  const mark = tone === "fired" ? "✓" : tone === "checked" ? "✓" : "?";
+  // fired/checked get a check; the "left for you" rows are the solid amber notice and carry
+  // no mark -- the amber box itself is the signal, matching the "kept to be safe" notice.
+  const mark = tone === "unknown" ? null : "✓";
 
   return (
     <section className="block">
@@ -174,7 +176,7 @@ function Gates({
       <ul className={`gates gates-${tone}`}>
         {outcomes.map((outcome) => (
           <li key={outcome.gate}>
-            <span className="gate-mark">{mark}</span>
+            {mark && <span className="gate-mark">{mark}</span>}
             <span className="gate-detail">{outcome.detail}</span>
           </li>
         ))}
@@ -249,11 +251,11 @@ export function WhyPanel({ item, onClose }: { item: CandidateDetail; onClose: ()
       />
 
       <Gates
-        title="Protections that could not be checked"
+        title="Left for you to decide"
         blurb={
-          "Reaper could not look — a source was unreachable or the data was missing. This is " +
-          "not the same as looking and finding nothing, so it is never treated as evidence " +
-          "for deleting. It can only ever protect."
+          "Reaper wasn't sure enough to act on these on its own — a rule was too close to " +
+          "call, or something couldn't be reached. Everything here is kept, never removed, " +
+          "until you look."
         }
         outcomes={explanation.protections_unknown}
         tone="unknown"

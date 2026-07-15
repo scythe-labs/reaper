@@ -66,11 +66,11 @@ class PruneConflict:
 
     @property
     def message(self) -> str:
+        viewers = "person" if self.pruned_watchers == 1 else "people"
         return (
-            f"Season {self.pruned_season} would be removed, but {self.pruned_watchers} "
-            f"viewers have watched it — more than the {self.kept_watchers} who watched "
-            f"season {self.kept_season}, which the rule keeps. This is the "
-            f"'the old season is the good one' case; it will not be auto-approved."
+            f"{self.pruned_watchers} {viewers} watched Season {self.pruned_season} — more "
+            f"than watched Season {self.kept_season}, which your keep rule protects. "
+            f"Reaper left it for you to decide instead of removing it."
         )
 
 

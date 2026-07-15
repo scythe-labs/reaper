@@ -1093,14 +1093,15 @@ tbody tr.selected {
   color: var(--protect);
 }
 
-/* Amber and dashed, deliberately unlike the others. */
+/* The solid amber notice -- the same tone as `.warn` / the "kept to be safe" notice, so
+   every "Reaper wasn't sure, so it's kept" state reads the same way. */
 .gates-unknown li {
   background: var(--unknown-soft);
-  border: 1px dashed var(--unknown);
+  border: 1px solid color-mix(in srgb, var(--unknown) 45%, transparent);
+  border-radius: var(--radius);
   color: var(--text);
-}
-.gates-unknown .gate-mark {
-  color: var(--unknown);
+  padding: 0.55rem 0.8rem;
+  line-height: 1.5;
 }
 
 /* ---- policy editor ------------------------------------------------------- */

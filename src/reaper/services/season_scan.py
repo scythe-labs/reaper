@@ -115,6 +115,9 @@ class SeasonJudgement:
     requested_by: str | None = None
     group_key: str | None = None
     group_title: str | None = None
+    # The SHOW's Plex rating key, for the card poster (a show always has one; many seasons
+    # do not). Distinct from plex_rating_key, which is the season's, used for watch stats.
+    poster_rating_key: int | None = None
     # How the show was bound to its Plex row (shared by every season of the show).
     matched_by: identity.MatchedBy | None = None
     match_detail: str | None = None
@@ -152,6 +155,9 @@ class _SeriesWork:
     matched_by: identity.MatchedBy | None = None
     match_detail: str | None = None
     match_status: identity.MatchStatus | None = None
+    # The matched Plex show's imdb id, used as a fallback for the IMDb rating lookup when
+    # Sonarr's series imdbId is missing or wrong (common for reality/recent shows).
+    plex_imdb_id: str | None = None
     seasons_in_plex: dict[int, PlexSeason] = field(default_factory=dict)
 
 
@@ -594,6 +600,7 @@ async def gather(
         item.matched_by = resolution.matched_by
         item.match_detail = resolution.detail
         item.match_status = resolution.status
+        item.plex_imdb_id = resolution.plex_item.ids.imdb if resolution.plex_item else None
         if resolution.rating_key is not None:
             show_rk = resolution.rating_key
             if show_rk not in resolved_shows:
@@ -606,7 +613,10 @@ async def gather(
     # Series-level IMDb ratings, from the dataset we already ingest, applied to each season
     # (a season has no IMDb title of its own). A degraded dataset degrades the whole snapshot
     # exactly as it does on the movie path -- a missing rating REMOVES protection.
+    # Look up by BOTH the Sonarr series imdbId and the matched Plex show's imdb id, so a
+    # show Sonarr has no (or a wrong) imdbId for still gets its rating when Plex knows it.
     imdb_ids = [str(w.series["imdbId"]) for w in work if w.series.get("imdbId")]
+    imdb_ids += [w.plex_imdb_id for w in work if w.plex_imdb_id]
     try:
         ratings = await ImdbRatings(engine).lookup(imdb_ids) if imdb_ids else {}
     except DatasetDegradedError as exc:
@@ -662,7 +672,11 @@ async def _judge_series(
     ranks = rank_seasons(list(item.seasons))
 
     # The show's IMDb rating (if any), shared by every season -- see build_season_facts.
-    show_rating = ratings.get(str(series.get("imdbId") or ""))
+    # Prefer Sonarr's imdbId; fall back to the Plex-matched imdb id when Sonarr's is
+    # missing or does not resolve (reality/recent shows TVDB has no IMDb mapping for).
+    show_rating = ratings.get(str(series.get("imdbId") or "")) or ratings.get(
+        item.plex_imdb_id or ""
+    )
 
     # Show-level display fields, shared by every season row of this series.
     tvdb_id = int(series["tvdbId"]) if series.get("tvdbId") else None
@@ -736,6 +750,7 @@ async def _judge_series(
                 requested_by=season_requester,
                 group_key=group_key,
                 group_title=series_title,
+                poster_rating_key=item.show_rating_key,
                 matched_by=item.matched_by,
                 match_detail=item.match_detail,
                 match_status=item.match_status,
