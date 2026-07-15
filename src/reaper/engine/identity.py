@@ -52,13 +52,27 @@ from typing import Any
 
 
 class MatchedBy(enum.StrEnum):
-    """Which signal bound an item to its Plex row -- surfaced in the why-panel/audit log."""
+    """Which signal bound an item to its Plex row -- surfaced in the audit log."""
 
     TVDB = "tvdb"
     TMDB = "tmdb"
     IMDB = "imdb"
     FILE_BASENAME = "file_basename"
     TITLE_YEAR = "title_year"
+
+
+class MatchStatus(enum.StrEnum):
+    """Whether the item was confidently bound to a Plex row.
+
+    The field the UI reads: on ``MATCHED`` it stays quiet (the panel just gets on with the
+    reasoning); on ``UNMATCHED`` / ``AMBIGUOUS`` it shows a plain "kept to be safe" notice,
+    and which of the two picks the wording ("we couldn't find this" vs "this looks like more
+    than one thing").
+    """
+
+    MATCHED = "matched"
+    UNMATCHED = "unmatched"
+    AMBIGUOUS = "ambiguous"
 
 
 # ---------------------------------------------------------------------------
@@ -287,19 +301,28 @@ class Resolution:
     rating_key: int | None
     matched_by: MatchedBy | None
     detail: str
+    status: MatchStatus
     plex_item: PlexItem | None = None
 
     @classmethod
     def bound(cls, item: PlexItem, by: MatchedBy, detail: str) -> Resolution:
-        return cls(rating_key=item.rating_key, matched_by=by, detail=detail, plex_item=item)
+        return cls(
+            rating_key=item.rating_key,
+            matched_by=by,
+            detail=detail,
+            status=MatchStatus.MATCHED,
+            plex_item=item,
+        )
 
     @classmethod
     def abstain(cls, detail: str) -> Resolution:
-        return cls(rating_key=None, matched_by=None, detail=detail)
+        # An abstain only ever comes from a duplicate id/basename or a cross-tier conflict --
+        # every one of which is "more than one possible match", i.e. AMBIGUOUS.
+        return cls(rating_key=None, matched_by=None, detail=detail, status=MatchStatus.AMBIGUOUS)
 
     @classmethod
     def unmatched(cls, detail: str = "No Plex item matched this title") -> Resolution:
-        return cls(rating_key=None, matched_by=None, detail=detail)
+        return cls(rating_key=None, matched_by=None, detail=detail, status=MatchStatus.UNMATCHED)
 
 
 def title_year_match(title: str | None, year: int | None, index: PlexIndex) -> int | None:

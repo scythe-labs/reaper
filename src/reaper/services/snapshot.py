@@ -106,6 +106,7 @@ class RawItem:
     # How this item was bound to its Plex row (and why, if it was not) -- for the why-panel.
     matched_by: identity.MatchedBy | None = None
     match_detail: str | None = None
+    match_status: identity.MatchStatus | None = None
 
 
 async def build_facts(
