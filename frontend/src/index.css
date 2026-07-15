@@ -304,6 +304,14 @@ a:hover {
   background: var(--condemn-soft);
   border-color: var(--condemn);
 }
+/* The "kept to be safe" match notice: the shared amber tone, with the lead in the amber ink
+   so the outcome reads first. */
+.kept-notice {
+  line-height: 1.5;
+}
+.kept-notice strong {
+  color: var(--unknown);
+}
 
 .error {
   color: var(--condemn);

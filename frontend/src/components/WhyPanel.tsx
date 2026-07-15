@@ -17,7 +17,7 @@
 // that only explains its deletions cannot be trusted about its keeps.
 
 import { useEffect, useRef, useState } from "react";
-import type { CandidateDetail, GateOutcome } from "../api";
+import type { CandidateDetail, GateOutcome, Match } from "../api";
 import { bytes, coverage, since } from "../format";
 
 /** The synopsis, clamped to two lines with a "more" to expand. The card shows the *reason*
@@ -72,6 +72,26 @@ function WhyHero({ posterUrl }: { posterUrl: string }) {
       />
       <div className="why-hero-fade" aria-hidden="true" />
     </div>
+  );
+}
+
+/** Shown ONLY when Reaper could not confidently tie the item to a Plex entry -- the one match
+ *  outcome the owner needs told, because it is *why* the file was kept. A clean match shows
+ *  nothing at all. Two plain wordings, no jargon: nothing found in Plex, or more than one
+ *  possible match. Reuses the shared amber `.warn` tone, like every other "we could not look"
+ *  state. */
+function KeptNotice({ match }: { match: Match | undefined }) {
+  if (!match || match.status === "matched" || match.status == null) return null;
+
+  const reason =
+    match.status === "ambiguous"
+      ? "This looks like more than one thing in your Plex, so we couldn't tell which one it is."
+      : "We couldn't find this in your Plex, so there's no way to tell if anyone still watches it.";
+
+  return (
+    <p className="warn kept-notice">
+      <strong>Kept to be safe.</strong> {reason}
+    </p>
   );
 }
 
@@ -187,6 +207,8 @@ export function WhyPanel({ item, onClose }: { item: CandidateDetail; onClose: ()
           ✕
         </button>
       </header>
+
+      <KeptNotice match={explanation.match} />
 
       {item.summary && <Synopsis text={item.summary} />}
 

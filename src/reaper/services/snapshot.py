@@ -437,6 +437,7 @@ async def scan(
             ),
             matched_by=item.matched_by,
             match_detail=item.match_detail,
+            match_status=item.match_status,
             override=whitelist.effective_override(item.media_key, override_map),
         )
         if verdict == "condemn":
@@ -473,6 +474,7 @@ async def scan(
             ),
             matched_by=judgement.matched_by,
             match_detail=judgement.match_detail,
+            match_status=judgement.match_status,
             extra_results=(judgement.guard_result,),
             override=whitelist.effective_override(judgement.media_key, override_map),
         )
@@ -529,6 +531,7 @@ async def _judge_item(
     display: Display = _NO_DISPLAY,
     matched_by: identity.MatchedBy | None = None,
     match_detail: str | None = None,
+    match_status: identity.MatchStatus | None = None,
     extra_results: Sequence[GateResult] = (),
     override: str | None = None,
 ) -> str:
@@ -588,6 +591,7 @@ async def _judge_item(
                 plex_rating_key=plex_rating_key,
                 matched_by=matched_by,
                 match_detail=match_detail,
+                match_status=match_status,
             ),
             created_at=now,
         )
@@ -649,6 +653,7 @@ def _explain(
     plex_rating_key: int | None = None,
     matched_by: identity.MatchedBy | None = None,
     match_detail: str | None = None,
+    match_status: identity.MatchStatus | None = None,
 ) -> str:
     """The why-panel.
 
@@ -672,6 +677,10 @@ def _explain(
             "threshold": policy.condemn_at,
             "coverage": round(item_score.coverage, 3),
             "match": {
+                # status is what the UI reads: "matched" -> stay quiet, "unmatched" /
+                # "ambiguous" -> a plain "kept to be safe" notice (the two differ only in
+                # wording). by/detail are kept for the audit log, not shown to the owner.
+                "status": match_status.value if match_status is not None else None,
                 "by": matched_by.value if matched_by is not None else None,
                 "detail": match_detail,
                 "rating_key": plex_rating_key,
@@ -891,6 +900,7 @@ def _raw_items(
                 requested_by=requested.get(requested_by.movie_key(tmdb_id) or ""),
                 matched_by=resolution.matched_by,
                 match_detail=resolution.detail,
+                match_status=resolution.status,
             )
         )
     return items

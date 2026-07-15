@@ -94,6 +94,16 @@ export interface GateOutcome {
   detail: string;
 }
 
+/** How the item was tied to its Plex library entry. The panel stays quiet on "matched" and
+ *  shows a plain "kept to be safe" notice on the other two -- the only cases where the owner
+ *  needs to know the file was kept because Reaper couldn't be sure what it was looking at. */
+export interface Match {
+  status: "matched" | "unmatched" | "ambiguous" | null;
+  /** For the audit log, not shown to the owner: "Bound by TMDB id 1001", etc. */
+  detail: string | null;
+  rating_key: number | null;
+}
+
 export interface Explanation {
   score: number;
   threshold: number;
@@ -106,6 +116,9 @@ export interface Explanation {
   /** Protections that could not be checked. "We could not look" is not "we looked and
    *  it was fine", and rendering them alike is the entire Deleterr failure class. */
   protections_unknown: GateOutcome[];
+  /** How it was tied to Plex. Optional so a candidate scored before this shipped still
+   *  parses (its explanation JSON has no match block). */
+  match?: Match;
 }
 
 export interface CandidateDetail extends Candidate {

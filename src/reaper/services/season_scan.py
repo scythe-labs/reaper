@@ -118,6 +118,7 @@ class SeasonJudgement:
     # How the show was bound to its Plex row (shared by every season of the show).
     matched_by: identity.MatchedBy | None = None
     match_detail: str | None = None
+    match_status: identity.MatchStatus | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +151,7 @@ class _SeriesWork:
     show_rating_key: int | None = None
     matched_by: identity.MatchedBy | None = None
     match_detail: str | None = None
+    match_status: identity.MatchStatus | None = None
     seasons_in_plex: dict[int, PlexSeason] = field(default_factory=dict)
 
 
@@ -591,6 +593,7 @@ async def gather(
         item.show_rating_key = resolution.rating_key
         item.matched_by = resolution.matched_by
         item.match_detail = resolution.detail
+        item.match_status = resolution.status
         if resolution.rating_key is not None:
             show_rk = resolution.rating_key
             if show_rk not in resolved_shows:
@@ -735,6 +738,7 @@ async def _judge_series(
                 group_title=series_title,
                 matched_by=item.matched_by,
                 match_detail=item.match_detail,
+                match_status=item.match_status,
             )
         )
     return judgements
