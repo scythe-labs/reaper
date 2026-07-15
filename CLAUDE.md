@@ -44,9 +44,10 @@ npm --prefix frontend run build        # tsc --noEmit, then vite build
 docker build -t reaper:ci .            # the shipped artifact must build
 ```
 
-Run the relevant subset while iterating; run the full set before a commit. When a change is
-observable in the app, *drive it end-to-end* (see the `verify` skill), don't stop at green
-tests.
+Run the relevant subset while iterating; run the full set before a commit. **Always run
+`uv run ruff format .` (not just `--check`) before staging — format failures are the most
+common CI break.** When a change is observable in the app, *drive it end-to-end* (see the
+`verify` skill), don't stop at green tests.
 
 ## Dev environment
 
