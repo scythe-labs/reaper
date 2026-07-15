@@ -78,8 +78,10 @@ jobs:
 
   # The shipped artifact is the container, so its buildability must be a checked gate --
   # otherwise a broken COPY order, a stale lock, or a bad base image reaches main green.
+  # needs: ensures the image is never built from code that failed lint, type, or test.
   docker:
     runs-on: ubuntu-latest
+    needs: [check, frontend]
     steps:
       - uses: actions/checkout@v4
 
