@@ -185,3 +185,8 @@ the file* and *failing closed*. Read them before touching the safety, auth, or c
 20. **Use `Promise.allSettled` (not `Promise.all`) for independent bulk operations,** then
     reconcile UI state (invalidate queries, clear/retain selection) regardless of partial
     failure.
+21. **Write every operator-facing string in plain language — sensible, concise, readable by
+    anyone, not just engineers.** Lead with the outcome, say what it means for their files,
+    and keep internal vocabulary out of the UI: no rating keys, no tmdb/imdb/tvdb ids, no
+    "collision"/"abstain-as-jargon"/"guard"/"coverage bp". If a normal person wouldn't say
+    it, reword it. This applies to notices, tooltips, empty states, and error text alike.
