@@ -14,6 +14,4 @@ from pwdlib.hashers.argon2 import Argon2Hasher
 
 import reaper.auth.passwords as _passwords
 
-_passwords._hasher = PasswordHash(
-    (Argon2Hasher(time_cost=1, memory_cost=8, parallelism=1),)
-)
+_passwords._hasher = PasswordHash((Argon2Hasher(time_cost=1, memory_cost=8, parallelism=1),))
