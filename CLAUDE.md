@@ -20,6 +20,10 @@ refreshes Plex. Python 3.13 / FastAPI backend + React 19 / Vite frontend, one co
   importantly, *which assumptions turned out wrong*. Update it as work proceeds. Record
   findings (including negative results) in `docs/LEARNINGS.md` / `docs/SIGNALS.md`.
 - **Pre-release: migrations stay at one Alembic baseline** and the dev DB is disposable.
+- **Mock up UI/UX before touching code.** When the work is about UI or UX, present a
+  rendered mockup first (an inline visual widget or a self-contained HTML artifact) and
+  iterate on *that* until it's approved — only then edit frontend code. Iterating on a
+  picture is far faster and cheaper than iterating on a diff.
 - **Commit only when asked**; end commit messages with the `Co-Authored-By` trailer.
 
 ## Branch & merge workflow
