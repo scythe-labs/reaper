@@ -305,6 +305,29 @@ it is the full account credential. Any tool storing it (Tautulli, Overseerr, Mai
 this one) is storing something equivalent to the Plex password. Document that honestly;
 do not imply a boundary that is not there.
 
+### Plex GUIDs: a new-agent list, a legacy single string, and sentinels
+
+Matching an *arr item to its Plex item by external id (imdb/tmdb/tvdb) is far more robust
+than by title+year — but reading the id off Plex has three traps, each of which silently
+mis-behaves rather than erroring:
+
+1. **Two GUID shapes.** New Plex agents expose a `guids` *list* (`imdb://tt…`, `tmdb://…`,
+   `tvdb://…`); legacy agents expose a single `guid` *string*
+   (`com.plexapp.agents.imdb://tt1234567?lang=en`). Code that reads only `guids` silently
+   sees *nothing* on a legacy-agent library — the "Never Reap" collection parser had exactly
+   this gap, unprotecting every item in such a library while looking fine.
+2. **The legacy string is not the new scheme.** It does not start with `imdb://`, and it
+   carries a `?lang=…` suffix (tvdb can also carry a `/season/episode` path tail). A naive
+   `startswith("imdb://")` misses it; a naive parse yields `tt1234567?lang=en`, which never
+   equals the arr's `tt1234567`. Match the agent-qualified prefix, strip the `?`/`/` tail.
+3. **Sentinels masquerade as ids.** `tmdb://0`, `tvdb://0`, and `tt0000000`/`tt0` are "no id"
+   markers; a non-external agent guid is `plex://…`, `com.plexapp.agents.none://…`,
+   `local://…`. Treated as real ids they collide across *every* sentinel-bearing item — a mass
+   mis-bind. Null them before any comparison; "no id" must never match "no id".
+
+All three now live in one parser (`engine/identity.parse_guids`), used by both the scan
+matcher and the collection provider, so there is a single place to be right.
+
 ### Don't hold a DB transaction across a human's sign-in
 
 The first version of the Plex link opened an `AsyncSession`, then polled plex.tv inside

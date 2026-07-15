@@ -23,21 +23,23 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from reaper.clock import utcnow
+from reaper.clients.plex import PlexError
+from reaper.clock import from_epoch, utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import FirstFlagged
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine import backtest as bt
+from reaper.engine import identity
 from reaper.engine.backtest import BacktestResult, Item, run
 from reaper.engine.calibration import Bucket, RewatchPrior
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import Score
 from reaper.services import history_sync
 from reaper.services.snapshot import (
-    _match_plex_movie,
     _raw_items,
     _record_first_flagged,
+    build_movie_index,
     protection_sync_degradations,
 )
 
@@ -51,61 +53,176 @@ NOW = utcnow().replace(microsecond=0)
 # ---------------------------------------------------------------------------
 
 
-class TestTheMovieJoinDisambiguatesByYear:
-    """Two films can share a title (remakes -- "The Mummy" 1999 vs 2017). A plain
-    title map is last-write-wins, so BOTH bind to whichever row was indexed last, read
-    the wrong watch history, and defeat the streaming veto. The join must resolve by
-    year and refuse on any ambiguity, exactly as ``season_scan.match_show`` does."""
+class TestTheMovieJoinAtTheScanLane:
+    """End-to-end proof that ``_raw_items`` threads the shared resolver correctly. Two
+    films can share a title (remakes), and neither of these fixtures carries an external
+    id, so an ambiguous title must leave the candidate unmatched (Unknown facts -> ABSTAIN,
+    executor spares a keyless item) and a year that singles out one Plex row must bind it.
+    The resolver's own tier logic is unit-tested in ``test_identity.py``."""
 
-    def _rows(self) -> dict[str, list[dict[str, object]]]:
-        return {
-            "the mummy": [
-                {"rating_key": 11, "added_at": "1700000000", "year": 1999},
-                {"rating_key": 22, "added_at": "1700000000", "year": 2017},
+    def _index(self) -> identity.PlexIndex:
+        # A remake pair, distinguished only by year; no ids -> the title+year backstop.
+        return identity.PlexIndex.build(
+            [
+                identity.PlexItem(rating_key=11, title="The Mummy", year=1999, added_at=NOW),
+                identity.PlexItem(rating_key=22, title="The Mummy", year=2017, added_at=NOW),
             ]
-        }
-
-    def test_a_matching_year_binds_to_the_right_row(self) -> None:
-        row = _match_plex_movie({"title": "The Mummy", "year": 1999}, self._rows())
-        assert row is not None and row["rating_key"] == 11
-
-        row = _match_plex_movie({"title": "The Mummy", "year": 2017}, self._rows())
-        assert row is not None and row["rating_key"] == 22
-
-    def test_a_duplicate_title_with_no_year_refuses(self) -> None:
-        """No year to disambiguate a collision -> no match, so the item's facts stay
-        Unknown and it abstains. Better a spared duplicate than a wrong-history delete."""
-        assert _match_plex_movie({"title": "The Mummy"}, self._rows()) is None
-
-    def test_a_duplicate_title_with_an_unmatched_year_refuses(self) -> None:
-        assert _match_plex_movie({"title": "The Mummy", "year": 1932}, self._rows()) is None
-
-    def test_a_single_row_with_a_conflicting_year_refuses(self) -> None:
-        """One Plex row, but its year disagrees: it is a different film, and binding to
-        it would read the wrong history."""
-        index = {"solaris": [{"rating_key": 5, "added_at": "1700000000", "year": 2002}]}
-        assert _match_plex_movie({"title": "Solaris", "year": 1972}, index) is None
-
-    def test_a_single_row_binds_when_a_year_is_missing_on_either_side(self) -> None:
-        """The common case -- Plex often omits the year. A lone title match with no
-        conflict is accepted, as safe as the old title-only join was."""
-        index = {"a film": [{"rating_key": 7, "added_at": "1700000000"}]}
-        assert _match_plex_movie({"title": "A Film", "year": 2010}, index)["rating_key"] == 7  # type: ignore[index]
-        assert _match_plex_movie({"title": "A Film"}, index)["rating_key"] == 7  # type: ignore[index]
+        )
 
     def test_raw_items_leaves_an_ambiguous_movie_unmatched(self) -> None:
-        """End to end: an ambiguous title produces a candidate with no rating key, which
-        makes its dormancy Unknown -> ABSTAIN, and the executor spares a keyless item."""
         movie = {"id": 1, "title": "The Mummy", "hasFile": True, "sizeOnDisk": 1}
-        items = _raw_items([movie], self._rows(), instance_id=1)
+        items = _raw_items([movie], self._index(), instance_id=1)
         assert len(items) == 1
         assert items[0].plex_rating_key is None
         assert items[0].added_at is None
 
-    def test_raw_items_binds_a_disambiguated_movie(self) -> None:
+    def test_raw_items_binds_a_disambiguated_movie_by_title(self) -> None:
         movie = {"id": 1, "title": "The Mummy", "year": 2017, "hasFile": True, "sizeOnDisk": 1}
-        items = _raw_items([movie], self._rows(), instance_id=1)
+        items = _raw_items([movie], self._index(), instance_id=1)
         assert items[0].plex_rating_key == 22
+        assert items[0].added_at == NOW
+        assert items[0].matched_by is identity.MatchedBy.TITLE_YEAR
+
+    def test_raw_items_binds_by_tmdb_across_a_title_difference(self) -> None:
+        """The whole point of id matching: a Plex row whose title differs (a regional or
+        renamed title) still binds when the tmdb id agrees."""
+        index = identity.PlexIndex.build(
+            [
+                identity.PlexItem(
+                    rating_key=42,
+                    title="A Regional Title",
+                    year=2020,
+                    added_at=NOW,
+                    ids=identity.ExternalIds.of(tmdb=1001),
+                )
+            ]
+        )
+        movie = {
+            "id": 1,
+            "title": "The Original Title",
+            "year": 2020,
+            "tmdbId": 1001,
+            "hasFile": True,
+            "sizeOnDisk": 1,
+        }
+        items = _raw_items([movie], index, instance_id=1)
+        assert items[0].plex_rating_key == 42
+        assert items[0].matched_by is identity.MatchedBy.TMDB
+
+    def test_raw_items_abstains_when_a_shared_id_names_two_rows(self) -> None:
+        """A duplicate tmdb across two Plex items is ambiguous -> keyless candidate."""
+        index = identity.PlexIndex.build(
+            [
+                identity.PlexItem(
+                    rating_key=1,
+                    title="A",
+                    year=2020,
+                    added_at=NOW,
+                    ids=identity.ExternalIds.of(tmdb=1001),
+                ),
+                identity.PlexItem(
+                    rating_key=2,
+                    title="B",
+                    year=2020,
+                    added_at=NOW,
+                    ids=identity.ExternalIds.of(tmdb=1001),
+                ),
+            ]
+        )
+        movie = {
+            "id": 9,
+            "title": "A",
+            "year": 2020,
+            "tmdbId": 1001,
+            "hasFile": True,
+            "sizeOnDisk": 1,
+        }
+        items = _raw_items([movie], index, instance_id=1)
+        assert items[0].plex_rating_key is None
+        assert items[0].matched_by is None
+
+
+# ---------------------------------------------------------------------------
+# build_movie_index: Tautulli spine + plexapi enrichment, fail-closed on sweep failure.
+# ---------------------------------------------------------------------------
+
+
+class _FakeTautulli:
+    """The minimum of the Tautulli client that ``build_movie_index`` touches."""
+
+    def __init__(self, rows: list[dict[str, object]]) -> None:
+        self._rows = rows
+
+    async def libraries(self) -> list[dict[str, object]]:
+        return [{"section_type": "movie", "section_id": 1}]
+
+    async def library_media_info(
+        self, section_id: int, *, start: int = 0, length: int = 1000, **_: object
+    ) -> dict[str, object]:
+        return {"data": self._rows if start == 0 else []}
+
+
+class _FakePlexSweep:
+    def __init__(self, guids: dict[int, tuple[identity.ExternalIds, str | None]]) -> None:
+        self._guids = guids
+
+    async def library_guid_index(
+        self, *, section_type: str
+    ) -> dict[int, tuple[identity.ExternalIds, str | None]]:
+        return self._guids
+
+
+class _FakePlexBrokenSweep:
+    async def library_guid_index(self, *, section_type: str) -> dict[int, object]:
+        raise PlexError("the sweep blew up")
+
+
+_SPINE_ROWS = [{"rating_key": 100, "title": "Example", "year": 2020, "added_at": "1700000000"}]
+
+
+class TestBuildMovieIndex:
+    async def test_ids_and_basename_enrich_the_tautulli_spine(self) -> None:
+        """The plexapi sweep joins onto the spine by rating key, and added_at STILL comes
+        from Tautulli (the dormancy floor must not shift)."""
+        guids = {100: (identity.ExternalIds.of(tmdb=1001), "example (2020).mkv")}
+        index = await build_movie_index(
+            _FakeTautulli(_SPINE_ROWS),  # type: ignore[arg-type]
+            _FakePlexSweep(guids),  # type: ignore[arg-type]
+            degrade=lambda _r: None,
+        )
+        item = index.by_rating_key[100]
+        assert item.added_at == from_epoch("1700000000")  # from the spine, not the sweep
+        assert item.ids.tmdb == 1001
+        assert item.file_basename == "example (2020).mkv"
+        assert index.by_tmdb[1001] == [100]
+
+    async def test_a_sweep_failure_degrades_but_still_matches_by_title(self) -> None:
+        """rule #2: a failed GUID sweep degrades the snapshot (un-executable) rather than
+        silently continuing -- but items still fall through to the title+year backstop."""
+        reasons: list[str] = []
+        index = await build_movie_index(
+            _FakeTautulli(_SPINE_ROWS),  # type: ignore[arg-type]
+            _FakePlexBrokenSweep(),  # type: ignore[arg-type]
+            degrade=reasons.append,
+        )
+        assert reasons and "GUID sweep failed" in reasons[0]
+        assert index.by_rating_key[100].ids.empty  # nothing enriched
+        res = identity.resolve_movie(
+            ids=identity.ExternalIds(), title="Example", year=2020, file_basename=None, index=index
+        )
+        assert res.rating_key == 100  # the backstop still works
+
+    async def test_no_plex_client_means_no_enrichment_and_no_degrade(self) -> None:
+        """A movie-only deployment with no Plex configured: no ids, no degrade for the
+        sweep (it was already un-executable, since a real reap refuses without Plex)."""
+        reasons: list[str] = []
+        index = await build_movie_index(
+            _FakeTautulli(_SPINE_ROWS),  # type: ignore[arg-type]
+            None,
+            degrade=reasons.append,
+        )
+        assert reasons == []
+        assert index.by_rating_key[100].ids.empty
 
 
 # ---------------------------------------------------------------------------

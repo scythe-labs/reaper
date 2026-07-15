@@ -53,6 +53,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from reaper.clients.arr import RadarrClient, SonarrClient
 from reaper.clients.base import IntegrationError
 from reaper.clock import utcnow
+from reaper.engine import identity
 
 log = structlog.get_logger(__name__)
 
@@ -315,25 +316,19 @@ class PlexCollection:
 
         items: list[ListItem] = []
         for item in collection.items():
-            # The new Plex agents expose external ids as Guid children; the legacy
-            # agents put a single id in `guid`. Handle both, or a legacy library
-            # silently protects nothing.
-            imdb = tmdb = tvdb = None
-            for guid in getattr(item, "guids", []) or []:
-                value = str(getattr(guid, "id", ""))
-                if value.startswith("imdb://"):
-                    imdb = value.removeprefix("imdb://")
-                elif value.startswith("tmdb://"):
-                    tmdb = int(value.removeprefix("tmdb://"))
-                elif value.startswith("tvdb://"):
-                    tvdb = int(value.removeprefix("tvdb://"))
-
+            # The new Plex agents expose external ids as Guid children; the legacy agents
+            # put a single id in `guid`. identity.parse_guids handles both (and the
+            # ``?lang=`` suffix, and sentinels), so a legacy-agent library is no longer
+            # silently unprotected -- the same one parser the scan's matcher uses.
+            guid_ids = [str(getattr(guid, "id", "")) for guid in getattr(item, "guids", None) or []]
+            legacy = getattr(item, "guid", None)
+            ids = identity.parse_guids(guid_ids, str(legacy) if legacy else None)
             items.append(
                 ListItem(
                     media_type="tv" if item.type == "show" else "movie",
-                    imdb_id=imdb,
-                    tmdb_id=tmdb,
-                    tvdb_id=tvdb,
+                    imdb_id=ids.imdb,
+                    tmdb_id=ids.tmdb,
+                    tvdb_id=ids.tvdb,
                     title=str(item.title),
                 )
             )

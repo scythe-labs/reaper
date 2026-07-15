@@ -366,6 +366,10 @@ async def run_scan(
             radarrs=radarrs,
             sonarrs=sonarrs,
             tautulli=tautulli,
+            # The same PlexClient the "Never Reap" collection used above -- reused so the
+            # GUID sweep that powers id-based matching goes through the one connected,
+            # guarded session, and a sweep failure degrades the snapshot.
+            plex=plex,
             movie_policy=movie_policy,
             movie_gates=movie_gates,
             tv_policy=tv_policy,

@@ -10,8 +10,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from reaper.clock import from_epoch
 from reaper.config import Settings
+from reaper.engine import identity
 from reaper.services.snapshot import RawItem, _raw_items
+
+ADDED = from_epoch("1700000000")
+
+
+def _plex_index(*items: tuple[int, str]) -> identity.PlexIndex:
+    """A Plex movie index from ``(rating_key, title)`` pairs -- no external ids, so the
+    join here exercises the title+year backstop (the multi-instance behaviour predates
+    id matching and must survive it unchanged)."""
+    return identity.PlexIndex.build(
+        [
+            identity.PlexItem(rating_key=rk, title=title, year=None, added_at=ADDED)
+            for rk, title in items
+        ]
+    )
 
 
 class TestEveryInstanceIsScanned:
@@ -36,7 +52,7 @@ class TestEveryInstanceIsScanned:
             "imdbId": "tt0000001",
             "tmdbId": 1001,
         }
-        plex = {"example movie": [{"rating_key": 999, "added_at": "1700000000"}]}
+        plex = _plex_index((999, "Example Movie"))
 
         hd = _raw_items([movie], plex, instance_id=1)
         uhd = _raw_items([movie], plex, instance_id=2)
@@ -50,7 +66,7 @@ class TestEveryInstanceIsScanned:
         Keying candidates on one would silently orphan every grace clock the next time
         the owner rebuilt their library."""
         movie = {"id": 42, "title": "Example Movie", "hasFile": True, "sizeOnDisk": 1}
-        plex = {"example movie": [{"rating_key": 999, "added_at": "1700000000"}]}
+        plex = _plex_index((999, "Example Movie"))
 
         item = _raw_items([movie], plex, instance_id=1)[0]
 
@@ -62,7 +78,7 @@ class TestEveryInstanceIsScanned:
         reclaim from a film that was never downloaded."""
         wanted = {"id": 1, "title": "Not Yet Downloaded", "hasFile": False, "sizeOnDisk": 0}
 
-        assert _raw_items([wanted], {}, instance_id=1) == []
+        assert _raw_items([wanted], _plex_index(), instance_id=1) == []
 
     def test_a_movie_plex_has_not_matched_still_appears(self) -> None:
         """It must not vanish. It appears with no rating key, which makes its dormancy
@@ -70,7 +86,7 @@ class TestEveryInstanceIsScanned:
         would never learn that Plex has failed to match it."""
         movie = {"id": 7, "title": "Unmatched By Plex", "hasFile": True, "sizeOnDisk": 1}
 
-        items = _raw_items([movie], {}, instance_id=1)
+        items = _raw_items([movie], _plex_index(), instance_id=1)
 
         assert len(items) == 1
         assert items[0].plex_rating_key is None
@@ -121,7 +137,7 @@ class TestRawItemShape:
             "imdbId": "tt0000002",
             "tmdbId": 1002,
         }
-        plex = {"another movie": [{"rating_key": 5, "added_at": "1700000000"}]}
+        plex = _plex_index((5, "Another Movie"))
 
         item: RawItem = _raw_items([movie], plex, instance_id=3)[0]
 

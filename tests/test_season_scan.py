@@ -26,6 +26,7 @@ from reaper.clients.sonarr_stats import SeasonStats
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.session import create_cache_engine
+from reaper.engine import identity
 from reaper.engine.gates import ABSTAIN, PROTECT, Evaluation, GateId, evaluate_all
 from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
@@ -124,54 +125,55 @@ class TestAiring:
 # ---------------------------------------------------------------------------
 
 
-class TestMatchShow:
+class TestTheShowJoin:
+    """The Sonarr series -> Plex show join now runs through the one shared resolver
+    (``identity.resolve_show``). These cases carry no external id, so they exercise the
+    title+year backstop -- the exact behaviour the old ``match_show`` guaranteed, preserved
+    now that there is a single implementation (see ``test_identity.py`` for the id tiers)."""
+
+    def _index(self, *items: tuple[int, str, int | None]) -> identity.PlexIndex:
+        return identity.PlexIndex.build(
+            [
+                identity.PlexItem(rating_key=rk, title=title, year=year, added_at=None)
+                for rk, title, year in items
+            ]
+        )
+
+    def _match(self, index: identity.PlexIndex, title: str, year: int | None) -> int | None:
+        return identity.resolve_show(
+            ids=identity.ExternalIds(), title=title, year=year, file_basename=None, index=index
+        ).rating_key
+
     def test_a_unique_title_matches(self) -> None:
-        index = {"example show": [season_scan.ShowRow(rating_key=900, added_at=None, year=2010)]}
-        show = season_scan.match_show({"title": "Example Show", "year": 2010}, index)
-        assert show is not None and show.rating_key == 900
+        assert self._match(self._index((900, "Example Show", 2010)), "Example Show", 2010) == 900
 
     def test_a_missing_title_is_no_match(self) -> None:
-        assert season_scan.match_show({"title": "Nowhere"}, {}) is None
+        assert self._match(self._index(), "Nowhere", None) is None
 
     def test_a_duplicate_title_is_disambiguated_by_year(self) -> None:
-        index = {
-            "the office": [
-                season_scan.ShowRow(rating_key=1, added_at=None, year=2001),  # UK
-                season_scan.ShowRow(rating_key=2, added_at=None, year=2005),  # US
-            ]
-        }
-        show = season_scan.match_show({"title": "The Office", "year": 2005}, index)
-        assert show is not None and show.rating_key == 2
+        index = self._index((1, "The Office", 2001), (2, "The Office", 2005))  # UK, US
+        assert self._match(index, "The Office", 2005) == 2
 
     def test_a_duplicate_title_with_no_year_refuses_to_guess(self) -> None:
         """The wrong show join reads the wrong show's watch history and could condemn a
         season people are watching. With nothing to disambiguate on, refuse -> the season
         goes Unknown and abstains, rather than being matched to a coin-flip."""
-        index = {
-            "the office": [
-                season_scan.ShowRow(rating_key=1, added_at=None, year=2001),
-                season_scan.ShowRow(rating_key=2, added_at=None, year=2005),
-            ]
-        }
-        assert season_scan.match_show({"title": "The Office"}, index) is None
+        index = self._index((1, "The Office", 2001), (2, "The Office", 2005))
+        assert self._match(index, "The Office", None) is None
 
     def test_a_lone_title_match_with_a_conflicting_year_is_refused(self) -> None:
         """The US series is scanned but the ONLY Plex show with that title is the UK one
         (the US show is indexed under a different title). A single title hit is not a safe
         join when the known years disagree -- binding would read the UK show's history."""
-        index = {"the office": [season_scan.ShowRow(rating_key=1, added_at=None, year=2001)]}
-        assert season_scan.match_show({"title": "The Office", "year": 2005}, index) is None
+        index = self._index((1, "The Office", 2001))
+        assert self._match(index, "The Office", 2005) is None
 
     def test_a_lone_title_match_with_an_agreeing_year_binds(self) -> None:
-        index = {"the office": [season_scan.ShowRow(rating_key=1, added_at=None, year=2005)]}
-        show = season_scan.match_show({"title": "The Office", "year": 2005}, index)
-        assert show is not None and show.rating_key == 1
+        assert self._match(self._index((1, "The Office", 2005)), "The Office", 2005) == 1
 
     def test_a_lone_title_match_binds_when_a_year_is_missing(self) -> None:
         """Plex often has no year; a title-only join stays as safe as the movie path's."""
-        index = {"the office": [season_scan.ShowRow(rating_key=1, added_at=None, year=None)]}
-        show = season_scan.match_show({"title": "The Office", "year": 2005}, index)
-        assert show is not None and show.rating_key == 1
+        assert self._match(self._index((1, "The Office", None)), "The Office", 2005) == 1
 
 
 class TestResolveSeasonKeys:

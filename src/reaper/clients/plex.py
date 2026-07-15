@@ -41,6 +41,7 @@ import structlog
 
 from reaper.clients.base import SAFE_METHODS, SafetyViolationError
 from reaper.config import RuntimeSafety
+from reaper.engine.identity import ExternalIds, parse_guids, to_basename
 
 if TYPE_CHECKING:
     from plexapi.server import PlexServer
@@ -278,6 +279,51 @@ class PlexClient:
             return {s.title: list(s.locations) for s in server.library.sections()}
 
         return await asyncio.to_thread(read)
+
+    async def library_guid_index(
+        self, *, section_type: str
+    ) -> dict[int, tuple[ExternalIds, str | None]]:
+        """Every item's external ids and file basename, keyed by Plex ``rating_key``.
+
+        The enrichment behind id-based matching. For each library section of
+        ``section_type`` (``"movie"`` or ``"show"``), sweep every item once via
+        ``section.all()`` and read its GUIDs -- the new-agent ``guids`` list *and* the
+        legacy single ``guid`` string -- plus the basename of its first file/folder
+        location. One sweep per section, never a per-item metadata call.
+
+        A GET, so it runs in read-only mode through the ``GuardedSession``. It **raises**
+        ``PlexError`` on any failure rather than returning a partial map, so the caller can
+        fail closed and degrade the snapshot: silently falling the whole library back to
+        title-only matching at the moment the id signal vanished is exactly the fail-open
+        this feature exists to prevent.
+        """
+        server = await self._connect()
+
+        def read() -> dict[int, tuple[ExternalIds, str | None]]:
+            out: dict[int, tuple[ExternalIds, str | None]] = {}
+            for section in server.library.sections():
+                if section.type != section_type:
+                    continue
+                for item in section.all():
+                    rating_key = getattr(item, "ratingKey", None)
+                    if rating_key is None:
+                        continue
+                    guid_ids = [
+                        str(getattr(guid, "id", "")) for guid in getattr(item, "guids", None) or []
+                    ]
+                    legacy = getattr(item, "guid", None)
+                    ids = parse_guids(guid_ids, str(legacy) if legacy else None)
+                    locations = list(getattr(item, "locations", None) or [])
+                    basename = to_basename(locations[0]) if locations else None
+                    out[int(rating_key)] = (ids, basename)
+            return out
+
+        try:
+            return await asyncio.to_thread(read)
+        except Exception as exc:
+            raise PlexError(
+                f"Could not sweep Plex GUIDs for {section_type} sections: {exc}"
+            ) from exc
 
     async def item_count(self, section_title: str) -> int:
         """How many items a section holds. The input to the trash interlock."""

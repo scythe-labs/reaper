@@ -55,9 +55,11 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from reaper.clients.base import IntegrationError
+from reaper.clients.plex import PlexClient, PlexError
 from reaper.clients.sonarr_stats import SeasonStats, parse_season_stats, rank_seasons
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
+from reaper.engine import identity
 from reaper.engine.gates import ABSTAIN as GATE_ABSTAIN
 from reaper.engine.gates import PROTECT as GATE_PROTECT
 from reaper.engine.gates import Facts, GateId, GateResult
@@ -113,15 +115,9 @@ class SeasonJudgement:
     requested_by: str | None = None
     group_key: str | None = None
     group_title: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ShowRow:
-    """The Plex show a Sonarr series was joined to."""
-
-    rating_key: int
-    added_at: datetime | None
-    year: int | None = None
+    # How the show was bound to its Plex row (shared by every season of the show).
+    matched_by: identity.MatchedBy | None = None
+    match_detail: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,16 +138,18 @@ class _SeriesWork:
     """One series carried through the gather pipeline, accumulating what each pass learns.
 
     The plan is recomputed once watch evidence is available (the sequential and
-    conflict guards need it); ``show`` and ``season_keys`` are filled in by the Plex
-    resolution pass, and stay empty for a series Plex could not match -- which is what
-    makes every one of its seasons abstain.
+    conflict guards need it); ``show_rating_key`` and ``seasons_in_plex`` are filled in by
+    the Plex resolution pass, and stay empty for a series Plex could not match -- which is
+    what makes every one of its seasons abstain.
     """
 
     source: SonarrSource
     series: dict[str, Any]
     seasons: list[SeasonStats]
     plan: SeriesPrunePlan
-    show: ShowRow | None = None
+    show_rating_key: int | None = None
+    matched_by: identity.MatchedBy | None = None
+    match_detail: str | None = None
     seasons_in_plex: dict[int, PlexSeason] = field(default_factory=dict)
 
 
@@ -215,38 +213,6 @@ def airing_seasons(series: Mapping[str, Any], seasons: list[SeasonStats]) -> set
         s.season_number for s in seasons if s.season_number != SPECIALS_SEASON and s.has_content
     ]
     return {max(real)} if real else set()
-
-
-def match_show(series: Mapping[str, Any], tv_index: Mapping[str, list[ShowRow]]) -> ShowRow | None:
-    """Join a Sonarr series to its Plex show by title, disambiguated by year.
-
-    Fail-closed on ambiguity. When a title matches more than one Plex show (a remake, a
-    regional variant -- "The Office" is the canonical trap), the years must agree or we
-    return ``None``: a wrong show join would read the wrong show's watch history and could
-    condemn a season people are watching. No match and an ambiguous match are treated the
-    same -- the season's facts go ``Unknown`` and it abstains.
-    """
-    rows = tv_index.get(str(series.get("title") or "").lower())
-    if not rows:
-        return None
-
-    series_year = series.get("year")
-    if len(rows) == 1:
-        # A single title match is NOT automatically safe: if both years are known and
-        # disagree, the one Plex show with this title is a different show (the US series
-        # matched against the sole UK entry, say), and binding to it would read the wrong
-        # show's history. Refuse when the known years conflict; accept only when they agree
-        # or at least one side has no year to compare (the common case -- Plex often omits
-        # it), which stays as safe as the movie path's title-only join.
-        only = rows[0]
-        if isinstance(series_year, int) and only.year is not None and only.year != series_year:
-            return None
-        return only
-
-    if not isinstance(series_year, int):
-        return None  # a duplicate title we cannot disambiguate -> refuse rather than guess
-    matched = [r for r in rows if r.year == series_year]
-    return matched[0] if len(matched) == 1 else None
 
 
 def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
@@ -385,14 +351,30 @@ def _as_year(value: Any) -> int | None:
     return None
 
 
-async def build_tv_index(tautulli: TautulliClient) -> dict[str, list[ShowRow]]:
-    """title (lowercased) -> the Plex show rows with that title.
+async def build_tv_index(
+    tautulli: TautulliClient,
+    plex: PlexClient | None,
+    *,
+    degrade: Any,
+) -> identity.PlexIndex:
+    """The Plex show library, inverted for id / basename / title matching.
 
-    A list, not a single row, because a title can name more than one show; the join
-    resolves the ambiguity by year (see ``match_show``). Rows carry only what a season
-    join needs: the show's rating key and its added-at date.
+    The same shape as the movie ``build_movie_index``: the Tautulli show sweep is the
+    spine (rating_key / title / year / added_at -- though a show's own added_at is not used
+    for dormancy, which is measured per season), enriched by the plexapi GUID sweep of the
+    show sections. A failed sweep degrades the snapshot (never a silent fall back to
+    title-only) and leaves ids empty so shows still match by title+year.
     """
-    index: dict[str, list[ShowRow]] = {}
+    guids: dict[int, tuple[identity.ExternalIds, str | None]] = {}
+    if plex is not None:
+        try:
+            guids = await plex.library_guid_index(section_type="show")
+        except PlexError as exc:
+            degrade(
+                f"Plex GUID sweep failed ({exc}) -- id matching unavailable, snapshot un-executable"
+            )
+
+    items: list[identity.PlexItem] = []
     for library in await tautulli.libraries():
         if library.get("section_type") != "show":
             continue
@@ -405,18 +387,22 @@ async def build_tv_index(tautulli: TautulliClient) -> dict[str, list[ShowRow]]:
                 rk = row.get("rating_key")
                 if rk is None:
                     continue
-                title = str(row.get("title") or "").lower()
-                index.setdefault(title, []).append(
-                    ShowRow(
-                        rating_key=int(rk),
-                        added_at=from_epoch(row.get("added_at")),
+                rating_key = int(rk)
+                ids, basename = guids.get(rating_key, (identity.ExternalIds(), None))
+                items.append(
+                    identity.PlexItem(
+                        rating_key=rating_key,
+                        title=str(row.get("title") or ""),
                         year=_as_year(row.get("year")),
+                        added_at=from_epoch(row.get("added_at")),
+                        ids=ids,
+                        file_basename=basename,
                     )
                 )
             if len(rows) < 1000:
                 break
             start += 1000
-    return index
+    return identity.PlexIndex.build(items)
 
 
 async def resolve_season_keys(
@@ -529,6 +515,7 @@ async def gather(
     *,
     sonarrs: list[SonarrSource],
     tautulli: TautulliClient,
+    plex: PlexClient | None = None,
     horizon: datetime,
     active_rating_keys: set[int],
     activity_degraded: bool,
@@ -552,7 +539,7 @@ async def gather(
     if not sonarrs:
         return []
 
-    tv_index = await build_tv_index(tautulli)
+    tv_index = await build_tv_index(tautulli, plex, degrade=degrade)
 
     # First pass, pure and offline: decide prunable/protected per series from Sonarr's
     # own season statistics. Only shows with a prunable season are resolved against Plex.
@@ -590,14 +577,25 @@ async def gather(
     resolved_shows: dict[int, dict[int, PlexSeason]] = {}  # show key -> {season_no: PlexSeason}
     all_season_keys: set[int] = set()
     for item in work:
-        show = match_show(item.series, tv_index)
-        if show is not None:
-            item.show = show
-            if show.rating_key not in resolved_shows:
-                resolved_shows[show.rating_key] = await resolve_season_keys(
-                    tautulli, show.rating_key
-                )
-            item.seasons_in_plex = resolved_shows[show.rating_key]
+        series = item.series
+        # The one shared resolver: bind the show by tvdb, then file basename, then
+        # title+year -- abstaining on any ambiguity or cross-tier conflict, exactly as the
+        # movie path does. A None binding leaves every season's facts Unknown -> abstain.
+        resolution = identity.resolve_show(
+            ids=identity.ExternalIds.of(imdb=series.get("imdbId"), tvdb=series.get("tvdbId")),
+            title=str(series.get("title") or ""),
+            year=_as_year(series.get("year")),
+            file_basename=identity.to_basename(series.get("path")),
+            index=tv_index,
+        )
+        item.show_rating_key = resolution.rating_key
+        item.matched_by = resolution.matched_by
+        item.match_detail = resolution.detail
+        if resolution.rating_key is not None:
+            show_rk = resolution.rating_key
+            if show_rk not in resolved_shows:
+                resolved_shows[show_rk] = await resolve_season_keys(tautulli, show_rk)
+            item.seasons_in_plex = resolved_shows[show_rk]
             all_season_keys.update(s.rating_key for s in item.seasons_in_plex.values())
 
     stats = await season_watch_stats(engine, all_season_keys, window_days=window_days)
@@ -735,6 +733,8 @@ async def _judge_series(
                 requested_by=season_requester,
                 group_key=group_key,
                 group_title=series_title,
+                matched_by=item.matched_by,
+                match_detail=item.match_detail,
             )
         )
     return judgements

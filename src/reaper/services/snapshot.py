@@ -39,9 +39,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from reaper.clients.arr import RadarrClient
 from reaper.clients.base import IntegrationError
+from reaper.clients.plex import PlexClient, PlexError
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
 from reaper.db.models import Candidate, FirstFlagged, Snapshot
+from reaper.engine import identity
 from reaper.engine.gates import PROTECT, Evaluation, Facts, Gate, GateId, GateResult, evaluate_all
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
@@ -101,6 +103,9 @@ class RawItem:
     summary: str | None = None
     poster_url: str | None = None
     requested_by: str | None = None
+    # How this item was bound to its Plex row (and why, if it was not) -- for the why-panel.
+    matched_by: identity.MatchedBy | None = None
+    match_detail: str | None = None
 
 
 async def build_facts(
@@ -236,6 +241,7 @@ async def scan(
     movie_gates: list[Gate],
     tv_policy: PolicyBody,
     tv_gates: list[Gate],
+    plex: PlexClient | None = None,
     sonarrs: list[season_scan.SonarrSource] | None = None,
     requested: dict[str, str] | None = None,
     grace_days: int = 14,
@@ -300,7 +306,7 @@ async def scan(
         context.degrade(f"tautulli-activity unreachable: {exc}")
 
     emit(Progress("gathering", 3, 5, "the Plex library index"))
-    plex_index = await _plex_index(tautulli)
+    plex_index = await build_movie_index(tautulli, plex, degrade=context.degrade)
 
     items: list[RawItem] = []
     all_movies: list[dict[str, Any]] = []
@@ -351,6 +357,7 @@ async def scan(
             engine,
             sonarrs=sonarrs,
             tautulli=tautulli,
+            plex=plex,
             horizon=context.horizon,
             active_rating_keys=context.active_rating_keys,
             activity_degraded=activity_degraded,
@@ -427,6 +434,8 @@ async def scan(
                 poster_url=item.poster_url,
                 requested_by=item.requested_by,
             ),
+            matched_by=item.matched_by,
+            match_detail=item.match_detail,
             override=whitelist.effective_override(item.media_key, override_map),
         )
         if verdict == "condemn":
@@ -461,6 +470,8 @@ async def scan(
                 group_key=judgement.group_key,
                 group_title=judgement.group_title,
             ),
+            matched_by=judgement.matched_by,
+            match_detail=judgement.match_detail,
             extra_results=(judgement.guard_result,),
             override=whitelist.effective_override(judgement.media_key, override_map),
         )
@@ -515,6 +526,8 @@ async def _judge_item(
     window_days: int = 365,
     grace_days: int = 14,
     display: Display = _NO_DISPLAY,
+    matched_by: identity.MatchedBy | None = None,
+    match_detail: str | None = None,
     extra_results: Sequence[GateResult] = (),
     override: str | None = None,
 ) -> str:
@@ -567,7 +580,14 @@ async def _judge_item(
             verdict=verdict,
             score=score_value,
             coverage_bp=coverage_bp,
-            explanation_json=_explain(evaluation, item_score, policy),
+            explanation_json=_explain(
+                evaluation,
+                item_score,
+                policy,
+                plex_rating_key=plex_rating_key,
+                matched_by=matched_by,
+                match_detail=match_detail,
+            ),
             created_at=now,
         )
     )
@@ -620,7 +640,15 @@ def _verdict(
     return "abstain"
 
 
-def _explain(evaluation: Evaluation, item_score: Score, policy: PolicyBody) -> str:
+def _explain(
+    evaluation: Evaluation,
+    item_score: Score,
+    policy: PolicyBody,
+    *,
+    plex_rating_key: int | None = None,
+    matched_by: identity.MatchedBy | None = None,
+    match_detail: str | None = None,
+) -> str:
     """The why-panel.
 
     One dict, two sinks -- the UI and the audit log -- so what the owner was shown and
@@ -632,12 +660,21 @@ def _explain(evaluation: Evaluation, item_score: Score, policy: PolicyBody) -> s
     * protections CHECKED that did not fire, **with the actual numbers**
     * protections that COULD NOT BE CHECKED -- rendered amber, not green, because "we
       could not look" is not "we looked and it was fine"
+
+    Plus a ``match`` block that says how (or whether) the item was bound to its Plex row --
+    "bound by TMDB id 12345", or "kept: two Plex items share this id" -- so a file that was
+    spared for a *matching* reason is not mistaken for one nobody looked at.
     """
     return json.dumps(
         {
             "score": round(item_score.value, 1),
             "threshold": policy.condemn_at,
             "coverage": round(item_score.coverage, 3),
+            "match": {
+                "by": matched_by.value if matched_by is not None else None,
+                "detail": match_detail,
+                "rating_key": plex_rating_key,
+            },
             "signals": [
                 {
                     "id": r.signal.value,
@@ -723,18 +760,35 @@ def _as_year(value: Any) -> int | None:
     return None
 
 
-async def _plex_index(tautulli: TautulliClient) -> dict[str, list[dict[str, Any]]]:
-    """title (lowercased) -> the Plex movie rows with that title.
+async def build_movie_index(
+    tautulli: TautulliClient,
+    plex: PlexClient | None,
+    *,
+    degrade: Callable[[str], None],
+) -> identity.PlexIndex:
+    """The Plex movie library, inverted for id / basename / title matching.
 
-    A *list*, not a single row, for the same reason the season path keeps one (see
-    ``season_scan.build_tv_index``): a title can name more than one movie -- remakes and
-    reboots collide constantly -- and a plain ``title -> row`` map is last-write-wins, so
-    both films silently bind to whichever row was indexed last. That mis-join reads the
-    wrong film's watch history AND the wrong live streaming key, which can condemn and
-    delete a beloved cut mid-stream. The ambiguity is resolved by year at join time in
-    ``_match_plex_movie``; here we simply keep every row per title.
+    The Tautulli ``get_library_media_info`` sweep is the **spine** -- it alone gives
+    rating_key / title / year / added_at cheaply, and ``added_at`` must keep coming from
+    there so dormancy stays byte-identical to the title-only era. The plexapi sweep then
+    enriches each spine row with external ids + file basename, joined by rating key.
+
+    A plexapi sweep that fails **degrades** the snapshot (rule #2: never let the id signal
+    vanish and silently fall the whole library back to title-only) and leaves ids empty, so
+    items still match by title+year but no run may execute against the result. A movie-only
+    deployment with no Plex configured simply gets no enrichment -- its snapshot was already
+    un-executable, since a real reap refuses without Plex.
     """
-    index: dict[str, list[dict[str, Any]]] = {}
+    guids: dict[int, tuple[identity.ExternalIds, str | None]] = {}
+    if plex is not None:
+        try:
+            guids = await plex.library_guid_index(section_type="movie")
+        except PlexError as exc:
+            degrade(
+                f"Plex GUID sweep failed ({exc}) -- id matching unavailable, snapshot un-executable"
+            )
+
+    items: list[identity.PlexItem] = []
     for library in await tautulli.libraries():
         if library.get("section_type") != "movie":
             continue
@@ -746,49 +800,38 @@ async def _plex_index(tautulli: TautulliClient) -> dict[str, list[dict[str, Any]
             for row in rows:
                 # A row with no rating key cannot become a candidate's join (its rating_key
                 # read would fail), so drop it here exactly as build_tv_index does.
-                if row.get("rating_key") is None:
+                rk = row.get("rating_key")
+                if rk is None:
                     continue
-                index.setdefault(str(row.get("title") or "").lower(), []).append(row)
+                rating_key = int(rk)
+                ids, basename = guids.get(rating_key, (identity.ExternalIds(), None))
+                items.append(
+                    identity.PlexItem(
+                        rating_key=rating_key,
+                        title=str(row.get("title") or ""),
+                        year=_as_year(row.get("year")),
+                        added_at=from_epoch(row.get("added_at")),
+                        ids=ids,
+                        file_basename=basename,
+                    )
+                )
             if len(rows) < 1000:
                 break
             start += 1000
-    return index
+    return identity.PlexIndex.build(items)
 
 
-def _match_plex_movie(
-    movie: dict[str, Any], plex_index: dict[str, list[dict[str, Any]]]
-) -> dict[str, Any] | None:
-    """Join a Radarr movie to its Plex row by title, disambiguated by year.
+def _movie_file_basename(movie: Mapping[str, Any]) -> str | None:
+    """The movie's file name, for the basename match tier.
 
-    Fail-closed on ambiguity, mirroring ``season_scan.match_show`` exactly. When a title
-    matches more than one Plex row (a remake -- "The Mummy" 1999 vs 2017 is the canonical
-    trap), the years must single one out; any conflict or unresolved duplicate returns
-    ``None``. A ``None`` match leaves ``plex_rating_key``/``added_at`` unset, which makes
-    the item's facts ``Unknown`` -> ABSTAIN, and the executor's ``plex_rating_key is None``
-    branch spares it. We never silently bind to the last-indexed row: a wrong join would
-    read the wrong film's watch history and defeat the streaming veto.
+    Radarr nests the file under ``movieFile``; the relative path is just the file name,
+    which is what Plex's ``locations[0]`` basename also reduces to -- so the two compare
+    equal across the mount-root difference. Falls back to the full path (still basenamed).
     """
-    rows = plex_index.get(str(movie.get("title") or "").lower())
-    if not rows:
+    movie_file = movie.get("movieFile")
+    if not isinstance(movie_file, dict):
         return None
-
-    movie_year = int(movie["year"]) if movie.get("year") else None
-    if len(rows) == 1:
-        # A single title match is NOT automatically safe: if both years are known and
-        # disagree, this one Plex row is a different film, and binding to it would read the
-        # wrong history. Refuse when the known years conflict; accept when they agree or at
-        # least one side has no year to compare (the common case -- Plex often omits it),
-        # which stays as safe as the old title-only join was in the unambiguous case.
-        only = rows[0]
-        only_year = _as_year(only.get("year"))
-        if movie_year is not None and only_year is not None and only_year != movie_year:
-            return None
-        return only
-
-    if movie_year is None:
-        return None  # a duplicate title we cannot disambiguate -> refuse rather than guess
-    matched = [r for r in rows if _as_year(r.get("year")) == movie_year]
-    return matched[0] if len(matched) == 1 else None
+    return identity.to_basename(movie_file.get("relativePath") or movie_file.get("path"))
 
 
 def _summary(text: Any) -> str | None:
@@ -803,7 +846,7 @@ def _summary(text: Any) -> str | None:
 
 def _raw_items(
     movies: list[dict[str, Any]],
-    plex_index: dict[str, list[dict[str, Any]]],
+    plex_index: identity.PlexIndex,
     instance_id: int,
     requested: dict[str, str] | None = None,
 ) -> list[RawItem]:
@@ -812,10 +855,19 @@ def _raw_items(
     for movie in movies:
         if not movie.get("hasFile"):
             continue
-        # Resolve by title AND year, failing closed on any ambiguity -- never last-write-wins
-        # into a title map (see _match_plex_movie / _plex_index for why that deletes films).
-        row = _match_plex_movie(movie, plex_index)
         tmdb_id = int(movie["tmdbId"]) if movie.get("tmdbId") else None
+        # Bind to Plex through the one shared resolver: external id (tmdb, then imdb) ->
+        # file basename -> title+year, abstaining on any ambiguity or cross-tier conflict.
+        # An abstain/unmatched leaves plex_rating_key None, which makes the item's facts
+        # Unknown -> ABSTAIN, and the executor spares a keyless item.
+        resolution = identity.resolve_movie(
+            ids=identity.ExternalIds.of(imdb=movie.get("imdbId"), tmdb=movie.get("tmdbId")),
+            title=str(movie.get("title") or ""),
+            year=int(movie["year"]) if movie.get("year") else None,
+            file_basename=_movie_file_basename(movie),
+            index=plex_index,
+        )
+        matched = resolution.plex_item
         items.append(
             RawItem(
                 # Identity is the *arr's, not Plex's. Plex rating keys are not stable
@@ -826,14 +878,18 @@ def _raw_items(
                 size_bytes=int(movie.get("sizeOnDisk") or 0),
                 imdb_id=movie.get("imdbId") or None,
                 tmdb_id=tmdb_id,
-                plex_rating_key=int(row["rating_key"]) if row else None,
-                added_at=from_epoch(row.get("added_at")) if row else None,
+                # added_at comes from the matched Plex item (Tautulli spine), preserving the
+                # dormancy floor exactly as before.
+                plex_rating_key=resolution.rating_key,
+                added_at=matched.added_at if matched is not None else None,
                 has_file=True,
                 year=int(movie["year"]) if movie.get("year") else None,
                 summary=_summary(movie.get("overview")),
                 # poster_url is derived from the Plex rating key at read time (api/poster.py),
                 # not stored -- the *arr's art is stale. See routes._candidate_out.
                 requested_by=requested.get(requested_by.movie_key(tmdb_id) or ""),
+                matched_by=resolution.matched_by,
+                match_detail=resolution.detail,
             )
         )
     return items

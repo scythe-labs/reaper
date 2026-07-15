@@ -7,9 +7,37 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-15 (full code-review pass executed)
+Last updated: 2026-07-15 (external-ID identity resolver landed)
 
-### Newest — a whole-codebase review, found and fixed
+### Newest — matching by external ID, not by name
+
+The fate-deciding join — *arr item → Plex item — was **name-based** (lowercased title + year,
+degrading to title-alone whenever Plex omitted the year). That join produces the Plex rating
+key every downstream check reads, so a mis-bind never deletes the *wrong* file (deletes route
+by the arr's stable `media_key`) — it deletes the **right** file for the **wrong reasons**,
+having read a stranger's "nobody's watching, long dormant." Both sides already carried stable
+ids (Radarr `imdbId`/`tmdbId`, Sonarr `imdbId`/`tvdbId`, Plex `imdb://`/`tmdb://`/`tvdb://`
+GUIDs), unused for this join.
+
+Now there is **one** shared resolver (`engine/identity.py`, pure — rule #3) with a fail-closed
+ladder: **external id → file basename → title+year**, plus a *contradiction veto* — a title
+mismatch is silence (the id still binds, surviving renames/regional titles), but two tiers that
+both resolve to *different* rating keys **abstain**. A duplicate id abstains too; every
+ambiguity keeps the file. Plex ids come from one guarded plexapi `library_guid_index` sweep,
+left-joined onto the Tautulli spine by rating key so `added_at`/dormancy stay byte-identical; a
+failed sweep **degrades** the snapshot (never a silent fall back to title-only). Provenance
+("bound by TMDB 1001" / "kept: two Plex items share this id") rides in the existing
+`explanation_json` `match` block — no schema change, no executor change, approvals unaffected
+(`manifest_hash` ignores rating keys). Assumptions that held: the executor already refuses
+without Plex, so tying id-enrichment to the Plex connection strands nothing. Two latent bugs
+fixed along the way: the "Never Reap" collection's GUID parser missed the legacy single-`guid`
+string (and its `?lang=` suffix), silently unprotecting legacy-agent libraries; and `tmdb://0`
+/ `tt0000000` sentinels were parsed as real ids. Green: 858 backend tests (new `test_identity.py`
++ scan-path/`build_movie_index` coverage), ruff, mypy, frontend build; no migration drift.
+Follow-up (not built): render the `match` block in the React why-panel; delete-time
+re-resolution to catch a rating key that moved between scan and execute.
+
+### A whole-codebase review, found and fixed
 
 A comprehensive review (`docs/CODE_REVIEW.md`) surfaced 64 adversarially-verified findings
 across bugs, security, production-readiness, performance and UI/UX; all were implemented and
