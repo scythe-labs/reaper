@@ -183,9 +183,7 @@ class TestResolveSeasonKeys:
             return self._children
 
     async def test_it_maps_number_to_key_and_arrival(self) -> None:
-        client = self._FakeChildren(
-            [{"media_index": 1, "rating_key": 101, "added_at": "1000000"}]
-        )
+        client = self._FakeChildren([{"media_index": 1, "rating_key": 101, "added_at": "1000000"}])
         result = await season_scan.resolve_season_keys(client, 900)  # type: ignore[arg-type]
         assert result[1].rating_key == 101
         assert result[1].added_at is not None
@@ -213,9 +211,7 @@ class TestResolveSeasonKeys:
 
 class TestGuardResult:
     def test_a_protected_season_becomes_a_protecting_gate(self) -> None:
-        plan = plan_series_prune(
-            series_title="S", seasons=[_season(1), _season(2)], keep_last=1
-        )
+        plan = plan_series_prune(series_title="S", seasons=[_season(1), _season(2)], keep_last=1)
         # Season 1 is the first season -> protected.
         result = season_scan.guard_result(plan, 1)
         assert result.gate is GateId.SEASON_PROGRESSION
@@ -463,8 +459,13 @@ async def _episode(
                 "percent_complete, media_type) "
                 "VALUES (:rk, :season, :show, :uid, :ts, 1, 100, 'episode')"
             ),
-            {"rk": season_key * 1000 + user_id, "season": season_key, "show": show_key,
-             "uid": user_id, "ts": when},
+            {
+                "rk": season_key * 1000 + user_id,
+                "season": season_key,
+                "show": show_key,
+                "uid": user_id,
+                "ts": when,
+            },
         )
 
 
@@ -474,9 +475,7 @@ class TestSeasonWatchStats:
         await _episode(cache_engine, season_key=701, user_id=2)
         await _episode(cache_engine, season_key=702, user_id=1)
 
-        stats = await season_scan.season_watch_stats(
-            cache_engine, {701, 702}, window_days=365
-        )
+        stats = await season_scan.season_watch_stats(cache_engine, {701, 702}, window_days=365)
         assert stats.watchers_all_time[701] == 2
         assert stats.watchers_all_time[702] == 1
         assert 701 in stats.last_played

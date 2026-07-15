@@ -256,7 +256,7 @@ def upgrade() -> None:
     sa.Column('media_key', sa.String(length=100), nullable=False),
     sa.Column('title', sa.String(length=500), nullable=False),
     sa.Column('note', sa.Text(), nullable=True),
-    sa.Column('decision', sa.String(length=10), nullable=False, server_default='spare'),
+    sa.Column('decision', sa.String(length=10), nullable=False),
     sa.Column('created_at', sa.Integer(), nullable=False),
     sa.PrimaryKeyConstraint('media_key', name=op.f('pk_whitelist'))
     )

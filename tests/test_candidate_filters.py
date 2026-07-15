@@ -129,9 +129,7 @@ class TestFilters:
 
     def test_filters_stack(self, client: TestClient) -> None:
         # media_type AND requested are ANDed, not either-or.
-        rows = client.get(
-            "/api/candidates?verdict=condemn&media_type=movie&requested=yes"
-        ).json()
+        rows = client.get("/api/candidates?verdict=condemn&media_type=movie&requested=yes").json()
         assert _titles(rows) == {"Alien"}  # a movie AND requested; the season is excluded
 
 

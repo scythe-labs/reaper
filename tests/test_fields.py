@@ -218,9 +218,11 @@ class TestCustomProtectGate:
         # The structural guarantee: whatever the condition, the outcome is only ever one of
         # these two. A mis-authored protection can at worst fail to keep something.
         for value in (0, 1, 999):
-            outcome = CustomProtectGate(
-                Condition(field="imdb_votes", op=Op.GTE, value=value)
-            ).evaluate(_facts()).outcome
+            outcome = (
+                CustomProtectGate(Condition(field="imdb_votes", op=Op.GTE, value=value))
+                .evaluate(_facts())
+                .outcome
+            )
             assert outcome in (PROTECT, ABSTAIN)
 
 

@@ -277,11 +277,7 @@ class TestARestrictedPlanReapsOnlyTheChosenItems:
         from reaper.services.planner import manifest_hash
 
         all_three = list(
-            (
-                await session.execute(
-                    select(Candidate).where(Candidate.snapshot_id == snapshot_id)
-                )
-            )
+            (await session.execute(select(Candidate).where(Candidate.snapshot_id == snapshot_id)))
             .scalars()
             .all()
         )
@@ -394,9 +390,7 @@ class TestASeasonDryRunsAsAWholeSequence:
         )
         assert steps and all(s.state is StepState.PENDING for s in steps)
 
-    async def test_a_mixed_movie_and_season_plan_dry_runs_both(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_a_mixed_movie_and_season_plan_dry_runs_both(self, session: AsyncSession) -> None:
         snapshot_id = await _snapshot_with(
             session, [("radarr:1:1", 1 * GB), ("sonarr:1:42:3", 4 * GB)]
         )
@@ -573,9 +567,7 @@ class TestARunExecutesOnce:
         report = await _real(session, run, _gateway(radarr={1: FakeRadarr()}))
         assert report.state is RunState.COMPLETED and report.deleted_items == 1
 
-    async def test_a_really_executed_run_cannot_be_re_executed(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_a_really_executed_run_cannot_be_re_executed(self, session: AsyncSession) -> None:
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
         run = await _plan(session, snapshot_id)
 
@@ -680,9 +672,7 @@ class TestMovieLiveSend:
         assert report.state is RunState.ABORTED
         assert report.deleted_items == 0
 
-    async def test_a_non_canary_failure_does_not_abort_the_run(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_a_non_canary_failure_does_not_abort_the_run(self, session: AsyncSession) -> None:
         """Two movies: the smaller is the canary and succeeds; the larger fails its
         exclusion. The run completes with one deleted and one failed -- one stubborn item
         is not a reason to abandon the rest."""
@@ -808,9 +798,7 @@ class TestStreamingVeto:
         assert report.deleted_items == 0
         assert radarr.delete_calls == []  # never even attempted
 
-    async def test_watching_an_episode_vetoes_its_whole_season(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_watching_an_episode_vetoes_its_whole_season(self, session: AsyncSession) -> None:
         """The stream is an episode (its own rating key), but the prune would take the
         season -- so the veto set includes the episode's parent (season) key, and the
         season is spared."""
@@ -969,9 +957,7 @@ class TestASpareIsHonouredAtExecuteTime:
     hash can see it; the executor re-checks the override per item. Two independent reviews
     flagged the original omission, so these tests pin the fix hard."""
 
-    async def test_a_spare_added_after_the_plan_is_not_deleted(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_a_spare_added_after_the_plan_is_not_deleted(self, session: AsyncSession) -> None:
         from reaper.services import whitelist
 
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
@@ -990,9 +976,7 @@ class TestASpareIsHonouredAtExecuteTime:
         assert radarr.delete_calls == []
         assert [s.state for s in await _steps(session, run.id)] == [StepState.SKIPPED]
 
-    async def test_a_spare_at_plan_time_does_not_abort_the_run(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_a_spare_at_plan_time_does_not_abort_the_run(self, session: AsyncSession) -> None:
         """The secondary half of the same bug: a spare present *before* planning must not
         make the manifest hashes disagree and abort every execution. The spared item gets
         no steps; the other is deleted normally."""
@@ -1102,9 +1086,7 @@ class TestPlexCleanup:
         assert plex.refreshed == [("Movies", "/movies/Worthless")]
         assert plex.emptied == []  # but the trash was NOT purged
 
-    async def test_an_unmapped_path_is_skipped_without_failing(
-        self, session: AsyncSession
-    ) -> None:
+    async def test_an_unmapped_path_is_skipped_without_failing(self, session: AsyncSession) -> None:
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
         run = await _plan(session, snapshot_id)
         plex = FakePlex(sections={"Movies": ["/some/other/root"]})

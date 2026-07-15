@@ -36,9 +36,7 @@ class _FakeSonarr:
 
     service = "sonarr"
 
-    def __init__(
-        self, tags: list[dict[str, object]], series: list[dict[str, object]]
-    ) -> None:
+    def __init__(self, tags: list[dict[str, object]], series: list[dict[str, object]]) -> None:
         self._tags = tags
         self._series = series
 

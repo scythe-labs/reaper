@@ -23,9 +23,7 @@ from reaper.services.leaving_soon import (
 NOW = utcnow()
 
 
-def _item(
-    rating_key: int | None, *, title: str = "Film", media_type: str = "movie"
-) -> GraceItem:
+def _item(rating_key: int | None, *, title: str = "Film", media_type: str = "movie") -> GraceItem:
     return GraceItem(
         media_key=f"radarr:1:{rating_key or 0}",
         plex_rating_key=rating_key,

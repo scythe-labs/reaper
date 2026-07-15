@@ -212,16 +212,12 @@ def airing_seasons(series: Mapping[str, Any], seasons: list[SeasonStats]) -> set
     if not running:
         return set()
     real = [
-        s.season_number
-        for s in seasons
-        if s.season_number != SPECIALS_SEASON and s.has_content
+        s.season_number for s in seasons if s.season_number != SPECIALS_SEASON and s.has_content
     ]
     return {max(real)} if real else set()
 
 
-def match_show(
-    series: Mapping[str, Any], tv_index: Mapping[str, list[ShowRow]]
-) -> ShowRow | None:
+def match_show(series: Mapping[str, Any], tv_index: Mapping[str, list[ShowRow]]) -> ShowRow | None:
     """Join a Sonarr series to its Plex show by title, disambiguated by year.
 
     Fail-closed on ambiguity. When a title matches more than one Plex show (a remake, a

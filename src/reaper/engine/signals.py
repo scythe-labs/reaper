@@ -144,11 +144,7 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
         case SignalId.SIZE:
             size = _numeric(facts.size_bytes)
             raw = size / 1_000_000_000 if size is not None else None
-            detail = (
-                f"{raw:.1f} GB on disk"
-                if raw is not None
-                else "could not read the file size"
-            )
+            detail = f"{raw:.1f} GB on disk" if raw is not None else "could not read the file size"
         case SignalId.SEASON_RANK:
             raw = _numeric(facts.season_rank)
             detail = (

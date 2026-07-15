@@ -71,9 +71,7 @@ def _tv_request(
         is_4k=False,
         status=5,
         requested_at=NOW - timedelta(days=500),
-        requester=Requester(
-            seerr_user_id=1, plex_id=1, username="a", display_name="A", email=None
-        ),
+        requester=Requester(seerr_user_id=1, plex_id=1, username="a", display_name="A", email=None),
         tmdb_id=None,
         tvdb_id=tvdb_id,
         imdb_id=None,

@@ -322,9 +322,7 @@ async def build_report(
     media = await _media_index(tautulli)
     for rating_key, size in (await _arr_sizes(radarrs, sonarrs, requests)).items():
         existing = media.get(rating_key)
-        media[rating_key] = MediaInfo(
-            title=existing.title if existing else "", size_bytes=size
-        )
+        media[rating_key] = MediaInfo(title=existing.title if existing else "", size_bytes=size)
 
     evidence = await _evidence_index(cache_engine, keys)
     log.info(
