@@ -91,7 +91,7 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
         <Check done={setup.has_tautulli}>
           <strong>Connect Tautulli</strong>: your watch history <em>(required)</em>
         </Check>
-        <Check done={setup.has_seerr || setup.has_scanned}>
+        <Check done={setup.has_seerr}>
           <strong>Connect Seerr</strong>: shows who requested each title <em>(optional)</em>
         </Check>
         <Check done={setup.has_scanned}>
