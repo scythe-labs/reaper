@@ -460,6 +460,7 @@ async def build_tv_index(
                         added_at=from_epoch(row.get("added_at")),
                         ids=enriched.ids if enriched is not None else identity.ExternalIds(),
                         file_basename=enriched.file_basename if enriched is not None else None,
+                        files=enriched.files if enriched is not None else (),
                     )
                 )
             if len(rows) < 1000:

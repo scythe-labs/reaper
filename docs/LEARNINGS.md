@@ -352,6 +352,82 @@ mis-behaves rather than erroring:
 All three now live in one parser (`engine/identity.parse_guids`), used by both the scan
 matcher and the collection provider, so there is a single place to be right.
 
+### A split library makes external ids ambiguous; the file name picks the copy
+
+On a real library with separate HD and 4K sections (plus curated sections that re-list
+titles), one tmdb/tvdb id names two or more Plex items for **~3% of items**. The resolver
+abstained on every one — correctly fail-closed, but *permanently*: those items' watch
+history stayed invisible, so they could never be judged at all.
+
+The duplicate hits are the same *content* in several *copies*, and the *arr entry's own
+file name identifies which copy it manages. So an ambiguous id may be narrowed by file
+name — under rules that keep it corroboration rather than guessing:
+
+- Compare **only among that id's candidates**. Consulting the wider library (a global
+  basename or title match) answers a different question and can land outside the id set.
+- Compare against **all** of a candidate's file locations, and require every candidate's
+  locations to be known. A merged multi-edition Plex item indexed by only its first file
+  makes a re-list of its *second* file look "unique" — and a candidate whose files could
+  not be seen might be the very file in hand. "Could not look" is not "looked and it was
+  different".
+- Bind on **exactly one** match; none keeps abstaining, and several hands over to the
+  size step below.
+- Narrowing binds the row that *contains the arr's file*, which stays correct even when
+  the shared id is an agent mis-tag: that row's history is the plays of that very file.
+
+Accepted residual, weighed and documented rather than guarded: an *arr rename that lands
+exactly on the sibling copy's file name mis-picks until Plex rescans — transient,
+same-content only, and gated by the grace window plus supervised execution.
+
+Verified on a live scan: **about a quarter of the stuck items bound by name alone** —
+each one a split-section copy whose file name carries a quality marker, each to its own
+rating key (the two instances of one title got *different* keys, and their scores
+immediately diverged, one dormant and one active — per-copy history working). Every item
+that stayed ambiguous gave the same reason: its file name matches two Plex items. None
+abstained for a missing file name, so real libraries do carry full location data through
+the sweep.
+
+### The same file listed twice: exact byte size proves it, and the twins merge
+
+The name-matches-two case turned out to be, on a real library, **every** remaining
+ambiguity — and inspecting the listings showed the shape precisely: a curated section
+(built years after the original) re-lists the *very same file* under its own rating key at
+a **different full path** with the same leaf and the same parent-folder name. So "same
+full path" can never recognise it; what does is the **exact byte size**: the two listings'
+part sizes were byte-equal, and equal to Radarr's own `movieFile.size`. A curated re-list
+farm points at the same bytes (links or a bit-exact copy), and no two different encodes
+share an exact byte count in practice.
+
+So when the file name matches several of an id's candidates, the *arr's exact size is the
+one corroborator left, and it resolves the tie in one of three ways — every unknown
+abstains ("could not look" is neither "different" nor "the same"):
+
+- **Size singles out one listing** → bind it. A stale re-list of a since-upgraded file
+  falls here: per-file judgment binds the *arr's actual file.
+- **Several listings at exactly the arr's size** → byte-identical twins of the file in
+  hand → bind them **as one group**. Reading only one listing's history would under-count
+  the file's own watching (plays split across the listings) — the direction that
+  condemns. So the canonical key is the earliest listing (the original row: its poster,
+  its honest dormancy floor), the match block records every key, the scan folds
+  last-played and distinct-watchers as an exact union (a person who played the file
+  through both listings counts once), and the executor's live interlocks re-read the
+  stored group so a stream or late play through *either* listing spares the file. The
+  merge can only add evidence of watching; the delete still routes by the *arr's file.
+- **No listing at the arr's size** → abstain; the file in hand matches nothing seen.
+
+Shows never merge: a show binds by its folder, and a folder has no one size — two
+same-name folder listings under one id keep abstaining. Residual accepted: a
+byte-identical *different* rip sharing name, size, and id would merge — practically
+impossible, and merging errs toward keeping.
+
+Verified on a live scan: **every remaining ambiguity merged** — each one a two-listing
+group whose sizes byte-matched the *arr's record — and the library ended *fully bound*
+(no item left without a rating key). A rescued item's coverage went from a tenth of the
+evidence to all of it, its dormancy read a play made through the second listing (invisible
+before the fold), and every rescued item landed on protect: new evidence arriving means
+*more* reasons to keep were suddenly visible, not a sudden condemnation. The why-panel's
+"kept to be safe" notice disappeared for all of them, replaced by real signal rows.
+
 ### Don't hold a DB transaction across a human's sign-in
 
 The first version of the Plex link opened an `AsyncSession`, then polled plex.tv inside

@@ -43,6 +43,9 @@ class MatchOut(BaseModel):
     by: str | None = None
     detail: str | None = None
     rating_key: int | None = None
+    merged_rating_keys: list[int] | None = None
+    """Every listing a merged bind covers, when one file is listed several times in Plex.
+    Audit only; absent for a normal single-listing bind."""
 
 
 class KeepContributionOut(BaseModel):

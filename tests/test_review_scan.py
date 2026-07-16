@@ -16,7 +16,7 @@ Covers the findings addressed in the scan lane of the code review:
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -37,8 +37,10 @@ from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import Score
 from reaper.services import history_sync
 from reaper.services.snapshot import (
+    _fold_merged_watch_stats,
     _raw_items,
     _record_first_flagged,
+    _watch_stats,
     build_movie_index,
     protection_sync_degradations,
 )
@@ -140,6 +142,90 @@ class TestTheMovieJoinAtTheScanLane:
         items = _raw_items([movie], index, instance_id=1)
         assert items[0].plex_rating_key is None
         assert items[0].matched_by is None
+
+    def test_raw_items_narrows_a_shared_id_by_the_movies_file_name(self) -> None:
+        """The split-library case through the scan path: two Plex rows share the tmdb id
+        (an HD and a 4K section), and the movie's own file name picks its copy."""
+        index = identity.PlexIndex.build(
+            [
+                identity.PlexItem(
+                    rating_key=1,
+                    title="Example",
+                    year=2020,
+                    added_at=NOW,
+                    ids=identity.ExternalIds.of(tmdb=1001),
+                    file_basename="example (2020) 1080p.mkv",
+                    files=(identity.PlexFile("example (2020) 1080p.mkv"),),
+                ),
+                identity.PlexItem(
+                    rating_key=2,
+                    title="Example",
+                    year=2020,
+                    added_at=NOW,
+                    ids=identity.ExternalIds.of(tmdb=1001),
+                    file_basename="example (2020) 2160p.mkv",
+                    files=(identity.PlexFile("example (2020) 2160p.mkv"),),
+                ),
+            ]
+        )
+        movie = {
+            "id": 9,
+            "title": "Example",
+            "year": 2020,
+            "tmdbId": 1001,
+            "hasFile": True,
+            "sizeOnDisk": 1,
+            "movieFile": {"relativePath": "Example (2020) 2160p.mkv"},
+        }
+        items = _raw_items([movie], index, instance_id=1)
+        assert items[0].plex_rating_key == 2
+        assert items[0].added_at == NOW
+        assert items[0].matched_by is identity.MatchedBy.ID_AND_BASENAME
+        assert items[0].match_status is identity.MatchStatus.MATCHED
+
+    def test_raw_items_merges_byte_identical_twin_listings(self) -> None:
+        """The curated re-list case through the scan path: two Plex rows share the tmdb
+        id AND the file name, and Radarr's exact byte size proves they are one file
+        listed twice. The item binds to the earliest listing and carries every listing's
+        key, so its watch stats can be read from all of them."""
+        earlier = NOW - timedelta(days=900)
+        index = identity.PlexIndex.build(
+            [
+                identity.PlexItem(
+                    rating_key=1,
+                    title="Example",
+                    year=2020,
+                    added_at=earlier,
+                    ids=identity.ExternalIds.of(tmdb=1001),
+                    file_basename="example (2020).mkv",
+                    files=(identity.PlexFile("example (2020).mkv", 7_000),),
+                ),
+                identity.PlexItem(
+                    rating_key=2,
+                    title="Example",
+                    year=2020,
+                    added_at=NOW,
+                    ids=identity.ExternalIds.of(tmdb=1001),
+                    file_basename="example (2020).mkv",
+                    files=(identity.PlexFile("example (2020).mkv", 7_000),),
+                ),
+            ]
+        )
+        movie = {
+            "id": 9,
+            "title": "Example",
+            "year": 2020,
+            "tmdbId": 1001,
+            "hasFile": True,
+            "sizeOnDisk": 7_050,
+            "movieFile": {"relativePath": "Example (2020).mkv", "size": 7_000},
+        }
+        items = _raw_items([movie], index, instance_id=1)
+        assert items[0].plex_rating_key == 1
+        assert items[0].added_at == earlier
+        assert items[0].matched_by is identity.MatchedBy.MERGED_LISTINGS
+        assert items[0].match_status is identity.MatchStatus.MATCHED
+        assert items[0].merged_rating_keys == (1, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +368,102 @@ async def cache_engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
     await history_sync.ensure_schema(eng)  # the empty watch_event table _plays reads
     yield eng
     await eng.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Merged listings: one file listed twice in Plex, plays split across the rating keys.
+# ---------------------------------------------------------------------------
+
+
+async def _play_event(
+    engine: AsyncEngine, row_id: int, rating_key: int, user_id: int, when: datetime
+) -> None:
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO watch_event (row_id, rating_key, user_id, watched_at, "
+                "watched_status, percent_complete, media_type) "
+                "VALUES (:id, :rk, :user, :at, 1.0, 100, 'movie')"
+            ),
+            {"id": row_id, "rk": rating_key, "user": user_id, "at": int(when.timestamp())},
+        )
+
+
+class TestMergedWatchStatsFold:
+    """The fold reads a merged group's plays as a UNION onto the canonical key: exact
+    distinct watchers (one person through two listings counts once), the latest play
+    through any listing, and nothing else's stats touched."""
+
+    async def test_the_group_union_lands_on_the_canonical_key(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        old = NOW - timedelta(days=400)  # outside the 365-day window
+        recent = NOW - timedelta(days=10)
+        await _play_event(cache_engine, 1, 100, 1, old)  # user 1, canonical listing
+        await _play_event(cache_engine, 2, 200, 1, recent)  # user 1 again, other listing
+        await _play_event(cache_engine, 3, 200, 2, recent)  # user 2, other listing only
+        await _play_event(cache_engine, 4, 200, 9, old)  # user 9, old, other listing
+        await _play_event(cache_engine, 5, 300, 3, recent)  # an unrelated item
+
+        last_played, window, ever = await _watch_stats(
+            cache_engine, rating_keys={100, 300}, window_days=365
+        )
+        assert ever.get(100) == 1  # before the fold: the canonical key alone
+
+        await _fold_merged_watch_stats(
+            cache_engine,
+            groups={100: (100, 200)},
+            window_days=365,
+            last_played=last_played,
+            watchers_window=window,
+            watchers_all_time=ever,
+        )
+        assert last_played[100] == from_epoch(int(recent.timestamp()))
+        assert window[100] == 2  # users 1 and 2; user 9's play is outside the window
+        assert ever[100] == 3  # user 1 counted once despite playing both listings
+        # The unrelated item's stats are untouched.
+        assert ever.get(300) == 1
+
+    async def test_plays_only_under_the_other_listing_still_count(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """Every play sits under the file's OTHER listing; without the fold the canonical
+        key would read 'never watched', the exact under-count that condemns."""
+        recent = NOW - timedelta(days=5)
+        await _play_event(cache_engine, 1, 200, 7, recent)
+
+        last_played, window, ever = await _watch_stats(
+            cache_engine, rating_keys={100}, window_days=365
+        )
+        assert 100 not in last_played
+
+        await _fold_merged_watch_stats(
+            cache_engine,
+            groups={100: (100, 200)},
+            window_days=365,
+            last_played=last_played,
+            watchers_window=window,
+            watchers_all_time=ever,
+        )
+        assert last_played[100] == from_epoch(int(recent.timestamp()))
+        assert window[100] == 1
+        assert ever[100] == 1
+
+    async def test_a_group_with_no_plays_changes_nothing(self, cache_engine: AsyncEngine) -> None:
+        last_played, window, ever = await _watch_stats(
+            cache_engine, rating_keys={100}, window_days=365
+        )
+        await _fold_merged_watch_stats(
+            cache_engine,
+            groups={100: (100, 200)},
+            window_days=365,
+            last_played=last_played,
+            watchers_window=window,
+            watchers_all_time=ever,
+        )
+        assert 100 not in last_played
+        assert 100 not in window
+        assert 100 not in ever
 
 
 def _bt_item() -> Item:

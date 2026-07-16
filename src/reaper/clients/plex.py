@@ -41,7 +41,7 @@ import structlog
 
 from reaper.clients.base import SAFE_METHODS, SafetyViolationError
 from reaper.config import RuntimeSafety
-from reaper.engine.identity import PlexItem, parse_guids, to_basename
+from reaper.engine.identity import PlexFile, PlexItem, parse_guids, to_basename
 
 if TYPE_CHECKING:
     from plexapi.server import PlexServer
@@ -286,9 +286,12 @@ class PlexClient:
         The enrichment behind id-based matching. For each library section of
         ``section_type`` (``"movie"`` or ``"show"``), sweep every item once via
         ``section.all()`` and read its GUIDs -- the new-agent ``guids`` list *and* the
-        legacy single ``guid`` string -- plus the basename of its first file/folder
-        location, and the title / year / added-at the listing already carries. One sweep
-        per section, never a per-item metadata call. Returning full :class:`PlexItem` rows
+        legacy single ``guid`` string -- plus **every** file behind the listing with its
+        name and exact byte size (the first location's leaf feeds the global basename
+        tier; the full set exists so an ambiguous id can be narrowed against all of a
+        candidate's files, and byte-identical re-lists of one file can be recognised),
+        and the title / year / added-at the listing already carries. One sweep per
+        section, never a per-item metadata call. Returning full :class:`PlexItem` rows
         (not just the ids) lets the index builders union in items the Tautulli media-info
         cache has not listed yet -- a freshly added item exists here first.
 
@@ -318,6 +321,28 @@ class PlexClient:
                     ids = parse_guids(guid_ids, str(legacy) if legacy else None)
                     locations = list(getattr(item, "locations", None) or [])
                     basename = to_basename(locations[0]) if locations else None
+                    # Movies carry media parts (file path + exact byte size); shows carry
+                    # folder locations only, which have no size. A missing or zero size is
+                    # recorded as None (unknown), never as a comparable number.
+                    files: list[PlexFile] = []
+                    for media in getattr(item, "media", None) or []:
+                        for part in getattr(media, "parts", None) or []:
+                            leaf = to_basename(getattr(part, "file", None))
+                            if leaf is None:
+                                continue
+                            size = getattr(part, "size", None)
+                            files.append(
+                                PlexFile(
+                                    basename=leaf,
+                                    size=int(size) if isinstance(size, int) and size > 0 else None,
+                                )
+                            )
+                    if not files:
+                        files = [
+                            PlexFile(basename=leaf)
+                            for leaf in (to_basename(loc) for loc in locations)
+                            if leaf is not None
+                        ]
                     year = getattr(item, "year", None)
                     # plexapi parses addedAt with fromtimestamp() in *this* process, so a
                     # naive value means "this host's local time"; astimezone(UTC) recovers
@@ -331,6 +356,7 @@ class PlexClient:
                         added_at=added_at,
                         ids=ids,
                         file_basename=basename,
+                        files=tuple(files),
                     )
             return out
 

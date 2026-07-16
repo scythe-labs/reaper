@@ -25,9 +25,22 @@ so an id match is precise where a title match is fragile (editions, punctuation,
 regional titles). The ladder, top to bottom:
 
 1. **External id** -- shows on ``tvdb``; movies on ``tmdb`` then ``imdb``. Exactly one
-   match binds; an id that names *two or more* Plex items is ambiguous and **abstains**
-   (never degrades to a weaker tier), exactly as ``season_scan.resolve_season_keys`` drops
-   both rows on a duplicate season number.
+   match binds. An id that names *two or more* Plex items is the same content in several
+   copies (split HD/4K sections, a curated section re-listing a title); the *arr item's
+   own file name may then pick the copy -- compared only among that id's candidates, with
+   every candidate's file names known. A name matching exactly one candidate binds it. A
+   name matching *several* gets one more corroborator, the exact byte size the *arr
+   records for its file: a size singling out one candidate binds it, and several
+   candidates carrying that name at exactly that size are byte-identical twins -- one
+   file listed more than once (a curated section re-listing the very file) -- bound as a
+   **group** under one canonical key, with every listing's rating key kept so watch reads
+   cover all of them. That is corroboration *inside* the strongest tier's answer set, and
+   it stays correct even when a shared id is an agent mis-tag: the candidate holding the
+   *arr's file is the row whose watch history describes that file. What an ambiguous id
+   never does is consult the wider library -- a weaker tier "resolving" the tie from
+   outside the candidate set would be a guess -- so any residual ambiguity (an unknown
+   name or size on either side included) **abstains**, exactly as
+   ``season_scan.resolve_season_keys`` drops both rows on a duplicate season number.
 2. **File basename** -- the file's (movie) or folder's (show) name, compared across the
    mount-root difference Plex and the *arr disagree on.
 3. **Title + year** -- the original fail-closed rule, kept verbatim as the backstop.
@@ -57,6 +70,12 @@ class MatchedBy(enum.StrEnum):
     TVDB = "tvdb"
     TMDB = "tmdb"
     IMDB = "imdb"
+    #: An id shared by several Plex copies, narrowed to one by the *arr's own file name
+    #: (and, where the name alone was not enough, its exact file size).
+    ID_AND_BASENAME = "id_and_basename"
+    #: One file listed several times in Plex (id, file name and exact size all equal),
+    #: bound to every listing at once so its watch history is read from all of them.
+    MERGED_LISTINGS = "merged_listings"
     FILE_BASENAME = "file_basename"
     TITLE_YEAR = "title_year"
 
@@ -219,14 +238,35 @@ def parse_guids(guids: Iterable[str], legacy_guid: str | None = None) -> Externa
 
 
 @dataclass(frozen=True, slots=True)
+class PlexFile:
+    """One file (movie) or folder (show) behind a Plex listing.
+
+    ``basename`` is the location's leaf; ``size`` is the exact byte count Plex reports
+    for the file, or ``None`` where there is none to report (show folders) or Plex did
+    not say. An unknown size never matches and never mismatches -- it abstains.
+    """
+
+    basename: str
+    size: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class PlexItem:
     """One Plex library item, as the resolver sees it.
 
     For every row the Tautulli spine lists, ``added_at`` is sourced from that spine (never
-    re-derived), so dormancy stays byte-identical to the title-only era; the ids and
-    ``file_basename`` are enriched on top from the plexapi sweep. An item the Tautulli
-    cache has not listed yet (a fresh addition) enters the index from the plexapi sweep
-    alone, carrying Plex's own added-at -- there is no spine value to preserve for it.
+    re-derived), so dormancy stays byte-identical to the title-only era; the ids and file
+    names are enriched on top from the plexapi sweep. An item the Tautulli cache has not
+    listed yet (a fresh addition) enters the index from the plexapi sweep alone, carrying
+    Plex's own added-at -- there is no spine value to preserve for it.
+
+    The two file fields have one job each and are built from the same media/location
+    data: ``file_basename`` is the *first* location's leaf and feeds the global Tier-2
+    ``by_basename`` map (unchanged semantics); ``files`` is *every* file behind the
+    listing, each with its exact byte size, and is consulted only to narrow an ambiguous
+    id -- a merged multi-edition item holds several files, and narrowing must see all of
+    them or a re-list of its second file would look "unique". Empty means the files are
+    unknown, and narrowing treats unknown as un-narrowable, never as "different".
     """
 
     rating_key: int
@@ -235,6 +275,7 @@ class PlexItem:
     added_at: datetime | None
     ids: ExternalIds = ExternalIds()
     file_basename: str | None = None
+    files: tuple[PlexFile, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,21 +346,31 @@ class Resolution:
     detail: str
     status: MatchStatus
     plex_item: PlexItem | None = None
+    merged_rating_keys: tuple[int, ...] = ()
+    """Every Plex listing this bind covers, when the bound file is listed more than once
+    (``matched_by is MERGED_LISTINGS``); includes ``rating_key`` itself. Empty for a
+    single-listing bind. Every downstream watch read (dormancy, watchers, the streaming
+    veto, the executor's played-since-approval interlock) must consult all of these keys,
+    or a play made through the file's other listing would be invisible."""
 
     @classmethod
-    def bound(cls, item: PlexItem, by: MatchedBy, detail: str) -> Resolution:
+    def bound(
+        cls, item: PlexItem, by: MatchedBy, detail: str, *, merged: tuple[int, ...] = ()
+    ) -> Resolution:
         return cls(
             rating_key=item.rating_key,
             matched_by=by,
             detail=detail,
             status=MatchStatus.MATCHED,
             plex_item=item,
+            merged_rating_keys=merged,
         )
 
     @classmethod
     def abstain(cls, detail: str) -> Resolution:
-        # An abstain only ever comes from a duplicate id/basename or a cross-tier conflict --
-        # every one of which is "more than one possible match", i.e. AMBIGUOUS.
+        # An abstain only ever comes from a duplicate id (that the file name and size
+        # could not narrow), a duplicate basename, or a cross-tier conflict -- every one
+        # of which is "more than one possible match", i.e. AMBIGUOUS.
         return cls(rating_key=None, matched_by=None, detail=detail, status=MatchStatus.AMBIGUOUS)
 
     @classmethod
@@ -349,6 +400,98 @@ def title_year_match(title: str | None, year: int | None, index: PlexIndex) -> i
     return matched[0] if len(matched) == 1 else None
 
 
+def _narrow_among_id_hits(
+    hits: Sequence[int], basename: str | None, file_size: int | None, index: PlexIndex
+) -> tuple[tuple[int, ...], str]:
+    """The Tier-1 candidates provably holding this *arr item's file, or why none could be.
+
+    All ``hits`` share one external id, so they are the same *content* in several copies
+    (split HD/4K sections, a curated section re-listing a title). The *arr's file name is
+    causally tied to the physical copy it manages, so a name matching exactly one
+    candidate's files identifies *which copy this entry is* -- corroboration inside the
+    id's own answer set, never a lookup in the wider library. Every candidate's file
+    names must be known and the comparison covers **all** of a candidate's files: a copy
+    whose files we could not see might be the very file this item manages, so "could not
+    look" abstains rather than counting as "looked and it was different".
+
+    A name matching SEVERAL candidates gets one more corroborator: the exact byte size
+    the *arr records for its file. A size singling out one candidate binds it. Several
+    candidates carrying that name at exactly that size are byte-identical twins -- one
+    file listed more than once in Plex (verified live: a curated section re-lists the
+    very same file under its own rating key, at a different path) -- and *all* of them
+    are returned, because the file's plays are split across those listings and reading
+    only one would under-count watching, which is the direction that condemns. Any
+    unknown (a missing name or size on either side, or a candidate holding two same-name
+    files) abstains: unknown is never "different", and it is never "the same" either.
+
+    Returns ``(rating_keys, text)``: on success one key (a clean single bind) or several
+    (byte-identical twins) plus the corroborator wording for the bind detail; on failure
+    ``()`` plus the reason phrased for the audit detail.
+    """
+    if basename is None:
+        return (), "this item has no file name to tell the copies apart"
+    matched: list[int] = []
+    sizes_by_key: dict[int, list[int | None]] = {}
+    for rk in hits:
+        files = index.by_rating_key[rk].files
+        leaves = {
+            leaf for leaf in (to_basename(file.basename) for file in files) if leaf is not None
+        }
+        if not leaves:
+            return (), "a copy's file name is unknown, so the copies cannot be told apart"
+        if basename in leaves:
+            matched.append(rk)
+            sizes_by_key[rk] = [
+                file.size for file in files if to_basename(file.basename) == basename
+            ]
+    if len(matched) == 1:
+        return (matched[0],), f"file name {basename!r}"
+    if not matched:
+        return (), "this item's file name matches none of them"
+
+    # Several listings hold a file with this very name; the one corroborator left is size.
+    count = len(matched)
+    if file_size is None:
+        return (), (
+            f"this item's file name matches {count} of them, "
+            "and it has no file size to tell them apart"
+        )
+    for rk in matched:
+        rk_sizes = sizes_by_key[rk]
+        if len(rk_sizes) != 1 or rk_sizes[0] is None:
+            return (), (
+                f"this item's file name matches {count} of them, and a matching copy's "
+                "file size is unknown, so they cannot be told apart"
+            )
+    same_size = [rk for rk in matched if sizes_by_key[rk][0] == file_size]
+    if len(same_size) == 1:
+        return (same_size[0],), f"file name {basename!r} and its exact file size"
+    if not same_size:
+        return (), (
+            f"this item's file name matches {count} of them, "
+            "but none of those files is the same size as its file"
+        )
+    # Byte-identical twins: the same file, listed several times.
+    return tuple(same_size), f"file name {basename!r} and its exact file size"
+
+
+def _earliest_listed(rating_keys: Sequence[int], index: PlexIndex) -> int:
+    """The listing a merged group binds under: earliest-added, ties to the lowest key.
+
+    A curated section re-lists a file long after its original listing, so the earliest
+    added-at is the original row -- the one whose poster the queue should draw and whose
+    added-at gives dormancy its honest floor (the file has been observable since then; the
+    history horizon still caps the claim). A listing with no added-at never outranks one
+    that has a date. Deterministic, so the same scan input always binds the same key.
+    """
+
+    def sort_key(rk: int) -> tuple[bool, float, int]:
+        added = index.by_rating_key[rk].added_at
+        return (added is None, added.timestamp() if added is not None else 0.0, rk)
+
+    return min(rating_keys, key=sort_key)
+
+
 _MOVIE_ID_PRIORITY: tuple[str, ...] = ("tmdb", "imdb")
 _SHOW_ID_PRIORITY: tuple[str, ...] = ("tvdb",)
 
@@ -359,6 +502,7 @@ def resolve(
     title: str | None,
     year: int | None,
     file_basename: str | None,
+    file_size: int | None = None,
     index: PlexIndex,
     id_priority: Sequence[str],
 ) -> Resolution:
@@ -367,28 +511,64 @@ def resolve(
     See the module docstring for the ladder and the contradiction veto. ``id_priority`` is
     the order external ids are tried (movies: tmdb then imdb; shows: tvdb) -- callers use
     :func:`resolve_movie` / :func:`resolve_show` so they cannot pass the wrong order.
+    ``file_size`` is the exact byte count the *arr records for its file (movies only;
+    a show is bound by its folder, which has no size) and is consulted only when the file
+    name alone cannot narrow an ambiguous id.
     """
+    basename = to_basename(file_basename)
+
     # -- Tier 1: external id -------------------------------------------------
-    tier1: tuple[int, MatchedBy] | None = None
+    tier1: tuple[int, MatchedBy, str, tuple[int, ...]] | None = None
     for kind in id_priority:
         value = ids.get(kind)
         if value is None:
             continue
         hits = index._by_id(kind).get(value, [])
         if len(hits) == 1:
-            tier1 = (hits[0], MatchedBy(kind))
+            tier1 = (
+                hits[0],
+                MatchedBy(kind),
+                f"Bound to Plex item by {kind.upper()} id {value}",
+                (),
+            )
             break
         if len(hits) >= 2:
-            # A stable id that names two Plex items is ambiguous by definition. Abstain --
-            # never fall through to a weaker tier that might "resolve" it by guessing.
-            return Resolution.abstain(
-                f"Kept: {kind.upper()} id {value} names {len(hits)} Plex items (ambiguous)"
-            )
+            # Two or more Plex items share this id: the same content in several copies.
+            # The *arr item's own file name (and, if several listings carry that name,
+            # its exact file size) may single out which copy this entry manages -- or
+            # prove that several listings are the same file, bound together (see
+            # _narrow_among_id_hits). The wider library is never consulted to break the
+            # tie, and any residual ambiguity abstains.
+            narrowed, text = _narrow_among_id_hits(hits, basename, file_size, index)
+            if not narrowed:
+                return Resolution.abstain(
+                    f"Kept: {kind.upper()} id {value} names {len(hits)} Plex items "
+                    f"(ambiguous), and {text}"
+                )
+            if len(narrowed) == 1:
+                tier1 = (
+                    narrowed[0],
+                    MatchedBy.ID_AND_BASENAME,
+                    f"Bound to Plex item by {kind.upper()} id {value} plus {text} "
+                    f"({len(hits)} Plex items share the id)",
+                    (),
+                )
+            else:
+                # Byte-identical twins: one file, several listings. Bind the group under
+                # the earliest listing; every key is kept so watch reads cover them all.
+                tier1 = (
+                    _earliest_listed(narrowed, index),
+                    MatchedBy.MERGED_LISTINGS,
+                    f"Bound by {kind.upper()} id {value} plus {text}: the same file is "
+                    f"listed {len(narrowed)} times in Plex, so its watch history is read "
+                    f"from all {len(narrowed)} listings",
+                    tuple(sorted(narrowed)),
+                )
+            break
         # len 0: this id kind names nothing in Plex -> try the next kind.
 
     # -- Tier 2: file basename (only if no id bound) -------------------------
     tier2: int | None = None
-    basename = to_basename(file_basename)
     if tier1 is None and basename is not None:
         hits = index.by_basename.get(basename, [])
         if len(hits) == 1:
@@ -403,6 +583,10 @@ def resolve(
 
     # -- Reconcile -----------------------------------------------------------
     tier1_rk = tier1[0] if tier1 is not None else None
+    if tier1 is not None and tier3 in tier1[3]:
+        # The title resolved to another listing of the very file the merged bind covers.
+        # That is agreement with the group, not a contradiction with its canonical key.
+        tier3 = tier1_rk
     resolved = {rk for rk in (tier1_rk, tier2, tier3) if rk is not None}
     if len(resolved) >= 2:
         parts: list[str] = []
@@ -418,11 +602,8 @@ def resolve(
 
     # Exactly one rating key: bind it, crediting the highest tier that produced it.
     if tier1 is not None:
-        rk, by = tier1
-        item = index.by_rating_key[rk]
-        return Resolution.bound(
-            item, by, f"Bound to Plex item by {by.value.upper()} id {ids.get(by.value)}"
-        )
+        rk, by, bind_detail, merged = tier1
+        return Resolution.bound(index.by_rating_key[rk], by, bind_detail, merged=merged)
     if tier2 is not None:
         item = index.by_rating_key[tier2]
         return Resolution.bound(
@@ -442,14 +623,20 @@ def resolve_movie(
     title: str | None,
     year: int | None,
     file_basename: str | None,
+    file_size: int | None = None,
     index: PlexIndex,
 ) -> Resolution:
-    """Bind a movie: id priority tmdb then imdb."""
+    """Bind a movie: id priority tmdb then imdb.
+
+    ``file_size`` is Radarr's exact byte count for the movie's file, consulted only when
+    several Plex listings carry the same file name under one shared id.
+    """
     return resolve(
         ids=ids,
         title=title,
         year=year,
         file_basename=file_basename,
+        file_size=file_size,
         index=index,
         id_priority=_MOVIE_ID_PRIORITY,
     )
@@ -463,12 +650,17 @@ def resolve_show(
     file_basename: str | None,
     index: PlexIndex,
 ) -> Resolution:
-    """Bind a show: id priority tvdb (Sonarr's primary key)."""
+    """Bind a show: id priority tvdb (Sonarr's primary key).
+
+    No ``file_size``: a show is bound by its folder, and a folder has no one size -- so
+    two same-name folder listings under one id always abstain, never merge.
+    """
     return resolve(
         ids=ids,
         title=title,
         year=year,
         file_basename=file_basename,
+        file_size=None,
         index=index,
         id_priority=_SHOW_ID_PRIORITY,
     )

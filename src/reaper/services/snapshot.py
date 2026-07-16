@@ -34,7 +34,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
 import structlog
-from sqlalchemy import select, text
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from reaper.clients.arr import RadarrClient
@@ -107,6 +107,9 @@ class RawItem:
     matched_by: identity.MatchedBy | None = None
     match_detail: str | None = None
     match_status: identity.MatchStatus | None = None
+    # Every Plex listing the bind covers when the file is listed more than once (includes
+    # plex_rating_key). Watch reads must consult all of them; empty for a normal bind.
+    merged_rating_keys: tuple[int, ...] = ()
     # The matched Plex item's imdb id -- a fallback rating key when Radarr's imdbId is
     # missing or does not resolve in the IMDb dataset.
     plex_imdb_id: str | None = None
@@ -213,8 +216,11 @@ async def build_facts(
         # somebody is watching.
         streaming = Unknown(reason="could not read active sessions", source="tautulli")
     else:
+        # A merged bind covers several listings of one file; someone streaming ANY of
+        # them is streaming this very file, so the veto checks every key in the group.
+        watch_keys = item.merged_rating_keys or ((rating_key,) if rating_key else ())
         streaming = Known(
-            value=rating_key in context.active_rating_keys if rating_key else False,
+            value=any(key in context.active_rating_keys for key in watch_keys),
             source="tautulli",
         )
 
@@ -374,6 +380,21 @@ async def scan(
         rating_keys={i.plex_rating_key for i in items if i.plex_rating_key},
         window_days=_popularity_window(movie_policy),
     )
+    # A merged bind is one file listed several times in Plex; its plays are split across
+    # the listings' rating keys. Fold each group's stats onto its canonical key, or the
+    # item would under-count its own watching -- the direction that condemns.
+    await _fold_merged_watch_stats(
+        engine,
+        groups={
+            i.plex_rating_key: i.merged_rating_keys
+            for i in items
+            if i.plex_rating_key is not None and i.merged_rating_keys
+        },
+        window_days=_popularity_window(movie_policy),
+        last_played=last_played,
+        watchers_window=watchers_window,
+        watchers_all_time=watchers_all_time,
+    )
     # The owner's manual overrides -- ``media_key -> "spare" | "reap"`` -- loaded once and
     # applied to every item's verdict. A spared file is judged PROTECT rather than surfacing in
     # "would delete" again; a reaped one is forced onto the list (short of a hard safety gate).
@@ -479,6 +500,7 @@ async def scan(
             matched_by=item.matched_by,
             match_detail=item.match_detail,
             match_status=item.match_status,
+            merged_rating_keys=item.merged_rating_keys,
             override=whitelist.effective_override(item.media_key, override_map),
         )
         if verdict == "condemn":
@@ -576,6 +598,7 @@ async def _judge_item(
     matched_by: identity.MatchedBy | None = None,
     match_detail: str | None = None,
     match_status: identity.MatchStatus | None = None,
+    merged_rating_keys: tuple[int, ...] = (),
     extra_results: Sequence[GateResult] = (),
     override: str | None = None,
 ) -> str:
@@ -651,6 +674,7 @@ async def _judge_item(
                 matched_by=matched_by,
                 match_detail=match_detail,
                 match_status=match_status,
+                merged_rating_keys=merged_rating_keys,
             ),
             created_at=now,
         )
@@ -713,6 +737,7 @@ def _explain(
     matched_by: identity.MatchedBy | None = None,
     match_detail: str | None = None,
     match_status: identity.MatchStatus | None = None,
+    merged_rating_keys: tuple[int, ...] = (),
 ) -> str:
     """The why-panel.
 
@@ -747,6 +772,10 @@ def _explain(
                 "by": matched_by.value if matched_by is not None else None,
                 "detail": match_detail,
                 "rating_key": plex_rating_key,
+                # Every listing a merged bind covers (one file listed several times in
+                # Plex). The executor's live interlocks re-read THIS list, so the keys
+                # they protect are exactly the keys the owner was shown.
+                "merged_rating_keys": (list(merged_rating_keys) if merged_rating_keys else None),
             },
             "signals": [
                 {
@@ -907,6 +936,7 @@ async def build_movie_index(
                         added_at=from_epoch(row.get("added_at")),
                         ids=enriched.ids if enriched is not None else identity.ExternalIds(),
                         file_basename=enriched.file_basename if enriched is not None else None,
+                        files=enriched.files if enriched is not None else (),
                     )
                 )
             if len(rows) < 1000:
@@ -930,6 +960,21 @@ def _movie_file_basename(movie: Mapping[str, Any]) -> str | None:
     if not isinstance(movie_file, dict):
         return None
     return identity.to_basename(movie_file.get("relativePath") or movie_file.get("path"))
+
+
+def _movie_file_size(movie: Mapping[str, Any]) -> int | None:
+    """The exact byte count Radarr records for the movie's file, or ``None``.
+
+    The corroborator that tells apart several Plex listings carrying the same file name:
+    an exact byte match is the same file (or a bit-identical copy of it); a mismatch is a
+    different file. Deliberately ``movieFile.size`` and not ``sizeOnDisk``, which can
+    include extras -- the comparison must be file-to-file. Zero or missing is unknown.
+    """
+    movie_file = movie.get("movieFile")
+    if not isinstance(movie_file, dict):
+        return None
+    size = movie_file.get("size")
+    return int(size) if isinstance(size, int) and size > 0 else None
 
 
 def _summary(text: Any) -> str | None:
@@ -987,6 +1032,7 @@ def _raw_items(
             title=str(movie.get("title") or ""),
             year=int(movie["year"]) if movie.get("year") else None,
             file_basename=_movie_file_basename(movie),
+            file_size=_movie_file_size(movie),
             index=plex_index,
         )
         matched = resolution.plex_item
@@ -1013,6 +1059,7 @@ def _raw_items(
                 matched_by=resolution.matched_by,
                 match_detail=resolution.detail,
                 match_status=resolution.status,
+                merged_rating_keys=resolution.merged_rating_keys,
                 plex_imdb_id=matched.ids.imdb if matched is not None else None,
                 genres=tuple(str(g) for g in (movie.get("genres") or []) if g),
                 quality=_movie_quality(movie),
@@ -1077,6 +1124,64 @@ async def _watch_stats(
         window,
         ever,
     )
+
+
+async def _fold_merged_watch_stats(
+    engine: AsyncEngine,
+    *,
+    groups: Mapping[int, tuple[int, ...]],
+    window_days: int,
+    last_played: dict[int, datetime],
+    watchers_window: dict[int, int],
+    watchers_all_time: dict[int, int],
+) -> None:
+    """Fold each merged listing group's watch stats onto its canonical rating key.
+
+    A merged group is one file listed several times in Plex (see
+    ``identity.MatchedBy.MERGED_LISTINGS``); its plays are split across the listings'
+    rating keys. Exact, not additive: distinct watchers are counted over the union of the
+    group's events, so one person who played the file through two listings still counts
+    once, and last-played is the latest play through any listing. Only the canonical
+    keys' entries are rewritten; every other item's stats are untouched.
+    """
+    all_keys = sorted({key for group in groups.values() for key in group})
+    if not all_keys:
+        return
+    window_start = int((utcnow() - timedelta(days=window_days)).timestamp())
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                text(
+                    "SELECT rating_key, user_id, MAX(watched_at) AS last FROM watch_event "
+                    "WHERE media_type = 'movie' AND rating_key IN :keys "
+                    "GROUP BY rating_key, user_id"
+                ).bindparams(bindparam("keys", expanding=True)),
+                {"keys": all_keys},
+            )
+        ).all()
+    per_key: dict[int, list[Any]] = {}
+    for row in rows:
+        per_key.setdefault(int(row.rating_key), []).append(row)
+    for canonical, group in groups.items():
+        group_rows = [row for key in group for row in per_key.get(key, [])]
+        if not group_rows:
+            continue  # no plays anywhere in the group: leave the base (empty) stats be
+        played = from_epoch(max(int(row.last) for row in group_rows))
+        if played is not None:
+            last_played[canonical] = played
+        # A user's latest play being inside the window is the same as having any play
+        # inside it. Rows with no user still move last-played but never count a watcher,
+        # matching COUNT(DISTINCT user_id) in the base queries.
+        watchers_window[canonical] = len(
+            {
+                row.user_id
+                for row in group_rows
+                if row.user_id is not None and int(row.last) >= window_start
+            }
+        )
+        watchers_all_time[canonical] = len(
+            {row.user_id for row in group_rows if row.user_id is not None}
+        )
 
 
 async def sync_protection_lists(

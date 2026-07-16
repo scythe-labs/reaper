@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from reaper.engine.identity import (
     ExternalIds,
     MatchedBy,
+    MatchStatus,
+    PlexFile,
     PlexIndex,
     PlexItem,
     parse_guids,
@@ -34,14 +36,20 @@ def _item(
     tmdb: object = None,
     tvdb: object = None,
     basename: str | None = None,
+    size: int | None = None,
+    files: tuple[PlexFile, ...] | None = None,
+    added: datetime | None = None,
 ) -> PlexItem:
     return PlexItem(
         rating_key=rk,
         title=title,
         year=year,
-        added_at=ADDED,
+        added_at=added if added is not None else ADDED,
         ids=ExternalIds.of(imdb=imdb, tmdb=tmdb, tvdb=tvdb),
         file_basename=basename,
+        # Mirror the production builders: both file fields derive from one media list, so
+        # a single-file item's file set defaults to its one basename (+ optional size).
+        files=files if files is not None else ((PlexFile(basename, size),) if basename else ()),
     )
 
 
@@ -121,6 +129,628 @@ class TestTheIdTierBindsAndDisambiguates:
         # tmdb 1001 names nothing -> silence -> title+year binds.
         assert res.rating_key == 100
         assert res.matched_by is MatchedBy.TITLE_YEAR
+
+
+# ---------------------------------------------------------------------------
+# Narrowing an ambiguous id by the *arr's own file name -- corroboration inside the
+# id's candidate set, never a consult of the wider library.
+# ---------------------------------------------------------------------------
+
+
+class TestAnAmbiguousIdNarrowedByFileName:
+    """A split library holds the same content as several Plex copies (an HD and a 4K
+    section, a curated section re-listing a title), so one id names 2+ rating keys. The
+    *arr item's file name may pick which copy this entry manages; anything less than
+    exactly one match keeps abstaining."""
+
+    def _split_library(self) -> PlexIndex:
+        # The same movie in two sections; the file names carry the quality marker.
+        return PlexIndex.build(
+            [
+                _item(100, year=2020, tmdb=1001, basename="example (2020) 1080p.mkv"),
+                _item(200, year=2020, tmdb=1001, basename="example (2020) 2160p.mkv"),
+            ]
+        )
+
+    def test_a_file_name_matching_exactly_one_copy_binds_it(self) -> None:
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="/movies/Example (2020)/example (2020) 1080p.mkv",
+            index=self._split_library(),
+        )
+        assert res.rating_key == 100
+        assert res.matched_by is MatchedBy.ID_AND_BASENAME
+        assert res.status is MatchStatus.MATCHED
+        # The audit detail names both signals: the id and the file name that picked the copy.
+        assert "TMDB id 1001" in res.detail
+        assert "example (2020) 1080p.mkv" in res.detail
+
+    def test_two_instances_each_bind_their_own_copy(self) -> None:
+        """The HD and 4K Radarr instances carry the same tmdb id but manage different
+        files -- each must bind its own Plex row, never the sibling's."""
+        index = self._split_library()
+        hd = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="/movies-hd/Example (2020)/Example (2020) 1080p.mkv",
+            index=index,
+        )
+        uhd = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="/movies-4k/Example (2020)/Example (2020) 2160p.mkv",
+            index=index,
+        )
+        assert hd.rating_key == 100
+        assert uhd.rating_key == 200
+
+    def test_a_file_name_matching_none_abstains(self) -> None:
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="example (2020) remux.mkv",
+            index=self._split_library(),
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+        assert "matches none" in res.detail
+
+    def test_a_file_name_matching_both_abstains_without_sizes(self) -> None:
+        """The curated-section case: the same physical file re-listed, so both copies
+        carry the same leaf. With no file size on either side there is nothing left to
+        corroborate with, so it must keep abstaining. (With exact sizes the twins merge:
+        see TestByteIdenticalTwinListings.)"""
+        index = PlexIndex.build(
+            [
+                _item(100, year=2020, tmdb=1001, basename="example (2020).mkv"),
+                _item(200, year=2020, tmdb=1001, basename="example (2020).mkv"),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="example (2020).mkv",
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+        assert "matches 2" in res.detail
+
+    def test_one_of_three_copies_binds_and_two_of_three_abstains(self) -> None:
+        index = PlexIndex.build(
+            [
+                _item(100, year=2020, tmdb=1001, basename="example a.mkv"),
+                _item(200, year=2020, tmdb=1001, basename="example b.mkv"),
+                _item(300, year=2020, tmdb=1001, basename="example b.mkv"),
+            ]
+        )
+        one = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="example a.mkv",
+            index=index,
+        )
+        assert one.rating_key == 100
+        two = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="example b.mkv",
+            index=index,
+        )
+        assert two.rating_key is None
+        assert "matches 2" in two.detail
+
+    def test_an_item_with_no_file_name_abstains(self) -> None:
+        for missing in (None, ""):
+            res = resolve_movie(
+                ids=ExternalIds.of(tmdb=1001),
+                title="Example Movie",
+                year=2020,
+                file_basename=missing,
+                index=self._split_library(),
+            )
+            assert res.rating_key is None
+            assert res.status is MatchStatus.AMBIGUOUS
+            assert "no file name" in res.detail
+
+    def test_a_copy_with_unknown_files_abstains(self) -> None:
+        """One candidate's files could not be seen. That copy might be the very file
+        this item manages, so "could not look" never counts as "looked and it was
+        different" -- even though the other copy's name matches."""
+        index = PlexIndex.build(
+            [
+                _item(100, year=2020, tmdb=1001, basename="example (2020) 1080p.mkv"),
+                _item(200, year=2020, tmdb=1001, basename=None),  # sweep saw no files
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="example (2020) 1080p.mkv",
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+        assert "unknown" in res.detail
+
+    def test_a_merged_copy_is_compared_by_all_its_files(self) -> None:
+        """One Plex row can merge several editions (several files). A re-list of its
+        SECOND file must not look 'unique' just because the merged row is indexed by its
+        first -- narrowing sees every file, finds two owners, and abstains."""
+        index = PlexIndex.build(
+            [
+                _item(
+                    100,
+                    year=2020,
+                    tmdb=1001,
+                    basename="example.mkv",
+                    files=(PlexFile("example.mkv"), PlexFile("example 4k.mkv")),
+                ),
+                _item(200, year=2020, tmdb=1001, basename="example 4k.mkv"),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="example 4k.mkv",
+            index=index,
+        )
+        assert res.rating_key is None
+        assert "matches 2" in res.detail
+
+    def test_a_merged_copy_still_binds_when_only_it_owns_the_file(self) -> None:
+        index = PlexIndex.build(
+            [
+                _item(
+                    100,
+                    year=2020,
+                    tmdb=1001,
+                    basename="example.mkv",
+                    files=(PlexFile("example.mkv"), PlexFile("example 4k.mkv")),
+                ),
+                _item(200, year=2020, tmdb=1001, basename="example remux.mkv"),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="example 4k.mkv",
+            index=index,
+        )
+        assert res.rating_key == 100
+        assert res.matched_by is MatchedBy.ID_AND_BASENAME
+
+    def test_a_failed_narrow_never_falls_through_to_the_wider_library(self) -> None:
+        """THE no-fall-through property. The arr file name matches none of the id's
+        candidates, but it WOULD uniquely match a third Plex item in the global basename
+        map -- and title+year would uniquely resolve that same third item. Falling
+        through would bind outside the id's candidate set: a guess. Abstain."""
+        index = PlexIndex.build(
+            [
+                _item(100, title="Same Title", year=2020, tmdb=1001, basename="copy a.mkv"),
+                _item(200, title="Same Title", year=2020, tmdb=1001, basename="copy b.mkv"),
+                # The out-of-set item: unique basename, unique title+year.
+                _item(300, title="Other Title", year=2020, basename="elsewhere.mkv"),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Other Title",
+            year=2020,
+            file_basename="elsewhere.mkv",
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+        # And a bind produced by narrowing stays inside the candidate set.
+        narrowed = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Same Title",
+            year=2020,
+            file_basename="copy a.mkv",
+            index=index,
+        )
+        assert narrowed.rating_key == 100
+
+    def test_a_narrowed_bind_is_still_vetoed_by_a_contradicting_title(self) -> None:
+        """The contradiction veto survives narrowing: the file name picks one copy, but
+        title+year positively resolves a DIFFERENT, third row. Two tiers disagreeing is
+        still a keep."""
+        index = PlexIndex.build(
+            [
+                _item(100, title="Split Title", year=2020, tmdb=1001, basename="copy a.mkv"),
+                _item(200, title="Split Title", year=2020, tmdb=1001, basename="copy b.mkv"),
+                _item(300, title="Example Movie", year=2020),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="copy a.mkv",
+            index=index,
+        )
+        assert res.rating_key is None
+        assert "disagree" in res.detail
+
+    def test_narrowing_runs_on_the_second_id_kind_too(self) -> None:
+        """tmdb names nothing in Plex -> the ladder tries imdb, which names two copies;
+        narrowing applies to whichever id kind produced the candidates."""
+        index = PlexIndex.build(
+            [
+                _item(100, year=2020, imdb="tt0000001", basename="example a.mkv"),
+                _item(200, year=2020, imdb="tt0000001", basename="example b.mkv"),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=9999, imdb="tt0000001"),
+            title="Example Movie",
+            year=2020,
+            file_basename="example a.mkv",
+            index=index,
+        )
+        assert res.rating_key == 100
+        assert res.matched_by is MatchedBy.ID_AND_BASENAME
+        assert "IMDB id tt0000001" in res.detail
+
+    def test_narrowing_normalizes_both_sides(self) -> None:
+        """Candidates may carry full paths and different case; the comparison must go
+        through the one shared normalizer on both sides."""
+        index = PlexIndex.build(
+            [
+                _item(
+                    100,
+                    year=2020,
+                    tmdb=1001,
+                    basename="/media/movies/Example (2020) 1080p.mkv",
+                    files=(PlexFile("/media/movies/Example (2020) 1080p.mkv"),),
+                ),
+                _item(
+                    200,
+                    year=2020,
+                    tmdb=1001,
+                    basename="/media/movies-4k/Example (2020) 2160p.mkv",
+                    files=(PlexFile("/media/movies-4k/Example (2020) 2160p.mkv"),),
+                ),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="C:\\Movies\\EXAMPLE (2020) 1080P.mkv",
+            index=index,
+        )
+        assert res.rating_key == 100
+
+    def test_a_show_narrows_by_its_folder_name(self) -> None:
+        """Sonarr's leaf is the series folder. Split TV sections with per-instance
+        folder conventions narrow the same way movies do."""
+        index = PlexIndex.build(
+            [
+                _item(300, title="Example Show", tvdb=2001, basename="example show"),
+                _item(400, title="Example Show", tvdb=2001, basename="example show (2160p)"),
+            ]
+        )
+        res = resolve_show(
+            ids=ExternalIds.of(tvdb=2001),
+            title="Example Show",
+            year=None,
+            file_basename="/tv-4k/Example Show (2160p)",
+            index=index,
+        )
+        assert res.rating_key == 400
+        assert res.matched_by is MatchedBy.ID_AND_BASENAME
+
+    def test_a_unique_id_bind_keeps_its_exact_provenance(self) -> None:
+        """The narrowing refactor must not shift the unique-hit path by a byte: same
+        rating key, same MatchedBy, same detail string as before."""
+        index = PlexIndex.build([_item(100, tmdb=1001), _item(200, title="Other", tmdb=1002)])
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=None,
+            file_basename=None,
+            index=index,
+        )
+        assert res.rating_key == 100
+        assert res.matched_by is MatchedBy.TMDB
+        assert res.detail == "Bound to Plex item by TMDB id 1001"
+
+
+# ---------------------------------------------------------------------------
+# A file name matching SEVERAL candidates: the exact byte size is the corroborator left.
+# ---------------------------------------------------------------------------
+
+
+class TestByteIdenticalTwinListings:
+    """When the file name matches several of an id's candidates, the *arr's exact byte
+    size decides. A size singling out one listing binds it; several listings at exactly
+    that size are byte-identical twins of the *arr's own file (verified live: a curated
+    section re-lists the very file under its own rating key, at another path) and bind as
+    one GROUP, every listing's key kept so watch reads cover them all. Any unknown on
+    either side keeps abstaining."""
+
+    def _relisted_library(self) -> PlexIndex:
+        # One file listed twice (a movie section plus a curated re-list): same name, same
+        # exact size, listed years apart. Plus the 4K sibling with its own name and size.
+        return PlexIndex.build(
+            [
+                _item(
+                    100,
+                    year=2020,
+                    tmdb=1001,
+                    basename="example (2020).mkv",
+                    size=7_000,
+                    added=datetime(2015, 1, 1, tzinfo=UTC),
+                ),
+                _item(
+                    200,
+                    year=2020,
+                    tmdb=1001,
+                    basename="example (2020).mkv",
+                    size=7_000,
+                    added=datetime(2021, 6, 1, tzinfo=UTC),
+                ),
+                _item(300, year=2020, tmdb=1001, basename="example (2020) 2160p.mkv", size=70_000),
+            ]
+        )
+
+    def test_twin_listings_bind_as_a_merged_group(self) -> None:
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="example (2020).mkv",
+            file_size=7_000,
+            index=self._relisted_library(),
+        )
+        assert res.status is MatchStatus.MATCHED
+        assert res.matched_by is MatchedBy.MERGED_LISTINGS
+        # Canonical = the earliest listing; the group carries every listing's key.
+        assert res.rating_key == 100
+        assert res.merged_rating_keys == (100, 200)
+        assert "listed 2 times" in res.detail
+
+    def test_the_canonical_key_is_the_earliest_listed(self) -> None:
+        """Deterministic and honest: the original listing (a curated re-list comes years
+        later) draws the poster and gives dormancy its floor, whatever the key order."""
+        index = PlexIndex.build(
+            [
+                _item(
+                    100,
+                    year=2020,
+                    tmdb=1001,
+                    basename="example.mkv",
+                    size=7_000,
+                    added=datetime(2022, 1, 1, tzinfo=UTC),
+                ),
+                _item(
+                    200,
+                    year=2020,
+                    tmdb=1001,
+                    basename="example.mkv",
+                    size=7_000,
+                    added=datetime(2012, 1, 1, tzinfo=UTC),
+                ),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="example.mkv",
+            file_size=7_000,
+            index=index,
+        )
+        assert res.rating_key == 200
+        assert res.merged_rating_keys == (100, 200)
+
+    def test_a_size_singling_out_one_listing_binds_it(self) -> None:
+        """Two same-name listings at DIFFERENT sizes (a re-list gone stale after an
+        upgrade): the *arr's exact size picks its own file's listing, no merge."""
+        index = PlexIndex.build(
+            [
+                _item(100, year=2020, tmdb=1001, basename="example.mkv", size=7_000),
+                _item(200, year=2020, tmdb=1001, basename="example.mkv", size=5_000),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="example.mkv",
+            file_size=7_000,
+            index=index,
+        )
+        assert res.rating_key == 100
+        assert res.matched_by is MatchedBy.ID_AND_BASENAME
+        assert res.merged_rating_keys == ()
+        assert "exact file size" in res.detail
+
+    def test_no_arr_size_keeps_abstaining(self) -> None:
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="example (2020).mkv",
+            index=self._relisted_library(),
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+        assert "no file size" in res.detail
+
+    def test_an_unknown_listing_size_keeps_abstaining(self) -> None:
+        """One matching listing's size could not be seen. It might be the same file; it
+        might not. "Could not look" is never "looked and it was different"."""
+        index = PlexIndex.build(
+            [
+                _item(100, year=2020, tmdb=1001, basename="example.mkv", size=7_000),
+                _item(200, year=2020, tmdb=1001, basename="example.mkv", size=None),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="example.mkv",
+            file_size=7_000,
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+        assert "file size is unknown" in res.detail
+
+    def test_a_size_matching_no_listing_keeps_abstaining(self) -> None:
+        index = PlexIndex.build(
+            [
+                _item(100, year=2020, tmdb=1001, basename="example.mkv", size=7_000),
+                _item(200, year=2020, tmdb=1001, basename="example.mkv", size=5_000),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="example.mkv",
+            file_size=6_000,
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+        assert "none of those files is the same size" in res.detail
+
+    def test_two_twins_merge_while_the_odd_size_stays_out(self) -> None:
+        """Three same-name listings: two byte-identical twins and one at another size.
+        The twins merge; the odd listing never enters the group."""
+        index = PlexIndex.build(
+            [
+                _item(100, year=2020, tmdb=1001, basename="example.mkv", size=7_000),
+                _item(200, year=2020, tmdb=1001, basename="example.mkv", size=7_000),
+                _item(300, year=2020, tmdb=1001, basename="example.mkv", size=5_000),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="example.mkv",
+            file_size=7_000,
+            index=index,
+        )
+        assert res.rating_key == 100
+        assert res.merged_rating_keys == (100, 200)
+
+    def test_a_unique_name_match_binds_without_a_size_check(self) -> None:
+        """The name alone identifying one candidate binds it even when the recorded size
+        disagrees (Plex metadata lags a file upgrade). Size is consulted only to break a
+        name tie, never to veto the established single-match path."""
+        index = PlexIndex.build(
+            [
+                _item(100, year=2020, tmdb=1001, basename="example a.mkv", size=5_000),
+                _item(200, year=2020, tmdb=1001, basename="example b.mkv", size=9_000),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="example a.mkv",
+            file_size=7_000,
+            index=index,
+        )
+        assert res.rating_key == 100
+        assert res.matched_by is MatchedBy.ID_AND_BASENAME
+
+    def test_a_title_resolving_to_the_other_twin_is_agreement(self) -> None:
+        """Tier 3 resolves to the group's OTHER listing (only the newer twin carries the
+        year, so title+year singles it out). A hit inside the merged group corroborates
+        the bind; it must not read as a contradiction with the canonical key."""
+        index = PlexIndex.build(
+            [
+                _item(
+                    100,
+                    title="Twin Title",
+                    year=None,
+                    tmdb=1001,
+                    basename="example.mkv",
+                    size=7_000,
+                    added=datetime(2012, 1, 1, tzinfo=UTC),
+                ),
+                _item(
+                    200,
+                    title="Twin Title",
+                    year=2020,
+                    tmdb=1001,
+                    basename="example.mkv",
+                    size=7_000,
+                    added=datetime(2022, 1, 1, tzinfo=UTC),
+                ),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Twin Title",
+            year=2020,
+            file_basename="example.mkv",
+            file_size=7_000,
+            index=index,
+        )
+        assert res.rating_key == 100
+        assert res.matched_by is MatchedBy.MERGED_LISTINGS
+        assert res.merged_rating_keys == (100, 200)
+
+    def test_a_merged_bind_is_still_vetoed_by_an_out_of_group_title(self) -> None:
+        """The contradiction veto survives the merge: title+year positively resolves a
+        third row OUTSIDE the group. Two tiers disagreeing is still a keep."""
+        index = PlexIndex.build(
+            [
+                _item(100, title="Split Title", year=2020, tmdb=1001, basename="c.mkv", size=7_000),
+                _item(200, title="Split Title", year=2020, tmdb=1001, basename="c.mkv", size=7_000),
+                _item(300, title="Example Movie", year=2020),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="c.mkv",
+            file_size=7_000,
+            index=index,
+        )
+        assert res.rating_key is None
+        assert "disagree" in res.detail
+
+    def test_a_show_never_merges_its_folders(self) -> None:
+        """A show is bound by its folder, and a folder has no one size -- so two
+        same-name folder listings under one id keep abstaining, never merge."""
+        index = PlexIndex.build(
+            [
+                _item(300, title="Example Show", tvdb=2001, basename="example show"),
+                _item(400, title="Example Show", tvdb=2001, basename="example show"),
+            ]
+        )
+        res = resolve_show(
+            ids=ExternalIds.of(tvdb=2001),
+            title="Example Show",
+            year=None,
+            file_basename="/tv/Example Show",
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+        assert "no file size" in res.detail
 
 
 # ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ the independent backstop (proven separately in test_guarded_transport / test_ple
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
@@ -828,6 +829,24 @@ class TestStreamingVeto:
         assert report.skipped == 1
         assert radarr.delete_calls == []
 
+    async def test_a_stream_through_the_files_other_listing_vetoes(
+        self, session: AsyncSession
+    ) -> None:
+        """A merged bind is one file listed twice in Plex. The candidate stores the
+        canonical key; someone is watching through the OTHER listing. Deleting would cut
+        off that very stream, so the veto must cover every key in the group."""
+        snapshot_id = await _snapshot_one(
+            session, media_key="radarr:1:1", rating_key=700, merged_keys=(700, 950)
+        )
+        run = await _plan(session, snapshot_id)
+        radarr = FakeRadarr()
+        gateway = _gateway(radarr={1: radarr}, plex=FakePlex(streams=[_stream(rating_key=950)]))
+
+        report = await _real(session, run, gateway)
+
+        assert report.skipped == 1
+        assert radarr.delete_calls == []
+
 
 class TestWatchedSinceApproval:
     async def test_a_play_after_approval_spares_the_item(self, session: AsyncSession) -> None:
@@ -888,6 +907,27 @@ class TestWatchedSinceApproval:
 
         assert report.skipped == 1
         assert radarr.delete_calls == []
+
+    async def test_a_play_through_the_files_other_listing_spares(
+        self, session: AsyncSession
+    ) -> None:
+        """A merged bind: the post-approval play was recorded under the file's OTHER
+        listing, not the stored canonical key. It is a play of the very file this delete
+        would remove, so every key in the group is queried and the item is spared."""
+        snapshot_id = await _snapshot_one(
+            session, media_key="radarr:1:1", rating_key=700, merged_keys=(700, 950)
+        )
+        run = await _plan(session, snapshot_id)
+        after_approval = int((utcnow() + timedelta(hours=1)).timestamp())
+        radarr = FakeRadarr()
+        tautulli = FakeTautulli(rows_by_key={950: [{"stopped": after_approval}]})
+        gateway = _gateway(radarr={1: radarr}, tautulli=tautulli)
+
+        report = await _real(session, run, gateway)
+
+        assert report.skipped == 1
+        assert radarr.delete_calls == []
+        assert {c["rating_key"] for c in tautulli.history_calls} == {700, 950}
 
 
 class TestSeasonLiveSend:
@@ -1139,13 +1179,20 @@ async def _snapshot_one(
     rating_key: int | None,
     size: int = 1 * GB,
     media_type: str = "movie",
+    merged_keys: tuple[int, ...] = (),
 ) -> int:
     """A snapshot with one condemned candidate carrying a Plex rating key.
 
     Distinct from ``_snapshot_with`` because the real send needs ``plex_rating_key`` (the
     streaming veto and played-since checks address the item by it) and, for TV, a
-    ``media_type`` of ``season``."""
-    return await _snapshot_many(session, [(media_key, size, rating_key)], media_type=media_type)
+    ``media_type`` of ``season``. ``merged_keys`` writes the match block a merged bind
+    stores (one file listed several times in Plex), which those same checks re-read."""
+    explanation = (
+        json.dumps({"match": {"merged_rating_keys": list(merged_keys)}}) if merged_keys else "{}"
+    )
+    return await _snapshot_many(
+        session, [(media_key, size, rating_key)], media_type=media_type, explanation=explanation
+    )
 
 
 async def _snapshot_many(
@@ -1153,6 +1200,7 @@ async def _snapshot_many(
     items: list[tuple[str, int, int | None]],
     *,
     media_type: str = "movie",
+    explanation: str = "{}",
 ) -> int:
     now = utcnow()
     snapshot = Snapshot(
@@ -1176,7 +1224,7 @@ async def _snapshot_many(
                 verdict="condemn",
                 score=90,
                 coverage_bp=10_000,
-                explanation_json="{}",
+                explanation_json=explanation,
                 created_at=now,
             )
         )
@@ -1373,12 +1421,21 @@ class FakePlex:
 
 
 class FakeTautulli:
-    """A stand-in Tautulli whose history rows and error behaviour a test controls."""
+    """A stand-in Tautulli whose history rows and error behaviour a test controls.
+
+    ``rows`` answers every key alike; ``rows_by_key`` answers per rating key (empty for
+    keys not listed), for the merged-listings tests where WHICH key was played matters.
+    """
 
     def __init__(
-        self, *, rows: list[dict[str, Any]] | None = None, raise_error: bool = False
+        self,
+        *,
+        rows: list[dict[str, Any]] | None = None,
+        rows_by_key: dict[int, list[dict[str, Any]]] | None = None,
+        raise_error: bool = False,
     ) -> None:
         self._rows = rows or []
+        self._rows_by_key = rows_by_key
         self._raise = raise_error
         self.history_calls: list[dict[str, Any]] = []
 
@@ -1394,4 +1451,7 @@ class FakeTautulli:
         )
         if self._raise:
             raise IntegrationError("tautulli", "history unavailable")
+        if self._rows_by_key is not None:
+            key = rating_key if rating_key is not None else parent_rating_key
+            return {"data": list(self._rows_by_key.get(key or 0, []))}
         return {"data": list(self._rows)}

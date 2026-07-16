@@ -7,9 +7,51 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-15 (custom weighting rules + season-keep rework — backend landed)
+Last updated: 2026-07-16 (ambiguous ids narrow by file name, then by exact size; twin
+listings of one file merge)
 
-### Newest — operator-authored weighting rules, and a season-keep rework (backend done, UI pending)
+### Newest — an ambiguous id narrows by file name, then exact size (the split-library fix)
+
+On a split library (HD + 4K sections, curated sections re-listing titles), one external id
+names 2+ Plex items — ~3% of items on a live scan — and every one abstained *forever*:
+watch history invisible, unjudgeable, a wall of "kept to be safe" notices. The duplicate-id
+hits are the same content in several copies, and the *arr item's own file evidence
+identifies which copy the entry manages — so the resolver now narrows, in two steps, always
+inside the id's candidate set (never the wider library; that would be a guess):
+
+1. **File name.** Compared against **all** of a candidate's files (`PlexItem.files` — a
+   merged multi-edition row compared by only its first file makes a re-list of its second
+   file look "unique"), with every candidate's files known. Exactly one match binds
+   (`id_and_basename`).
+2. **Exact byte size**, when the name matches several. Radarr's `movieFile.size` against
+   each matched listing's part size. A size singling out one listing binds it
+   (`id_and_basename`, detail says size took part). Several listings at exactly that size
+   are **byte-identical twins of the *arr's own file** — verified live: a curated section
+   re-lists the very file under its own rating key at a different path, same name, same
+   parent folder name, byte-equal size, listed years apart — and they bind as a **group**
+   (`merged_listings`): canonical key = the earliest listing (the original row; poster,
+   honest dormancy floor), with every listing's key carried in the match block. Watch
+   reads then cover the whole group: the scan folds last-played/watchers as an exact
+   union (one person through two listings counts once), the streaming fact checks every
+   key, and the executor's two live interlocks (streaming veto, played-since-approval)
+   re-read the stored group so a play through the file's other listing spares it. Merging
+   can only ADD evidence of watching, which errs toward keeping; the delete still routes
+   by the *arr's own file, untouched.
+
+Anything else keeps abstaining, with an audit detail that says why the copies could not be
+told apart ("a copy's file name is unknown" / "matches none" / "matches N of them, and it
+has no file size to tell them apart" / "none of those files is the same size"). Shows never
+merge (a folder has no one size). Adversarially reviewed before building; accepted
+residuals: an *arr rename landing exactly on the sibling copy's file name mis-picks until
+Plex rescans (transient, same-content only, gated by grace + supervised execution), and a
+byte-identical *different* rip sharing name+size+id would merge (practically impossible,
+and merging errs toward keep). The contradiction veto treats a tier-3 hit on another
+listing of the same group as agreement, and is otherwise byte-identical; Tiers 2 and 3 are
+untouched. Verified live end to end: a real scan first bound about a quarter of the
+previously-stuck items by name alone (per-copy scores immediately diverging), and the size
+merge then resolved the remaining same-file re-lists.
+
+### Earlier — operator-authored weighting rules, and a season-keep rework (backend done, UI pending)
 
 The policy grew a Radarr-style **custom rules** surface, mapped onto Reaper's two-lane safety
 model rather than Radarr's signed sum. Positive "reasons to remove" become **unsigned custom

@@ -642,6 +642,31 @@ class Executor:
 
     # -- live pre-delete interlocks: read-only, fail-closed ----------------
 
+    def _equivalent_keys(self, candidate: Candidate) -> list[int]:
+        """Every Plex rating key this candidate's watch evidence lives under.
+
+        Usually just ``plex_rating_key``. A merged bind (one file listed several times in
+        Plex, ``matched_by = merged_listings``) recorded every listing's key in its
+        explanation's match block, and the live interlocks must consult all of them: a
+        play or an active stream through the file's other listing is a play of the very
+        file this delete would remove. Read back from the stored explanation, so the keys
+        the interlocks protect are exactly the keys the owner was shown. An explanation
+        without the list (every non-merged bind, and every snapshot from before merging
+        existed) falls back to the single key, which is the pre-merge behaviour.
+        """
+        keys: list[int] = []
+        if candidate.plex_rating_key is not None:
+            keys.append(candidate.plex_rating_key)
+        try:
+            match = json.loads(candidate.explanation_json).get("match") or {}
+            merged = match.get("merged_rating_keys") or []
+        except (ValueError, AttributeError):
+            merged = []
+        for value in merged:
+            if isinstance(value, int) and value not in keys:
+                keys.append(value)
+        return keys
+
     async def _being_watched_now(self, candidate: Candidate) -> bool:
         """Is anyone watching this item -- or a child of it -- right now?
 
@@ -670,7 +695,9 @@ class Executor:
         veto: set[int] = set()
         for stream in streams:
             veto |= stream.veto_keys
-        return candidate.plex_rating_key in veto
+        # Every listing of a merged bind is checked: a stream through the file's second
+        # listing is someone watching the very file this delete would remove.
+        return any(key in veto for key in self._equivalent_keys(candidate))
 
     async def _watched_since_approval(self, candidate: Candidate, approved_at: datetime) -> bool:
         """Has anyone played this item since the plan was approved?
@@ -692,40 +719,43 @@ class Executor:
         gateway = self._gateway
         if gateway is None or gateway.tautulli is None:  # pragma: no cover - execute() guards
             return True
-        rating_key = candidate.plex_rating_key
         # The rating-key skip in _one_delete precedes this, so this is belt-and-suspenders.
-        if rating_key is None:  # pragma: no cover
+        if candidate.plex_rating_key is None:  # pragma: no cover
             return True
 
         # One-day margin (see docstring): guard against Tautulli's local-day boundary
         # dropping a real post-approval play near a UTC-midnight approval.
         after = (approved_at - timedelta(days=1)).strftime("%Y-%m-%d")
-        try:
-            # A season's episodes are children of its rating key; a movie is the key
-            # itself. Querying the season by parent_rating_key catches an episode play the
-            # movie-style rating_key query would miss.
-            if candidate.media_type == "season":
-                data = await gateway.tautulli.history(parent_rating_key=rating_key, after=after)
-            else:
-                data = await gateway.tautulli.history(rating_key=rating_key, after=after)
-        except Exception as exc:
-            # Broad on purpose: any failure to read history -- not just IntegrationError --
-            # means we cannot prove it was not watched, so we spare.
-            log.warning(
-                "reap.watched_since_unreadable", media_key=candidate.media_key, error=str(exc)
-            )
-            return True
-
         approved_ts = int(approved_at.timestamp())
-        rows = data.get("data") if isinstance(data, dict) else None
-        if not isinstance(rows, list):
-            rows = []
-        for row in rows:
-            played_ts = _row_timestamp(row)
-            # An unreadable timestamp (None) spares: the row is present and passed the date
-            # filter, so we treat it as a possible late play rather than assume it is old.
-            if played_ts is None or played_ts >= approved_ts:
+        # A merged bind is one file listed several times in Plex; a play recorded under
+        # ANY of its listings is a play of the file, so every key is queried.
+        for rating_key in self._equivalent_keys(candidate):
+            try:
+                # A season's episodes are children of its rating key; a movie is the key
+                # itself. Querying the season by parent_rating_key catches an episode play
+                # the movie-style rating_key query would miss.
+                if candidate.media_type == "season":
+                    data = await gateway.tautulli.history(parent_rating_key=rating_key, after=after)
+                else:
+                    data = await gateway.tautulli.history(rating_key=rating_key, after=after)
+            except Exception as exc:
+                # Broad on purpose: any failure to read history -- not just
+                # IntegrationError -- means we cannot prove it was not watched, so we spare.
+                log.warning(
+                    "reap.watched_since_unreadable", media_key=candidate.media_key, error=str(exc)
+                )
                 return True
+
+            rows = data.get("data") if isinstance(data, dict) else None
+            if not isinstance(rows, list):
+                rows = []
+            for row in rows:
+                played_ts = _row_timestamp(row)
+                # An unreadable timestamp (None) spares: the row is present and passed the
+                # date filter, so we treat it as a possible late play rather than assume it
+                # is old.
+                if played_ts is None or played_ts >= approved_ts:
+                    return True
         return False
 
     # -- the real send -----------------------------------------------------

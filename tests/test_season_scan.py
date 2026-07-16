@@ -634,6 +634,85 @@ class TestGatherEndToEnd:
         assert by_key["sonarr:1:42:1"].guard_result.outcome == PROTECT
         assert by_key["sonarr:1:42:5"].guard_result.outcome == PROTECT
 
+    async def test_a_show_duplicated_in_plex_narrows_by_its_folder_name(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """Two Plex rows share the show's tvdb id (an HD and a 4K section). The series
+        folder name picks the copy this Sonarr instance manages, and the seasons resolve
+        under that copy's rating key."""
+        series = [
+            {
+                "id": 56,
+                "title": "Duplicated Show",
+                "year": 2020,
+                "status": "ended",
+                "ended": True,
+                "tvdbId": 4242,
+                "path": "/tv-4k/Duplicated Show (2160p)",
+                "seasons": [_season_payload(n) for n in range(1, 6)],
+            }
+        ]
+        tautulli = _FakeTautulli(
+            shows=[
+                {
+                    "rating_key": 800,
+                    "title": "Duplicated Show",
+                    "year": 2020,
+                    "added_at": "1000000",
+                },
+                {
+                    "rating_key": 900,
+                    "title": "Duplicated Show",
+                    "year": 2020,
+                    "added_at": "1000000",
+                },
+            ],
+            children={900: [{"media_index": n, "rating_key": 900 + n} for n in range(1, 6)]},
+        )
+        plex = _FakePlexGuids(
+            {
+                800: identity.PlexItem(
+                    rating_key=800,
+                    title="Duplicated Show",
+                    year=2020,
+                    added_at=None,
+                    ids=identity.ExternalIds.of(tvdb=4242),
+                    file_basename="duplicated show",
+                    files=(identity.PlexFile("duplicated show"),),
+                ),
+                900: identity.PlexItem(
+                    rating_key=900,
+                    title="Duplicated Show",
+                    year=2020,
+                    added_at=None,
+                    ids=identity.ExternalIds.of(tvdb=4242),
+                    file_basename="duplicated show (2160p)",
+                    files=(identity.PlexFile("duplicated show (2160p)"),),
+                ),
+            }
+        )
+        _reasons, degrade = _degrade_sink()
+
+        judgements = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(_FakeSonarr(series))],
+            tautulli=tautulli,  # type: ignore[arg-type]
+            plex=plex,  # type: ignore[arg-type]
+            horizon=utcnow() - timedelta(days=4000),
+            active_rating_keys=set(),
+            activity_degraded=False,
+            keep_last_seasons=2,
+            keep_first_season=True,
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+        )
+
+        pruned = next(j for j in judgements if j.media_key == "sonarr:1:56:3")
+        assert pruned.matched_by is identity.MatchedBy.ID_AND_BASENAME
+        assert pruned.match_status is identity.MatchStatus.MATCHED
+        assert pruned.plex_rating_key == 903  # season 3 under the 4K copy, never the HD one
+
     async def test_plex_supplies_the_rating_and_poster_when_sonarr_cannot(
         self, cache_engine: AsyncEngine
     ) -> None:
