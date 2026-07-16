@@ -244,50 +244,42 @@ class TestBuildLinks:
 # --- the sweep's reload-storm guard ------------------------------------------------
 
 
-class _StrictItem:
-    """A fake plexapi listing row that fails LOUDLY on any attribute outside what a
-    real listing carries. plexapi's ``__getattr__`` silently issues a per-item HTTP
-    reload for unknown attributes; if the sweep ever reads one, this stub turns the
-    would-be reload storm into a test failure naming the attribute."""
-
-    _ALLOWED: ClassVar[dict[str, Any]] = {
-        "ratingKey": 100,
-        "guids": [],
-        "guid": None,
-        "locations": ["/media/example (2020)/example (2020).mkv"],
-        "media": [],
-        "year": 2020,
-        "addedAt": None,
-        "title": "Example",
-        "rating": "7.7",
-        "ratingImage": "rottentomatoes://image.rating.ripe",
-        "audienceRating": "7.1",
-        "audienceRatingImage": "rottentomatoes://image.rating.upright",
-        "contentRating": "TV-14",
-        "duration": 4_800_000,
-    }
-
-    def __getattr__(self, name: str) -> Any:
-        if name in self._ALLOWED:
-            return self._ALLOWED[name]
-        raise AssertionError(
-            f"the sweep read {name!r}, which a listing row does not carry -- "
-            "plexapi would fire a per-item reload here"
-        )
+_LISTING_XML = """
+<MediaContainer size="1" totalSize="1">
+  <Video ratingKey="100" title="Example" year="2020" contentRating="TV-14"
+         duration="4800000" rating="7.7" ratingImage="rottentomatoes://image.rating.ripe"
+         audienceRating="7.1"
+         audienceRatingImage="rottentomatoes://image.rating.upright"/>
+</MediaContainer>
+"""
 
 
 class _StrictSection:
     type = "movie"
-
-    def all(self) -> list[_StrictItem]:
-        return [_StrictItem()]
+    key = 1
 
 
 class _StrictServer:
+    """Serves ONE canned listing container and counts every request.
+
+    The sweep parses the container XML directly, so display metadata can only come
+    from what the listing carried -- and any regression back toward per-item fetches
+    (the reload storm plexapi's object walk silently produced, measured at one HTTP
+    request per title on a real library) shows up here as a second query."""
+
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
     class library:  # noqa: N801 - mirrors the plexapi attribute
         @staticmethod
         def sections() -> list[_StrictSection]:
             return [_StrictSection()]
+
+    def query(self, path: str) -> Any:
+        self.queries.append(path)
+        from xml.etree.ElementTree import fromstring
+
+        return fromstring(_LISTING_XML)  # noqa: S314 - canned literal, not untrusted data
 
 
 async def test_the_sweep_reads_only_listing_attributes() -> None:
@@ -296,7 +288,8 @@ async def test_the_sweep_reads_only_listing_attributes() -> None:
         "token",
         safety=RuntimeSafety(destructive_enabled=False),
     )
-    client._server = _StrictServer()  # type: ignore[assignment]
+    server = _StrictServer()
+    client._server = server  # type: ignore[assignment]
 
     swept = await client.library_guid_index(section_type="movie")
 
@@ -310,3 +303,5 @@ async def test_the_sweep_reads_only_listing_attributes() -> None:
     }
     # No media on this listing -> no resolution, and the badge stays hidden.
     assert item.video_resolution is None
+    # One item, ONE request: the listing itself. Never a per-item metadata call.
+    assert len(server.queries) == 1

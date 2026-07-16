@@ -33,8 +33,10 @@ import asyncio
 import contextlib
 from collections.abc import Iterator
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from xml.etree.ElementTree import Element
 
 import requests
 import structlog
@@ -51,6 +53,81 @@ log = structlog.get_logger(__name__)
 
 #: plexapi issues one PUT per chunk for a batch edit. 100 is Kometa's battle-tested size.
 BATCH_SIZE = 100
+
+#: One listing page of the GUID sweep. Big pages are strictly better here (the cost is
+#: per item, not per page), bounded so a huge library never materialises in one response.
+SWEEP_PAGE_SIZE = 1000
+
+#: Rating keys per batched ``/library/metadata/{ids}`` read (show folder paths).
+METADATA_BATCH_SIZE = 100
+
+
+def _parse_sweep_element(el: Element) -> PlexItem:
+    """One listing row (a movie ``Video`` or show ``Directory``) as a :class:`PlexItem`.
+
+    Pure attribute/child reads on already-fetched XML -- a field the server omitted is
+    ``None``, never a reason for another request. Movies carry ``Media/Part`` children
+    (file name + exact byte size, and the resolution); shows carry no files in a
+    listing, so their ``files`` stay empty here and the folder-path batch in
+    :meth:`PlexClient.library_guid_index` fills them in.
+    """
+    guid_ids = [str(g.get("id") or "") for g in el.findall("Guid")]
+    legacy = el.get("guid")
+    ids = parse_guids(guid_ids, legacy if legacy else None)
+
+    files: list[PlexFile] = []
+    video_resolution: str | None = None
+    for media in el.findall("Media"):
+        if video_resolution is None:
+            raw_res = media.get("videoResolution")
+            video_resolution = str(raw_res) if raw_res else None
+        for part in media.findall("Part"):
+            leaf = to_basename(part.get("file"))
+            if leaf is None:
+                continue
+            raw_size = part.get("size")
+            size = int(raw_size) if raw_size and raw_size.isdigit() else None
+            files.append(PlexFile(basename=leaf, size=size if size and size > 0 else None))
+
+    raw_year = el.get("year")
+    raw_added = el.get("addedAt")
+    raw_duration = el.get("duration")
+    content_rating = el.get("contentRating")
+    # Ratings with provenance: the *RatingImage tells us what each number IS (imdb, RT,
+    # tmdb); a number whose image is missing is dropped by from_plex rather than guessed
+    # at. The audience flag routes an RT image in the audience slot to the audience score.
+    plex_ratings = [
+        r
+        for r in (
+            from_plex(el.get("rating"), el.get("ratingImage")),
+            from_plex(el.get("audienceRating"), el.get("audienceRatingImage"), audience=True),
+        )
+        if r is not None
+    ]
+
+    return PlexItem(
+        rating_key=int(el.get("ratingKey") or 0),
+        title=str(el.get("title") or ""),
+        year=int(raw_year) if raw_year and raw_year.isdigit() else None,
+        # addedAt in the container is a plain epoch, so the instant is exact regardless
+        # of either machine's timezone.
+        added_at=(
+            datetime.fromtimestamp(int(raw_added), tz=UTC)
+            if raw_added and raw_added.lstrip("-").isdigit() and int(raw_added) > 0
+            else None
+        ),
+        ids=ids,
+        file_basename=files[0].basename if files else None,
+        files=tuple(files),
+        video_resolution=video_resolution,
+        content_rating=str(content_rating) if content_rating else None,
+        runtime_minutes=(
+            int(raw_duration) // 60_000
+            if raw_duration and raw_duration.isdigit() and int(raw_duration) > 0
+            else None
+        ),
+        ratings=tuple(plex_ratings),
+    )
 
 
 class PlexError(RuntimeError):
@@ -304,118 +381,84 @@ class PlexClient:
         """Every library item as the resolver sees it, keyed by Plex ``rating_key``.
 
         The enrichment behind id-based matching. For each library section of
-        ``section_type`` (``"movie"`` or ``"show"``), sweep every item once via
-        ``section.all()`` and read its GUIDs -- the new-agent ``guids`` list *and* the
-        legacy single ``guid`` string -- plus **every** file behind the listing with its
-        name and exact byte size (the first location's leaf feeds the global basename
-        tier; the full set exists so an ambiguous id can be narrowed against all of a
-        candidate's files, and byte-identical re-lists of one file can be recognised),
-        and the title / year / added-at the listing already carries. One sweep per
-        section, never a per-item metadata call. Returning full :class:`PlexItem` rows
-        (not just the ids) lets the index builders union in items the Tautulli media-info
-        cache has not listed yet -- a freshly added item exists here first.
+        ``section_type`` (``"movie"`` or ``"show"``), page the section's ``/all``
+        listing (with ``includeGuids=1``) and parse the container XML directly: the
+        new-agent ``Guid`` children *and* the legacy single ``guid`` attribute, plus
+        **every** file behind the listing with its name and exact byte size (the first
+        location's leaf feeds the global basename tier; the full set exists so an
+        ambiguous id can be narrowed against all of a candidate's files, and
+        byte-identical re-lists of one file can be recognised), the display metadata
+        (ratings with provenance, certification, runtime, resolution), and the
+        title / year / added-at the listing already carries.
 
-        A GET, so it runs in read-only mode through the ``GuardedSession``. It **raises**
-        ``PlexError`` on any failure rather than returning a partial map, so the caller can
-        fail closed and degrade the snapshot: silently falling the whole library back to
-        title-only matching at the moment the id signal vanished is exactly the fail-open
-        this feature exists to prevent.
+        Parsed RAW, not through ``section.all()``, and the reason is measured, not
+        stylistic: plexapi reloads a partial object the first time any accessed
+        attribute is ``None``, and on a listing row some attribute always is -- so the
+        object walk silently issued one metadata request *per item* and the "single
+        sweep" cost minutes on a large library. Reading the container XML makes a
+        missing attribute honestly ``None`` with no hidden network call, and the sweep
+        is a handful of page requests. Show folder paths are the one thing ``/all``
+        never carries, so shows add batched ``/library/metadata/{ids}`` reads (100 per
+        call) for their ``Location`` -- the folder-name tier that narrows a show listed
+        in two sections. Returning full :class:`PlexItem` rows (not just the ids) lets
+        the index builders union in items the Tautulli media-info cache has not listed
+        yet -- a freshly added item exists here first.
+
+        GETs only, so it runs in read-only mode through the ``GuardedSession``. It
+        **raises** ``PlexError`` on any failure rather than returning a partial map, so
+        the caller can fail closed and degrade the snapshot: silently falling the whole
+        library back to title-only matching at the moment the id signal vanished is
+        exactly the fail-open this feature exists to prevent.
         """
         server = await self._connect()
 
         def read() -> dict[int, PlexItem]:
-            from datetime import UTC, datetime
-
             out: dict[int, PlexItem] = {}
+            show_keys: list[int] = []
             for section in server.library.sections():
                 if section.type != section_type:
                     continue
-                for item in section.all():
-                    rating_key = getattr(item, "ratingKey", None)
-                    if rating_key is None:
+                start = 0
+                while True:
+                    container = server.query(  # type: ignore[no-untyped-call]
+                        f"/library/sections/{section.key}/all"
+                        f"?includeGuids=1&X-Plex-Container-Start={start}"
+                        f"&X-Plex-Container-Size={SWEEP_PAGE_SIZE}"
+                    )
+                    elements = [el for el in container if el.get("ratingKey")]
+                    for el in elements:
+                        item = _parse_sweep_element(el)
+                        out[item.rating_key] = item
+                        if section_type == "show":
+                            show_keys.append(item.rating_key)
+                    start += len(elements)
+                    total = int(container.get("totalSize") or container.get("size") or 0)
+                    # A short page always ends the section, whether or not the server
+                    # reported a total -- never trust one signal alone to terminate.
+                    short_page = not elements or len(elements) < SWEEP_PAGE_SIZE
+                    if short_page or (total and start >= total):
+                        break
+
+            # Show folders arrive from batched metadata reads; each Location leaf
+            # becomes the show's basename exactly as the object walk produced it.
+            for chunk_start in range(0, len(show_keys), METADATA_BATCH_SIZE):
+                chunk = show_keys[chunk_start : chunk_start + METADATA_BATCH_SIZE]
+                batch = server.query(  # type: ignore[no-untyped-call]
+                    "/library/metadata/" + ",".join(str(k) for k in chunk)
+                )
+                for el in batch:
+                    rk = el.get("ratingKey")
+                    if rk is None or int(rk) not in out:
                         continue
-                    guid_ids = [
-                        str(getattr(guid, "id", "")) for guid in getattr(item, "guids", None) or []
-                    ]
-                    legacy = getattr(item, "guid", None)
-                    ids = parse_guids(guid_ids, str(legacy) if legacy else None)
-                    locations = list(getattr(item, "locations", None) or [])
-                    basename = to_basename(locations[0]) if locations else None
-                    # Movies carry media parts (file path + exact byte size); shows carry
-                    # folder locations only, which have no size. A missing or zero size is
-                    # recorded as None (unknown), never as a comparable number.
-                    #
-                    # Display metadata rides the same listing XML, so reading it here costs
-                    # nothing. All of these attributes are set by plexapi's _loadData for
-                    # listing rows (None when the server omits one), so plain attribute
-                    # reads never trigger the implicit per-item reload plexapi fires for
-                    # attributes it has never seen.
-                    files: list[PlexFile] = []
-                    video_resolution: str | None = None
-                    for media in getattr(item, "media", None) or []:
-                        if video_resolution is None:
-                            raw_res = getattr(media, "videoResolution", None)
-                            video_resolution = str(raw_res) if raw_res else None
-                        for part in getattr(media, "parts", None) or []:
-                            leaf = to_basename(getattr(part, "file", None))
-                            if leaf is None:
-                                continue
-                            size = getattr(part, "size", None)
-                            files.append(
-                                PlexFile(
-                                    basename=leaf,
-                                    size=int(size) if isinstance(size, int) and size > 0 else None,
-                                )
-                            )
-                    if not files:
-                        files = [
-                            PlexFile(basename=leaf)
-                            for leaf in (to_basename(loc) for loc in locations)
-                            if leaf is not None
-                        ]
-                    year = getattr(item, "year", None)
-                    # plexapi parses addedAt with fromtimestamp() in *this* process, so a
-                    # naive value means "this host's local time"; astimezone(UTC) recovers
-                    # the exact instant regardless of the Plex server's own timezone.
-                    added = getattr(item, "addedAt", None)
-                    added_at = added.astimezone(UTC) if isinstance(added, datetime) else None
-                    # Ratings with provenance: the *RatingImage tells us what each number
-                    # IS (imdb, RT, tmdb); a number whose image is missing is dropped by
-                    # from_plex rather than guessed at. The audience flag routes an RT
-                    # image in the audience slot to the audience score.
-                    plex_ratings = [
-                        r
-                        for r in (
-                            from_plex(
-                                getattr(item, "rating", None),
-                                getattr(item, "ratingImage", None),
-                            ),
-                            from_plex(
-                                getattr(item, "audienceRating", None),
-                                getattr(item, "audienceRatingImage", None),
-                                audience=True,
-                            ),
-                        )
-                        if r is not None
-                    ]
-                    content_rating = getattr(item, "contentRating", None)
-                    duration = getattr(item, "duration", None)
-                    out[int(rating_key)] = PlexItem(
-                        rating_key=int(rating_key),
-                        title=str(getattr(item, "title", "") or ""),
-                        year=int(year) if isinstance(year, int) and year > 0 else None,
-                        added_at=added_at,
-                        ids=ids,
-                        file_basename=basename,
-                        files=tuple(files),
-                        video_resolution=video_resolution,
-                        content_rating=str(content_rating) if content_rating else None,
-                        runtime_minutes=(
-                            duration // 60_000
-                            if isinstance(duration, int) and duration > 0
-                            else None
-                        ),
-                        ratings=tuple(plex_ratings),
+                    paths = [loc.get("path") for loc in el.findall("Location") if loc.get("path")]
+                    leaves = [leaf for leaf in (to_basename(p) for p in paths) if leaf]
+                    if not leaves:
+                        continue
+                    item = out[int(rk)]
+                    out[int(rk)] = replace(
+                        item,
+                        file_basename=leaves[0],
+                        files=item.files or tuple(PlexFile(basename=leaf) for leaf in leaves),
                     )
             return out
 

@@ -12,6 +12,24 @@ batched)
 
 ### Newest — the scan's wall clock was sequential waiting, and most of it is gone
 
+Measured end to end against a real dual-instance library (movies + TV, all six
+integrations live): the scan dropped to roughly **a fifth** of its previous wall time,
+with byte-identical verdict counts before and after and a non-degraded snapshot both
+ways. Two distinct fixes carried it, and the second only became visible after honestly
+measuring the first:
+
+1. The structural work below (concurrent gather, batched per-item database work)
+   barely moved the total at first, because both the old and new pipelines were
+   dominated by one shared bottleneck neither had touched;
+2. that bottleneck was the Plex GUID sweep: plexapi silently issues **one metadata
+   request per item** whenever an accessed attribute is ``None`` on a listing row
+   (roughly ~80% of the old scan's wall time on the measured library). The sweep now
+   parses the listing container XML directly (plus batched ``/library/metadata/{ids}``
+   reads for show folder paths), which took the sweeps from minutes to seconds -- see
+   ``clients/plex.py`` and the reload-trap entry in ``docs/LEARNINGS.md``. With the
+   sweeps fixed, the concurrency work is what keeps everything else off the critical
+   path.
+
 The scan was slow for structural reasons, not compute: every source was read in
 series, and three per-item patterns multiplied round trips by the size of the library.
 What changed (all read-only paths; the freeze-then-judge contract is untouched —
@@ -913,10 +931,11 @@ Compute the baseline over **exactly** what the scorer scores. See `docs/SIGNALS.
 
 ## Where the pipeline stands
 
-A scan streams progress while it runs and produces a candidate list partitioned into
-condemn / protect / abstain. The gather is concurrent across sources (see the scan
-wall-clock section above): it costs roughly its slowest source — in practice the Plex
-GUID sweep or the largest *arr library download — plus the judge loop, which is now
+A full scan of a large library completes in tens of seconds again (measured live
+after the concurrent-gather and sweep fixes above; it had crept to minutes as
+features landed), streaming progress while it runs, and produces a candidate list
+partitioned into condemn / protect / abstain. The gather is concurrent across
+sources: it costs roughly its slowest source plus the judge loop, which is now
 in-memory per item.
 
 The why-panel renders for **keeps as well as deletes** — an item can score high enough

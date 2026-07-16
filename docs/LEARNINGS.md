@@ -604,6 +604,29 @@ dimension that makes it distinct (service AND instance), and "we only made it
 concurrent" is precisely when to re-audit which shared keys the now-racing writers
 collide on.
 
+### plexapi turns one sweep into one request per item, silently
+
+The GUID sweep read listing rows via ``section.all()`` and plain attribute access,
+with a comment promising "one sweep per section, never a per-item metadata call."
+Measured live, the sweep cost ~35ms *per item* -- because plexapi reloads a partial
+object the first time any accessed attribute is ``None``, and on a listing row some
+attribute always is (an unrated title has no rating image; many rows lack a year).
+One full metadata request per title, thousands per scan, invisible in any unit test
+because fakes do not lazily reload. An attribute-allow-list guard fake could not
+catch it either: the reload fires on *known* attributes whose value happens to be
+None, not on unknown ones.
+
+⇒ The sweep now parses the listing container XML directly (missing attribute =
+honestly ``None``, never a hidden request), with batched ``/library/metadata/{ids}``
+reads for the one thing listings never carry (show folder paths). The whole sweep
+went from minutes to seconds, and the regression test counts requests -- one page,
+one request -- rather than trusting attribute discipline.
+
+⇒ The general lesson: after making a pipeline concurrent, measure the OLD code and
+the NEW code on the same data before claiming victory. The first measurement here
+showed near-zero total improvement -- both pipelines were pinned by this one shared
+bottleneck, and the honest before/after is what exposed it.
+
 ### bare asyncio.gather leaves siblings running after a failure
 
 `asyncio.gather` re-raises the first failure immediately but does not cancel the
