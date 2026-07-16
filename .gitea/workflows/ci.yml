@@ -12,10 +12,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Caching is off because this runner's cache server is unreachable, not because
+      # caching is unwanted. Jobs run on a per-job bridge network while the runner
+      # advertises its cache at 172.17.0.2 (the default bridge), and Docker isolates the
+      # two, so every restore and save times out. A cache that always misses is not free:
+      # it cost this job ~40s and the frontend job ~9m per run, for nothing. Re-enable
+      # here and in `frontend` once the runner sets cache.host to an address reachable
+      # from job containers.
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
-          enable-cache: true
+          enable-cache: false
 
       - name: Set up Python
         run: uv python install 3.13
@@ -59,11 +66,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # `cache: npm` is omitted deliberately -- see the note in `check`. Against this
+      # runner it never hit, and the doomed restore plus save added ~9m to every run.
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
 
       # `ci`, not `install`: it installs exactly the locked tree and fails if
       # package.json and the lockfile disagree, rather than quietly resolving something
@@ -82,25 +89,62 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     needs: [check, frontend]
+    env:
+      # Empty unless the operator has configured the secret; the push step keys off this.
+      REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build image
+      # The registry host and image path are derived from the run context, never hardcoded:
+      # this workflow has to be correct for any operator who forks Reaper onto their own
+      # Gitea. Docker requires a lowercase image path, but repo owners are commonly
+      # capitalised, so the repository slug is lowercased here. A branch name may contain
+      # "/", which is not a legal tag character, so it is folded to "-".
+      #
+      # A pull request publishes as "pr-<number>" so it can be pulled and tested. That
+      # cannot collide with a branch tag, and it says plainly what the image is. The tag
+      # is not taken from REF_NAME on a PR: there REF_NAME is the PR *number*, which
+      # would tag the image ":1" and read like a version.
+      - name: Resolve image name
+        env:
+          PR_NUMBER: ${{ github.event.number }}
         run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          docker build \
-            -t ghcr.io/scythe-labs/reaper:${{ github.ref_name }} \
-            -t ghcr.io/scythe-labs/reaper:${SHORT_SHA} \
-            .
+          echo "IMAGE=${GITHUB_SERVER_URL#https://}/$(echo "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            echo "TAG=pr-${PR_NUMBER}" >> "$GITHUB_ENV"
+          else
+            echo "TAG=$(echo "${GITHUB_REF_NAME}" | tr '/' '-')" >> "$GITHUB_ENV"
+          fi
+          echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
+      - name: Build image
+        run: docker build -t "${IMAGE}:${TAG}" -t "${IMAGE}:${SHORT_SHA}" .
 
       - name: Tag latest
         if: github.ref_name == 'main'
-        run: docker tag ghcr.io/scythe-labs/reaper:main ghcr.io/scythe-labs/reaper:latest
+        run: docker tag "${IMAGE}:${TAG}" "${IMAGE}:latest"
 
-      # Push on branch pushes only — PR builds verify buildability but don't publish.
+      # Gitea's automatic Actions token cannot write packages: basic auth accepts it, but
+      # it carries an empty access scope, and reqPackageAccess demands read/write:package.
+      # Publishing therefore needs an operator-provided token with the write:package scope,
+      # stored as the REGISTRY_TOKEN secret. Without it the image is still built and
+      # verified above -- the gate that matters -- and only the publish is skipped.
+      #
+      # Pull requests publish too, so a reviewer can pull and run the exact image, but only
+      # when the PR comes from this repository. A fork must never be able to publish under
+      # this registry path, and whether Gitea withholds secrets from fork runs is not a
+      # thing to depend on -- so the branch is checked here rather than assumed upstream.
       - name: Push image
-        if: github.event_name == 'push'
+        if: >-
+          env.REGISTRY_TOKEN != '' &&
+          (github.event_name == 'push' ||
+           github.event.pull_request.head.repo.full_name == github.repository)
         run: |
-          echo "${{ github.token }}" | \
-            docker login <registry> --username ${{ github.actor }} --password-stdin
-          docker push --all-tags ghcr.io/scythe-labs/reaper
+          echo "${REGISTRY_TOKEN}" | \
+            docker login "${GITHUB_SERVER_URL#https://}" --username "${GITHUB_ACTOR}" --password-stdin
+          docker push --all-tags "${IMAGE}"
+
+      - name: Warn when publishing is not configured
+        if: env.REGISTRY_TOKEN == ''
+        run: |
+          echo "::warning::Image built but not published: the REGISTRY_TOKEN secret is unset. Add a token with the write:package scope to publish ${IMAGE}:${TAG}."
