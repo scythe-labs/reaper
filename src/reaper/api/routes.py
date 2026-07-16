@@ -34,9 +34,11 @@ from reaper.api.schemas import (
     FieldValuesOut,
     GateCountOut,
     GateSettingIn,
+    LinksOut,
     PolicyIn,
     PolicyOut,
     PolicyWarningOut,
+    RatingsOut,
     SeasonShapeOut,
     SignalSettingIn,
     SimExampleOut,
@@ -45,7 +47,7 @@ from reaper.api.schemas import (
     VocabularyOut,
 )
 from reaper.clock import utcnow
-from reaper.db.models import Candidate, FirstFlagged, Snapshot
+from reaper.db.models import Candidate, FirstFlagged, Instance, InstanceKind, PlexServer, Snapshot
 from reaper.db.models import Policy as PolicyModel
 from reaper.engine.fields import Lane, vocabulary
 from reaper.engine.policy import (
@@ -59,7 +61,10 @@ from reaper.engine.policy import (
     combine_hashes,
     inspect,
 )
-from reaper.services import whitelist
+from reaper.services import app_settings, whitelist
+from reaper.services.deep_links import build_links
+from reaper.services.display_meta import parse_ratings_json
+from reaper.services.planner import MediaRef, PlanError
 
 log = structlog.get_logger(__name__)
 
@@ -301,6 +306,30 @@ def _primary_reason(explanation_json: str, verdict: str) -> str | None:
     return "Scored below your threshold."
 
 
+def _dormant_for(explanation_json: str) -> str | None:
+    """The humanized dormancy span ("5 years, 9 months") for the card's amber pill.
+
+    Read from the stored explanation's UNWATCHED signal, whose detail has exactly one
+    producer (engine/signals.py): ``not watched in {span}``. Anything else -- the
+    signal unevaluated, an older snapshot's different phrasing, a missing block --
+    degrades to ``None`` and the pill is hidden. Same defensive posture as
+    ``_primary_reason``: display extraction must never error a row off the queue.
+    """
+    prefix = "not watched in "
+    try:
+        exp = json.loads(explanation_json)
+    except (ValueError, TypeError):
+        return None
+    for signal in exp.get("signals") or []:
+        if not isinstance(signal, dict) or signal.get("id") != "unwatched":
+            continue
+        detail = signal.get("detail")
+        if signal.get("evaluated") and isinstance(detail, str) and detail.startswith(prefix):
+            return detail[len(prefix) :] or None
+        return None
+    return None
+
+
 def _candidate_out(
     r: Candidate, flagged_at: datetime | None = None, override: str | None = None
 ) -> CandidateOut:
@@ -327,10 +356,104 @@ def _candidate_out(
         requested_by=r.requested_by,
         group_key=r.group_key,
         group_title=r.group_title,
+        video_resolution=r.video_resolution,
+        dormant_for=_dormant_for(r.explanation_json),
         reason=_primary_reason(r.explanation_json, r.verdict),
         spared=override == "spare",
         override=override,
     )
+
+
+async def _deep_links(session: AsyncSession, row: Candidate) -> LinksOut:
+    """The panel's jump links, from coordinates frozen on the row plus the live
+    instance/server configuration. Every lookup failure degrades that one link to
+    ``None`` -- an unroutable key, a removed instance or an unlinked Plex must never
+    404 the why-panel."""
+    arr_base: str | None = None
+    try:
+        ref = MediaRef.parse(row.media_key)
+    except PlanError:
+        ref = None
+    if ref is not None:
+        # THE instance the key routes to -- by id and kind, never "the first Radarr".
+        instance = await session.get(Instance, ref.instance_id)
+        if instance is not None and instance.kind == ref.kind and instance.enabled:
+            arr_base = instance.base_url
+
+    async def first_enabled(kind: InstanceKind) -> Instance | None:
+        # Ordered by id so "the first enabled" is deterministic: the longest-standing
+        # instance, not whichever row the query planner happened to return.
+        return (
+            (
+                await session.execute(
+                    select(Instance)
+                    .where(Instance.kind == kind, Instance.enabled.is_(True))
+                    .order_by(Instance.id)
+                )
+            )
+            .scalars()
+            .first()
+        )
+
+    tautulli = await first_enabled(InstanceKind.TAUTULLI)
+    seerr = await first_enabled(InstanceKind.SEERR)
+    plex_server = (await session.execute(select(PlexServer))).scalars().first()
+
+    links = build_links(
+        row.media_key,
+        plex_rating_key=row.plex_rating_key,
+        tmdb_id=row.tmdb_id,
+        title_slug=row.title_slug,
+        arr_base_url=arr_base,
+        tautulli_base_url=tautulli.base_url if tautulli else None,
+        machine_identifier=plex_server.machine_identifier if plex_server else None,
+        plex_web_url=await app_settings.get_plex_web_url(session),
+        seerr_base_url=seerr.base_url if seerr else None,
+        imdb_id=row.imdb_id,
+        media_type=row.media_type,
+        # A season row searches by its SHOW's title ("Example Show", not
+        # "Example Show · Season 3") -- that is the page the rating describes.
+        title=row.group_title or row.title,
+    )
+    return LinksOut(
+        plex=links.plex,
+        tautulli=links.tautulli,
+        seerr=links.seerr,
+        radarr=links.radarr,
+        sonarr=links.sonarr,
+        imdb=links.imdb,
+        tmdb=links.tmdb,
+        rotten_tomatoes=links.rotten_tomatoes,
+    )
+
+
+def _ratings_out(ratings_json: str | None) -> RatingsOut | None:
+    """The stored int map, decoded for the wire: IMDb back to its 0-10 float, the
+    percentage sources as 0-100 ints. ``None`` (row absent or empty) hides the row."""
+    stored = parse_ratings_json(ratings_json)
+    if not stored:
+        return None
+    imdb_tenths = stored.get("imdb")
+    return RatingsOut(
+        imdb=imdb_tenths / 10 if imdb_tenths is not None else None,
+        imdb_votes=stored.get("imdb_votes"),
+        rt_critic=stored.get("rotten_tomatoes_critic"),
+        rt_audience=stored.get("rotten_tomatoes_audience"),
+        tmdb=stored.get("tmdb"),
+    )
+
+
+def _genres(genres_json: str | None) -> list[str]:
+    """The stored genre list, defensively: anything unexpected is an empty list."""
+    if not genres_json:
+        return []
+    try:
+        raw = json.loads(genres_json)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(raw, list):
+        return []
+    return [str(g) for g in raw if g]
 
 
 @router.get("/candidates/{candidate_id}")
@@ -356,6 +479,11 @@ async def candidate_detail(request: Request, candidate_id: int) -> CandidateDeta
         return CandidateDetail(
             **base.model_dump(),
             explanation=Explanation(**json.loads(row.explanation_json)),
+            links=await _deep_links(session, row),
+            ratings=_ratings_out(row.ratings_json),
+            content_rating=row.content_rating,
+            runtime_minutes=row.runtime_minutes,
+            genres=_genres(row.genres_json),
         )
 
 

@@ -49,6 +49,15 @@
   --plex-hover: #f2ad1f;
   --plex-ink: #241a02;
 
+  /* The Movie chip's teal. Deliberately its own pair: every other hue here carries a
+   * verdict or a warning, and a media-type tag must not read as one. TV keeps accent. */
+  --media-movie: #0b6b63;
+  --media-movie-soft: #dcf3f0;
+
+  /* IMDb brand yellow, for the ratings chip -- same precedent as --plex. */
+  --imdb: #f5c518;
+  --imdb-ink: #241d02;
+
   --radius-sm: 7px;
   --radius: 11px;
   --radius-lg: 18px;
@@ -92,6 +101,12 @@
     --plex: #e5a00d;
     --plex-hover: #f2ad1f;
     --plex-ink: #241a02;
+
+    --media-movie: #4fd0c0;
+    --media-movie-soft: #10312c;
+
+    --imdb: #f5c518;
+    --imdb-ink: #241d02;
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.35);
@@ -950,6 +965,134 @@ tbody tr.selected {
 }
 .why-close {
   flex: none;
+}
+
+/* The title as the "open in Plex" jump: reads as the title until you hover. */
+.title-link {
+  color: inherit;
+  text-decoration: none;
+}
+.title-link:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+}
+.title-ext {
+  margin-left: 0.3rem;
+  vertical-align: 2px;
+  color: var(--faint);
+}
+.title-link:hover .title-ext {
+  color: var(--accent);
+}
+
+/* The size · type line, now also carrying the jump pills. */
+.why-sub {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+.jump-pill {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.06rem 0.55rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.jump-pill:hover {
+  color: var(--accent-hover);
+}
+
+/* Certification · runtime · genres, the way a library listing reads. */
+.why-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin: 0.6rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.why-meta .cert {
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 0 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* External ratings, no stars. Quiet chips; IMDb wears its brand badge because it is
+   the one number the score itself uses. */
+.why-ratings {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin: 0.55rem 0 0;
+}
+.rating-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.22rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  text-decoration: none;
+}
+/* A chip with a link opens the number's source; the border says so on hover. */
+a.rating-chip:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.rating-src {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+.rating-imdb {
+  background: var(--imdb);
+  color: var(--imdb-ink);
+  border-radius: 3px;
+  padding: 0.02rem 0.25rem;
+  letter-spacing: 0.02em;
+}
+
+/* The marker every operator-authored row wears, wherever policy touches the outcome:
+   a custom protection, a custom reason to remove, a graded keep. */
+.rule-tag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.4rem;
+  padding: 0 0.3rem;
+  border-radius: 4px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  background: var(--accent-soft);
+  color: var(--accent);
+  vertical-align: 1px;
+  white-space: nowrap;
+}
+
+/* A custom rule's row among the protections: the accent tint says "yours", where green
+   stays the shared "protection" language. */
+.gates li.gate-custom {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.gates li.gate-custom .gate-mark {
+  color: var(--accent);
 }
 .why-summary {
   margin: 0.6rem 0 0;
@@ -2391,8 +2534,8 @@ button.sm {
   color: var(--accent);
 }
 .chip-movie {
-  background: var(--surface-2);
-  color: var(--muted);
+  background: var(--media-movie-soft);
+  color: var(--media-movie);
 }
 .chip-spared {
   background: var(--protect-soft);
@@ -2401,6 +2544,42 @@ button.sm {
 .chip-reap {
   background: var(--condemn-soft);
   color: var(--condemn);
+}
+
+/* The file's resolution, worn next to the size. Quiet by design: it informs a keep/reap
+   call ("that's our only 4K copy") without competing with the verdict colours. */
+.res-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 0.04rem 0.35rem;
+  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.res-badge .res-detail {
+  font-size: 0.6rem;
+  opacity: 0.75;
+}
+
+/* How long the item has sat unwatched -- the strongest reason most items are here, so it
+   wears the shared amber "attention" tone and reads at a glance. */
+.dormant-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  align-self: flex-start;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.08rem 0.55rem 0.08rem 0.45rem;
+  border-radius: 999px;
+  color: var(--unknown);
+  background: var(--unknown-soft);
+  white-space: nowrap;
 }
 
 /* --- hand overrides: the paired Spare / Reap toggle ---------------------------------------- */

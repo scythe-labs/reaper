@@ -22,7 +22,14 @@ from sqlalchemy.orm import Session
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import Candidate, FirstFlagged, Snapshot
+from reaper.db.models import (
+    Candidate,
+    FirstFlagged,
+    Instance,
+    InstanceKind,
+    PlexServer,
+    Snapshot,
+)
 from reaper.engine.policy import (
     DEFAULT_TV_POLICY,
     GateSetting,
@@ -79,7 +86,7 @@ def _explanation(score: float) -> str:
                     "id": "unwatched",
                     "contribution": score,
                     "weight": 70,
-                    "detail": "unwatched for 2059 days",
+                    "detail": "not watched in 5 years, 8 months",
                     "evaluated": True,
                 }
             ],
@@ -114,6 +121,45 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
         session.add(snapshot)
         session.flush()
 
+        # The instances and Plex server the why-panel's jump links are built from. The
+        # radarr row's id must be the instance id inside the fixtures' media_key.
+        session.add_all(
+            [
+                Instance(
+                    id=1,
+                    kind=InstanceKind.RADARR,
+                    name="hd",
+                    base_url="https://radarr.example",
+                    api_key_enc="enc",
+                    created_at=now,
+                ),
+                Instance(
+                    id=2,
+                    kind=InstanceKind.TAUTULLI,
+                    name="main",
+                    base_url="https://tautulli.example",
+                    api_key_enc="enc",
+                    created_at=now,
+                ),
+                Instance(
+                    id=3,
+                    kind=InstanceKind.SEERR,
+                    name="requests",
+                    base_url="https://seerr.example",
+                    api_key_enc="enc",
+                    created_at=now,
+                ),
+                PlexServer(
+                    machine_identifier="abc123",
+                    name="Example Server",
+                    connection_uri="http://plex.local:32400",
+                    token_enc="enc",
+                    owner_plex_account_id=1,
+                    created_at=now,
+                ),
+            ]
+        )
+
         # A condemned item, a protected one, and one we could not judge.
         session.add_all(
             [
@@ -126,6 +172,22 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     year=2013,
                     genres_json=json.dumps(["Documentary", "Drama"]),
                     quality="Bluray-1080p",
+                    # The display metadata a scan freezes for the panel head + card badges.
+                    plex_rating_key=555,
+                    tmdb_id=603,
+                    imdb_id="tt0000001",
+                    video_resolution="1080",
+                    content_rating="PG-13",
+                    runtime_minutes=95,
+                    ratings_json=json.dumps(
+                        {
+                            "imdb": 59,
+                            "imdb_votes": 35_072,
+                            "rotten_tomatoes_critic": 77,
+                            "rotten_tomatoes_audience": 71,
+                            "tmdb": 61,
+                        }
+                    ),
                     verdict="condemn",
                     score=91,
                     coverage_bp=10_000,
@@ -486,6 +548,106 @@ class TestTheWhyPanel:
 
     def test_a_missing_candidate_is_a_404(self, client: TestClient) -> None:
         assert client.get("/api/candidates/9999").status_code == 404
+
+
+class TestPanelHeadFields:
+    """The panel head's display metadata and jump links, and the card's badge + pill.
+
+    Every field degrades to null/hidden rather than erroring: an old row, an unmatched
+    item or a removed instance must never take the panel down with it.
+    """
+
+    def test_the_card_carries_the_badge_and_the_dormancy_pill(self, client: TestClient) -> None:
+        row = client.get("/api/candidates?verdict=condemn").json()[0]
+
+        assert row["video_resolution"] == "1080"
+        assert row["dormant_for"] == "5 years, 8 months"
+
+    def test_a_row_without_the_metadata_hides_both(self, client: TestClient) -> None:
+        """The abstained fixture predates the capture (no columns, and its dormancy came
+        from an unmatched item) -- both fields must be null, not an error."""
+        row = client.get("/api/candidates?verdict=abstain").json()[0]
+
+        assert row["video_resolution"] is None
+        # Its explanation says "not watched in ..." but with evaluated=True from the
+        # shared helper; the unmatched item's dormancy is still the helper's phrasing, so
+        # dormant_for emits. The protect row exercises the same path.
+        assert row["dormant_for"] == "5 years, 8 months"
+
+    def test_the_detail_carries_links_ratings_and_the_meta_line(self, client: TestClient) -> None:
+        candidates = client.get("/api/candidates?verdict=condemn").json()
+        detail = client.get(f"/api/candidates/{candidates[0]['id']}").json()
+
+        assert detail["links"] == {
+            "plex": (
+                "https://app.plex.tv/desktop/#!/server/abc123"
+                "/details?key=%2Flibrary%2Fmetadata%2F555"
+            ),
+            "tautulli": "https://tautulli.example/info?rating_key=555",
+            "seerr": "https://seerr.example/movie/603",
+            "radarr": "https://radarr.example/movie/603",
+            "sonarr": None,
+            "imdb": "https://www.imdb.com/title/tt0000001/",
+            "tmdb": "https://www.themoviedb.org/movie/603",
+            "rotten_tomatoes": "https://www.rottentomatoes.com/search?search=Example%20Movie",
+        }
+        assert detail["ratings"] == {
+            "imdb": 5.9,
+            "imdb_votes": 35_072,
+            "rt_critic": 77,
+            "rt_audience": 71,
+            "tmdb": 61,
+        }
+        assert detail["content_rating"] == "PG-13"
+        assert detail["runtime_minutes"] == 95
+        assert detail["genres"] == ["Documentary", "Drama"]
+
+    def test_an_unmatched_pre_rescan_row_offers_no_links_and_no_ratings(
+        self, client: TestClient
+    ) -> None:
+        """No rating key -> no Plex/Tautulli link; no tmdb id -> no Radarr link. The
+        panel hides them all rather than rendering a broken jump."""
+        abstained = client.get("/api/candidates?verdict=abstain").json()
+        detail = client.get(f"/api/candidates/{abstained[0]['id']}").json()
+
+        assert detail["links"] == {
+            "plex": None,
+            "tautulli": None,
+            "seerr": None,
+            "radarr": None,
+            "sonarr": None,
+            "imdb": None,
+            "tmdb": None,
+            # A title always exists, so the RT search still works for an unmatched row.
+            "rotten_tomatoes": "https://www.rottentomatoes.com/search?search=Unmatched",
+        }
+        assert detail["ratings"] is None
+        assert detail["content_rating"] is None
+        assert detail["runtime_minutes"] is None
+
+
+class TestPlexWebUrlSetting:
+    def test_the_default_is_the_hosted_plex_web(self, client: TestClient) -> None:
+        assert client.get("/api/settings/plex").json()["web_url"] == "https://app.plex.tv"
+
+    def test_saving_strips_the_trailing_slash_and_feeds_the_links(self, client: TestClient) -> None:
+        saved = client.put("/api/settings/plex", json={"web_url": "https://plex.example/"})
+        assert saved.status_code == 200
+        assert saved.json()["web_url"] == "https://plex.example"
+
+        candidates = client.get("/api/candidates?verdict=condemn").json()
+        detail = client.get(f"/api/candidates/{candidates[0]['id']}").json()
+        assert detail["links"]["plex"].startswith("https://plex.example/desktop/")
+
+    def test_a_non_http_address_is_refused_in_plain_words(self, client: TestClient) -> None:
+        refused = client.put("/api/settings/plex", json={"web_url": "plex.example"})
+        assert refused.status_code == 422
+        assert "must start with" in refused.json()["detail"]
+
+    def test_clearing_resets_to_the_default(self, client: TestClient) -> None:
+        client.put("/api/settings/plex", json={"web_url": "https://plex.example"})
+        cleared = client.put("/api/settings/plex", json={"web_url": ""})
+        assert cleared.json()["web_url"] == "https://app.plex.tv"
 
 
 class TestTheSimulator:

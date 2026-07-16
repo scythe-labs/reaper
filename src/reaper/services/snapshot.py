@@ -48,7 +48,9 @@ from reaper.engine.gates import PROTECT, Evaluation, Facts, Gate, GateId, GateRe
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
 from reaper.engine.signals import Score, SignalConfig, SignalId, score
+from reaper.ratings import Rating, from_radarr
 from reaper.services import history_sync, lists, requested_by, season_scan, whitelist
+from reaper.services.display_meta import build_ratings_json, dataset_entry, normalize_resolution
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
 
 log = structlog.get_logger(__name__)
@@ -117,6 +119,13 @@ class RawItem:
     # Radarr payload the scan already holds -- no extra fetch.
     genres: tuple[str, ...] = ()
     quality: str | None = None
+    # Display metadata frozen onto the candidate (services.display_meta). Plex first,
+    # the Radarr payload as fallback; none of it touches the verdict.
+    video_resolution: str | None = None
+    content_rating: str | None = None
+    runtime_minutes: int | None = None
+    plex_ratings: tuple[Rating, ...] = ()
+    arr_ratings: tuple[Rating, ...] = ()
 
 
 async def build_facts(
@@ -177,8 +186,9 @@ async def build_facts(
     rating: Observation[int]
     votes: Observation[int]
     # Radarr's imdbId first, then the Plex-matched imdb id as a fallback (Radarr may lack
-    # it, or carry one the IMDb dataset doesn't have).
-    entry = imdb.get(item.imdb_id or "") or imdb.get(item.plex_imdb_id or "")
+    # it, or carry one the IMDb dataset doesn't have). The shared helper is also what the
+    # display ratings row reads, so the signal and the row can never show different numbers.
+    entry = dataset_entry(imdb, item.imdb_id, item.plex_imdb_id)
     if entry is not None:
         rating = Known(value=int(entry.average_rating * 10), source="imdb")
         votes = Known(value=int(entry.num_votes), source="imdb")
@@ -496,6 +506,20 @@ async def scan(
                 summary=item.summary,
                 poster_url=item.poster_url,
                 requested_by=item.requested_by,
+                tmdb_id=item.tmdb_id,
+                # Radarr's id first, the Plex-matched one as fallback -- the same
+                # precedence the dataset lookup uses.
+                imdb_id=item.imdb_id or item.plex_imdb_id,
+                video_resolution=item.video_resolution,
+                content_rating=item.content_rating,
+                runtime_minutes=item.runtime_minutes,
+                # The same dataset entry build_facts froze into the scoring signal, so
+                # the ratings row can never disagree with the signal text beside it.
+                ratings_json=build_ratings_json(
+                    dataset_entry(imdb, item.imdb_id, item.plex_imdb_id),
+                    item.plex_ratings,
+                    item.arr_ratings,
+                ),
             ),
             matched_by=item.matched_by,
             match_detail=item.match_detail,
@@ -536,6 +560,12 @@ async def scan(
                 requested_by=judgement.requested_by,
                 group_key=judgement.group_key,
                 group_title=judgement.group_title,
+                tmdb_id=judgement.tmdb_id,
+                imdb_id=judgement.imdb_id,
+                title_slug=judgement.title_slug,
+                content_rating=judgement.content_rating,
+                runtime_minutes=judgement.runtime_minutes,
+                ratings_json=judgement.ratings_json,
             ),
             matched_by=judgement.matched_by,
             match_detail=judgement.match_detail,
@@ -571,6 +601,15 @@ class Display:
     requested_by: str | None = None
     group_key: str | None = None
     group_title: str | None = None
+    # Deep-link coordinates (the *arr web routes key on these, not on internal ids)
+    # and the frozen display metadata. See services.display_meta and deep_links.
+    tmdb_id: int | None = None
+    imdb_id: str | None = None
+    title_slug: str | None = None
+    video_resolution: str | None = None
+    content_rating: str | None = None
+    runtime_minutes: int | None = None
+    ratings_json: str | None = None
 
 
 #: The "no display fields" default, as a singleton so it is not constructed per call.
@@ -663,6 +702,13 @@ async def _judge_item(
             quality=(facts.quality.value if isinstance(facts.quality, Known) else None),
             group_key=display.group_key,
             group_title=display.group_title,
+            tmdb_id=display.tmdb_id,
+            imdb_id=display.imdb_id,
+            title_slug=display.title_slug,
+            video_resolution=display.video_resolution,
+            content_rating=display.content_rating,
+            runtime_minutes=display.runtime_minutes,
+            ratings_json=display.ratings_json,
             verdict=verdict,
             score=score_value,
             coverage_bp=coverage_bp,
@@ -937,6 +983,16 @@ async def build_movie_index(
                         ids=enriched.ids if enriched is not None else identity.ExternalIds(),
                         file_basename=enriched.file_basename if enriched is not None else None,
                         files=enriched.files if enriched is not None else (),
+                        # Display metadata from the plexapi sweep; rows the sweep did not
+                        # list (or a failed sweep) simply carry none of it.
+                        video_resolution=(
+                            enriched.video_resolution if enriched is not None else None
+                        ),
+                        content_rating=enriched.content_rating if enriched is not None else None,
+                        runtime_minutes=(
+                            enriched.runtime_minutes if enriched is not None else None
+                        ),
+                        ratings=enriched.ratings if enriched is not None else (),
                     )
                 )
             if len(rows) < 1000:
@@ -1063,6 +1119,16 @@ def _raw_items(
                 plex_imdb_id=matched.ids.imdb if matched is not None else None,
                 genres=tuple(str(g) for g in (movie.get("genres") or []) if g),
                 quality=_movie_quality(movie),
+                # Display metadata: Plex's answer first (it describes the file Plex
+                # serves), the Radarr payload filling the gaps. Never a verdict input.
+                video_resolution=normalize_resolution(
+                    matched.video_resolution if matched is not None else None,
+                    _movie_quality(movie),
+                ),
+                content_rating=matched.content_rating if matched is not None else None,
+                runtime_minutes=matched.runtime_minutes if matched is not None else None,
+                plex_ratings=matched.ratings if matched is not None else (),
+                arr_ratings=tuple(from_radarr(movie.get("ratings"))),
             )
         )
     return items

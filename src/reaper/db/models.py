@@ -343,6 +343,39 @@ class Candidate(Base):
     quality: Mapped[str | None] = mapped_column(String(100), default=None)
     """The file's quality name at scan time (e.g. "Bluray-1080p"), same purpose."""
 
+    tmdb_id: Mapped[int | None] = mapped_column(Integer, default=None)
+    """The TMDb id at scan time: the movie's, or the SHOW's for a season row. Radarr's
+    web routes and Seerr's item pages key on it, so it is what "open this in Radarr /
+    Seerr / TMDb" links need -- the internal id in media_key does not resolve there.
+    Display/link only; identity stays media_key."""
+
+    imdb_id: Mapped[str | None] = mapped_column(String(20), default=None)
+    """The IMDb id at scan time (the *arr's, else the Plex-matched one) -- the show's for
+    a season row. What the "open on IMDb" link needs. Display/link only."""
+
+    title_slug: Mapped[str | None] = mapped_column(String(200), default=None)
+    """Sonarr's titleSlug for the show, the coordinate its web routes key on. The show's
+    value is stamped on every season row. Display/link only."""
+
+    video_resolution: Mapped[str | None] = mapped_column(String(10), default=None)
+    """Canonical resolution of the file at scan time ("2160", "1080", ..., "sd"), from
+    Plex's videoResolution first, else parsed from the *arr quality name. Movies only in
+    v1 (show listings carry no media). Display only."""
+
+    content_rating: Mapped[str | None] = mapped_column(String(20), default=None)
+    """Plex's certification (e.g. a TV or film rating board label). Display only."""
+
+    runtime_minutes: Mapped[int | None] = mapped_column(Integer, default=None)
+    """Runtime in minutes from Plex (a show row carries its episode runtime). Display
+    only."""
+
+    ratings_json: Mapped[str | None] = mapped_column(Text, default=None)
+    """The frozen external-ratings row, as canonical JSON of ints: every value stored as
+    round(value_on_0_to_10 * 10) -- IMDb 5.9 -> 59, RT 77% -> 77 -- plus imdb_votes.
+    Keys are reaper.ratings.RatingSource values. The imdb entry is the SAME dataset
+    number the scoring signal froze, so the panel cannot show two IMDb values. Built by
+    services.display_meta.build_ratings_json; display only."""
+
     group_key: Mapped[str | None] = mapped_column(String(100), index=True, default=None)
     """Ties rows that belong together in the queue -- every season of one show shares its
     show's key -- so the UI can collapse a show into a single expandable row. Null for a

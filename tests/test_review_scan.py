@@ -35,6 +35,7 @@ from reaper.engine.backtest import BacktestResult, Item, run
 from reaper.engine.calibration import Bucket, RewatchPrior
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import Score
+from reaper.ratings import Rating, RatingSource
 from reaper.services import history_sync
 from reaper.services.snapshot import (
     _fold_merged_watch_stats,
@@ -276,6 +277,17 @@ class TestBuildMovieIndex:
                 added_at=from_epoch("1600000000"),  # differs from the spine on purpose
                 ids=identity.ExternalIds.of(tmdb=1001),
                 file_basename="example (2020).mkv",
+                video_resolution="1080",
+                content_rating="PG-13",
+                runtime_minutes=95,
+                ratings=(
+                    Rating(
+                        source=RatingSource.ROTTEN_TOMATOES_CRITIC,
+                        value=7.7,
+                        votes=None,
+                        provider="plex",
+                    ),
+                ),
             )
         }
         index = await build_movie_index(
@@ -288,6 +300,12 @@ class TestBuildMovieIndex:
         assert item.ids.tmdb == 1001
         assert item.file_basename == "example (2020).mkv"
         assert index.by_tmdb[1001] == [100]
+        # The display metadata must survive the spine rebuild -- this loop copies
+        # fields one by one, and a field missed here silently never reaches a card.
+        assert item.video_resolution == "1080"
+        assert item.content_rating == "PG-13"
+        assert item.runtime_minutes == 95
+        assert [r.source for r in item.ratings] == [RatingSource.ROTTEN_TOMATOES_CRITIC]
 
     async def test_an_item_the_tautulli_cache_has_not_listed_still_enters_the_index(self) -> None:
         """Tautulli's media-info listing is a cache and lags fresh additions. An item the

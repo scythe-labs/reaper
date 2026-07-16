@@ -16,9 +16,116 @@
 // And it renders for PROTECTED items too, showing the score it is overriding. A tool
 // that only explains its deletions cannot be trusted about its keeps.
 
-import { useEffect, useRef, useState } from "react";
-import type { CandidateDetail, GateOutcome, Match } from "../api";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import type { CandidateDetail, GateOutcome, Links, Match, Ratings } from "../api";
 import { bytes, coverage, since } from "../format";
+
+/** The built-in signal ids. Anything else in `explanation.signals[].id` is a custom
+ *  rule's own name, and its row wears the "Your rule" tag. */
+const BUILTIN_SIGNAL_IDS = new Set(["unwatched", "season_rank", "few_watchers", "low_rating", "size"]);
+
+/** The little "this one is yours" marker worn by every policy row the owner authored. */
+function RuleTag() {
+  return <span className="rule-tag">Your rule</span>;
+}
+
+/** A pill that opens the item in one of the tools that manage it. Hidden without a URL --
+ *  a missing link is hidden, never rendered broken. */
+function JumpPill({ href, label }: { href: string | null; label: string }) {
+  if (!href) return null;
+  return (
+    <a className="jump-pill" href={href} target="_blank" rel="noopener noreferrer">
+      {label} ↗
+    </a>
+  );
+}
+
+/** Certification, runtime and genres, the way a library listing reads. The year stays in
+ *  the title; anything unknown is simply skipped. */
+function MetaLine({ item }: { item: CandidateDetail }) {
+  const parts: string[] = [];
+  if (item.runtime_minutes) parts.push(`${item.runtime_minutes} min`);
+  if (item.genres.length > 0) parts.push(item.genres.slice(0, 3).join(", "));
+  if (!item.content_rating && parts.length === 0) return null;
+  return (
+    <p className="why-meta">
+      {item.content_rating && <span className="cert">{item.content_rating}</span>}
+      {parts.join(" · ")}
+    </p>
+  );
+}
+
+/** One ratings chip. With a site link it opens the number's source in a new tab;
+ *  without one it stays a plain chip -- never a dead link. */
+function RatingChip({
+  href,
+  title,
+  children,
+}: {
+  href: string | null;
+  title: string;
+  children: ReactNode;
+}) {
+  if (!href) {
+    return (
+      <span className="rating-chip" title={title}>
+        {children}
+      </span>
+    );
+  }
+  return (
+    <a className="rating-chip" href={href} target="_blank" rel="noopener noreferrer" title={title}>
+      {children}
+    </a>
+  );
+}
+
+/** External ratings, no stars. IMDb is the same number the score used (its chip says so
+ *  on hover); the rest come from Plex. Each chip opens its site when the link is known.
+ *  The whole row hides when nothing is known. */
+function RatingsRow({ ratings, links }: { ratings: Ratings | null; links: Links }) {
+  if (!ratings) return null;
+  const known =
+    ratings.imdb ?? ratings.rt_critic ?? ratings.rt_audience ?? ratings.tmdb ?? null;
+  if (known === null) return null;
+  return (
+    <div className="why-ratings">
+      {ratings.imdb != null && (
+        <RatingChip
+          href={links.imdb}
+          title={
+            ratings.imdb_votes
+              ? `IMDb ${ratings.imdb.toFixed(1)} from ${ratings.imdb_votes.toLocaleString()} votes. The same number the score uses.`
+              : "The same number the score uses."
+          }
+        >
+          <span className="rating-src rating-imdb">IMDb</span> {ratings.imdb.toFixed(1)}
+        </RatingChip>
+      )}
+      {ratings.rt_critic != null && (
+        <RatingChip
+          href={links.rotten_tomatoes}
+          title="Rotten Tomatoes critics score, from Plex. Opens a Rotten Tomatoes search"
+        >
+          <span className="rating-src">🍅 RT</span> {ratings.rt_critic}%
+        </RatingChip>
+      )}
+      {ratings.rt_audience != null && (
+        <RatingChip
+          href={links.rotten_tomatoes}
+          title="Rotten Tomatoes audience score, from Plex. Opens a Rotten Tomatoes search"
+        >
+          <span className="rating-src">🍿 Audience</span> {ratings.rt_audience}%
+        </RatingChip>
+      )}
+      {ratings.tmdb != null && (
+        <RatingChip href={links.tmdb} title="TMDb score, from Plex">
+          <span className="rating-src">TMDb</span> {ratings.tmdb}%
+        </RatingChip>
+      )}
+    </div>
+  );
+}
 
 /** The synopsis, clamped to two lines with a "more" to expand. The card shows the *reason*
  *  now, so this slide-out is the one place the plot lives -- but it still should not push the
@@ -129,6 +236,8 @@ function Verdict({ item }: { item: CandidateDetail }) {
  *  glance, which is the question you actually ask when tuning. */
 function Signal({ signal }: { signal: CandidateDetail["explanation"]["signals"][number] }) {
   const filled = signal.weight > 0 ? (signal.contribution / signal.weight) * 100 : 0;
+  // A custom condemn rule's id is its own name; built-ins use the closed id set.
+  const custom = !BUILTIN_SIGNAL_IDS.has(signal.id);
 
   return (
     <li className={signal.evaluated ? "signal" : "signal signal-unknown"}>
@@ -137,7 +246,10 @@ function Signal({ signal }: { signal: CandidateDetail["explanation"]["signals"][
           {signal.evaluated ? `+${signal.contribution.toFixed(1)}` : "·"}
           <span className="muted">/{signal.weight}</span>
         </span>
-        <span className="signal-detail">{signal.detail}</span>
+        <span className="signal-detail">
+          {signal.detail}
+          {custom && <RuleTag />}
+        </span>
       </div>
       <div className="bar">
         <div className="bar-fill" style={{ width: `${Math.min(filled, 100)}%` }} />
@@ -150,6 +262,19 @@ function Signal({ signal }: { signal: CandidateDetail["explanation"]["signals"][
       )}
     </li>
   );
+}
+
+/** The backend words a custom-rule outcome as "your rule: {condition}" (fired) or
+ *  "checked your rule: {condition}" (checked, didn't fire) -- see engine/fields.py.
+ *  Reworded here for the panel; the stored detail stays untouched as the audit record. */
+function customGateDetail(detail: string): string {
+  if (detail.startsWith("your rule: ")) {
+    return `Kept by your rule: ${detail.slice("your rule: ".length)}`;
+  }
+  if (detail.startsWith("checked your rule: ")) {
+    return `Your rule didn't match: ${detail.slice("checked your rule: ".length)}`;
+  }
+  return detail;
 }
 
 function Gates({
@@ -170,12 +295,20 @@ function Gates({
       <h3>{title}</h3>
       <p className="blurb">{blurb}</p>
       <ul className={`gates gates-${tone}`}>
-        {outcomes.map((outcome) => (
-          <li key={outcome.gate}>
-            <span className="gate-mark">✓</span>
-            <span className="gate-detail">{outcome.detail}</span>
-          </li>
-        ))}
+        {/* Keyed on gate AND detail: several custom rules share the "custom" gate id,
+            and duplicate keys would make React drop rows. */}
+        {outcomes.map((outcome) => {
+          const custom = outcome.gate === "custom";
+          return (
+            <li key={`${outcome.gate}:${outcome.detail}`} className={custom ? "gate-custom" : ""}>
+              <span className="gate-mark">✓</span>
+              <span className="gate-detail">
+                {custom ? customGateDetail(outcome.detail) : outcome.detail}
+                {custom && <RuleTag />}
+              </span>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
@@ -287,12 +420,48 @@ export function WhyPanel({ item, onClose }: { item: CandidateDetail; onClose: ()
       <header className="why-head">
         <div>
           <h2>
-            {item.title}
-            {item.year && <span className="card-year"> {item.year}</span>}
+            {/* The title itself opens the item in Plex when it can; a title Reaper
+                couldn't match stays plain text rather than linking somewhere wrong. */}
+            {item.links.plex ? (
+              <a
+                className="title-link"
+                href={item.links.plex}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open in Plex"
+              >
+                {item.title}
+                {item.year && <span className="card-year"> {item.year}</span>}
+                <svg
+                  className="title-ext"
+                  viewBox="0 0 16 16"
+                  width="13"
+                  height="13"
+                  fill="none"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M6 3h7v7M13 3L4 12"
+                    stroke="currentColor"
+                    strokeWidth="1.7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </a>
+            ) : (
+              <>
+                {item.title}
+                {item.year && <span className="card-year"> {item.year}</span>}
+              </>
+            )}
           </h2>
-          <p className="muted">
-            {bytes(item.size_bytes)} &middot; {mediaLabel} &middot;{" "}
-            <code>{item.media_key}</code>
+          <p className="muted why-sub">
+            {bytes(item.size_bytes)} &middot; {mediaLabel}
+            <JumpPill href={item.links.tautulli} label="Tautulli" />
+            <JumpPill href={item.links.seerr} label="Seerr" />
+            <JumpPill href={item.links.radarr} label="Radarr" />
+            <JumpPill href={item.links.sonarr} label="Sonarr" />
           </p>
         </div>
         <button className="ghost why-close" onClick={onClose} aria-label="Close">
@@ -301,6 +470,9 @@ export function WhyPanel({ item, onClose }: { item: CandidateDetail; onClose: ()
       </header>
 
       <KeptNotice match={explanation.match} />
+
+      <MetaLine item={item} />
+      <RatingsRow ratings={item.ratings} links={item.links} />
 
       {item.summary && <Synopsis text={item.summary} />}
 
@@ -344,7 +516,11 @@ export function WhyPanel({ item, onClose }: { item: CandidateDetail; onClose: ()
                     −{keep.discount.toFixed(1)}
                     <span className="muted">/{keep.max_discount}</span>
                   </span>
-                  <span className="signal-detail">{keep.detail}</span>
+                  <span className="signal-detail">
+                    {keep.detail}
+                    {/* Every graded keep is operator-authored, so every row is yours. */}
+                    <RuleTag />
+                  </span>
                 </div>
                 {!keep.evaluated && (
                   <p className="signal-note">

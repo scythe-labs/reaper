@@ -164,6 +164,23 @@ class TestRatingProvenance:
         assert rating.source is RatingSource.ROTTEN_TOMATOES_CRITIC
         assert rating.value == 9.6  # normalised from a 0-100 percentage
 
+    def test_the_audience_slot_routes_a_rotten_tomatoes_image_to_the_audience_score(
+        self,
+    ) -> None:
+        """Both RT populations arrive as ``rottentomatoes://`` images; only the slot
+        tells them apart. Without the flag, the audience score silently became the
+        Tomatometer -- and the panel would have shown two 'critic' numbers."""
+        audience = from_plex("84", "rottentomatoes://image.rating.upright", audience=True)
+        assert audience is not None
+        assert audience.source is RatingSource.ROTTEN_TOMATOES_AUDIENCE
+        assert audience.value == 8.4
+
+        # An IMDb image in the audience slot is still just IMDb (the probed-server
+        # shape in this module's docstring) -- the flag only disambiguates RT.
+        imdb = from_plex("7.0", "imdb://image.rating", audience=True)
+        assert imdb is not None
+        assert imdb.source is RatingSource.IMDB
+
     def test_a_rating_with_no_provenance_is_dropped_not_guessed(self) -> None:
         """An uninterpretable number must not justify a deletion."""
         assert from_plex("7.0", None) is None

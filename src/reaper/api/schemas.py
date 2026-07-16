@@ -96,6 +96,35 @@ class Explanation(BaseModel):
     Deleterr failure class."""
 
 
+class LinksOut(BaseModel):
+    """Where this item can be opened. Each link is ``None`` when it cannot be built
+    (unmatched in Plex, instance removed, a row scanned before the coordinates were
+    captured) -- the UI hides a missing link, never renders a broken one. At most one
+    of ``radarr``/``sonarr`` is set. The rating-site links back the chips in the
+    ratings row; Rotten Tomatoes is a title search (no integration provides RT's
+    hand-curated slugs)."""
+
+    plex: str | None = None
+    tautulli: str | None = None
+    seerr: str | None = None
+    radarr: str | None = None
+    sonarr: str | None = None
+    imdb: str | None = None
+    tmdb: str | None = None
+    rotten_tomatoes: str | None = None
+
+
+class RatingsOut(BaseModel):
+    """The external-ratings row. ``imdb`` is the same dataset number the scoring signal
+    used (never a second source); the percentage fields are 0-100 ints."""
+
+    imdb: float | None = None
+    imdb_votes: int | None = None
+    rt_critic: int | None = None
+    rt_audience: int | None = None
+    tmdb: int | None = None
+
+
 class CandidateOut(BaseModel):
     id: int
     media_key: str
@@ -114,6 +143,13 @@ class CandidateOut(BaseModel):
     requested_by: str | None = None
     group_key: str | None = None
     group_title: str | None = None
+    video_resolution: str | None = None
+    """Canonical file resolution ("2160", "1080", ..., "sd") for the card's quality
+    badge. None hides the badge (TV seasons, unmatched items, pre-rescan rows)."""
+    dormant_for: str | None = None
+    """How long the item has sat unwatched, as the humanized span from the dormancy
+    signal ("5 years, 9 months") -- the card's amber pill. None when the signal could
+    not be evaluated, and the pill is hidden."""
     reason: str | None = None
     """The one-line "why", drawn from the explanation: the protection that keeps a spared
     item, or the top reason a reaped one scored. It is what the card shows in place of a plot
@@ -129,6 +165,11 @@ class CandidateOut(BaseModel):
 
 class CandidateDetail(CandidateOut):
     explanation: Explanation
+    links: LinksOut = Field(default_factory=LinksOut)
+    ratings: RatingsOut | None = None
+    content_rating: str | None = None
+    runtime_minutes: int | None = None
+    genres: list[str] = Field(default_factory=list)
 
 
 class SnapshotOut(BaseModel):

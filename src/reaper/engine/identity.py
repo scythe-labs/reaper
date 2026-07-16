@@ -63,6 +63,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from reaper.ratings import Rating
+
 
 class MatchedBy(enum.StrEnum):
     """Which signal bound an item to its Plex row -- surfaced in the audit log."""
@@ -276,6 +278,18 @@ class PlexItem:
     ids: ExternalIds = ExternalIds()
     file_basename: str | None = None
     files: tuple[PlexFile, ...] = ()
+    # --- display metadata riding the same sweep -----------------------------------
+    # Captured because the section listing already carries it, and carried onto the
+    # candidate so the review queue can show it. None of these fields participate in
+    # matching or in any verdict; a row missing them matches and judges identically.
+    video_resolution: str | None = None
+    """Plex's ``videoResolution`` for the first media ("4k", "1080", ...). Movies only;
+    show listings carry no media."""
+    content_rating: str | None = None
+    runtime_minutes: int | None = None
+    ratings: tuple[Rating, ...] = ()
+    """Plex's critic/audience ratings with provenance read from the ``*RatingImage``
+    (see reaper.ratings) -- never bare numbers whose meaning was guessed."""
 
 
 @dataclass(frozen=True, slots=True)

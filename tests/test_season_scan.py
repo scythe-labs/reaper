@@ -13,6 +13,7 @@ through the real default policy and asserts the verdict cannot be "condemn".
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
@@ -32,6 +33,7 @@ from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import SignalConfig
 from reaper.engine.signals import score as score_signals
+from reaper.ratings import Rating, RatingSource
 from reaper.services import history_sync, requested_by, season_scan
 from reaper.services.scan_runner import build_gates
 from reaper.services.season_pruning import plan_series_prune
@@ -754,6 +756,8 @@ class TestGatherEndToEnd:
                 "status": "ended",
                 "ended": True,
                 "tvdbId": 4242,  # matches Plex by tvdb; NO imdbId from Sonarr
+                "tmdbId": 999,
+                "titleSlug": "reality-show",
                 "seasons": [_season_payload(n) for n in range(1, 6)],
             }
         ]
@@ -771,6 +775,16 @@ class TestGatherEndToEnd:
                     year=2020,
                     added_at=None,
                     ids=identity.ExternalIds.of(tvdb=4242, imdb="tt7777"),
+                    content_rating="TV-PG",
+                    runtime_minutes=50,
+                    ratings=(
+                        Rating(
+                            source=RatingSource.ROTTEN_TOMATOES_AUDIENCE,
+                            value=7.6,
+                            votes=None,
+                            provider="plex",
+                        ),
+                    ),
                 )
             }
         )
@@ -798,6 +812,21 @@ class TestGatherEndToEnd:
         # Poster uses the show's key (800), not the season's (803).
         assert pruned.poster_rating_key == 800
         assert pruned.plex_rating_key == 803
+        # The show's display metadata is inherited by every season row: the Sonarr web
+        # coordinate, certification, runtime, and a ratings row whose IMDb entry is the
+        # SAME dataset number the scoring signal froze (never a second source).
+        assert pruned.title_slug == "reality-show"
+        # Outbound-link coordinates: the show's tmdb id, and the imdb id resolved the
+        # same way the rating was (Sonarr had none, so the Plex-matched one serves).
+        assert pruned.tmdb_id == 999
+        assert pruned.imdb_id == "tt7777"
+        assert pruned.content_rating == "TV-PG"
+        assert pruned.runtime_minutes == 50
+        assert pruned.ratings_json is not None
+        stored = json.loads(pruned.ratings_json)
+        assert stored["imdb"] == 71
+        assert stored["imdb_votes"] == 38
+        assert stored["rotten_tomatoes_audience"] == 76
 
     async def test_an_unmatched_series_yields_unresolved_seasons(
         self, cache_engine: AsyncEngine

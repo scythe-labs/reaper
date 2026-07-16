@@ -1021,6 +1021,61 @@ Also corrected in passing: `api/settings.py`'s module docstring still promised t
 env-ceiling model ("*enabling* deletion still requires host access"), the same stale claim
 family as §12's aftermath.
 
+## The review-view context pass (badges, deep links, ratings, policy visibility)
+
+The operator annotated the Review view asking for more context per item, with one
+standing decision: **the data source priority is Plex first, then Tautulli, then the
+*arrs — for everything.** All shipped and live-verified against real services (two full
+scans on a copy of the dev DB):
+
+- **Free capture from the sweep.** The plexapi section listing the identity sweep already
+  iterates carries ratings-with-provenance, certification, runtime, and per-media
+  `videoResolution`. `PlexItem` now carries them; both Tautulli-spine rebuild loops copy
+  them (that double copy site is regression-tested); nothing costs an extra call. A strict
+  stub test proves the sweep reads only listing attributes — plexapi's `__getattr__`
+  auto-reload (a per-item HTTP call for unknown attributes) can never fire.
+- **Six display-only Candidate columns** (`tmdb_id`, `title_slug`, `video_resolution`,
+  `content_rating`, `runtime_minutes`, `ratings_json`), display-only by construction:
+  Facts/gates/signals/policy hashing untouched. Baseline migration edited in place.
+- **`ratings.from_plex`/`from_radarr` are wired into production for the first time** —
+  and the audience slot now resolves a Rotten Tomatoes image to the audience score (both
+  RT populations arrive as `rottentomatoes://` images; only the slot tells them apart).
+  The displayed IMDb number is the SAME dataset entry the scoring signal froze
+  (`dataset_entry` is shared by `build_facts` and the ratings assembly), so the panel can
+  never show one IMDb value beside a signal that used another. TV inherits the show's
+  ratings; seasons get no resolution badge v1 (show listings carry no media).
+- **Deep links are server-computed** (`services/deep_links.py`, reusing `MediaRef.parse`):
+  the panel title opens Plex Web
+  (`{web_url}/desktop/#!/server/{machine_identifier}/details?key=…`), pills open Tautulli
+  (`/info?rating_key=`) and the managing *arr — Radarr routes by **tmdbId**, Sonarr by
+  **titleSlug** (the internal id in media_key does not resolve in their web UIs), and the
+  arr link resolves the instance from `MediaRef.instance_id`, never "the first Radarr"
+  (verified live: a 4K-instance item opens its 4K Radarr). Every missing coordinate hides
+  that one link; nothing renders broken.
+- **A `plex_web_url` AppSetting** (default `https://app.plex.tv`), editable under
+  Settings → Plex, feeds the Plex link. Plain-language 422 on a non-http(s) value.
+- **Cards**: resolution badge (4K/HD/SD + exact p-value), the dormancy line as a compact
+  amber pill ("Not watched in 5y 9m", extracted from the stored UNWATCHED signal detail —
+  serializer-only, old snapshots render it immediately), teal Movie chip
+  (`--media-movie` token pair; TV keeps accent), scythe icon on Reap actions (close
+  buttons keep ✕).
+- **Policy visibility**: every operator-authored row wears a "Your rule" tag — custom
+  protect rules in the protections lists (accent tint; wording rendered as "Kept by your
+  rule: …" / "Your rule didn't match: …" while the stored detail stays the audit record),
+  custom condemn rows in "Why it scored", and every "Leaning toward keeping" row. Fixed a
+  pre-existing React key collision in `Gates` (all custom rules share `gate="custom"`).
+- **Named custom rules are deferred** — protect conditions have no name field, and adding
+  one churns the policy hash. Rows show their condition text; revisit post-release.
+- **Outbound links (follow-up ask):** a "Seerr ↗" pill after Tautulli (Seerr item pages
+  key on the tmdb id, `/movie/{id}` / `/tv/{id}`), and the ratings chips open their
+  sites — IMDb and TMDb as true item pages (a new `imdb_id` column; seasons now also
+  stamp the show's `tmdb_id`), Rotten Tomatoes as an honest **title search**, because RT
+  slugs are hand-curated and no integration provides them. A season searches by its
+  show's title, not "Show · Season 3". Chips without a link stay plain spans, never dead
+  anchors. Also fixed in passing: "the first enabled Tautulli/Seerr" lookups are now
+  ordered by id — the previous unordered `.first()` was nondeterministic, exposed by
+  env-seeded instances landing beside fixture rows in a test database.
+
 ## Immediate next steps
 
 1. **The live send** — wire `_send_for_real` + the exclusion-verify + the Plex refresh

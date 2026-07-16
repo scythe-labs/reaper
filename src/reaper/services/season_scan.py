@@ -64,7 +64,9 @@ from reaper.engine.gates import ABSTAIN as GATE_ABSTAIN
 from reaper.engine.gates import PROTECT as GATE_PROTECT
 from reaper.engine.gates import Facts, GateId, GateResult
 from reaper.engine.observation import Absent, Known, Observation, Unknown
+from reaper.ratings import Rating
 from reaper.services import lists, requested_by
+from reaper.services.display_meta import build_ratings_json
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
 from reaper.services.season_pruning import (
     SPECIALS_SEASON,
@@ -125,6 +127,15 @@ class SeasonJudgement:
     matched_by: identity.MatchedBy | None = None
     match_detail: str | None = None
     match_status: identity.MatchStatus | None = None
+    # Show-level display metadata shared by every season row: the Sonarr web-route
+    # coordinate, certification, episode runtime, and the frozen ratings row. A season
+    # has none of its own; the show's stand in. Display only, never a verdict input.
+    title_slug: str | None = None
+    tmdb_id: int | None = None
+    imdb_id: str | None = None
+    content_rating: str | None = None
+    runtime_minutes: int | None = None
+    ratings_json: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +174,11 @@ class _SeriesWork:
     plex_imdb_id: str | None = None
     seasons_in_plex: dict[int, PlexSeason] = field(default_factory=dict)
     season_final_episode: dict[int, int | None] = field(default_factory=dict)
+    # Show-level display metadata from the matched Plex row, shared by every season of
+    # the show (a season has no certification/ratings of its own). Display only.
+    show_content_rating: str | None = None
+    show_runtime_minutes: int | None = None
+    show_plex_ratings: tuple[Rating, ...] = ()
 
 
 @dataclass
@@ -461,6 +477,17 @@ async def build_tv_index(
                         ids=enriched.ids if enriched is not None else identity.ExternalIds(),
                         file_basename=enriched.file_basename if enriched is not None else None,
                         files=enriched.files if enriched is not None else (),
+                        # Display metadata from the plexapi sweep; rows the sweep did not
+                        # list (or a failed sweep) simply carry none of it. Shows carry no
+                        # media, so video_resolution stays None here by construction.
+                        video_resolution=(
+                            enriched.video_resolution if enriched is not None else None
+                        ),
+                        content_rating=enriched.content_rating if enriched is not None else None,
+                        runtime_minutes=(
+                            enriched.runtime_minutes if enriched is not None else None
+                        ),
+                        ratings=enriched.ratings if enriched is not None else (),
                     )
                 )
             if len(rows) < 1000:
@@ -722,6 +749,11 @@ async def gather(
         item.match_detail = resolution.detail
         item.match_status = resolution.status
         item.plex_imdb_id = resolution.plex_item.ids.imdb if resolution.plex_item else None
+        if resolution.plex_item is not None:
+            # Show-level display metadata, inherited by every season row of the show.
+            item.show_content_rating = resolution.plex_item.content_rating
+            item.show_runtime_minutes = resolution.plex_item.runtime_minutes
+            item.show_plex_ratings = resolution.plex_item.ratings
         if resolution.rating_key is not None:
             show_rk = resolution.rating_key
             if show_rk not in resolved_shows:
@@ -821,6 +853,15 @@ async def _judge_series(
     show_year = int(series["year"]) if series.get("year") else None
     show_summary = _series_summary(series)
     group_key = f"sonarr:{item.source.instance_id}:{series_id}"
+    title_slug = str(series.get("titleSlug") or "") or None
+    # Outbound-link coordinates: Seerr and TMDb key on the show's tmdb id; the IMDb page
+    # on its imdb id (Sonarr's first, the Plex-matched one as fallback -- the same
+    # precedence the rating lookup uses).
+    show_tmdb_id = int(series["tmdbId"]) if series.get("tmdbId") else None
+    show_imdb_id = str(series.get("imdbId") or "") or item.plex_imdb_id
+    # The frozen ratings row: the dataset entry the scoring signal used first (they must
+    # never disagree), the matched Plex show's ratings filling the rest.
+    show_ratings_json = build_ratings_json(show_rating, item.show_plex_ratings)
 
     # Show-level facts shared by every season row: ended-vs-returning and genre.
     show_ended_obs = series_ended(series)
@@ -908,6 +949,12 @@ async def _judge_series(
                 matched_by=item.matched_by,
                 match_detail=item.match_detail,
                 match_status=item.match_status,
+                title_slug=title_slug,
+                tmdb_id=show_tmdb_id,
+                imdb_id=show_imdb_id,
+                content_rating=item.show_content_rating,
+                runtime_minutes=item.show_runtime_minutes,
+                ratings_json=show_ratings_json,
             )
         )
     return judgements

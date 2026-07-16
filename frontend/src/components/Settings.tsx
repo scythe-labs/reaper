@@ -334,8 +334,23 @@ export function PlexPanel() {
   const [servers, setServers] = useState<PlexServerChoice[] | null>(null);
   const pollRef = useRef<number | null>(null);
   const pinRef = useRef<number | null>(null);
+  // The web-address box mirrors the saved value and follows it when a save (or another
+  // tab) changes it; typing diverges the two until Save or a refetch reconciles them.
+  const [webUrl, setWebUrl] = useState("");
+  const [webUrlError, setWebUrlError] = useState<string | null>(null);
+  const savedWebUrl = data?.web_url ?? "";
+  useEffect(() => setWebUrl(savedWebUrl), [savedWebUrl]);
 
   useEffect(() => () => (pollRef.current ? clearInterval(pollRef.current) : undefined), []);
+
+  const saveWebUrl = useMutation({
+    mutationFn: () => api.setPlexWebUrl(webUrl.trim()),
+    onSuccess: () => {
+      setWebUrlError(null);
+      void queryClient.invalidateQueries({ queryKey: ["plex"] });
+    },
+    onError: (e: Error) => setWebUrlError(e.message),
+  });
 
   const done = () => {
     setLinking(false);
@@ -469,6 +484,37 @@ export function PlexPanel() {
         </div>
       )}
       {message && <p className="muted">{message}</p>}
+
+      <div className="add-grid">
+        <label className="field-sm wide">
+          <span className="field-label">Plex web address</span>
+          <input
+            type="url"
+            value={webUrl}
+            onChange={(e) => {
+              setWebUrl(e.target.value);
+              setWebUrlError(null);
+            }}
+            placeholder="https://app.plex.tv"
+            autoComplete="off"
+          />
+        </label>
+      </div>
+      <p className="help">
+        Where links to your Plex library open. Keep the default unless you host your own
+        Plex Web. Clear the box and save to go back to the default.
+      </p>
+      <div className="add-actions">
+        <button
+          type="button"
+          className="primary"
+          disabled={saveWebUrl.isPending || webUrl.trim() === savedWebUrl}
+          onClick={() => saveWebUrl.mutate()}
+        >
+          {saveWebUrl.isPending ? "Saving…" : "Save"}
+        </button>
+      </div>
+      {webUrlError && <p className="error">{webUrlError}</p>}
     </div>
   );
 }

@@ -46,6 +46,12 @@ export interface Candidate {
   requested_by: string | null;
   group_key: string | null;
   group_title: string | null;
+  /** Canonical file resolution ("2160", "1080", ..., "sd") for the card's quality badge.
+   *  Null hides the badge (TV seasons, unmatched items, rows from older scans). */
+  video_resolution: string | null;
+  /** How long the item has sat unwatched ("5 years, 9 months"), for the amber pill.
+   *  Null hides the pill. */
+  dormant_for: string | null;
   /** The one-line "why", drawn from the explanation: the protection keeping a spared item,
    *  or the strongest reason a reaped one scored. What the card shows instead of a synopsis. */
   reason: string | null;
@@ -136,8 +142,38 @@ export interface Explanation {
   match?: Match;
 }
 
+/** Where the item can be opened. Each link is null when it can't be built (unmatched in
+ *  Plex, instance removed, a row from an older scan); the panel hides a missing link,
+ *  never renders a broken one. At most one of radarr/sonarr is set. The rating-site
+ *  links back the chips in the ratings row; rotten_tomatoes is a title search. */
+export interface Links {
+  plex: string | null;
+  tautulli: string | null;
+  seerr: string | null;
+  radarr: string | null;
+  sonarr: string | null;
+  imdb: string | null;
+  tmdb: string | null;
+  rotten_tomatoes: string | null;
+}
+
+/** The external-ratings row. `imdb` is the same number the score used; the percentage
+ *  fields are 0-100 ints. Null means that source is unknown for this item. */
+export interface Ratings {
+  imdb: number | null;
+  imdb_votes: number | null;
+  rt_critic: number | null;
+  rt_audience: number | null;
+  tmdb: number | null;
+}
+
 export interface CandidateDetail extends Candidate {
   explanation: Explanation;
+  links: Links;
+  ratings: Ratings | null;
+  content_rating: string | null;
+  runtime_minutes: number | null;
+  genres: string[];
 }
 
 export interface GateSetting {
@@ -477,6 +513,8 @@ export interface PlexStatus {
   name: string | null;
   connection_uri: string | null;
   last_ok_at: string | null;
+  /** Where "open in Plex" links point. Defaults to the hosted Plex Web app. */
+  web_url: string;
 }
 
 export interface PlexLinkStart {
@@ -639,6 +677,8 @@ export const api = {
     post<InstanceTest>(`/api/settings/instances/${id}/test`, {}),
 
   plexStatus: () => request<PlexStatus>("/api/settings/plex"),
+  /** Save where "open in Plex" links point. An empty string resets to the hosted default. */
+  setPlexWebUrl: (web_url: string) => put<PlexStatus>("/api/settings/plex", { web_url }),
   plexLinkStart: () => post<PlexLinkStart>("/api/settings/plex/link/start", {}),
   plexLinkPoll: (pin_id: number, machine_identifier?: string) =>
     post<PlexLinkPoll>("/api/settings/plex/link/poll", { pin_id, machine_identifier }),

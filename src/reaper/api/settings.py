@@ -121,6 +121,15 @@ class PlexStatusOut(BaseModel):
     name: str | None = None
     connection_uri: str | None = None
     last_ok_at: str | None = None
+    web_url: str = ""
+    """Where "open in Plex" links point. Always present, linked or not -- the hosted
+    Plex Web default until the operator overrides it."""
+
+
+class PlexWebUrlIn(BaseModel):
+    """The one editable Plex display setting. Empty resets to the hosted default."""
+
+    web_url: str = ""
 
 
 class PlexLinkStartOut(BaseModel):
@@ -318,14 +327,16 @@ async def test_saved_instance(request: Request, instance_id: int) -> TestOut:
 
 
 async def _plex_status(session: AsyncSession) -> PlexStatusOut:
+    web_url = await app_settings.get_plex_web_url(session)
     server = (await session.execute(select(PlexServer))).scalars().first()
     if server is None:
-        return PlexStatusOut(linked=False)
+        return PlexStatusOut(linked=False, web_url=web_url)
     return PlexStatusOut(
         linked=True,
         name=server.name,
         connection_uri=server.connection_uri,
         last_ok_at=server.last_ok_at.isoformat() if server.last_ok_at else None,
+        web_url=web_url,
     )
 
 
@@ -333,6 +344,20 @@ async def _plex_status(session: AsyncSession) -> PlexStatusOut:
 async def plex_status(request: Request) -> PlexStatusOut:
     async with _factory(request)() as session:
         return await _plex_status(session)
+
+
+@router.put("/plex")
+async def set_plex_web_url(request: Request, payload: PlexWebUrlIn) -> PlexStatusOut:
+    """Save where "open in Plex" links point. Empty resets to the hosted default."""
+    cleaned = payload.web_url.strip()
+    if cleaned and not (cleaned.startswith("https://") or cleaned.startswith("http://")):
+        raise HTTPException(422, "The Plex web address must start with https:// or http://.")
+    async with _factory(request)() as session:
+        await app_settings.set_plex_web_url(session, cleaned or None)
+        status = await _plex_status(session)
+        await session.commit()
+    log.info("settings.plex_web_url_saved")
+    return status
 
 
 @router.post("/plex/link/start")

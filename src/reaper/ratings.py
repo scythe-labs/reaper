@@ -114,6 +114,7 @@ def from_plex(
     image: str | None,
     *,
     provider: str = "plex",
+    audience: bool = False,
 ) -> Rating | None:
     """Read a Plex ``rating`` / ``audience_rating`` pair.
 
@@ -121,6 +122,12 @@ def from_plex(
     Rotten Tomatoes or TMDb. Without it the value is uninterpretable, and an
     uninterpretable rating must not be used to justify a deletion -- so we return
     None rather than guessing.
+
+    ``audience=True`` marks the value as coming from the ``audience_rating`` slot, so
+    a Rotten Tomatoes image resolves to the audience score, not the Tomatometer --
+    the prefix map alone cannot tell them apart, since both arrive as
+    ``rottentomatoes://image.rating.*``. (An IMDb or TMDb image in that slot is
+    still just an IMDb/TMDb value; only RT keeps two distinct populations.)
     """
     if value in (None, ""):
         return None
@@ -133,6 +140,8 @@ def from_plex(
     if image:
         scheme = str(image).split("://", 1)[0].lower()
         source = _PLEX_IMAGE_PREFIXES.get(scheme, RatingSource.UNKNOWN)
+        if audience and source is RatingSource.ROTTEN_TOMATOES_CRITIC:
+            source = RatingSource.ROTTEN_TOMATOES_AUDIENCE
 
     if source is RatingSource.UNKNOWN:
         # We know a number but not what it means. Unknown may only protect,

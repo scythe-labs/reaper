@@ -42,6 +42,7 @@ import structlog
 from reaper.clients.base import SAFE_METHODS, SafetyViolationError
 from reaper.config import RuntimeSafety
 from reaper.engine.identity import PlexFile, PlexItem, parse_guids, to_basename
+from reaper.ratings import from_plex
 
 if TYPE_CHECKING:
     from plexapi.server import PlexServer
@@ -324,8 +325,18 @@ class PlexClient:
                     # Movies carry media parts (file path + exact byte size); shows carry
                     # folder locations only, which have no size. A missing or zero size is
                     # recorded as None (unknown), never as a comparable number.
+                    #
+                    # Display metadata rides the same listing XML, so reading it here costs
+                    # nothing. All of these attributes are set by plexapi's _loadData for
+                    # listing rows (None when the server omits one), so plain attribute
+                    # reads never trigger the implicit per-item reload plexapi fires for
+                    # attributes it has never seen.
                     files: list[PlexFile] = []
+                    video_resolution: str | None = None
                     for media in getattr(item, "media", None) or []:
+                        if video_resolution is None:
+                            raw_res = getattr(media, "videoResolution", None)
+                            video_resolution = str(raw_res) if raw_res else None
                         for part in getattr(media, "parts", None) or []:
                             leaf = to_basename(getattr(part, "file", None))
                             if leaf is None:
@@ -349,6 +360,27 @@ class PlexClient:
                     # the exact instant regardless of the Plex server's own timezone.
                     added = getattr(item, "addedAt", None)
                     added_at = added.astimezone(UTC) if isinstance(added, datetime) else None
+                    # Ratings with provenance: the *RatingImage tells us what each number
+                    # IS (imdb, RT, tmdb); a number whose image is missing is dropped by
+                    # from_plex rather than guessed at. The audience flag routes an RT
+                    # image in the audience slot to the audience score.
+                    plex_ratings = [
+                        r
+                        for r in (
+                            from_plex(
+                                getattr(item, "rating", None),
+                                getattr(item, "ratingImage", None),
+                            ),
+                            from_plex(
+                                getattr(item, "audienceRating", None),
+                                getattr(item, "audienceRatingImage", None),
+                                audience=True,
+                            ),
+                        )
+                        if r is not None
+                    ]
+                    content_rating = getattr(item, "contentRating", None)
+                    duration = getattr(item, "duration", None)
                     out[int(rating_key)] = PlexItem(
                         rating_key=int(rating_key),
                         title=str(getattr(item, "title", "") or ""),
@@ -357,6 +389,14 @@ class PlexClient:
                         ids=ids,
                         file_basename=basename,
                         files=tuple(files),
+                        video_resolution=video_resolution,
+                        content_rating=str(content_rating) if content_rating else None,
+                        runtime_minutes=(
+                            duration // 60_000
+                            if isinstance(duration, int) and duration > 0
+                            else None
+                        ),
+                        ratings=tuple(plex_ratings),
                     )
             return out
 

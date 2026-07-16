@@ -287,6 +287,8 @@ class TestPlexStatus:
             "name": None,
             "connection_uri": None,
             "last_ok_at": None,
+            # Present whether or not a server is linked: links need somewhere to point.
+            "web_url": "https://app.plex.tv",
         }
 
     def test_unlinking_when_nothing_is_linked_is_a_noop(self, client: TestClient) -> None:

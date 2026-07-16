@@ -36,6 +36,11 @@ DISCORD_WEBHOOK_KEY = "discord_webhook_enc"
 #: idempotent across repeated syncs even when the Plex label write never lands (preview /
 #: unarmed) -- see :func:`reaper.services.leaving_soon.sync`.
 LEAVING_SOON_ANNOUNCED_KEY = "leaving_soon_announced"
+#: Where "open in Plex" links send the admin. A plain URL, not a secret -- most installs
+#: keep the hosted Plex Web default; a self-hosted Plex Web front-end overrides it.
+PLEX_WEB_URL_KEY = "plex_web_url"
+
+DEFAULT_PLEX_WEB_URL = "https://app.plex.tv"
 
 
 async def _get(session: AsyncSession, key: str, default: Any) -> Any:
@@ -85,6 +90,21 @@ async def runtime_safety(session: AsyncSession, settings: Settings) -> RuntimeSa
         destructive_enabled=await destructive_enabled(session, settings),
         allow_leaving_soon_unarmed=settings.allow_unarmed_leaving_soon,
     )
+
+
+# --- Plex web address ------------------------------------------------------
+
+
+async def get_plex_web_url(session: AsyncSession) -> str:
+    """Where "open in Plex" links point. Defaults to the hosted Plex Web app."""
+    value = await _get(session, PLEX_WEB_URL_KEY, default=None)
+    return str(value) if value else DEFAULT_PLEX_WEB_URL
+
+
+async def set_plex_web_url(session: AsyncSession, url: str | None) -> None:
+    """Store the Plex web address. ``None`` or empty resets to the hosted default."""
+    cleaned = (url or "").strip().rstrip("/")
+    await _set(session, PLEX_WEB_URL_KEY, cleaned or None)
 
 
 # --- scan schedule ---------------------------------------------------------

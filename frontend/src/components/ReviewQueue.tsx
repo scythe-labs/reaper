@@ -195,6 +195,68 @@ function Score({ item }: { item: Candidate }) {
   );
 }
 
+/** The reap glyph: a small scythe. Only reap ACTIONS wear it -- close buttons keep ✕. */
+function ScytheIcon() {
+  return (
+    <svg className="scythe" viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+      <path
+        d="M12.9 2.1 C8.8 -0.4, 3.2 1.5, 1.3 7.3 C4.1 3.9, 8.9 3.3, 12.4 3.4 Z"
+        fill="currentColor"
+      />
+      <path
+        d="M12 3 C10.6 7.2, 9.4 10.8, 8.6 14.4"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <path d="M10.2 8.6 l2 0.7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** The label the resolution badge wears: 4K, HD or SD. Null (no data) shows nothing. */
+function resolutionLabel(value: string | null): string | null {
+  if (!value) return null;
+  if (value === "2160") return "4K";
+  if (value === "1080" || value === "720") return "HD";
+  return "SD";
+}
+
+function ResolutionBadge({ value }: { value: string | null }) {
+  const label = resolutionLabel(value);
+  if (!label) return null;
+  const detail = value && value !== "sd" ? `${value}p` : null;
+  return (
+    <span className="res-badge" title="The file's resolution">
+      {label}
+      {detail && <span className="res-detail">&nbsp;{detail}</span>}
+    </span>
+  );
+}
+
+/** "5 years, 9 months" -> "5y 9m", the compact span the pill wears. */
+function compactSpan(text: string): string {
+  return text
+    .replace(/ years?/g, "y")
+    .replace(/ months?/g, "m")
+    .replace(/ days?/g, "d")
+    .replace(/,/g, "");
+}
+
+/** The dormancy pill: how long the item has sat unwatched, in the shared amber tone. */
+function DormantPill({ dormantFor }: { dormantFor: string | null }) {
+  if (!dormantFor) return null;
+  return (
+    <span className="dormant-pill" title={`Not watched in ${dormantFor}`}>
+      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true">
+        <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.4" />
+        <path d="M8 4.6V8l2.4 1.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+      Not watched in {compactSpan(dormantFor)}
+    </span>
+  );
+}
+
 /** The two hand-overrides, as a paired toggle: **Spare** (∞ keep forever) and **Reap** (force
  *  onto the list). The active one is lit; clicking it again clears the override and lets Reaper
  *  judge the item again. Clicking the other switches. Stops the click from opening the panel. */
@@ -244,7 +306,7 @@ function OverrideControls({
             : "Force this onto the reap list"
         }
       >
-        <span aria-hidden="true">✕</span> {override === "reap" ? "Reaping" : "Reap"}
+        <ScytheIcon /> {override === "reap" ? "Reaping" : "Reap"}
       </button>
     </div>
   );
@@ -322,6 +384,9 @@ type Group = {
   poster: string | null;
   reason: string | null;
   requestedBy: string | null;
+  /** The first (highest-scoring) season's dormancy span, like `reason` -- the show
+   *  card's pill leads with its most condemned season. */
+  dormantFor: string | null;
   items: Candidate[];
   isShow: boolean;
 };
@@ -343,6 +408,7 @@ function toGroups(items: Candidate[]): Group[] {
           poster: item.poster_url,
           reason: item.reason,
           requestedBy: item.requested_by,
+          dormantFor: item.dormant_for,
           items: [],
           isShow: true,
         };
@@ -358,6 +424,7 @@ function toGroups(items: Candidate[]): Group[] {
         poster: item.poster_url,
         reason: item.reason,
         requestedBy: item.requested_by,
+        dormantFor: item.dormant_for,
         items: [item],
         isShow: false,
       });
@@ -429,9 +496,15 @@ function MovieCard({
         </div>
         <div className="card-meta">
           <span>{bytes(item.size_bytes)}</span>
+          <ResolutionBadge value={item.video_resolution} />
           <RequestedChip who={item.requested_by} />
         </div>
-        {item.reason && <p className="card-reason">{item.reason}</p>}
+        <DormantPill dormantFor={item.dormant_for} />
+        {/* The pill already says "not watched in …", so a reason that says the same
+            thing stands down; any other reason (a protection, a rating) still shows. */}
+        {item.reason && !(item.dormant_for && item.reason.startsWith("not watched in")) && (
+          <p className="card-reason">{item.reason}</p>
+        )}
       </div>
       <div className="card-side">
         <Score item={item} />
@@ -533,7 +606,11 @@ function ShowCard({
             </span>
             <RequestedChip who={group.requestedBy} />
           </div>
-          {group.reason && <p className="card-reason">{group.reason}</p>}
+          <DormantPill dormantFor={group.dormantFor} />
+          {group.reason &&
+            !(group.dormantFor && group.reason.startsWith("not watched in")) && (
+              <p className="card-reason">{group.reason}</p>
+            )}
         </div>
         <div className="card-side">
           {/* Spare or reap the whole show in one go -- the decision covers every season. In
@@ -994,7 +1071,7 @@ export function ReviewQueue({
               disabled={pending || selected.size === 0}
               onClick={() => bulk.mutate({ keys: [...selected], decision: "reap" })}
             >
-              <span aria-hidden="true">✕</span> Reap
+              <ScytheIcon /> Reap
             </button>
             <button
               type="button"
