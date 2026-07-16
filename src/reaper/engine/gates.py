@@ -479,7 +479,7 @@ class DataHorizonGate:
         return GateResult(
             self.id,
             ABSTAIN,
-            detail="Dormancy is known (clamped to the watch horizon during fact derivation).",
+            detail="Unwatched time is known, never counted further back than its history goes.",
         )
 
 
