@@ -68,6 +68,41 @@ class TestMutationsAreBlocked:
             assert (await client.system_status())["version"] == "6.3.0"
 
 
+class TestTlsVerificationReachesTheTransport:
+    """The per-instance "check the server's certificate" switch is only real if the flag
+    survives all the way to the httpx transport. Pin both directions, and pin the
+    default: nothing may quietly construct an unverified client."""
+
+    @staticmethod
+    def _spy_on_transport(monkeypatch: pytest.MonkeyPatch, seen: list[object]) -> None:
+        real = httpx.AsyncHTTPTransport
+
+        def spy(*args: Any, **kwargs: Any) -> httpx.AsyncHTTPTransport:
+            seen.append(kwargs.get("verify"))
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr("reaper.clients.base.httpx.AsyncHTTPTransport", spy)
+
+    @pytest.mark.parametrize("verify", [True, False])
+    async def test_the_verify_flag_lands_on_the_httpx_transport(
+        self, monkeypatch: pytest.MonkeyPatch, verify: bool
+    ) -> None:
+        seen: list[object] = []
+        self._spy_on_transport(monkeypatch, seen)
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY, verify=verify):
+            pass
+        assert seen == [verify]
+
+    async def test_verification_is_on_when_no_one_says_otherwise(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[object] = []
+        self._spy_on_transport(monkeypatch, seen)
+        async with TautulliClient("https://tautulli.test", "k", safety=READ_ONLY):
+            pass
+        assert seen == [True]
+
+
 class TestTypedMutationMethods:
     """The destructive *arr calls the executor actually issues. Each goes through
     ``_mutate``, so it declares intent to the guard -- and each is still refused unless

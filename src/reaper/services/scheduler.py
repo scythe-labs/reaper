@@ -102,6 +102,7 @@ async def full_history_sweep(
         row.base_url,
         secret_box.decrypt(row.api_key_enc),
         safety=RuntimeSafety(destructive_enabled=False),
+        verify=row.verify_tls,
     )
     try:
         async with client:

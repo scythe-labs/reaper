@@ -7,10 +7,41 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-16 (ambiguous ids narrow by file name, then by exact size; twin
-listings of one file merge)
+Last updated: 2026-07-16 (Services settings redesigned into per-kind card grids with a
+modal; per-service TLS verification opt-out for self-signed servers)
 
-### Newest — an ambiguous id narrows by file name, then exact size (the split-library fix)
+### Newest — Services settings redesign, and the per-service TLS opt-out
+
+The Settings → Services tab moved from a flat stacked list with an always-visible add form
+to one section per service kind (Radarr / Sonarr / Tautulli / Seerr), each a responsive
+grid of compact cards plus a dashed "Add a …" card. Add and edit now live in a modal
+(`ServiceModal.tsx`): the address is edited as hostname / port / SSL / optional URL base,
+composed back into the single stored `base_url` in the frontend only (the wire format and
+backend are unchanged), pasting a full URL into the hostname field distributes it across
+the fields, and the scheme's default port is left off so existing URLs round-trip
+unchanged. Enable/disable moved into the edit modal as an "Enabled" checkbox; the card
+footer is Test / Edit / Remove with the existing two-step confirm. The Setup Wizard renders
+the same panel unchanged.
+
+The long-deferred self-signed TLS opt-out landed with it: a per-instance `verify_tls`
+column (default on), threaded from the row into the clients' existing `verify=` transport
+parameter at every construction site (scan sources, reap gateway, fairness, poster,
+scheduler sweep, and both connection tests). In the modal it is "Check the server's
+certificate" — shown only when SSL is on, with a caution note while off — and the card
+wears a "certificate check off" chip so the choice is visible at a glance. On update an
+omitted `verify_tls` means "leave it alone" while an explicit `false` sticks; create and
+test default to on. Pinned by tests at three layers (API round-trip including
+omitted-vs-explicit-false, client `verify` → `httpx.AsyncHTTPTransport` kwarg,
+`build_sources` passing each row's own flag) and proven live against a scratch self-signed
+HTTPS server: with the check on the test fails with a certificate error, with it off it
+connects, and a saved instance's test uses its stored choice. The baseline migration was
+edited in place (pre-release rule). One sharp edge worth remembering: an *existing* dev DB
+can't take a plain `ALTER TABLE … ADD COLUMN verify_tls BOOLEAN NOT NULL DEFAULT 1` —
+SQLite requires the default, but the resulting server-default then trips `alembic check`
+as model/migration drift — so an existing dev DB gets a one-off instance-table rebuild
+(create the new shape, copy rows with `verify_tls = 1`, drop, rename).
+
+### Earlier — an ambiguous id narrows by file name, then exact size (the split-library fix)
 
 On a split library (HD + 4K sections, curated sections re-listing titles), one external id
 names 2+ Plex items — ~3% of items on a live scan — and every one abstained *forever*:
@@ -150,8 +181,9 @@ the env var is demoted to a first-boot seed and documented in `.env.example`. Ve
 browser end to end (validation rejects non-Discord hosts, the secret is never echoed and is
 stored encrypted). Two follow-ups then landed: recovery now delivers a **code to paste**
 rather than a `?token=` link (so the token never hits a reverse-proxy access log), and the
-admin-password floor rose 8 → 12. Still deferred: a self-signed-Seerr TLS opt-out (verify now
-defaults on, fail-closed). Note: `alembic check` fails on a **pre-existing**
+admin-password floor rose 8 → 12. Deferred at the time — a self-signed TLS opt-out (verify
+defaulting on, fail-closed) — has since landed as the per-instance certificate toggle (see
+the newest entry above). Note: `alembic check` fails on a **pre-existing**
 `whitelist.decision` server-default drift, unrelated to this pass.
 
 ### Earlier — the delete is wired end to end (the real send, under supervision)

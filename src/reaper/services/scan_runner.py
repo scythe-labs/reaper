@@ -157,6 +157,10 @@ async def build_sources(
             "Add them in Settings first."
         )
 
+    # Each client carries its instance's own TLS setting (``verify_tls``, on by default):
+    # the decrypted API key travels on these connections, so certificate verification is
+    # only relaxed where the operator explicitly turned it off for that one instance in
+    # Settings -- never silently, and never for the others.
     radarrs = [
         snapshot_service.RadarrSource(
             client=RadarrClient(
@@ -164,6 +168,7 @@ async def build_sources(
                 box.decrypt(r.api_key_enc),
                 safety=safety,
                 api_path_prefix=r.api_path_prefix,
+                verify=r.verify_tls,
             ),
             instance_id=r.id,
             name=r.name,
@@ -177,6 +182,7 @@ async def build_sources(
                 box.decrypt(r.api_key_enc),
                 safety=safety,
                 api_path_prefix=r.api_path_prefix,
+                verify=r.verify_tls,
             ),
             instance_id=r.id,
             name=r.name,
@@ -184,14 +190,18 @@ async def build_sources(
         for r in sonarr_rows
     ]
     tautulli = TautulliClient(
-        tautulli_row.base_url, box.decrypt(tautulli_row.api_key_enc), safety=safety
+        tautulli_row.base_url,
+        box.decrypt(tautulli_row.api_key_enc),
+        safety=safety,
+        verify=tautulli_row.verify_tls,
     )
     seerr = (
-        # TLS verification stays ON (the client default), consistent with Tautulli and the
-        # *arr: the decrypted Seerr API key travels on this connection and must not be
-        # harvestable by an on-path attacker. A self-signed internal Seerr is an explicit
-        # opt-out, never disabled silently here.
-        SeerrClient(seerr_row.base_url, box.decrypt(seerr_row.api_key_enc), safety=safety)
+        SeerrClient(
+            seerr_row.base_url,
+            box.decrypt(seerr_row.api_key_enc),
+            safety=safety,
+            verify=seerr_row.verify_tls,
+        )
         if seerr_row is not None
         else None
     )
@@ -244,18 +254,26 @@ async def build_reap_gateway(
         key = box.decrypt(row.api_key_enc)
         if row.kind is InstanceKind.RADARR:
             client = RadarrClient(
-                row.base_url, key, safety=safety, api_path_prefix=row.api_path_prefix
+                row.base_url,
+                key,
+                safety=safety,
+                api_path_prefix=row.api_path_prefix,
+                verify=row.verify_tls,
             )
             radarr[row.id] = client
             closers.append(client)
         elif row.kind is InstanceKind.SONARR:
             sclient = SonarrClient(
-                row.base_url, key, safety=safety, api_path_prefix=row.api_path_prefix
+                row.base_url,
+                key,
+                safety=safety,
+                api_path_prefix=row.api_path_prefix,
+                verify=row.verify_tls,
             )
             sonarr[row.id] = sclient
             closers.append(sclient)
         elif row.kind is InstanceKind.TAUTULLI and tautulli is None:
-            tautulli = TautulliClient(row.base_url, key, safety=safety)
+            tautulli = TautulliClient(row.base_url, key, safety=safety, verify=row.verify_tls)
             closers.append(tautulli)
 
     plex = (

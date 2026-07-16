@@ -79,6 +79,7 @@ class InstanceOut(BaseModel):
     name: str
     base_url: str
     enabled: bool
+    verify_tls: bool
     has_key: bool
     api_path_prefix: str
     detected_version: str | None = None
@@ -95,6 +96,7 @@ class InstanceCreateIn(BaseModel):
     name: str
     base_url: str
     api_key: str
+    verify_tls: bool = True
 
 
 class InstanceUpdateIn(BaseModel):
@@ -102,12 +104,14 @@ class InstanceUpdateIn(BaseModel):
     base_url: str | None = None
     api_key: str | None = None  # blank/omitted keeps the stored key
     enabled: bool | None = None
+    verify_tls: bool | None = None  # omitted keeps the stored setting; explicit False sticks
 
 
 class InstanceTestIn(BaseModel):
     kind: str
     base_url: str
     api_key: str
+    verify_tls: bool = True
 
 
 class TestOut(BaseModel):
@@ -263,6 +267,7 @@ async def create_instance(request: Request, payload: InstanceCreateIn) -> Instan
                 name=payload.name,
                 base_url=payload.base_url,
                 api_key=payload.api_key,
+                verify_tls=payload.verify_tls,
             )
         except instances.InstanceError as exc:
             raise HTTPException(409, str(exc)) from exc
@@ -284,6 +289,7 @@ async def update_instance(
                 base_url=payload.base_url,
                 api_key=payload.api_key,
                 enabled=payload.enabled,
+                verify_tls=payload.verify_tls,
             )
         except instances.InstanceConflictError as exc:
             # A rename into an existing name is a conflict, not a missing resource.
@@ -305,7 +311,9 @@ async def delete_instance(request: Request, instance_id: int) -> dict[str, bool]
 @router.post("/instances/test")
 async def test_new_instance(request: Request, payload: InstanceTestIn) -> TestOut:
     """Test a URL and key before saving, so a typo is caught on the add form."""
-    result = await instances.test_connection(_kind(payload.kind), payload.base_url, payload.api_key)
+    result = await instances.test_connection(
+        _kind(payload.kind), payload.base_url, payload.api_key, verify=payload.verify_tls
+    )
     return TestOut(ok=result.ok, detail=result.detail, version=result.version)
 
 

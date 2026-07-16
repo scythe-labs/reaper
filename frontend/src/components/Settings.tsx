@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type Instance, type InstanceTest, type PlexServerChoice } from "../api";
 import { date } from "../format";
 import { ScanBar } from "./ScanBar";
+import { KINDS, kindLabel, ServiceModal, TestBadge } from "./ServiceModal";
 
 type Panel = "services" | "plex" | "jobs" | "notifications" | "security";
 
@@ -24,142 +25,10 @@ const PANELS: { id: Panel; label: string }[] = [
   { id: "security", label: "Security" },
 ];
 
-const KINDS: { value: string; label: string; hint: string }[] = [
-  { value: "radarr", label: "Radarr", hint: "Your movies. At least one is required." },
-  { value: "sonarr", label: "Sonarr", hint: "Your TV shows. Needed for season pruning." },
-  { value: "tautulli", label: "Tautulli", hint: "Watch history. Required. It's how Reaper knows what's watched." },
-  { value: "seerr", label: "Seerr", hint: "Requests. Lets Reaper show who asked for what." },
-];
-
-function kindLabel(kind: string): string {
-  return KINDS.find((k) => k.value === kind)?.label ?? kind;
-}
-
-/** A small inline pill reporting the result of a connection test. */
-function TestBadge({ result }: { result: InstanceTest | null }) {
-  if (!result) return null;
-  return (
-    <span className={`test-badge ${result.ok ? "ok" : "bad"}`}>
-      {result.ok ? "✓ " : "✗ "}
-      {result.detail}
-      {result.version && ` (v${result.version})`}
-    </span>
-  );
-}
-
 // --- Services --------------------------------------------------------------
 
-function AddInstance() {
+function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => void }) {
   const queryClient = useQueryClient();
-  const [kind, setKind] = useState("radarr");
-  const [name, setName] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [test, setTest] = useState<InstanceTest | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const reset = () => {
-    setName("");
-    setBaseUrl("");
-    setApiKey("");
-    setTest(null);
-  };
-
-  const testConn = useMutation({
-    mutationFn: () => api.testInstance({ kind, base_url: baseUrl, api_key: apiKey }),
-    onSuccess: setTest,
-    onError: (e: Error) => setError(e.message),
-  });
-  const create = useMutation({
-    mutationFn: () => api.createInstance({ kind, name, base_url: baseUrl, api_key: apiKey }),
-    onSuccess: () => {
-      reset();
-      void queryClient.invalidateQueries({ queryKey: ["instances"] });
-      void queryClient.invalidateQueries({ queryKey: ["setup"] });
-    },
-    onError: (e: Error) => setError(e.message),
-  });
-
-  const hint = KINDS.find((k) => k.value === kind)?.hint;
-  const ready = name.trim() && baseUrl.trim() && apiKey.trim();
-
-  return (
-    <form
-      className="add-instance"
-      onSubmit={(e) => {
-        e.preventDefault();
-        setError(null);
-        create.mutate();
-      }}
-    >
-      <h3>Add a service</h3>
-      <div className="add-grid">
-        <label className="field-sm">
-          <span className="field-label">Type</span>
-          <select value={kind} onChange={(e) => setKind(e.target.value)}>
-            {KINDS.map((k) => (
-              <option key={k.value} value={k.value}>
-                {k.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field-sm">
-          <span className="field-label">Name</span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder={kind === "radarr" ? "HD" : "Main"}
-          />
-        </label>
-        <label className="field-sm wide">
-          <span className="field-label">Address</span>
-          <input
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="http://192.168.1.10:7878"
-          />
-        </label>
-        <label className="field-sm wide">
-          <span className="field-label">API key</span>
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="from the service's settings"
-            autoComplete="off"
-          />
-        </label>
-      </div>
-      {hint && <p className="help">{hint}</p>}
-      <div className="add-actions">
-        <button
-          type="button"
-          className="ghost"
-          disabled={!baseUrl.trim() || !apiKey.trim() || testConn.isPending}
-          onClick={() => {
-            setError(null);
-            testConn.mutate();
-          }}
-        >
-          {testConn.isPending ? "Testing…" : "Test connection"}
-        </button>
-        <button type="submit" className="primary" disabled={!ready || create.isPending}>
-          {create.isPending ? "Adding…" : "Add service"}
-        </button>
-        <TestBadge result={test} />
-      </div>
-      {error && <p className="notice notice-error">{error}</p>}
-    </form>
-  );
-}
-
-function InstanceRow({ instance }: { instance: Instance }) {
-  const queryClient = useQueryClient();
-  const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(instance.name);
-  const [baseUrl, setBaseUrl] = useState(instance.base_url);
-  const [apiKey, setApiKey] = useState("");
   const [test, setTest] = useState<InstanceTest | null>(null);
   // A two-step "Remove" -> "Confirm remove" toggle, mirroring the Safety arm flow below,
   // rather than a native confirm() dialog -- the OS alert box ignores the app's theme and
@@ -178,37 +47,21 @@ function InstanceRow({ instance }: { instance: Instance }) {
       invalidate();
     },
   });
-  const save = useMutation({
-    mutationFn: () => {
-      const body: { name: string; base_url: string; api_key?: string } = {
-        name,
-        base_url: baseUrl,
-      };
-      if (apiKey) body.api_key = apiKey; // omit entirely when blank -> keep stored key
-      return api.updateInstance(instance.id, body);
-    },
-    onSuccess: () => {
-      setEditing(false);
-      setApiKey("");
-      invalidate();
-    },
-  });
-  const toggle = useMutation({
-    mutationFn: () => api.updateInstance(instance.id, { enabled: !instance.enabled }),
-    onSuccess: invalidate,
-  });
   const remove = useMutation({
     mutationFn: () => api.deleteInstance(instance.id),
     onSuccess: invalidate,
   });
 
+  const certCheckOff = !instance.verify_tls && instance.base_url.startsWith("https://");
+
   return (
-    <li className={`instance-row ${instance.enabled ? "" : "disabled"}`}>
-      <div className="instance-main">
+    <article className={`service-card ${instance.enabled ? "" : "disabled"}`}>
+      <div className="service-card-body">
         <div className="instance-id">
           <span className={`kind-badge kind-${instance.kind}`}>{kindLabel(instance.kind)}</span>
           <strong>{instance.name}</strong>
           {!instance.enabled && <span className="chip">disabled</span>}
+          {certCheckOff && <span className="chip chip-warn">certificate check off</span>}
         </div>
         <div className="instance-url muted">{instance.base_url}</div>
         <div className="instance-status">
@@ -225,21 +78,12 @@ function InstanceRow({ instance }: { instance: Instance }) {
           )}
         </div>
       </div>
-
-      <div className="instance-actions">
-        <button className="ghost sm" disabled={testSaved.isPending} onClick={() => testSaved.mutate()}>
-          {testSaved.isPending ? "Testing…" : "Test"}
-        </button>
-        <button className="ghost sm" onClick={() => toggle.mutate()}>
-          {instance.enabled ? "Disable" : "Enable"}
-        </button>
-        <button className="ghost sm" onClick={() => setEditing((v) => !v)}>
-          Edit
-        </button>
+      <div className="service-card-foot">
         {confirmingRemove ? (
           <>
             <button
-              className="ghost sm danger"
+              type="button"
+              className="danger"
               title="Only forgets it in Reaper. Nothing is changed in the service itself."
               onClick={() => {
                 setConfirmingRemove(false);
@@ -248,78 +92,73 @@ function InstanceRow({ instance }: { instance: Instance }) {
             >
               Confirm remove
             </button>
-            <button className="ghost sm" onClick={() => setConfirmingRemove(false)}>
+            <button type="button" onClick={() => setConfirmingRemove(false)}>
               Cancel
             </button>
           </>
         ) : (
-          <button className="ghost sm danger" onClick={() => setConfirmingRemove(true)}>
-            Remove
-          </button>
+          <>
+            <button type="button" disabled={testSaved.isPending} onClick={() => testSaved.mutate()}>
+              {testSaved.isPending ? "Testing…" : "Test"}
+            </button>
+            <button type="button" onClick={onEdit}>
+              Edit
+            </button>
+            <button type="button" className="danger" onClick={() => setConfirmingRemove(true)}>
+              Remove
+            </button>
+          </>
         )}
       </div>
-
-      {editing && (
-        <form
-          className="instance-edit"
-          onSubmit={(e) => {
-            e.preventDefault();
-            save.mutate();
-          }}
-        >
-          <label className="field-sm">
-            <span className="field-label">Name</span>
-            <input value={name} onChange={(e) => setName(e.target.value)} />
-          </label>
-          <label className="field-sm wide">
-            <span className="field-label">Address</span>
-            <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
-          </label>
-          <label className="field-sm wide">
-            <span className="field-label">New API key</span>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="leave blank to keep the current key"
-              autoComplete="off"
-            />
-          </label>
-          <div className="add-actions">
-            <button type="submit" className="primary sm" disabled={save.isPending}>
-              Save
-            </button>
-            <button type="button" className="ghost sm" onClick={() => setEditing(false)}>
-              Cancel
-            </button>
-          </div>
-        </form>
-      )}
-    </li>
+    </article>
   );
 }
 
 export function ServicesPanel() {
   const { data, isPending, error } = useQuery({ queryKey: ["instances"], queryFn: api.instances });
+  const [modal, setModal] = useState<{ kind: string; instance: Instance | null } | null>(null);
+
   return (
-    <div className="panel">
+    <div className="panel panel-wide">
       <h2>Services</h2>
       <p className="blurb">
         The apps Reaper reads from. It only ever reads. Nothing here can delete a file.
       </p>
       {error && <p className="notice notice-error">{(error as Error).message}</p>}
       {isPending && <p className="muted">Loading…</p>}
-      {data && data.length === 0 && (
-        <p className="empty">No services yet. Add Radarr and Tautulli below to get started.</p>
+      {data &&
+        KINDS.map((k) => (
+          <section key={k.value} className="service-section">
+            <h3>{k.label}</h3>
+            <p className="service-hint">{k.hint}</p>
+            <div className="service-grid">
+              {data
+                .filter((i) => i.kind === k.value)
+                .map((i) => (
+                  <ServiceCard
+                    key={i.id}
+                    instance={i}
+                    onEdit={() => setModal({ kind: i.kind, instance: i })}
+                  />
+                ))}
+              <button
+                type="button"
+                className="service-add"
+                onClick={() => setModal({ kind: k.value, instance: null })}
+              >
+                <span aria-hidden="true">+</span> Add a {k.label}
+              </button>
+            </div>
+          </section>
+        ))}
+      {modal && (
+        <ServiceModal
+          key={modal.instance ? modal.instance.id : `add-${modal.kind}`}
+          kind={modal.kind}
+          instance={modal.instance}
+          onClose={() => setModal(null)}
+        />
       )}
-      {data && data.length > 0 && (
-        <ul className="instance-list">
-          {data.map((i) => (
-            <InstanceRow key={i.id} instance={i} />
-          ))}
-        </ul>
-      )}
-      <AddInstance />
     </div>
   );
 }

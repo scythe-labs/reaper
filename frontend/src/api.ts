@@ -495,6 +495,7 @@ export interface Instance {
   name: string;
   base_url: string;
   enabled: boolean;
+  verify_tls: boolean;
   has_key: boolean;
   api_path_prefix: string;
   detected_version: string | null;
@@ -665,13 +666,20 @@ export const api = {
     name: string;
     base_url: string;
     api_key: string;
+    verify_tls?: boolean;
   }) => post<Instance>("/api/settings/instances", body),
   updateInstance: (
     id: number,
-    body: { name?: string; base_url?: string; api_key?: string; enabled?: boolean },
+    body: {
+      name?: string;
+      base_url?: string;
+      api_key?: string;
+      enabled?: boolean;
+      verify_tls?: boolean;
+    },
   ) => put<Instance>(`/api/settings/instances/${id}`, body),
   deleteInstance: (id: number) => del<{ removed: boolean }>(`/api/settings/instances/${id}`),
-  testInstance: (body: { kind: string; base_url: string; api_key: string }) =>
+  testInstance: (body: { kind: string; base_url: string; api_key: string; verify_tls?: boolean }) =>
     post<InstanceTest>("/api/settings/instances/test", body),
   testSavedInstance: (id: number) =>
     post<InstanceTest>(`/api/settings/instances/${id}/test`, {}),

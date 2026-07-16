@@ -64,6 +64,10 @@ class Instance(Base):
     detected_version: Mapped[str | None] = mapped_column(String(50), default=None)
 
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # TLS verification is on unless the operator turned it off for this one instance
+    # (a self-signed server they run themselves). Off is never a silent default.
+    verify_tls: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[UtcTimestamp]
     last_ok_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
     last_error: Mapped[str | None] = mapped_column(Text, default=None)

@@ -59,6 +59,7 @@ class InstanceView:
     name: str
     base_url: str
     enabled: bool
+    verify_tls: bool
     has_key: bool
     api_path_prefix: str
     detected_version: str | None
@@ -80,6 +81,7 @@ def _view(row: Instance) -> InstanceView:
         name=row.name,
         base_url=row.base_url,
         enabled=row.enabled,
+        verify_tls=row.verify_tls,
         has_key=bool(row.api_key_enc),
         api_path_prefix=row.api_path_prefix,
         detected_version=row.detected_version,
@@ -112,6 +114,7 @@ async def create_instance(
     name: str,
     base_url: str,
     api_key: str,
+    verify_tls: bool = True,
 ) -> InstanceView:
     name = name.strip()
     base_url = base_url.strip().rstrip("/")
@@ -130,6 +133,7 @@ async def create_instance(
         base_url=base_url,
         api_key_enc=box.encrypt(api_key),
         enabled=True,
+        verify_tls=verify_tls,
         created_at=utcnow(),
     )
     session.add(row)
@@ -147,6 +151,7 @@ async def update_instance(
     base_url: str | None = None,
     api_key: str | None = None,
     enabled: bool | None = None,
+    verify_tls: bool | None = None,
 ) -> InstanceView:
     """Update an instance. An omitted (or blank) ``api_key`` keeps the stored one.
 
@@ -176,6 +181,8 @@ async def update_instance(
         row.api_key_enc = box.encrypt(api_key)
     if enabled is not None:
         row.enabled = enabled
+    if verify_tls is not None:  # None means "leave it as it is"; an explicit False sticks
+        row.verify_tls = verify_tls
 
     await session.flush()
     log.info("instance.updated", kind=row.kind.value, name=row.name)
@@ -197,25 +204,26 @@ async def delete_instance(session: AsyncSession, instance_id: int) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _client(kind: InstanceKind, base_url: str, api_key: str) -> BaseClient:
-    # Destructive actions disabled: a connection test never mutates anything. Every client,
-    # Seerr included, verifies TLS (the client default): the API key travels on this
-    # connection, so disabling verification for Seerr alone would silently expose that key
-    # to an on-path attacker while the other integrations stay protected. A self-signed
-    # internal Seerr is a real setup, but it must be opted out of explicitly rather than
-    # having verification turned off on the operator's behalf.
+def _client(kind: InstanceKind, base_url: str, api_key: str, *, verify: bool = True) -> BaseClient:
+    # Destructive actions disabled: a connection test never mutates anything. ``verify`` is
+    # the instance's own TLS setting and defaults ON: the API key travels on this
+    # connection, so skipping certificate verification is an explicit per-instance choice
+    # the operator makes in Settings (a self-signed server they run themselves), never
+    # something turned off on their behalf.
     safety = RuntimeSafety(destructive_enabled=False)
     base_url = base_url.strip().rstrip("/")
     if kind is InstanceKind.RADARR:
-        return RadarrClient(base_url, api_key, safety=safety)
+        return RadarrClient(base_url, api_key, safety=safety, verify=verify)
     if kind is InstanceKind.SONARR:
-        return SonarrClient(base_url, api_key, safety=safety)
+        return SonarrClient(base_url, api_key, safety=safety, verify=verify)
     if kind is InstanceKind.TAUTULLI:
-        return TautulliClient(base_url, api_key, safety=safety)
-    return SeerrClient(base_url, api_key, safety=safety)
+        return TautulliClient(base_url, api_key, safety=safety, verify=verify)
+    return SeerrClient(base_url, api_key, safety=safety, verify=verify)
 
 
-async def test_connection(kind: InstanceKind, base_url: str, api_key: str) -> TestResult:
+async def test_connection(
+    kind: InstanceKind, base_url: str, api_key: str, *, verify: bool = True
+) -> TestResult:
     """Reach the service and report what came back. Never raises -- a failure is a result.
 
     Each service has one cheap status endpoint. For the *arr it doubles as the version
@@ -223,7 +231,7 @@ async def test_connection(kind: InstanceKind, base_url: str, api_key: str) -> Te
     proves the URL and key are good.
     """
     try:
-        client = _client(kind, base_url, api_key)
+        client = _client(kind, base_url, api_key, verify=verify)
     except Exception as exc:  # a malformed URL, say
         return TestResult(ok=False, detail=str(exc))
 
@@ -252,7 +260,9 @@ async def test_saved_instance(
 ) -> TestResult:
     """Test a stored instance and record the outcome on the row (last_ok_at / last_error)."""
     row = await _get(session, instance_id)
-    result = await test_connection(row.kind, row.base_url, box.decrypt(row.api_key_enc))
+    result = await test_connection(
+        row.kind, row.base_url, box.decrypt(row.api_key_enc), verify=row.verify_tls
+    )
     if result.ok:
         row.last_ok_at = utcnow()
         row.last_error = None

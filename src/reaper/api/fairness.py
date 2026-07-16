@@ -53,27 +53,42 @@ async def get_fairness(request: Request) -> FairnessReportOut:
             "requested what, Tautulli for who watched it. Configure them in Settings.",
         )
 
-    # TLS verification is left ON (the client default): the decrypted Seerr API key travels
-    # on this connection, and silently disabling verification for Seerr while enforcing it
-    # for Tautulli and the *arr made the key harvestable by an on-path attacker. An operator
-    # with a self-signed internal Seerr should opt out explicitly, never have it disabled
-    # for them.
-    seerr = SeerrClient(seerr_row.base_url, box.decrypt(seerr_row.api_key_enc), safety=safety)
+    # Each client carries its instance's own TLS setting (``verify_tls``, on by default):
+    # the decrypted API keys travel on these connections, so certificate verification is
+    # only relaxed where the operator explicitly turned it off for that one instance in
+    # Settings -- never silently, and never for the others.
+    seerr = SeerrClient(
+        seerr_row.base_url,
+        box.decrypt(seerr_row.api_key_enc),
+        safety=safety,
+        verify=seerr_row.verify_tls,
+    )
     tautulli = TautulliClient(
-        tautulli_row.base_url, box.decrypt(tautulli_row.api_key_enc), safety=safety
+        tautulli_row.base_url,
+        box.decrypt(tautulli_row.api_key_enc),
+        safety=safety,
+        verify=tautulli_row.verify_tls,
     )
     # The *arr are read for one thing here: the real size on disk of each requested title,
     # which is what they -- not Tautulli -- are the authority on. Radarr sizes movies,
     # Sonarr sizes shows. Both are optional; without them the sizes fall back to Tautulli's.
     radarrs = [
         RadarrClient(
-            r.base_url, box.decrypt(r.api_key_enc), safety=safety, api_path_prefix=r.api_path_prefix
+            r.base_url,
+            box.decrypt(r.api_key_enc),
+            safety=safety,
+            api_path_prefix=r.api_path_prefix,
+            verify=r.verify_tls,
         )
         for r in radarr_rows
     ]
     sonarrs = [
         SonarrClient(
-            r.base_url, box.decrypt(r.api_key_enc), safety=safety, api_path_prefix=r.api_path_prefix
+            r.base_url,
+            box.decrypt(r.api_key_enc),
+            safety=safety,
+            api_path_prefix=r.api_path_prefix,
+            verify=r.verify_tls,
         )
         for r in sonarr_rows
     ]

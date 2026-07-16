@@ -2899,26 +2899,41 @@ button.sm {
   margin-top: 1.5rem;
 }
 
-/* instances */
-.instance-list {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+/* services: one section per kind, a grid of compact cards, add/edit in a modal */
+.panel-wide {
+  max-width: 1040px;
 }
-.instance-row {
+.service-section {
+  margin-bottom: 1.6rem;
+}
+.service-section h3 {
+  margin: 0;
+}
+.service-hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0.15rem 0 0.7rem;
+}
+.service-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(265px, 1fr));
+  gap: 0.75rem;
+}
+.service-card {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 0.7rem 0.9rem;
   background: var(--surface);
   box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
-.instance-row.disabled {
+.service-card.disabled .service-card-body {
   opacity: 0.6;
 }
-.instance-main {
+.service-card-body {
+  padding: 0.7rem 0.9rem;
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 0.2rem;
@@ -2927,20 +2942,60 @@ button.sm {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex-wrap: wrap;
 }
 .instance-url {
   font-size: 0.82rem;
   font-family: var(--mono);
+  overflow-wrap: anywhere;
 }
 .instance-status {
   font-size: 0.8rem;
   margin-top: 0.15rem;
 }
-.instance-actions {
+.service-card-foot {
   display: flex;
-  gap: 0.35rem;
-  margin-top: 0.6rem;
-  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+}
+.service-card-foot button {
+  flex: 1;
+  background: none;
+  border: none;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0.5rem 0.2rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+.service-card-foot button:first-child {
+  border-left: none;
+}
+.service-card-foot button:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+.service-card-foot button.danger {
+  color: var(--condemn);
+}
+.service-card-foot button.danger:hover:not(:disabled) {
+  background: var(--condemn-soft);
+}
+.service-add {
+  background: none;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius);
+  min-height: 118px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+.service-add:hover:not(:disabled) {
+  background: none;
+  border-color: var(--accent);
+  color: var(--accent);
 }
 button.danger {
   color: var(--condemn);
@@ -2948,14 +3003,6 @@ button.danger {
 button.danger:hover:not(:disabled) {
   border-color: var(--condemn);
   background: var(--condemn-soft);
-}
-.instance-edit {
-  margin-top: 0.7rem;
-  padding-top: 0.7rem;
-  border-top: 1px dashed var(--border);
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.6rem;
 }
 
 .kind-badge {
@@ -2980,28 +3027,59 @@ button.danger:hover:not(:disabled) {
 .test-badge.ok { color: var(--protect); }
 .test-badge.bad { color: var(--condemn); }
 
-/* add instance */
-.add-instance {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 1rem 1.1rem;
+/* the service add/edit modal */
+.service-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+}
+.host-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  gap: 0.6rem;
+}
+.url-join {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+.url-scheme {
+  display: flex;
+  align-items: center;
+  padding: 0 0.55rem;
   background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-right: none;
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--muted);
+  white-space: nowrap;
 }
-.add-instance h3 {
-  margin-top: 0;
+.url-join input {
+  flex: 1;
+  min-width: 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
+.chip-warn {
+  background: var(--unknown-soft);
+  color: var(--unknown);
+}
+.flex-spacer {
+  flex: 1;
+}
+
 .add-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.7rem;
 }
 
-/* On a phone the two-column instance forms and the four-track grace rows are too cramped to
+/* On a phone the two-column settings forms and the four-track grace rows are too cramped to
    read a pasted URL or API key, so collapse them to a single column below a narrow width.
    (The queue/editor already reflow at 900px via their own query.) */
 @media (max-width: 640px) {
-  .add-grid,
-  .instance-edit {
+  .add-grid {
     grid-template-columns: 1fr;
   }
   .grace-list li {

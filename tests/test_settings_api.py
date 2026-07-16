@@ -24,7 +24,9 @@ from sqlalchemy import create_engine as sa_create_engine
 
 from reaper.config import Settings
 from reaper.db.base import Base
+from reaper.db.models import InstanceKind
 from reaper.main import create_app
+from reaper.services import instances as instances_service
 
 from ._auth import TEST_PASSWORD, login
 
@@ -146,6 +148,128 @@ class TestInstancesCrud:
             json={"kind": "plexarr", "name": "X", "base_url": "http://x", "api_key": "k"},
         )
         assert resp.status_code == 422
+
+    def test_certificate_checking_defaults_on_and_survives_unrelated_updates(
+        self, client: TestClient
+    ) -> None:
+        """``verify_tls`` is on unless the operator turns it off, an explicit off
+        round-trips, and an update that never mentions it leaves the choice alone --
+        omitted must mean "unchanged", never "back to the default"."""
+        created = client.post(
+            "/api/settings/instances",
+            json={"kind": "radarr", "name": "HD", "base_url": "https://a.local", "api_key": "k"},
+        ).json()
+        assert created["verify_tls"] is True
+
+        off = client.post(
+            "/api/settings/instances",
+            json={
+                "kind": "radarr",
+                "name": "UHD",
+                "base_url": "https://b.local",
+                "api_key": "k",
+                "verify_tls": False,
+            },
+        ).json()
+        assert off["verify_tls"] is False
+
+        renamed = client.put(f"/api/settings/instances/{off['id']}", json={"name": "4K"}).json()
+        assert renamed["verify_tls"] is False  # untouched by an unrelated update
+
+        back_on = client.put(
+            f"/api/settings/instances/{off['id']}", json={"verify_tls": True}
+        ).json()
+        assert back_on["verify_tls"] is True
+
+        off_again = client.put(
+            f"/api/settings/instances/{off['id']}", json={"verify_tls": False}
+        ).json()
+        assert off_again["verify_tls"] is False
+
+
+class TestConnectionTestsHonourTheTlsChoice:
+    """The TLS choice must reach the client that actually dials out -- the stored
+    ``verify_tls`` for a saved instance, and the checkbox value sent with the request
+    for the pre-save test on the add form."""
+
+    async def test_test_connection_builds_its_client_with_the_given_verify(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[bool] = []
+
+        class FakeClient:
+            async def __aenter__(self) -> FakeClient:
+                return self
+
+            async def __aexit__(self, *exc: object) -> None:
+                return None
+
+            async def system_status(self) -> dict[str, str]:
+                return {"version": "1.0", "appName": "Radarr"}
+
+        def fake_client(
+            kind: InstanceKind, base_url: str, api_key: str, *, verify: bool = True
+        ) -> FakeClient:
+            seen.append(verify)
+            return FakeClient()
+
+        monkeypatch.setattr(instances_service, "_client", fake_client)
+        result = await instances_service.test_connection(
+            InstanceKind.RADARR, "https://a.local", "k", verify=False
+        )
+        assert result.ok is True
+        assert seen == [False]
+
+    def test_a_saved_instances_stored_choice_is_used(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        created = client.post(
+            "/api/settings/instances",
+            json={
+                "kind": "tautulli",
+                "name": "T",
+                "base_url": "https://t.local",
+                "api_key": "k",
+                "verify_tls": False,
+            },
+        ).json()
+
+        seen: list[bool] = []
+
+        async def fake_test(
+            kind: InstanceKind, base_url: str, api_key: str, *, verify: bool = True
+        ) -> instances_service.TestResult:
+            seen.append(verify)
+            return instances_service.TestResult(ok=True, detail="Connected.")
+
+        monkeypatch.setattr(instances_service, "test_connection", fake_test)
+        resp = client.post(f"/api/settings/instances/{created['id']}/test")
+        assert resp.status_code == 200
+        assert seen == [False]
+
+    def test_the_pre_save_test_carries_the_checkbox_value(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[bool] = []
+
+        async def fake_test(
+            kind: InstanceKind, base_url: str, api_key: str, *, verify: bool = True
+        ) -> instances_service.TestResult:
+            seen.append(verify)
+            return instances_service.TestResult(ok=True, detail="Connected.")
+
+        monkeypatch.setattr(instances_service, "test_connection", fake_test)
+        resp = client.post(
+            "/api/settings/instances/test",
+            json={
+                "kind": "radarr",
+                "base_url": "https://a.local",
+                "api_key": "k",
+                "verify_tls": False,
+            },
+        )
+        assert resp.status_code == 200
+        assert seen == [False]
 
 
 class TestSafety:

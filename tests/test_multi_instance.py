@@ -10,9 +10,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from reaper.clock import from_epoch
+import pytest
+
+from reaper.clock import from_epoch, utcnow
 from reaper.config import Settings
+from reaper.crypto import SecretBox
+from reaper.db.base import Base
+from reaper.db.models import Instance, InstanceKind
+from reaper.db.session import create_engine, create_session_factory
 from reaper.engine import identity
+from reaper.services import scan_runner
 from reaper.services.snapshot import RawItem, _raw_items
 
 ADDED = from_epoch("1700000000")
@@ -147,3 +154,63 @@ class TestRawItemShape:
         assert item.plex_rating_key == 5
         assert item.added_at is not None
         assert item.added_at.tzinfo is not None  # aware, always
+
+
+class TestScanClientsCarryTheTlsChoice:
+    """``build_sources`` hands every client its own instance's ``verify_tls``. A dropped
+    flag here would quietly ignore the operator's per-service certificate choice for a
+    whole scan: either failing against the self-signed server they explicitly allowed,
+    or, in the other direction, skipping verification somewhere they never asked."""
+
+    async def test_build_sources_passes_each_rows_own_choice(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        engine = create_engine(settings)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = create_session_factory(engine)
+        box = SecretBox("test-key")
+
+        def row(kind: InstanceKind, name: str, url: str, verify: bool) -> Instance:
+            return Instance(
+                kind=kind,
+                name=name,
+                base_url=url,
+                api_key_enc=box.encrypt("k"),
+                enabled=True,
+                verify_tls=verify,
+                created_at=utcnow(),
+            )
+
+        async with factory() as session:
+            session.add_all(
+                [
+                    row(InstanceKind.RADARR, "HD", "https://movies.local", False),
+                    row(InstanceKind.SONARR, "HD", "https://tv.local", True),
+                    row(InstanceKind.TAUTULLI, "Main", "https://history.local", True),
+                    row(InstanceKind.SEERR, "Main", "https://requests.local", False),
+                ]
+            )
+            await session.commit()
+
+        seen: dict[str, object] = {}
+
+        class FakeClient:
+            def __init__(self, base_url: str, *args: object, **kwargs: object) -> None:
+                seen[base_url] = kwargs.get("verify")
+
+        for name in ("RadarrClient", "SonarrClient", "TautulliClient", "SeerrClient"):
+            monkeypatch.setattr(scan_runner, name, FakeClient)
+
+        try:
+            await scan_runner.build_sources(factory, settings, box)
+        finally:
+            await engine.dispose()
+
+        assert seen == {
+            "https://movies.local": False,
+            "https://tv.local": True,
+            "https://history.local": True,
+            "https://requests.local": False,
+        }

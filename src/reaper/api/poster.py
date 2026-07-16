@@ -54,7 +54,9 @@ async def poster(request: Request, rating_key: int, kind: str = "poster") -> Res
         raise HTTPException(404, "No Tautulli configured to fetch artwork from.")
 
     # Read-only: this only ever GETs an image.
-    client = TautulliClient(row.base_url, box.decrypt(row.api_key_enc), safety=RuntimeSafety())
+    client = TautulliClient(
+        row.base_url, box.decrypt(row.api_key_enc), safety=RuntimeSafety(), verify=row.verify_tls
+    )
     async with client:
         result = await (client.art(rating_key) if kind == "art" else client.poster(rating_key))
 
