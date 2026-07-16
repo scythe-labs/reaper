@@ -34,12 +34,14 @@ class SetupStatus(BaseModel):
     """How many of each kind are configured -- e.g. {"radarr": 2, "tautulli": 1}."""
 
     has_radarr: bool
+    has_sonarr: bool
     has_tautulli: bool
     has_seerr: bool
     has_scanned: bool
 
     scan_ready: bool
-    """The minimum to run a scan: at least one Radarr and one Tautulli."""
+    """The minimum to run a scan: a Tautulli, plus at least one Radarr or Sonarr.
+    Mirrors the guard in ``services.scan_runner.build_sources``."""
     complete: bool
     """Ready AND a scan has actually run -- nothing left the wizard needs to push."""
 
@@ -70,14 +72,16 @@ async def setup_status(request: Request) -> SetupStatus:
         ).scalar_one_or_none() is not None
 
     has_radarr = counts.get(str(InstanceKind.RADARR), 0) > 0
+    has_sonarr = counts.get(str(InstanceKind.SONARR), 0) > 0
     has_tautulli = counts.get(str(InstanceKind.TAUTULLI), 0) > 0
-    scan_ready = has_radarr and has_tautulli
+    scan_ready = (has_radarr or has_sonarr) and has_tautulli
 
     return SetupStatus(
         admin_exists=admins > 0,
         plex_linked=plex_linked,
         instances=counts,
         has_radarr=has_radarr,
+        has_sonarr=has_sonarr,
         has_tautulli=has_tautulli,
         has_seerr=counts.get(str(InstanceKind.SEERR), 0) > 0,
         has_scanned=has_scanned,

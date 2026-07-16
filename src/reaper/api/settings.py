@@ -9,9 +9,9 @@ Two things are true of the whole router:
 * **It requires a session.** These routes are behind the auth gate (see
   ``api.middleware``); only a signed-in admin can change what Reaper is pointed at.
 * **API keys are write-only.** A key is encrypted the instant it arrives and is never
-  read back to the browser -- a view says only *whether* a key is set. The one switch a
-  browser is allowed to throw, the emergency stop, can only ever make Reaper safer;
-  *enabling* deletion still requires host access to the environment.
+  read back to the browser -- a view says only *whether* a key is set. The deletion
+  switch is asymmetric: turning it ON requires the admin password (see ``set_safety``),
+  turning it OFF requires nothing, because making Reaper safer is never gated.
 """
 
 from __future__ import annotations
@@ -31,7 +31,12 @@ from reaper.crypto import SecretBox
 from reaper.db.models import InstanceKind, PlexServer
 from reaper.notify.discord import DiscordNotifier, Embed, build_notifier
 from reaper.services import admin_password, app_settings, instances
-from reaper.services.plex_link import PlexLinkError, poll_link, start_link
+from reaper.services.plex_link import (
+    PlexLinkError,
+    PlexServerChoiceNeededError,
+    poll_link,
+    start_link,
+)
 from reaper.services.scheduler import SCAN_JOB_ID, apply_scan_schedule
 
 log = structlog.get_logger(__name__)
@@ -125,11 +130,21 @@ class PlexLinkStartOut(BaseModel):
 
 class PlexLinkPollIn(BaseModel):
     pin_id: int
+    # Multi-server accounts only: the machine identifier of the owned server the admin
+    # picked, echoed back from a "choose_server" response.
+    machine_identifier: str | None = None
+
+
+class PlexServerChoiceOut(BaseModel):
+    name: str
+    machine_identifier: str
 
 
 class PlexLinkPollOut(BaseModel):
-    status: str  # "pending" | "ok"
+    status: str  # "pending" | "ok" | "choose_server"
     server: PlexStatusOut | None = None
+    # Present only with status "choose_server": the owned servers to pick from.
+    servers: list[PlexServerChoiceOut] | None = None
 
 
 class ScheduledJobOut(BaseModel):
@@ -334,7 +349,21 @@ async def plex_link_poll(request: Request, payload: PlexLinkPollIn) -> PlexLinkP
         safety = await app_settings.runtime_safety(session, _settings(request))
     try:
         linked = await poll_link(
-            _factory(request), _box(request), pin_id=payload.pin_id, safety=safety
+            _factory(request),
+            _box(request),
+            pin_id=payload.pin_id,
+            safety=safety,
+            choice=payload.machine_identifier,
+        )
+    except PlexServerChoiceNeededError as exc:
+        # The account owns several servers. The PIN stays valid; the browser shows the
+        # candidates and re-polls with the admin's pick.
+        return PlexLinkPollOut(
+            status="choose_server",
+            servers=[
+                PlexServerChoiceOut(name=c.name, machine_identifier=c.machine_identifier)
+                for c in exc.candidates
+            ],
         )
     except PlexLinkError as exc:
         raise HTTPException(400, str(exc)) from exc

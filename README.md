@@ -108,17 +108,16 @@ the template dropdown.
    otherwise lock you out of your own tool. See [Not getting locked out](#not-getting-locked-out).
 3. **Add your services** in the UI: Sonarr, Radarr, Tautulli, Seerr. Keys are entered
    there, stored encrypted, and never come back out of the API. The wizard calls you
-   *scan-ready* once a **Radarr and a Tautulli** exist; Plex is not required to scan.
+   *scan-ready* once **Tautulli plus at least one of Radarr or Sonarr** exist — a
+   movie-only or TV-only deployment is a real deployment. Plex is not required to scan.
 4. **Scan, and just read it.** Deletion is off. Every candidate shows its score and, more
    usefully, every protection that was checked and did *not* fire.
 5. **Turn deletion on only once you trust it**, under Policy → Deletion, with your admin
    password. See [the deletion switch](#the-deletion-switch).
 
-> **Known limitation.** If your Plex account owns **more than one server**, linking is
-> refused outright: Reaper will not guess which library to point a deletion tool at, and
-> there is no picker yet. Sign in with a local admin instead — scanning is unaffected, but
-> the Plex-side features (the *Leaving Soon* label, the post-delete refresh) stay off
-> until it is linked.
+> **Own more than one server?** Reaper never guesses which library to point a deletion
+> tool at — it asks. Pick the server during sign-in (the CLI takes
+> `reaper-admin link-plex --server <name>`), and change it later by unlinking in Settings.
 
 ### Back this up
 

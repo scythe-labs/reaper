@@ -16,7 +16,9 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
+import httpx
 import pytest
+import respx
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 
@@ -209,6 +211,26 @@ class TestSetupStatus:
         assert status["scan_ready"] is True
         assert status["complete"] is False  # ready, but no scan has run yet
 
+    def test_a_sonarr_and_tautulli_also_make_it_scan_ready(self, client: TestClient) -> None:
+        """A TV-only deployment is a real deployment: Sonarr counts as the library
+        source exactly like Radarr does."""
+        for kind, name in [("sonarr", "TV"), ("tautulli", "T")]:
+            client.post(
+                "/api/settings/instances",
+                json={"kind": kind, "name": name, "base_url": f"http://{name}", "api_key": "k"},
+            )
+        status = client.get("/api/setup/status").json()
+        assert status["has_radarr"] is False
+        assert status["has_sonarr"] is True
+        assert status["scan_ready"] is True
+
+    def test_tautulli_alone_is_not_scan_ready(self, client: TestClient) -> None:
+        client.post(
+            "/api/settings/instances",
+            json={"kind": "tautulli", "name": "T", "base_url": "http://t", "api_key": "k"},
+        )
+        assert client.get("/api/setup/status").json()["scan_ready"] is False
+
 
 class TestSchedule:
     def test_the_maintenance_jobs_are_listed(self, client: TestClient) -> None:
@@ -269,3 +291,97 @@ class TestPlexStatus:
 
     def test_unlinking_when_nothing_is_linked_is_a_noop(self, client: TestClient) -> None:
         assert client.delete("/api/settings/plex").json() == {"removed": False}
+
+
+def _plex_resource(machine_id: str, name: str) -> dict[str, object]:
+    return {
+        "name": name,
+        "clientIdentifier": machine_id,
+        "owned": True,
+        "provides": "server",
+        "accessToken": "server-token",
+        "connections": [
+            {
+                "uri": "https://x.plex.direct:32400",
+                "address": "10.0.0.2",
+                "port": 32400,
+                "local": True,
+                "relay": False,
+                "protocol": "https",
+            }
+        ],
+    }
+
+
+class TestPlexLinkChoice:
+    """The Settings-page link flow for an account owning several servers: the exact
+    API contract the PlexPanel picker consumes. The login-time twin of this flow is
+    pinned in test_sessions; this pins the in-app route."""
+
+    def _mock_plextv(self) -> None:
+        respx.post("https://plex.tv/api/v2/pins").mock(
+            return_value=httpx.Response(201, json={"id": 42, "code": "ABCD"})
+        )
+        respx.get("https://plex.tv/api/v2/pins/42").mock(
+            return_value=httpx.Response(200, json={"id": 42, "authToken": "tok"})
+        )
+        respx.get("https://plex.tv/api/v2/user").mock(
+            return_value=httpx.Response(200, json={"id": 7, "username": "owner"})
+        )
+        respx.get("https://plex.tv/api/v2/resources").mock(
+            return_value=httpx.Response(
+                200,
+                json=[_plex_resource("machine-a", "Den"), _plex_resource("machine-b", "Attic")],
+            )
+        )
+        respx.get("https://x.plex.direct:32400/identity").mock(
+            return_value=httpx.Response(200, json={})
+        )
+
+    def test_a_multi_server_account_gets_the_choices_and_the_pin_survives(
+        self, client: TestClient
+    ) -> None:
+        with respx.mock:
+            self._mock_plextv()
+            start = client.post("/api/settings/plex/link/start").json()
+
+            first = client.post("/api/settings/plex/link/poll", json={"pin_id": start["pin_id"]})
+            assert first.status_code == 200, first.text
+            body = first.json()
+            assert body["status"] == "choose_server"
+            assert {(s["name"], s["machine_identifier"]) for s in body["servers"]} == {
+                ("Den", "machine-a"),
+                ("Attic", "machine-b"),
+            }
+
+            # The choice did not burn the PIN: the SAME sign-in finishes with the pick.
+            done = client.post(
+                "/api/settings/plex/link/poll",
+                json={"pin_id": start["pin_id"], "machine_identifier": "machine-b"},
+            )
+            assert done.status_code == 200, done.text
+            assert done.json()["status"] == "ok"
+            assert done.json()["server"]["name"] == "Attic"
+
+        assert client.get("/api/settings/plex").json()["linked"] is True
+
+    def test_a_pick_matching_nothing_owned_fails_closed(self, client: TestClient) -> None:
+        with respx.mock:
+            self._mock_plextv()
+            start = client.post("/api/settings/plex/link/start").json()
+
+            bad = client.post(
+                "/api/settings/plex/link/poll",
+                json={"pin_id": start["pin_id"], "machine_identifier": "somebody-elses-machine"},
+            )
+            assert bad.status_code == 400
+            assert "No server this account owns" in bad.json()["detail"]
+
+            # The refusal consumed the PIN, so the obtained token cannot be replayed.
+            retry = client.post(
+                "/api/settings/plex/link/poll",
+                json={"pin_id": start["pin_id"], "machine_identifier": "machine-b"},
+            )
+            assert retry.status_code == 400
+
+        assert client.get("/api/settings/plex").json()["linked"] is False

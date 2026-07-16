@@ -129,9 +129,11 @@ async def build_sources(
     scanning whichever came first would silently ignore an entire library while reporting
     a clean, confident, non-degraded result.
 
-    Sonarr and Seerr are optional. A movie-only deployment runs with no Sonarr and
-    produces no season candidates; with no Seerr, items simply carry no "requested by".
-    Radarr and Tautulli are required -- without them there is nothing to scan against.
+    Tautulli is required (a scan judges dormancy, and dormancy is watch history), plus
+    at least one library source: Radarr, Sonarr, or both. A movie-only deployment runs
+    with no Sonarr and produces no season candidates; a TV-only deployment runs with no
+    Radarr and produces no movie candidates. Seerr is optional -- without it, items
+    simply carry no "requested by".
     """
     async with session_factory() as session:
         safety = await app_settings.runtime_safety(session, settings)
@@ -149,9 +151,9 @@ async def build_sources(
     tautulli_row = next((r for r in rows if r.kind is InstanceKind.TAUTULLI), None)
     seerr_row = next((r for r in rows if r.kind is InstanceKind.SEERR), None)
 
-    if not radarr_rows or tautulli_row is None:
+    if (not radarr_rows and not sonarr_rows) or tautulli_row is None:
         raise ScanConfigError(
-            "A scan needs at least one Radarr and one Tautulli instance. "
+            "A scan needs a Tautulli instance plus at least one Radarr or Sonarr. "
             "Add them in Settings first."
         )
 

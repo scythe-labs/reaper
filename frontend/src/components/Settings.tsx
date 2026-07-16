@@ -10,7 +10,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { api, type Instance, type InstanceTest } from "../api";
+import { api, type Instance, type InstanceTest, type PlexServerChoice } from "../api";
 import { date } from "../format";
 import { ScanBar } from "./ScanBar";
 
@@ -331,15 +331,47 @@ export function PlexPanel() {
   const { data } = useQuery({ queryKey: ["plex"], queryFn: api.plexStatus });
   const [linking, setLinking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [servers, setServers] = useState<PlexServerChoice[] | null>(null);
   const pollRef = useRef<number | null>(null);
+  const pinRef = useRef<number | null>(null);
 
   useEffect(() => () => (pollRef.current ? clearInterval(pollRef.current) : undefined), []);
 
   const done = () => {
     setLinking(false);
+    setServers(null);
     if (pollRef.current) clearInterval(pollRef.current);
     void queryClient.invalidateQueries({ queryKey: ["plex"] });
     void queryClient.invalidateQueries({ queryKey: ["setup"] });
+  };
+
+  // Give the poll a deadline, exactly like Login's PlexButton. Without one, an operator
+  // who opens the approval tab and never approves leaves this POSTing every 2s forever,
+  // with the button stuck disabled on "Waiting for Plex…" until a full page reload.
+  const beginPoll = (pinId: number, machineId?: string) => {
+    const deadline = Date.now() + 5 * 60 * 1000;
+    pollRef.current = window.setInterval(async () => {
+      if (Date.now() > deadline) {
+        setMessage("Plex sign-in timed out. Please try again.");
+        done();
+        return;
+      }
+      try {
+        const poll = await api.plexLinkPoll(pinId, machineId);
+        if (poll.status === "ok") {
+          setMessage(`Linked to ${poll.server?.name ?? "your server"}.`);
+          done();
+        } else if (poll.status === "choose_server") {
+          // The account owns several servers. The sign-in stays valid; stop polling
+          // and hold the list until the admin picks one.
+          if (pollRef.current) clearInterval(pollRef.current);
+          setServers(poll.servers ?? []);
+        }
+      } catch (e) {
+        setMessage(e instanceof Error ? e.message : String(e));
+        done();
+      }
+    }, 2000);
   };
 
   const startLink = async () => {
@@ -347,32 +379,40 @@ export function PlexPanel() {
     setLinking(true);
     try {
       const start = await api.plexLinkStart();
+      pinRef.current = start.pin_id;
       window.open(start.auth_url, "_blank", "noopener");
-      // Give the poll a deadline, exactly like Login's PlexButton. Without one, an operator
-      // who opens the approval tab and never approves leaves this POSTing every 2s forever,
-      // with the button stuck disabled on "Waiting for Plex…" until a full page reload.
-      const deadline = Date.now() + 5 * 60 * 1000;
-      pollRef.current = window.setInterval(async () => {
-        if (Date.now() > deadline) {
-          setMessage("Plex sign-in timed out. Please try again.");
-          done();
-          return;
-        }
-        try {
-          const poll = await api.plexLinkPoll(start.pin_id);
-          if (poll.status === "ok") {
-            setMessage(`Linked to ${poll.server?.name ?? "your server"}.`);
-            done();
-          }
-        } catch (e) {
-          setMessage(e instanceof Error ? e.message : String(e));
-          done();
-        }
-      }, 2000);
+      beginPoll(start.pin_id);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : String(e));
       setLinking(false);
     }
+  };
+
+  /** The admin picked a server. One immediate poll usually finishes the link; a
+   *  "pending" answer (plex.tv asking us to slow down) falls back to polling. */
+  const pick = async (machineId: string) => {
+    const pinId = pinRef.current;
+    if (pinId == null) return;
+    setServers(null);
+    try {
+      const poll = await api.plexLinkPoll(pinId, machineId);
+      if (poll.status === "ok") {
+        setMessage(`Linked to ${poll.server?.name ?? "your server"}.`);
+        done();
+      } else if (poll.status === "choose_server") {
+        setServers(poll.servers ?? []);
+      } else {
+        beginPoll(pinId, machineId);
+      }
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : String(e));
+      done();
+    }
+  };
+
+  const cancelChoice = () => {
+    setMessage(null);
+    done();
   };
 
   const unlink = useMutation({
@@ -398,6 +438,26 @@ export function PlexPanel() {
           </div>
           <button className="ghost" onClick={() => unlink.mutate()} disabled={unlink.isPending}>
             Unlink
+          </button>
+        </div>
+      ) : servers ? (
+        <div className="server-pick">
+          <strong>Which server should Reaper manage?</strong>
+          <p className="muted">
+            This account owns more than one Plex server. Reaper will only ever scan and
+            prune the one you pick.
+          </p>
+          {servers.map((s) => (
+            <button
+              key={s.machine_identifier}
+              className="server-pick-row"
+              onClick={() => void pick(s.machine_identifier)}
+            >
+              {s.name}
+            </button>
+          ))}
+          <button className="link" onClick={cancelChoice}>
+            Cancel
           </button>
         </div>
       ) : (

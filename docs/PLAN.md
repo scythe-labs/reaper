@@ -987,6 +987,40 @@ cluster of related fixes, all live-verified against real services:
 - **The dormancy gate no longer claims "last watched N days ago" for never-played
   items** — the clock runs from arrival, so it says "untouched for just N".
 
+## First-run honesty fixes (server picker, startup banner, TV-only scans)
+
+Three first-run dead ends found while writing the deployment docs, each fixed with the
+refusal semantics kept intact:
+
+- **An account owning several Plex servers can now finish setup.** `complete_link` used to
+  refuse outright with "select one explicitly" — and nothing anywhere let you select one:
+  no web picker, no CLI flag, no parameter on any path. It now raises
+  `PlexServerChoiceNeededError` carrying `{name, machine id}` candidates; both web flows
+  (the login-time claim and the Settings re-link) render a picker and re-poll the
+  still-valid PIN with the pick, and `reaper-admin link-plex` takes `--server
+  <name-or-machine-id>`. Fail-closed properties preserved: no choice + several owned
+  servers never guesses; a choice resolves only against the *owned* list, so no string a
+  browser sends can land on an unowned server; two owned servers sharing the chosen name
+  are refused with their ids rather than guessed between. The pending PIN is consumed on
+  final outcomes only — the choice-needed state leaves it intact, exactly like the
+  transient-probe path, so the owner is never dragged through a second OAuth round-trip.
+- **The startup banner now reads the *effective* deletion switch.** It logged the env var,
+  which only seeds the first run — so an install armed from the web UI booted saying
+  "Nothing can be deleted", the exact false-safety-claim shape rule 7 exists for. The
+  lifespan now reads `app_settings.runtime_safety` (as `/api/health` already did) and logs
+  `reaper.armed` (a warning, deliberately: it is the line an operator whose `.env` still
+  says disabled will look for) or `reaper.safe_mode`, truthfully. Verified live: armed via
+  the UI with the env var false, restarted, watched the warning appear.
+- **A TV-only deployment can scan.** `build_sources` hard-required a Radarr — a leftover
+  from before season scanning existed, contradicted by its own "a movie-only deployment
+  runs with no Sonarr" symmetry. The gate is now Tautulli plus at least one of
+  Radarr/Sonarr, mirrored in `/api/setup/status` (`scan_ready`, new `has_sonarr`) and the
+  wizard checklist ("Connect Radarr or Sonarr … at least one").
+
+Also corrected in passing: `api/settings.py`'s module docstring still promised the removed
+env-ceiling model ("*enabling* deletion still requires host access"), the same stale claim
+family as §12's aftermath.
+
 ## Immediate next steps
 
 1. **The live send** — wire `_send_for_real` + the exclusion-verify + the Plex refresh

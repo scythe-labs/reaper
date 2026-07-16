@@ -84,14 +84,15 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
       </div>
 
       <ol className="setup-checklist">
-        <Check done={setup.has_radarr}>
-          <strong>Connect Radarr</strong>: where your movies live <em>(required)</em>
+        <Check done={setup.has_radarr || setup.has_sonarr}>
+          <strong>Connect Radarr or Sonarr</strong>: where your movies and shows live{" "}
+          <em>(at least one)</em>
         </Check>
         <Check done={setup.has_tautulli}>
           <strong>Connect Tautulli</strong>: your watch history <em>(required)</em>
         </Check>
         <Check done={setup.has_seerr || setup.has_scanned}>
-          <strong>Connect Sonarr / Seerr</strong>: for TV pruning and requests <em>(optional)</em>
+          <strong>Connect Seerr</strong>: shows who requested each title <em>(optional)</em>
         </Check>
         <Check done={setup.has_scanned}>
           <strong>Run your first scan</strong>
@@ -107,8 +108,8 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
             <div>
               <h2>Ready to scan</h2>
               <p className="muted">
-                Radarr and Tautulli are connected. Run a first scan to see what Reaper would
-                reap. It only reads, and you approve every deletion by hand later.
+                Your library and watch history are connected. Run a first scan to see what
+                Reaper would reap. It only reads, and you approve every deletion by hand later.
               </p>
             </div>
             <button className="primary btn-lg" onClick={runFirstScan} disabled={scanning}>
@@ -117,7 +118,8 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
           </>
         ) : (
           <p className="muted">
-            Add at least a Radarr and a Tautulli above, then you'll be able to run your first scan.
+            Connect Tautulli plus at least one of Radarr or Sonarr above, then you'll be able
+            to run your first scan.
           </p>
         )}
       </div>

@@ -99,14 +99,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     "Create a fallback with: reaper-admin create-admin --username <name>"
                 ),
             )
+
+        # The EFFECTIVE deletion permission: the stored toggle, which the env var only
+        # seeds on first run. The startup banner must tell the truth about what this
+        # process can do right now -- an install armed from the web UI must not log
+        # "nothing can be deleted" on its next restart. (/api/health reads the same way.)
+        safety = await app_settings.runtime_safety(session, settings)
         await session.commit()
 
     log.info(
         "reaper.started",
         version=__version__,
-        destructive_actions_enabled=settings.destructive_actions_enabled,
+        destructive_actions_enabled=safety.destructive_allowed,
     )
-    if not settings.destructive_actions_enabled:
+    if safety.destructive_allowed:
+        # A warning, deliberately: this is the one line an operator whose .env still says
+        # disabled will look for when the toggle was turned on in the web UI.
+        log.warning(
+            "reaper.armed",
+            detail="Deletion is turned on. Reaper can remove media through Sonarr and Radarr.",
+        )
+    else:
         log.info(
             "reaper.safe_mode",
             detail="Destructive actions are disabled. Nothing can be deleted.",

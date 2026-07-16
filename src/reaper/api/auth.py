@@ -47,6 +47,7 @@ from reaper.services.login import (
     poll_plex_login,
     start_plex_login,
 )
+from reaper.services.plex_link import PlexServerChoiceNeededError
 
 log = structlog.get_logger(__name__)
 
@@ -139,12 +140,22 @@ class PlexStartOut(BaseModel):
 
 class PlexPollIn(BaseModel):
     pin_id: int
+    # First-run setup, multi-server accounts only: the machine identifier of the owned
+    # server the user picked, echoed back from a "choose_server" response.
+    machine_identifier: str | None = None
+
+
+class PlexServerChoiceOut(BaseModel):
+    name: str
+    machine_identifier: str
 
 
 class PlexPollOut(BaseModel):
-    status: str  # "pending" | "ok"
+    status: str  # "pending" | "ok" | "choose_server"
     user: UserOut | None = None
     setup: bool = False
+    # Present only with status "choose_server": the owned servers to pick from.
+    servers: list[PlexServerChoiceOut] | None = None
 
 
 class LocalLoginIn(BaseModel):
@@ -222,6 +233,17 @@ async def plex_poll(request: Request, payload: PlexPollIn, response: Response) -
             pin_id=payload.pin_id,
             safety=_safety(request),
             user_agent=request.headers.get("user-agent"),
+            choice=payload.machine_identifier,
+        )
+    except PlexServerChoiceNeededError as exc:
+        # First-run setup, account owns several servers. The sign-in itself succeeded;
+        # the PIN stays valid, and the browser re-polls with the owner's pick.
+        return PlexPollOut(
+            status="choose_server",
+            servers=[
+                PlexServerChoiceOut(name=c.name, machine_identifier=c.machine_identifier)
+                for c in exc.candidates
+            ],
         )
     except LoginError as exc:
         raise HTTPException(401, str(exc)) from exc

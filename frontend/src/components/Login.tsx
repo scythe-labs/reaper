@@ -11,7 +11,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, type AuthContext } from "../api";
+import { api, ApiError, type AuthContext, type PlexServerChoice } from "../api";
 
 function Mark() {
   // A stylized scythe: a handle sweeping down-left, a curved blade across the top.
@@ -46,11 +46,13 @@ function PlexGlyph() {
  *  Plex token -- the backend polls plex.tv and does the ownership check; we only
  *  learn "ok" or "why not". */
 function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void }) {
-  const [phase, setPhase] = useState<"idle" | "waiting" | "error">("idle");
+  const [phase, setPhase] = useState<"idle" | "waiting" | "choose" | "error">("idle");
   const [error, setError] = useState("");
   const [authUrl, setAuthUrl] = useState("");
+  const [servers, setServers] = useState<PlexServerChoice[]>([]);
   const popup = useRef<Window | null>(null);
   const timer = useRef<number | undefined>(undefined);
+  const pinRef = useRef<number | null>(null);
 
   const stop = () => {
     if (timer.current) window.clearInterval(timer.current);
@@ -58,40 +60,74 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
   };
   useEffect(() => stop, []);
 
+  /** Poll until a final answer. On first-run setup, an account owning several servers
+   *  answers "choose_server": the sign-in stays valid while we show the picker, and a
+   *  later poll carries the pick. */
+  const poll = (pinId: number, machineId?: string) => {
+    const deadline = Date.now() + 5 * 60 * 1000;
+    timer.current = window.setInterval(async () => {
+      if (Date.now() > deadline) {
+        stop();
+        popup.current?.close();
+        setPhase("error");
+        setError("Plex sign-in timed out. Please try again.");
+        return;
+      }
+      try {
+        const result = await api.plexPoll(pinId, machineId);
+        if (result.status === "ok") {
+          stop();
+          popup.current?.close();
+          onAuthed();
+        } else if (result.status === "choose_server") {
+          stop();
+          popup.current?.close();
+          setServers(result.servers ?? []);
+          setPhase("choose");
+        }
+      } catch (e) {
+        stop();
+        popup.current?.close();
+        setPhase("error");
+        setError(e instanceof ApiError ? e.message : "Plex sign-in failed.");
+      }
+    }, 2500);
+  };
+
   const start = async () => {
     setPhase("waiting");
     setError("");
     try {
       const { pin_id, auth_url } = await api.plexStart();
       setAuthUrl(auth_url);
+      pinRef.current = pin_id;
       popup.current = window.open(auth_url, "reaper-plex-auth", "width=620,height=760");
-
-      const deadline = Date.now() + 5 * 60 * 1000;
-      timer.current = window.setInterval(async () => {
-        if (Date.now() > deadline) {
-          stop();
-          popup.current?.close();
-          setPhase("error");
-          setError("Plex sign-in timed out. Please try again.");
-          return;
-        }
-        try {
-          const result = await api.plexPoll(pin_id);
-          if (result.status === "ok") {
-            stop();
-            popup.current?.close();
-            onAuthed();
-          }
-        } catch (e) {
-          stop();
-          popup.current?.close();
-          setPhase("error");
-          setError(e instanceof ApiError ? e.message : "Plex sign-in failed.");
-        }
-      }, 2500);
+      poll(pin_id);
     } catch (e) {
       setPhase("error");
       setError(e instanceof ApiError ? e.message : "Could not reach Plex to start sign-in.");
+    }
+  };
+
+  /** The user picked a server. One immediate poll usually finishes the job; a
+   *  "pending" answer (plex.tv asking us to slow down) falls back to polling. */
+  const pick = async (machineId: string) => {
+    const pinId = pinRef.current;
+    if (pinId == null) return;
+    setPhase("waiting");
+    try {
+      const result = await api.plexPoll(pinId, machineId);
+      if (result.status === "ok") {
+        onAuthed();
+      } else if (result.status === "choose_server") {
+        setServers(result.servers ?? []);
+        setPhase("choose");
+      } else {
+        poll(pinId, machineId);
+      }
+    } catch (e) {
+      setPhase("error");
+      setError(e instanceof ApiError ? e.message : "Plex sign-in failed.");
     }
   };
 
@@ -114,6 +150,30 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
             </a>
           </p>
         </div>
+        <button className="link" onClick={cancel}>
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  if (phase === "choose") {
+    return (
+      <div className="server-pick">
+        <strong>Which server should Reaper manage?</strong>
+        <p className="muted">
+          This account owns more than one Plex server. Reaper will only ever scan and
+          prune the one you pick. You can change it later in Settings.
+        </p>
+        {servers.map((s) => (
+          <button
+            key={s.machine_identifier}
+            className="server-pick-row"
+            onClick={() => void pick(s.machine_identifier)}
+          >
+            {s.name}
+          </button>
+        ))}
         <button className="link" onClick={cancel}>
           Cancel
         </button>

@@ -422,10 +422,18 @@ export interface PlexStart {
   auth_url: string;
 }
 
+/** One owned server the account could link, when it owns several. */
+export interface PlexServerChoice {
+  name: string;
+  machine_identifier: string;
+}
+
 export interface PlexPoll {
-  status: "pending" | "ok";
+  status: "pending" | "ok" | "choose_server";
   user: AuthUser | null;
   setup: boolean;
+  /** Present only with status "choose_server". */
+  servers: PlexServerChoice[] | null;
 }
 
 // --- setup + settings ------------------------------------------------------
@@ -435,6 +443,7 @@ export interface SetupStatus {
   plex_linked: boolean;
   instances: Record<string, number>;
   has_radarr: boolean;
+  has_sonarr: boolean;
   has_tautulli: boolean;
   has_seerr: boolean;
   has_scanned: boolean;
@@ -476,8 +485,10 @@ export interface PlexLinkStart {
 }
 
 export interface PlexLinkPoll {
-  status: "pending" | "ok";
+  status: "pending" | "ok" | "choose_server";
   server: PlexStatus | null;
+  /** Present only with status "choose_server". */
+  servers: PlexServerChoice[] | null;
 }
 
 export interface ScheduledJob {
@@ -629,8 +640,8 @@ export const api = {
 
   plexStatus: () => request<PlexStatus>("/api/settings/plex"),
   plexLinkStart: () => post<PlexLinkStart>("/api/settings/plex/link/start", {}),
-  plexLinkPoll: (pin_id: number) =>
-    post<PlexLinkPoll>("/api/settings/plex/link/poll", { pin_id }),
+  plexLinkPoll: (pin_id: number, machine_identifier?: string) =>
+    post<PlexLinkPoll>("/api/settings/plex/link/poll", { pin_id, machine_identifier }),
   plexUnlink: () => del<{ removed: boolean }>("/api/settings/plex"),
 
   schedule: () => request<Schedule>("/api/settings/schedule"),
@@ -713,7 +724,8 @@ export const api = {
   me: () => request<AuthUser>("/api/auth/me"),
   authContext: () => request<AuthContext>("/api/auth/context"),
   plexStart: () => post<PlexStart>("/api/auth/plex/start", {}),
-  plexPoll: (pin_id: number) => post<PlexPoll>("/api/auth/plex/poll", { pin_id }),
+  plexPoll: (pin_id: number, machine_identifier?: string) =>
+    post<PlexPoll>("/api/auth/plex/poll", { pin_id, machine_identifier }),
   localLogin: (username: string, password: string) =>
     post<AuthUser>("/api/auth/local", { username, password }),
   recover: (token: string) => post<AuthUser>("/api/auth/recover", { token }),

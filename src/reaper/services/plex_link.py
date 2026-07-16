@@ -64,6 +64,36 @@ class PlexLinkRetryableError(PlexLinkError):
     """
 
 
+@dataclass(frozen=True)
+class PlexServerCandidate:
+    """One owned server the signing-in account could link. Safe to show a browser:
+    a name and an identifier, never a token."""
+
+    name: str
+    machine_identifier: str
+
+
+class PlexServerChoiceNeededError(PlexLinkError):
+    """The account owns several servers, and Reaper will not guess between them.
+
+    Not a refusal: the sign-in succeeded and the owner merely has to say which library
+    this deletion tool should manage. Callers that can render a choice (the web flows,
+    the CLI) catch this, present ``candidates``, and retry with an explicit pick. Like
+    the retryable error it must NOT consume the pending PIN -- the whole point is that
+    the same sign-in finishes once the choice is made. A subclass of ``PlexLinkError``
+    so any caller not yet showing a picker degrades to the old refusal, never to a
+    silent guess.
+    """
+
+    def __init__(self, candidates: list[PlexServerCandidate]) -> None:
+        names = ", ".join(repr(c.name) for c in candidates)
+        super().__init__(
+            f"This account owns more than one Plex server ({names}). "
+            "Pick the one Reaper should manage."
+        )
+        self.candidates = candidates
+
+
 async def client_identifier(session: AsyncSession) -> str:
     """Reaper's stable identity to plex.tv. Generated once, then **never regenerated**.
 
@@ -127,6 +157,7 @@ async def link(
     *,
     safety: RuntimeSafety,
     on_prompt: object = None,
+    choice: str | None = None,
 ) -> LinkedServer:
     """Run the PIN flow end to end and persist the result.
 
@@ -164,7 +195,38 @@ async def link(
         account = await plextv.account(token)
         owned = await plextv.owned_servers(token)
 
-    return await complete_link(session_factory, box, token=token, account=account, owned=owned)
+    return await complete_link(
+        session_factory, box, token=token, account=account, owned=owned, choice=choice
+    )
+
+
+def _select_owned(owned: list[PlexResource], choice: str) -> PlexResource:
+    """Resolve an explicit server choice against the OWNED list, and only that list.
+
+    Matching from ``owned`` is the property that matters: whatever string arrives here,
+    the result can never be a server the account does not own. The choice is a machine
+    identifier (what the web picker sends back) or an exact name (what a human types at
+    the CLI). Two owned servers sharing the chosen name is refused rather than guessed,
+    exactly like every other ambiguity on this path.
+    """
+    by_id = [r for r in owned if r.client_identifier == choice]
+    if by_id:
+        return by_id[0]  # identifiers are unique per server; plex.tv will not list dupes
+
+    by_name = [r for r in owned if r.name == choice]
+    if len(by_name) > 1:
+        ids = ", ".join(r.client_identifier for r in by_name)
+        raise PlexLinkError(
+            f"This account owns more than one server named {choice!r}. Pick by machine "
+            f"identifier instead: {ids}."
+        )
+    if not by_name:
+        names = ", ".join(repr(r.name) for r in owned)
+        raise PlexLinkError(
+            f"No server this account owns matches {choice!r}. It owns: {names}. "
+            "Start the sign-in again and pick one of those."
+        )
+    return by_name[0]
 
 
 async def complete_link(
@@ -174,14 +236,21 @@ async def complete_link(
     token: str,
     account: PlexAccount,
     owned: list[PlexResource],
+    choice: str | None = None,
 ) -> LinkedServer:
     """Turn a signed-in owner's discovered servers into a persisted link.
 
     Split out of :func:`link` so the web setup flow can reuse it: that flow runs
     its own poll-based PIN loop (the browser needs to be told to open the auth
-    URL and then polled), but the *decision* -- refuse if they own no server or
-    more than one, probe for a reachable connection, encrypt and persist -- is
-    identical, and must not drift between the CLI and the UI.
+    URL and then polled), but the *decision* -- refuse if they own no server,
+    demand an explicit choice if they own several, probe for a reachable
+    connection, encrypt and persist -- is identical, and must not drift between
+    the CLI and the UI.
+
+    ``choice`` names one of the *owned* servers (machine identifier, or exact
+    name from the CLI). Absent, a single owned server is linked and several
+    raise :class:`PlexServerChoiceNeededError` -- never a guess, because picking one
+    arbitrarily is how you point a deletion tool at the wrong library.
     """
     if not owned:
         raise PlexLinkError(
@@ -189,16 +258,17 @@ async def complete_link(
             "server. Reaper must be linked by the server owner -- it is going to be "
             "given permission to delete media."
         )
-    if len(owned) > 1:
-        # Picking one arbitrarily is how you point a deletion tool at the wrong
-        # library. Refuse, and make the caller choose.
-        names = ", ".join(repr(r.name) for r in owned)
-        raise PlexLinkError(
-            f"This account owns more than one server ({names}). Reaper will not guess "
-            "which one to point a deletion tool at -- select one explicitly."
+    if choice is not None:
+        resource = _select_owned(owned, choice)
+    elif len(owned) > 1:
+        raise PlexServerChoiceNeededError(
+            [
+                PlexServerCandidate(name=r.name, machine_identifier=r.client_identifier)
+                for r in owned
+            ]
         )
-
-    resource = owned[0]
+    else:
+        resource = owned[0]
     connection = await _reachable(resource, resource.access_token or token)
     token_enc = box.encrypt(resource.access_token or token)
 
@@ -293,15 +363,18 @@ async def poll_link(
     *,
     pin_id: int,
     safety: RuntimeSafety,
+    choice: str | None = None,
 ) -> LinkedServer | None:
     """Check an in-app link once. ``None`` while still pending; the linked server once done.
 
-    Raises :class:`PlexLinkError` on a *permanent* refusal (owns no server, or owns several)
-    and consumes the pending row so the obtained token cannot be replayed. A transient
-    failure -- the reachable-connection probe not answering -- raises
-    :class:`PlexLinkRetryableError` and leaves the pending row **intact**, so the browser can
-    re-poll the still-valid PIN without a fresh OAuth round-trip. ``complete_link`` upserts by
-    machine id, so re-linking the same server just refreshes its stored connection and token.
+    Raises :class:`PlexLinkError` on a *permanent* refusal (owns no server, or a choice
+    that matches none) and consumes the pending row so the obtained token cannot be
+    replayed. Two outcomes leave the pending row **intact**, so the browser can re-poll
+    the still-valid PIN without a fresh OAuth round-trip: a transient failure of the
+    reachable-connection probe (:class:`PlexLinkRetryableError`), and an account owning
+    several servers (:class:`PlexServerChoiceNeededError`) -- the browser shows the candidates
+    and re-polls with ``choice`` set. ``complete_link`` upserts by machine id, so
+    re-linking the same server just refreshes its stored connection and token.
     """
     async with session_factory() as session:
         pending = await session.scalar(
@@ -338,17 +411,20 @@ async def poll_link(
             raise PlexLinkError("Signed in to Plex, but could not read the account.") from exc
 
     # Consume the pending PIN only on a *final* outcome: success, or a permanent refusal
-    # (owns no server / owns several). A transient probe failure leaves it intact so the
-    # browser can re-poll the still-valid PIN -- otherwise a server briefly unreachable at
-    # the instant of sign-in would force the owner through a fresh OAuth flow despite having
-    # just authenticated. Consuming on the final outcomes still prevents token replay.
+    # (owns no server / a choice matching nothing). Two intermediate outcomes leave it
+    # intact so the browser can re-poll the still-valid PIN -- a transient probe failure
+    # (otherwise a server briefly unreachable at the instant of sign-in forces a fresh
+    # OAuth flow despite a successful sign-in), and a multi-server account waiting on its
+    # owner's choice. Consuming on the final outcomes still prevents token replay.
     consume_pending = True
     try:
         linked = await complete_link(
-            session_factory, box, token=token, account=account, owned=owned
+            session_factory, box, token=token, account=account, owned=owned, choice=choice
         )
-    except PlexLinkRetryableError:
-        consume_pending = False  # PIN still valid; let the browser re-poll it
+    except (PlexLinkRetryableError, PlexServerChoiceNeededError):
+        # PIN still valid in both cases; let the browser re-poll it -- after the
+        # transient blip passes, or carrying the owner's server choice.
+        consume_pending = False
         raise
     finally:
         if consume_pending:

@@ -647,6 +647,49 @@ button.link:hover:not(:disabled) {
   font-size: 0.85rem;
 }
 
+/* The server picker: shown when the signing-in account owns several Plex servers.
+ * One tap per server; Reaper never guesses which library a deletion tool manages. */
+.server-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  text-align: left;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.server-pick > strong {
+  font-size: 0.92rem;
+}
+.server-pick > p {
+  margin: 0 0 0.25rem;
+  font-size: 0.8rem;
+}
+.server-pick-row {
+  width: 100%;
+  text-align: left;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 550;
+  cursor: pointer;
+  transition:
+    border-color 0.15s var(--ease),
+    background 0.15s var(--ease);
+}
+.server-pick-row:hover {
+  background: var(--hover);
+  border-color: var(--accent);
+}
+.server-pick .link {
+  align-self: flex-start;
+  font-size: 0.85rem;
+}
+
 /* ---- bottom sheet (local login) ------------------------------------------ */
 
 .sheet-scrim {
