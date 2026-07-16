@@ -320,12 +320,11 @@ The metadata naming convention (`src/reaper/db/base.py`) and Alembic's
 constraint, so without both, future migrations fail and the only fix is rewriting
 the entire migration history.
 
-`tests/test_migrations.py` covers *half* of that, honestly: it imports the real
-`NAMING_CONVENTION` and proves a named constraint can be dropped under batch mode, so the
-convention is genuinely guarded. But it configures batch mode itself
-(`opts={"as_batch": True}`) rather than reading `alembic/env.py`, so flipping
-`render_as_batch` to `False` there would not fail a single test. That line is load-bearing
-and unguarded — treat it accordingly.
+`tests/test_migrations.py` guards both halves. It imports the real `NAMING_CONVENTION` and
+proves a named constraint can be dropped under batch mode, and it runs the real
+`alembic/env.py` to capture what that file actually passes to `context.configure()`, at
+both the offline and online call sites. Flipping `render_as_batch` to `False` fails that
+test today, rather than surfacing years from now in the first migration that needs it.
 
 ## Licence
 
