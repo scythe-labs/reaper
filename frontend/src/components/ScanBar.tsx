@@ -74,14 +74,14 @@ export function ScanBar({ snapshot }: { snapshot: Snapshot | undefined }) {
         )}
 
         {!snapshot && !scanning && (
-          <p className="muted">No scan has run yet. A scan only reads — it cannot delete.</p>
+          <p className="muted">No scan has run yet. A scan only reads. It cannot delete.</p>
         )}
 
         {scanning && (
           <p className="muted">
             {phaseLabel(status!.phase)}
-            {status!.detail && ` — ${status!.detail}`}
-            {pct !== null && ` — ${pct}%`}
+            {status!.detail && ` · ${status!.detail}`}
+            {pct !== null && ` · ${pct}%`}
             {" · you can leave this page; it keeps running."}
           </p>
         )}
@@ -98,7 +98,7 @@ export function ScanBar({ snapshot }: { snapshot: Snapshot | undefined }) {
       {snapshot?.degraded && (
         <p className="warn">
           <strong>This scan came back incomplete.</strong> {snapshot.degraded_reason} You can still
-          look at it, but Reaper won't act on it — a scan that missed a source could show a list
+          look at it, but Reaper won't act on it. A scan that missed a source could show a list
           that looks complete when it isn't.
         </p>
       )}

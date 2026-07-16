@@ -47,7 +47,7 @@ function SafetyBanner() {
         <span className="banner-dot" aria-hidden="true" />
         <span>
           <strong>Safety state unknown.</strong> Reaper couldn't reach the server to confirm
-          whether deletion is on. Until it can, treat this as armed and check Settings → Safety.
+          whether deletion is on. Until it can, treat this as armed and check Policy → Deletion.
         </span>
       </div>
     );
@@ -59,7 +59,7 @@ function SafetyBanner() {
         <span className="banner-dot" aria-hidden="true" />
         <span>
           <strong>Read-only.</strong> Reaper can look but can't remove anything. Turn deletion on
-          in Settings → Safety when you're ready.
+          in Policy → Deletion when you're ready.
         </span>
       </div>
     );

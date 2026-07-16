@@ -236,6 +236,19 @@ export interface Policy {
   warnings: PolicyWarning[];
 }
 
+/** One title the draft would newly flag, for the simulator's "New on the list" block. */
+export interface SimExample {
+  title: string;
+  year: number | null;
+  score: number;
+}
+
+/** One protection and how many items it is keeping, for "Why titles were spared". */
+export interface GateCount {
+  gate: string;
+  count: number;
+}
+
 export interface Simulation {
   /** Whether these numbers actually answer the question that was asked. False when the
    *  candidate policy changed a weight or a gate, in which case the stored scores were
@@ -249,6 +262,16 @@ export interface Simulation {
   newly_condemned: number;
   no_longer_condemned: number;
   histogram: number[];
+  /** Populated only when exact; empty on a stale refusal, like every count above. */
+  examples_newly_condemned: SimExample[];
+  protected_by: GateCount[];
+}
+
+/** Distinct values the latest scan saw for one rule field. Suggestions only: an unknown
+ *  field or a missing scan is an empty list, and typing an unlisted value stays valid. */
+export interface FieldValues {
+  field: string;
+  values: string[];
 }
 
 export interface ActionStep {
@@ -636,6 +659,9 @@ export const api = {
     request<Policy>(`/api/policy?media_type=${mediaType}`),
   vocabulary: (lane: "protect" | "condemn") =>
     request<Vocabulary>(`/api/vocabulary?lane=${lane}`),
+  /** Seen values for one field's input suggestions. Empty when nothing to suggest. */
+  vocabularyValues: (field: string) =>
+    request<FieldValues>(`/api/vocabulary/values?field=${encodeURIComponent(field)}`),
   savePolicy: (body: PolicyBody) => post<Policy>("/api/policy", body),
   validatePolicy: (body: PolicyBody) => post<Policy>("/api/policy/validate", body),
   simulate: (body: PolicyBody) => post<Simulation>("/api/policy/simulate", body),

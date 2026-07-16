@@ -199,8 +199,8 @@ def season_media_key(instance_id: int, series_id: int, season_number: int) -> st
 
 def season_title(series_title: str, season_number: int) -> str:
     if season_number == SPECIALS_SEASON:
-        return f"{series_title} — Specials"
-    return f"{series_title} — Season {season_number}"
+        return f"{series_title} · Specials"
+    return f"{series_title} · Season {season_number}"
 
 
 def parse_seasons(series: Mapping[str, Any]) -> list[SeasonStats]:
@@ -303,12 +303,16 @@ def build_season_facts(
     requested: Observation[bool] = _UNSET_OBS,
     show_ended: Observation[bool] = _UNSET_OBS,
     genres: Observation[str] = _UNSET_OBS,
+    show_match_status: identity.MatchStatus | None = None,
 ) -> Facts:
     """Assemble one season's evidence, with the same Unknown-discipline as the movie path.
 
     A season we could not resolve in Plex (``plex_rating_key is None``) has no watch
     history to read, so its dormancy and popularity are ``Unknown`` -- and Unknown, run
     through the gates, abstains. A file we cannot see is never condemned.
+    ``show_match_status`` picks the honest wording for that Unknown: an AMBIGUOUS show
+    (two Plex items share its id) is a different story from one Plex has no match for,
+    and the why-panel must not tell the owner the wrong one.
     """
     dormancy: Observation[float]
     recent: Observation[int]
@@ -316,10 +320,15 @@ def build_season_facts(
     streaming: Observation[bool]
 
     if plex_rating_key is None:
-        dormancy = Unknown(reason="Plex has not matched this season", source="plex")
-        recent = Unknown(reason="Plex has not matched this season", source="plex")
-        all_time = Unknown(reason="Plex has not matched this season", source="plex")
-        streaming = Unknown(reason="Plex has not matched this season", source="plex")
+        no_key_reason = (
+            "more than one Plex item matches this show"
+            if show_match_status is identity.MatchStatus.AMBIGUOUS
+            else "Plex has not matched this season"
+        )
+        dormancy = Unknown(reason=no_key_reason, source="plex")
+        recent = Unknown(reason=no_key_reason, source="plex")
+        all_time = Unknown(reason=no_key_reason, source="plex")
+        streaming = Unknown(reason=no_key_reason, source="plex")
     else:
         # Dormancy is measured from THIS SEASON's own arrival date, never the show's -- a
         # season backfilled into an old show arrived recently even though the show is old,
@@ -413,13 +422,16 @@ async def build_tv_index(
     The same shape as the movie ``build_movie_index``: the Tautulli show sweep is the
     spine (rating_key / title / year / added_at -- though a show's own added_at is not used
     for dormancy, which is measured per season), enriched by the plexapi GUID sweep of the
-    show sections. A failed sweep degrades the snapshot (never a silent fall back to
-    title-only) and leaves ids empty so shows still match by title+year.
+    show sections. And the same staleness fix: the spine is a Tautulli-side cache that lags
+    fresh additions, so any show the plexapi sweep returns that the spine did not list is
+    appended as its own row rather than silently reported as "Plex has not matched". A
+    failed sweep degrades the snapshot (never a silent fall back to title-only) and leaves
+    ids empty so shows still match by title+year.
     """
-    guids: dict[int, tuple[identity.ExternalIds, str | None]] = {}
+    plex_items: dict[int, identity.PlexItem] = {}
     if plex is not None:
         try:
-            guids = await plex.library_guid_index(section_type="show")
+            plex_items = await plex.library_guid_index(section_type="show")
         except PlexError as exc:
             degrade(
                 f"Plex GUID sweep failed ({exc}) -- id matching unavailable, snapshot un-executable"
@@ -439,20 +451,24 @@ async def build_tv_index(
                 if rk is None:
                     continue
                 rating_key = int(rk)
-                ids, basename = guids.get(rating_key, (identity.ExternalIds(), None))
+                enriched = plex_items.get(rating_key)
                 items.append(
                     identity.PlexItem(
                         rating_key=rating_key,
                         title=str(row.get("title") or ""),
                         year=_as_year(row.get("year")),
                         added_at=from_epoch(row.get("added_at")),
-                        ids=ids,
-                        file_basename=basename,
+                        ids=enriched.ids if enriched is not None else identity.ExternalIds(),
+                        file_basename=enriched.file_basename if enriched is not None else None,
                     )
                 )
             if len(rows) < 1000:
                 break
             start += 1000
+
+    # Shows Plex has that the Tautulli cache has not listed yet (fresh additions).
+    spine_keys = {item.rating_key for item in items}
+    items.extend(row for rk, row in plex_items.items() if rk not in spine_keys)
     return identity.PlexIndex.build(items)
 
 
@@ -867,6 +883,7 @@ async def _judge_series(
             requested=requested_obs,
             show_ended=show_ended_obs,
             genres=show_genres_obs,
+            show_match_status=item.match_status,
         )
         # Requested-by: prefer a request that named this season; fall back to a
         # whole-show request. Display only -- never a gate.

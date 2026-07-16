@@ -273,6 +273,6 @@ class RuntimeSafety(BaseModel):
         if not self.destructive_enabled:
             return (
                 "Deletion is turned off, so Reaper can look but can't remove anything. "
-                "Turn it on in Settings -> Safety when you're ready."
+                "Turn it on in Policy -> Deletion when you're ready."
             )
         return None

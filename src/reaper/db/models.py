@@ -336,6 +336,13 @@ class Candidate(Base):
     requested_by: Mapped[str | None] = mapped_column(String(200), default=None)
     """Who asked for this via Seerr, if anyone. Never a gate -- see services.requested_by."""
 
+    genres_json: Mapped[str | None] = mapped_column(Text, default=None)
+    """The item's genres at scan time, as a JSON array. Feeds the rule editors' value
+    suggestions (GET /api/vocabulary/values); suggestion only, never a verdict input."""
+
+    quality: Mapped[str | None] = mapped_column(String(100), default=None)
+    """The file's quality name at scan time (e.g. "Bluray-1080p"), same purpose."""
+
     group_key: Mapped[str | None] = mapped_column(String(100), index=True, default=None)
     """Ties rows that belong together in the queue -- every season of one show shares its
     show's key -- so the UI can collapse a show into a single expandable row. Null for a

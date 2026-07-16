@@ -14,7 +14,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, type Run, type RunReport } from "../api";
 import { bytes, count } from "../format";
-import { CapsEditor } from "./CapsEditor";
 import { GracePanel } from "./GracePanel";
 import { ReapConfirm } from "./ReapConfirm";
 
@@ -58,7 +57,7 @@ function Report({ report }: { report: RunReport }) {
   if (report.state === "aborted") {
     return (
       <div className="sim sim-stale">
-        <h3>The run aborted — nothing was touched</h3>
+        <h3>The run aborted. Nothing was touched</h3>
         <p>{report.aborted_reason}</p>
       </div>
     );
@@ -118,12 +117,11 @@ export function ReapPlan() {
         </button>
       </div>
       <p className="blurb">
-        A plan records exactly what a reap <em>would</em> do — the literal request behind every
-        deletion — and can be dry-run end to end. Nothing here deletes anything.
+        A plan records exactly what a reap <em>would</em> do: the literal request behind every
+        deletion. It can be dry-run end to end. Nothing here deletes anything.
       </p>
 
       <GracePanel />
-      <CapsEditor />
 
       {plan.error && <p className="error">{plan.error.message}</p>}
 

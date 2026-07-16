@@ -40,7 +40,7 @@ function Row({ row }: { row: RequesterRow }) {
               {count(row.reclaimable_items)} · {bytes(row.reclaimable_bytes)}
             </span>
           ) : (
-            <span className="muted">—</span>
+            <span className="muted">·</span>
           )}
         </td>
         <td className="why-cell">
@@ -78,7 +78,7 @@ export function Fairness() {
       <div className="fairness-head">
         <h2>Fairness</h2>
         <p className="blurb">
-          Who asked for what, and who actually watched it. Read-only — nothing here deletes
+          Who asked for what, and who actually watched it. Read-only. Nothing here deletes
           anything; it is the picture behind the requests.
         </p>
       </div>

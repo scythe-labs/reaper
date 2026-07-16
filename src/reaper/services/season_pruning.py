@@ -69,7 +69,7 @@ class PruneConflict:
     def message(self) -> str:
         viewers = "person" if self.pruned_watchers == 1 else "people"
         return (
-            f"{self.pruned_watchers} {viewers} watched Season {self.pruned_season} — more "
+            f"{self.pruned_watchers} {viewers} watched Season {self.pruned_season}, more "
             f"than watched Season {self.kept_season}, which your keep rule protects. "
             f"Reaper left it for you to decide instead of removing it."
         )

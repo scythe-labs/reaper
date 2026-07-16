@@ -163,13 +163,11 @@ class _FakeTautulli:
 
 
 class _FakePlexSweep:
-    def __init__(self, guids: dict[int, tuple[identity.ExternalIds, str | None]]) -> None:
-        self._guids = guids
+    def __init__(self, items: dict[int, identity.PlexItem]) -> None:
+        self._items = items
 
-    async def library_guid_index(
-        self, *, section_type: str
-    ) -> dict[int, tuple[identity.ExternalIds, str | None]]:
-        return self._guids
+    async def library_guid_index(self, *, section_type: str) -> dict[int, identity.PlexItem]:
+        return self._items
 
 
 class _FakePlexBrokenSweep:
@@ -184,10 +182,19 @@ class TestBuildMovieIndex:
     async def test_ids_and_basename_enrich_the_tautulli_spine(self) -> None:
         """The plexapi sweep joins onto the spine by rating key, and added_at STILL comes
         from Tautulli (the dormancy floor must not shift)."""
-        guids = {100: (identity.ExternalIds.of(tmdb=1001), "example (2020).mkv")}
+        swept = {
+            100: identity.PlexItem(
+                rating_key=100,
+                title="Example",
+                year=2020,
+                added_at=from_epoch("1600000000"),  # differs from the spine on purpose
+                ids=identity.ExternalIds.of(tmdb=1001),
+                file_basename="example (2020).mkv",
+            )
+        }
         index = await build_movie_index(
             _FakeTautulli(_SPINE_ROWS),  # type: ignore[arg-type]
-            _FakePlexSweep(guids),  # type: ignore[arg-type]
+            _FakePlexSweep(swept),  # type: ignore[arg-type]
             degrade=lambda _r: None,
         )
         item = index.by_rating_key[100]
@@ -195,6 +202,45 @@ class TestBuildMovieIndex:
         assert item.ids.tmdb == 1001
         assert item.file_basename == "example (2020).mkv"
         assert index.by_tmdb[1001] == [100]
+
+    async def test_an_item_the_tautulli_cache_has_not_listed_still_enters_the_index(self) -> None:
+        """Tautulli's media-info listing is a cache and lags fresh additions. An item the
+        plexapi sweep sees but the spine does not must still enter the index (with Plex's
+        own added-at), or the resolver falsely reports a matched item as unmatched."""
+        fresh = identity.PlexItem(
+            rating_key=200,
+            title="Example Fresh",
+            year=2026,
+            added_at=from_epoch("1700000500"),
+            ids=identity.ExternalIds.of(tmdb=2002),
+            file_basename="example fresh (2026).mkv",
+        )
+        swept = {
+            100: identity.PlexItem(
+                rating_key=100,
+                title="Example",
+                year=2020,
+                added_at=None,
+                ids=identity.ExternalIds.of(tmdb=1001),
+                file_basename="example (2020).mkv",
+            ),
+            200: fresh,
+        }
+        index = await build_movie_index(
+            _FakeTautulli(_SPINE_ROWS),  # type: ignore[arg-type]
+            _FakePlexSweep(swept),  # type: ignore[arg-type]
+            degrade=lambda _r: None,
+        )
+        assert index.by_rating_key[200] == fresh  # in the index, Plex's added_at intact
+        res = identity.resolve_movie(
+            ids=identity.ExternalIds.of(tmdb=2002),
+            title="Example Fresh",
+            year=2026,
+            file_basename=None,
+            index=index,
+        )
+        assert res.rating_key == 200
+        assert res.status is identity.MatchStatus.MATCHED
 
     async def test_a_sweep_failure_degrades_but_still_matches_by_title(self) -> None:
         """rule #2: a failed GUID sweep degrades the snapshot (un-executable) rather than

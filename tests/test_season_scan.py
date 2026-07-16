@@ -83,7 +83,7 @@ class TestKeys:
         assert season_scan.season_media_key(1, 42, 3) == "sonarr:1:42:3"
 
     def test_the_title_names_the_season(self) -> None:
-        assert season_scan.season_title("Example Show", 3) == "Example Show — Season 3"
+        assert season_scan.season_title("Example Show", 3) == "Example Show · Season 3"
 
     def test_specials_are_named_not_numbered(self) -> None:
         assert "Specials" in season_scan.season_title("Example Show", 0)
@@ -253,7 +253,7 @@ class TestGuardResult:
 
 def _facts(**over: Any) -> Any:
     base: dict[str, Any] = {
-        "title": "Show — Season 3",
+        "title": "Show · Season 3",
         "season": _season(3, size=8 * GB),
         "rank": 2,
         "plex_rating_key": 700,
@@ -279,6 +279,18 @@ class TestBuildSeasonFacts:
         assert isinstance(facts.days_observed_unwatched, Unknown)
         assert isinstance(facts.distinct_watchers, Unknown)
         assert isinstance(facts.is_streaming_now, Unknown)
+
+    def test_an_ambiguous_show_gets_the_honest_unknown_reason(self) -> None:
+        """An AMBIGUOUS show (two Plex items share its id) is not "unmatched" -- Plex has
+        it, more than once. The Unknown reason must tell that story, or the why-panel
+        claims the show couldn't be found when the opposite is true."""
+        facts = _facts(plex_rating_key=None, show_match_status=identity.MatchStatus.AMBIGUOUS)
+        assert isinstance(facts.days_observed_unwatched, Unknown)
+        assert facts.days_observed_unwatched.reason == "more than one Plex item matches this show"
+
+        unmatched = _facts(plex_rating_key=None, show_match_status=identity.MatchStatus.UNMATCHED)
+        assert isinstance(unmatched.days_observed_unwatched, Unknown)
+        assert unmatched.days_observed_unwatched.reason == "Plex has not matched this season"
 
     def test_a_resolved_season_has_known_dormancy(self) -> None:
         facts = _facts(plex_rating_key=700)
@@ -567,15 +579,13 @@ def _source(client: Any) -> season_scan.SonarrSource:
 
 
 class _FakePlexGuids:
-    """A stand-in for the plexapi GUID sweep: rating_key -> (ExternalIds, basename)."""
+    """A stand-in for the plexapi GUID sweep: rating_key -> PlexItem."""
 
-    def __init__(self, guids: dict[int, tuple[identity.ExternalIds, str | None]]) -> None:
-        self._guids = guids
+    def __init__(self, items: dict[int, identity.PlexItem]) -> None:
+        self._items = items
 
-    async def library_guid_index(
-        self, *, section_type: str
-    ) -> dict[int, tuple[identity.ExternalIds, str | None]]:
-        return self._guids
+    async def library_guid_index(self, *, section_type: str) -> dict[int, identity.PlexItem]:
+        return self._items
 
 
 class TestGatherEndToEnd:
@@ -674,7 +684,17 @@ class TestGatherEndToEnd:
             ],
             children={800: [{"media_index": n, "rating_key": 800 + n} for n in range(1, 6)]},
         )
-        plex = _FakePlexGuids({800: (identity.ExternalIds.of(tvdb=4242, imdb="tt7777"), None)})
+        plex = _FakePlexGuids(
+            {
+                800: identity.PlexItem(
+                    rating_key=800,
+                    title="Reality Show",
+                    year=2020,
+                    added_at=None,
+                    ids=identity.ExternalIds.of(tvdb=4242, imdb="tt7777"),
+                )
+            }
+        )
         _reasons, degrade = _degrade_sink()
 
         judgements = await season_scan.gather(

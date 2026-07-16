@@ -480,7 +480,7 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
             if not await admin_password.has_password(session):
                 raise HTTPException(
                     400,
-                    "Set an admin password first — it's what confirms turning deletion on.",
+                    "Set an admin password first. It's what confirms turning deletion on.",
                 )
             if not await admin_password.verify(session, payload.password or ""):
                 raise HTTPException(403, "That password didn't match. Deletion stays off.")

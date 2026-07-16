@@ -16,6 +16,7 @@ Two routes carry most of the product:
 from __future__ import annotations
 
 import json
+from collections import Counter
 from datetime import datetime
 
 import structlog
@@ -30,12 +31,15 @@ from reaper.api.schemas import (
     ConditionIn,
     Explanation,
     FieldOut,
+    FieldValuesOut,
+    GateCountOut,
     GateSettingIn,
     PolicyIn,
     PolicyOut,
     PolicyWarningOut,
     SeasonShapeOut,
     SignalSettingIn,
+    SimExampleOut,
     SimulationOut,
     SnapshotOut,
     VocabularyOut,
@@ -282,9 +286,15 @@ def _primary_reason(explanation_json: str, verdict: str) -> str | None:
         signals = [s for s in exp.get("signals") or [] if s.get("evaluated")]
         signals.sort(key=lambda s: s.get("contribution", 0), reverse=True)
         return signals[0]["detail"] if signals else None
-    # abstain: something Reaper left for the owner to decide (a keep-rule conflict, or a
-    # source it couldn't reach), else "scored too low". The detail is already a plain,
-    # self-contained sentence, so no prefix -- a jargon prefix only muddies it.
+    # abstain: lead with the match problem when there is one -- it is the single cause
+    # behind every "could not check" that follows, and the raw gate detail ("could not
+    # check the watch horizon: ...") repeats it in engineer-speak. Otherwise fall back to
+    # the first unchecked protection, whose detail is already a plain sentence.
+    status = (exp.get("match") or {}).get("status")
+    if status == "unmatched":
+        return "Kept to be safe: it couldn't be found in Plex."
+    if status == "ambiguous":
+        return "Kept to be safe: it looks like more than one thing in Plex."
     unknown = exp.get("protections_unknown") or []
     if unknown:
         return str(unknown[0]["detail"])
@@ -631,6 +641,8 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
     condemned = protected = abstained = 0
     reclaimable = 0
     newly = gone = 0
+    newly_rows: list[Candidate] = []
+    spared_by: Counter[str] = Counter()
 
     for row in rows:
         histogram[min(row.score // 10, 9)] += 1
@@ -641,6 +653,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         # verdicts can move.
         if row.verdict == "protect":
             protected += 1
+            spared_by.update(_fired_gates(row.explanation_json))
             continue
 
         eligible = row.coverage_bp >= body.coverage_floor_bp
@@ -651,10 +664,16 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
             reclaimable += row.size_bytes
             if not was_condemned:
                 newly += 1
+                newly_rows.append(row)
         else:
             abstained += 1
             if was_condemned:
                 gone += 1
+
+    # The few names the owner will actually recognise: the highest-scoring titles this
+    # draft flags that the saved policy does not. A count is abstract; a familiar title
+    # is what stops a bad threshold before it is saved.
+    newly_rows.sort(key=lambda r: r.score, reverse=True)
 
     return SimulationOut(
         exact=True,
@@ -665,7 +684,27 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         newly_condemned=newly,
         no_longer_condemned=gone,
         histogram=histogram,
+        examples_newly_condemned=[
+            SimExampleOut(title=r.title, year=r.year, score=r.score) for r in newly_rows[:5]
+        ],
+        protected_by=[
+            GateCountOut(gate=gate, count=n)
+            for gate, n in sorted(spared_by.items(), key=lambda kv: (-kv[1], kv[0]))
+        ],
     )
+
+
+def _fired_gates(explanation_json: str) -> list[str]:
+    """The gates that fired in one stored explanation, for the spared-by tally.
+
+    Defensive like ``_primary_reason``: an unreadable explanation contributes nothing
+    rather than failing the whole simulation.
+    """
+    try:
+        exp = json.loads(explanation_json)
+    except (ValueError, TypeError):
+        return []
+    return [str(entry["gate"]) for entry in exp.get("protections_fired") or [] if "gate" in entry]
 
 
 # ---------------------------------------------------------------------------
@@ -695,3 +734,53 @@ async def get_vocabulary(lane: Lane) -> VocabularyOut:
             for spec in vocabulary(lane)
         ],
     )
+
+
+#: The fields whose seen-values are worth suggesting, and the candidate column each is
+#: read from. Free-text fields only: numbers and booleans need no suggestions.
+_VALUE_COLUMNS = {"genre": Candidate.genres_json, "quality": Candidate.quality}
+
+
+@router.get("/vocabulary/values")
+async def vocabulary_values(request: Request, field: str) -> FieldValuesOut:
+    """Distinct values the latest scan actually saw for one field, most common first.
+
+    Powers the rule editors' input suggestions ("Documentary", "Bluray-1080p", ...).
+    Deliberately fail-open-to-empty: an unknown field, or no scan yet, returns an empty
+    list rather than an error, because a suggestion box with nothing to suggest is still
+    a working input -- typing any value remains valid either way.
+    """
+    column = _VALUE_COLUMNS.get(field)
+    if column is None:
+        return FieldValuesOut(field=field, values=[])
+
+    async with _sessions(request)() as session:
+        snapshot = await _latest_snapshot(session)
+        if snapshot is None:
+            return FieldValuesOut(field=field, values=[])
+        raws = (
+            (
+                await session.execute(
+                    select(column).where(Candidate.snapshot_id == snapshot.id, column.is_not(None))
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    counts: Counter[str] = Counter()
+    for raw in raws:
+        if raw is None:  # filtered in SQL; repeated here for the type-checker
+            continue
+        if field == "genre":
+            # genres_json is a JSON array; a row that does not parse contributes nothing.
+            try:
+                parsed = json.loads(raw)
+            except (ValueError, TypeError):
+                continue
+            counts.update(str(g) for g in parsed if g)
+        else:
+            counts.update([raw])
+
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return FieldValuesOut(field=field, values=[value for value, _ in ranked[:50]])

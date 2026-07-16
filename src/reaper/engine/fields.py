@@ -463,7 +463,7 @@ class CustomProtectGate:
             return GateResult(self.id, ABSTAIN, blocked=True, detail=result.detail)
         if result.matched:
             return GateResult(self.id, PROTECT, detail=f"your rule: {result.detail}")
-        return GateResult(self.id, ABSTAIN, detail=f"checked your rule — {result.detail}")
+        return GateResult(self.id, ABSTAIN, detail=f"checked your rule: {result.detail}")
 
 
 def evaluate_rules(rules: RuleSet, facts: Facts) -> RuleSetResult:

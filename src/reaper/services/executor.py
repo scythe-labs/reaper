@@ -590,7 +590,7 @@ class Executor:
             return self._mark_skipped(
                 delete,
                 "you spared this by hand, so it is kept even though it was in the plan",
-                check="You spared this by hand — kept",
+                check="You spared this by hand. Kept.",
             )
 
         if not self._dry_run:
@@ -602,19 +602,19 @@ class Executor:
                     delete,
                     "Plex has no rating key for this item, so Reaper cannot confirm nobody "
                     "is watching it. Spared.",
-                    check="No Plex match, so we can't confirm it's idle — kept",
+                    check="No Plex match, so we can't confirm it's idle. Kept.",
                 )
             if await self._being_watched_now(candidate):
                 return self._mark_skipped(
                     delete,
                     "someone is watching it right now",
-                    check="Someone is watching it right now — kept",
+                    check="Someone is watching it right now. Kept.",
                 )
             if await self._watched_since_approval(candidate, approved_at):
                 return self._mark_skipped(
                     delete,
                     "played since the plan was approved",
-                    check="It was played since you approved the plan — kept",
+                    check="It was played since you approved the plan. Kept.",
                 )
 
         if self._dry_run:
@@ -801,7 +801,7 @@ class Executor:
         gone = await self._movie_is_gone(radarr, ref.arr_id)
         excluded = await self._exclusion_landed(radarr, tmdb_id)
         checks.append(StepCheck("Removed the file through Radarr", gone))
-        checks.append(StepCheck("Import exclusion confirmed — it won't re-download", excluded))
+        checks.append(StepCheck("Import exclusion confirmed. It won't re-download", excluded))
 
         # Once the file is gone, tell Plex -- whatever the exclusion result. This is what
         # stops a stale entry lingering, and it must fire even when the exclusion check

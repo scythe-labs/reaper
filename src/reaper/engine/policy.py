@@ -103,7 +103,7 @@ class GateSetting(Frozen):
         if self.gate is GateId.SERVER_POPULARITY and self.threshold < 1:
             raise ValueError(
                 "Keeping anything watched by 0 people would protect your whole library. "
-                "Set it to at least 1 — or switch this protection off instead."
+                "Set it to at least 1, or switch this protection off instead."
             )
         if self.gate is GateId.MIN_DORMANCY and self.threshold < 365:
             raise ValueError(

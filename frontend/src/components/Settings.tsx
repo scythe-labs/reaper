@@ -4,32 +4,30 @@
 //
 // The API key is write-only end to end -- it is sent once, encrypted on arrival, and
 // never comes back, so a field for it is always blank and "leave it empty to keep the
-// current one". The one destructive-action control here, the emergency stop, can only
-// ever make Reaper safer; turning deletion *on* is a host decision, not a browser one, and
-// the Safety panel says so plainly.
+// current one". Nothing here can delete anything: the deletion switch lives in
+// Policy → Deletion, and the Security panel only manages the admin password that
+// confirms it.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { api, type Instance, type InstanceTest, type ProfileSettings } from "../api";
-import { bytes, count, date } from "../format";
-import { QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
+import { api, type Instance, type InstanceTest } from "../api";
+import { date } from "../format";
 import { ScanBar } from "./ScanBar";
 
-type Panel = "services" | "plex" | "jobs" | "limits" | "notifications" | "safety";
+type Panel = "services" | "plex" | "jobs" | "notifications" | "security";
 
 const PANELS: { id: Panel; label: string }[] = [
   { id: "services", label: "Services" },
   { id: "plex", label: "Plex" },
   { id: "jobs", label: "Jobs" },
-  { id: "limits", label: "Limits" },
   { id: "notifications", label: "Notifications" },
-  { id: "safety", label: "Safety" },
+  { id: "security", label: "Security" },
 ];
 
 const KINDS: { value: string; label: string; hint: string }[] = [
   { value: "radarr", label: "Radarr", hint: "Your movies. At least one is required." },
   { value: "sonarr", label: "Sonarr", hint: "Your TV shows. Needed for season pruning." },
-  { value: "tautulli", label: "Tautulli", hint: "Watch history. Required — it's how Reaper knows what's watched." },
+  { value: "tautulli", label: "Tautulli", hint: "Watch history. Required. It's how Reaper knows what's watched." },
   { value: "seerr", label: "Seerr", hint: "Requests. Lets Reaper show who asked for what." },
 ];
 
@@ -242,7 +240,7 @@ function InstanceRow({ instance }: { instance: Instance }) {
           <>
             <button
               className="ghost sm danger"
-              title="Only forgets it in Reaper — nothing is changed in the service itself."
+              title="Only forgets it in Reaper. Nothing is changed in the service itself."
               onClick={() => {
                 setConfirmingRemove(false);
                 remove.mutate();
@@ -307,7 +305,7 @@ export function ServicesPanel() {
     <div className="panel">
       <h2>Services</h2>
       <p className="blurb">
-        The apps Reaper reads from. It only ever reads — nothing here can delete a file.
+        The apps Reaper reads from. It only ever reads. Nothing here can delete a file.
       </p>
       {error && <p className="notice notice-error">{(error as Error).message}</p>}
       {isPending && <p className="muted">Loading…</p>}
@@ -390,7 +388,7 @@ export function PlexPanel() {
       <h2>Plex</h2>
       <p className="blurb">
         Linking Plex lets Reaper mark items "Leaving Soon" during their grace period and read
-        your "Never Reap" collection. It's optional — scanning works without it.
+        your "Never Reap" collection. It's optional. Scanning works without it.
       </p>
       {data?.linked ? (
         <div className="plex-status linked">
@@ -445,7 +443,7 @@ function MaintenanceJobs() {
   const run = useMutation({
     mutationFn: (id: string) => api.runJob(id),
     onSuccess: (_r, id) => {
-      setRan((m) => ({ ...m, [id]: "Started — it will run in the background." }));
+      setRan((m) => ({ ...m, [id]: "Started. It will run in the background." }));
       void queryClient.invalidateQueries({ queryKey: ["schedule"] });
     },
   });
@@ -537,7 +535,7 @@ function JobsPanel() {
       <h2>Jobs</h2>
       <p className="blurb">
         Everything Reaper runs on a timer lives here, and you can run any of it now without
-        waiting. None of these can delete a thing — a scan just refreshes the review queue, and
+        waiting. None of these can delete a thing. A scan just refreshes the review queue, and
         the rest is cache upkeep.
       </p>
 
@@ -550,7 +548,7 @@ function JobsPanel() {
 
       <h3>Run automatically</h3>
       <p className="help">
-        Reaper can scan on its own to keep the queue fresh. It still only reads — you approve
+        Reaper can scan on its own to keep the queue fresh. It still only reads. You approve
         every deletion by hand.
       </p>
       <AutoScanSchedule />
@@ -561,126 +559,6 @@ function JobsPanel() {
         accurate. These run once a day on their own; run one now if you can't wait.
       </p>
       <MaintenanceJobs />
-    </div>
-  );
-}
-
-// --- Limits ----------------------------------------------------------------
-
-function LimitsPanel() {
-  const queryClient = useQueryClient();
-  const { data } = useQuery({ queryKey: ["profile"], queryFn: api.profile });
-  const [draft, setDraft] = useState<ProfileSettings | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const settings = draft ?? data ?? null;
-  const save = useMutation({
-    mutationFn: (s: ProfileSettings) => api.saveProfile(s),
-    onSuccess: (s) => {
-      setError(null);
-      setDraft(s);
-      void queryClient.invalidateQueries({ queryKey: ["profile"] });
-    },
-    onError: (e: Error) => setError(e.message),
-  });
-
-  if (!settings) {
-    return (
-      <div className="panel">
-        <h2>Limits</h2>
-        <p className="muted">Loading…</p>
-      </div>
-    );
-  }
-
-  const set = (patch: Partial<ProfileSettings>) => setDraft({ ...settings, ...patch });
-
-  return (
-    <div className="panel">
-      <h2>Limits</h2>
-      <p className="blurb">
-        How much Reaper can remove in one run, and how long a title waits before it's actually
-        deleted. If a run would go over any of these, Reaper stops the whole run rather than
-        deleting part of it — so it never quietly does more than you expected. Lowering a limit
-        is always safe.
-      </p>
-
-      <div className="caps-grid">
-        <label>
-          <span>Most titles per run</span>
-          <input
-            type="number"
-            min={1}
-            value={settings.max_items_per_run}
-            onChange={(e) => set({ max_items_per_run: Number(e.target.value) || 1 })}
-          />
-          <span className="help">The most titles a single run will delete.</span>
-        </label>
-        <label>
-          <span>Most space per run</span>
-          <QuantityInput
-            value={settings.max_bytes_per_run}
-            units={SIZE_UNITS}
-            onChange={(v) => set({ max_bytes_per_run: v })}
-          />
-          <span className="help">The most disk one run can free.</span>
-        </label>
-        <label>
-          <span>Most titles per month</span>
-          <input
-            type="number"
-            min={1}
-            value={settings.max_items_per_30d}
-            onChange={(e) => set({ max_items_per_30d: Number(e.target.value) || 1 })}
-          />
-          <span className="help">A rolling limit over the last 30 days.</span>
-        </label>
-        <label>
-          <span>Most space per month</span>
-          <QuantityInput
-            value={settings.max_bytes_per_30d}
-            units={SIZE_UNITS}
-            onChange={(v) => set({ max_bytes_per_30d: v })}
-          />
-          <span className="help">A rolling disk limit over the last 30 days.</span>
-        </label>
-        <label>
-          <span>Grace period</span>
-          <QuantityInput
-            value={settings.grace_days}
-            units={TIME_UNITS}
-            min={7}
-            onChange={(v) => set({ grace_days: v })}
-          />
-          <span className="help">
-            How long a title stays on the list — where you can still rescue it — before Reaper
-            can remove it.
-          </span>
-        </label>
-        <label className="toggle">
-          <input
-            type="checkbox"
-            checked={settings.require_approval}
-            onChange={(e) => set({ require_approval: e.target.checked })}
-          />
-          <span>Ask me before every run deletes anything</span>
-        </label>
-      </div>
-
-      <div className="add-actions">
-        <button
-          className="primary"
-          disabled={!draft || save.isPending}
-          onClick={() => draft && save.mutate(draft)}
-        >
-          {save.isPending ? "Saving…" : "Save limits"}
-        </button>
-        <span className="muted">
-          Now: up to {count(settings.max_items_per_run)} titles · {bytes(settings.max_bytes_per_run)}{" "}
-          per run
-        </span>
-      </div>
-      {error && <p className="notice notice-error">{error}</p>}
     </div>
   );
 }
@@ -771,7 +649,7 @@ function NotificationsPanel() {
       {connected ? (
         <p className="muted">✓ Discord connected. Leaving-soon warnings post to your channel.</p>
       ) : (
-        <p className="muted">No Discord webhook set — leaving-soon warnings won't be sent.</p>
+        <p className="muted">No Discord webhook set, so leaving-soon warnings won't be sent.</p>
       )}
 
       <div className="add-grid">
@@ -795,7 +673,7 @@ function NotificationsPanel() {
       </div>
       <p className="help">
         In Discord: Channel settings → Integrations → Webhooks → New Webhook → Copy Webhook URL.
-        It's a secret — once saved it's encrypted and never shown again.
+        It's a secret. Once saved it's encrypted and never shown again.
       </p>
 
       <div className="add-actions">
@@ -867,10 +745,7 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
     <div className="safety-row">
       <div>
         <strong>{needed ? "Set an admin password" : "Change the admin password"}</strong>
-        <p className="help">
-          This is the password that confirms turning deletion on. It's also how you sign in
-          without Plex, so keep it somewhere safe.
-        </p>
+        <p className="help">Choose something long, and keep it somewhere safe.</p>
       </div>
       <form
         className="pw-form"
@@ -896,103 +771,33 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
   );
 }
 
-function SafetyPanel() {
-  const queryClient = useQueryClient();
-  const { data } = useQuery({ queryKey: ["safety"], queryFn: api.safety });
-  const [confirming, setConfirming] = useState(false);
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+function SecurityPanel() {
+  const { data, isLoading, isError } = useQuery({ queryKey: ["safety"], queryFn: api.safety });
 
-  const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: ["safety"] });
-    void queryClient.invalidateQueries({ queryKey: ["health"] });
-  };
-  const toggle = useMutation({
-    mutationFn: (vars: { enabled: boolean; password?: string }) =>
-      api.setDeletion(vars.enabled, vars.password),
-    onSuccess: () => {
-      setPassword("");
-      setConfirming(false);
-      setError(null);
-      refresh();
-    },
-    onError: (e: Error) => setError(e.message),
-  });
-
-  if (!data) {
+  if (isLoading) {
     return (
       <div className="panel">
-        <h2>Safety</h2>
+        <h2>Security</h2>
         <p className="muted">Loading…</p>
       </div>
     );
   }
-
-  const on = data.destructive_enabled;
+  if (isError || !data) {
+    return (
+      <div className="panel">
+        <h2>Security</h2>
+        <p className="notice notice-error">Couldn't load these settings. Reload to try again.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="panel">
-      <h2>Safety</h2>
+      <h2>Security</h2>
       <p className="blurb">
-        When deletion is off, Reaper can scan and explain but can't remove anything. Turning it
-        on takes your admin password — so it can't happen by accident — and you can turn it back
-        off any time, no password needed.
+        The admin password. It confirms turning deletion on (in{" "}
+        <strong>Policy → Deletion</strong>), and it's also how you sign in without Plex.
       </p>
-
-      <div className={`safety-state ${on ? "armed" : "safe"}`}>
-        <span className="banner-dot" aria-hidden="true" />
-        <div>
-          <strong>{on ? "Deletion is on." : "Deletion is off — Reaper is read-only."}</strong>
-          {data.note && <p className="muted">{data.note}</p>}
-        </div>
-      </div>
-
-      <div className="safety-row">
-        <div>
-          <strong>{on ? "Turn deletion off" : "Turn deletion on"}</strong>
-          <p className="help">
-            {on
-              ? "Puts Reaper back to read-only right away."
-              : "Reaper will be allowed to delete media you approve. You'll still review and approve every run."}
-          </p>
-        </div>
-        {on ? (
-          <button className="ghost danger" onClick={() => toggle.mutate({ enabled: false })}>
-            Turn off
-          </button>
-        ) : !data.has_password ? (
-          <span className="muted">Set an admin password first ↓</span>
-        ) : confirming ? (
-          <form
-            className="pw-form"
-            onSubmit={(e) => {
-              e.preventDefault();
-              setError(null);
-              toggle.mutate({ enabled: true, password });
-            }}
-          >
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="admin password"
-              autoComplete="current-password"
-              autoFocus
-            />
-            <button type="submit" className="primary sm" disabled={!password || toggle.isPending}>
-              Confirm
-            </button>
-            <button type="button" className="ghost sm" onClick={() => setConfirming(false)}>
-              Cancel
-            </button>
-          </form>
-        ) : (
-          <button className="primary" onClick={() => setConfirming(true)}>
-            Turn on…
-          </button>
-        )}
-      </div>
-      {error && <p className="notice notice-error">{error}</p>}
 
       <AdminPasswordForm needed={!data.has_password} />
     </div>
@@ -1020,9 +825,8 @@ export function Settings() {
         {panel === "services" && <ServicesPanel />}
         {panel === "plex" && <PlexPanel />}
         {panel === "jobs" && <JobsPanel />}
-        {panel === "limits" && <LimitsPanel />}
         {panel === "notifications" && <NotificationsPanel />}
-        {panel === "safety" && <SafetyPanel />}
+        {panel === "security" && <SecurityPanel />}
       </div>
     </div>
   );

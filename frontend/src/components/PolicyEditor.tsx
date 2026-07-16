@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The policy editor, and the live simulator beside it.
+// The policy workspace: everything that shapes Reaper's decision, on one page, in the
+// order Reaper decides it -- what flags a title, what is always kept, how fast a reap
+// may go, and whether deletion is allowed at all. The live simulator sits beside it.
 //
 // The design principle: **the knob and its blast radius sit in the same viewport.**
 // Move the threshold, and the count, the byte total and the histogram move with it --
@@ -16,6 +18,11 @@
 // authoritative as a live one, and the owner would act on it.
 //
 // A dangerous number that looks trustworthy is worse than no number at all.
+//
+// Three things save from this page, and they stay separate on purpose:
+//   1. the policy itself (hashed; editing it re-arms any pending approval),
+//   2. pace and limits (un-hashed; tightening a cap never voids an approval),
+//   3. the deletion switch (its own password-gated call).
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -27,12 +34,14 @@ import {
   type GradedKeep,
   type Policy,
   type PolicyBody,
+  type ProfileSettings,
   type SignalSetting,
   type Simulation,
   type VocabField,
 } from "../api";
 import { bytes, count } from "../format";
-import { QuantityInput, TIME_UNITS } from "./QuantityInput";
+import { DeletionToggle } from "./DeletionToggle";
+import { QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 
 // Plain-English identities for every protection and signal, so the editor reads like a
 // person wrote it instead of exposing the engine's field names. `unit` picks the control:
@@ -47,7 +56,7 @@ const GATE_META: Record<string, GateMeta> = {
   },
   server_popularity: {
     label: "Keep what your users actually watch",
-    help: "If at least this many different people have played it recently, it stays — whatever it scored.",
+    help: "If at least this many different people have played it recently, it stays, whatever it scored.",
     unit: "people",
   },
   rating_floor: {
@@ -57,7 +66,7 @@ const GATE_META: Record<string, GateMeta> = {
   },
   others_watching: {
     label: "Protect what other people watch",
-    help: "If someone other than the requester has played it, keep it — removing it would punish them for a request that wasn't theirs.",
+    help: "If someone other than the requester has played it, keep it. Removing it would punish them for a request that wasn't theirs.",
     unit: "people",
   },
   streaming_now: {
@@ -73,8 +82,8 @@ const GATE_META: Record<string, GateMeta> = {
     help: "The IMDb Top 250, and any other list you mark as protected.",
   },
   data_horizon: {
-    label: "Don’t judge what predates your history",
-    help: "Tautulli can’t see plays from before it was installed, so anything older than your history is left alone rather than assumed unwatched.",
+    label: "Don't judge what predates your history",
+    help: "Tautulli can't see plays from before it was installed, so anything older than your history is left alone rather than assumed unwatched.",
   },
   unmanaged: {
     label: "Only touch what Sonarr or Radarr manages",
@@ -84,7 +93,7 @@ const GATE_META: Record<string, GateMeta> = {
 
 const SIGNAL_META: Record<string, { label: string; help: string }> = {
   unwatched: {
-    label: "How long it’s gone unwatched",
+    label: "How long it's gone unwatched",
     help: "The longer since anyone played it, the stronger the reason to remove it. The biggest single signal.",
   },
   few_watchers: {
@@ -93,15 +102,15 @@ const SIGNAL_META: Record<string, { label: string; help: string }> = {
   },
   season_rank: {
     label: "How old a season is",
-    help: "Older seasons of a show carry more pressure than the newest one.",
+    help: "Older seasons of a show carry more pressure than the newest one. The season floor below still wins.",
   },
   low_rating: {
-    label: "How low it’s rated",
+    label: "How low it's rated",
     help: "A poorly-rated title carries a little more pressure.",
   },
   size: {
     label: "How big it is on disk",
-    help: "Off by default. Big files are usually big because they’re popular, so size makes a poor reason to delete — it only ranks titles the score has already chosen.",
+    help: "Off by default. Big files are usually big because they're popular, so size makes a poor reason to delete. It only ranks titles the score has already chosen.",
   },
 };
 
@@ -109,8 +118,96 @@ function titleCase(id: string): string {
   return id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-/** The keep-tags: a set of *arr tags that spare a title, with an ANY/ALL switch. Chips you can
- *  remove, plus a box to add one. Shown under the "Spare titles you've tagged" protection. */
+// ---------------------------------------------------------------------------
+// Presets: three starting points that stage (never save) the threshold and the
+// pace. Weights are RESET to the shipped mix on apply -- a preset is a known
+// place to start from, not a tweak -- and the badge only claims a preset while
+// the draft actually matches it.
+// ---------------------------------------------------------------------------
+
+type PresetId = "cautious" | "balanced" | "aggressive";
+
+/** The shipped signal mixes (see engine/policy.py defaults). A preset resets to these. */
+const DEFAULT_WEIGHTS: Record<"movie" | "tv", Record<string, number>> = {
+  movie: { unwatched: 70, few_watchers: 20, low_rating: 10 },
+  tv: { unwatched: 60, few_watchers: 15, season_rank: 15, low_rating: 10 },
+};
+
+type PresetCaps = Pick<
+  ProfileSettings,
+  "max_items_per_run" | "max_bytes_per_run" | "max_items_per_30d" | "max_bytes_per_30d" | "grace_days"
+>;
+
+const PRESETS: { id: PresetId; label: string; help: string; condemn_at: number; caps: PresetCaps }[] = [
+  {
+    id: "cautious",
+    label: "Cautious",
+    help: "Cautious: only flags a title it is very sure about, removes less per run, and waits a month of grace.",
+    condemn_at: 82,
+    caps: {
+      max_items_per_run: 5,
+      max_bytes_per_run: 250_000_000_000,
+      max_items_per_30d: 50,
+      max_bytes_per_30d: 1_000_000_000_000,
+      grace_days: 30,
+    },
+  },
+  {
+    id: "balanced",
+    label: "Balanced",
+    help: "Balanced: the defaults Reaper ships with.",
+    condemn_at: 70,
+    caps: {
+      max_items_per_run: 10,
+      max_bytes_per_run: 500_000_000_000,
+      max_items_per_30d: 100,
+      max_bytes_per_30d: 2_000_000_000_000,
+      grace_days: 14,
+    },
+  },
+  {
+    id: "aggressive",
+    label: "Aggressive",
+    help: "Aggressive: flags sooner, allows bigger runs, and keeps the one-week minimum grace.",
+    condemn_at: 58,
+    caps: {
+      max_items_per_run: 25,
+      max_bytes_per_run: 1_000_000_000_000,
+      max_items_per_30d: 150,
+      max_bytes_per_30d: 4_000_000_000_000,
+      grace_days: 7,
+    },
+  },
+];
+
+/** Which preset the draft currently IS, or null for "Custom". Honest by construction:
+ *  a preset badge is only shown while the threshold matches it AND the weights are the
+ *  shipped mix -- hand-tuned weights always read as Custom. */
+function activePreset(draft: PolicyBody): PresetId | null {
+  const mix = DEFAULT_WEIGHTS[draft.media_type === "tv" ? "tv" : "movie"];
+  const weightsAreDefault = draft.signals.every((s) => s.weight === (mix[s.signal] ?? 0));
+  if (!weightsAreDefault) return null;
+  return PRESETS.find((p) => p.condemn_at === draft.condemn_at)?.id ?? null;
+}
+
+/** "1095 days" said the way a person would: "3 years". */
+function humanDays(days: number): string {
+  if (days >= 365 && days % 365 === 0) {
+    const y = days / 365;
+    return y === 1 ? "1 year" : `${y} years`;
+  }
+  if (days >= 30 && days % 30 === 0) {
+    const m = days / 30;
+    return m === 1 ? "1 month" : `${m} months`;
+  }
+  return `${days} days`;
+}
+
+// ---------------------------------------------------------------------------
+// Keep-tags: a set of *arr tags that spare a title, with an ANY/ALL switch.
+// ---------------------------------------------------------------------------
+
+/** Removable chips plus a free-type box. Lives in its own card in "What's always kept". */
 function KeepTagsEditor({
   tags,
   match,
@@ -161,28 +258,14 @@ function KeepTagsEditor({
           </select>
         </label>
       )}
-      {tags.length === 0 && <p className="help">No tags — this protection keeps nothing.</p>}
+      {tags.length === 0 && <p className="help">No tags: this protection keeps nothing.</p>}
     </div>
   );
 }
 
-/** One protection: a switch, a plain-English label and help, and — where it has one — a
- *  threshold in the units a person thinks in. The keep-list gate also carries its tag editor. */
-function GateRow({
-  gate,
-  keepTags,
-  keepMatch,
-  onKeepTags,
-  onKeepMatch,
-  onChange,
-}: {
-  gate: GateSetting;
-  keepTags?: string[];
-  keepMatch?: "any" | "all";
-  onKeepTags?: (t: string[]) => void;
-  onKeepMatch?: (m: "any" | "all") => void;
-  onChange: (g: GateSetting) => void;
-}) {
+/** One protection: a switch, a plain-English label and help, and -- where it has one -- a
+ *  threshold in the units a person thinks in. */
+function GateRow({ gate, onChange }: { gate: GateSetting; onChange: (g: GateSetting) => void }) {
   const meta = GATE_META[gate.gate] ?? { label: titleCase(gate.gate), help: "" };
 
   return (
@@ -196,15 +279,6 @@ function GateRow({
         <span className="rule-name">{meta.label}</span>
       </label>
       {meta.help && <p className="help rule-help">{meta.help}</p>}
-
-      {gate.gate === "whitelisted" && gate.enabled && keepTags && onKeepTags && onKeepMatch && (
-        <KeepTagsEditor
-          tags={keepTags}
-          match={keepMatch ?? "any"}
-          onTags={onKeepTags}
-          onMatch={onKeepMatch}
-        />
-      )}
 
       {gate.enabled && meta.unit === "days" && (
         <div className="rule-control">
@@ -255,7 +329,7 @@ function GateRow({
   );
 }
 
-/** One signal: a plain-English label, its help, a slider, and a *quantified* readout — the
+/** One signal: a plain-English label, its help, a slider, and a *quantified* readout -- the
  *  raw weight and the share of the score it currently accounts for, because "a lot" told you
  *  nothing you could act on. */
 function SignalRow({
@@ -298,6 +372,10 @@ function SignalRow({
   );
 }
 
+// ---------------------------------------------------------------------------
+// The owner's own rules: sentences in, sentences out.
+// ---------------------------------------------------------------------------
+
 const OP_LABELS: Record<string, string> = {
   gte: "is at least",
   lte: "is at most",
@@ -318,6 +396,64 @@ const FIELD_TO_GATE: Record<string, string> = {
   streaming_now: "streaming_now",
 };
 
+// The built-in signals already cover these fields, so they are not offered as custom
+// "remove" rules -- the two never say the same thing twice. That leaves the new metadata
+// fields (genre, requested, quality, release age, show ended) to be authored here.
+const FIELD_TO_SIGNAL: Record<string, string> = {
+  days_unwatched: "unwatched",
+  recent_watchers: "few_watchers",
+  imdb_rating: "low_rating",
+  season_rank: "season_rank",
+  size_bytes: "size",
+};
+
+// The ramp phrasing per field, offered as an extra choice in the condition dropdown.
+// Curated: a phrase exists only where more-of-the-number honestly means more reason to
+// remove. (Most of these fields are filtered out of the remove vocabulary today because a
+// built-in signal covers them; the map stays complete so a future field just works.)
+const RAMP_PHRASES: Record<string, string> = {
+  days_unwatched: "the longer it sits unwatched",
+  size_bytes: "the bigger it is",
+  season_rank: "the older the season",
+  release_age: "the older it is",
+};
+
+/** The sentinel option value for a ramp phrase in the condition dropdown. */
+const RAMP_OP = "__ramp__";
+
+/** Sensible starting ramp per field type, in the field's native units. */
+function rampDefaults(field: VocabField): [number, number] {
+  if (field.type === "days") return [365, 1825];
+  if (field.type === "bytes") return [20_000_000_000, 80_000_000_000];
+  if (field.type === "rating_tenths") return [40, 70];
+  return [1, 5];
+}
+
+/** A ramp bound, said in the field's own units. */
+function rampValue(field: VocabField | undefined, value: number): string {
+  if (field?.type === "bytes") return `${Math.round(value / 1e9)} GB`;
+  if (field?.type === "days") return humanDays(value);
+  if (field?.type === "rating_tenths") return (value / 10).toFixed(1);
+  const suffix = field?.unit_suffix ? ` ${field.unit_suffix}` : "";
+  return `${value.toLocaleString()}${suffix}`;
+}
+
+/** Coerce a text input into the value the wire expects, in the field's own units. */
+function coerceValue(field: VocabField, raw: string): number | string | boolean {
+  if (field.type === "bool") return raw === "true";
+  if (field.type === "rating_tenths") return Math.round(Number(raw) * 10);
+  if (field.type === "bytes") return Math.round(Number(raw) * 1e9);
+  if (field.type === "text") return raw;
+  return Math.round(Number(raw));
+}
+
+/** A name that reads like the rule and does not collide with an existing one. */
+function uniqueName(existing: { name: string }[], base: string): string {
+  const taken = new Set(existing.map((r) => r.name));
+  if (!taken.has(base)) return base;
+  for (let i = 2; ; i++) if (!taken.has(`${base} ${i}`)) return `${base} ${i}`;
+}
+
 /** Turn a stored condition back into a sentence, in the units a person reads. */
 function describeCondition(c: Condition, fields: VocabField[]): string {
   const f = fields.find((x) => x.key === c.field);
@@ -337,78 +473,230 @@ function describeCondition(c: Condition, fields: VocabField[]): string {
   return `Keep it when ${label} ${op} ${value}${unit}`;
 }
 
-/** The owner's own protections: field + operator + value, from the protect vocabulary. Every
- *  one can only ever KEEP a title — the condemn-only fields aren't even offered here. */
-function ConditionsEditor({
-  conditions,
-  gateIds,
+function describeCondemn(rule: CustomCondemn, fields: VocabField[]): string {
+  const f = fields.find((x) => x.key === rule.field);
+  const label = f?.label ?? rule.field;
+  if (rule.kind === "graded") {
+    const phrase = RAMP_PHRASES[rule.field] ?? "the higher it is";
+    return `${label}: ${phrase} (from ${rampValue(f, rule.floor)} to ${rampValue(f, rule.saturate_at)})`;
+  }
+  const op = OP_LABELS[rule.op] ?? rule.op;
+  const value = f?.type === "bool" ? (rule.value ? "yes" : "no") : String(rule.value);
+  return `${label} ${op} ${value}`;
+}
+
+/** A value input that suggests what the library already contains -- and still takes
+ *  anything typed. The suggestions are an ordinary in-app popover, NOT a native
+ *  <datalist>: Safari only reveals a datalist after you type a matching prefix (an empty
+ *  click shows nothing), and embedded panes can draw the native popup in the wrong place
+ *  entirely. Free entry stays valid because validation is by type, never by membership. */
+function SuggestInput({
+  field,
+  value,
   onChange,
 }: {
-  conditions: Condition[];
-  gateIds: string[];
-  onChange: (c: Condition[]) => void;
+  field: VocabField;
+  value: string;
+  onChange: (v: string) => void;
 }) {
-  const { data: vocab } = useQuery({
-    queryKey: ["vocabulary", "protect"],
-    queryFn: () => api.vocabulary("protect"),
+  const isText = field.type === "text";
+  const { data } = useQuery({
+    queryKey: ["vocab-values", field.key],
+    queryFn: () => api.vocabularyValues(field.key),
+    enabled: isText,
+    staleTime: 60_000,
   });
-  const allFields = vocab?.fields ?? []; // for rendering existing chips' labels
-  // Only offer fields that aren't already a built-in protection above.
-  const fields = allFields.filter((f) => {
-    const gate = FIELD_TO_GATE[f.key];
-    return !gate || !gateIds.includes(gate);
-  });
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(-1);
 
-  const [fieldKey, setFieldKey] = useState("");
-  const [op, setOp] = useState("");
-  const [value, setValue] = useState("");
-  const field = fields.find((f) => f.key === fieldKey);
+  if (!isText) {
+    return (
+      <input
+        type="number"
+        step={field.type === "rating_tenths" ? "0.1" : undefined}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={field.unit_suffix || "value"}
+      />
+    );
+  }
 
-  // Reset the operator + value to sensible defaults whenever the field changes.
-  useEffect(() => {
-    const f = fields.find((x) => x.key === fieldKey);
-    if (!f) return;
-    setOp(f.ops[0] ?? "");
-    setValue(f.type === "bool" ? "true" : "");
-  }, [fieldKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const values = data?.values ?? [];
+  const query = value.trim().toLowerCase();
+  const matches = query ? values.filter((v) => v.toLowerCase().includes(query)) : values;
+  const show = open && matches.length > 0;
 
-  const add = () => {
-    if (!field || !op) return;
-    let v: number | string | boolean;
-    if (field.type === "bool") v = value === "true";
-    else if (field.type === "rating_tenths") v = Math.round(Number(value) * 10);
-    else if (field.type === "bytes") v = Math.round(Number(value) * 1e9);
-    else if (field.type === "text") v = value;
-    else v = Math.round(Number(value));
-    onChange([...conditions, { field: field.key, op, value: v }]);
-    setFieldKey("");
+  const pick = (v: string) => {
+    onChange(v);
+    setOpen(false);
+    setHighlight(-1);
   };
 
   return (
-    <div className="conditions">
-      <h3>Your own rules</h3>
-      <p className="blurb">
-        Extra protections you write. Any one keeps a title, on top of the built-ins above — and
-        like them, a rule can only ever <em>keep</em> something, never mark it for removal.
-      </p>
-
-      {conditions.length > 0 && (
-        <ul className="condition-list">
-          {conditions.map((c, i) => (
-            <li key={`${c.field}-${c.op}-${i}`}>
-              <span>{describeCondition(c, allFields)}</span>
-              <button className="ghost sm" onClick={() => onChange(conditions.filter((_, j) => j !== i))}>
-                Remove
-              </button>
+    <span className="suggest">
+      <input
+        type="text"
+        role="combobox"
+        aria-expanded={show}
+        aria-autocomplete="list"
+        value={value}
+        placeholder={field.unit_suffix || "value"}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+          setHighlight(-1);
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => {
+          // Option clicks commit on mousedown, which fires before this blur.
+          setOpen(false);
+          setHighlight(-1);
+        }}
+        onKeyDown={(e) => {
+          if (!show) {
+            if (e.key === "ArrowDown") setOpen(true);
+            return;
+          }
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setHighlight((h) => (h + 1) % matches.length);
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setHighlight((h) => (h - 1 + matches.length) % matches.length);
+          } else if (e.key === "Enter" && highlight >= 0) {
+            e.preventDefault();
+            const hit = matches[highlight];
+            if (hit !== undefined) pick(hit);
+          } else if (e.key === "Escape") {
+            setOpen(false);
+            setHighlight(-1);
+          }
+        }}
+      />
+      {show && (
+        <ul className="suggest-pop" role="listbox">
+          {matches.map((v, i) => (
+            <li
+              key={v}
+              role="option"
+              aria-selected={i === highlight}
+              className={i === highlight ? "suggest-opt active" : "suggest-opt"}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                pick(v);
+              }}
+              onMouseEnter={() => setHighlight(i)}
+            >
+              {v}
             </li>
           ))}
         </ul>
       )}
+    </span>
+  );
+}
+
+/** The owner's own "reasons to remove" (custom condemn rules). One form: the condition
+ *  dropdown carries plain comparisons AND, for numeric fields where it honestly applies,
+ *  a ramp phrase like "the older it is" -- picking the phrase swaps the value box for a
+ *  from/to pair and the rule scales up between them, like the built-in signals. */
+function RemoveRulesEditor({
+  condemn,
+  onCondemn,
+}: {
+  condemn: CustomCondemn[];
+  onCondemn: (r: CustomCondemn[]) => void;
+}) {
+  const { data: condemnVocab } = useQuery({
+    queryKey: ["vocabulary", "condemn"],
+    queryFn: () => api.vocabulary("condemn"),
+  });
+  const condemnAll = condemnVocab?.fields ?? [];
+  // Only the new metadata fields, not those a built-in signal already scores.
+  const condemnFields = condemnAll.filter((f) => !FIELD_TO_SIGNAL[f.key]);
+
+  const [rField, setRField] = useState("");
+  const [rOp, setROp] = useState("");
+  const [rValue, setRValue] = useState("");
+  const [rWeight, setRWeight] = useState(20);
+  const [rFrom, setRFrom] = useState(0);
+  const [rTo, setRTo] = useState(1);
+  const field = condemnFields.find((f) => f.key === rField);
+  const rampable = Boolean(
+    field && RAMP_PHRASES[field.key] && field.type !== "bool" && field.type !== "text",
+  );
+  const isRamp = rOp === RAMP_OP;
+
+  useEffect(() => {
+    const f = condemnFields.find((x) => x.key === rField);
+    if (!f) return;
+    setROp(f.ops[0] ?? "");
+    setRValue(f.type === "bool" ? "true" : "");
+    const [from, to] = rampDefaults(f);
+    setRFrom(from);
+    setRTo(to);
+  }, [rField]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const add = () => {
+    if (!field || !rOp) return;
+    if (isRamp) {
+      const phrase = RAMP_PHRASES[field.key];
+      onCondemn([
+        ...condemn,
+        {
+          kind: "graded",
+          name: uniqueName(condemn, `${field.label}: ${phrase}`),
+          field: field.key,
+          weight: rWeight,
+          floor: rFrom,
+          saturate_at: Math.max(rFrom + 1, rTo),
+        },
+      ]);
+    } else {
+      onCondemn([
+        ...condemn,
+        {
+          kind: "boolean",
+          name: uniqueName(condemn, field.label),
+          field: field.key,
+          op: rOp,
+          value: coerceValue(field, rValue),
+          weight: rWeight,
+        },
+      ]);
+    }
+    setRField("");
+    setRValue("");
+  };
+
+  return (
+    <div className="rules-card">
+      <h3>Your own reasons to remove</h3>
+      <p className="blurb">
+        Add pressure to the score with a rule of your own. These can flag a title, but a
+        protection still wins, and missing data only ever leans toward keeping.
+      </p>
+
+      {condemn.length > 0 && (
+        <div className="rules-table">
+          {condemn.map((r, i) => (
+            <div className="rules-row rules-row-simple" key={`c-${r.name}-${i}`}>
+              <span className="rules-rule">{describeCondemn(r, condemnAll)}</span>
+              <span className="rules-weight-remove">
+                {r.kind === "graded" ? `up to +${r.weight}` : `+${r.weight} to the score`}
+              </span>
+              <button className="ghost sm" onClick={() => onCondemn(condemn.filter((_, j) => j !== i))}>
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="condition-add">
-        <select value={fieldKey} onChange={(e) => setFieldKey(e.target.value)}>
-          <option value="">Keep it when…</option>
-          {fields.map((f) => (
+        <select value={rField} onChange={(e) => setRField(e.target.value)}>
+          <option value="">when…</option>
+          {condemnFields.map((f) => (
             <option key={f.key} value={f.key}>
               {f.label}
             </option>
@@ -416,198 +704,192 @@ function ConditionsEditor({
         </select>
         {field && (
           <>
-            <select value={op} onChange={(e) => setOp(e.target.value)}>
+            <select value={rOp} onChange={(e) => setROp(e.target.value)}>
               {field.ops.map((o) => (
                 <option key={o} value={o}>
                   {OP_LABELS[o] ?? o}
                 </option>
               ))}
+              {rampable && <option value={RAMP_OP}>{RAMP_PHRASES[field.key]}</option>}
             </select>
-            {field.type === "bool" ? (
-              <select value={value} onChange={(e) => setValue(e.target.value)}>
+            {isRamp ? (
+              <span className="ramp-bounds">
+                <span className="muted">from</span>
+                {field.type === "days" ? (
+                  <QuantityInput value={rFrom} units={TIME_UNITS} onChange={setRFrom} />
+                ) : field.type === "bytes" ? (
+                  <QuantityInput value={rFrom} units={SIZE_UNITS} onChange={setRFrom} />
+                ) : (
+                  <input
+                    type="number"
+                    value={rFrom}
+                    onChange={(e) => setRFrom(Number(e.target.value) || 0)}
+                  />
+                )}
+                <span className="muted">to</span>
+                {field.type === "days" ? (
+                  <QuantityInput value={rTo} units={TIME_UNITS} onChange={setRTo} />
+                ) : field.type === "bytes" ? (
+                  <QuantityInput value={rTo} units={SIZE_UNITS} onChange={setRTo} />
+                ) : (
+                  <input
+                    type="number"
+                    value={rTo}
+                    onChange={(e) => setRTo(Number(e.target.value) || 1)}
+                  />
+                )}
+              </span>
+            ) : field.type === "bool" ? (
+              <select value={rValue} onChange={(e) => setRValue(e.target.value)}>
                 <option value="true">yes</option>
                 <option value="false">no</option>
               </select>
             ) : (
-              <input
-                type={field.type === "text" ? "text" : "number"}
-                step={field.type === "rating_tenths" ? "0.1" : undefined}
-                value={value}
-                onChange={(e) => setValue(e.target.value)}
-                placeholder={field.unit_suffix || "value"}
-              />
+              <SuggestInput field={field} value={rValue} onChange={setRValue} />
             )}
-            <button className="ghost sm" onClick={add} disabled={field.type !== "bool" && value === ""}>
+            <label className="inline-weight">
+              {isRamp ? "up to" : "weight"}
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={rWeight}
+                onChange={(e) => setRWeight(Number(e.target.value))}
+              />
+            </label>
+            <button
+              className="ghost sm"
+              onClick={add}
+              disabled={!isRamp && field.type !== "bool" && rValue === ""}
+            >
               Add rule
             </button>
           </>
         )}
       </div>
       {field?.help_text && <p className="help">{field.help_text}</p>}
+      <p className="help">
+        The choices match the field: numbers get at least / at most, words get is / is one of /
+        contains. A phrase like “the older it is” builds pressure gradually between two numbers,
+        like the built-in signals above, and its weight is a ceiling. There is no “is not”, on
+        purpose.
+      </p>
     </div>
   );
 }
 
-// The built-in signals already cover these fields, so they are not offered as custom
-// "remove" rules -- the two never say the same thing twice. That leaves the new metadata
-// fields (genre, requested, quality, release age, show ended) to be authored here.
-const FIELD_TO_SIGNAL: Record<string, string> = {
-  days_unwatched: "unwatched",
-  recent_watchers: "few_watchers",
-  imdb_rating: "low_rating",
-  season_rank: "season_rank",
-  size_bytes: "size",
-};
-
-/** Coerce a text input into the value the wire expects, in the field's own units. */
-function coerceValue(field: VocabField, raw: string): number | string | boolean {
-  if (field.type === "bool") return raw === "true";
-  if (field.type === "rating_tenths") return Math.round(Number(raw) * 10);
-  if (field.type === "bytes") return Math.round(Number(raw) * 1e9);
-  if (field.type === "text") return raw;
-  return Math.round(Number(raw));
-}
-
-/** A name that reads like the rule and does not collide with an existing one. */
-function uniqueName(existing: { name: string }[], base: string): string {
-  const taken = new Set(existing.map((r) => r.name));
-  if (!taken.has(base)) return base;
-  for (let i = 2; ; i++) if (!taken.has(`${base} ${i}`)) return `${base} ${i}`;
-}
-
-function describeCondemn(rule: CustomCondemn, fields: VocabField[]): string {
-  const f = fields.find((x) => x.key === rule.field);
-  const label = f?.label ?? rule.field;
-  if (rule.kind === "graded") return `${label}, the higher the more likely to remove`;
-  const op = OP_LABELS[rule.op] ?? rule.op;
-  const value = f?.type === "bool" ? (rule.value ? "yes" : "no") : String(rule.value);
-  return `${label} ${op} ${value}`;
-}
-
-/** The owner's own "reasons to remove" (custom condemn signals) and graded "leans toward
- *  keeping" -- the Radarr-style weighting, mapped onto Reaper's two lanes. A remove rule adds
- *  unsigned pressure to the score; a keep rule subtracts a discount AFTER the score and can
- *  never veto a protection. (A hard "always keep" lives in "Your own rules" above.) */
-function CustomRulesEditor({
-  condemn,
+/** The owner's own keep rules, both strengths in one card: a rule can keep a title
+ *  outright (a protection), or just lean toward keeping by lowering its score. Neither
+ *  can ever flag anything -- the protect vocabulary is filtered server-side. */
+function KeepRulesEditor({
+  conditions,
   keeps,
-  onCondemn,
+  gateIds,
+  onConditions,
   onKeeps,
 }: {
-  condemn: CustomCondemn[];
+  conditions: Condition[];
   keeps: GradedKeep[];
-  onCondemn: (r: CustomCondemn[]) => void;
+  gateIds: string[];
+  onConditions: (c: Condition[]) => void;
   onKeeps: (k: GradedKeep[]) => void;
 }) {
-  const { data: condemnVocab } = useQuery({
-    queryKey: ["vocabulary", "condemn"],
-    queryFn: () => api.vocabulary("condemn"),
-  });
-  const { data: protectVocab } = useQuery({
+  const { data: vocab } = useQuery({
     queryKey: ["vocabulary", "protect"],
     queryFn: () => api.vocabulary("protect"),
   });
-  const condemnAll = condemnVocab?.fields ?? [];
-  // Only the new metadata fields, not those a built-in signal already scores.
-  const condemnFields = condemnAll.filter((f) => !FIELD_TO_SIGNAL[f.key]);
-  // A keep ramps a number, so only numeric fields (those that accept >=) can drive one;
-  // the protect vocabulary carries the useful ones (all-time watchers, vote count, ...).
-  const keepFields = (protectVocab?.fields ?? []).filter((f) => f.ops.includes("gte"));
+  const allFields = vocab?.fields ?? [];
+  // Only offer fields that aren't already a built-in protection above.
+  const hardFields = allFields.filter((f) => {
+    const gate = FIELD_TO_GATE[f.key];
+    return !gate || !gateIds.includes(gate);
+  });
+  // A lean ramps a number, so only numeric fields (those that accept >=) can drive one.
+  const leanFields = allFields.filter((f) => f.ops.includes("gte"));
 
-  // --- add a "remove" rule -------------------------------------------------
-  const [rField, setRField] = useState("");
-  const [rOp, setROp] = useState("");
-  const [rValue, setRValue] = useState("");
-  const [rWeight, setRWeight] = useState(20);
-  const removeField = condemnFields.find((f) => f.key === rField);
+  const [strength, setStrength] = useState<"hard" | "lean">("hard");
+
+  // --- keep it outright ------------------------------------------------------
+  const [hField, setHField] = useState("");
+  const [hOp, setHOp] = useState("");
+  const [hValue, setHValue] = useState("");
+  const hardField = hardFields.find((f) => f.key === hField);
   useEffect(() => {
-    const f = condemnFields.find((x) => x.key === rField);
+    const f = hardFields.find((x) => x.key === hField);
     if (!f) return;
-    setROp(f.ops[0] ?? "");
-    setRValue(f.type === "bool" ? "true" : "");
-  }, [rField]); // eslint-disable-line react-hooks/exhaustive-deps
-  const addRemove = () => {
-    if (!removeField || !rOp) return;
-    onCondemn([
-      ...condemn,
-      {
-        kind: "boolean",
-        name: uniqueName(condemn, removeField.label),
-        field: removeField.key,
-        op: rOp,
-        value: coerceValue(removeField, rValue),
-        weight: rWeight,
-      },
+    setHOp(f.ops[0] ?? "");
+    setHValue(f.type === "bool" ? "true" : "");
+  }, [hField]); // eslint-disable-line react-hooks/exhaustive-deps
+  const addHard = () => {
+    if (!hardField || !hOp) return;
+    onConditions([
+      ...conditions,
+      { field: hardField.key, op: hOp, value: coerceValue(hardField, hValue) },
     ]);
-    setRField("");
-    setRValue("");
+    setHField("");
+    setHValue("");
   };
 
-  // --- add a "lean toward keeping" rule ------------------------------------
-  const [kField, setKField] = useState("");
-  const [kPoints, setKPoints] = useState(15);
-  const [kAt, setKAt] = useState("");
-  const [kDir, setKDir] = useState<"high_keeps" | "low_keeps">("high_keeps");
-  const keepField = keepFields.find((f) => f.key === kField);
-  const addKeep = () => {
-    if (!keepField || kAt === "") return;
-    const saturate = Number(coerceValue(keepField, kAt));
+  // --- lean toward keeping ---------------------------------------------------
+  const [lField, setLField] = useState("");
+  const [lPoints, setLPoints] = useState(15);
+  const [lAt, setLAt] = useState("");
+  const [lDir, setLDir] = useState<"high_keeps" | "low_keeps">("high_keeps");
+  const leanField = leanFields.find((f) => f.key === lField);
+  const addLean = () => {
+    if (!leanField || lAt === "") return;
+    const saturate = Number(coerceValue(leanField, lAt));
     onKeeps([
       ...keeps,
       {
-        name: uniqueName(keeps, keepField.label),
-        field: keepField.key,
-        max_discount: kPoints,
+        name: uniqueName(keeps, leanField.label),
+        field: leanField.key,
+        max_discount: lPoints,
         floor: 0,
         saturate_at: Math.max(1, saturate),
-        direction: kDir,
+        direction: lDir,
       },
     ]);
-    setKField("");
-    setKAt("");
+    setLField("");
+    setLAt("");
   };
-
-  const [effect, setEffect] = useState<"remove" | "keep">("remove");
 
   return (
     <div className="rules-card">
-      <h3>Custom rules</h3>
+      <h3>Your own keep rules</h3>
       <p className="blurb">
-        Nudge a title's score with your own rules. A <strong>remove</strong> rule makes a match
-        more likely to be flagged; a <strong>lean toward keeping</strong> rule lowers the score
-        without ever overruling a protection. Missing data only ever leans toward keeping.
+        Two strengths: a rule can keep a title <strong>outright</strong>, or just{" "}
+        <strong>lean toward keeping</strong> by lowering its score. Neither can ever flag
+        anything, and missing data takes the full lean, to be safe.
       </p>
 
-      {(condemn.length > 0 || keeps.length > 0) && (
+      {(conditions.length > 0 || keeps.length > 0) && (
         <div className="rules-table">
-          <div className="rules-row rules-row-head">
-            <span>Rule</span>
-            <span>Effect</span>
-            <span className="rules-weight-cell">Weight</span>
-            <span />
-          </div>
-          {condemn.map((r, i) => (
-            <div className="rules-row" key={`c-${r.name}-${i}`}>
-              <span className="rules-rule">{describeCondemn(r, condemnAll)}</span>
-              <span className="effect-pill effect-remove">more likely to remove</span>
-              <span className="rules-weight-cell rules-weight-remove">+{r.weight}</span>
+          {conditions.map((c, i) => (
+            <div className="rules-row rules-row-simple" key={`h-${c.field}-${c.op}-${i}`}>
+              <span className="rules-rule">
+                <span className="rule-kind">Keeps it, always · </span>
+                {describeCondition(c, allFields)}
+              </span>
+              <span className="rules-weight-keep">kept outright</span>
               <button
                 className="ghost sm"
-                onClick={() => onCondemn(condemn.filter((_, j) => j !== i))}
+                onClick={() => onConditions(conditions.filter((_, j) => j !== i))}
               >
                 Remove
               </button>
             </div>
           ))}
           {keeps.map((k, i) => {
-            const f = keepFields.find((x) => x.key === k.field);
+            const f = allFields.find((x) => x.key === k.field);
             return (
-              <div className="rules-row" key={`k-${k.name}-${i}`}>
+              <div className="rules-row rules-row-simple" key={`k-${k.name}-${i}`}>
                 <span className="rules-rule">
-                  {f?.label ?? k.field} is {k.direction === "low_keeps" ? "low" : "high"}
+                  <span className="rule-kind">Leans · </span>
+                  {f?.label ?? k.field}: the {k.direction === "low_keeps" ? "less" : "more"}, the
+                  safer (full effect at {rampValue(f, k.saturate_at)})
                 </span>
-                <span className="effect-pill effect-keep">lean toward keeping</span>
-                <span className="rules-weight-cell rules-weight-keep">−{k.max_discount}</span>
+                <span className="rules-weight-keep">lowers the score, up to −{k.max_discount}</span>
                 <button className="ghost sm" onClick={() => onKeeps(keeps.filter((_, j) => j !== i))}>
                   Remove
                 </button>
@@ -618,122 +900,111 @@ function CustomRulesEditor({
       )}
 
       <div className="rules-add">
-        <div className="segmented" role="group" aria-label="Rule effect">
+        <div className="segmented" role="group" aria-label="Rule strength">
           <button
             type="button"
-            className={effect === "remove" ? "seg active" : "seg"}
-            onClick={() => setEffect("remove")}
+            className={strength === "hard" ? "seg active" : "seg"}
+            onClick={() => setStrength("hard")}
           >
-            More likely to remove
+            Keeps it outright
           </button>
           <button
             type="button"
-            className={effect === "keep" ? "seg active" : "seg"}
-            onClick={() => setEffect("keep")}
+            className={strength === "lean" ? "seg active" : "seg"}
+            onClick={() => setStrength("lean")}
           >
-            Lean toward keeping
+            Leans toward keeping
           </button>
         </div>
 
-        {effect === "remove" ? (
+        {strength === "hard" ? (
           <div className="condition-add">
-            <select value={rField} onChange={(e) => setRField(e.target.value)}>
-              <option value="">when…</option>
-              {condemnFields.map((f) => (
+            <select value={hField} onChange={(e) => setHField(e.target.value)}>
+              <option value="">Keep it when…</option>
+              {hardFields.map((f) => (
                 <option key={f.key} value={f.key}>
                   {f.label}
                 </option>
               ))}
             </select>
-            {removeField && (
+            {hardField && (
               <>
-                <select value={rOp} onChange={(e) => setROp(e.target.value)}>
-                  {removeField.ops.map((o) => (
+                <select value={hOp} onChange={(e) => setHOp(e.target.value)}>
+                  {hardField.ops.map((o) => (
                     <option key={o} value={o}>
                       {OP_LABELS[o] ?? o}
                     </option>
                   ))}
                 </select>
-                {removeField.type === "bool" ? (
-                  <select value={rValue} onChange={(e) => setRValue(e.target.value)}>
+                {hardField.type === "bool" ? (
+                  <select value={hValue} onChange={(e) => setHValue(e.target.value)}>
                     <option value="true">yes</option>
                     <option value="false">no</option>
                   </select>
                 ) : (
-                  <input
-                    type={removeField.type === "text" ? "text" : "number"}
-                    step={removeField.type === "rating_tenths" ? "0.1" : undefined}
-                    value={rValue}
-                    onChange={(e) => setRValue(e.target.value)}
-                    placeholder={removeField.unit_suffix || "value"}
-                  />
+                  <SuggestInput field={hardField} value={hValue} onChange={setHValue} />
                 )}
-                <label className="inline-weight">
-                  weight
-                  <input
-                    type="number"
-                    min={0}
-                    max={100}
-                    value={rWeight}
-                    onChange={(e) => setRWeight(Number(e.target.value))}
-                  />
-                </label>
                 <button
                   className="ghost sm"
-                  onClick={addRemove}
-                  disabled={removeField.type !== "bool" && rValue === ""}
+                  onClick={addHard}
+                  disabled={hardField.type !== "bool" && hValue === ""}
                 >
                   Add rule
                 </button>
               </>
             )}
-            {removeField?.help_text && <p className="help">{removeField.help_text}</p>}
+            {hardField?.help_text && <p className="help">{hardField.help_text}</p>}
           </div>
         ) : (
           <div className="condition-add">
-            <select value={kField} onChange={(e) => setKField(e.target.value)}>
+            <select value={lField} onChange={(e) => setLField(e.target.value)}>
               <option value="">when…</option>
-              {keepFields.map((f) => (
+              {leanFields.map((f) => (
                 <option key={f.key} value={f.key}>
                   {f.label}
                 </option>
               ))}
             </select>
-            {keepField && (
+            {leanField && (
               <>
                 <select
-                  value={kDir}
-                  onChange={(e) => setKDir(e.target.value as "high_keeps" | "low_keeps")}
+                  value={lDir}
+                  onChange={(e) => setLDir(e.target.value as "high_keeps" | "low_keeps")}
                 >
-                  <option value="high_keeps">is high</option>
-                  <option value="low_keeps">is low</option>
+                  <option value="high_keeps">the more, the safer</option>
+                  <option value="low_keeps">the less, the safer</option>
                 </select>
                 <input
                   type="number"
-                  step={keepField.type === "rating_tenths" ? "0.1" : undefined}
-                  value={kAt}
-                  onChange={(e) => setKAt(e.target.value)}
-                  placeholder={`at ${keepField.unit_suffix || "value"}`}
+                  step={leanField.type === "rating_tenths" ? "0.1" : undefined}
+                  value={lAt}
+                  onChange={(e) => setLAt(e.target.value)}
+                  placeholder={`full effect at ${leanField.unit_suffix || "value"}`}
                 />
                 <label className="inline-weight">
-                  keep up to
+                  up to −
                   <input
                     type="number"
                     min={1}
                     max={100}
-                    value={kPoints}
-                    onChange={(e) => setKPoints(Number(e.target.value))}
+                    value={lPoints}
+                    onChange={(e) => setLPoints(Number(e.target.value))}
                   />
                 </label>
-                <button className="ghost sm" onClick={addKeep} disabled={kAt === ""}>
+                <button className="ghost sm" onClick={addLean} disabled={lAt === ""}>
                   Add rule
                 </button>
               </>
             )}
-            {keepField?.help_text && <p className="help">{keepField.help_text}</p>}
+            {leanField?.help_text && <p className="help">{leanField.help_text}</p>}
           </div>
         )}
       </div>
+      <p className="help">
+        Suggestions are values from your own library. Pick one, or type anything else. Fields
+        already covered by a protection you've turned on aren't offered for outright keeps, so a
+        rule never repeats a built-in.
+      </p>
     </div>
   );
 }
@@ -756,6 +1027,10 @@ function SeasonAdvisory({ keepLast }: { keepLast: number }) {
     </p>
   );
 }
+
+// ---------------------------------------------------------------------------
+// The simulator column.
+// ---------------------------------------------------------------------------
 
 /** The histogram, with the threshold drawn across it.
  *
@@ -780,11 +1055,14 @@ function Histogram({ buckets, threshold }: { buckets: number[]; threshold: numbe
           </div>
         );
       })}
+      <div className="hist-thresh" style={{ left: `${threshold}%` }}>
+        <b>{threshold}</b>
+      </div>
     </div>
   );
 }
 
-/** The "needs a scan" state. Informational, not an error — you didn't do anything wrong,
+/** The "needs a scan" state. Informational, not an error: you didn't do anything wrong,
  *  the numbers just can't be re-derived from the old scan. So it's neutral, short, and gives
  *  you the one button that fixes it. */
 function StaleNotice({ scanning, onScan }: { scanning: boolean; onScan: () => void }) {
@@ -802,7 +1080,21 @@ function StaleNotice({ scanning, onScan }: { scanning: boolean; onScan: () => vo
   );
 }
 
-function Outcome({ simulation, threshold }: { simulation: Simulation; threshold: number }) {
+function Outcome({
+  simulation,
+  threshold,
+  pace,
+}: {
+  simulation: Simulation;
+  threshold: number;
+  pace: ProfileSettings | null;
+}) {
+  // The saved policy's count is derivable: what this draft flags, minus what only this
+  // draft flags, plus what only the saved one flags.
+  const savedFlags =
+    simulation.condemned - simulation.newly_condemned + simulation.no_longer_condemned;
+  const moreExamples = simulation.newly_condemned - simulation.examples_newly_condemned.length;
+
   return (
     <div className="sim">
       <div className="sim-headline">
@@ -816,7 +1108,51 @@ function Outcome({ simulation, threshold }: { simulation: Simulation; threshold:
         </div>
       </div>
 
+      <p className="sim-compare">
+        Your saved policy flags <strong>{count(savedFlags)}</strong>. This draft flags{" "}
+        <strong>{count(simulation.condemned)}</strong>.
+      </p>
+
       <Histogram buckets={simulation.histogram} threshold={threshold} />
+      <p className="help">
+        Everyone's score, 0 to 100. The line is your threshold. Red bars are past it.
+      </p>
+
+      {simulation.examples_newly_condemned.length > 0 && (
+        <>
+          <h3>New on the list</h3>
+          <ul className="sim-examples">
+            {simulation.examples_newly_condemned.map((e) => (
+              <li key={`${e.title}-${e.year ?? ""}`}>
+                <span>
+                  {e.title}
+                  {e.year !== null && <span className="muted"> ({e.year})</span>}
+                </span>
+                <span className="sim-example-score">{e.score}</span>
+              </li>
+            ))}
+            {moreExamples > 0 && (
+              <li className="muted">
+                …and {count(moreExamples)} more that your saved policy left alone
+              </li>
+            )}
+          </ul>
+        </>
+      )}
+
+      {simulation.protected_by.length > 0 && (
+        <>
+          <h3>Why titles were spared</h3>
+          <dl className="sim-delta">
+            {simulation.protected_by.map((g) => (
+              <div key={g.gate}>
+                <dt>{GATE_META[g.gate]?.label ?? titleCase(g.gate)}</dt>
+                <dd>{count(g.count)}</dd>
+              </div>
+            ))}
+          </dl>
+        </>
+      )}
 
       <dl className="sim-delta">
         <div>
@@ -839,6 +1175,14 @@ function Outcome({ simulation, threshold }: { simulation: Simulation; threshold:
         </div>
       </dl>
 
+      {pace && (
+        <p className="help">
+          Your pace: at most {count(pace.max_items_per_run)} titles /{" "}
+          {bytes(pace.max_bytes_per_run)} per run, and nothing is removed until it has waited out
+          the {pace.grace_days}-day grace period.
+        </p>
+      )}
+
       <p className="blurb">
         The delta is the number that matters before saving: not the total, but what changes
         relative to the list you have already reviewed.
@@ -846,6 +1190,18 @@ function Outcome({ simulation, threshold }: { simulation: Simulation; threshold:
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// The workspace.
+// ---------------------------------------------------------------------------
+
+const SECTIONS = [
+  { id: "flags", label: "What flags a title" },
+  { id: "kept", label: "What's always kept" },
+  { id: "pace", label: "Pace and limits" },
+  { id: "deletion", label: "Deletion" },
+] as const;
+type SectionId = (typeof SECTIONS)[number]["id"];
 
 export function PolicyEditor() {
   const queryClient = useQueryClient();
@@ -866,6 +1222,28 @@ export function PolicyEditor() {
       setDraft(saved.body);
     }
   }, [saved, draft]);
+
+  // Pace and limits: a SEPARATE draft with a separate save. Un-hashed on the server, so
+  // changing a cap never voids a pending approval -- and deliberately media-type
+  // independent, so the Movies/TV toggle never re-seeds it.
+  const { data: savedPace } = useQuery({ queryKey: ["profile"], queryFn: api.profile });
+  const [pace, setPace] = useState<ProfileSettings | null>(null);
+  useEffect(() => {
+    if (savedPace && pace === null) setPace(savedPace);
+  }, [savedPace, pace]);
+  const savePace = useMutation({
+    mutationFn: (s: ProfileSettings) => api.saveProfile(s),
+    onSuccess: (s) => {
+      setPace(s);
+      void queryClient.invalidateQueries({ queryKey: ["profile"] });
+      // Reap's read-only grace countdown shows grace_days; keep it in step.
+      void queryClient.invalidateQueries({ queryKey: ["grace"] });
+    },
+  });
+  const paceDirty = useMemo(
+    () => pace !== null && savedPace !== undefined && JSON.stringify(pace) !== JSON.stringify(savedPace),
+    [pace, savedPace],
+  );
 
   // Debounce the draft the simulator/validator run against, so dragging a slider fires one
   // request when you stop -- not one per pixel. Combined with keepPreviousData below, this is
@@ -932,11 +1310,57 @@ export function PolicyEditor() {
     [draft, saved],
   );
 
+  // The preset that was just applied, so the band can say "staged, not saved" until both
+  // saves are clean again (or the drafts are discarded).
+  const [staged, setStaged] = useState<PresetId | null>(null);
+  useEffect(() => {
+    if (staged !== null && !dirty && !paceDirty) setStaged(null);
+  }, [staged, dirty, paceDirty]);
+
+  // Section jump targets for the rail.
+  const sectionRefs: Record<SectionId, React.RefObject<HTMLHeadingElement | null>> = {
+    flags: useRef<HTMLHeadingElement>(null),
+    kept: useRef<HTMLHeadingElement>(null),
+    pace: useRef<HTMLHeadingElement>(null),
+    deletion: useRef<HTMLHeadingElement>(null),
+  };
+  const [activeSection, setActiveSection] = useState<SectionId>("flags");
+
   if (!draft) return <p className="muted">Loading…</p>;
 
   const update = (patch: Partial<PolicyBody>) => setDraft({ ...draft, ...patch });
+  const updatePace = (patch: Partial<ProfileSettings>) =>
+    setPace(pace === null ? null : { ...pace, ...patch });
   const totalWeight = draft.signals.reduce((sum, s) => sum + s.weight, 0);
   const invalidMessage = invalidError instanceof Error ? invalidError.message : null;
+
+  const kind = mediaType === "tv" ? "TV" : "movie";
+  const otherKind = mediaType === "tv" ? "movie" : "TV";
+  const preset = activePreset(draft);
+  const presetHelp =
+    PRESETS.find((p) => p.id === preset)?.help ?? "Custom: your own tuning, not a preset.";
+
+  const applyPreset = (p: (typeof PRESETS)[number]) => {
+    const mix = DEFAULT_WEIGHTS[mediaType];
+    update({
+      condemn_at: p.condemn_at,
+      signals: draft.signals.map((s) => ({ ...s, weight: mix[s.signal] ?? 0 })),
+    });
+    updatePace(p.caps);
+    setStaged(p.id);
+  };
+
+  // The one-sentence read of the whole policy, from the live drafts, so it can never
+  // disagree with the controls below it.
+  const dormancy = draft.gates.find((g) => g.gate === "min_dormancy" && g.enabled);
+  const popularity = draft.gates.find((g) => g.gate === "server_popularity" && g.enabled);
+  const keepClauses = [
+    popularity ? `watched by ${popularity.threshold || 1}+ people` : null,
+    dormancy ? `played in the last ${humanDays(dormancy.threshold)}` : null,
+  ].filter(Boolean);
+  const paceClause = pace
+    ? `removes at most ${count(pace.max_items_per_run)} titles or ${bytes(pace.max_bytes_per_run)} per run`
+    : "removes only within your caps";
 
   return (
     <section className="editor">
@@ -960,8 +1384,85 @@ export function PolicyEditor() {
         </div>
         <p className="blurb">
           {mediaType === "tv"
-            ? "How Reaper judges TV — seasons, not whole shows. Tuned separately from movies."
-            : "How Reaper judges your movies. TV is tuned separately — use the toggle."}
+            ? "How Reaper judges TV: seasons, not whole shows. Tuned separately from movies."
+            : "How Reaper judges your movies. TV is tuned separately, with the toggle."}
+        </p>
+
+        <nav className="settings-nav policy-rail" aria-label="Policy sections">
+          {SECTIONS.map((s) => (
+            <button
+              key={s.id}
+              className={activeSection === s.id ? "settings-tab active" : "settings-tab"}
+              onClick={() => {
+                // Instant, not smooth: smooth scrolling silently no-ops in some
+                // environments, and a jump that always lands beats an animation that
+                // sometimes doesn't happen at all.
+                sectionRefs[s.id].current?.scrollIntoView({ block: "start" });
+                setActiveSection(s.id);
+              }}
+            >
+              {s.label}
+            </button>
+          ))}
+        </nav>
+
+        {/* The intent band: the whole policy in one sentence, and three starting points. */}
+        <div className="intent-band">
+          <p className="intent-summary">
+            {mediaType === "tv" ? (
+              <>
+                Right now Reaper flags a <strong>season</strong> once it scores{" "}
+                <strong>{draft.condemn_at} / 100</strong>, always keeps the{" "}
+                <strong>
+                  newest {draft.keep_last_seasons}{" "}
+                  {draft.keep_last_seasons === 1 ? "season" : "seasons"}
+                </strong>{" "}
+                of a show and anyone's mid-binge, and {paceClause}.
+              </>
+            ) : (
+              <>
+                Right now Reaper flags a movie once it scores{" "}
+                <strong>{draft.condemn_at} / 100</strong>
+                {keepClauses.length > 0 && (
+                  <>
+                    , keeps anything <strong>{keepClauses.join(" or ")}</strong>
+                  </>
+                )}
+                , and {paceClause}.
+              </>
+            )}
+          </p>
+          <div className="intent-row">
+            <span className="muted intent-label">Starting point</span>
+            <div className="segmented" role="group" aria-label="Preset">
+              {PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={preset === p.id ? "seg active" : "seg"}
+                  onClick={() => applyPreset(p)}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="help">{presetHelp}</p>
+          {staged !== null && (
+            <p className="help">
+              <strong>Staged, not saved.</strong> Review the changes below, then Save {kind}{" "}
+              policy and Save pace &amp; limits.
+            </p>
+          )}
+        </div>
+
+        {/* ------------------------------------------------------------------ */}
+        <h3 ref={sectionRefs.flags} className="policy-section">
+          What flags a title
+        </h3>
+        <p className="blurb">
+          The reasons to believe nobody will watch it again. Nothing here removes a title on its
+          own. The protections below can always overrule the score.
         </p>
 
         <label className="field">
@@ -978,7 +1479,7 @@ export function PolicyEditor() {
           />
           <span className="help">
             The higher you set this, the more sure Reaper has to be before it flags a title.
-            Protections below still win — this only decides among titles nothing is keeping.
+            Protections below still win. This only decides among titles nothing is keeping.
           </span>
         </label>
 
@@ -1001,6 +1502,65 @@ export function PolicyEditor() {
           </span>
         </label>
 
+        <ul className="rule-list">
+          {draft.signals.map((signal, i) => (
+            <SignalRow
+              key={signal.signal}
+              signal={signal}
+              totalWeight={totalWeight}
+              onChange={(s) => {
+                const signals = [...draft.signals];
+                signals[i] = s;
+                update({ signals });
+              }}
+            />
+          ))}
+        </ul>
+
+        <RemoveRulesEditor
+          condemn={draft.custom_condemn}
+          onCondemn={(custom_condemn) => update({ custom_condemn })}
+        />
+
+        <div className="policy-divider" />
+
+        {/* ------------------------------------------------------------------ */}
+        <h3 ref={sectionRefs.kept} className="policy-section">
+          What's always kept
+        </h3>
+        <p className="blurb">
+          Protections. Any one of these keeps a title no matter how it scored, and every one can
+          only ever <em>keep</em> a file, never mark one for removal.
+        </p>
+
+        <ul className="rule-list">
+          {draft.gates.map((gate, i) => (
+            <GateRow
+              key={gate.gate}
+              gate={gate}
+              onChange={(g) => {
+                const gates = [...draft.gates];
+                gates[i] = g;
+                update({ gates });
+              }}
+            />
+          ))}
+        </ul>
+
+        <div className="rules-card">
+          <h3>Tags that spare a title</h3>
+          <p className="blurb">
+            Applies when <em>“Spare titles you've tagged”</em> above is on.
+          </p>
+          <KeepTagsEditor
+            tags={draft.keep_tags}
+            match={draft.keep_tags_match}
+            onTags={(keep_tags) => update({ keep_tags })}
+            onMatch={(keep_tags_match) => update({ keep_tags_match })}
+          />
+          <p className="help">Type each tag exactly as it appears in Sonarr or Radarr.</p>
+        </div>
+
         {mediaType === "tv" && (
           <div className="season-card">
             <h3>TV season protection</h3>
@@ -1019,8 +1579,8 @@ export function PolicyEditor() {
                 </span>
               </span>
               <span className="help">
-                The most recent seasons of every show are kept outright, whatever they score —
-                the hard floor behind the season-rank signal below. There is no upper limit.
+                The most recent seasons of every show are kept outright, whatever they score.
+                There is no upper limit.
               </span>
               <SeasonAdvisory keepLast={draft.keep_last_seasons} />
             </label>
@@ -1045,7 +1605,7 @@ export function PolicyEditor() {
               </div>
               <span className="help">
                 “Requested only” lets older seasons of shows nobody asked for be removed, while
-                still keeping the recent seasons of requested shows. When Reaper can’t tell whether
+                still keeping the recent seasons of requested shows. When Reaper can't tell whether
                 a show was requested, it keeps the seasons to be safe.
               </span>
             </label>
@@ -1062,7 +1622,7 @@ export function PolicyEditor() {
             <label className="field">
               <span className="field-label">
                 <span>
-                  When someone’s mid-binge, also keep{" "}
+                  When someone's mid-binge, also keep{" "}
                   <input
                     type="number"
                     min={0}
@@ -1083,62 +1643,11 @@ export function PolicyEditor() {
           </div>
         )}
 
-        <h3>What Reaper always keeps</h3>
-        <p className="blurb">
-          Protections. Any one of these keeps a title no matter how it scored — and every one
-          can only ever <em>keep</em> a file, never mark one for removal.
-        </p>
-
-        <ul className="rule-list">
-          {draft.gates.map((gate, i) => (
-            <GateRow
-              key={gate.gate}
-              gate={gate}
-              keepTags={draft.keep_tags}
-              keepMatch={draft.keep_tags_match}
-              onKeepTags={(keep_tags) => update({ keep_tags })}
-              onKeepMatch={(keep_tags_match) => update({ keep_tags_match })}
-              onChange={(g) => {
-                const gates = [...draft.gates];
-                gates[i] = g;
-                update({ gates });
-              }}
-            />
-          ))}
-        </ul>
-
-        <h3>What makes a title a candidate</h3>
-        <p className="blurb">
-          Reasons to believe nobody will watch it again. Slide each one up if it should matter
-          more. An unknown value only ever lowers a score, so an outage makes Reaper more
-          cautious, never less.
-        </p>
-
-        <ul className="rule-list">
-          {draft.signals.map((signal, i) => (
-            <SignalRow
-              key={signal.signal}
-              signal={signal}
-              totalWeight={totalWeight}
-              onChange={(s) => {
-                const signals = [...draft.signals];
-                signals[i] = s;
-                update({ signals });
-              }}
-            />
-          ))}
-        </ul>
-
-        <ConditionsEditor
+        <KeepRulesEditor
           conditions={draft.protect_conditions}
-          gateIds={draft.gates.map((g) => g.gate)}
-          onChange={(protect_conditions) => update({ protect_conditions })}
-        />
-
-        <CustomRulesEditor
-          condemn={draft.custom_condemn}
           keeps={draft.graded_keeps}
-          onCondemn={(custom_condemn) => update({ custom_condemn })}
+          gateIds={draft.gates.map((g) => g.gate)}
+          onConditions={(protect_conditions) => update({ protect_conditions })}
           onKeeps={(graded_keeps) => update({ graded_keeps })}
         />
 
@@ -1161,7 +1670,7 @@ export function PolicyEditor() {
             disabled={!dirty || Boolean(invalidMessage) || save.isPending}
             onClick={() => save.mutate(draft)}
           >
-            {save.isPending ? "Saving…" : dirty ? "Save policy" : "Saved"}
+            {save.isPending ? "Saving…" : dirty ? `Save ${kind} policy` : "Saved"}
           </button>
           {dirty && (
             <button className="ghost" onClick={() => setDraft(saved?.body ?? null)}>
@@ -1174,15 +1683,125 @@ export function PolicyEditor() {
         <p className="hash">
           {validation && (
             <>
-              policy <code>{validation.policy_hash.slice(0, 12)}</code>
+              {kind} policy <code>{validation.policy_hash.slice(0, 12)}</code>
             </>
           )}
         </p>
 
         <p className="blurb">
-          Saving does not arm anything. Reaper still cannot delete, and a saved policy takes
-          effect on the next scan.
+          Saves only your {kind} policy. The {otherKind} one is untouched. Saving does not arm
+          anything, and it takes effect on the next scan.
         </p>
+
+        <div className="policy-divider" />
+
+        {/* ------------------------------------------------------------------ */}
+        <h3 ref={sectionRefs.pace} className="policy-section">
+          Pace and limits
+        </h3>
+        <p className="blurb">
+          How much a single reap may do, and how long the grace countdown lasts. One setting for
+          all of Reaper, movies and TV alike.
+        </p>
+
+        {pace === null ? (
+          <p className="muted">Loading…</p>
+        ) : (
+          <>
+            <label className="toggle pace-approval">
+              <input
+                type="checkbox"
+                checked={pace.require_approval}
+                onChange={(e) => updatePace({ require_approval: e.target.checked })}
+              />
+              <span>Ask me before every run deletes anything</span>
+            </label>
+            <div className="caps-grid">
+              <label>
+                <span>Most titles per run</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={pace.max_items_per_run}
+                  onChange={(e) => updatePace({ max_items_per_run: Number(e.target.value) || 1 })}
+                />
+                <span className="help">The most titles a single run will delete.</span>
+              </label>
+              <label>
+                <span>Most space per run</span>
+                <QuantityInput
+                  value={pace.max_bytes_per_run}
+                  units={SIZE_UNITS}
+                  onChange={(v) => updatePace({ max_bytes_per_run: v })}
+                />
+                <span className="help">The most disk one run can free.</span>
+              </label>
+              <label>
+                <span>Most titles per month</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={pace.max_items_per_30d}
+                  onChange={(e) => updatePace({ max_items_per_30d: Number(e.target.value) || 1 })}
+                />
+                <span className="help">A rolling limit over the last 30 days.</span>
+              </label>
+              <label>
+                <span>Most space per month</span>
+                <QuantityInput
+                  value={pace.max_bytes_per_30d}
+                  units={SIZE_UNITS}
+                  onChange={(v) => updatePace({ max_bytes_per_30d: v })}
+                />
+                <span className="help">A rolling disk limit over the last 30 days.</span>
+              </label>
+              <label>
+                <span>Grace period</span>
+                <QuantityInput
+                  value={pace.grace_days}
+                  units={TIME_UNITS}
+                  min={7}
+                  onChange={(v) => updatePace({ grace_days: v })}
+                />
+                <span className="help">
+                  How long a title stays on the list, where you can still rescue it, before
+                  Reaper can remove it.
+                </span>
+              </label>
+            </div>
+            <p className="help">
+              A run over a cap stops itself and removes nothing. It never quietly deletes just
+              the part that fits.
+            </p>
+            <div className="editor-actions">
+              <button
+                className="primary"
+                disabled={!paceDirty || savePace.isPending}
+                onClick={() => savePace.mutate(pace)}
+              >
+                {savePace.isPending ? "Saving…" : paceDirty ? "Save pace & limits" : "Saved"}
+              </button>
+              <span className="muted pace-note">
+                Takes effect immediately. Changing a limit never affects a run you've already
+                approved.
+              </span>
+            </div>
+            {savePace.error && <p className="notice notice-error">{savePace.error.message}</p>}
+          </>
+        )}
+
+        <div className="policy-divider" />
+
+        {/* ------------------------------------------------------------------ */}
+        <h3 ref={sectionRefs.deletion} className="policy-section">
+          Deletion
+        </h3>
+        <p className="blurb">
+          Whether Reaper is allowed to remove anything at all. One switch for all of Reaper,
+          movies and TV alike. Turning it on always asks for the admin password. Turning it off
+          never does.
+        </p>
+        <DeletionToggle />
       </div>
 
       <div className="editor-sim">
@@ -1195,7 +1814,7 @@ export function PolicyEditor() {
           <p className="muted">Fix the policy on the left, then this updates.</p>
         ) : simulation ? (
           simulation.exact ? (
-            <Outcome simulation={simulation} threshold={draft.condemn_at} />
+            <Outcome simulation={simulation} threshold={draft.condemn_at} pace={pace} />
           ) : (
             <StaleNotice scanning={scanning} onScan={startScan} />
           )

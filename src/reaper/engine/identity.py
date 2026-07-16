@@ -222,9 +222,11 @@ def parse_guids(guids: Iterable[str], legacy_guid: str | None = None) -> Externa
 class PlexItem:
     """One Plex library item, as the resolver sees it.
 
-    ``added_at`` is sourced from the Tautulli spine (never re-derived), so dormancy stays
-    byte-identical to the title-only era; the ids and ``file_basename`` are enriched on top
-    from the plexapi sweep.
+    For every row the Tautulli spine lists, ``added_at`` is sourced from that spine (never
+    re-derived), so dormancy stays byte-identical to the title-only era; the ids and
+    ``file_basename`` are enriched on top from the plexapi sweep. An item the Tautulli
+    cache has not listed yet (a fresh addition) enters the index from the plexapi sweep
+    alone, carrying Plex's own added-at -- there is no spine value to preserve for it.
     """
 
     rating_key: int

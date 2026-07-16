@@ -853,6 +853,83 @@ live clients is that step.
   step ahead). `Candidate` now keeps `plex_rating_key` so grace items are addressable in
   Plex. POST `/api/leaving-soon/sync` + a button on the grace panel.
 
+## The policy workspace rework (M8) — one page, in decision order
+
+The policy configuration UI was scattered: caps edited in two near-duplicate places (Reap
+and Settings → Limits), keep-tags buried inside a gate row, custom rules split from the
+signals they extend, and the arming switch two tabs from the policy it governs. The rework
+consolidates everything that shapes a decision onto the Policy tab, ordered the way Reaper
+decides: what flags a title → what's always kept → pace and limits → deletion, with a
+sticky section rail and the live simulator alongside. Iterated as a rendered mockup (eight
+revisions) before any code.
+
+- **Three saves stay separate on purpose**: the hashed policy (per media type, labelled
+  "Save movie policy" / "Save TV policy"), the un-hashed pace/limits (its own button; a cap
+  change never voids an approval; the ask-first toggle leads the section, above the caps),
+  and the password-gated deletion switch (a shared `DeletionToggle` in Policy → Deletion,
+  the only arming surface: password to enable, none to disable). Settings → **Security**
+  (renamed from Safety) holds only the admin password.
+- **Presets** (Cautious / Balanced / Aggressive) stage the threshold + caps and reset
+  weights to the shipped mix; nothing saves until both save buttons are pressed, and the
+  badge only claims a preset while the draft actually matches one. Threshold-only presets
+  keep the simulator exact.
+- **Rule editors speak sentences.** The remove card has one form whose condition dropdown
+  carries ramp phrases ("the older it is") that map to `GradedCondemnSpec`; the keep card
+  pairs outright keeps with graded leans. Text-value inputs suggest what the library
+  already contains via `GET /api/vocabulary/values` (genre/quality captured on `Candidate`
+  at scan time), and free entry always stays valid. The suggestions are an in-app popover,
+  not a native `<datalist>` — Safari only reveals a datalist after typed text
+  prefix-matches, so an empty click showed nothing there, and embedded panes can misplace
+  the native popup. The rule-form controls share one pinned height, because Safari's
+  native select/input/stepper chrome otherwise staggers the row.
+- **The simulator now names names**: a saved-vs-draft compare line, a threshold marker on
+  the histogram, the top newly-flagged titles (`examples_newly_condemned`), and a per-gate
+  spared-by tally (`protected_by`), all only when exact; the stale refusal is unchanged.
+- **Copy rule**: no em dashes in operator-facing strings, either side of the wire (rule 21
+  extended); season titles compose with a middot now, and the queue strips both separators
+  so old snapshots still render.
+- *Verified live* against a real library (a fresh several-thousand-item scan, presets
+  restored, the two saves proven independent with the policy hash unmoved, autocomplete
+  serving real genres). Found in passing: smooth `scrollIntoView` can silently no-op, so
+  the rail jumps instantly; the deletion "why blocked" note pointed at the old Settings
+  location and was fixed.
+
+## The identity join and the why-panel honesty pass
+
+An operator report ("this item IS matched in Plex, but Reaper says it isn't") led to a
+cluster of related fixes, all live-verified against real services:
+
+- **The Tautulli media-info listing is a cache, and it lags.** `build_movie_index` /
+  `build_tv_index` used it as the *exclusive* spine, so an item added to Plex since
+  Tautulli's last library refresh never entered the index at all — every resolver tier
+  whiffed and the item was reported "unmatched" while Plex demonstrably had it (verified
+  live: a day-old movie absent from `get_library_media_info` while Tautulli's own
+  `get_metadata` served it). Fix: `library_guid_index` now returns full `PlexItem` rows
+  (title/year/added-at ride along in the same plexapi listing, zero extra calls), and the
+  builders union in any rating key the spine did not list. Spine rows keep Tautulli's
+  `added_at` (dormancy byte-identical); plexapi-only rows carry Plex's own. A failed sweep
+  still degrades; no Plex still means no enrichment.
+- **Unmatched and ambiguous are different stories, and the panel now tells the right
+  one.** `build_facts` wrote "Plex has not matched this item" for *any* missing rating
+  key — but most keyless items on a split 1080p/4K library are AMBIGUOUS (one TMDB id
+  naming two or three Plex items; the resolver correctly refuses to guess whose watch
+  history to read). The Unknown reason now says "more than one Plex item matches this
+  title/show" for those, threaded through the season path too.
+- **The wire schema silently dropped `match`, `keeps` and `base_score`.** The stored
+  explanation always carried them and the frontend always typed them, but pydantic's
+  `extra="ignore"` stripped all three at the API boundary — so the "kept to be safe"
+  notice and the keep breakdown could never render. Declared on `Explanation` now, with a
+  regression test. Lesson recorded: a wire schema must name every key the UI reads;
+  optional frontend types hide this class of bug completely.
+- **"Left for you to decide" groups by cause.** Three amber boxes each ending "Plex has
+  not matched this item" told the owner the same thing three times. The panel now parses
+  the fixed "could not check {check}: {cause}" vocabulary, states each cause once in
+  plain words, and lists the checks it blocked; anything unparseable (season-order
+  conflicts, named custom rules) keeps its own verbatim box. The card's one-line reason
+  prefers the match status over the first gate's engineer-speak.
+- **The dormancy gate no longer claims "last watched N days ago" for never-played
+  items** — the clock runs from arrival, so it says "untouched for just N".
+
 ## Immediate next steps
 
 1. **The live send** — wire `_send_for_real` + the exclusion-verify + the Plex refresh

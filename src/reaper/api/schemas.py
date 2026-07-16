@@ -35,18 +35,49 @@ class GateOutcomeOut(BaseModel):
     detail: str
 
 
+class MatchOut(BaseModel):
+    """How (or whether) the item was bound to its Plex row. ``status`` is what the UI
+    reads: quiet on ``matched``, a plain "kept to be safe" notice otherwise."""
+
+    status: str | None = None
+    by: str | None = None
+    detail: str | None = None
+    rating_key: int | None = None
+
+
+class KeepContributionOut(BaseModel):
+    """A graded keep's pull on the score. ``evaluated=False`` means the input was
+    Unknown, which takes the FULL discount -- fail-closed toward keeping."""
+
+    name: str
+    discount: float
+    max_discount: float
+    detail: str
+    evaluated: bool
+
+
 class Explanation(BaseModel):
     """The why-panel.
 
     Three blocks, and the last two are what make a verdict trustworthy. Every
     competitor shows which rules matched. None of them show the work.
+
+    ``match``, ``keeps`` and the score split are optional with safe defaults: the
+    stored explanation JSON has carried them since they shipped, but pydantic's
+    ``extra="ignore"`` silently DROPPED them at this boundary until the fields were
+    declared here -- which is why the panel's "kept to be safe" notice and keep
+    breakdown never rendered. Wire schemas must name every key the UI reads.
     """
 
     score: float
+    base_score: float | None = None
+    keep_discount: float | None = None
     threshold: int
     coverage: float
+    match: MatchOut | None = None
 
     signals: list[SignalContribution]
+    keeps: list[KeepContributionOut] = Field(default_factory=list)
 
     protections_fired: list[GateOutcomeOut]
     """Why it is being kept. A tool that only explains deletions cannot be trusted
@@ -301,6 +332,21 @@ class PolicyOut(BaseModel):
     box -- both are legal -- so it says so instead of pretending to know."""
 
 
+class SimExampleOut(BaseModel):
+    """One title the draft would newly flag."""
+
+    title: str
+    year: int | None = None
+    score: int
+
+
+class GateCountOut(BaseModel):
+    """One protection and how many items it is keeping, for the simulator."""
+
+    gate: str
+    count: int
+
+
 class SimulationOut(BaseModel):
     """Re-deciding the last snapshot under a candidate policy. Zero API calls.
 
@@ -337,6 +383,28 @@ class SimulationOut(BaseModel):
     histogram: list[int]
     """Score distribution in 10-point buckets, so the threshold can be placed against
     the shape of the library rather than guessed."""
+
+    examples_newly_condemned: list[SimExampleOut] = Field(default_factory=list)
+    """The top few titles this draft would newly flag, highest score first -- the
+    "New on the list" block. Populated only when ``exact``; a count is abstract, but
+    a title the owner recognises is what actually stops a bad threshold."""
+
+    protected_by: list[GateCountOut] = Field(default_factory=list)
+    """How many protected items each protection saved, busiest first -- the "Why
+    titles were spared" block, aggregated from the stored explanations. Populated
+    only when ``exact``."""
+
+
+class FieldValuesOut(BaseModel):
+    """Distinct values Reaper has already seen for one rule field, newest scan only.
+
+    Suggestions for the rule editors' inputs, nothing more: an unknown field or a
+    missing scan comes back as an empty list, never an error, and typing a value that
+    is not listed stays valid -- validation is by type, not by membership here.
+    """
+
+    field: str
+    values: list[str]
 
 
 class FieldOut(BaseModel):

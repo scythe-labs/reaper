@@ -64,8 +64,9 @@ class TestTheMinDormancyGate:
         result = GATE.evaluate(_facts(400))
 
         assert result.outcome == PROTECT
-        # The floor of 1095 days reads as "3 years"; the dormancy of 400 as "1 year, 1 month".
-        assert "last watched" in result.detail
+        # The floor of 1095 days reads as "3 years". "Untouched", never "last watched":
+        # a never-played item's clock runs from its arrival, not from a play.
+        assert "untouched" in result.detail
         assert "3 years" in result.detail
 
     def test_a_film_past_the_floor_is_not_protected_by_this_gate(self) -> None:

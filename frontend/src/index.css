@@ -1096,12 +1096,18 @@ tbody tr.selected {
 /* The solid amber notice -- the same tone as `.warn` / the "kept to be safe" notice, so
    every "Reaper wasn't sure, so it's kept" state reads the same way. */
 .gates-unknown li {
+  display: block; /* the shared .gates li flex row would put the cause beside the list */
   background: var(--unknown-soft);
   border: 1px solid color-mix(in srgb, var(--unknown) 45%, transparent);
   border-radius: var(--radius);
   color: var(--text);
   padding: 0.55rem 0.8rem;
   line-height: 1.5;
+}
+/* The cause line of a grouped "couldn't check" box: its own line, in the amber accent. */
+.gates-unknown li strong {
+  display: block;
+  color: var(--unknown);
 }
 
 /* ---- policy editor ------------------------------------------------------- */
@@ -1341,6 +1347,122 @@ tbody tr.selected {
 .rules-add .segmented {
   margin-bottom: 0.6rem;
 }
+/* Sentence rows: rule as a sentence, its effect, and a remove button. No pill column --
+   the card's lane already says which way the rule points. */
+.rules-row-simple {
+  grid-template-columns: 1fr auto auto;
+}
+/* One height for every control in a rule form. Without this, Safari's native select,
+   text and number-stepper chrome each pick their own intrinsic height and the row
+   staggers; with it, every engine renders the same row. */
+.condition-add :is(select, input) {
+  height: 2.1rem;
+}
+/* Free-entry value input with library suggestions. An ordinary popover, NOT a native
+   <datalist>: Safari only reveals a datalist once typed text prefix-matches (an empty
+   click shows nothing), and embedded panes can draw the native popup at the wrong
+   position entirely. This one is plain DOM and behaves the same everywhere. */
+.suggest {
+  position: relative;
+  display: inline-flex;
+}
+.suggest > input {
+  min-width: 9rem;
+}
+.suggest-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  min-width: 100%;
+  max-height: 14rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0.25rem;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+.suggest-opt {
+  padding: 0.3rem 0.55rem;
+  border-radius: 5px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.suggest-opt.active {
+  background: var(--hover);
+}
+.rule-kind {
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* The from/to pair a ramp rule swaps in for the single value box. */
+.ramp-bounds {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* ---- the policy workspace shell ------------------------------------------ */
+
+/* The section rail: the Settings tab-bar look, kept stuck to the top of the viewport
+   while the (long) pipeline scrolls under it. */
+.policy-rail {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--bg);
+  padding-top: 0.4rem;
+  margin-bottom: 0.9rem;
+}
+/* Jump targets land below the stuck rail, not under it. */
+.policy-section {
+  scroll-margin-top: 3.4rem;
+}
+.policy-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 1.6rem 0;
+}
+
+/* The intent band: the whole policy in one sentence, and three starting points. */
+.intent-band {
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 0.9rem 1rem;
+  margin: 0.2rem 0 1.5rem;
+}
+.intent-summary {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+.intent-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.intent-label {
+  font-size: 0.8rem;
+}
+.intent-band .help {
+  margin-top: 0.5rem;
+}
+.pace-note {
+  font-size: 0.82rem;
+  max-width: 34rem;
+}
+/* The ask-first toggle leads the pace section, above the numeric caps. */
+.pace-approval {
+  margin: 0 0 1.1rem;
+}
 /* A bordered card grouping the TV season-protection controls, matching the mockup. */
 .season-card {
   border: 1px solid var(--border-strong);
@@ -1575,11 +1697,33 @@ tbody tr.selected {
 }
 
 .histogram {
+  position: relative; /* the threshold marker is positioned against it */
   display: flex;
   align-items: flex-end;
   gap: 3px;
   height: 90px;
-  margin: 0.5rem 0 1.2rem;
+  margin: 1.1rem 0 0.4rem;
+}
+/* The threshold, drawn where it actually falls on the 0-100 axis, with its number above.
+   This is what turns the histogram from a picture into a decision aid. */
+.hist-thresh {
+  position: absolute;
+  top: -4px;
+  bottom: 14px; /* stop above the bucket labels */
+  width: 2px;
+  background: var(--text);
+  opacity: 0.55;
+  border-radius: 1px;
+  pointer-events: none;
+}
+.hist-thresh b {
+  position: absolute;
+  top: -0.85rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.66rem;
+  font-weight: 650;
+  color: var(--muted);
 }
 .hist-col {
   flex: 1;
@@ -1602,6 +1746,34 @@ tbody tr.selected {
   font-size: 0.65rem;
   color: var(--muted);
   margin-top: 2px;
+}
+
+.sim-compare {
+  margin: 0.35rem 0 0;
+  font-size: 0.88rem;
+}
+/* "New on the list": the titles a draft would newly flag, score on the right in the
+   condemn colour -- the same verdict language as everywhere else. */
+.sim-examples {
+  list-style: none;
+  margin: 0.4rem 0 0.9rem;
+  padding: 0;
+  font-size: 0.85rem;
+}
+.sim-examples li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.22rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.sim-examples li:last-child {
+  border-bottom: none;
+}
+.sim-example-score {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  color: var(--condemn);
 }
 
 .sim-delta {

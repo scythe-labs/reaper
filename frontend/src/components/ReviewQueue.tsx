@@ -223,8 +223,8 @@ function OverrideControls({
         onClick={(e) => click(e, "spare")}
         title={
           override === "spare"
-            ? "Spared — click to let Reaper judge it again"
-            : "Never reap this — keep it forever"
+            ? "Spared. Click to let Reaper judge it again"
+            : "Never reap this. Keep it forever"
         }
       >
         <span className="infinity" aria-hidden="true">
@@ -240,7 +240,7 @@ function OverrideControls({
         onClick={(e) => click(e, "reap")}
         title={
           override === "reap"
-            ? "Marked for reaping — click to undo"
+            ? "Marked for reaping. Click to undo"
             : "Force this onto the reap list"
         }
       >
@@ -301,8 +301,8 @@ function CheckSquareIcon() {
 /** The chip a card shows once the owner has overridden it by hand -- pending until the next
  *  scan moves it for real. */
 function OverrideChip({ override }: { override: Override | null }) {
-  if (override === "spare") return <span className="chip chip-spared">Spared — will be kept</span>;
-  if (override === "reap") return <span className="chip chip-reap">Reap — will be removed</span>;
+  if (override === "spare") return <span className="chip chip-spared">Spared · will be kept</span>;
+  if (override === "reap") return <span className="chip chip-reap">Reap · will be removed</span>;
   return null;
 }
 
@@ -573,7 +573,9 @@ function ShowCard({
             >
               <Score item={season} />
               <span className="season-title">
-                {season.title.replace(`${group.title} — `, "")}
+                {/* Strip the show-name prefix; the second form is the pre-middot separator
+                    still present in titles frozen into older snapshots. */}
+                {season.title.replace(`${group.title} · `, "").replace(`${group.title} — `, "")}
                 <OverrideChip override={season.override} />
               </span>
               <span className="season-size num">{bytes(season.size_bytes)}</span>
@@ -789,7 +791,7 @@ export function ReviewQueue({
   const emptyMessage =
     requested === "yes" && verdict === "condemn"
       ? "Nothing people requested is on the reap list. A requested title that got watched is " +
-        "protected, not reaped — look under Spared to see them."
+        "protected, not reaped. Look under Spared to see them."
       : filtering
         ? "Nothing matches those filters."
         : tab.empty;
@@ -880,7 +882,7 @@ export function ReviewQueue({
           aria-pressed={selectMode}
           title={
             selectMode
-              ? "Done selecting — clears your picks"
+              ? "Done selecting. Clears your picks"
               : "Select several at once to spare or reap"
           }
         >
@@ -1023,7 +1025,7 @@ export function ReviewQueue({
 
       {bulkFailures > 0 && (
         <p className="error bulk-error">
-          {count(bulkFailures)} {bulkFailures === 1 ? "item" : "items"} could not be updated — the
+          {count(bulkFailures)} {bulkFailures === 1 ? "item" : "items"} could not be updated; the
           rest were saved.
         </p>
       )}

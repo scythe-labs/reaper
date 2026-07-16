@@ -169,6 +169,8 @@ def upgrade() -> None:
     sa.Column('summary', sa.Text(), nullable=True),
     sa.Column('poster_url', sa.String(length=1000), nullable=True),
     sa.Column('requested_by', sa.String(length=200), nullable=True),
+    sa.Column('genres_json', sa.Text(), nullable=True),
+    sa.Column('quality', sa.String(length=100), nullable=True),
     sa.Column('group_key', sa.String(length=100), nullable=True),
     sa.Column('group_title', sa.String(length=500), nullable=True),
     sa.Column('verdict', sa.String(length=10), nullable=False),

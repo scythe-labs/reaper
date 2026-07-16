@@ -135,6 +135,16 @@ async def build_facts(
     those would have quietly condemned an item we know nothing about.
     """
     rating_key = item.plex_rating_key
+    # The two no-key states are DIFFERENT stories and the why-panel must not conflate
+    # them: "unmatched" means Plex has no such item as far as Reaper can tell; "ambiguous"
+    # means Plex has MORE than one (a 1080p and a 4K copy sharing one TMDB id) and Reaper
+    # refused to guess whose watch history to read. Both keep the file; only the words
+    # shown to the owner differ.
+    no_key_reason = (
+        "more than one Plex item matches this title"
+        if item.match_status is identity.MatchStatus.AMBIGUOUS
+        else "Plex has not matched this item"
+    )
 
     # --- dormancy -----------------------------------------------------------
     # THE derived field. "Days since last play" is null for exactly the items we care
@@ -142,7 +152,7 @@ async def build_facts(
     # the maximum condemnation pressure, for the item we know least about.
     dormancy: Observation[float]
     if rating_key is None:
-        dormancy = Unknown(reason="Plex has not matched this item", source="plex")
+        dormancy = Unknown(reason=no_key_reason, source="plex")
     elif item.added_at is None:
         dormancy = Unknown(reason="no added-at date", source="tautulli")
     else:
@@ -154,8 +164,8 @@ async def build_facts(
     recent: Observation[int]
     all_time: Observation[int]
     if rating_key is None:
-        recent = Unknown(reason="Plex has not matched this item", source="plex")
-        all_time = Unknown(reason="Plex has not matched this item", source="plex")
+        recent = Unknown(reason=no_key_reason, source="plex")
+        all_time = Unknown(reason=no_key_reason, source="plex")
     else:
         recent = Known(value=watchers_window.get(rating_key, 0), source="tautulli")
         all_time = Known(value=watchers_all_time.get(rating_key, 0), source="tautulli")
@@ -620,6 +630,14 @@ async def _judge_item(
             summary=display.summary,
             poster_url=display.poster_url,
             requested_by=display.requested_by,
+            # Suggestion fields for the rule editors' datalists, from evidence already in
+            # hand. Facts carries genres comma-joined (genre names never contain ", ").
+            genres_json=(
+                json.dumps(facts.genres.value.split(", "))
+                if isinstance(facts.genres, Known)
+                else None
+            ),
+            quality=(facts.quality.value if isinstance(facts.quality, Known) else None),
             group_key=display.group_key,
             group_title=display.group_title,
             verdict=verdict,
@@ -835,9 +853,19 @@ async def build_movie_index(
     """The Plex movie library, inverted for id / basename / title matching.
 
     The Tautulli ``get_library_media_info`` sweep is the **spine** -- it alone gives
-    rating_key / title / year / added_at cheaply, and ``added_at`` must keep coming from
-    there so dormancy stays byte-identical to the title-only era. The plexapi sweep then
-    enriches each spine row with external ids + file basename, joined by rating key.
+    rating_key / title / year / added_at cheaply, and for every row it lists, ``added_at``
+    keeps coming from there so dormancy stays byte-identical to the title-only era. The
+    plexapi sweep enriches each spine row with external ids + file basename, joined by
+    rating key.
+
+    The spine is a Tautulli-side *cache*, though, and it lags: an item added to Plex since
+    Tautulli's last library refresh is absent from the listing (verified live: a day-old
+    movie missing from the media-info listing while Tautulli's own get_metadata served it
+    fine). Spine-only, that item never enters the index, so the resolver reports it
+    unmatched -- kept, but with a false "Plex has not matched this item" explanation. The
+    plexapi sweep walks the same sections directly, so any rating key it returns that the
+    spine did not list is appended as its own row, carrying Plex's own added-at (there is
+    no Tautulli value to preserve for a row Tautulli has not listed yet).
 
     A plexapi sweep that fails **degrades** the snapshot (rule #2: never let the id signal
     vanish and silently fall the whole library back to title-only) and leaves ids empty, so
@@ -845,10 +873,10 @@ async def build_movie_index(
     deployment with no Plex configured simply gets no enrichment -- its snapshot was already
     un-executable, since a real reap refuses without Plex.
     """
-    guids: dict[int, tuple[identity.ExternalIds, str | None]] = {}
+    plex_items: dict[int, identity.PlexItem] = {}
     if plex is not None:
         try:
-            guids = await plex.library_guid_index(section_type="movie")
+            plex_items = await plex.library_guid_index(section_type="movie")
         except PlexError as exc:
             degrade(
                 f"Plex GUID sweep failed ({exc}) -- id matching unavailable, snapshot un-executable"
@@ -870,20 +898,24 @@ async def build_movie_index(
                 if rk is None:
                     continue
                 rating_key = int(rk)
-                ids, basename = guids.get(rating_key, (identity.ExternalIds(), None))
+                enriched = plex_items.get(rating_key)
                 items.append(
                     identity.PlexItem(
                         rating_key=rating_key,
                         title=str(row.get("title") or ""),
                         year=_as_year(row.get("year")),
                         added_at=from_epoch(row.get("added_at")),
-                        ids=ids,
-                        file_basename=basename,
+                        ids=enriched.ids if enriched is not None else identity.ExternalIds(),
+                        file_basename=enriched.file_basename if enriched is not None else None,
                     )
                 )
             if len(rows) < 1000:
                 break
             start += 1000
+
+    # Items Plex has that the Tautulli cache has not listed yet (fresh additions).
+    spine_keys = {item.rating_key for item in items}
+    items.extend(row for rk, row in plex_items.items() if rk not in spine_keys)
     return identity.PlexIndex.build(items)
 
 

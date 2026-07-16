@@ -41,7 +41,7 @@ import structlog
 
 from reaper.clients.base import SAFE_METHODS, SafetyViolationError
 from reaper.config import RuntimeSafety
-from reaper.engine.identity import ExternalIds, parse_guids, to_basename
+from reaper.engine.identity import PlexItem, parse_guids, to_basename
 
 if TYPE_CHECKING:
     from plexapi.server import PlexServer
@@ -280,16 +280,17 @@ class PlexClient:
 
         return await asyncio.to_thread(read)
 
-    async def library_guid_index(
-        self, *, section_type: str
-    ) -> dict[int, tuple[ExternalIds, str | None]]:
-        """Every item's external ids and file basename, keyed by Plex ``rating_key``.
+    async def library_guid_index(self, *, section_type: str) -> dict[int, PlexItem]:
+        """Every library item as the resolver sees it, keyed by Plex ``rating_key``.
 
         The enrichment behind id-based matching. For each library section of
         ``section_type`` (``"movie"`` or ``"show"``), sweep every item once via
         ``section.all()`` and read its GUIDs -- the new-agent ``guids`` list *and* the
         legacy single ``guid`` string -- plus the basename of its first file/folder
-        location. One sweep per section, never a per-item metadata call.
+        location, and the title / year / added-at the listing already carries. One sweep
+        per section, never a per-item metadata call. Returning full :class:`PlexItem` rows
+        (not just the ids) lets the index builders union in items the Tautulli media-info
+        cache has not listed yet -- a freshly added item exists here first.
 
         A GET, so it runs in read-only mode through the ``GuardedSession``. It **raises**
         ``PlexError`` on any failure rather than returning a partial map, so the caller can
@@ -299,8 +300,10 @@ class PlexClient:
         """
         server = await self._connect()
 
-        def read() -> dict[int, tuple[ExternalIds, str | None]]:
-            out: dict[int, tuple[ExternalIds, str | None]] = {}
+        def read() -> dict[int, PlexItem]:
+            from datetime import UTC, datetime
+
+            out: dict[int, PlexItem] = {}
             for section in server.library.sections():
                 if section.type != section_type:
                     continue
@@ -315,7 +318,20 @@ class PlexClient:
                     ids = parse_guids(guid_ids, str(legacy) if legacy else None)
                     locations = list(getattr(item, "locations", None) or [])
                     basename = to_basename(locations[0]) if locations else None
-                    out[int(rating_key)] = (ids, basename)
+                    year = getattr(item, "year", None)
+                    # plexapi parses addedAt with fromtimestamp() in *this* process, so a
+                    # naive value means "this host's local time"; astimezone(UTC) recovers
+                    # the exact instant regardless of the Plex server's own timezone.
+                    added = getattr(item, "addedAt", None)
+                    added_at = added.astimezone(UTC) if isinstance(added, datetime) else None
+                    out[int(rating_key)] = PlexItem(
+                        rating_key=int(rating_key),
+                        title=str(getattr(item, "title", "") or ""),
+                        year=int(year) if isinstance(year, int) and year > 0 else None,
+                        added_at=added_at,
+                        ids=ids,
+                        file_basename=basename,
+                    )
             return out
 
         try:

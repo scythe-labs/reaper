@@ -305,6 +305,30 @@ it is the full account credential. Any tool storing it (Tautulli, Overseerr, Mai
 this one) is storing something equivalent to the Plex password. Document that honestly;
 do not imply a boundary that is not there.
 
+### Tautulli's `get_library_media_info` is a cache, and it lags Plex (verified)
+
+A movie added to Plex a day earlier was absent from the media-info listing (the section
+reported its old count) while Tautulli's own `get_metadata` for the same rating key
+served the item fine. The listing is served from Tautulli's media-info table, refreshed
+on Tautulli's own schedule — it is *not* a live view of the library. Anything that treats
+it as the authoritative item list will silently miss fresh additions.
+
+⇒ The identity index unions the plexapi sweep over the same sections: spine rows keep
+Tautulli's `added_at`, and rating keys the spine did not list enter from the sweep with
+Plex's own added-at. Watch *history* is unaffected — that comes from the history table,
+which is written per play, not from this cache.
+
+### pydantic drops undeclared keys silently — a wire schema can hide a whole feature
+
+The stored explanation carried `match`, `keeps` and `base_score`; the frontend typed and
+rendered all three; and none of them ever reached the browser, because the API's
+`Explanation` model didn't declare them and pydantic's default `extra="ignore"` stripped
+them without a sound. Optional frontend types (`match?: Match`) made the absence
+invisible too — no error anywhere, the notice simply never rendered.
+
+⇒ A wire schema must name every key the UI reads, and a feature whose visible surface is
+conditional ("renders only when X") needs a test that X actually crosses the wire.
+
 ### Plex GUIDs: a new-agent list, a legacy single string, and sentinels
 
 Matching an *arr item to its Plex item by external id (imdb/tmdb/tvdb) is far more robust

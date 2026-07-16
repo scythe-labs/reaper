@@ -123,6 +123,9 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     title="Example Movie",
                     media_type="movie",
                     size_bytes=5_900_000_000,
+                    year=2013,
+                    genres_json=json.dumps(["Documentary", "Drama"]),
+                    quality="Bluray-1080p",
                     verdict="condemn",
                     score=91,
                     coverage_bp=10_000,
@@ -135,6 +138,8 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     title="Example Classic",
                     media_type="movie",
                     size_bytes=8_000_000_000,
+                    genres_json=json.dumps(["Drama"]),
+                    quality="WEBDL-1080p",
                     verdict="protect",
                     score=90,
                     coverage_bp=10_000,
@@ -160,7 +165,54 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     verdict="abstain",
                     score=50,
                     coverage_bp=2_000,  # below the coverage floor
-                    explanation_json=_explanation(50),
+                    # The shape production writes for an item Plex could not be matched
+                    # to: a match block, and one "could not check" per blocked gate, all
+                    # sharing the same cause.
+                    explanation_json=json.dumps(
+                        {
+                            **json.loads(_explanation(50)),
+                            "base_score": 50.0,
+                            "keep_discount": 0.0,
+                            "match": {
+                                "status": "unmatched",
+                                "by": None,
+                                "detail": "No Plex item matched this title",
+                                "rating_key": None,
+                            },
+                            "keeps": [
+                                {
+                                    "name": "well rated",
+                                    "discount": 0.0,
+                                    "max_discount": 15,
+                                    "detail": "could not check the IMDb rating",
+                                    "evaluated": False,
+                                }
+                            ],
+                            "protections_unknown": [
+                                {
+                                    "gate": "min_dormancy",
+                                    "detail": (
+                                        "could not check when it was last watched: "
+                                        "Plex has not matched this item"
+                                    ),
+                                },
+                                {
+                                    "gate": "data_horizon",
+                                    "detail": (
+                                        "could not check the watch horizon: "
+                                        "Plex has not matched this item"
+                                    ),
+                                },
+                                {
+                                    "gate": "server_popularity",
+                                    "detail": (
+                                        "could not check watch history: "
+                                        "Plex has not matched this item"
+                                    ),
+                                },
+                            ],
+                        }
+                    ),
                     created_at=now,
                 ),
             ]
@@ -411,6 +463,27 @@ class TestTheWhyPanel:
 
         assert candidates[0]["first_flagged_at"]
 
+    def test_the_match_block_and_keeps_survive_the_wire(self, client: TestClient) -> None:
+        """Regression: the stored explanation always carried ``match`` and ``keeps``, but
+        the wire schema did not declare them, so pydantic silently DROPPED both -- and the
+        panel's "kept to be safe" notice could never render. Every key the UI reads must
+        be named in the schema."""
+        abstained = client.get("/api/candidates?verdict=abstain").json()
+        detail = client.get(f"/api/candidates/{abstained[0]['id']}").json()
+
+        assert detail["explanation"]["match"]["status"] == "unmatched"
+        assert detail["explanation"]["base_score"] == 50.0
+        keeps = detail["explanation"]["keeps"]
+        assert keeps and keeps[0]["evaluated"] is False
+
+    def test_an_unmatched_item_leads_with_the_plain_cause(self, client: TestClient) -> None:
+        """The card's one-liner. Three gates each report "could not check X: Plex has not
+        matched this item"; the owner should read the shared cause once, in plain words,
+        not the first gate's engineer-speak."""
+        abstained = client.get("/api/candidates?verdict=abstain").json()
+
+        assert abstained[0]["reason"] == "Kept to be safe: it couldn't be found in Plex."
+
     def test_a_missing_candidate_is_a_404(self, client: TestClient) -> None:
         assert client.get("/api/candidates/9999").status_code == 404
 
@@ -475,6 +548,30 @@ class TestTheSimulator:
         number, which needs no API call and is not an approximation."""
         assert self._simulate(client, 50)["exact"] is True
 
+    def test_it_names_what_a_change_would_newly_condemn(self, client: TestClient) -> None:
+        """A count is abstract; a title the owner recognises is what stops a bad
+        threshold. Dropping the coverage floor pulls in the barely-seen item -- and the
+        example names it, highest score first."""
+        result = client.post(
+            "/api/policy/simulate",
+            json=_policy(condemn_at=40, coverage_floor_bp=0),
+        ).json()
+
+        assert result["newly_condemned"] == 1
+        assert result["examples_newly_condemned"] == [
+            {"title": "Unmatched", "year": None, "score": 50}
+        ]
+
+    def test_examples_are_empty_when_nothing_new_is_flagged(self, client: TestClient) -> None:
+        result = self._simulate(client, 95)  # stricter than the stored 91: nothing new
+        assert result["examples_newly_condemned"] == []
+
+    def test_it_tallies_which_protection_spared_the_kept_items(self, client: TestClient) -> None:
+        """The protected fixture was saved by its rating. The simulator says so in
+        aggregate, from the same stored explanation the why-panel renders."""
+        result = self._simulate(client, 70)
+        assert result["protected_by"] == [{"gate": "rating_floor", "count": 1}]
+
 
 class TestTheSimulatorRefusesToGuess:
     """The trap this class exists to close.
@@ -503,6 +600,10 @@ class TestTheSimulatorRefusesToGuess:
         assert result["condemned"] == 0
         assert result["reclaimable_bytes"] == 0
         assert sum(result["histogram"]) == 0  # type: ignore[arg-type]
+        # No examples and no spared-by tally either: stale names would be acted on
+        # exactly like stale counts.
+        assert result["examples_newly_condemned"] == []
+        assert result["protected_by"] == []
 
     def test_the_refusal_says_what_to_do_about_it(self, client: TestClient) -> None:
         """An error the owner cannot act on is only marginally better than a wrong
@@ -534,6 +635,30 @@ class TestTheSimulatorRefusesToGuess:
         result = self._simulate(client, _policy(gates=without))
 
         assert result["exact"] is False
+
+
+class TestVocabularyValues:
+    """Seen-value suggestions for the rule editors. Suggestions, never a gate: typing a
+    value that is not in the list stays valid, so this endpoint fails open to empty."""
+
+    def test_genres_come_from_the_latest_scan_most_common_first(self, client: TestClient) -> None:
+        body = client.get("/api/vocabulary/values", params={"field": "genre"}).json()
+
+        # Drama is on two candidates, Documentary on one.
+        assert body == {"field": "genre", "values": ["Drama", "Documentary"]}
+
+    def test_quality_values_break_frequency_ties_alphabetically(self, client: TestClient) -> None:
+        body = client.get("/api/vocabulary/values", params={"field": "quality"}).json()
+
+        assert body["values"] == ["Bluray-1080p", "WEBDL-1080p"]
+
+    def test_an_unknown_field_is_empty_not_an_error(self, client: TestClient) -> None:
+        """A numeric or unheard-of field has nothing to suggest. That is not a fault --
+        the input keeps working with no suggestions at all."""
+        response = client.get("/api/vocabulary/values", params={"field": "days_unwatched"})
+
+        assert response.status_code == 200
+        assert response.json()["values"] == []
 
 
 class TestPolicyPersistence:

@@ -190,3 +190,6 @@ the file* and *failing closed*. Read them before touching the safety, auth, or c
     and keep internal vocabulary out of the UI: no rating keys, no tmdb/imdb/tvdb ids, no
     "collision"/"abstain-as-jargon"/"guard"/"coverage bp". If a normal person wouldn't say
     it, reword it. This applies to notices, tooltips, empty states, and error text alike.
+    **No em dashes in operator-facing copy** (frontend strings and backend `detail`/message
+    strings alike): reword with a period, comma, or colon. Middots as separators
+    ("70/100 · 20% of the score") and arrows ("Policy → Deletion") are fine.

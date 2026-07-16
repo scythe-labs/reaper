@@ -216,7 +216,7 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
         case SignalId.SEASON_RANK:
             raw = _numeric(facts.season_rank)
             detail = (
-                f"an older season — number {raw:.0f} counting back from the newest"
+                f"an older season: number {raw:.0f} counting back from the newest"
                 if raw is not None
                 else "could not tell which season this is"
             )

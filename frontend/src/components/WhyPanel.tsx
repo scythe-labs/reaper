@@ -108,14 +108,14 @@ function Verdict({ item }: { item: CandidateDetail }) {
 
       {verdict === "protect" && (
         <p className="verdict-note">
-          Something is protecting this, so <strong>the score doesn't matter</strong> &mdash; it's
-          kept no matter what, and nothing can change that.
+          Something is protecting this, so <strong>the score doesn't matter</strong>: it's kept
+          no matter what, and nothing can change that.
         </p>
       )}
       {verdict === "abstain" && (
         <p className="verdict-note">
           Reaper is not confident enough to judge this one. It scored below your threshold, or
-          too little of it could be seen &mdash; either way, abstaining keeps the file.
+          too little of it could be seen. Either way, abstaining keeps the file.
         </p>
       )}
     </div>
@@ -134,7 +134,7 @@ function Signal({ signal }: { signal: CandidateDetail["explanation"]["signals"][
     <li className={signal.evaluated ? "signal" : "signal signal-unknown"}>
       <div className="signal-head">
         <span className="signal-amount">
-          {signal.evaluated ? `+${signal.contribution.toFixed(1)}` : "—"}
+          {signal.evaluated ? `+${signal.contribution.toFixed(1)}` : "·"}
           <span className="muted">/{signal.weight}</span>
         </span>
         <span className="signal-detail">{signal.detail}</span>
@@ -144,7 +144,7 @@ function Signal({ signal }: { signal: CandidateDetail["explanation"]["signals"][
       </div>
       {!signal.evaluated && (
         <p className="signal-note">
-          Reaper couldn't check this one, so it added nothing — which can only pull the score{" "}
+          Reaper couldn't check this one, so it added nothing, which can only pull the score{" "}
           <em>down</em>, never up.
         </p>
       )}
@@ -161,13 +161,9 @@ function Gates({
   title: string;
   blurb: string;
   outcomes: GateOutcome[];
-  tone: "fired" | "checked" | "unknown";
+  tone: "fired" | "checked";
 }) {
   if (outcomes.length === 0) return null;
-
-  // fired/checked get a check; the "left for you" rows are the solid amber notice and carry
-  // no mark -- the amber box itself is the signal, matching the "kept to be safe" notice.
-  const mark = tone === "unknown" ? null : "✓";
 
   return (
     <section className="block">
@@ -176,10 +172,104 @@ function Gates({
       <ul className={`gates gates-${tone}`}>
         {outcomes.map((outcome) => (
           <li key={outcome.gate}>
-            {mark && <span className="gate-mark">{mark}</span>}
+            <span className="gate-mark">✓</span>
             <span className="gate-detail">{outcome.detail}</span>
           </li>
         ))}
+      </ul>
+    </section>
+  );
+}
+
+/** The backend words each unchecked protection as "could not check {check}: {cause}"
+ *  (engine/gates.py `_blocked` and the custom-rule evaluator). Both vocabularies are
+ *  closed and colon-free, so the first ": " splits them reliably; anything that doesn't
+ *  parse (a season-order conflict, a named custom rule's wrapped detail) keeps its own
+ *  row with the raw sentence, exactly as before. */
+const CHECK_COPY: Record<string, string> = {
+  "watch history": "watch history",
+  "when it was last watched": "when it was last watched",
+  "the watch horizon": "how far back its history goes",
+  "active streams": "whether anyone is watching",
+  "the IMDb rating": "its IMDb rating",
+  "the IMDb vote count": "its IMDb vote count",
+  "the whitelist": "your keep list",
+  "curated lists": "protected lists",
+  "which *arr owns this": "which app manages it",
+  "who else watched it": "who else watched it",
+};
+
+const CAUSE_COPY: Record<string, string> = {
+  "Plex has not matched this item": "This title couldn't be found in Plex.",
+  "Plex has not matched this season": "This season couldn't be found in Plex.",
+  "more than one Plex item matches this title": "This looks like more than one thing in Plex.",
+  "more than one Plex item matches this show":
+    "This show looks like more than one thing in Plex.",
+  "no added-at date": "Plex didn't say when this was added.",
+  "no added-at date for this season": "Plex didn't say when this season was added.",
+  "could not read active sessions": "Reaper couldn't see what's playing right now.",
+  "could not reach the requests app": "The requests app couldn't be reached.",
+  "requests not loaded": "Requests weren't loaded for this scan.",
+  "no TMDb id to match a request": "It couldn't be matched to a request.",
+  "no TVDb id to match a request": "It couldn't be matched to a request.",
+  "Sonarr did not report series status": "Sonarr didn't say whether the show has ended.",
+  "season has no rank": "Reaper couldn't tell which season this is.",
+};
+
+function joinChecks(checks: string[]): string {
+  if (checks.length === 1) return checks[0] ?? "";
+  if (checks.length === 2) return `${checks[0]} and ${checks[1]}`;
+  return `${checks.slice(0, -1).join(", ")}, and ${checks[checks.length - 1]}`;
+}
+
+/** "Left for you to decide", grouped by cause. Three rows all ending in "Plex has not
+ *  matched this item" told the owner the same thing three times; one box states the cause
+ *  once and lists what it blocked. Causes keep first-appearance order; unparseable details
+ *  render verbatim as their own box. */
+function LeftForYou({ outcomes }: { outcomes: GateOutcome[] }) {
+  if (outcomes.length === 0) return null;
+
+  const groups = new Map<string, { cause: string; checks: string[] }>();
+  const rows: ({ kind: "group"; key: string } | { kind: "raw"; outcome: GateOutcome })[] = [];
+  for (const outcome of outcomes) {
+    const parsed = /^could not check (.+?): (.+)$/.exec(outcome.detail);
+    if (!parsed || !parsed[1] || !parsed[2]) {
+      rows.push({ kind: "raw", outcome });
+      continue;
+    }
+    const check = CHECK_COPY[parsed[1]] ?? parsed[1];
+    const cause = CAUSE_COPY[parsed[2]] ?? `${parsed[2]}.`;
+    const group = groups.get(cause);
+    if (group) {
+      if (!group.checks.includes(check)) group.checks.push(check);
+    } else {
+      groups.set(cause, { cause, checks: [check] });
+      rows.push({ kind: "group", key: cause });
+    }
+  }
+
+  return (
+    <section className="block">
+      <h3>Left for you to decide</h3>
+      <p className="blurb">
+        Reaper wasn't sure enough to act on these on its own: a rule was too close to call, or
+        something couldn't be reached. Everything here is kept, never removed, until you look.
+      </p>
+      <ul className="gates gates-unknown">
+        {rows.map((row) =>
+          row.kind === "raw" ? (
+            <li key={row.outcome.gate + row.outcome.detail}>
+              <span className="gate-detail">{row.outcome.detail}</span>
+            </li>
+          ) : (
+            <li key={row.key}>
+              <strong>{row.key}</strong>
+              <span className="gate-detail">
+                Couldn't check: {joinChecks(groups.get(row.key)?.checks ?? [])}.
+              </span>
+            </li>
+          ),
+        )}
       </ul>
     </section>
   );
@@ -218,8 +308,8 @@ export function WhyPanel({ item, onClose }: { item: CandidateDetail; onClose: ()
 
       {item.first_flagged_at && (
         <p className="flagged">
-          On the list since {since(item.first_flagged_at)}. It waits out a grace period —
-          which you can cancel — before Reaper can remove it.
+          On the list since {since(item.first_flagged_at)}. It waits out a grace period,
+          which you can cancel, before Reaper can remove it.
         </p>
       )}
 
@@ -258,7 +348,7 @@ export function WhyPanel({ item, onClose }: { item: CandidateDetail; onClose: ()
                 </div>
                 {!keep.evaluated && (
                   <p className="signal-note">
-                    Reaper couldn’t check this one, so it kept the file fully — missing data only
+                    Reaper couldn’t check this one, so it kept the file fully: missing data only
                     ever leans toward <em>keeping</em>.
                   </p>
                 )}
@@ -276,22 +366,13 @@ export function WhyPanel({ item, onClose }: { item: CandidateDetail; onClose: ()
       />
 
       <Gates
-        title="Protections that were checked — and did not fire"
+        title="Protections that were checked and did not fire"
         blurb="What Reaper looked for and did not find. The numbers are the ones it actually used."
         outcomes={explanation.protections_checked}
         tone="checked"
       />
 
-      <Gates
-        title="Left for you to decide"
-        blurb={
-          "Reaper wasn't sure enough to act on these on its own — a rule was too close to " +
-          "call, or something couldn't be reached. Everything here is kept, never removed, " +
-          "until you look."
-        }
-        outcomes={explanation.protections_unknown}
-        tone="unknown"
-      />
+      <LeftForYou outcomes={explanation.protections_unknown} />
     </aside>
   );
 }

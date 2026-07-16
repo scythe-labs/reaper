@@ -53,7 +53,7 @@ export function GracePanel() {
   return (
     <details className="grace" open={data.ready_count > 0}>
       <summary>
-        Grace &amp; countdown —{" "}
+        Grace &amp; countdown ·{" "}
         <strong>{count(data.in_grace_count)}</strong>
         <span className="muted"> in grace ({bytes(data.total_bytes_in_grace)})</span>
         {data.in_grace_count > 0 && soonest !== undefined && (
@@ -70,7 +70,7 @@ export function GracePanel() {
 
       <p className="blurb">
         A condemned item waits out {data.grace_days} days before it is eligible to be
-        reaped. Cancel resets nothing else — it spares the file, so it leaves the queue and
+        reaped. Cancel resets nothing else. It spares the file, so it leaves the queue and
         the plan too.
       </p>
 

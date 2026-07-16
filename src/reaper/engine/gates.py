@@ -266,7 +266,7 @@ class RatingFloorGate:
                 self.id,
                 ABSTAIN,
                 detail=(
-                    f"rated {rating_value / 10:.1f} on IMDb, but from only {vote_value:,} votes — "
+                    f"rated {rating_value / 10:.1f} on IMDb, but from only {vote_value:,} votes, "
                     f"too few to trust (you need {min_votes:,})"
                 ),
             )
@@ -275,7 +275,7 @@ class RatingFloorGate:
                 self.id,
                 PROTECT,
                 detail=(
-                    f"well rated — {rating_value / 10:.1f} on IMDb from {vote_value:,} votes, "
+                    f"well rated: {rating_value / 10:.1f} on IMDb from {vote_value:,} votes, "
                     f"at or above the {floor / 10:.1f} you keep"
                 ),
             )
@@ -283,7 +283,7 @@ class RatingFloorGate:
             self.id,
             ABSTAIN,
             detail=(
-                f"rated {rating_value / 10:.1f} on IMDb from {vote_value:,} votes — "
+                f"rated {rating_value / 10:.1f} on IMDb from {vote_value:,} votes, "
                 f"below the {floor / 10:.1f} you keep"
             ),
         )
@@ -331,7 +331,7 @@ class ServerPopularityGate:
             return GateResult(
                 self.id,
                 PROTECT,
-                detail=f"watched here — {count} {people} in the last {window_text}",
+                detail=f"watched here: {count} {people} in the last {window_text}",
             )
         if count == 0:
             return GateResult(
@@ -367,7 +367,7 @@ class WhitelistGate:
             return blocked
         listed = facts.is_whitelisted
         if isinstance(listed, Known) and listed.value:
-            return GateResult(self.id, PROTECT, detail="on your keep list — never reaped")
+            return GateResult(self.id, PROTECT, detail="on your keep list, never reaped")
         return GateResult(self.id, ABSTAIN, detail="Not on your keep list.")
 
 
@@ -428,11 +428,14 @@ class MinDormancyGate:
             )
 
         if dormant.value < floor:
+            # "Untouched", not "last watched": for a never-played item the clock runs from
+            # the day it arrived, and claiming a watch that never happened would be a lie
+            # in the one panel whose job is to be believed.
             return GateResult(
                 self.id,
                 PROTECT,
                 detail=(
-                    f"last watched {humanize_days(dormant.value)} ago — sooner than the "
+                    f"untouched for just {humanize_days(dormant.value)}, less than the "
                     f"{humanize_days(floor)} Reaper waits before removing anything. Titles left "
                     "alone for under three years still get watched again a fifth to a third of the "
                     "time."
@@ -442,7 +445,7 @@ class MinDormancyGate:
             self.id,
             ABSTAIN,
             detail=(
-                f"Untouched for {humanize_days(dormant.value)} — past the "
+                f"Untouched for {humanize_days(dormant.value)}, past the "
                 f"{humanize_days(floor)} it has to sit unwatched first."
             ),
         )
@@ -519,8 +522,8 @@ class OthersWatchingGate:
                 self.id,
                 PROTECT,
                 detail=(
-                    f"{count} other {'person is' if count == 1 else 'people are'} watching it — "
-                    "removing it would punish them for someone else's request"
+                    f"{count} other {'person is' if count == 1 else 'people are'} watching it. "
+                    "Removing it would punish them for someone else's request"
                 ),
             )
         return GateResult(

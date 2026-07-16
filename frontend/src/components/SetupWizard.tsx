@@ -44,7 +44,7 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
   const scanMsg = scanState?.error
     ? scanState.error
     : scanning
-      ? `${scanState!.phase}${scanState!.detail ? ` — ${scanState!.detail}` : ""}`
+      ? `${scanState!.phase}${scanState!.detail ? ` · ${scanState!.detail}` : ""}`
       : null;
 
   const runFirstScan = async () => {
@@ -73,8 +73,8 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
           <div>
             <h1>Welcome to Reaper</h1>
             <p className="muted">
-              Two quick things and you're running. Everything here only reads your library —
-              nothing can be deleted until you say so.
+              Two quick things and you're running. Everything here only reads your library.
+              Nothing can be deleted until you say so.
             </p>
           </div>
         </div>
@@ -85,13 +85,13 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
 
       <ol className="setup-checklist">
         <Check done={setup.has_radarr}>
-          <strong>Connect Radarr</strong> — where your movies live <em>(required)</em>
+          <strong>Connect Radarr</strong>: where your movies live <em>(required)</em>
         </Check>
         <Check done={setup.has_tautulli}>
-          <strong>Connect Tautulli</strong> — your watch history <em>(required)</em>
+          <strong>Connect Tautulli</strong>: your watch history <em>(required)</em>
         </Check>
         <Check done={setup.has_seerr || setup.has_scanned}>
-          <strong>Connect Sonarr / Seerr</strong> — for TV pruning and requests <em>(optional)</em>
+          <strong>Connect Sonarr / Seerr</strong>: for TV pruning and requests <em>(optional)</em>
         </Check>
         <Check done={setup.has_scanned}>
           <strong>Run your first scan</strong>
@@ -108,7 +108,7 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
               <h2>Ready to scan</h2>
               <p className="muted">
                 Radarr and Tautulli are connected. Run a first scan to see what Reaper would
-                reap — it only reads, and you approve every deletion by hand later.
+                reap. It only reads, and you approve every deletion by hand later.
               </p>
             </div>
             <button className="primary btn-lg" onClick={runFirstScan} disabled={scanning}>

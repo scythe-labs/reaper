@@ -5,7 +5,7 @@
 // A deliberate gauntlet, and every gate resolves toward NOT deleting:
 //   1. A dry run walks the whole plan and sends nothing. Execute stays disabled until it
 //      completes cleanly — you cannot reap a plan that hasn't proven itself.
-//   2. Deletion must be armed on the host (Settings → Safety). If it's off, we say so and
+//   2. Deletion must be armed on the host (Policy → Deletion). If it's off, we say so and
 //      link there; there is no way to arm it from here.
 //   3. You must type the exact content-bound phrase ("REAP 1 ITEMS 0 GB"). It carries the
 //      count and size, so muscle memory can't carry you through and a stale plan reads as
@@ -86,13 +86,13 @@ export function ReapConfirm({
         {dry.error && <p className="error">{dry.error.message}</p>}
         {report?.dry_run && report.state === "aborted" && (
           <div className="sim sim-stale">
-            <strong>The plan aborted — nothing would be touched.</strong>
+            <strong>The plan aborted. Nothing would be touched.</strong>
             <p>{report.aborted_reason}</p>
           </div>
         )}
         {dryClean && (
           <p className="dry-ok">
-            <span className="gate-mark">✓</span> Dry run passed — the plan is sound and sent
+            <span className="gate-mark">✓</span> Dry run passed: the plan is sound, and it sent
             nothing.
           </p>
         )}
@@ -102,7 +102,7 @@ export function ReapConfirm({
           <div className="reap-arm">
             {!armed ? (
               <p className="reap-disarmed">
-                Deletion is <strong>off</strong>. Turn it on in <em>Settings → Safety</em> (it
+                Deletion is <strong>off</strong>. Turn it on in <em>Policy → Deletion</em> (it
                 asks for your admin password), then come back here.
               </p>
             ) : (

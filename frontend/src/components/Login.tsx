@@ -324,8 +324,8 @@ export function Login() {
           </button>
 
           <p className="auth-safety">
-            Reaper can permanently delete media. Only the server’s owner is admitted —
-            authenticating with Plex is not enough.
+            Reaper can permanently delete media. Only the server’s owner is admitted.
+            Authenticating with Plex is not enough.
           </p>
         </div>
       )}
