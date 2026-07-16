@@ -91,7 +91,7 @@ class Settings(BaseSettings):
 
     # --- Notifications --------------------------------------------------------
     # The Discord webhook is the *real* notification channel -- the "Leaving Soon"
-    # Plex collection only reaches users who have pinned the library, which we cannot
+    # Plex label only reaches users who have pinned the library, which we cannot
     # force. The whole URL is a credential (its token lives in the path), so it is a
     # SecretStr and is redacted from logs.
     #

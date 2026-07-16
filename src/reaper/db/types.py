@@ -27,7 +27,7 @@ unix ints already, so this is the format the data arrives in.
 Trade-off, stated plainly: raw SQL is less readable. Use SQLite's own conversion
 when poking at the database by hand::
 
-    SELECT datetime(last_played, 'unixepoch') FROM media_item;
+    SELECT datetime(first_flagged_at, 'unixepoch') FROM first_flagged;
 
 Precision is whole seconds. Nothing in Reaper is sub-second -- watch history is
 recorded in seconds -- and rows that need a stable tiebreak order by their

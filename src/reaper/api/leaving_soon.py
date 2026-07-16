@@ -30,7 +30,8 @@ router = APIRouter(prefix="/api")
 
 
 async def _safety(request: Request) -> RuntimeSafety:
-    """The effective safety state, reading the env ceiling AND the in-app emergency stop."""
+    """Whether deletion is on right now: the stored toggle, falling back to the env
+    default on a fresh install. Never the env var alone -- see app_settings.runtime_safety."""
     settings: Settings = request.app.state.settings
     async with request.app.state.session_factory() as session:
         return await app_settings.runtime_safety(session, settings)

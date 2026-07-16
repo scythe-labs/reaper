@@ -2,12 +2,12 @@
 """The configuration surface: instances, safety, schedule, setup status.
 
 These are the routes a first-run install lives on -- adding the services Reaper reads
-from, seeing what is left to set up, and throwing the emergency stop. The load-bearing
+from, seeing what is left to set up, and turning deletion on and off. The load-bearing
 properties, each pinned here:
 
 * an API key goes in encrypted and never comes back out;
-* the emergency stop can only make Reaper *safer* -- it subtracts from the host ceiling,
-  never adds to it;
+* a fresh install starts read-only, and the asymmetry holds: turning deletion ON needs
+  the admin password, turning it OFF needs nothing;
 * the setup status tells the wizard exactly what is still missing.
 """
 

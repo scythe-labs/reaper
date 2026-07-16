@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# A working Reaper deployment. Copy it, adjust, then: docker compose up -d
+#
+# Reaper needs no access to your media. It has no filesystem delete path at all --
+# everything goes through Sonarr and Radarr -- so the only volume here is its own
+# small database. If you find yourself mounting your library, something is wrong.
+
+services:
+  reaper:
+    # CI publishes this on every push: :dev tracks the dev branch, :latest follows main,
+    # and every build is also tagged with its short commit sha if you want to pin one.
+    # Pre-release, use :dev.
+    #
+    # This registry refused an anonymous pull:
+    #   docker login <registry>
+    #
+    # Overridable so a fork can point this at its own registry without editing the file
+    # (the CI derives its image path the same way, rather than hardcoding a host):
+    #   REAPER_IMAGE=your-registry/you/reaper:dev docker compose up -d
+    image: ${REAPER_IMAGE:-ghcr.io/scythe-labs/reaper:dev}
+
+    # Building it yourself instead of pulling? Uncomment, and `docker compose up -d --build`.
+    # build: .
+
+    container_name: reaper
+    restart: unless-stopped
+
+    ports:
+      # Left side is the port on your machine. The right side is fixed: the container
+      # always serves on 8420, and REAPER_PORT does not move it (the image's CMD
+      # passes the port to uvicorn directly).
+      - "8420:8420"
+
+    volumes:
+      # A named volume works with no setup: Docker seeds it from the image, where /data
+      # is already owned by the unprivileged `reaper` user (uid 1000) that the container
+      # runs as.
+      #
+      # To bind-mount a host directory instead -- easier to back up, and what you want on
+      # a NAS -- replace the line below with `./data:/data` and create it with the right
+      # owner FIRST. Docker would otherwise create it owned by root, and Reaper never runs
+      # as root, so it could not write its database and the container would restart-loop:
+      #
+      #   mkdir -p ./data && sudo chown -R 1000:1000 ./data
+      #
+      # There is no PUID/PGID support. The uid is baked into the image.
+      - reaper-data:/data
+
+    environment:
+      # Whether a BRAND NEW install comes up able to delete. This seeds the first run
+      # only: once you have set it in the web UI (Policy -> Deletion, which asks for your
+      # admin password) the stored value wins and this is ignored. Leave it false and
+      # read the scores for a while first.
+      REAPER_DESTRUCTIVE_ACTIONS_ENABLED: "false"
+
+      REAPER_LOG_LEVEL: INFO
+      # Set true to emit one JSON object per line, for a log collector.
+      REAPER_LOG_JSON: "false"
+
+      # Encrypts the API keys stored in the database. Leave it unset and Reaper generates
+      # one on first boot at /data/secret.key (mode 0600) and reuses it. Back that file up
+      # WITH the database: losing it means re-entering every credential. Set it here to
+      # manage the key yourself, and Reaper writes no key file at all. Generate one with:
+      #   python -c "import secrets; print(secrets.token_urlsafe(32))"
+      # REAPER_SECRET_KEY: "..."
+
+      # Anti-lockout. Set true and restart to print a single-use, 15-minute login link to
+      # the log, then set it back to false. See: docker compose logs reaper | grep -A2 RECOVERY
+      # REAPER_RECOVERY: "false"
+
+      # Let the reversible "Leaving Soon" Plex label be written while deletion is still
+      # off, so your users see the warning during the grace countdown rather than after
+      # you arm Reaper. It can never permit a file delete.
+      # REAPER_ALLOW_UNARMED_LEAVING_SOON: "false"
+
+      # Optional: seed integrations on first boot, for a declarative deployment. These are
+      # imported into the database, encrypted, and can then be removed -- Reaper logs when
+      # that is safe. An instance that already exists is never overwritten from here, so a
+      # key rotated in the UI cannot be clobbered by a stale value left below. <NAME> is
+      # free-form and becomes the display name. Plex is not seeded: it is linked with
+      # "Sign in with Plex" in the web UI.
+      # REAPER_SONARR_HD_URL: "https://sonarr.example.net"
+      # REAPER_SONARR_HD_API_KEY: "..."
+      # REAPER_RADARR_HD_URL: "https://radarr.example.net"
+      # REAPER_RADARR_HD_API_KEY: "..."
+      # REAPER_TAUTULLI_MAIN_URL: "https://tautulli.example.net"
+      # REAPER_TAUTULLI_MAIN_API_KEY: "..."
+
+      # Optional: tells your users what is leaving soon. The whole URL is a secret. This
+      # is a first-boot seed too; the web UI is the source of truth afterwards.
+      # REAPER_DISCORD_WEBHOOK: "https://discord.com/api/webhooks/..."
+
+    # No healthcheck block is needed: the image declares one against /api/health, so
+    # `docker compose ps` reports real health out of the box.
+
+volumes:
+  reaper-data:

@@ -524,10 +524,9 @@ round closed that gap end to end, backend then frontend, and verified it live in
   `services/scan_runner.py` so the SSE route and the timer run the identical path.
 - **The emergency stop is finally wired.** It was defined on `RuntimeSafety` but never read
   from anywhere — every construction site passed only `env_enabled`. Now
-  `services/app_settings.runtime_safety` assembles both switches (host ceiling + DB stop) at
-  every site, and the Safety panel surfaces the arm-state plainly. The asymmetry holds: the
-  browser can only ever *subtract* — engaging the stop blocks deletion; clearing it cannot
-  arm anything, because enabling deletion stays a host env flag.
+  `services/app_settings.runtime_safety` assembles the effective permission at every site,
+  and the Safety panel surfaces the arm-state plainly. *(Superseded: the two-switch model
+  described here was later collapsed into a single stored toggle. See §12.)*
 - **Candidate enrichment + a redesigned review queue.** Candidates now carry a poster, a
   plain-English blurb, a year, a "requested by", and show-grouping — all captured at scan
   time from data already in hand (the *arr payloads and a Seerr join), no extra Tautulli
@@ -729,9 +728,25 @@ AND NOT emergency_stop`, and a UI story around it. But every construction site b
 `RuntimeSafety(env_enabled=...)` and nothing ever read the DB, so the switch controlled
 nothing. A safety control that silently does nothing is worse than none.
 
-⇒ One helper (`app_settings.runtime_safety`) now assembles both switches, used everywhere a
-client or a health check is built, with a test asserting an engaged stop actually flips the
-effective permission (and that clearing it cannot, alone, arm).
+⇒ One helper (`app_settings.runtime_safety`) now assembles the effective permission, used
+everywhere a client or a health check is built.
+
+**Superseded — the two-switch model is gone, and the docs did not notice for a long time.**
+The host-ceiling / emergency-stop pair was collapsed into a single stored toggle:
+`destructive_allowed` is now `RuntimeSafety.destructive_enabled` alone, sourced from the DB,
+with `REAPER_DESTRUCTIVE_ACTIONS_ENABLED` seeding only the first run (`app_settings.
+destructive_enabled` falls back to it solely when nothing is stored). There is no
+`emergency_stop` field. So the old guarantee — *nothing reachable from a browser can arm
+Reaper* — **no longer holds**: the password-gated `PUT /api/settings/safety` arms it, and
+`tests/test_settings_api.py::TestSafety` pins exactly that, with the env var false. The
+admin password is now the only thing between a browser and an armed Reaper.
+
+⇒ The lesson is the drift, not the design: `README.md` and `.env.example` went on promising
+the ceiling ("Turning deletion on requires host access") long after it was removed, and two
+docstrings still described switches that no longer existed. A safety claim nobody re-checked
+is the same failure as §12 itself, one level up — see engineering rule 7. Corrected to
+describe the stored toggle. **If the host ceiling is wanted back, it is a code change, not a
+doc change.**
 
 ---
 
