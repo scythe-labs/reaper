@@ -71,6 +71,15 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"  # noqa: S104 -- a container must bind all interfaces
     port: int = 8420
 
+    # The shipped container is a single service: this process serves the API *and* the
+    # built SPA from frontend/dist on one port. Development is the exception -- Vite
+    # serves the UI live on its own port and proxies /api here, so mounting dist as well
+    # would put a second UI on this port, frozen at whatever the last `npm run build`
+    # produced. It looks identical right up until you edit a component, and then it
+    # silently lags. Turning this off (see .claude/launch.json) leaves exactly one UI in
+    # development. Production must leave it on.
+    serve_spa: bool = True
+
     # --- Secrets --------------------------------------------------------------
     # REAPER_SECRET_KEY decrypts every stored credential, so changing it to a *fresh*
     # value would render them all unreadable. To rotate, set the new key here and the

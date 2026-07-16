@@ -204,13 +204,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # The built SPA, served as low-priority routes: every /api route above is matched
     # first, and only then does the frontend get a look. Missing paths fall back to
     # index.html so client-side routing survives a refresh or a bookmarked deep link.
+    # This is what makes the shipped container one service on one port.
     #
-    # Absent in development -- Vite serves the app on its own port and proxies /api
-    # here -- so this is conditional rather than check_dir=False. A missing dist in
-    # *production* is a broken image, and should not be papered over by silently
-    # serving 404s from a directory that was never built.
+    # Off in development (REAPER_SERVE_SPA=false, set in .claude/launch.json), because
+    # Vite serves the UI on its own port and proxies /api here; mounting dist too would
+    # leave a stale second copy of the UI on this one. A missing dist in *production* is
+    # a broken image, and should not be papered over by silently serving 404s from a
+    # directory that was never built -- so that case still warns rather than passing.
     dist = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
-    if dist.is_dir():
+    if not settings.serve_spa:
+        log.info(
+            "frontend.not_served",
+            detail="REAPER_SERVE_SPA is off. This process serves the API only; "
+            "the Vite dev server serves the UI.",
+        )
+    elif dist.is_dir():
         app.frontend("/", directory=dist)
     else:
         log.info(

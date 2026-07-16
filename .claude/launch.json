@@ -5,7 +5,10 @@
       "name": "reaper-api",
       "runtimeExecutable": "uv",
       "runtimeArgs": ["run", "uvicorn", "reaper.main:create_app", "--factory", "--reload", "--port", "8420"],
-      "port": 8420
+      "port": 8420,
+      "env": {
+        "REAPER_SERVE_SPA": "false"
+      }
     },
     {
       "name": "reaper-frontend",
