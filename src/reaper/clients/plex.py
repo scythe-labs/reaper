@@ -192,6 +192,17 @@ class PlexClient:
         self._token = token
         self._safety = safety
         self._server: PlexServer | None = None
+        # The scan runs the movie and show GUID sweeps concurrently with its other
+        # gathers. Both sweeps ride ONE plexapi server (one requests.Session), and
+        # requests does not promise a Session is safe to share across threads -- so the
+        # sweeps take this lock and run one at a time, while still overlapping with the
+        # Tautulli and *arr reads that dominate the wall clock.
+        self._sweep_lock = asyncio.Lock()
+        # And the "one server" premise itself needs a lock: two concurrent callers both
+        # seeing _server is None would each build a connection, leaving one session
+        # leaked and the sweeps split across two sessions -- exactly what _sweep_lock
+        # claims cannot happen.
+        self._connect_lock = asyncio.Lock()
 
     async def connect(self) -> PlexServer:
         """The underlying plexapi server, connected once and reused.
@@ -203,8 +214,9 @@ class PlexClient:
         return await self._connect()
 
     async def _connect(self) -> PlexServer:
-        if self._server is not None:
-            return self._server
+        connected = self._server
+        if connected is not None:
+            return connected
 
         def build() -> PlexServer:
             from plexapi.server import PlexServer as _PlexServer
@@ -215,11 +227,18 @@ class PlexClient:
                 self._base_url, self._token, session=GuardedSession(self._safety)
             )
 
-        try:
-            self._server = await asyncio.to_thread(build)
-        except Exception as exc:
-            raise PlexError(f"Could not reach Plex at {self._base_url}: {exc}") from exc
-        return self._server
+        async with self._connect_lock:
+            # Re-checked under the lock: a concurrent caller may have connected while
+            # this one waited, and building twice would leak a session.
+            connected = self._server
+            if connected is not None:
+                return connected
+            try:
+                built = await asyncio.to_thread(build)
+            except Exception as exc:
+                raise PlexError(f"Could not reach Plex at {self._base_url}: {exc}") from exc
+            self._server = built
+            return built
 
     # -- reading -----------------------------------------------------------
 
@@ -400,12 +419,13 @@ class PlexClient:
                     )
             return out
 
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(
-                f"Could not sweep Plex GUIDs for {section_type} sections: {exc}"
-            ) from exc
+        async with self._sweep_lock:
+            try:
+                return await asyncio.to_thread(read)
+            except Exception as exc:
+                raise PlexError(
+                    f"Could not sweep Plex GUIDs for {section_type} sections: {exc}"
+                ) from exc
 
     async def item_count(self, section_title: str) -> int:
         """How many items a section holds. The input to the trash interlock."""

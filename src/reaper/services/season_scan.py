@@ -26,8 +26,9 @@ Plex calls to the shows that actually have something removable.
 ## The season -> Plex rating key join (verify against a live server)
 
 There is no Tautulli sweep that lists seasons; ``get_library_media_info`` returns
-show-level rows only. So a show's seasons are resolved one show at a time via
-``get_children_metadata``, and two field assumptions are load-bearing and must be
+show-level rows only. So a show's seasons are resolved via one
+``get_children_metadata`` call per show (several shows in flight at once, bounded by
+``RESOLVE_CONCURRENCY``), and two field assumptions are load-bearing and must be
 checked against a real instance before the first live TV reap:
 
 1. A show row from ``get_library_media_info`` carries ``rating_key`` and ``year``, and
@@ -45,6 +46,7 @@ isolated in a pure function with a fail-closed default rather than trusted inlin
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -54,8 +56,9 @@ import structlog
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from reaper.aio import gather_reaped
 from reaper.clients.base import IntegrationError
-from reaper.clients.plex import PlexClient, PlexError
+from reaper.clients.plex import PlexClient
 from reaper.clients.sonarr_stats import SeasonStats, parse_season_stats, rank_seasons
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
@@ -65,7 +68,7 @@ from reaper.engine.gates import PROTECT as GATE_PROTECT
 from reaper.engine.gates import Facts, GateId, GateResult
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.ratings import Rating
-from reaper.services import lists, requested_by
+from reaper.services import library_index, lists, requested_by
 from reaper.services.display_meta import build_ratings_json
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
 from reaper.services.season_pruning import (
@@ -78,6 +81,11 @@ log = structlog.get_logger(__name__)
 
 #: Fail-safe default for the optional custom-rule fact observations (see gates._UNSET).
 _UNSET_OBS: Absent = Absent(source="unset")
+
+#: How many shows to resolve against Tautulli / Sonarr at once. High enough to collapse
+#: hundreds of sequential round trips into a few batches; low enough that a modest
+#: self-hosted service sees a handful of concurrent reads, never a stampede.
+RESOLVE_CONCURRENCY = 4
 
 
 def _series_summary(series: Mapping[str, Any]) -> str | None:
@@ -435,69 +443,11 @@ async def build_tv_index(
 ) -> identity.PlexIndex:
     """The Plex show library, inverted for id / basename / title matching.
 
-    The same shape as the movie ``build_movie_index``: the Tautulli show sweep is the
-    spine (rating_key / title / year / added_at -- though a show's own added_at is not used
-    for dormancy, which is measured per season), enriched by the plexapi GUID sweep of the
-    show sections. And the same staleness fix: the spine is a Tautulli-side cache that lags
-    fresh additions, so any show the plexapi sweep returns that the spine did not list is
-    appended as its own row rather than silently reported as "Plex has not matched". A
-    failed sweep degrades the snapshot (never a silent fall back to title-only) and leaves
-    ids empty so shows still match by title+year.
+    One shared implementation with ``snapshot.build_movie_index`` -- see
+    ``services.library_index`` for the spine + sweep design and its failure semantics.
+    A show's own added_at is not used for dormancy, which is measured per season.
     """
-    plex_items: dict[int, identity.PlexItem] = {}
-    if plex is not None:
-        try:
-            plex_items = await plex.library_guid_index(section_type="show")
-        except PlexError as exc:
-            degrade(
-                f"Plex GUID sweep failed ({exc}) -- id matching unavailable, snapshot un-executable"
-            )
-
-    items: list[identity.PlexItem] = []
-    for library in await tautulli.libraries():
-        if library.get("section_type") != "show":
-            continue
-        section_id = int(library["section_id"])
-        start = 0
-        while True:
-            page = await tautulli.library_media_info(section_id, start=start, length=1000)
-            rows = page.get("data") or []
-            for row in rows:
-                rk = row.get("rating_key")
-                if rk is None:
-                    continue
-                rating_key = int(rk)
-                enriched = plex_items.get(rating_key)
-                items.append(
-                    identity.PlexItem(
-                        rating_key=rating_key,
-                        title=str(row.get("title") or ""),
-                        year=_as_year(row.get("year")),
-                        added_at=from_epoch(row.get("added_at")),
-                        ids=enriched.ids if enriched is not None else identity.ExternalIds(),
-                        file_basename=enriched.file_basename if enriched is not None else None,
-                        files=enriched.files if enriched is not None else (),
-                        # Display metadata from the plexapi sweep; rows the sweep did not
-                        # list (or a failed sweep) simply carry none of it. Shows carry no
-                        # media, so video_resolution stays None here by construction.
-                        video_resolution=(
-                            enriched.video_resolution if enriched is not None else None
-                        ),
-                        content_rating=enriched.content_rating if enriched is not None else None,
-                        runtime_minutes=(
-                            enriched.runtime_minutes if enriched is not None else None
-                        ),
-                        ratings=enriched.ratings if enriched is not None else (),
-                    )
-                )
-            if len(rows) < 1000:
-                break
-            start += 1000
-
-    # Shows Plex has that the Tautulli cache has not listed yet (fresh additions).
-    spine_keys = {item.rating_key for item in items}
-    items.extend(row for rk, row in plex_items.items() if rk not in spine_keys)
-    return identity.PlexIndex.build(items)
+    return await library_index.build_index(tautulli, plex, section_type="show", degrade=degrade)
 
 
 async def resolve_season_keys(
@@ -680,6 +630,7 @@ async def gather(
     request_index: requested_by.RequestIndex | None = None,
     keep_last_scope: str = "all",
     season_lookahead: int = 0,
+    membership_index: lists.MembershipIndex | None = None,
 ) -> list[SeasonJudgement]:
     """Gather every prunable season across every Sonarr instance, ready to judge.
 
@@ -694,17 +645,33 @@ async def gather(
     if not sonarrs:
         return []
 
-    tv_index = await build_tv_index(tautulli, plex, degrade=degrade)
+    # The scan passes its already-loaded index so movies and seasons read the same
+    # frozen list state; a direct caller (tests) gets a fresh load.
+    if membership_index is None:
+        membership_index = await lists.load_membership_index(engine)
+
+    async def _series_from(source: SonarrSource) -> list[dict[str, Any]] | None:
+        try:
+            series: list[dict[str, Any]] = await source.client.series()
+        except IntegrationError as exc:
+            degrade(f"sonarr '{source.name}' unreachable: {exc}")
+            return None
+        return series
+
+    # The show index and each Sonarr's series list live on different services, so they
+    # are fetched concurrently -- the same shape as the movie fan-out in snapshot.scan,
+    # with the same reap-on-failure discipline.
+    tv_index, *series_lists = await gather_reaped(
+        build_tv_index(tautulli, plex, degrade=degrade),
+        *(_series_from(source) for source in sonarrs),
+    )
 
     # First pass, pure and offline: decide prunable/protected per series from Sonarr's
     # own season statistics. Only shows with a prunable season are resolved against Plex.
     work: list[_SeriesWork] = []
     fully_protected = 0
-    for source in sonarrs:
-        try:
-            series_list = await source.client.series()
-        except IntegrationError as exc:
-            degrade(f"sonarr '{source.name}' unreachable: {exc}")
+    for source, series_list in zip(sonarrs, series_lists, strict=True):
+        if series_list is None:
             continue
         for series in series_list:
             seasons = parse_seasons(series)
@@ -729,9 +696,9 @@ async def gather(
         # told apart from "TV was skipped".
         log.info("season_scan.fully_protected_shows", count=fully_protected)
 
-    # Resolve the shows that made the cut, then batch-read their season watch history.
-    resolved_shows: dict[int, dict[int, PlexSeason]] = {}  # show key -> {season_no: PlexSeason}
-    all_season_keys: set[int] = set()
+    # Resolve the shows that made the cut: bind each to its Plex row (pure, in memory),
+    # then fetch what the judging needs over the network -- each distinct show's season
+    # keys from Tautulli, and each show's on-disk episode list from Sonarr.
     for item in work:
         series = item.series
         # The one shared resolver: bind the show by tvdb, then file basename, then
@@ -754,23 +721,54 @@ async def gather(
             item.show_content_rating = resolution.plex_item.content_rating
             item.show_runtime_minutes = resolution.plex_item.runtime_minutes
             item.show_plex_ratings = resolution.plex_item.ratings
-        if resolution.rating_key is not None:
-            show_rk = resolution.rating_key
-            if show_rk not in resolved_shows:
-                resolved_shows[show_rk] = await resolve_season_keys(tautulli, show_rk)
-            item.seasons_in_plex = resolved_shows[show_rk]
-            all_season_keys.update(s.rating_key for s in item.seasons_in_plex.values())
 
+    # The per-show reads are independent of each other, so they run concurrently under
+    # small bounds: one for Tautulli, one per Sonarr instance (two instances are two
+    # servers; sharing one bound would halve each for no one's protection). A large
+    # library prunes hundreds of shows, and reading them one show at a time was the
+    # scan's longest sequential stretch; the bound keeps a modest self-hosted service at
+    # a handful of parallel reads, never a stampede. Failure semantics are per call and
+    # unchanged: an unresolvable show's seasons stay Unknown (abstain), a failed episode
+    # read falls back to season-level protection.
+    tautulli_bound = asyncio.Semaphore(RESOLVE_CONCURRENCY)
+    arr_bounds = {source.instance_id: asyncio.Semaphore(RESOLVE_CONCURRENCY) for source in sonarrs}
+
+    async def _seasons_for(show_rk: int) -> tuple[int, dict[int, PlexSeason]]:
+        async with tautulli_bound:
+            return show_rk, await resolve_season_keys(tautulli, show_rk)
+
+    async def _episodes_for(item: _SeriesWork) -> None:
         # Episode-precise mid-binge needs each season's last on-disk episode -- one extra
-        # Sonarr read per prunable show, bounded like the Plex resolution above. On failure the
-        # map stays empty and every season falls back to season-level protection, never less.
-        try:
-            episodes = await item.source.client.episodes(int(series["id"]))
-            item.season_final_episode = _final_episodes(episodes)
-        except IntegrationError as exc:
-            log.warning(
-                "season_scan.episodes_unreachable", show=series.get("title"), error=str(exc)
-            )
+        # Sonarr read per prunable show. On failure the map stays empty and every season
+        # falls back to season-level protection, never less.
+        async with arr_bounds[item.source.instance_id]:
+            try:
+                episodes = await item.source.client.episodes(int(item.series["id"]))
+            except IntegrationError as exc:
+                log.warning(
+                    "season_scan.episodes_unreachable",
+                    show=item.series.get("title"),
+                    error=str(exc),
+                )
+                return
+        item.season_final_episode = _final_episodes(episodes)
+
+    # One Tautulli read per DISTINCT matched show: two Sonarr series can bind to the same
+    # Plex show, and it is still one show's season list. One flat reaped fan-out, so an
+    # unexpected failure in any one read cancels and drains ALL the others -- nothing
+    # keeps polling Tautulli or Sonarr for a scan that is already dead.
+    show_keys = list(
+        dict.fromkeys(item.show_rating_key for item in work if item.show_rating_key is not None)
+    )
+    season_coros = [_seasons_for(rk) for rk in show_keys]
+    fanned = await gather_reaped(*season_coros, *(_episodes_for(item) for item in work))
+    resolved_shows: dict[int, dict[int, PlexSeason]] = dict(fanned[: len(season_coros)])
+
+    all_season_keys: set[int] = set()
+    for item in work:
+        if item.show_rating_key is not None:
+            item.seasons_in_plex = resolved_shows[item.show_rating_key]
+            all_season_keys.update(s.rating_key for s in item.seasons_in_plex.values())
 
     stats = await season_watch_stats(engine, all_season_keys, window_days=window_days)
 
@@ -790,8 +788,7 @@ async def gather(
     judgements: list[SeasonJudgement] = []
     for item in work:
         judgements.extend(
-            await _judge_series(
-                engine,
+            _judge_series(
                 item,
                 stats=stats,
                 horizon=horizon,
@@ -805,6 +802,7 @@ async def gather(
                 keep_last_scope=keep_last_scope,
                 season_lookahead=season_lookahead,
                 ratings=ratings,
+                membership_index=membership_index,
             )
         )
 
@@ -812,8 +810,7 @@ async def gather(
     return judgements
 
 
-async def _judge_series(
-    engine: AsyncEngine,
+def _judge_series(
     item: _SeriesWork,
     *,
     stats: SeasonWatchStats,
@@ -823,6 +820,7 @@ async def _judge_series(
     keep_last_seasons: int,
     keep_first_season: bool,
     whitelisted: set[str],
+    membership_index: lists.MembershipIndex,
     requested: dict[str, str] | None = None,
     request_index: requested_by.RequestIndex | None = None,
     keep_last_scope: str = "all",
@@ -888,7 +886,7 @@ async def _judge_series(
         watchers_by_season=watchers_by_season,
     )
 
-    curated_by_series = await lists.memberships(engine, imdb_id=series.get("imdbId") or None)
+    curated_by_series = membership_index.lookup(imdb_id=series.get("imdbId") or None)
     hard = [m for m in curated_by_series if m.mode is lists.ListMode.HARD]
     whitelists = [m for m in hard if m.is_whitelist]
     curated = [m for m in hard if not m.is_whitelist]

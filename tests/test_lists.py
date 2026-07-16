@@ -24,15 +24,17 @@ from reaper.services.lists import (
     ArrTagRule,
     ImdbTop250,
     ListItem,
+    ListKind,
     ListMode,
+    load_membership_index,
     memberships,
     sync,
 )
 
 
 class _FakeSonarr:
-    """A Sonarr stand-in for the tag-rule test: not a RadarrClient, so ArrTag takes the
-    series path. Carries just the two methods the tag fetch touches."""
+    """A Sonarr stand-in for the tag-rule test: not a RadarrClient, so ArrTagRule takes
+    the series path. Carries just the two methods the tag fetch touches."""
 
     service = "sonarr"
 
@@ -183,6 +185,69 @@ class TestMatching:
     async def test_an_item_with_no_ids_at_all_is_not_protected(self, engine: AsyncEngine) -> None:
         """And does not blow up. An item Plex has not matched has no ids."""
         assert await memberships(engine) == []
+
+
+class TestMembershipIndexParity:
+    """The scan answers "which lists contain this item?" from an in-memory index loaded
+    once per run. The index must agree with :func:`memberships` -- the per-item SQL it
+    replaced -- on every lookup, or the two paths could protect different items."""
+
+    @respx.mock
+    async def test_the_index_answers_exactly_like_the_query(self, engine: AsyncEngine) -> None:
+        respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=_top250_payload()))
+        await sync(engine, ImdbTop250())
+        # A second, whitelist-kind list overlapping one title, so an item can belong to
+        # two lists at once and the parity check covers the multi-row answer.
+        await sync(
+            engine,
+            _StaticProvider(
+                [
+                    ListItem(media_type="movie", imdb_id="tt0000005", title="Overlap"),
+                    ListItem(media_type="tv", tvdb_id=777, title="A show"),
+                ]
+            ),
+            mode=ListMode.HARD,
+            kind=ListKind.WHITELIST,
+        )
+
+        index = await load_membership_index(engine)
+        probes: list[dict[str, object]] = [
+            {"imdb_id": "tt0000005"},  # on both lists
+            {"imdb_id": "tt0000001"},  # top-250 only
+            {"tmdb_id": 1005},  # matched through the other id
+            {"imdb_id": "tt0000005", "tmdb_id": 1005},  # one row, reachable both ways
+            {"tvdb_id": 777},  # tv, whitelist only
+            {"imdb_id": "tt9999999"},  # on nothing
+            {},  # no ids at all
+        ]
+        for probe in probes:
+            expected = await memberships(engine, **probe)  # type: ignore[arg-type]
+            assert sorted(index.lookup(**probe), key=lambda m: m.slug) == sorted(  # type: ignore[arg-type]
+                expected, key=lambda m: m.slug
+            ), probe
+
+    @respx.mock
+    async def test_a_disabled_list_drops_out_of_the_index(self, engine: AsyncEngine) -> None:
+        respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=_top250_payload()))
+        await sync(engine, ImdbTop250())
+        async with engine.begin() as conn:
+            await conn.execute(text("UPDATE protection_list SET enabled = 0"))
+
+        index = await load_membership_index(engine)
+
+        assert index.lookup(imdb_id="tt0000001") == []
+        assert await memberships(engine, imdb_id="tt0000001") == []
+
+
+class _StaticProvider:
+    slug = "static-keep"
+    display_name = "Static keep"
+
+    def __init__(self, items: list[ListItem]) -> None:
+        self._items = items
+
+    async def fetch(self) -> list[ListItem]:
+        return self._items
 
 
 class TestListItem:

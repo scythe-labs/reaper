@@ -41,9 +41,9 @@ Being *on* the list is the signal.
 from __future__ import annotations
 
 import enum
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 import httpx
 import structlog
@@ -108,7 +108,7 @@ class ListProvider(Protocol):
     """A source of protected items.
 
     ``slug`` and ``display_name`` are read-only *properties*, not attributes: a
-    provider like ``ArrTag`` derives them from its configuration, and a Protocol
+    provider like ``ArrTagRule`` derives them from its configuration, and a Protocol
     declaring a mutable attribute would not accept that.
     """
 
@@ -177,36 +177,76 @@ class ImdbTop250:
 
 
 @dataclass(frozen=True, slots=True)
-class ArrTag:
-    """A tag in Sonarr or Radarr -- `reaper-keep` by convention.
+class ArrTagRule:
+    """One or more *arr tags, combined -- the configurable "keep list".
 
-    Zero new configuration: you apply it in a UI you already use.
+    A title matches when it carries ANY of the tags (the usual case) or ALL of them, per
+    ``match``. The tag list and the library are each read ONCE for the whole rule -- the
+    library is the expensive call (every movie or series in the instance), and an earlier
+    version re-downloaded it once per configured tag, per scan. Protect-only, like every
+    list source -- the worst a mis-configured rule can do is fail to keep something.
+
+    ``instance_id`` is part of the slug for a reason that is easy to miss: the slug is
+    the stored list's primary key, and each sync atomically REPLACES that slug's
+    membership. With two same-service instances and a service-only slug, each instance's
+    sync erased the other's keep-tagged titles -- whichever synced last won, and titles
+    tagged only on the losing instance silently lost their whitelist protection. A
+    per-instance slug makes each instance its own list, so both protect.
     """
 
     client: SonarrClient | RadarrClient
-    tag_label: str = "reaper-keep"
+    tags: tuple[str, ...]
+    match: Literal["any", "all"] = "any"
+    instance_id: int | None = None
+    instance_name: str | None = None
 
     @property
     def slug(self) -> str:
-        return f"{self.client.service}-tag-{self.tag_label}"
+        instance = f"-{self.instance_id}" if self.instance_id is not None else ""
+        return f"{self.client.service}{instance}-keeptags-{self.match}"
 
     @property
     def display_name(self) -> str:
-        return f"{self.client.service.title()} tag: {self.tag_label}"
+        joiner = " or " if self.match == "any" else " and "
+        where = f" ({self.instance_name})" if self.instance_name else ""
+        return f"{self.client.service.title()}{where} tag: {joiner.join(self.tags)}"
 
     async def fetch(self) -> list[ListItem]:
-        tags = await self.client.tags()
-        tag_id = next(
-            (int(t["id"]) for t in tags if str(t.get("label", "")).lower() == self.tag_label),
-            None,
-        )
-        if tag_id is None:
-            # Not an error. The owner simply has not created the tag yet.
-            log.info("lists.tag_absent", tag=self.tag_label, service=self.client.service)
+        if not self.tags:
             return []
 
+        # First match wins when two tag labels collide after lowercasing ('Keep' and
+        # 'keep' can both exist), and a malformed tag row is skipped rather than failing
+        # the whole keep-list over a row that was never the owner's keep tag.
+        by_label: dict[str, int] = {}
+        for row in await self.client.tags():
+            tag_id = row.get("id")
+            if isinstance(tag_id, int):
+                by_label.setdefault(str(row.get("label", "")).lower(), tag_id)
+
+        wanted: set[int] = set()
+        missing = 0
+        for tag in self.tags:
+            found = by_label.get(tag)
+            if found is None:
+                # Not an error. The owner simply has not created this tag yet.
+                log.info("lists.tag_absent", tag=tag, service=self.client.service)
+                missing += 1
+            else:
+                wanted.add(found)
+        # Nothing can carry a tag that does not exist: with no tags found nothing
+        # matches, and under ALL a single missing tag already rules every title out.
+        if not wanted or (self.match == "all" and missing):
+            return []
+
+        def keeps(media: dict[str, Any]) -> bool:
+            carried = set(media.get("tags") or [])
+            if self.match == "all":
+                return wanted <= carried
+            return not wanted.isdisjoint(carried)
+
         if isinstance(self.client, RadarrClient):
-            media = await self.client.movies()
+            movies = await self.client.movies()
             return [
                 ListItem(
                     media_type="movie",
@@ -214,8 +254,8 @@ class ArrTag:
                     tmdb_id=m.get("tmdbId") or None,
                     title=str(m.get("title") or ""),
                 )
-                for m in media
-                if tag_id in (m.get("tags") or [])
+                for m in movies
+                if keeps(m)
             ]
 
         series = await self.client.series()
@@ -227,51 +267,8 @@ class ArrTag:
                 title=str(s.get("title") or ""),
             )
             for s in series
-            if tag_id in (s.get("tags") or [])
+            if keeps(s)
         ]
-
-
-@dataclass(frozen=True, slots=True)
-class ArrTagRule:
-    """One or more *arr tags, combined -- the configurable "keep list".
-
-    A title matches when it carries ANY of the tags (the usual case) or ALL of them, per
-    ``match``. Each tag is fetched via :class:`ArrTag`; the results are then combined on media
-    identity, so a title carrying a tag twice is not counted twice. Protect-only, like every
-    list source -- the worst a mis-configured rule can do is fail to keep something.
-    """
-
-    client: SonarrClient | RadarrClient
-    tags: tuple[str, ...]
-    match: Literal["any", "all"] = "any"
-
-    @property
-    def slug(self) -> str:
-        return f"{self.client.service}-keeptags-{self.match}"
-
-    @property
-    def display_name(self) -> str:
-        joiner = " or " if self.match == "any" else " and "
-        return f"{self.client.service.title()} tag: {joiner.join(self.tags)}"
-
-    async def fetch(self) -> list[ListItem]:
-        if not self.tags:
-            return []
-
-        def key(item: ListItem) -> tuple[str, str, int, int]:
-            return (item.media_type, item.imdb_id or "", item.tmdb_id or 0, item.tvdb_id or 0)
-
-        by_key: dict[tuple[str, str, int, int], ListItem] = {}
-        tag_count: dict[tuple[str, str, int, int], int] = {}
-        for tag in self.tags:
-            for item in await ArrTag(self.client, tag).fetch():
-                k = key(item)
-                by_key[k] = item
-                tag_count[k] = tag_count.get(k, 0) + 1
-
-        # ANY -> in at least one tag's set; ALL -> in every tag's set.
-        need = len(self.tags) if self.match == "all" else 1
-        return [by_key[k] for k, count in tag_count.items() if count >= need]
 
 
 @dataclass(frozen=True, slots=True)
@@ -508,6 +505,93 @@ async def sync(
     return len(items)
 
 
+@dataclass(frozen=True, slots=True)
+class MembershipIndex:
+    """Every enabled protection-list row, loaded once and looked up in memory.
+
+    A scan asks "which lists contain this item?" once per movie and once per show.
+    Answering each of those with its own SQLite round trip (plus the ensure-schema DDL
+    :func:`memberships` runs first) dominated the judge loop on large libraries, so the
+    scan loads this index once and every per-item lookup becomes a dict hit.
+
+    Parity with :func:`memberships` is the contract: a lookup returns one
+    :class:`Membership` per matching *stored row* -- a row reachable through more than
+    one of its ids still counts once, and two distinct rows of the same list still count
+    twice -- so the two paths cannot disagree about what protects an item. Entries carry
+    their load order so results are deterministic.
+    """
+
+    _by_imdb: Mapping[str, tuple[tuple[int, Membership], ...]]
+    _by_tmdb: Mapping[int, tuple[tuple[int, Membership], ...]]
+    _by_tvdb: Mapping[int, tuple[tuple[int, Membership], ...]]
+
+    def lookup(
+        self,
+        *,
+        imdb_id: str | None = None,
+        tmdb_id: int | None = None,
+        tvdb_id: int | None = None,
+    ) -> list[Membership]:
+        """Which protected lists contain this item? Same answer as :func:`memberships`."""
+        if not (imdb_id or tmdb_id or tvdb_id):
+            return []
+        entries: list[tuple[int, Membership]] = []
+        if imdb_id is not None:
+            entries += self._by_imdb.get(imdb_id, ())
+        if tmdb_id is not None:
+            entries += self._by_tmdb.get(tmdb_id, ())
+        if tvdb_id is not None:
+            entries += self._by_tvdb.get(tvdb_id, ())
+        seen: set[int] = set()
+        out: list[Membership] = []
+        for seq, membership in sorted(entries, key=lambda entry: entry[0]):
+            if seq not in seen:
+                seen.add(seq)
+                out.append(membership)
+        return out
+
+
+async def load_membership_index(engine: AsyncEngine) -> MembershipIndex:
+    """Materialise the :func:`memberships` join once, for a whole scan's lookups."""
+    await ensure_schema(engine)
+    async with engine.connect() as conn:
+        rows = (
+            await conn.execute(
+                text(
+                    "SELECT i.imdb_id, i.tmdb_id, i.tvdb_id, "
+                    "       l.slug, l.display_name, l.mode, l.kind, i.rank "
+                    "FROM protection_list_item i "
+                    "JOIN protection_list l ON l.slug = i.slug "
+                    "WHERE l.enabled = 1"
+                )
+            )
+        ).all()
+
+    by_imdb: dict[str, list[tuple[int, Membership]]] = {}
+    by_tmdb: dict[int, list[tuple[int, Membership]]] = {}
+    by_tvdb: dict[int, list[tuple[int, Membership]]] = {}
+    for seq, row in enumerate(rows):
+        membership = Membership(
+            slug=str(row.slug),
+            display_name=str(row.display_name),
+            mode=ListMode(row.mode),
+            kind=ListKind(row.kind),
+            rank=int(row.rank) if row.rank is not None else None,
+        )
+        if row.imdb_id:
+            by_imdb.setdefault(str(row.imdb_id), []).append((seq, membership))
+        if row.tmdb_id is not None:
+            by_tmdb.setdefault(int(row.tmdb_id), []).append((seq, membership))
+        if row.tvdb_id is not None:
+            by_tvdb.setdefault(int(row.tvdb_id), []).append((seq, membership))
+
+    return MembershipIndex(
+        _by_imdb={k: tuple(v) for k, v in by_imdb.items()},
+        _by_tmdb={k: tuple(v) for k, v in by_tmdb.items()},
+        _by_tvdb={k: tuple(v) for k, v in by_tvdb.items()},
+    )
+
+
 async def memberships(
     engine: AsyncEngine,
     *,
@@ -520,39 +604,15 @@ async def memberships(
     Matched on any external id we hold. A film on the Top 250 is protected whether we
     know it by IMDb id or TMDb id -- requiring both would silently drop the ones where
     only one is present.
+
+    Implemented AS a one-item view over :func:`load_membership_index`, so there is
+    exactly one place that decides what protects an item -- a second hand-written query
+    here could drift from the one the scan actually uses (rule 3). The scan never calls
+    this per item; it loads the index once. This form exists for one-off callers, where
+    loading the (small) list tables per call is fine.
     """
-    if not (imdb_id or tmdb_id or tvdb_id):
-        return []
-
-    await ensure_schema(engine)
-
-    async with engine.connect() as conn:
-        rows = (
-            await conn.execute(
-                text(
-                    "SELECT l.slug, l.display_name, l.mode, l.kind, i.rank "
-                    "FROM protection_list_item i "
-                    "JOIN protection_list l ON l.slug = i.slug "
-                    "WHERE l.enabled = 1 AND ("
-                    "  (:imdb IS NOT NULL AND i.imdb_id = :imdb) OR "
-                    "  (:tmdb IS NOT NULL AND i.tmdb_id = :tmdb) OR "
-                    "  (:tvdb IS NOT NULL AND i.tvdb_id = :tvdb)"
-                    ")"
-                ),
-                {"imdb": imdb_id, "tmdb": tmdb_id, "tvdb": tvdb_id},
-            )
-        ).all()
-
-    return [
-        Membership(
-            slug=str(r.slug),
-            display_name=str(r.display_name),
-            mode=ListMode(r.mode),
-            kind=ListKind(r.kind),
-            rank=int(r.rank) if r.rank is not None else None,
-        )
-        for r in rows
-    ]
+    index = await load_membership_index(engine)
+    return index.lookup(imdb_id=imdb_id, tmdb_id=tmdb_id, tvdb_id=tvdb_id)
 
 
 async def configured(engine: AsyncEngine) -> Sequence[dict[str, object]]:

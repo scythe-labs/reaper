@@ -559,6 +559,65 @@ the import**. `alembic upgrade head` reported success and created **zero tables*
 
 ---
 
+## Scan wall clock
+
+### The scan was slow because it *waited in series*, not because it computed
+
+Every optimization that mattered removed sequential waiting; none of them touched the
+scoring. Three patterns, each invisible in a small test library and each scaling with
+the real one:
+
+1. **Two HTTP round trips per prunable show, one show at a time.** The TV gather
+   resolved each show's seasons (Tautulli) and episode list (Sonarr) sequentially. At
+   hundreds of prunable shows and typical LAN latencies, this one loop dominated the
+   entire scan. One call per show is required by the APIs; one show *at a time* was
+   not. A small per-service concurrency bound (4) collapses the stretch by roughly
+   the bound while keeping a self-hosted service at a handful of parallel reads.
+2. **A database query per item inside the judge loop** — and worse, an
+   ensure-schema pass (7 `CREATE ... IF NOT EXISTS` statements) *before every query*.
+   Ensure-schema-before-read is the right habit at module boundaries (the cache is
+   deletable), but calling it per item turns a judge loop into thousands of DDL
+   transactions. Load once, look up in memory — and prove parity with the SQL it
+   replaced with a test, or the two paths will drift.
+3. **Re-downloading a whole library nobody asked for twice.** The keep-tag provider
+   fetched the full movie/series list once *per configured tag*, and the scan gather
+   fetched it again. The tag ids are one cheap call; the library is the expensive
+   one. Read each once per rule.
+
+⇒ The safety architecture and the concurrency are orthogonal: gather-freeze-judge
+only requires that everything is gathered *before* anything is scored, not that
+sources are read one after another. Overlapping the gather changed when evidence
+arrives, never what is frozen. The one place concurrency was refused on purpose: the
+two plexapi GUID sweeps share one `requests.Session`, which is not promised
+thread-safe, so they serialize behind a lock and overlap with everything else
+instead.
+
+### Making syncs concurrent exposed a fail-open that was always there
+
+The keep-tag whitelist synced one list PER SERVICE, not per instance: with two
+same-service *arr instances, each sync atomically replaced the other's membership,
+and whichever ran last silently erased the other instance's keep-tagged titles.
+Sequentially the winner was at least deterministic, which is why it survived unseen;
+running the syncs concurrently made the winner random, and the review of that change
+is what finally surfaced the bug. Two lessons: a stored list's key must carry every
+dimension that makes it distinct (service AND instance), and "we only made it
+concurrent" is precisely when to re-audit which shared keys the now-racing writers
+collide on.
+
+### bare asyncio.gather leaves siblings running after a failure
+
+`asyncio.gather` re-raises the first failure immediately but does not cancel the
+other awaitables -- they keep running detached, keep issuing reads against the
+operator's services for a scan that is already dead, and any later failure logs
+"exception was never retrieved" at teardown. Every fan-out in the scan now goes
+through one shared reap-on-failure helper (`reaper.aio`), at every nesting level, so
+there is a single cancellation discipline instead of N hand-rolled ones. Relatedly:
+removing all the per-item awaits from the judge loop made it pure computation, which
+*starves the event loop* -- the progress endpoint it feeds would freeze for the whole
+scoring phase without an explicit yield at the emit points.
+
+---
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs

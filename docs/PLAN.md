@@ -7,10 +7,85 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-16 (Services settings redesigned into per-kind card grids with a
-modal; per-service TLS verification opt-out for self-signed servers)
+Last updated: 2026-07-16 (the scan gathers concurrently; per-item database work is
+batched)
 
-### Newest — Services settings redesign, and the per-service TLS opt-out
+### Newest — the scan's wall clock was sequential waiting, and most of it is gone
+
+The scan was slow for structural reasons, not compute: every source was read in
+series, and three per-item patterns multiplied round trips by the size of the library.
+What changed (all read-only paths; the freeze-then-judge contract is untouched —
+nothing is scored until every source has completed or degraded, exactly as before;
+only the *waiting* overlaps):
+
+- **The gather fans out.** After the active-streams read, the movie index (Plex GUID
+  sweep + Tautulli spine, themselves now concurrent), each Radarr's movie list, and
+  the whole TV season gather run concurrently; `run_scan` also overlaps the
+  protection-list refresh with the two Seerr reads. The gather now costs its slowest
+  source, not the sum. The two plexapi sweeps are serialized by a client-level lock
+  (one `requests.Session` under plexapi; not promised thread-safe) but overlap with
+  everything else.
+- **TV resolution was the longest sequential stretch**: two HTTP round trips per
+  prunable show (Tautulli `get_children_metadata` + Sonarr episodes), one show at a
+  time. Now one call per show with several shows in flight under a small per-service
+  bound (`RESOLVE_CONCURRENCY = 4` — a stampede against self-hosted services is the
+  failure mode to avoid), deduplicated per distinct matched show.
+- **Per-item SQLite left the judge loop.** `lists.memberships` ran an ensure-schema
+  (7 DDL statements) plus a SELECT *per movie and per show*; it is now one bulk load
+  into an in-memory `MembershipIndex` whose lookups are proven (test) to answer
+  exactly like the SQL. The grace clock writes are batched the same way: condemned
+  keys are collected and applied in chunked `IN` reads through the same single
+  decision function (`_apply_first_flag`), instead of a `session.get` + autoflush per
+  condemned item. `build_facts` is now a pure function.
+- **The keep-tag provider re-downloaded the library once per configured tag** (tags()
+  + the full movie/series list, per tag, per scan). It now reads the tag list and the
+  library once per rule; list providers in `sync_protection_lists` refresh
+  concurrently (each already fails soft on its own; the atomic per-list swap is
+  unchanged).
+
+An adversarial review pass over the concurrency change (eight independent reviewers,
+findings verified before acting) surfaced and fixed:
+
+- **A pre-existing fail-open on the keep-tag whitelist**: `ArrTagRule`'s slug carried
+  only the service name, so with two same-service instances each sync atomically
+  replaced the OTHER instance's keep-list, last writer wins, titles tagged only on the
+  losing instance silently unprotected. The slug now carries the instance id (each
+  instance is its own list), the display name carries the instance name, and a
+  regression test pins two instances protecting simultaneously.
+- **Cancellation discipline in one place**: every concurrent fan-out goes through
+  `reaper.aio.gather_reaped` / `reap` -- on the first failure the surviving branches
+  are cancelled, drained and logged before the failure propagates, so nothing keeps
+  reading an operator's services for a scan that is already dead, at any nesting
+  level. `scan()`'s fan-out creates every task through one `_spawn` helper so the reap
+  list cannot miss a future branch.
+- The twin movie/TV index builders collapsed into one shared
+  `services.library_index.build_index` (they had already started drifting).
+  `memberships()` now delegates to the same loader the scan uses: one SQL source of
+  truth for "what protects this item".
+- `PlexClient` serializes both the GUID sweeps AND first connect (two concurrent
+  sweeps on an unconnected client would have built two sessions, voiding the sweep
+  lock's premise).
+- The judge loop yields to the event loop at its progress-emit points: with the
+  per-item queries gone it had become pure computation, which would have frozen the
+  very progress endpoint it feeds for the whole scoring phase.
+- Deliberately declined, recorded here so the next reader knows they were weighed:
+  collapsing the two Seerr paginations into one (the server-side "available" filter
+  and client-side availability are not provably the same predicate; display-only win),
+  overlapping the history sync with the list refresh (same SQLite writer, first-run-only
+  win), and concurrent Tautulli spine pages (politeness; the spine overlaps the Plex
+  sweep already). The remaining known redundancy: each *arr library is still downloaded
+  twice per scan (once by the keep-tag rule, once by the gather).
+
+Wrong assumption recorded: "a full scan completes in tens of seconds" (below) was
+written before season pruning added per-show resolution; on a large TV library the
+sequential per-show reads dominated everything else the scan did. Also: list
+membership is now frozen once at gather start (it was previously re-read per item
+DURING judging, after the freeze -- the one evidence source that could change mid-run,
+which is exactly what the freeze exists to prevent).
+
+### An ambiguous id narrows by file name, then exact size (the split-library fix)
+
+### Services settings redesign, and the per-service TLS opt-out
 
 The Settings → Services tab moved from a flat stacked list with an always-visible add form
 to one section per service kind (Radarr / Sonarr / Tautulli / Seerr), each a responsive
@@ -838,8 +913,11 @@ Compute the baseline over **exactly** what the scorer scores. See `docs/SIGNALS.
 
 ## Where the pipeline stands
 
-A full scan of a large library completes in tens of seconds, streaming progress over
-SSE, and produces a candidate list partitioned into condemn / protect / abstain.
+A scan streams progress while it runs and produces a candidate list partitioned into
+condemn / protect / abstain. The gather is concurrent across sources (see the scan
+wall-clock section above): it costs roughly its slowest source — in practice the Plex
+GUID sweep or the largest *arr library download — plus the judge loop, which is now
+in-memory per item.
 
 The why-panel renders for **keeps as well as deletes** — an item can score high enough
 to be condemned on score alone and still be protected by a gate, and the panel says so

@@ -24,6 +24,7 @@ from reaper.config import Settings
 from reaper.db.session import create_engine
 from reaper.services import history_sync
 from reaper.services.lists import IMDB_TOP_250_URL, memberships
+from reaper.services.season_scan import SonarrSource
 from reaper.services.snapshot import _watch_stats, sync_protection_lists
 
 
@@ -104,3 +105,55 @@ class TestOneFailingListDoesNotSinkTheScan:
 
         assert isinstance(synced["imdb-top-250"], str)
         assert "error" in synced["imdb-top-250"]
+
+
+class _TaggedSonarr:
+    """A Sonarr stand-in carrying exactly what the keep-tag rule reads."""
+
+    service = "sonarr"
+
+    def __init__(self, tags: list[dict[str, object]], series: list[dict[str, object]]) -> None:
+        self._tags = tags
+        self._series = series
+
+    async def tags(self) -> list[dict[str, object]]:
+        return self._tags
+
+    async def series(self) -> list[dict[str, object]]:
+        return self._series
+
+
+class TestEachInstanceKeepsItsOwnKeepList:
+    async def test_two_instances_of_one_service_both_protect(self, engine: AsyncEngine) -> None:
+        """Two Sonarr instances, each with its own keep-tagged title. The slug carries
+        the instance id, so each instance syncs its OWN list. With a shared slug (the
+        old shape), each sync atomically replaced the other's membership: whichever ran
+        last erased the other instance's keep-tagged titles from the whitelist, silently
+        -- a protection failing open, in whichever order the syncs happened to finish."""
+        first = SonarrSource(
+            client=_TaggedSonarr(
+                [{"id": 1, "label": "keep"}],
+                [{"title": "A", "tvdbId": 10, "tags": [1]}],
+            ),
+            instance_id=1,
+            name="hd",
+        )
+        second = SonarrSource(
+            client=_TaggedSonarr(
+                [{"id": 9, "label": "keep"}],
+                [{"title": "B", "tvdbId": 20, "tags": [9]}],
+            ),
+            instance_id=2,
+            name="uhd",
+        )
+
+        synced = await sync_protection_lists(
+            engine, sonarrs=[first, second], tv_keep_tags=("keep",), include_top_250=False
+        )
+
+        # Two distinct lists, so neither sync can mask the other's outcome either.
+        assert synced["sonarr-1-keeptags-any"] == 1
+        assert synced["sonarr-2-keeptags-any"] == 1
+        # And BOTH instances' keep-tagged titles are protected at the same time.
+        assert await memberships(engine, tvdb_id=10)
+        assert await memberships(engine, tvdb_id=20)

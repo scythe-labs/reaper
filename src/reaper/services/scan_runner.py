@@ -21,6 +21,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from reaper.aio import gather_reaped
 from reaper.clients.arr import RadarrClient, SonarrClient
 from reaper.clients.base import BaseClient, IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
@@ -358,15 +359,35 @@ async def run_scan(
                     f"Plex unreachable: {exc} -- the 'Never Reap' collection could not be "
                     "refreshed, so no reap may run against a keep-list we could not confirm"
                 )
-        synced = await snapshot_service.sync_protection_lists(
-            cache_engine,
-            radarrs=[s.client for s in radarrs],
-            sonarrs=[s.client for s in sonarrs],
-            movie_keep_tags=movie_policy.keep_tags,
-            movie_keep_match=movie_policy.keep_tags_match,
-            tv_keep_tags=tv_policy.keep_tags,
-            tv_keep_match=tv_policy.keep_tags_match,
-            plex_server=plex_server,
+        # Three independent reads, overlapped: the protection-list refresh (the *arr tag
+        # sweeps, the Plex collection, the Top 250 mirror), the "requested by" display map,
+        # and the requested-or-not scoring index (the two Seerr reads walk different
+        # request filters). Each already fails soft on its own -- a failed list records an
+        # error the degradation check below picks up, an unreachable Seerr yields an empty
+        # map and an Unknown-producing index -- so overlapping them changes only the wait.
+        # gather_reaped so an unexpected failure on one branch cancels and drains the
+        # others before the exit stack closes the clients they are still reading through.
+        synced, requested, request_index = await gather_reaped(
+            snapshot_service.sync_protection_lists(
+                cache_engine,
+                radarrs=radarrs,
+                sonarrs=sonarrs,
+                movie_keep_tags=movie_policy.keep_tags,
+                movie_keep_match=movie_policy.keep_tags_match,
+                tv_keep_tags=tv_policy.keep_tags,
+                tv_keep_match=tv_policy.keep_tags_match,
+                plex_server=plex_server,
+            ),
+            # Who requested what, keyed by media_key, so each candidate can carry a
+            # "requested by" and the review queue can filter to just-requested media.
+            # Optional and soft: no Seerr, or an unreachable one, means an empty map,
+            # never a failed scan.
+            requested_by.build_map(seerr),
+            # A separate three-state index used as a scoring FACT (was this requested?),
+            # built from every request and fail-closed to Unknown when Seerr can't be read
+            # -- distinct from the display map above, which is deliberately loose and
+            # available-only.
+            requested_by.build_request_index(seerr),
         )
         log.info("scan.lists_synced", **{str(k): v for k, v in synced.items()})
         # A whitelist that failed to sync with an empty keep-list fails OPEN -- the worst
@@ -374,15 +395,6 @@ async def run_scan(
         pre_scan_degradations += await snapshot_service.protection_sync_degradations(
             cache_engine, synced
         )
-
-        # Who requested what, keyed by media_key, so each candidate can carry a "requested
-        # by" and the review queue can filter to just-requested media. Optional and soft:
-        # no Seerr, or an unreachable one, means an empty map, never a failed scan.
-        requested = await requested_by.build_map(seerr) if seerr is not None else {}
-        # A separate three-state index used as a scoring FACT (was this requested?), built
-        # from every request and fail-closed to Unknown when Seerr can't be read -- distinct
-        # from the display map above, which is deliberately loose and available-only.
-        request_index = await requested_by.build_request_index(seerr)
 
         snapshot = await snapshot_service.scan(
             cache_engine,

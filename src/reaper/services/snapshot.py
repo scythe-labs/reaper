@@ -27,8 +27,9 @@ one it produces.
 
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Literal
@@ -37,9 +38,10 @@ import structlog
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from reaper.aio import gather_reaped, reap
 from reaper.clients.arr import RadarrClient
 from reaper.clients.base import IntegrationError
-from reaper.clients.plex import PlexClient, PlexError
+from reaper.clients.plex import PlexClient
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
 from reaper.db.models import Candidate, FirstFlagged, Snapshot
@@ -49,7 +51,14 @@ from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
 from reaper.engine.signals import Score, SignalConfig, SignalId, score
 from reaper.ratings import Rating, from_radarr
-from reaper.services import history_sync, lists, requested_by, season_scan, whitelist
+from reaper.services import (
+    history_sync,
+    library_index,
+    lists,
+    requested_by,
+    season_scan,
+    whitelist,
+)
 from reaper.services.display_meta import build_ratings_json, dataset_entry, normalize_resolution
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
 
@@ -128,11 +137,11 @@ class RawItem:
     arr_ratings: tuple[Rating, ...] = ()
 
 
-async def build_facts(
-    engine: AsyncEngine,
+def build_facts(
     item: RawItem,
     context: ScanContext,
     *,
+    membership_index: lists.MembershipIndex,
     imdb: dict[str, ImdbRating],
     last_played: dict[int, datetime],
     watchers_window: dict[int, int],
@@ -203,7 +212,7 @@ async def build_facts(
     # Whitelist and curated are DIFFERENT reasons to keep a file, and collapsing them
     # would tell the owner "whitelisted" about a film they never touched. The why-panel
     # must be able to say which.
-    memberships = await lists.memberships(engine, imdb_id=item.imdb_id, tmdb_id=item.tmdb_id)
+    memberships = membership_index.lookup(imdb_id=item.imdb_id, tmdb_id=item.tmdb_id)
     hard = [m for m in memberships if m.mode is lists.ListMode.HARD]
 
     whitelists = [m for m in hard if m.is_whitelist]
@@ -359,87 +368,137 @@ async def scan(
         # Do NOT assume nothing is playing. That is how you delete a file mid-stream.
         context.degrade(f"tautulli-activity unreachable: {exc}")
 
-    emit(Progress("gathering", 3, 5, "the Plex library index"))
-    plex_index = await build_movie_index(tautulli, plex, degrade=context.degrade)
+    # Manual spares are applied via the override, not the whitelist gate, so the gate is left to
+    # the *arr-tag / collection whitelists alone. An empty set keeps that path tag-only.
+    tag_only_whitelist: set[str] = set()
+    # Every enabled protection-list row, loaded once and shared by the movie and season
+    # judges. The judge loops below ask "which lists contain this item?" for every movie
+    # and every show; answering each from SQLite made the loop's runtime scale with the
+    # library. One load, then dict hits.
+    membership_index = await lists.load_membership_index(engine)
 
-    items: list[RawItem] = []
-    for source in radarrs:
-        emit(Progress("gathering", 2, 5, f"movies from Radarr ({source.name})"))
+    # ---- fan out across the independent sources -----------------------------
+    # Everything past the activity read touches DIFFERENT services -- the Plex + Tautulli
+    # movie index, each Radarr's movie list, and the whole TV season gather (Sonarr, Plex,
+    # Tautulli again) -- so they run concurrently and the gather takes as long as its
+    # slowest source instead of the sum of all of them. The freeze-then-judge contract is
+    # untouched: nothing is scored until every one of these has completed (or degraded),
+    # exactly as before; only the waiting overlaps.
+    emit(Progress("gathering", 2, 5, "movie and TV libraries"))
+
+    # Every task the fan-out creates goes through _spawn, so the reap on failure below
+    # covers all of them by construction -- a future branch cannot be forgotten.
+    fanned_out: list[asyncio.Task[Any]] = []
+
+    def _spawn[T](coro: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
+        task = asyncio.create_task(coro)
+        fanned_out.append(task)
+        return task
+
+    # A read-only extension of the same gather. It reads Sonarr, resolves prunable
+    # seasons to Plex, and reads their watch history from the same local mirror. A
+    # movie-only deployment (no Sonarr) skips it entirely.
+    season_task: asyncio.Task[list[season_scan.SeasonJudgement]] | None = None
+    if sonarrs:
+        activity_degraded = "tautulli-activity" in " ".join(context.degraded_reasons)
+        season_task = _spawn(
+            season_scan.gather(
+                engine,
+                sonarrs=sonarrs,
+                tautulli=tautulli,
+                plex=plex,
+                horizon=context.horizon,
+                active_rating_keys=context.active_rating_keys,
+                activity_degraded=activity_degraded,
+                keep_last_seasons=tv_policy.keep_last_seasons,
+                keep_first_season=tv_policy.keep_first_season,
+                window_days=_popularity_window(tv_policy),
+                whitelisted=tag_only_whitelist,
+                degrade=context.degrade,
+                requested=requested,
+                request_index=request_index,
+                keep_last_scope=tv_policy.keep_last_scope,
+                season_lookahead=tv_policy.season_lookahead,
+                membership_index=membership_index,
+            )
+        )
+
+    async def _movies_from(source: RadarrSource) -> list[dict[str, Any]] | None:
         try:
             movies = await source.client.movies()
         except IntegrationError as exc:
             # One instance down must not silently shrink the library. Degrade, so no run
             # may execute against a snapshot that is missing an entire *arr.
             context.degrade(f"radarr '{source.name}' unreachable: {exc}")
-            continue
-        items.extend(_raw_items(movies, plex_index, source.instance_id, requested))
+            return None
         log.info("snapshot.radarr", instance=source.name, movies=len(movies))
+        return movies
 
-    emit(Progress("gathering", 4, 5, "IMDb ratings"))
-    # Look up by BOTH Radarr's imdbId and the matched Plex item's imdb id, so a film whose
-    # Radarr record lacks (or has a wrong) imdbId still gets its rating when Plex knows it.
-    imdb_ids = [x for i in items for x in (i.imdb_id, i.plex_imdb_id) if x]
-    try:
-        imdb = await ImdbRatings(engine).lookup(imdb_ids)
-    except DatasetDegradedError as exc:
-        # The inverted failure: a missing rating REMOVES protection. Degrade loudly.
-        context.degrade(str(exc))
-        imdb = {}
-    last_played, watchers_window, watchers_all_time = await _watch_stats(
-        engine,
-        rating_keys={i.plex_rating_key for i in items if i.plex_rating_key},
-        window_days=_popularity_window(movie_policy),
-    )
-    # A merged bind is one file listed several times in Plex; its plays are split across
-    # the listings' rating keys. Fold each group's stats onto its canonical key, or the
-    # item would under-count its own watching -- the direction that condemns.
-    await _fold_merged_watch_stats(
-        engine,
-        groups={
-            i.plex_rating_key: i.merged_rating_keys
-            for i in items
-            if i.plex_rating_key is not None and i.merged_rating_keys
-        },
-        window_days=_popularity_window(movie_policy),
-        last_played=last_played,
-        watchers_window=watchers_window,
-        watchers_all_time=watchers_all_time,
-    )
-    # The owner's manual overrides -- ``media_key -> "spare" | "reap"`` -- loaded once and
-    # applied to every item's verdict. A spared file is judged PROTECT rather than surfacing in
-    # "would delete" again; a reaped one is forced onto the list (short of a hard safety gate).
-    # Keys may be a show's, in which case the decision applies to all of its seasons.
-    override_map = await whitelist.overrides(session)
-    # Manual spares are applied via the override, not the whitelist gate, so the gate is left to
-    # the *arr-tag / collection whitelists alone. An empty set keeps that path tag-only.
-    tag_only_whitelist: set[str] = set()
+    index_task = _spawn(build_movie_index(tautulli, plex, degrade=context.degrade))
+    movie_tasks = [_spawn(_movies_from(source)) for source in radarrs]
 
-    # ---- gather TV seasons -------------------------------------------------
-    # A read-only extension of the same gather. It reads Sonarr, resolves prunable
-    # seasons to Plex, and reads their watch history from the same local mirror. A
-    # movie-only deployment (no Sonarr) passes an empty list and this is a no-op.
+    items: list[RawItem] = []
     season_judgements: list[season_scan.SeasonJudgement] = []
-    if sonarrs:
-        emit(Progress("gathering", 4, 5, "TV seasons from Sonarr"))
-        activity_degraded = "tautulli-activity" in " ".join(context.degraded_reasons)
-        season_judgements = await season_scan.gather(
+    try:
+        # Awaited in the sequential code's order, so the first failure to surface is the
+        # same one it would have raised then; the except below reaps every other task.
+        plex_index = await index_task
+        for source, movie_task in zip(radarrs, movie_tasks, strict=True):
+            movies = await movie_task
+            if movies is None:
+                continue
+            items.extend(_raw_items(movies, plex_index, source.instance_id, requested))
+
+        emit(Progress("gathering", 4, 5, "IMDb ratings"))
+        # Look up by BOTH Radarr's imdbId and the matched Plex item's imdb id, so a film
+        # whose Radarr record lacks (or has a wrong) imdbId still gets its rating when
+        # Plex knows it.
+        imdb_ids = [x for i in items for x in (i.imdb_id, i.plex_imdb_id) if x]
+        try:
+            imdb = await ImdbRatings(engine).lookup(imdb_ids)
+        except DatasetDegradedError as exc:
+            # The inverted failure: a missing rating REMOVES protection. Degrade loudly.
+            context.degrade(str(exc))
+            imdb = {}
+        last_played, watchers_window, watchers_all_time = await _watch_stats(
             engine,
-            sonarrs=sonarrs,
-            tautulli=tautulli,
-            plex=plex,
-            horizon=context.horizon,
-            active_rating_keys=context.active_rating_keys,
-            activity_degraded=activity_degraded,
-            keep_last_seasons=tv_policy.keep_last_seasons,
-            keep_first_season=tv_policy.keep_first_season,
-            window_days=_popularity_window(tv_policy),
-            whitelisted=tag_only_whitelist,
-            degrade=context.degrade,
-            requested=requested,
-            request_index=request_index,
-            keep_last_scope=tv_policy.keep_last_scope,
-            season_lookahead=tv_policy.season_lookahead,
+            rating_keys={i.plex_rating_key for i in items if i.plex_rating_key},
+            window_days=_popularity_window(movie_policy),
         )
+        # A merged bind is one file listed several times in Plex; its plays are split
+        # across the listings' rating keys. Fold each group's stats onto its canonical
+        # key, or the item would under-count its own watching -- the direction that
+        # condemns.
+        await _fold_merged_watch_stats(
+            engine,
+            groups={
+                i.plex_rating_key: i.merged_rating_keys
+                for i in items
+                if i.plex_rating_key is not None and i.merged_rating_keys
+            },
+            window_days=_popularity_window(movie_policy),
+            last_played=last_played,
+            watchers_window=watchers_window,
+            watchers_all_time=watchers_all_time,
+        )
+        # The owner's manual overrides -- ``media_key -> "spare" | "reap"`` -- loaded once
+        # and applied to every item's verdict. A spared file is judged PROTECT rather than
+        # surfacing in "would delete" again; a reaped one is forced onto the list (short
+        # of a hard safety gate). Keys may be a show's, in which case the decision applies
+        # to all of its seasons.
+        override_map = await whitelist.overrides(session)
+
+        if season_task is not None:
+            emit(Progress("gathering", 4, 5, "TV seasons from Sonarr"))
+            season_judgements = await season_task
+    except BaseException:
+        # A failure on any branch aborts the scan, exactly as it did sequentially -- but
+        # the surviving branches are reaped first (cancelled, drained, late failures
+        # logged), so nothing keeps reading from sources after the scan is already dead
+        # and no task's failure goes unobserved. Every task is in fanned_out because
+        # every task was created by _spawn.
+        await reap(fanned_out)
+        raise
 
     # ---- freeze ------------------------------------------------------------
     snapshot = Snapshot(
@@ -471,14 +530,20 @@ async def scan(
     condemned = 0
     total = len(items) + len(season_judgements)
 
+    condemned_keys: list[str] = []
+
     for index, item in enumerate(items):
         if index % 100 == 0:
             emit(Progress("scoring", index, total, item.title))
+            # The judge is pure computation now (no per-item queries), so without this
+            # the loop would hold the event loop for the whole scoring phase -- freezing
+            # the very progress endpoint the emit above feeds.
+            await asyncio.sleep(0)
 
-        facts = await build_facts(
-            engine,
+        facts = build_facts(
             item,
             context,
+            membership_index=membership_index,
             imdb=imdb,
             last_played=last_played,
             watchers_window=watchers_window,
@@ -486,7 +551,7 @@ async def scan(
             whitelisted=tag_only_whitelist,
             request_index=request_index,
         )
-        verdict = await _judge_item(
+        verdict = _judge_item(
             session,
             snapshot_id=snapshot.id,
             media_key=item.media_key,
@@ -529,6 +594,7 @@ async def scan(
         )
         if verdict == "condemn":
             condemned += 1
+            condemned_keys.append(item.media_key)
 
     # Seasons run through the SAME judge: the season-pruning guard is merged in as an
     # extra gate result, so a protected season is protected by a gate exactly as a
@@ -536,7 +602,8 @@ async def scan(
     for offset, judgement in enumerate(season_judgements):
         if offset % 100 == 0:
             emit(Progress("scoring", len(items) + offset, total, judgement.title))
-        verdict = await _judge_item(
+            await asyncio.sleep(0)  # keep the event loop live; see the movie loop above
+        verdict = _judge_item(
             session,
             snapshot_id=snapshot.id,
             media_key=judgement.media_key,
@@ -575,6 +642,11 @@ async def scan(
         )
         if verdict == "condemn":
             condemned += 1
+            condemned_keys.append(judgement.media_key)
+
+    # Grace clocks for everything condemned this run, in one batched pass -- the same
+    # decision per key as _record_first_flagged, without a database round trip per item.
+    await _record_first_flagged_bulk(session, condemned_keys, now, grace_days=grace_days)
 
     await session.flush()
     emit(Progress("done", total, total, f"{condemned} candidates"))
@@ -616,7 +688,7 @@ class Display:
 _NO_DISPLAY = Display()
 
 
-async def _judge_item(
+def _judge_item(
     session: AsyncSession,
     *,
     snapshot_id: int,
@@ -676,8 +748,9 @@ async def _judge_item(
     coverage_bp = round(item_score.coverage * 10_000)
 
     verdict = _verdict(evaluation, score_value, coverage_bp, policy, override=override)
-    if verdict == "condemn":
-        await _record_first_flagged(session, media_key, now, grace_days=grace_days)
+    # The grace clock for a condemned item is set by the CALLER, batched across the whole
+    # run (_record_first_flagged_bulk) -- one query for every condemned key instead of a
+    # read per item. The decision per key is unchanged: see _apply_first_flag.
 
     session.add(
         Candidate(
@@ -858,8 +931,13 @@ def _explain(
     )
 
 
-async def _record_first_flagged(
-    session: AsyncSession, media_key: str, now: datetime, *, grace_days: int
+def _apply_first_flag(
+    session: AsyncSession,
+    existing: FirstFlagged | None,
+    media_key: str,
+    now: datetime,
+    *,
+    grace_days: int,
 ) -> None:
     """Set the grace clock once, and never move it while the item stays condemned --
     but DO restart it when an item that had left the condemned set comes back.
@@ -877,8 +955,10 @@ async def _record_first_flagged(
     condemned: when that gap exceeds the grace window (so it genuinely left, not just
     missed a snapshot to an outage), the clock restarts. ``last_seen_condemned_at`` exists
     for exactly this reset.
+
+    This is THE decision, shared by the one-key and batched recorders below so the two
+    can never drift apart on a safety window.
     """
-    existing = await session.get(FirstFlagged, media_key)
     if existing is None:
         session.add(
             FirstFlagged(media_key=media_key, first_flagged_at=now, last_seen_condemned_at=now)
@@ -894,6 +974,30 @@ async def _record_first_flagged(
         # a clock that was legitimately still running.
         existing.first_flagged_at = now
     existing.last_seen_condemned_at = now
+
+
+async def _record_first_flagged_bulk(
+    session: AsyncSession, media_keys: Sequence[str], now: datetime, *, grace_days: int
+) -> None:
+    """Grace bookkeeping for every key condemned in one run, in one read.
+
+    The ONLY write path to the grace clock, applying :func:`_apply_first_flag` per key;
+    the existing rows arrive in chunked ``IN`` queries instead of a ``session.get`` (and
+    its autoflush) per condemned item.
+    """
+    keys = list(dict.fromkeys(media_keys))
+    if not keys:
+        return
+    existing: dict[str, FirstFlagged] = {}
+    for start in range(0, len(keys), 500):
+        chunk = keys[start : start + 500]
+        rows = (
+            await session.execute(select(FirstFlagged).where(FirstFlagged.media_key.in_(chunk)))
+        ).scalars()
+        for row in rows:
+            existing[row.media_key] = row
+    for key in keys:
+        _apply_first_flag(session, existing.get(key), key, now, grace_days=grace_days)
 
 
 # ---------------------------------------------------------------------------
@@ -927,82 +1031,13 @@ async def build_movie_index(
 ) -> identity.PlexIndex:
     """The Plex movie library, inverted for id / basename / title matching.
 
-    The Tautulli ``get_library_media_info`` sweep is the **spine** -- it alone gives
-    rating_key / title / year / added_at cheaply, and for every row it lists, ``added_at``
-    keeps coming from there so dormancy stays byte-identical to the title-only era. The
-    plexapi sweep enriches each spine row with external ids + file basename, joined by
-    rating key.
-
-    The spine is a Tautulli-side *cache*, though, and it lags: an item added to Plex since
-    Tautulli's last library refresh is absent from the listing (verified live: a day-old
-    movie missing from the media-info listing while Tautulli's own get_metadata served it
-    fine). Spine-only, that item never enters the index, so the resolver reports it
-    unmatched -- kept, but with a false "Plex has not matched this item" explanation. The
-    plexapi sweep walks the same sections directly, so any rating key it returns that the
-    spine did not list is appended as its own row, carrying Plex's own added-at (there is
-    no Tautulli value to preserve for a row Tautulli has not listed yet).
-
-    A plexapi sweep that fails **degrades** the snapshot (rule #2: never let the id signal
-    vanish and silently fall the whole library back to title-only) and leaves ids empty, so
-    items still match by title+year but no run may execute against the result. A movie-only
-    deployment with no Plex configured simply gets no enrichment -- its snapshot was already
-    un-executable, since a real reap refuses without Plex.
+    One shared implementation with ``season_scan.build_tv_index`` -- see
+    ``services.library_index`` for the spine + sweep design and its failure
+    semantics. A movie-only deployment with no Plex configured simply gets no
+    enrichment; its snapshot was already un-executable, since a real reap refuses
+    without Plex.
     """
-    plex_items: dict[int, identity.PlexItem] = {}
-    if plex is not None:
-        try:
-            plex_items = await plex.library_guid_index(section_type="movie")
-        except PlexError as exc:
-            degrade(
-                f"Plex GUID sweep failed ({exc}) -- id matching unavailable, snapshot un-executable"
-            )
-
-    items: list[identity.PlexItem] = []
-    for library in await tautulli.libraries():
-        if library.get("section_type") != "movie":
-            continue
-        section_id = int(library["section_id"])
-        start = 0
-        while True:
-            page = await tautulli.library_media_info(section_id, start=start, length=1000)
-            rows = page.get("data") or []
-            for row in rows:
-                # A row with no rating key cannot become a candidate's join (its rating_key
-                # read would fail), so drop it here exactly as build_tv_index does.
-                rk = row.get("rating_key")
-                if rk is None:
-                    continue
-                rating_key = int(rk)
-                enriched = plex_items.get(rating_key)
-                items.append(
-                    identity.PlexItem(
-                        rating_key=rating_key,
-                        title=str(row.get("title") or ""),
-                        year=_as_year(row.get("year")),
-                        added_at=from_epoch(row.get("added_at")),
-                        ids=enriched.ids if enriched is not None else identity.ExternalIds(),
-                        file_basename=enriched.file_basename if enriched is not None else None,
-                        files=enriched.files if enriched is not None else (),
-                        # Display metadata from the plexapi sweep; rows the sweep did not
-                        # list (or a failed sweep) simply carry none of it.
-                        video_resolution=(
-                            enriched.video_resolution if enriched is not None else None
-                        ),
-                        content_rating=enriched.content_rating if enriched is not None else None,
-                        runtime_minutes=(
-                            enriched.runtime_minutes if enriched is not None else None
-                        ),
-                        ratings=enriched.ratings if enriched is not None else (),
-                    )
-                )
-            if len(rows) < 1000:
-                break
-            start += 1000
-
-    # Items Plex has that the Tautulli cache has not listed yet (fresh additions).
-    spine_keys = {item.rating_key for item in items}
-    items.extend(row for rk, row in plex_items.items() if rk not in spine_keys)
-    return identity.PlexIndex.build(items)
+    return await library_index.build_index(tautulli, plex, section_type="movie", degrade=degrade)
 
 
 def _movie_file_basename(movie: Mapping[str, Any]) -> str | None:
@@ -1253,8 +1288,8 @@ async def _fold_merged_watch_stats(
 async def sync_protection_lists(
     engine: AsyncEngine,
     *,
-    radarrs: Sequence[RadarrClient] = (),
-    sonarrs: Sequence[Any] = (),
+    radarrs: Sequence[RadarrSource] = (),
+    sonarrs: Sequence[season_scan.SonarrSource] = (),
     movie_keep_tags: tuple[str, ...] = ("reaper-keep",),
     movie_keep_match: str = "any",
     tv_keep_tags: tuple[str, ...] = ("reaper-keep",),
@@ -1297,35 +1332,68 @@ async def sync_protection_lists(
             synced[provider.slug] = f"error: {exc}"
             log.warning("lists.sync_failed", slug=provider.slug, error=str(exc))
 
+    # Every provider reads a different service, and each one already fails soft on its
+    # own, so they refresh concurrently -- the whole pass takes as long as the slowest
+    # provider instead of the sum. The database writes inside lists.sync stay atomic per
+    # list; SQLite allows one writer at a time, and the busy_timeout pragma (see
+    # db/session.py) queues the brief overlapping writes -- each provider's write is a
+    # few hundred rows, far inside that budget.
+    runs: list[Coroutine[Any, Any, None]] = []
     if include_top_250:
-        await _run(lists.ImdbTop250(), kind=lists.ListKind.CURATED)
+        runs.append(_run(lists.ImdbTop250(), kind=lists.ListKind.CURATED))
 
     # The keep-list, configurable per media type: movies read the owner's Radarr keep-tags,
     # TV reads their Sonarr keep-tags, each matched ANY/ALL. A title carrying a keep-tag is
     # spared outright. Empty tag list -> nothing synced (the protection simply does not fire).
+    # Each instance is its OWN list (the instance id is part of the slug): with a shared
+    # slug, two same-service instances would take turns erasing each other's keep-tagged
+    # titles, since a sync atomically replaces its slug's whole membership.
     movie_match: Literal["any", "all"] = "all" if movie_keep_match == "all" else "any"
     tv_match: Literal["any", "all"] = "all" if tv_keep_match == "all" else "any"
     for radarr in radarrs:
         if movie_keep_tags:
-            await _run(
-                lists.ArrTagRule(radarr, tuple(movie_keep_tags), movie_match),
-                kind=lists.ListKind.WHITELIST,
+            runs.append(
+                _run(
+                    lists.ArrTagRule(
+                        radarr.client,
+                        tuple(movie_keep_tags),
+                        movie_match,
+                        instance_id=radarr.instance_id,
+                        instance_name=radarr.name,
+                    ),
+                    kind=lists.ListKind.WHITELIST,
+                )
             )
     for sonarr in sonarrs:
         if tv_keep_tags:
-            await _run(
-                lists.ArrTagRule(sonarr, tuple(tv_keep_tags), tv_match),
-                kind=lists.ListKind.WHITELIST,
+            runs.append(
+                _run(
+                    lists.ArrTagRule(
+                        sonarr.client,
+                        tuple(tv_keep_tags),
+                        tv_match,
+                        instance_id=sonarr.instance_id,
+                        instance_name=sonarr.name,
+                    ),
+                    kind=lists.ListKind.WHITELIST,
+                )
             )
 
     if plex_server is not None:
-        await _run(
-            lists.PlexCollection(
-                server=plex_server, section_name=section_name, collection_name=collection_name
-            ),
-            kind=lists.ListKind.WHITELIST,
+        runs.append(
+            _run(
+                lists.PlexCollection(
+                    server=plex_server, section_name=section_name, collection_name=collection_name
+                ),
+                kind=lists.ListKind.WHITELIST,
+            )
         )
 
+    # gather_reaped, not bare gather: _run swallows every per-provider failure, so only
+    # something unexpected (a cache-database fault) can raise here -- and when it does,
+    # the surviving providers are cancelled and drained rather than left refreshing
+    # lists for a scan that is already dead.
+    await gather_reaped(*runs)
     return synced
 
 

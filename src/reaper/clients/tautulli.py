@@ -198,8 +198,9 @@ class TautulliClient(BaseClient):
 
         Season pruning needs the Plex rating key of each *season*, and there is no sweep
         endpoint that lists seasons -- ``get_library_media_info`` returns show-level rows
-        only. So we resolve a show's seasons one show at a time, and only for shows that
-        actually have a prunable season, to keep the call count bounded.
+        only. So we resolve seasons with one call per show -- several shows in flight at
+        once under a small bound, and only for shows that actually have a prunable
+        season, to keep the call count bounded.
 
         Each child carries ``rating_key`` and ``media_index`` (the season number). The
         envelope nests them under ``children_list``; an item with no children returns an
