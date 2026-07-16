@@ -12,17 +12,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Caching is off because this runner's cache server is unreachable, not because
-      # caching is unwanted. Jobs run on a per-job bridge network while the runner
-      # advertises its cache at 172.17.0.2 (the default bridge), and Docker isolates the
-      # two, so every restore and save times out. A cache that always misses is not free:
-      # it cost this job ~40s and the frontend job ~9m per run, for nothing. Re-enable
-      # here and in `frontend` once the runner sets cache.host to an address reachable
-      # from job containers.
+      # Caching depends on job containers being able to reach the runner's cache server.
+      # It only works while the runner shares a network with them (container.network on
+      # the runner, rather than the per-job network it creates by default) -- otherwise
+      # Docker isolates the two, every restore and save times out, and a cache that always
+      # misses is far from free: it once cost this job ~40s and `frontend` ~9m per run, to
+      # fetch nothing. If those timeouts reappear, suspect the runner's network, not this.
       - name: Install uv
         uses: astral-sh/setup-uv@v5
         with:
-          enable-cache: false
+          enable-cache: true
 
       - name: Set up Python
         run: uv python install 3.13
@@ -66,11 +65,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # `cache: npm` is omitted deliberately -- see the note in `check`. Against this
-      # runner it never hit, and the doomed restore plus save added ~9m to every run.
+      # See the note on caching in `check`.
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       # `ci`, not `install`: it installs exactly the locked tree and fails if
       # package.json and the lockfile disagree, rather than quietly resolving something
