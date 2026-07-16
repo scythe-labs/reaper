@@ -33,11 +33,17 @@ from dataclasses import dataclass, field, fields
 from typing import Literal, Protocol
 
 from reaper.clock import humanize_days, humanize_window
-from reaper.engine.observation import Known, Observation, Unknown, describe
+from reaper.engine.observation import Absent, Known, Observation, Unknown, describe
 
 GateOutcome = Literal["PROTECT", "ABSTAIN"]
 PROTECT: GateOutcome = "PROTECT"
 ABSTAIN: GateOutcome = "ABSTAIN"
+
+#: Fail-safe default for the custom-rule fact fields below. A shared, immutable ``Absent``
+#: singleton: ``Absent`` never matches a condemn comparison and never protects, so a Facts
+#: builder that does not set one of these fields cannot change any verdict. The live scan
+#: builders set them explicitly.
+_UNSET: Absent = Absent(source="unset")
 
 
 class GateId(enum.StrEnum):
@@ -151,6 +157,31 @@ class Facts:
     in_curated_list: Observation[str]
     is_whitelisted: Observation[bool]
     others_watching: Observation[int]
+
+    # --- fields authorable in custom rules (the weighting feature) --------------------
+    # Given fail-safe defaults so the non-production Facts builders (backtest
+    # reconstruction, calibration, test fixtures) need not enumerate them; the live scan
+    # builders set them explicitly. ``Absent`` is fail-closed on every lane -- it never
+    # matches a condemn comparison and never protects.
+    requested: Observation[bool] = _UNSET
+    """Was this title asked for via Seerr? Three-state: ``Unknown`` when Seerr is
+    absent/partial or the item has no id to join on -- never coerced to ``False``, which
+    would add delete pressure on missing data. Set in build_facts / build_season_facts."""
+
+    genres: Observation[str] = _UNSET
+    """The *arr's genres, comma-joined. ``Absent`` when the payload carries none."""
+
+    release_age_days: Observation[float] = _UNSET
+    """Days since the title's release. Derived (age composes with dormancy); ``Absent``
+    for seasons in v1, which have no clean per-season release date."""
+
+    quality: Observation[str] = _UNSET
+    """The file's quality/resolution name (e.g. "Bluray-1080p"). Movies only in v1."""
+
+    show_ended: Observation[bool] = _UNSET
+    """TV: has the series ended (vs still returning)? ``Absent`` for movies -- the
+    ``season_rank`` precedent -- so it never condemns and never protects where it does
+    not apply."""
 
     def unknowns(self) -> list[Unknown]:
         # fields(), not vars(): slots=True removes __dict__, so vars() raises.

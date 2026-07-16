@@ -7,9 +7,60 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-15 (external-ID identity resolver landed)
+Last updated: 2026-07-15 (custom weighting rules + season-keep rework — backend landed)
 
-### Newest — matching by external ID, not by name
+### Newest — operator-authored weighting rules, and a season-keep rework (backend done, UI pending)
+
+The policy grew a Radarr-style **custom rules** surface, mapped onto Reaper's two-lane safety
+model rather than Radarr's signed sum. Positive "reasons to remove" become **unsigned custom
+condemn signals** (`BooleanCondemnSpec` = match → full weight; `GradedCondemnSpec` = a numeric
+field ramped like a built-in), and "reasons to keep" become either a hard protect condition
+(already existed) or a new **graded lean-to-keep** — a strictly-subtractive discount applied
+*after* the normalized score (`value = max(0, base − Σdiscount)`). Both are provably fail-closed:
+an Unknown condemn rule adds 0 pressure while keeping its weight in the fixed denominator, and an
+Unknown keep takes its *maximum* discount — so, as with the built-in signals, missing data can
+only push a score *down*. All the new arithmetic lives inside the one `score()` both the live scan
+and the backtest call, so the lift gate measures the composed formula (it catches a size-based
+custom rule the way it catches built-in SIZE) and there is no second implementation to drift.
+`_verdict` is untouched, so a keep can turn a condemn into an abstain but can never un-protect a
+gated item. `SCORER_VERSION` was bumped, so the simulator correctly refuses stale numbers.
+
+Five new **Unknown-safe metadata fields** back the rules: `requested` (three-state, from a new
+`build_request_index` over *all* Seerr requests — joined on tmdb/tvdb so a non-admin key can't
+break it, and Unknown whenever Seerr can't be fully read, so a missing requests app never reads as
+"not requested"), `genre`, `release_age`, `quality`, and `show_ended`. The operator explicitly
+accepted elevating requested-status to a decision input, given the fail-closed handling.
+
+Season-keep gained: the keep-last-N knob is now scopeable (`keep_last_scope: "all" | "requested"`,
+fail-closed — Unknown-requested still gets the floor); an `inspect()` warning and a new
+`GET /api/snapshot/season-shape` endpoint so the editor can show live "X of Y shows have no
+removable season"; clearer over-count "why" copy; and **episode-precise mid-binge** protection —
+the guard now protects the season a viewer is *actually* mid-way through (or the true next one if
+they finished), from a new `media_index` column on the rebuildable `watch_event` cache (idempotent
+add, nightly-backfilled) plus a scan-time Sonarr `episodes()` read for each season's last on-disk
+episode. Fail-closed throughout: any missing episode data drops to the old season-level `{m, m+1}`.
+
+The **unified rules-editor UI** then landed on the approved mockup: a "Your custom rules" panel with
+"Reasons to remove" (offering exactly the new metadata fields) and "Lean toward keeping" (numeric
+fields), each routed to the correct lane; the season slider became an uncapped number input with a
+live "X of Y shows have no removable season" advisory (fed by `GET /api/snapshot/season-shape`), a
+`keep_last_scope` segmented control, and a `season_lookahead` input; and the why-panel gained a
+"leaning toward keeping" block. Verified end to end in a logged-in browser against a real scan:
+authored a `genre contains …` remove rule → validate/save/reload round-tripped 200, the advisory
+read live off 222 shows, and the scorer-version bump correctly made the simulator refuse stale
+numbers ("needs a fresh scan"); no console errors; the demo rule was then removed to restore the
+policy.
+
+Green: ruff, mypy, **905 backend tests** (new `test_custom_condemn.py` plus extended season/history
+coverage), `alembic check` clean (no new drift — no ORM columns changed; the policy is JSON and the
+cache is off-Alembic), and the frontend build (tsc + vite). Assumption that held: reusing the engine
+specs directly as the API DTOs (rather than parallel `*In` models) kept the lane/numeric validation
+on the wire. Remaining follow-ups (deferred): compound AND rules within one custom rule; backtest
+reconstruction of the new metadata fields (they read Absent in the backtest today, so a genre/quality
+custom rule is inert there); and a first *live* season reap to exercise the episode-precise guard
+against a real Sonarr.
+
+### Earlier — matching by external ID, not by name
 
 The fate-deciding join — *arr item → Plex item — was **name-based** (lowercased title + year,
 degrading to title-alone whenever Plex omitted the year). That join produces the Plex rating

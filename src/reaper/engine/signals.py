@@ -41,10 +41,12 @@ from __future__ import annotations
 import enum
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 from reaper.clock import humanize_days, humanize_window
+from reaper.engine import fields
 from reaper.engine.gates import Facts
-from reaper.engine.observation import Known, Observation
+from reaper.engine.observation import Absent, Known, Observation
 
 MAX_SCORE = 100
 
@@ -99,8 +101,74 @@ class SignalConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class CustomSignalConfig:
+    """A user-authored condemnation signal, translated from the policy for scoring.
+
+    Two flavors, both unsigned and both in ``[0, weight]``:
+
+    * **boolean** -- a matched ``condition`` contributes the full weight, an unmatched one
+      zero; an ``Unknown`` input contributes zero with the weight retained.
+    * **graded** -- a numeric ``field`` ramped between ``floor`` and ``saturate_at``,
+      exactly like a built-in signal.
+
+    Kept an engine-level type (not the policy spec) so ``score()`` never imports the policy
+    layer, and translated from the policy at the call site like ``SignalConfig`` is.
+    """
+
+    name: str
+    weight: int
+    kind: Literal["boolean", "graded"]
+    field: str
+    condition: fields.Condition | None = None
+    saturate_at: int = 1
+    floor: int = 0
+
+    @property
+    def enabled(self) -> bool:
+        return self.weight > 0
+
+
+@dataclass(frozen=True, slots=True)
+class KeepConfig:
+    """A user-authored graded "lean toward keeping", translated from the policy.
+
+    A strictly-subtractive discount applied AFTER the normalized score, in score points.
+    Fail-closed on purpose: an ``Unknown`` input yields the MAXIMUM discount (toward
+    keeping), and the discount can only ever lower a score -- never raise one, and never
+    (by construction, see ``services.snapshot._verdict``) un-protect a gate-protected item.
+
+    ``direction`` says which end of the ramp keeps: ``high_keeps`` (many all-time watchers
+    -> keep) or ``low_keeps``.
+    """
+
+    name: str
+    max_discount: int
+    field: str
+    floor: int
+    saturate_at: int
+    direction: Literal["high_keeps", "low_keeps"] = "high_keeps"
+
+    @property
+    def enabled(self) -> bool:
+        return self.max_discount > 0
+
+
+@dataclass(frozen=True, slots=True)
+class KeepResult:
+    name: str
+    discount: float
+    """Points subtracted from the score, in [0, max_discount]."""
+    max_discount: int
+    detail: str
+    evaluated: bool
+    """False when the input was Unknown -- and an Unknown keep takes its MAXIMUM discount,
+    so missing data pushes toward keeping the file."""
+
+
+@dataclass(frozen=True, slots=True)
 class SignalResult:
-    signal: SignalId
+    signal: SignalId | str
+    """A built-in ``SignalId`` or a custom rule's name."""
     pressure: float
     """In [0, weight]. Never negative."""
     weight: int
@@ -187,46 +255,171 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
     )
 
 
+def evaluate_custom(config: CustomSignalConfig, facts: Facts) -> SignalResult:
+    """One user-authored condemnation signal. Always in ``[0, weight]``.
+
+    Unsigned like every signal: a matched boolean rule (or a graded field above its floor)
+    adds pressure; an ``Unknown`` input adds none but keeps its weight in the denominator,
+    so a custom rule can only ever push the score DOWN on missing data.
+    """
+    if not config.enabled:
+        return SignalResult(config.name, 0.0, 0, "disabled", evaluated=True)
+
+    spec = fields.BY_KEY.get(config.field)
+    label = spec.label if spec is not None else config.field
+
+    if config.kind == "graded":
+        observation = spec.read(facts) if spec is not None else None
+        raw = (
+            float(observation.value)
+            if isinstance(observation, Known) and isinstance(observation.value, int | float)
+            else None
+        )
+        if raw is None:
+            # Unknown or absent numeric: zero pressure, weight retained -- fail-safe.
+            return SignalResult(
+                config.name, 0.0, config.weight, f"could not read {label.lower()}", evaluated=False
+            )
+        fraction = _ramp(raw, float(config.floor), float(config.saturate_at))
+        return SignalResult(
+            config.name,
+            fraction * config.weight,
+            config.weight,
+            f"{label}: {raw:.0f}",
+            evaluated=True,
+        )
+
+    # boolean
+    if config.condition is None:  # pragma: no cover -- the policy always sets one
+        return SignalResult(config.name, 0.0, config.weight, "misconfigured rule", evaluated=False)
+    result = fields.evaluate(config.condition, facts)
+    if result.blocked:
+        # Unknown input: could not check, so it cannot add pressure. Weight retained.
+        return SignalResult(config.name, 0.0, config.weight, result.detail, evaluated=False)
+    pressure = float(config.weight) if result.matched else 0.0
+    return SignalResult(config.name, pressure, config.weight, result.detail, evaluated=True)
+
+
+def evaluate_keep(config: KeepConfig, facts: Facts) -> KeepResult:
+    """One user-authored graded keep. A discount in ``[0, max_discount]``, fail-closed.
+
+    A value we cannot read yields the FULL discount -- missing data pushes toward keeping.
+    An ``Absent`` value (we looked, there genuinely is none) yields no discount: absence is
+    real evidence, not a reason to keep.
+    """
+    if not config.enabled:
+        return KeepResult(config.name, 0.0, 0, "disabled", evaluated=True)
+
+    spec = fields.BY_KEY.get(config.field)
+    label = spec.label if spec is not None else config.field
+    observation = spec.read(facts) if spec is not None else None
+    raw = (
+        float(observation.value)
+        if isinstance(observation, Known) and isinstance(observation.value, int | float)
+        else None
+    )
+    if raw is None:
+        if isinstance(observation, Absent):
+            return KeepResult(
+                config.name, 0.0, config.max_discount, f"{label}: none recorded", True
+            )
+        # Unknown (or an unreadable field): fail-closed to the maximum keep.
+        return KeepResult(
+            config.name,
+            float(config.max_discount),
+            config.max_discount,
+            f"kept fully: could not check {label.lower()}",
+            evaluated=False,
+        )
+
+    fraction = _ramp(raw, float(config.floor), float(config.saturate_at))
+    if config.direction == "low_keeps":
+        fraction = 1.0 - fraction
+    return KeepResult(
+        config.name,
+        fraction * config.max_discount,
+        config.max_discount,
+        f"{label}: {raw:.0f}",
+        True,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Score:
     value: float
-    """0-100. Higher means more pressure to delete."""
+    """0-100. Higher means more pressure to delete. This is ``base_value`` minus the keep
+    discount, floored at 0 -- the number the verdict and the simulator decide on."""
 
     coverage: float
     """The share of enabled weight we could actually evaluate, 0-1.
 
     An item at 40% coverage is one we mostly cannot see. The policy's coverage
-    floor abstains below a threshold rather than guessing.
+    floor abstains below a threshold rather than guessing. Keeps are NOT in coverage:
+    coverage measures how much *condemnation evidence* we saw, and a keep is orthogonal.
     """
 
     results: Sequence[SignalResult]
+
+    base_value: float = 0.0
+    """The condemnation score before any keep discount -- what the why-panel shows as the
+    'condemnation' subtotal."""
+
+    keep_discount: float = 0.0
+    """Points the graded keeps subtracted from ``base_value`` to reach ``value``."""
+
+    keep_results: Sequence[KeepResult] = ()
 
     @property
     def unevaluated(self) -> list[SignalResult]:
         return [r for r in self.results if not r.evaluated and r.weight > 0]
 
 
-def score(configs: Sequence[SignalConfig], facts: Facts, *, window_days: int = 365) -> Score:
+def score(
+    configs: Sequence[SignalConfig],
+    facts: Facts,
+    *,
+    custom_condemn: Sequence[CustomSignalConfig] = (),
+    keeps: Sequence[KeepConfig] = (),
+    window_days: int = 365,
+) -> Score:
     """Total condemnation pressure, 0-100.
 
     The denominator is the sum of **all enabled weights**, including those whose
     value could not be read. That is what makes missing data fail safe: the numerator
     loses the contribution, the denominator keeps it, so the score falls.
 
+    User-authored ``custom_condemn`` signals join this same denominator, so they inherit
+    the fail-safe arithmetic for free: an Unknown custom rule drags the score down exactly
+    as a built-in one does, and there is no separate additive layer to reason about.
+
+    ``keeps`` are a strictly-subtractive discount applied AFTER normalization:
+    ``value = max(0, base - Σdiscount)``. Because every discount is non-negative and an
+    Unknown keep takes its maximum, more missing data can only lower the score -- a keep can
+    never raise a score, and never un-protect a gate-protected item (that is decided before
+    the score is ever read; see ``services.snapshot._verdict``).
+
     ``window_days`` is passed through purely for phrasing the "few watches" detail; it is
     never part of any number.
     """
     results = [evaluate_signal(config, facts, window_days=window_days) for config in configs]
+    results += [evaluate_custom(config, facts) for config in custom_condemn]
+
+    keep_results = [evaluate_keep(keep, facts) for keep in keeps]
+    keep_discount = sum(kr.discount for kr in keep_results)
 
     denominator = sum(r.weight for r in results)
     if denominator == 0:
-        return Score(value=0.0, coverage=1.0, results=results)
-
-    numerator = sum(r.pressure for r in results)
-    evaluated_weight = sum(r.weight for r in results if r.evaluated)
+        base = 0.0
+        coverage = 1.0
+    else:
+        base = MAX_SCORE * sum(r.pressure for r in results) / denominator
+        coverage = sum(r.weight for r in results if r.evaluated) / denominator
 
     return Score(
-        value=MAX_SCORE * numerator / denominator,
-        coverage=evaluated_weight / denominator,
+        value=max(0.0, base - keep_discount),
+        coverage=coverage,
         results=results,
+        base_value=base,
+        keep_discount=keep_discount,
+        keep_results=keep_results,
     )

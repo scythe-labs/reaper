@@ -74,6 +74,9 @@ from reaper.services.season_pruning import (
 
 log = structlog.get_logger(__name__)
 
+#: Fail-safe default for the optional custom-rule fact observations (see gates._UNSET).
+_UNSET_OBS: Absent = Absent(source="unset")
+
 
 def _series_summary(series: Mapping[str, Any]) -> str | None:
     overview = series.get("overview")
@@ -159,6 +162,7 @@ class _SeriesWork:
     # Sonarr's series imdbId is missing or wrong (common for reality/recent shows).
     plex_imdb_id: str | None = None
     seasons_in_plex: dict[int, PlexSeason] = field(default_factory=dict)
+    season_final_episode: dict[int, int | None] = field(default_factory=dict)
 
 
 @dataclass
@@ -175,6 +179,12 @@ class SeasonWatchStats:
     user_season_keys: dict[int, set[int]] = field(default_factory=dict)
     """user_id -> the season rating keys that user has any episode play under. Mapped to
     season *numbers* per show to feed the sequential-progression guard."""
+
+    user_season_progress: dict[int, dict[int, int]] = field(default_factory=dict)
+    """user_id -> {season rating key -> highest COMPLETED episode number}. The episode-precise
+    position for the mid-binge guard. Only rows with a known episode index and a completed
+    watch; a season with only un-backfilled (NULL-index) rows is absent here, so the guard
+    falls back to season-level protection for it."""
 
 
 def season_media_key(instance_id: int, series_id: int, season_number: int) -> str:
@@ -223,6 +233,27 @@ def airing_seasons(series: Mapping[str, Any], seasons: list[SeasonStats]) -> set
     return {max(real)} if real else set()
 
 
+def series_ended(series: Mapping[str, Any]) -> Observation[bool]:
+    """Whether Sonarr considers the series finished -- three-state, for custom rules.
+
+    ``Unknown`` when Sonarr reports no status at all, so an unreadable status can never be
+    read as "ended" and add delete pressure. Mirrors the ``running`` logic in
+    ``airing_seasons`` so the two never disagree.
+    """
+    status = str(series.get("status") or "").lower()
+    if not status and "ended" not in series:
+        return Unknown(reason="Sonarr did not report series status", source="sonarr")
+    ended = bool(series.get("ended", False))
+    running = status == "continuing" or (status not in ("ended", "deleted") and not ended)
+    return Known(value=not running, source="sonarr")
+
+
+def series_genres(series: Mapping[str, Any]) -> Observation[str]:
+    """The show's genres, comma-joined. ``Absent`` when Sonarr recorded none."""
+    genres = [str(g) for g in (series.get("genres") or []) if g]
+    return Known(value=", ".join(genres), source="sonarr") if genres else Absent(source="sonarr")
+
+
 def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
     """Translate the season-pruning verdict for one season into a gate result.
 
@@ -269,6 +300,9 @@ def build_season_facts(
     whitelisted: bool,
     curated: list[lists.Membership],
     imdb_rating: ImdbRating | None = None,
+    requested: Observation[bool] = _UNSET_OBS,
+    show_ended: Observation[bool] = _UNSET_OBS,
+    genres: Observation[str] = _UNSET_OBS,
 ) -> Facts:
     """Assemble one season's evidence, with the same Unknown-discipline as the movie path.
 
@@ -344,6 +378,15 @@ def build_season_facts(
         in_curated_list=in_curated,
         is_whitelisted=Known(value=whitelisted, source="lists"),
         others_watching=Absent(source="tautulli"),
+        # --- fields authorable in custom rules ---------------------------------
+        requested=requested,
+        genres=genres,
+        # No clean per-season release date, and a season mixes episode qualities, so both
+        # are Absent for seasons in v1 -- never condemn, never protect (the movie/season
+        # not-applicable precedent).
+        release_age_days=Absent(source="sonarr"),
+        quality=Absent(source="sonarr"),
+        show_ended=show_ended,
     )
 
 
@@ -486,6 +529,17 @@ async def season_watch_stats(
         "WHERE parent_rating_key IN :keys AND media_type = 'episode'"
     ).bindparams(bindparam("keys", expanding=True))
 
+    # Episode-precise position: each user's highest COMPLETED episode per season. NULL-index
+    # rows (movies, or pre-backfill TV) are excluded, so a season with only those is simply
+    # absent here and the guard falls back to season-level protection for it.
+    progress = text(
+        "SELECT user_id AS u, parent_rating_key AS k, MAX(media_index) AS max_ep "
+        "FROM watch_event "
+        "WHERE parent_rating_key IN :keys AND media_type = 'episode' "
+        "  AND media_index IS NOT NULL AND watched_status = 1 "
+        "GROUP BY user_id, parent_rating_key"
+    ).bindparams(bindparam("keys", expanding=True))
+
     async with engine.connect() as conn:
         for row in (await conn.execute(aggregate, {"keys": keys, "since": since})).all():
             key = int(row.k)
@@ -496,26 +550,72 @@ async def season_watch_stats(
             stats.watchers_window[key] = int(row.win_w or 0)
         for row in (await conn.execute(pairs, {"keys": keys})).all():
             stats.user_season_keys.setdefault(int(row.u), set()).add(int(row.k))
+        for row in (await conn.execute(progress, {"keys": keys})).all():
+            stats.user_season_progress.setdefault(int(row.u), {})[int(row.k)] = int(row.max_ep)
 
     return stats
 
 
-def _watched_max_by_user(
+def _progress_by_user(
     stats: SeasonWatchStats, season_key_to_number: Mapping[int, int]
-) -> dict[str, int]:
-    """For one show, each viewer's highest watched season number.
+) -> dict[str, dict[int, int | None]]:
+    """For one show, each viewer's per-season position: season number -> highest completed
+    episode, or ``None`` when they touched the season but we have no episode index for it.
 
-    Feeds the sequential-progression guard: protect the season a viewer just finished and
-    the one they are about to start. Scoped to this show's season keys, so a user's
-    progress in another series does not leak in.
+    The anchor is every season the viewer has any play under (``user_season_keys``); a
+    ``None`` value means "position unknown for this season" and drops the guard to its
+    season-level fallback there. Scoped to this show's keys, so progress in another series
+    does not leak in.
     """
-    result: dict[str, int] = {}
     show_keys = set(season_key_to_number)
+    result: dict[str, dict[int, int | None]] = {}
     for user_id, keys in stats.user_season_keys.items():
-        numbers = [season_key_to_number[k] for k in keys & show_keys]
-        if numbers:
-            result[str(user_id)] = max(numbers)
+        per_season: dict[int, int | None] = {}
+        progressed = stats.user_season_progress.get(user_id, {})
+        for key in keys & show_keys:
+            per_season[season_key_to_number[key]] = progressed.get(key)
+        if per_season:
+            result[str(user_id)] = per_season
     return result
+
+
+def _final_episodes(episodes: list[dict[str, Any]]) -> dict[int, int | None]:
+    """{season number -> highest ON-DISK episode number}, from Sonarr's episode list.
+
+    Uses ``hasFile``, never ``episodeCount`` (Sonarr's download intent) or
+    ``totalEpisodeCount`` (which counts unaired episodes, so a season could never be
+    "finished"), so gaps and unaired episodes do not mislead the finished check.
+    """
+    final: dict[int, int | None] = {}
+    for episode in episodes:
+        if not episode.get("hasFile"):
+            continue
+        try:
+            season = int(episode["seasonNumber"])
+            number = int(episode["episodeNumber"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        current = final.get(season)
+        if current is None or number > current:
+            final[season] = number
+    return final
+
+
+def _keep_last_applies(
+    series: Mapping[str, Any],
+    keep_last_scope: str,
+    request_index: requested_by.RequestIndex | None,
+) -> bool:
+    """Whether the keep-last floor applies to this show under the scope.
+
+    Fail-closed under a "requested only" scope: apply keep-last unless we KNOW the show was
+    not requested (Unknown counts as "might be requested").
+    """
+    if keep_last_scope != "requested":
+        return True
+    tvdb_id = int(series["tvdbId"]) if series.get("tvdbId") else None
+    requested = request_index.show_requested(tvdb_id) if request_index is not None else None
+    return not (isinstance(requested, Known) and requested.value is False)
 
 
 async def gather(
@@ -533,6 +633,9 @@ async def gather(
     whitelisted: set[str],
     degrade: Any,
     requested: dict[str, str] | None = None,
+    request_index: requested_by.RequestIndex | None = None,
+    keep_last_scope: str = "all",
+    season_lookahead: int = 0,
 ) -> list[SeasonJudgement]:
     """Gather every prunable season across every Sonarr instance, ready to judge.
 
@@ -568,6 +671,7 @@ async def gather(
                 seasons=seasons,
                 keep_last=keep_last_seasons,
                 keep_first_season=keep_first_season,
+                apply_keep_last=_keep_last_applies(series, keep_last_scope, request_index),
                 airing_seasons=airing_seasons(series, seasons),
             )
             if not plan.prunable:
@@ -608,6 +712,17 @@ async def gather(
             item.seasons_in_plex = resolved_shows[show_rk]
             all_season_keys.update(s.rating_key for s in item.seasons_in_plex.values())
 
+        # Episode-precise mid-binge needs each season's last on-disk episode -- one extra
+        # Sonarr read per prunable show, bounded like the Plex resolution above. On failure the
+        # map stays empty and every season falls back to season-level protection, never less.
+        try:
+            episodes = await item.source.client.episodes(int(series["id"]))
+            item.season_final_episode = _final_episodes(episodes)
+        except IntegrationError as exc:
+            log.warning(
+                "season_scan.episodes_unreachable", show=series.get("title"), error=str(exc)
+            )
+
     stats = await season_watch_stats(engine, all_season_keys, window_days=window_days)
 
     # Series-level IMDb ratings, from the dataset we already ingest, applied to each season
@@ -637,6 +752,9 @@ async def gather(
                 keep_first_season=keep_first_season,
                 whitelisted=whitelisted,
                 requested=requested or {},
+                request_index=request_index,
+                keep_last_scope=keep_last_scope,
+                season_lookahead=season_lookahead,
                 ratings=ratings,
             )
         )
@@ -657,6 +775,9 @@ async def _judge_series(
     keep_first_season: bool,
     whitelisted: set[str],
     requested: dict[str, str] | None = None,
+    request_index: requested_by.RequestIndex | None = None,
+    keep_last_scope: str = "all",
+    season_lookahead: int = 0,
     ratings: dict[str, ImdbRating] | None = None,
 ) -> list[SeasonJudgement]:
     """Build a judgement for every content-bearing season of one series.
@@ -684,11 +805,15 @@ async def _judge_series(
     show_summary = _series_summary(series)
     group_key = f"sonarr:{item.source.instance_id}:{series_id}"
 
+    # Show-level facts shared by every season row: ended-vs-returning and genre.
+    show_ended_obs = series_ended(series)
+    show_genres_obs = series_genres(series)
+
     # Re-plan WITH the watch evidence now available: the sequential guard and the
     # keep-rule conflict detector both need per-user and per-season watcher counts that
     # only exist after the Plex resolution and the mirror read.
     key_to_number = {s.rating_key: n for n, s in item.seasons_in_plex.items()}
-    watched_max = _watched_max_by_user(stats, key_to_number)
+    progress = _progress_by_user(stats, key_to_number)
     watchers_by_season = {
         n: stats.watchers_all_time.get(s.rating_key, 0) for n, s in item.seasons_in_plex.items()
     }
@@ -697,7 +822,10 @@ async def _judge_series(
         seasons=item.seasons,
         keep_last=keep_last_seasons,
         keep_first_season=keep_first_season,
-        watched_max_by_user=watched_max,
+        apply_keep_last=_keep_last_applies(series, keep_last_scope, request_index),
+        progress_by_user=progress,
+        season_final_episode=item.season_final_episode,
+        season_lookahead=season_lookahead,
         airing_seasons=airing_seasons(series, item.seasons),
         watchers_by_season=watchers_by_season,
     )
@@ -716,6 +844,11 @@ async def _judge_series(
         in_plex = item.seasons_in_plex.get(n)
         plex_key = in_plex.rating_key if in_plex else None
         title = season_title(series_title, n)
+        requested_obs = (
+            request_index.season_requested(tvdb_id, n)
+            if request_index is not None
+            else Unknown(reason="requests not loaded", source="seerr")
+        )
         facts = build_season_facts(
             title=title,
             season=season,
@@ -731,6 +864,9 @@ async def _judge_series(
             whitelisted=bool(whitelists) or media_key in whitelisted,
             curated=curated,
             imdb_rating=show_rating,
+            requested=requested_obs,
+            show_ended=show_ended_obs,
+            genres=show_genres_obs,
         )
         # Requested-by: prefer a request that named this season; fall back to a
         # whole-show request. Display only -- never a gate.

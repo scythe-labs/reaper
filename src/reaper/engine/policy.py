@@ -37,16 +37,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import ClassVar, Literal, Self
+from typing import Annotated, ClassVar, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from reaper.engine.fields import Condition, Lane, Op
+from reaper.engine.fields import BY_KEY, Condition, Lane, Op
 from reaper.engine.gates import GateId
-from reaper.engine.signals import SignalId
+from reaper.engine.signals import CustomSignalConfig, KeepConfig, SignalId
 
-SCHEMA_VERSION: Literal[1] = 1
-SCORER_VERSION: Literal[1] = 1
+SCHEMA_VERSION: Literal[2] = 2
+SCORER_VERSION: Literal[2] = 2
 """Bumped when the SCORER changes meaning, not when the schema gains a field.
 Both are inside the policy hash: an item scored under a different scorer was not
 approved under this one."""
@@ -160,6 +160,101 @@ class ConditionSpec(Frozen):
         return Condition(field=self.field, op=self.op, value=self.value)
 
 
+class BooleanCondemnSpec(Frozen):
+    """A user-authored reason to remove: when the condition matches, add the full weight.
+
+    Validated against the CONDEMN lane of the field registry, so a protect-only field is
+    unconstructable and the worst a mis-authored rule can do is fail to add pressure -- it
+    can never protect (that is the gate lane's job). Unsigned, like every condemnation
+    signal: an ``Unknown`` input adds nothing."""
+
+    kind: Literal["boolean"] = "boolean"
+    name: str = Field(min_length=1, max_length=60)
+    field: str
+    op: Op
+    value: int | str | bool
+    weight: int = Field(ge=0, le=100)
+    """0 disables the rule and removes its weight from the denominator, like a built-in signal."""
+
+    @model_validator(mode="after")
+    def _valid_condemn_condition(self) -> Self:
+        # Reuse the registry's own validation (rule #3): unknown field, protect-only field,
+        # or an operator the field does not accept all raise here, with the API's message.
+        Condition(field=self.field, op=self.op, value=self.value).validate_for(Lane.CONDEMN)
+        return self
+
+
+class GradedCondemnSpec(Frozen):
+    """A user-authored reason to remove that ramps a numeric field, like a built-in signal.
+
+    The field must be numeric and usable in the CONDEMN lane; pressure rises linearly from
+    ``floor`` to ``saturate_at`` and is capped at ``weight``."""
+
+    kind: Literal["graded"] = "graded"
+    name: str = Field(min_length=1, max_length=60)
+    field: str
+    weight: int = Field(ge=0, le=100)
+    saturate_at: int = Field(ge=1)
+    floor: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _valid_graded(self) -> Self:
+        if self.floor >= self.saturate_at:
+            raise ValueError(
+                f"floor ({self.floor}) must be below saturate_at ({self.saturate_at}), "
+                "or the rule is either always off or always at full pressure."
+            )
+        spec = BY_KEY.get(self.field)
+        if spec is None:
+            raise ValueError(f"Unknown field {self.field!r}.")
+        if Lane.CONDEMN not in spec.lanes:
+            raise ValueError(f"{spec.label!r} cannot be used to remove things.")
+        if Op.GTE not in spec.ops:
+            raise ValueError(
+                f"{spec.label!r} is not a number, so it cannot be graded. Use a yes/no rule."
+            )
+        return self
+
+
+#: A custom condemnation rule, discriminated on ``kind`` so a policy can carry a mix.
+CustomCondemnSpec = Annotated[BooleanCondemnSpec | GradedCondemnSpec, Field(discriminator="kind")]
+
+
+class GradedKeepSpec(Frozen):
+    """A user-authored graded "lean toward keeping": lowers the score, never vetoes.
+
+    A numeric field, ramped ``floor`` -> ``saturate_at``, whose discount is in score
+    POINTS (not a share). Fail-closed: a value we cannot read keeps the title fully. It can
+    only ever LOWER a score, and can never un-protect a title a gate protected -- the verdict
+    checks protection before it ever reads the score. Any numeric field may drive a keep,
+    including protect-only ones like all-time watchers or vote count, which is the point."""
+
+    name: str = Field(min_length=1, max_length=60)
+    field: str
+    max_discount: int = Field(ge=1, le=100)
+    """Points to subtract at full strength. ``ge=1`` -- "off" is expressed by omitting the rule."""
+    floor: int = Field(ge=0)
+    saturate_at: int = Field(ge=1)
+    direction: Literal["high_keeps", "low_keeps"] = "high_keeps"
+    """Which end of the ramp keeps: a high all-time-watcher count keeps (``high_keeps``); a
+    low value keeps (``low_keeps``)."""
+
+    @model_validator(mode="after")
+    def _valid_keep(self) -> Self:
+        if self.floor >= self.saturate_at:
+            raise ValueError(
+                f"floor ({self.floor}) must be below saturate_at ({self.saturate_at})."
+            )
+        spec = BY_KEY.get(self.field)
+        if spec is None:
+            raise ValueError(f"Unknown field {self.field!r}.")
+        if Op.GTE not in spec.ops:
+            raise ValueError(
+                f"{spec.label!r} is not a number, so it cannot be graded. Use a protection instead."
+            )
+        return self
+
+
 class PolicyBody(Frozen):
     """The hashed, immutable part of a policy.
 
@@ -168,8 +263,8 @@ class PolicyBody(Frozen):
     so that tightening a cap does not void every pending approval.
     """
 
-    schema_version: Literal[1] = SCHEMA_VERSION
-    scorer_version: Literal[1] = SCORER_VERSION
+    schema_version: Literal[2] = SCHEMA_VERSION
+    scorer_version: Literal[2] = SCORER_VERSION
 
     media_type: Literal["movie", "tv"] = "movie"
 
@@ -194,12 +289,32 @@ class PolicyBody(Frozen):
     library never throws away the pilot that lets a new viewer start the show. On by
     default; movies ignore it."""
 
+    keep_last_scope: Literal["all", "requested"] = "all"
+    """Whether the keep-last-N floor applies to every show (``all``) or only to shows someone
+    requested (``requested``). Fail-closed: under ``requested``, when we cannot tell whether a
+    show was requested, the floor still applies -- Unknown counts as "might be requested"."""
+
+    season_lookahead: int = Field(default=0, ge=0)
+    """How many seasons BEYOND a viewer's current position to also protect while they binge.
+    ``0`` protects exactly the season they are mid-way through, or the next one if they have
+    finished the current. Replaces the old hardcoded look-ahead. Movies ignore it."""
+
     gates: tuple[GateSetting, ...]
     signals: tuple[SignalSetting, ...]
 
     protect_conditions: tuple[ConditionSpec, ...] = ()
     """The owner's own protections, on top of the built-in gates. Each keeps a title when it
     matches; together they are an OR (any one is enough). Protect-only -- see ConditionSpec."""
+
+    custom_condemn: tuple[CustomCondemnSpec, ...] = ()
+    """The owner's own reasons to REMOVE, on top of the built-in signals. Each is an unsigned
+    signal (boolean bonus or graded ramp) that joins the same fixed denominator, so a missing
+    input can only lower the score. Never a protection -- see BooleanCondemnSpec."""
+
+    graded_keeps: tuple[GradedKeepSpec, ...] = ()
+    """The owner's own graded reasons to KEEP -- a subtractive discount applied after the
+    score, fail-closed. A softer companion to a hard protect condition; it lowers a score
+    but never vetoes, and missing data keeps the file. See GradedKeepSpec."""
 
     keep_tags: tuple[str, ...] = ("reaper-keep",)
     """The *arr tags that spare a title outright -- the configurable form of "honour your keep
@@ -212,7 +327,9 @@ class PolicyBody(Frozen):
 
     @model_validator(mode="after")
     def _at_least_one_signal(self) -> Self:
-        if not any(s.weight > 0 for s in self.signals):
+        if not any(s.weight > 0 for s in self.signals) and not any(
+            c.weight > 0 for c in self.custom_condemn
+        ):
             raise ValueError(
                 "Every signal has weight 0, so every item would score 0 and nothing "
                 "would ever be a candidate. This is almost certainly not what you meant."
@@ -225,7 +342,59 @@ class PolicyBody(Frozen):
             raise ValueError("A gate is configured twice; the second would silently win.")
         if len({s.signal for s in self.signals}) != len(self.signals):
             raise ValueError("A signal is configured twice; the second would silently win.")
+        names = [c.name for c in self.custom_condemn]
+        if len(set(names)) != len(names):
+            raise ValueError(
+                "Two custom rules share a name; the second would silently double-count."
+            )
+        keep_names = [k.name for k in self.graded_keeps]
+        if len(set(keep_names)) != len(keep_names):
+            raise ValueError("Two keep rules share a name; the second would silently double-count.")
         return self
+
+    def keep_configs(self) -> list[KeepConfig]:
+        """Translate the graded-keep specs into engine keep configs for ``score()``."""
+        return [
+            KeepConfig(
+                name=k.name,
+                max_discount=k.max_discount,
+                field=k.field,
+                floor=k.floor,
+                saturate_at=k.saturate_at,
+                direction=k.direction,
+            )
+            for k in self.graded_keeps
+        ]
+
+    def custom_signal_configs(self) -> list[CustomSignalConfig]:
+        """Translate the custom-condemn specs into engine configs for ``score()``.
+
+        The one place the policy's specs become scoring inputs -- mirroring how ``signals``
+        become ``SignalConfig``s at the call site -- so ``score()`` never imports the policy."""
+        out: list[CustomSignalConfig] = []
+        for spec in self.custom_condemn:
+            if isinstance(spec, BooleanCondemnSpec):
+                out.append(
+                    CustomSignalConfig(
+                        name=spec.name,
+                        weight=spec.weight,
+                        kind="boolean",
+                        field=spec.field,
+                        condition=Condition(field=spec.field, op=spec.op, value=spec.value),
+                    )
+                )
+            else:
+                out.append(
+                    CustomSignalConfig(
+                        name=spec.name,
+                        weight=spec.weight,
+                        kind="graded",
+                        field=spec.field,
+                        saturate_at=spec.saturate_at,
+                        floor=spec.floor,
+                    )
+                )
+        return out
 
     def canonical_json(self) -> str:
         """Byte-stable JSON. The basis of the hash.
@@ -386,6 +555,48 @@ def inspect(body: PolicyBody, settings: ProfileSettings) -> list[PolicyWarning]:
                 field="require_approval",
                 severity="danger",
                 message="This profile deletes without a human looking at the list first.",
+            )
+        )
+
+    for spec in body.custom_condemn:
+        if spec.field == "size_bytes" and spec.weight > 0:
+            warnings.append(
+                PolicyWarning(
+                    field="custom_condemn",
+                    severity="danger",
+                    message=(
+                        f'Your rule "{spec.name}" removes things for being large. File size '
+                        "measures how much space you reclaim, not whether anyone wants the "
+                        "title -- and big files are usually the popular 4K ones. Backtest this "
+                        "before arming it."
+                    ),
+                )
+            )
+
+    if body.media_type == "tv" and body.keep_last_seasons >= 10:
+        warnings.append(
+            PolicyWarning(
+                field="keep_last_seasons",
+                severity="warn",
+                message=(
+                    f"Keeping the last {body.keep_last_seasons} seasons protects every season of "
+                    "most shows, so TV pruning is effectively off -- most series have fewer "
+                    "seasons than this."
+                ),
+            )
+        )
+
+    total_keep = sum(k.max_discount for k in body.graded_keeps)
+    if total_keep >= body.condemn_at:
+        warnings.append(
+            PolicyWarning(
+                field="graded_keeps",
+                severity="warn",
+                message=(
+                    f"Your keep rules can subtract up to {total_keep} points, at or above your "
+                    f"remove threshold of {body.condemn_at}. Together they could keep almost "
+                    "everything -- backtest to check the scorer still finds things to remove."
+                ),
             )
         )
 

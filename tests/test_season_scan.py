@@ -32,7 +32,7 @@ from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import SignalConfig
 from reaper.engine.signals import score as score_signals
-from reaper.services import history_sync, season_scan
+from reaper.services import history_sync, requested_by, season_scan
 from reaper.services.scan_runner import build_gates
 from reaper.services.season_pruning import plan_series_prune
 from reaper.services.snapshot import _verdict
@@ -451,6 +451,7 @@ async def _episode(
     user_id: int,
     show_key: int = 42,
     days_ago: int = 1,
+    episode: int | None = None,
 ) -> None:
     when = int((utcnow() - timedelta(days=days_ago)).timestamp())
     async with engine.begin() as conn:
@@ -458,15 +459,16 @@ async def _episode(
             text(
                 "INSERT INTO watch_event (rating_key, parent_rating_key, "
                 "grandparent_rating_key, user_id, watched_at, watched_status, "
-                "percent_complete, media_type) "
-                "VALUES (:rk, :season, :show, :uid, :ts, 1, 100, 'episode')"
+                "percent_complete, media_type, media_index) "
+                "VALUES (:rk, :season, :show, :uid, :ts, 1, 100, 'episode', :ep)"
             ),
             {
-                "rk": season_key * 1000 + user_id,
+                "rk": season_key * 1000 + user_id + (episode or 0),
                 "season": season_key,
                 "show": show_key,
                 "uid": user_id,
                 "ts": when,
+                "ep": episode,
             },
         )
 
@@ -495,14 +497,23 @@ class TestSeasonWatchStats:
         assert stats.user_season_keys[1] == {704, 705}
 
 
-class TestWatchedMaxByUser:
-    def test_a_users_highest_season_is_scoped_to_this_show(self) -> None:
+class TestProgressByUser:
+    def test_progress_is_scoped_to_this_show(self) -> None:
         """A user's progress in another series must not leak in: only this show's season
-        keys are consulted."""
-        stats = season_scan.SeasonWatchStats(user_season_keys={7: {701, 702, 999}})
+        keys are consulted, mapped to season numbers with their completed-episode positions."""
+        stats = season_scan.SeasonWatchStats(
+            user_season_keys={7: {701, 702, 999}},
+            user_season_progress={7: {701: 4, 702: 9}},
+        )
         # 701 -> season 2, 702 -> season 3; 999 belongs to another show and is ignored.
         this_show = {701: 2, 702: 3}
-        assert season_scan._watched_max_by_user(stats, this_show) == {"7": 3}
+        assert season_scan._progress_by_user(stats, this_show) == {"7": {2: 4, 3: 9}}
+
+    def test_a_touched_season_with_no_episode_index_is_none(self) -> None:
+        # Touched the season (any play) but no episode index -> position unknown -> None,
+        # which drops the guard to its season-level fallback for that season.
+        stats = season_scan.SeasonWatchStats(user_season_keys={7: {701}}, user_season_progress={})
+        assert season_scan._progress_by_user(stats, {701: 2}) == {"7": {2: None}}
 
 
 # ---------------------------------------------------------------------------
@@ -511,11 +522,17 @@ class TestWatchedMaxByUser:
 
 
 class _FakeSonarr:
-    def __init__(self, series: list[dict[str, Any]]) -> None:
+    def __init__(
+        self, series: list[dict[str, Any]], episodes: dict[int, list[dict[str, Any]]] | None = None
+    ) -> None:
         self._series = series
+        self._episodes = episodes or {}
 
     async def series(self) -> list[dict[str, Any]]:
         return self._series
+
+    async def episodes(self, series_id: int) -> list[dict[str, Any]]:
+        return self._episodes.get(series_id, [])
 
 
 class _FakeTautulli:
@@ -771,3 +788,55 @@ class TestGatherEndToEnd:
         )
         assert judgements == []
         assert any("sonarr" in r and "unreachable" in r for r in reasons)
+
+
+class TestUserSeasonProgress:
+    async def test_progress_uses_the_max_completed_episode(self, cache_engine: AsyncEngine) -> None:
+        await _episode(cache_engine, season_key=706, user_id=1, episode=3)
+        await _episode(cache_engine, season_key=706, user_id=1, episode=7)
+        stats = await season_scan.season_watch_stats(cache_engine, {706}, window_days=365)
+        assert stats.user_season_progress[1][706] == 7
+
+    async def test_a_null_episode_index_is_not_a_progress_row(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        # A movie-style row (no media_index) still counts as a touch, but not as a position.
+        await _episode(cache_engine, season_key=707, user_id=1)  # episode=None
+        stats = await season_scan.season_watch_stats(cache_engine, {707}, window_days=365)
+        assert 707 in stats.user_season_keys[1]
+        assert 707 not in stats.user_season_progress.get(1, {})
+
+
+class TestFinalEpisodes:
+    def test_uses_the_highest_on_disk_episode_ignoring_gaps_and_missing_files(self) -> None:
+        episodes = [
+            {"seasonNumber": 1, "episodeNumber": 1, "hasFile": True},
+            {"seasonNumber": 1, "episodeNumber": 3, "hasFile": True},  # gap at 2, still on disk
+            {"seasonNumber": 1, "episodeNumber": 4, "hasFile": False},  # not on disk -> ignored
+            {"seasonNumber": 2, "episodeNumber": 1, "hasFile": True},
+        ]
+        assert season_scan._final_episodes(episodes) == {1: 3, 2: 1}
+
+
+class TestKeepLastApplies:
+    def _index(self, *, shows: set[str] = frozenset()) -> requested_by.RequestIndex:
+        return requested_by.RequestIndex(
+            available=True,
+            movie_keys=frozenset(),
+            show_keys=frozenset(shows),
+            season_keys=frozenset(),
+        )
+
+    def test_all_scope_always_applies(self) -> None:
+        assert season_scan._keep_last_applies({"tvdbId": 1}, "all", None) is True
+
+    def test_requested_scope_applies_when_the_show_was_requested(self) -> None:
+        index = self._index(shows={"tv:tvdb:1"})
+        assert season_scan._keep_last_applies({"tvdbId": 1}, "requested", index) is True
+
+    def test_requested_scope_skips_a_show_that_was_not_requested(self) -> None:
+        assert season_scan._keep_last_applies({"tvdbId": 1}, "requested", self._index()) is False
+
+    def test_requested_scope_fails_closed_when_it_cannot_tell(self) -> None:
+        # No index -> Unknown -> keep-last still applies (Unknown counts as "might be requested").
+        assert season_scan._keep_last_applies({"tvdbId": 1}, "requested", None) is True

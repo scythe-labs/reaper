@@ -17,10 +17,13 @@ delete path. If Seerr is absent or unreachable, the map is simply empty.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import structlog
 
 from reaper.clients.base import IntegrationError
 from reaper.clients.seerr import SeerrClient
+from reaper.engine.observation import Known, Observation, Unknown
 
 log = structlog.get_logger(__name__)
 
@@ -90,3 +93,100 @@ async def build_map(seerr: SeerrClient | None) -> dict[str, str]:
 
     log.info("requested_by.built", keys=len(result), requests=len(requests))
     return result
+
+
+@dataclass(frozen=True)
+class RequestIndex:
+    """A three-state "was this requested?" view, for the scoring path.
+
+    Unlike :func:`build_map` (a display name, deliberately loose), this answers a *fact*
+    the score can lean on, so it is built from the fail-closed side. ``available`` is
+    ``False`` whenever Seerr could not be fully read; every lookup is then ``Unknown``, so
+    a missing requests app can never make a title look un-requested and add delete
+    pressure. The join is on tmdb/tvdb ids, which a non-admin key does not strip.
+    """
+
+    available: bool
+    movie_keys: frozenset[str]
+    show_keys: frozenset[str]
+    season_keys: frozenset[str]
+
+    def movie_requested(self, tmdb_id: int | None) -> Observation[bool]:
+        if not tmdb_id:
+            return Unknown(reason="no TMDb id to match a request", source="seerr")
+        if not self.available:
+            return Unknown(reason="could not reach the requests app", source="seerr")
+        return Known(value=movie_key(tmdb_id) in self.movie_keys, source="seerr")
+
+    def season_requested(self, tvdb_id: int | None, season: int) -> Observation[bool]:
+        """A season counts as requested if the season itself, or the whole show, was."""
+        if not tvdb_id:
+            return Unknown(reason="no TVDb id to match a request", source="seerr")
+        if not self.available:
+            return Unknown(reason="could not reach the requests app", source="seerr")
+        hit = season_key(tvdb_id, season) in self.season_keys or show_key(tvdb_id) in self.show_keys
+        return Known(value=hit, source="seerr")
+
+    def show_requested(self, tvdb_id: int | None) -> Observation[bool]:
+        """Whether the show as a whole was requested -- the show itself, or any of its seasons."""
+        if not tvdb_id:
+            return Unknown(reason="no TVDb id to match a request", source="seerr")
+        if not self.available:
+            return Unknown(reason="could not reach the requests app", source="seerr")
+        prefix = f"tv:tvdb:{tvdb_id}:"
+        hit = show_key(tvdb_id) in self.show_keys or any(
+            k.startswith(prefix) for k in self.season_keys
+        )
+        return Known(value=hit, source="seerr")
+
+
+_EMPTY_INDEX = RequestIndex(
+    available=False,
+    movie_keys=frozenset(),
+    show_keys=frozenset(),
+    season_keys=frozenset(),
+)
+
+
+async def build_request_index(seerr: SeerrClient | None) -> RequestIndex:
+    """Build a three-state requested-or-not index from *every* Seerr request.
+
+    Reads ``filter_="all"`` (not just available ones), so a title that was requested but
+    is still processing is not mistaken for "never requested". When Seerr is absent or
+    unreachable, ``available`` is ``False`` and every lookup returns ``Unknown``.
+    """
+    if seerr is None:
+        return _EMPTY_INDEX
+
+    try:
+        requests = await seerr.all_requests(filter_="all")
+    except IntegrationError as exc:
+        log.warning("requested_by.index_unreachable", error=str(exc))
+        return _EMPTY_INDEX
+
+    movie_keys: set[str] = set()
+    show_keys: set[str] = set()
+    season_keys: set[str] = set()
+    for req in requests:
+        if req.media_type == "movie":
+            if (mk := movie_key(req.tmdb_id)) is not None:
+                movie_keys.add(mk)
+        else:
+            if (sk := show_key(req.tvdb_id)) is not None:
+                show_keys.add(sk)
+            for season in req.seasons:
+                if (nk := season_key(req.tvdb_id, season)) is not None:
+                    season_keys.add(nk)
+
+    log.info(
+        "requested_by.index_built",
+        movies=len(movie_keys),
+        shows=len(show_keys),
+        seasons=len(season_keys),
+    )
+    return RequestIndex(
+        available=True,
+        movie_keys=frozenset(movie_keys),
+        show_keys=frozenset(show_keys),
+        season_keys=frozenset(season_keys),
+    )

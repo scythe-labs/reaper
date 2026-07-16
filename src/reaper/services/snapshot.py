@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Literal
 
 import structlog
@@ -47,7 +47,7 @@ from reaper.engine import identity
 from reaper.engine.gates import PROTECT, Evaluation, Facts, Gate, GateId, GateResult, evaluate_all
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
-from reaper.engine.signals import Score, SignalConfig, score
+from reaper.engine.signals import Score, SignalConfig, SignalId, score
 from reaper.services import history_sync, lists, requested_by, season_scan, whitelist
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
 
@@ -110,6 +110,10 @@ class RawItem:
     # The matched Plex item's imdb id -- a fallback rating key when Radarr's imdbId is
     # missing or does not resolve in the IMDb dataset.
     plex_imdb_id: str | None = None
+    # Metadata authorable in custom rules (the weighting feature). Captured from the
+    # Radarr payload the scan already holds -- no extra fetch.
+    genres: tuple[str, ...] = ()
+    quality: str | None = None
 
 
 async def build_facts(
@@ -122,6 +126,7 @@ async def build_facts(
     watchers_window: dict[int, int],
     watchers_all_time: dict[int, int],
     whitelisted: set[str],
+    request_index: requested_by.RequestIndex | None = None,
 ) -> Facts:
     """Assemble one item's evidence.
 
@@ -219,6 +224,22 @@ async def build_facts(
         # Not applicable outside the requester rule: with no requester, "others" is
         # everyone, and the gate would protect anything ever played.
         others_watching=Absent(source="tautulli"),
+        # --- fields authorable in custom rules ---------------------------------
+        requested=(
+            request_index.movie_requested(item.tmdb_id)
+            if request_index is not None
+            else Unknown(reason="requests not loaded", source="seerr")
+        ),
+        genres=(
+            Known(value=", ".join(item.genres), source="radarr")
+            if item.genres
+            else Absent(source="radarr")
+        ),
+        release_age_days=_release_age_days(item.year),
+        quality=(
+            Known(value=item.quality, source="radarr") if item.quality else Absent(source="radarr")
+        ),
+        show_ended=Absent(source="radarr"),  # a movie is not a series
     )
 
 
@@ -250,6 +271,7 @@ async def scan(
     plex: PlexClient | None = None,
     sonarrs: list[season_scan.SonarrSource] | None = None,
     requested: dict[str, str] | None = None,
+    request_index: requested_by.RequestIndex | None = None,
     grace_days: int = 14,
     extra_degrade_reasons: Sequence[str] | None = None,
     on_progress: ProgressFn | None = None,
@@ -373,6 +395,9 @@ async def scan(
             whitelisted=tag_only_whitelist,
             degrade=context.degrade,
             requested=requested,
+            request_index=request_index,
+            keep_last_scope=tv_policy.keep_last_scope,
+            season_lookahead=tv_policy.season_lookahead,
         )
 
     # ---- freeze ------------------------------------------------------------
@@ -418,6 +443,7 @@ async def scan(
             watchers_window=watchers_window,
             watchers_all_time=watchers_all_time,
             whitelisted=tag_only_whitelist,
+            request_index=request_index,
         )
         verdict = await _judge_item(
             session,
@@ -566,7 +592,13 @@ async def _judge_item(
             0, GateResult(GateId.WHITELISTED, PROTECT, detail="You spared this by hand.")
         )
     evaluation = Evaluation(results=[*merged_extra, *evaluate_all(gates, facts).results])
-    item_score = score(signals, facts, window_days=window_days)
+    item_score = score(
+        signals,
+        facts,
+        custom_condemn=policy.custom_signal_configs(),
+        keeps=policy.keep_configs(),
+        window_days=window_days,
+    )
 
     score_value = round(item_score.value)
     coverage_bp = round(item_score.coverage * 10_000)
@@ -683,6 +715,10 @@ def _explain(
     return json.dumps(
         {
             "score": round(item_score.value, 1),
+            # The condemnation subtotal before any keep discount -- so the panel can show
+            # "condemnation 67, keep -15, final 52" the way the operator expects from Radarr.
+            "base_score": round(item_score.base_value, 1),
+            "keep_discount": round(item_score.keep_discount, 1),
             "threshold": policy.condemn_at,
             "coverage": round(item_score.coverage, 3),
             "match": {
@@ -696,13 +732,24 @@ def _explain(
             },
             "signals": [
                 {
-                    "id": r.signal.value,
+                    # Built-in signals carry a SignalId; a custom rule carries its own name.
+                    "id": r.signal.value if isinstance(r.signal, SignalId) else r.signal,
                     "contribution": round(r.pressure, 1),
                     "weight": r.weight,
                     "detail": r.detail,
                     "evaluated": r.evaluated,
                 }
                 for r in item_score.results
+            ],
+            "keeps": [
+                {
+                    "name": k.name,
+                    "discount": round(k.discount, 1),
+                    "max_discount": k.max_discount,
+                    "detail": k.detail,
+                    "evaluated": k.evaluated,
+                }
+                for k in item_score.keep_results
             ],
             "protections_fired": [
                 {"gate": r.gate.value, "detail": r.detail} for r in evaluation.protectors
@@ -863,6 +910,30 @@ def _summary(text: Any) -> str | None:
     return trimmed[:600]
 
 
+def _movie_quality(movie: Mapping[str, Any]) -> str | None:
+    """The file's quality name (e.g. "Bluray-1080p"), for the ``quality`` rule field."""
+    movie_file = movie.get("movieFile")
+    if not isinstance(movie_file, dict):
+        return None
+    name = (((movie_file.get("quality") or {}).get("quality")) or {}).get("name")
+    return str(name) if name else None
+
+
+def _release_age_days(year: int | None) -> Observation[float]:
+    """Days since release, from the release year. ``Absent`` when the year is unknown.
+
+    Derived (not the raw year) because "how old" composes with "how long unwatched"; the
+    year-granularity is deliberate -- a finer release date is not worth a second fetch.
+    """
+    if not year:
+        return Absent(source="radarr")
+    try:
+        age = (utcnow().date() - date(year, 1, 1)).days
+    except (ValueError, OverflowError):
+        return Absent(source="radarr")
+    return Known(value=float(max(0, age)), source="radarr")
+
+
 def _raw_items(
     movies: list[dict[str, Any]],
     plex_index: identity.PlexIndex,
@@ -911,6 +982,8 @@ def _raw_items(
                 match_detail=resolution.detail,
                 match_status=resolution.status,
                 plex_imdb_id=matched.ids.imdb if matched is not None else None,
+                genres=tuple(str(g) for g in (movie.get("genres") or []) if g),
+                quality=_movie_quality(movie),
             )
         )
     return items

@@ -120,25 +120,41 @@ class TestAiring:
 
 
 class TestSequentialProgression:
-    def test_it_protects_the_watched_season_and_the_next(self) -> None:
-        assert sequential_protections({"alice": 3}) == {3, 4}
+    def test_partway_protects_the_current_season_only(self) -> None:
+        # Watched to episode 5 of a 10-episode season 3 -> still on 3, not yet reaching 4.
+        assert sequential_protections({"alice": {3: 5}}, {3: 10}) == {3}
+
+    def test_finishing_a_season_protects_the_next_one(self) -> None:
+        # Completed season 3's last on-disk episode -> ready for 4; 3 is no longer protected here.
+        assert sequential_protections({"alice": {3: 10}}, {3: 10}) == {4}
+
+    def test_a_finished_season_with_lookahead_protects_further(self) -> None:
+        assert sequential_protections({"alice": {3: 10}}, {3: 10}, lookahead=1) == {4, 5}
+
+    def test_an_unknown_final_episode_falls_back_to_season_level(self) -> None:
+        # Sonarr could not supply the season's last episode -> protect both m and m+1.
+        assert sequential_protections({"alice": {3: 5}}, {3: None}) == {3, 4}
+
+    def test_an_unknown_watched_position_falls_back_to_season_level(self) -> None:
+        # A season with only un-backfilled (NULL-index) rows -> position unknown -> {m, m+1}.
+        assert sequential_protections({"alice": {3: None}}, {3: 10}) == {3, 4}
 
     def test_it_unions_across_viewers(self) -> None:
-        assert sequential_protections({"alice": 2, "bob": 5}) == {2, 3, 5, 6}
+        # alice is partway on 2 -> {2}; bob finished 5 -> {6}.
+        assert sequential_protections({"alice": {2: 3}, "bob": {5: 8}}, {2: 10, 5: 8}) == {2, 6}
 
     def test_a_mid_binge_season_is_not_deleted(self) -> None:
-        """The bug: 'keep last 2' would delete season 3 out from under someone who just
-        finished it and is about to start 4."""
+        """The bug: 'keep last 2' would delete season 3 out from under someone still watching it."""
         seasons = [_season(n) for n in range(1, 7)]  # 1..6
         plan = plan_series_prune(
             series_title="Show",
             seasons=seasons,
             keep_last=2,  # keeps 5, 6
             keep_first_season=False,
-            watched_max_by_user={"alice": 3},
+            progress_by_user={"alice": {3: 5}},  # partway through season 3
+            season_final_episode={3: 10},
         )
         assert 3 not in plan.prunable
-        assert 4 not in plan.prunable
         assert "part-way" in _reasons(plan)[3]
 
 
@@ -181,3 +197,35 @@ class TestKeepRuleConflict:
         )
         assert plan.auto_approvable
         assert 2 in plan.prunable  # dormant middle season, cleanly prunable
+
+
+class TestKeepLastScope:
+    def test_keep_last_can_be_switched_off_for_this_show(self) -> None:
+        # Under a "requested only" scope, a non-requested show passes apply_keep_last=False,
+        # so the last-N floor no longer shields its old seasons.
+        seasons = [_season(n) for n in range(1, 5)]  # 1..4
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=seasons,
+            keep_last=2,
+            keep_first_season=False,
+            apply_keep_last=False,
+        )
+        assert set(plan.prunable) == {1, 2, 3, 4}  # nothing shielded by keep-last
+
+    def test_keep_last_applies_by_default(self) -> None:
+        seasons = [_season(n) for n in range(1, 5)]
+        plan = plan_series_prune(
+            series_title="Show", seasons=seasons, keep_last=2, keep_first_season=False
+        )
+        assert 3 not in plan.prunable and 4 not in plan.prunable  # last 2 kept
+
+
+class TestKeepLastOverCount:
+    def test_a_high_keep_last_reads_clearly_for_a_short_show(self) -> None:
+        seasons = [_season(n) for n in range(1, 4)]  # 3 seasons
+        plan = plan_series_prune(
+            series_title="Show", seasons=seasons, keep_last=10, keep_first_season=False
+        )
+        assert not plan.prunable
+        assert "only 3 seasons" in _reasons(plan)[3]

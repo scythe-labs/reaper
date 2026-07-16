@@ -22,7 +22,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
   type Condition,
+  type CustomCondemn,
   type GateSetting,
+  type GradedKeep,
   type Policy,
   type PolicyBody,
   type SignalSetting,
@@ -446,6 +448,315 @@ function ConditionsEditor({
   );
 }
 
+// The built-in signals already cover these fields, so they are not offered as custom
+// "remove" rules -- the two never say the same thing twice. That leaves the new metadata
+// fields (genre, requested, quality, release age, show ended) to be authored here.
+const FIELD_TO_SIGNAL: Record<string, string> = {
+  days_unwatched: "unwatched",
+  recent_watchers: "few_watchers",
+  imdb_rating: "low_rating",
+  season_rank: "season_rank",
+  size_bytes: "size",
+};
+
+/** Coerce a text input into the value the wire expects, in the field's own units. */
+function coerceValue(field: VocabField, raw: string): number | string | boolean {
+  if (field.type === "bool") return raw === "true";
+  if (field.type === "rating_tenths") return Math.round(Number(raw) * 10);
+  if (field.type === "bytes") return Math.round(Number(raw) * 1e9);
+  if (field.type === "text") return raw;
+  return Math.round(Number(raw));
+}
+
+/** A name that reads like the rule and does not collide with an existing one. */
+function uniqueName(existing: { name: string }[], base: string): string {
+  const taken = new Set(existing.map((r) => r.name));
+  if (!taken.has(base)) return base;
+  for (let i = 2; ; i++) if (!taken.has(`${base} ${i}`)) return `${base} ${i}`;
+}
+
+function describeCondemn(rule: CustomCondemn, fields: VocabField[]): string {
+  const f = fields.find((x) => x.key === rule.field);
+  const label = f?.label ?? rule.field;
+  if (rule.kind === "graded") return `${label}, the higher the more likely to remove`;
+  const op = OP_LABELS[rule.op] ?? rule.op;
+  const value = f?.type === "bool" ? (rule.value ? "yes" : "no") : String(rule.value);
+  return `${label} ${op} ${value}`;
+}
+
+/** The owner's own "reasons to remove" (custom condemn signals) and graded "leans toward
+ *  keeping" -- the Radarr-style weighting, mapped onto Reaper's two lanes. A remove rule adds
+ *  unsigned pressure to the score; a keep rule subtracts a discount AFTER the score and can
+ *  never veto a protection. (A hard "always keep" lives in "Your own rules" above.) */
+function CustomRulesEditor({
+  condemn,
+  keeps,
+  onCondemn,
+  onKeeps,
+}: {
+  condemn: CustomCondemn[];
+  keeps: GradedKeep[];
+  onCondemn: (r: CustomCondemn[]) => void;
+  onKeeps: (k: GradedKeep[]) => void;
+}) {
+  const { data: condemnVocab } = useQuery({
+    queryKey: ["vocabulary", "condemn"],
+    queryFn: () => api.vocabulary("condemn"),
+  });
+  const { data: protectVocab } = useQuery({
+    queryKey: ["vocabulary", "protect"],
+    queryFn: () => api.vocabulary("protect"),
+  });
+  const condemnAll = condemnVocab?.fields ?? [];
+  // Only the new metadata fields, not those a built-in signal already scores.
+  const condemnFields = condemnAll.filter((f) => !FIELD_TO_SIGNAL[f.key]);
+  // A keep ramps a number, so only numeric fields (those that accept >=) can drive one;
+  // the protect vocabulary carries the useful ones (all-time watchers, vote count, ...).
+  const keepFields = (protectVocab?.fields ?? []).filter((f) => f.ops.includes("gte"));
+
+  // --- add a "remove" rule -------------------------------------------------
+  const [rField, setRField] = useState("");
+  const [rOp, setROp] = useState("");
+  const [rValue, setRValue] = useState("");
+  const [rWeight, setRWeight] = useState(20);
+  const removeField = condemnFields.find((f) => f.key === rField);
+  useEffect(() => {
+    const f = condemnFields.find((x) => x.key === rField);
+    if (!f) return;
+    setROp(f.ops[0] ?? "");
+    setRValue(f.type === "bool" ? "true" : "");
+  }, [rField]); // eslint-disable-line react-hooks/exhaustive-deps
+  const addRemove = () => {
+    if (!removeField || !rOp) return;
+    onCondemn([
+      ...condemn,
+      {
+        kind: "boolean",
+        name: uniqueName(condemn, removeField.label),
+        field: removeField.key,
+        op: rOp,
+        value: coerceValue(removeField, rValue),
+        weight: rWeight,
+      },
+    ]);
+    setRField("");
+    setRValue("");
+  };
+
+  // --- add a "lean toward keeping" rule ------------------------------------
+  const [kField, setKField] = useState("");
+  const [kPoints, setKPoints] = useState(15);
+  const [kAt, setKAt] = useState("");
+  const [kDir, setKDir] = useState<"high_keeps" | "low_keeps">("high_keeps");
+  const keepField = keepFields.find((f) => f.key === kField);
+  const addKeep = () => {
+    if (!keepField || kAt === "") return;
+    const saturate = Number(coerceValue(keepField, kAt));
+    onKeeps([
+      ...keeps,
+      {
+        name: uniqueName(keeps, keepField.label),
+        field: keepField.key,
+        max_discount: kPoints,
+        floor: 0,
+        saturate_at: Math.max(1, saturate),
+        direction: kDir,
+      },
+    ]);
+    setKField("");
+    setKAt("");
+  };
+
+  const [effect, setEffect] = useState<"remove" | "keep">("remove");
+
+  return (
+    <div className="rules-card">
+      <h3>Custom rules</h3>
+      <p className="blurb">
+        Nudge a title's score with your own rules. A <strong>remove</strong> rule makes a match
+        more likely to be flagged; a <strong>lean toward keeping</strong> rule lowers the score
+        without ever overruling a protection. Missing data only ever leans toward keeping.
+      </p>
+
+      {(condemn.length > 0 || keeps.length > 0) && (
+        <div className="rules-table">
+          <div className="rules-row rules-row-head">
+            <span>Rule</span>
+            <span>Effect</span>
+            <span className="rules-weight-cell">Weight</span>
+            <span />
+          </div>
+          {condemn.map((r, i) => (
+            <div className="rules-row" key={`c-${r.name}-${i}`}>
+              <span className="rules-rule">{describeCondemn(r, condemnAll)}</span>
+              <span className="effect-pill effect-remove">more likely to remove</span>
+              <span className="rules-weight-cell rules-weight-remove">+{r.weight}</span>
+              <button
+                className="ghost sm"
+                onClick={() => onCondemn(condemn.filter((_, j) => j !== i))}
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+          {keeps.map((k, i) => {
+            const f = keepFields.find((x) => x.key === k.field);
+            return (
+              <div className="rules-row" key={`k-${k.name}-${i}`}>
+                <span className="rules-rule">
+                  {f?.label ?? k.field} is {k.direction === "low_keeps" ? "low" : "high"}
+                </span>
+                <span className="effect-pill effect-keep">lean toward keeping</span>
+                <span className="rules-weight-cell rules-weight-keep">−{k.max_discount}</span>
+                <button className="ghost sm" onClick={() => onKeeps(keeps.filter((_, j) => j !== i))}>
+                  Remove
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="rules-add">
+        <div className="segmented" role="group" aria-label="Rule effect">
+          <button
+            type="button"
+            className={effect === "remove" ? "seg active" : "seg"}
+            onClick={() => setEffect("remove")}
+          >
+            More likely to remove
+          </button>
+          <button
+            type="button"
+            className={effect === "keep" ? "seg active" : "seg"}
+            onClick={() => setEffect("keep")}
+          >
+            Lean toward keeping
+          </button>
+        </div>
+
+        {effect === "remove" ? (
+          <div className="condition-add">
+            <select value={rField} onChange={(e) => setRField(e.target.value)}>
+              <option value="">when…</option>
+              {condemnFields.map((f) => (
+                <option key={f.key} value={f.key}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+            {removeField && (
+              <>
+                <select value={rOp} onChange={(e) => setROp(e.target.value)}>
+                  {removeField.ops.map((o) => (
+                    <option key={o} value={o}>
+                      {OP_LABELS[o] ?? o}
+                    </option>
+                  ))}
+                </select>
+                {removeField.type === "bool" ? (
+                  <select value={rValue} onChange={(e) => setRValue(e.target.value)}>
+                    <option value="true">yes</option>
+                    <option value="false">no</option>
+                  </select>
+                ) : (
+                  <input
+                    type={removeField.type === "text" ? "text" : "number"}
+                    step={removeField.type === "rating_tenths" ? "0.1" : undefined}
+                    value={rValue}
+                    onChange={(e) => setRValue(e.target.value)}
+                    placeholder={removeField.unit_suffix || "value"}
+                  />
+                )}
+                <label className="inline-weight">
+                  weight
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={rWeight}
+                    onChange={(e) => setRWeight(Number(e.target.value))}
+                  />
+                </label>
+                <button
+                  className="ghost sm"
+                  onClick={addRemove}
+                  disabled={removeField.type !== "bool" && rValue === ""}
+                >
+                  Add rule
+                </button>
+              </>
+            )}
+            {removeField?.help_text && <p className="help">{removeField.help_text}</p>}
+          </div>
+        ) : (
+          <div className="condition-add">
+            <select value={kField} onChange={(e) => setKField(e.target.value)}>
+              <option value="">when…</option>
+              {keepFields.map((f) => (
+                <option key={f.key} value={f.key}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+            {keepField && (
+              <>
+                <select
+                  value={kDir}
+                  onChange={(e) => setKDir(e.target.value as "high_keeps" | "low_keeps")}
+                >
+                  <option value="high_keeps">is high</option>
+                  <option value="low_keeps">is low</option>
+                </select>
+                <input
+                  type="number"
+                  step={keepField.type === "rating_tenths" ? "0.1" : undefined}
+                  value={kAt}
+                  onChange={(e) => setKAt(e.target.value)}
+                  placeholder={`at ${keepField.unit_suffix || "value"}`}
+                />
+                <label className="inline-weight">
+                  keep up to
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={kPoints}
+                    onChange={(e) => setKPoints(Number(e.target.value))}
+                  />
+                </label>
+                <button className="ghost sm" onClick={addKeep} disabled={kAt === ""}>
+                  Add rule
+                </button>
+              </>
+            )}
+            {keepField?.help_text && <p className="help">{keepField.help_text}</p>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Live advisory beside the keep-last input: how many shows a keep-last-N value fully
+ *  protects, computed from the last scan's season shape -- no re-scan, since the shape does
+ *  not depend on the keep-last value. */
+function SeasonAdvisory({ keepLast }: { keepLast: number }) {
+  const { data } = useQuery({ queryKey: ["season-shape"], queryFn: () => api.seasonShape() });
+  if (!data || data.total_shows === 0) return null;
+  const covered = Object.entries(data.season_counts).reduce(
+    (sum, [seasons, shows]) => (Number(seasons) <= keepLast ? sum + shows : sum),
+    0,
+  );
+  if (covered === 0) return null;
+  return (
+    <p className={`help ${covered === data.total_shows ? "help-warn" : ""}`}>
+      With this setting, <strong>{count(covered)}</strong> of {count(data.total_shows)} shows have
+      no season eligible for removal (from your last scan).
+    </p>
+  );
+}
+
 /** The histogram, with the threshold drawn across it.
  *
  *  This is what makes a threshold a decision rather than a guess: you place it against
@@ -691,26 +1002,54 @@ export function PolicyEditor() {
         </label>
 
         {mediaType === "tv" && (
-          <>
+          <div className="season-card">
+            <h3>TV season protection</h3>
             <label className="field">
               <span className="field-label">
-                Always keep the newest
-                <strong>
-                  {draft.keep_last_seasons} {draft.keep_last_seasons === 1 ? "season" : "seasons"}
-                </strong>
+                <span>
+                  Always keep the newest{" "}
+                  <input
+                    type="number"
+                    min={0}
+                    className="inline-number"
+                    value={draft.keep_last_seasons}
+                    onChange={(e) => update({ keep_last_seasons: Math.max(0, Number(e.target.value)) })}
+                  />{" "}
+                  {draft.keep_last_seasons === 1 ? "season" : "seasons"} of a show
+                </span>
               </span>
-              <input
-                type="range"
-                min={0}
-                max={10}
-                value={draft.keep_last_seasons}
-                onChange={(e) => update({ keep_last_seasons: Number(e.target.value) })}
-              />
               <span className="help">
                 The most recent seasons of every show are kept outright, whatever they score —
-                the hard floor behind the season-rank signal below.
+                the hard floor behind the season-rank signal below. There is no upper limit.
+              </span>
+              <SeasonAdvisory keepLast={draft.keep_last_seasons} />
+            </label>
+
+            <label className="field">
+              <span className="field-label">Apply that to</span>
+              <div className="segmented" role="group" aria-label="Keep-last scope">
+                <button
+                  type="button"
+                  className={draft.keep_last_scope === "all" ? "seg active" : "seg"}
+                  onClick={() => update({ keep_last_scope: "all" })}
+                >
+                  All shows
+                </button>
+                <button
+                  type="button"
+                  className={draft.keep_last_scope === "requested" ? "seg active" : "seg"}
+                  onClick={() => update({ keep_last_scope: "requested" })}
+                >
+                  Requested only
+                </button>
+              </div>
+              <span className="help">
+                “Requested only” lets older seasons of shows nobody asked for be removed, while
+                still keeping the recent seasons of requested shows. When Reaper can’t tell whether
+                a show was requested, it keeps the seasons to be safe.
               </span>
             </label>
+
             <label className="toggle">
               <input
                 type="checkbox"
@@ -719,7 +1058,29 @@ export function PolicyEditor() {
               />
               <span>Always keep a show's first season, so a new viewer can still start it</span>
             </label>
-          </>
+
+            <label className="field">
+              <span className="field-label">
+                <span>
+                  When someone’s mid-binge, also keep{" "}
+                  <input
+                    type="number"
+                    min={0}
+                    className="inline-number"
+                    value={draft.season_lookahead}
+                    onChange={(e) =>
+                      update({ season_lookahead: Math.max(0, Number(e.target.value)) })
+                    }
+                  />{" "}
+                  season{draft.season_lookahead === 1 ? "" : "s"} ahead
+                </span>
+              </span>
+              <span className="help">
+                Reaper protects the season a viewer is part-way through. Set this above 0 to also
+                keep the seasons just ahead of where they are.
+              </span>
+            </label>
+          </div>
         )}
 
         <h3>What Reaper always keeps</h3>
@@ -772,6 +1133,13 @@ export function PolicyEditor() {
           conditions={draft.protect_conditions}
           gateIds={draft.gates.map((g) => g.gate)}
           onChange={(protect_conditions) => update({ protect_conditions })}
+        />
+
+        <CustomRulesEditor
+          condemn={draft.custom_condemn}
+          keeps={draft.graded_keeps}
+          onCondemn={(custom_condemn) => update({ custom_condemn })}
+          onKeeps={(graded_keeps) => update({ graded_keeps })}
         />
 
         {/* A validation failure is an ERROR (red): this policy cannot be saved as-is. */}

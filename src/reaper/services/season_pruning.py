@@ -40,9 +40,10 @@ from dataclasses import dataclass, field
 
 from reaper.clients.sonarr_stats import SeasonStats, rank_seasons
 
-#: Keep the last watched season *and* this many after it -- the "up next" a viewer is
-#: about to reach. One lookahead season is the episode they will play tonight.
-SEQUENTIAL_LOOKAHEAD = 1
+#: Default seasons to protect BEYOND a viewer's current position while they binge. 0 keeps
+#: exactly the season they are on (or the next one, if they finished the current). The policy
+#: supplies the real value; this constant is only the fallback.
+SEQUENTIAL_LOOKAHEAD = 0
 
 #: Season 0 is specials: out-of-run content that is frequently the oldest and newest at
 #: once. It is never auto-pruned and never occupies a keep-slot.
@@ -92,18 +93,40 @@ class SeriesPrunePlan:
 
 
 def sequential_protections(
-    watched_max_by_user: Mapping[str, int], *, lookahead: int = SEQUENTIAL_LOOKAHEAD
+    progress_by_user: Mapping[str, Mapping[int, int | None]],
+    season_final_episode: Mapping[int, int | None],
+    *,
+    lookahead: int = SEQUENTIAL_LOOKAHEAD,
 ) -> set[int]:
-    """Seasons to protect because a viewer is part-way through.
+    """Seasons to protect because a viewer is part-way through -- episode-precise.
 
-    For each viewer's highest watched season ``m``, protect ``m`` and the next
-    ``lookahead`` seasons (``m+1`` ... ``m+lookahead``). The union across viewers is the
-    set of seasons somebody is watching or about to watch.
+    For each viewer, anchor on ``m`` = the highest real season they have any play under. If
+    they have completed ``m``'s last on-disk episode they are ready for ``m+1`` (protect
+    ``m+1``); otherwise they are still watching ``m`` (protect ``m``). Then extend each
+    protected season by ``lookahead``. The union across viewers is the set somebody is
+    watching or about to.
+
+    Fail-closed: if ``m``'s final episode is unknown (Sonarr unavailable) or the viewer's
+    episode index is unknown (a season with only un-backfilled rows), protect BOTH ``m`` and
+    ``m+1`` -- exactly the old season-level behaviour, never less.
     """
     protected: set[int] = set()
-    for highest in watched_max_by_user.values():
-        for offset in range(lookahead + 1):
-            protected.add(highest + offset)
+    for progress in progress_by_user.values():
+        real = [n for n in progress if n != SPECIALS_SEASON]
+        if not real:
+            continue
+        m = max(real)
+        final = season_final_episode.get(m)
+        watched = progress.get(m)
+        if final is None or watched is None:
+            positions = {m, m + 1}  # fail closed to season-level
+        elif watched >= final:
+            positions = {m + 1}  # finished m, ready for the next
+        else:
+            positions = {m}  # still watching m
+        for start in positions:
+            for offset in range(lookahead + 1):
+                protected.add(start + offset)
     return protected
 
 
@@ -113,7 +136,10 @@ def plan_series_prune(
     seasons: Sequence[SeasonStats],
     keep_last: int,
     keep_first_season: bool = True,
-    watched_max_by_user: Mapping[str, int] | None = None,
+    apply_keep_last: bool = True,
+    progress_by_user: Mapping[str, Mapping[int, int | None]] | None = None,
+    season_final_episode: Mapping[int, int | None] | None = None,
+    season_lookahead: int = SEQUENTIAL_LOOKAHEAD,
     airing_seasons: Collection[int] = (),
     watchers_by_season: Mapping[int, int] | None = None,
 ) -> SeriesPrunePlan:
@@ -123,14 +149,22 @@ def plan_series_prune(
     unmonitored-and-gone season is nothing to remove. Everything else is protected, with
     the reason recorded so the why-panel can show it. ``keep_last`` is clamped at 0; a
     negative keep would be nonsense and must never widen what is prunable.
+
+    ``apply_keep_last`` is the keep-last-scope gate: under a "requested only" scope it is
+    False for a show nobody requested, so its older seasons are no longer shielded by the
+    keep-last floor (every other guard and the score still apply).
     """
     keep_last = max(0, keep_last)
-    watched_max_by_user = watched_max_by_user or {}
+    progress_by_user = progress_by_user or {}
+    season_final_episode = season_final_episode or {}
     watchers_by_season = watchers_by_season or {}
     airing = set(airing_seasons)
 
     ranks = rank_seasons(list(seasons))
-    seq_protected = sequential_protections(watched_max_by_user)
+    seq_protected = sequential_protections(
+        progress_by_user, season_final_episode, lookahead=season_lookahead
+    )
+    total_ranked = len(ranks)
 
     on_disk = [s for s in seasons if s.has_content]
     real_numbers = [s.season_number for s in on_disk if s.season_number != SPECIALS_SEASON]
@@ -146,6 +180,8 @@ def plan_series_prune(
             rank=ranks.get(n),
             keep_last=keep_last,
             keep_first_season=keep_first_season,
+            apply_keep_last=apply_keep_last,
+            total_ranked=total_ranked,
             first_real=first_real,
             airing=airing,
             seq_protected=seq_protected,
@@ -171,6 +207,8 @@ def _protection_reason(
     rank: int | None,
     keep_last: int,
     keep_first_season: bool,
+    apply_keep_last: bool,
+    total_ranked: int,
     first_real: int | None,
     airing: set[int],
     seq_protected: set[int],
@@ -190,7 +228,13 @@ def _protection_reason(
         return "currently airing"
     if keep_first_season and n == first_real:
         return "the first season is kept so the show can still be started"
-    if rank is not None and rank <= keep_last:
+    if apply_keep_last and rank is not None and rank <= keep_last:
+        if keep_last >= total_ranked:
+            plural = "s" if total_ranked != 1 else ""
+            return (
+                f"this show has only {total_ranked} season{plural}, so your keep-last-"
+                f"{keep_last} rule keeps all of them"
+            )
         return f"within the last {keep_last} seasons (rank {rank})"
     if n in seq_protected:
         return "a viewer is part-way through the show"

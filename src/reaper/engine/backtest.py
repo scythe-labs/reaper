@@ -421,7 +421,16 @@ async def run(
         # owner is tuning: an item scoring 69.6 rounds to 70 and IS condemned by production, so
         # the backtest must condemn it too (or it under-counts regret at the threshold); and a
         # low-coverage item production would abstain on must not be counted as a deletion here.
-        item_score = score(signals, facts)
+        # Custom condemn rules are scored here too, so the lift gate measures the composed
+        # formula (this is what catches a size-based custom rule the way it catches built-in
+        # SIZE). Metadata fields the historical reconstruction does not populate (genre,
+        # quality, ...) read Absent and the rule is inert here -- a known v1 limitation.
+        item_score = score(
+            signals,
+            facts,
+            custom_condemn=policy.custom_signal_configs(),
+            keeps=policy.keep_configs(),
+        )
         score_value = round(item_score.value)
         coverage_bp = round(item_score.coverage * 10_000)
         if coverage_bp < policy.coverage_floor_bp:

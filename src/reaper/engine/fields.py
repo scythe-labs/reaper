@@ -223,6 +223,68 @@ REGISTRY: tuple[FieldSpec, ...] = (
         ops=BOOL_OPS,
         read=lambda f: f.is_streaming_now,
     ),
+    FieldSpec(
+        key="requested",
+        label="Requested by a user",
+        help_text=(
+            "Whether someone asked for this through your requests app. If Reaper cannot "
+            "tell -- the requests app is unreachable, or the title has no id to match on "
+            "-- this is left unknown and never counts toward removal."
+        ),
+        type=FieldType.BOOL,
+        lanes=(Lane.CONDEMN, Lane.PROTECT),
+        ops=BOOL_OPS,
+        read=lambda f: f.requested,
+    ),
+    FieldSpec(
+        key="genre",
+        label="Genre",
+        help_text=(
+            'The genres recorded for this title. Use "contains" to match one genre '
+            "within a title that has several (e.g. contains Reality)."
+        ),
+        type=FieldType.TEXT,
+        lanes=(Lane.CONDEMN, Lane.PROTECT),
+        ops=TEXT_OPS,
+        read=lambda f: f.genres,
+    ),
+    FieldSpec(
+        key="release_age",
+        label="Age since release",
+        help_text=(
+            "How long ago the title was released. Pairs well with how long it has gone "
+            "unwatched -- old and untouched is a stronger case than either alone."
+        ),
+        type=FieldType.DAYS,
+        unit_suffix="days",
+        lanes=(Lane.CONDEMN, Lane.PROTECT),
+        ops=NUMERIC_OPS,
+        read=lambda f: f.release_age_days,
+    ),
+    FieldSpec(
+        key="quality",
+        label="File quality",
+        help_text=(
+            "The quality of the file on disk, as your library names it (e.g. Bluray-1080p, "
+            'SDTV). Use "contains" to match a resolution -- contains 2160p for 4K.'
+        ),
+        type=FieldType.TEXT,
+        lanes=(Lane.CONDEMN, Lane.PROTECT),
+        ops=TEXT_OPS,
+        read=lambda f: f.quality,
+    ),
+    FieldSpec(
+        key="show_ended",
+        label="The show has ended",
+        help_text=(
+            "Whether the series has finished for good. An ended show will get no new "
+            "seasons to draw viewers back; a returning one still might. TV only."
+        ),
+        type=FieldType.BOOL,
+        lanes=(Lane.CONDEMN, Lane.PROTECT),
+        ops=BOOL_OPS,
+        read=lambda f: f.show_ended,
+    ),
 )
 
 BY_KEY: dict[str, FieldSpec] = {spec.key: spec for spec in REGISTRY}

@@ -104,11 +104,26 @@ export interface Match {
   rating_key: number | null;
 }
 
+/** A graded keep's contribution to the score -- points subtracted, and whether it could be
+ *  evaluated (false means Unknown, which takes the FULL discount -- fail-closed toward keeping). */
+export interface KeepContribution {
+  name: string;
+  discount: number;
+  max_discount: number;
+  detail: string;
+  evaluated: boolean;
+}
+
 export interface Explanation {
   score: number;
+  /** The condemnation subtotal before any keep discount. Optional so an item scored before
+   *  this shipped still parses. */
+  base_score?: number;
+  keep_discount?: number;
   threshold: number;
   coverage: number;
   signals: SignalContribution[];
+  keeps?: KeepContribution[];
   /** Why it is being kept. */
   protections_fired: GateOutcome[];
   /** Protections evaluated that did NOT fire -- with the actual numbers. */
@@ -146,6 +161,29 @@ export interface Condition {
   value: number | string | boolean;
 }
 
+/** A user-authored "reason to remove". Boolean: a match adds the full weight. Graded: a
+ *  numeric field ramped floor->saturate, like a built-in signal. Both unsigned. */
+export type CustomCondemn =
+  | {
+      kind: "boolean";
+      name: string;
+      field: string;
+      op: string;
+      value: number | string | boolean;
+      weight: number;
+    }
+  | { kind: "graded"; name: string; field: string; weight: number; saturate_at: number; floor: number };
+
+/** A user-authored graded "lean toward keeping" -- a subtractive discount, fail-closed. */
+export interface GradedKeep {
+  name: string;
+  field: string;
+  max_discount: number;
+  floor: number;
+  saturate_at: number;
+  direction: "high_keeps" | "low_keeps";
+}
+
 export interface PolicyBody {
   name: string;
   media_type: string;
@@ -153,11 +191,22 @@ export interface PolicyBody {
   coverage_floor_bp: number;
   keep_last_seasons: number;
   keep_first_season: boolean;
+  keep_last_scope: "all" | "requested";
+  season_lookahead: number;
   gates: GateSetting[];
   signals: SignalSetting[];
   protect_conditions: Condition[];
+  custom_condemn: CustomCondemn[];
+  graded_keeps: GradedKeep[];
   keep_tags: string[];
   keep_tags_match: "any" | "all";
+}
+
+/** The distribution of content-season counts across shows in the latest snapshot, so the
+ *  editor can show live how many shows a keep-last-N value fully protects. */
+export interface SeasonShape {
+  total_shows: number;
+  season_counts: Record<number, number>;
 }
 
 /** One field the owner may write a protect condition about (from the vocabulary endpoint). */
@@ -590,6 +639,9 @@ export const api = {
   savePolicy: (body: PolicyBody) => post<Policy>("/api/policy", body),
   validatePolicy: (body: PolicyBody) => post<Policy>("/api/policy/validate", body),
   simulate: (body: PolicyBody) => post<Simulation>("/api/policy/simulate", body),
+  /** The season-count distribution from the latest snapshot, for the keep-last advisory.
+   *  Independent of the current keep-last value, so it needs no re-scan. */
+  seasonShape: () => request<SeasonShape>("/api/snapshot/season-shape"),
 
   startScan: () => post<ScanStatus>("/api/scan/start", {}),
   scanStatus: () => request<ScanStatus>("/api/scan/status"),

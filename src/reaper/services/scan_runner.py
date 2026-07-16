@@ -359,6 +359,10 @@ async def run_scan(
         # by" and the review queue can filter to just-requested media. Optional and soft:
         # no Seerr, or an unreachable one, means an empty map, never a failed scan.
         requested = await requested_by.build_map(seerr) if seerr is not None else {}
+        # A separate three-state index used as a scoring FACT (was this requested?), built
+        # from every request and fail-closed to Unknown when Seerr can't be read -- distinct
+        # from the display map above, which is deliberately loose and available-only.
+        request_index = await requested_by.build_request_index(seerr)
 
         snapshot = await snapshot_service.scan(
             cache_engine,
@@ -375,6 +379,7 @@ async def run_scan(
             tv_policy=tv_policy,
             tv_gates=tv_gates,
             requested=requested,
+            request_index=request_index,
             grace_days=profile_settings.grace_days,
             extra_degrade_reasons=pre_scan_degradations,
             on_progress=on_progress,

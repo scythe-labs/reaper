@@ -111,7 +111,10 @@ CREATE TABLE IF NOT EXISTS watch_event (
     watched_at             INTEGER NOT NULL,
     watched_status         REAL    NOT NULL,
     percent_complete       INTEGER NOT NULL,
-    media_type             TEXT    NOT NULL
+    media_type             TEXT    NOT NULL,
+    -- The episode number (Tautulli media_index) for TV rows, NULL for movies and for rows
+    -- synced before this column existed. Powers episode-precise mid-binge protection.
+    media_index            INTEGER
 );
 CREATE INDEX IF NOT EXISTS ix_watch_event_rating_key ON watch_event (rating_key, watched_at);
 CREATE INDEX IF NOT EXISTS ix_watch_event_gp_key
@@ -160,6 +163,12 @@ async def ensure_schema(engine: AsyncEngine) -> None:
         for statement in SCHEMA.strip().split(";"):
             if statement.strip():
                 await conn.execute(text(statement))
+        # CREATE TABLE IF NOT EXISTS never alters an existing table, so add media_index
+        # explicitly on installs whose watch_event predates it. Idempotent -- guarded by the
+        # column check, and the nightly full sweep backfills the values within a day.
+        cols = (await conn.execute(text("PRAGMA table_info(watch_event)"))).all()
+        if "media_index" not in {row[1] for row in cols}:
+            await conn.execute(text("ALTER TABLE watch_event ADD COLUMN media_index INTEGER"))
 
 
 async def _state(engine: AsyncEngine) -> HistoryState:
@@ -246,6 +255,10 @@ async def sync(
                     "watched_status": float(row.get("watched_status") or 0),
                     "percent_complete": int(row.get("percent_complete") or 0),
                     "media_type": str(row.get("media_type") or "unknown"),
+                    # Episode number for TV rows; None for movies. Fail-safe: a NULL here
+                    # leaves that season "position unknown" and the guard falls back to the
+                    # season-level protection, never under-protecting.
+                    "media_index": _int_or_none(row.get("media_index")),
                 }
             )
 
@@ -255,10 +268,11 @@ async def sync(
                     text(
                         "INSERT OR REPLACE INTO watch_event "
                         "(row_id, rating_key, parent_rating_key, grandparent_rating_key, "
-                        " user_id, watched_at, watched_status, percent_complete, media_type) "
+                        " user_id, watched_at, watched_status, percent_complete, media_type, "
+                        " media_index) "
                         "VALUES (:row_id, :rating_key, :parent_rating_key, "
                         " :grandparent_rating_key, :user_id, :watched_at, :watched_status, "
-                        " :percent_complete, :media_type)"
+                        " :percent_complete, :media_type, :media_index)"
                     ),
                     batch,
                 )

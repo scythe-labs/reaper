@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from reaper.engine.fields import FieldType, Lane, Op
 from reaper.engine.gates import GateId
+from reaper.engine.policy import CustomCondemnSpec, GradedKeepSpec
 from reaper.engine.signals import SignalId
 
 
@@ -261,9 +262,15 @@ class PolicyIn(BaseModel):
     coverage_floor_bp: int = Field(default=5000, ge=0, le=10_000)
     keep_last_seasons: int = Field(default=2, ge=0)
     keep_first_season: bool = True
+    keep_last_scope: Literal["all", "requested"] = "all"
+    season_lookahead: int = Field(default=0, ge=0)
     gates: list[GateSettingIn]
     signals: list[SignalSettingIn]
     protect_conditions: list[ConditionIn] = Field(default_factory=list)
+    # The engine spec is reused directly (not a parallel *In model) so its lane/numeric
+    # validation runs on the wire and the two cannot drift.
+    custom_condemn: list[CustomCondemnSpec] = Field(default_factory=list)
+    graded_keeps: list[GradedKeepSpec] = Field(default_factory=list)
     keep_tags: list[str] = Field(default_factory=lambda: ["reaper-keep"])
     keep_tags_match: Literal["any", "all"] = "any"
 
@@ -272,6 +279,16 @@ class PolicyWarningOut(BaseModel):
     field: str
     message: str
     severity: str
+
+
+class SeasonShapeOut(BaseModel):
+    """How many content-bearing seasons each show has in the latest snapshot, so the policy
+    editor can show live how many shows a keep-last-N value fully protects -- without a new
+    scan, since the season shape is independent of the keep-last value."""
+
+    total_shows: int
+    season_counts: dict[int, int]
+    """season count -> number of shows that have exactly that many content-bearing seasons."""
 
 
 class PolicyOut(BaseModel):

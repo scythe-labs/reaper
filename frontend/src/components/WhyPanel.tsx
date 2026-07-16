@@ -236,6 +236,38 @@ export function WhyPanel({ item, onClose }: { item: CandidateDetail; onClose: ()
         </ul>
       </section>
 
+      {explanation.keeps && explanation.keeps.length > 0 && (
+        <section className="block">
+          <h3>Leaning toward keeping</h3>
+          <p className="blurb">
+            Your soft “keep” rules lowered the score
+            {explanation.base_score != null
+              ? ` from ${explanation.base_score.toFixed(0)} to ${explanation.score.toFixed(0)}`
+              : ""}
+            . These can only ever lower a score, and never overrule a protection.
+          </p>
+          <ul className="signals">
+            {explanation.keeps.map((keep) => (
+              <li key={keep.name} className={keep.evaluated ? "signal" : "signal signal-unknown"}>
+                <div className="signal-head">
+                  <span className="signal-amount">
+                    −{keep.discount.toFixed(1)}
+                    <span className="muted">/{keep.max_discount}</span>
+                  </span>
+                  <span className="signal-detail">{keep.detail}</span>
+                </div>
+                {!keep.evaluated && (
+                  <p className="signal-note">
+                    Reaper couldn’t check this one, so it kept the file fully — missing data only
+                    ever leans toward <em>keeping</em>.
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <Gates
         title="Protections that fired"
         blurb="Any one of these keeps the file, whatever it scored."

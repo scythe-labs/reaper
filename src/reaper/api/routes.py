@@ -34,6 +34,7 @@ from reaper.api.schemas import (
     PolicyIn,
     PolicyOut,
     PolicyWarningOut,
+    SeasonShapeOut,
     SignalSettingIn,
     SimulationOut,
     SnapshotOut,
@@ -118,6 +119,36 @@ async def _snapshot_out(session: AsyncSession, snapshot: Snapshot) -> SnapshotOu
         abstained=int(counts.get("abstain", 0)),
         reclaimable_bytes=int(reclaimable),
     )
+
+
+@router.get("/snapshot/season-shape")
+async def season_shape(request: Request) -> SeasonShapeOut:
+    """The distribution of content-season counts across shows, for the keep-last advisory.
+
+    A show's season count is how many season candidate rows it has in the latest snapshot.
+    The editor uses this to compute, entirely client-side, how many shows have no season
+    that a given keep-last-N value would leave removable -- live as the number changes,
+    with no scan and no dependency on the current keep-last value.
+    """
+    async with _sessions(request)() as session:
+        snapshot = await _latest_snapshot(session)
+        if snapshot is None:
+            return SeasonShapeOut(total_shows=0, season_counts={})
+        rows = (
+            await session.execute(
+                select(Candidate.group_key, func.count())
+                .where(
+                    Candidate.snapshot_id == snapshot.id,
+                    Candidate.media_type == "season",
+                    Candidate.group_key.is_not(None),
+                )
+                .group_by(Candidate.group_key)
+            )
+        ).all()
+    counts: dict[int, int] = {}
+    for _group, n in rows:
+        counts[int(n)] = counts.get(int(n), 0) + 1
+    return SeasonShapeOut(total_shows=len(rows), season_counts=counts)
 
 
 @router.get("/candidates")
@@ -343,6 +374,8 @@ def _to_body(payload: PolicyIn) -> PolicyBody:
             coverage_floor_bp=payload.coverage_floor_bp,
             keep_last_seasons=payload.keep_last_seasons,
             keep_first_season=payload.keep_first_season,
+            keep_last_scope=payload.keep_last_scope,
+            season_lookahead=payload.season_lookahead,
             gates=tuple(
                 GateSetting(
                     gate=g.gate,
@@ -363,6 +396,9 @@ def _to_body(payload: PolicyIn) -> PolicyBody:
                 ConditionSpec(field=c.field, op=c.op, value=c.value)
                 for c in payload.protect_conditions
             ),
+            # Already engine specs (BooleanCondemnSpec / GradedCondemnSpec) -- passed through.
+            custom_condemn=tuple(payload.custom_condemn),
+            graded_keeps=tuple(payload.graded_keeps),
             keep_tags=tuple(t.strip() for t in payload.keep_tags if t.strip()),
             keep_tags_match=payload.keep_tags_match,
         )
@@ -391,6 +427,8 @@ def _policy_out(body: PolicyBody, name: str) -> PolicyOut:
             coverage_floor_bp=body.coverage_floor_bp,
             keep_last_seasons=body.keep_last_seasons,
             keep_first_season=body.keep_first_season,
+            keep_last_scope=body.keep_last_scope,
+            season_lookahead=body.season_lookahead,
             gates=[
                 GateSettingIn(
                     gate=g.gate,
@@ -410,6 +448,8 @@ def _policy_out(body: PolicyBody, name: str) -> PolicyOut:
             protect_conditions=[
                 ConditionIn(field=c.field, op=c.op, value=c.value) for c in body.protect_conditions
             ],
+            custom_condemn=list(body.custom_condemn),
+            graded_keeps=list(body.graded_keeps),
             keep_tags=list(body.keep_tags),
             keep_tags_match=body.keep_tags_match,
         ),
