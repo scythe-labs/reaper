@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import Candidate, Snapshot
+from reaper.db.models import Candidate, Snapshot, WhitelistEntry
 from reaper.main import create_app
 
 from ._auth import login
@@ -62,6 +62,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     year=1979,
                     summary="A crew is hunted.",
                     requested_by="Alice",
+                    genres_json='["Comedy", "Horror"]',
                 ),
                 _candidate(
                     snapshot_id=snap.id,
@@ -69,6 +70,9 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     title="Example Zulu",
                     year=1995,
                     requested_by=None,
+                    # "Comedy Special" proves the genre filter matches whole terms, not
+                    # substrings; a filter for Comedy must not drag this row along.
+                    genres_json='["Comedy Special"]',
                 ),
                 _candidate(
                     snapshot_id=snap.id,
@@ -78,6 +82,20 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     group_key="sonarr:1:5",
                     group_title="Example Mid",
                     requested_by="Bob",
+                    # Malformed on purpose: the genre filter must skip it, never 500.
+                    genres_json="not json",
+                ),
+            ]
+        )
+        # Hand overrides: one item-level spare, and one show-level reap the season
+        # inherits through whitelist.effective_override's own-key-beats-show precedence.
+        session.add_all(
+            [
+                WhitelistEntry(
+                    media_key="radarr:1:11", title="Example Zulu", decision="spare", created_at=now
+                ),
+                WhitelistEntry(
+                    media_key="sonarr:1:5", title="Example Mid", decision="reap", created_at=now
                 ),
             ]
         )
@@ -134,6 +152,46 @@ class TestFilters:
         # media_type AND requested are ANDed, not either-or.
         rows = client.get("/api/candidates?verdict=condemn&media_type=movie&requested=yes").json()
         assert _titles(rows) == {"Example Alpha"}  # a movie AND requested; the season is excluded
+
+
+class TestGenreFilter:
+    def test_a_genre_matches_the_whole_term_only(self, client: TestClient) -> None:
+        # "Comedy" must match ["Comedy", ...] and NOT ["Comedy Special"].
+        rows = client.get("/api/candidates?verdict=condemn&genre=Comedy").json()
+        assert _titles(rows) == {"Example Alpha"}
+
+    def test_a_malformed_genre_row_is_skipped_not_an_error(self, client: TestClient) -> None:
+        # The season row's genres_json does not parse; it never matches and never 500s.
+        response = client.get("/api/candidates?verdict=condemn&genre=Horror")
+        assert response.status_code == 200
+        assert _titles(response.json()) == {"Example Alpha"}
+
+    def test_an_unseen_genre_matches_nothing(self, client: TestClient) -> None:
+        response = client.get("/api/candidates?verdict=condemn&genre=Western")
+        assert response.json() == []
+        assert response.headers["X-Total-Count"] == "0"
+
+
+class TestOverrideFilter:
+    def test_spared_by_hand(self, client: TestClient) -> None:
+        response = client.get("/api/candidates?verdict=condemn&override=spare")
+        assert _titles(response.json()) == {"Example Zulu"}
+        # The totals describe the filtered set, exactly what the page is drawn from.
+        assert response.headers["X-Total-Count"] == "1"
+
+    def test_a_show_level_reap_covers_its_season(self, client: TestClient) -> None:
+        # The override sits on the SHOW key (sonarr:1:5); the season row inherits it.
+        rows = client.get("/api/candidates?verdict=condemn&override=reap").json()
+        assert _titles(rows) == {"Example Mid · Season 5"}
+
+    def test_untouched_items_only(self, client: TestClient) -> None:
+        rows = client.get("/api/candidates?verdict=condemn&override=none").json()
+        assert _titles(rows) == {"Example Alpha"}
+
+    def test_it_stacks_with_the_other_filters(self, client: TestClient) -> None:
+        # A spare override AND a requester: Zulu is spared but was never requested.
+        rows = client.get("/api/candidates?verdict=condemn&override=spare&requested=yes").json()
+        assert rows == []
 
 
 class TestSort:

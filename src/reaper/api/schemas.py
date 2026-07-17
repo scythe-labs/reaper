@@ -407,6 +407,10 @@ class PolicyIn(BaseModel):
     keep_first_season: bool = True
     keep_last_scope: Literal["all", "requested"] = "all"
     season_lookahead: int = Field(default=0, ge=0)
+    keep_in_progress: bool = True
+    in_progress_hold_days: int = Field(default=180, ge=0)
+    keep_specials: bool = True
+    flag_keep_conflicts: bool = True
     gates: list[GateSettingIn]
     signals: list[SignalSettingIn]
     protect_conditions: list[ConditionIn] = Field(default_factory=list)

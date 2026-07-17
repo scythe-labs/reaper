@@ -1510,6 +1510,57 @@ a copy of the dev DB on an alt port.
   (rating-floor warning and vote-floor error in `engine/policy.py`, two executor
   errors, two degrade reasons, the Plex-link owner error). All reworded per rule 21.
 
+## Season-rule knobs, queue filters, and panel actions (operator feedback round)
+
+Everything here came from one annotated-screenshot review of the queue against live data.
+
+- **The mid-binge hold now expires, and is configurable.** The sequential-progression
+  guard held a viewer's place on all-time history: someone who abandoned a show years ago
+  pinned their season (and the next) forever. Live data made the cost visible: ~23% of the
+  snapshot's TV rows were kept by that one guard. Three new TV-policy fields, all applied
+  through the one decision path: `keep_in_progress` (the guard's on/off, default on),
+  `in_progress_hold_days` (viewer-inactivity expiry, default 180; `0` = the old
+  hold-forever; unreadable last-watch keeps the hold), and the pure
+  `season_pruning.active_progress` helper that applies the expiry to per-viewer progress
+  before the guard sees it. The evidence side reads each viewer's most recent play per
+  season (`user_season_last`, same query that fed the old DISTINCT pairs), rolled up per
+  show fail-closed: any unreadable timestamp makes the viewer count as active.
+- **Two hardwired season behaviours became policy toggles**: `keep_specials` (off =
+  specials judged like any other season; they still never occupy a keep-last slot, and
+  airing/still-downloading still protect them) and `flag_keep_conflicts` (off = the
+  more-watched-than-kept detector stays quiet and the keep rule is simply followed).
+  Both default to the old behaviour. All four fields ride the policy hash, so the
+  simulator honestly refuses stale numbers until the next scan.
+- **The "request filter does not work" report was honest data, badly presented.** The
+  filter worked; on the condemned tab zero items carried a requester (requested media
+  gets watched; watched media is not condemned), so "Requested" showed a bare empty page
+  and "Not requested" changed nothing. Fixes: every active filter renders as a removable
+  chip above the list, and a filtered-empty queue now says how many items the filters
+  hide, with a one-tap clear. The requested data itself was fine (~6% of the snapshot
+  carried a requester, concentrated in the protected lane).
+- **The queue filter bar grew up**: media filter says "TV shows" (was "TV seasons"),
+  new genre filter (values from the existing `vocabulary/values` endpoint), new
+  hand-override filter (spared / reaped / none) resolved through the one
+  `whitelist.effective_override` function (keys resolved in Python, then an `IN` over the
+  same conditions the totals use, so count/bytes/page describe one set), and filters are
+  remembered per tab on the device (`loadFilters`/`saveFilters`, sanitized field-by-field
+  on the way back in). Note for tests: bare `localStorage` resolves to Node's experimental
+  global under vitest, and this jsdom ships without storage entirely; the helpers use
+  `window.localStorage` and degrade to defaults when it is absent.
+- **The why panel acts**: a sticky Spare/Reap bar (the queue's `OverrideControls`,
+  exported) with pending/error states, invalidating `candidates`, `group`, and
+  `candidate` so every surface refreshes together (the queue's own invalidation now
+  includes `candidate` too, closing a stale-open-panel gap).
+- **One chip family**: every chip is 1.35rem tall on one type scale; the status chip
+  centers by construction (line box + padding = the family height) instead of a loose
+  line-height; the show panel's season sizes no longer wrap to two lines. This closed the
+  "pill spacing inconsistent on several views" and "bad padding, not centered" reports.
+- **One status line per condemned card, enforced.** The reason paragraph used to stand
+  down only when it would repeat the dormancy pill's wording; when the fresh scan made a
+  different signal the leading reason, cards grew a second line under the pill. The reason
+  now stands down whenever the pill is present, on both card kinds; the full sentences
+  stay in the panel.
+
 ## Immediate next steps
 
 1. **The live send** — wire `_send_for_real` + the exclusion-verify + the Plex refresh

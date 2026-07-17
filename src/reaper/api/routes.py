@@ -19,12 +19,16 @@ import json
 import re
 from collections import Counter
 from datetime import datetime
+from typing import TYPE_CHECKING, cast
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import ValidationError
-from sqlalchemy import asc, desc, func, or_, select
+from sqlalchemy import asc, desc, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+if TYPE_CHECKING:
+    from sqlalchemy import ColumnElement
 
 from reaper.api.schemas import (
     CandidateDetail,
@@ -172,6 +176,8 @@ async def list_candidates(
     search: str | None = None,
     media_type: str | None = None,
     requested: str = "any",
+    genre: str | None = None,
+    override: str = "any",
     sort: str = "score",
     order: str = "desc",
     limit: int = Query(100, ge=1, le=500),
@@ -194,8 +200,10 @@ async def list_candidates(
 
     Filters **stack** (they are ANDed), and each only narrows the frozen snapshot, never
     re-decides it: ``search`` matches the title or the show name, ``media_type`` keeps
-    movies or seasons, and ``requested`` keeps only what someone asked for through Seerr
-    (``yes``), only what nobody asked for (``no``), or everything (``any``).
+    movies or seasons, ``requested`` keeps only what someone asked for through Seerr
+    (``yes``), only what nobody asked for (``no``), or everything (``any``), ``genre``
+    keeps rows whose stored genre list contains the given term exactly, and ``override``
+    keeps rows by their hand-override state (``spare`` / ``reap`` / ``none`` / ``any``).
     """
     async with _sessions(request)() as session:
         snapshot = await _latest_snapshot(session)
@@ -221,6 +229,39 @@ async def list_candidates(
             conditions.append(Candidate.requested_by.is_not(None))
         elif requested == "no":
             conditions.append(Candidate.requested_by.is_(None))
+        if genre and genre.strip():
+            # Exact term match inside the stored JSON genre array. json_each raises
+            # mid-query on a malformed document, so invalid or missing rows are swapped
+            # for an empty array inside the expression itself and simply never match.
+            # Raw SQL (the season scan's precedent for json/table-valued reads), cast to
+            # the boolean element type the conditions list carries.
+            genre_predicate = text(
+                "EXISTS (SELECT 1 FROM json_each("
+                "CASE WHEN candidate.genres_json IS NOT NULL "
+                "AND json_valid(candidate.genres_json) "
+                "THEN candidate.genres_json ELSE '[]' END"
+                ") WHERE json_each.value = :genre)"
+            ).bindparams(genre=genre.strip())
+            conditions.append(cast("ColumnElement[bool]", genre_predicate))
+        if override in {"spare", "reap", "none"}:
+            # Hand overrides resolve in Python: whitelist.effective_override is the one
+            # decision function (an item's own key beats its show's), and re-stating that
+            # precedence in SQL is how the copies would drift. So the candidate keys under
+            # the conditions built so far are resolved through the real function, and the
+            # filter becomes an IN over the ones in the asked-for state. Totals below use
+            # the same final conditions, so count, bytes and page describe one set.
+            decisions = await whitelist.overrides(session)
+            keys = (
+                (await session.execute(select(Candidate.media_key).where(*conditions)))
+                .scalars()
+                .all()
+            )
+            wanted = [
+                key
+                for key in keys
+                if (whitelist.effective_override(key, decisions) or "none") == override
+            ]
+            conditions.append(Candidate.media_key.in_(wanted))
 
         totals = (
             await session.execute(
@@ -811,6 +852,10 @@ def _to_body(payload: PolicyIn) -> PolicyBody:
             keep_first_season=payload.keep_first_season,
             keep_last_scope=payload.keep_last_scope,
             season_lookahead=payload.season_lookahead,
+            keep_in_progress=payload.keep_in_progress,
+            in_progress_hold_days=payload.in_progress_hold_days,
+            keep_specials=payload.keep_specials,
+            flag_keep_conflicts=payload.flag_keep_conflicts,
             gates=tuple(
                 GateSetting(
                     gate=g.gate,
@@ -877,6 +922,10 @@ def _policy_out(body: PolicyBody, name: str, *, requests_app_configured: bool) -
             keep_first_season=body.keep_first_season,
             keep_last_scope=body.keep_last_scope,
             season_lookahead=body.season_lookahead,
+            keep_in_progress=body.keep_in_progress,
+            in_progress_hold_days=body.in_progress_hold_days,
+            keep_specials=body.keep_specials,
+            flag_keep_conflicts=body.flag_keep_conflicts,
             gates=[
                 GateSettingIn(
                     gate=g.gate,

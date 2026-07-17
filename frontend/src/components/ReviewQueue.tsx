@@ -28,6 +28,7 @@ import {
   type Candidate,
   type GroupSeasonMark,
   type Override,
+  type OverrideFilter,
   type RequestedFilter,
   type Run,
   type SortKey,
@@ -71,7 +72,7 @@ const TABS: { verdict: Verdict; label: string; blurb: string; empty: string }[] 
 const MEDIA_FILTERS: { value: string; label: string }[] = [
   { value: "", label: "Everything" },
   { value: "movie", label: "Movies" },
-  { value: "season", label: "TV seasons" },
+  { value: "season", label: "TV shows" },
 ];
 
 const REQUESTED_FILTERS: { value: RequestedFilter; label: string }[] = [
@@ -80,12 +81,98 @@ const REQUESTED_FILTERS: { value: RequestedFilter; label: string }[] = [
   { value: "no", label: "Not requested" },
 ];
 
+const OVERRIDE_FILTERS: { value: OverrideFilter; label: string }[] = [
+  { value: "any", label: "Any override" },
+  { value: "spare", label: "Spared by hand" },
+  { value: "reap", label: "Reaped by hand" },
+  { value: "none", label: "No override" },
+];
+
 const SORTS: { value: SortKey; label: string }[] = [
   { value: "score", label: "Score" },
   { value: "size", label: "Size" },
   { value: "year", label: "Year" },
   { value: "title", label: "Title" },
 ];
+
+// --- remembered filters --------------------------------------------------------------------
+// Each queue tab keeps its own filters and sort, on this device, until changed or cleared.
+
+export interface QueueFilters {
+  mediaType: string;
+  requested: RequestedFilter;
+  genre: string;
+  override: OverrideFilter;
+  sort: SortKey;
+  order: SortOrder;
+}
+
+export const DEFAULT_FILTERS: QueueFilters = {
+  mediaType: "",
+  requested: "any",
+  genre: "",
+  override: "any",
+  sort: "score",
+  order: "desc",
+};
+
+const filtersKey = (verdict: string) => `reaper.queue.filters.${verdict}`;
+
+/** The remembered filters for one tab, sanitized field by field: an unknown or outgrown
+ *  stored value falls back to that field's default instead of poisoning the whole set. */
+export function loadFilters(verdict: string): QueueFilters {
+  let raw: string | null;
+  try {
+    // window.localStorage, never the bare global: Node exposes an experimental global
+    // of the same name, so the bare name is the wrong object under the test runner.
+    raw = window.localStorage.getItem(filtersKey(verdict));
+  } catch {
+    return { ...DEFAULT_FILTERS };
+  }
+  if (!raw) return { ...DEFAULT_FILTERS };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ...DEFAULT_FILTERS };
+  }
+  const stored = (parsed ?? {}) as Partial<Record<keyof QueueFilters, unknown>>;
+  const pick = <T,>(value: unknown, allowed: readonly T[], fallback: T): T =>
+    allowed.includes(value as T) ? (value as T) : fallback;
+  return {
+    mediaType: pick(
+      stored.mediaType,
+      MEDIA_FILTERS.map((f) => f.value),
+      DEFAULT_FILTERS.mediaType,
+    ),
+    requested: pick(
+      stored.requested,
+      REQUESTED_FILTERS.map((f) => f.value),
+      DEFAULT_FILTERS.requested,
+    ),
+    genre: typeof stored.genre === "string" ? stored.genre : DEFAULT_FILTERS.genre,
+    override: pick(
+      stored.override,
+      OVERRIDE_FILTERS.map((f) => f.value),
+      DEFAULT_FILTERS.override,
+    ),
+    sort: pick(
+      stored.sort,
+      SORTS.map((s) => s.value),
+      DEFAULT_FILTERS.sort,
+    ),
+    order: pick(stored.order, ["asc", "desc"] as const, DEFAULT_FILTERS.order),
+  };
+}
+
+export function saveFilters(verdict: string, filters: QueueFilters): void {
+  try {
+    window.localStorage.setItem(filtersKey(verdict), JSON.stringify(filters));
+  } catch {
+    // Storage can be unavailable (private mode, full quota); filters simply stop being
+    // remembered, which is the pre-existing behavior, never an error.
+  }
+}
 
 // --- little inline icons for the filter/sort pills ------------------------------------------
 
@@ -108,6 +195,26 @@ function SortIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
       <path d="M3 4h10M3 8h6M3 12h3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+function GenreIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
+      <path
+        d="M8 2.2l1.5 4.3L13.8 8l-4.3 1.5L8 13.8 6.5 9.5 2.2 8l4.3-1.5z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+function OverrideIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
+      <rect x="2" y="5" width="12" height="6" rx="3" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="11" cy="8" r="1.8" stroke="currentColor" strokeWidth="1.3" />
     </svg>
   );
 }
@@ -262,7 +369,7 @@ function DormantPill({ dormantFor }: { dormantFor: string | null }) {
 /** The two hand-overrides, as a paired toggle: **Spare** (∞ keep forever) and **Reap** (force
  *  onto the list). The active one is lit; clicking it again clears the override and lets Reaper
  *  judge the item again. Clicking the other switches. Stops the click from opening the panel. */
-function OverrideControls({
+export function OverrideControls({
   override,
   onSet,
   onClear,
@@ -680,15 +787,14 @@ function MovieCard({
           <ResolutionBadge value={item.video_resolution} />
           <RequestedChip who={item.requested_by} />
         </div>
-        {/* One status line per card. Condemned leads with the amber dormancy pill (the
-            reason paragraph stands down when it would repeat the pill); Sanctuary and
-            Limbo wear their single short chip, and the full sentences live in the panel. */}
+        {/* One status line per card. Condemned leads with the amber dormancy pill, and the
+            reason paragraph stands down WHENEVER the pill is present -- two status lines is
+            noise whatever the reason says; the full sentences live in the panel. Sanctuary
+            and Limbo wear their single short chip. */}
         {item.verdict === "condemn" ? (
           <>
             <DormantPill dormantFor={item.dormant_for} />
-            {item.reason && !(item.dormant_for && item.reason.startsWith("not watched in")) && (
-              <p className="card-reason">{item.reason}</p>
-            )}
+            {item.reason && !item.dormant_for && <p className="card-reason">{item.reason}</p>}
           </>
         ) : (
           <StatusChip chip={item.chip} />
@@ -802,12 +908,12 @@ function ShowCard({
           </div>
           {marks && marks.length > 1 && <SeasonStrip marks={marks} />}
           {isReapTab ? (
+            // One status line, like the movie card: the pill OR the reason, never both.
             <>
               <DormantPill dormantFor={group.dormantFor} />
-              {group.reason &&
-                !(group.dormantFor && group.reason.startsWith("not watched in")) && (
-                  <p className="card-reason">{group.reason}</p>
-                )}
+              {group.reason && !group.dormantFor && (
+                <p className="card-reason">{group.reason}</p>
+              )}
             </>
           ) : (
             <StatusChip chip={first.chip} />
@@ -860,10 +966,7 @@ export function ReviewQueue({
   const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [mediaType, setMediaType] = useState("");
-  const [requested, setRequested] = useState<RequestedFilter>("any");
-  const [sort, setSort] = useState<SortKey>("score");
-  const [order, setOrder] = useState<SortOrder>("desc");
+  const [filters, setFilters] = useState<QueueFilters>(() => loadFilters(verdict));
   const [visible, setVisible] = useState(PAGE);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectMode, setSelectMode] = useState(false);
@@ -885,18 +988,40 @@ export function ReviewQueue({
     return () => clearTimeout(id);
   }, [searchInput]);
 
+  // Each tab remembers its own filters. On a tab switch, adopt that tab's remembered set
+  // and skip the save below for that render -- otherwise the old tab's filters would be
+  // written under the new tab's key before the load lands. A ref, not state: it flips
+  // mid-effect and must not re-render anything (see the engineering rules on effect deps).
+  const filtersVerdict = useRef(verdict);
+  useEffect(() => {
+    if (filtersVerdict.current !== verdict) {
+      filtersVerdict.current = verdict;
+      setFilters(loadFilters(verdict));
+      return;
+    }
+    saveFilters(verdict, filters);
+  }, [verdict, filters]);
+
   // Start over from the top whenever the list itself changes (a new tab, filter or sort), and
   // drop any selection -- a key picked on one tab is not visible on another.
-  useEffect(() => setVisible(PAGE), [verdict, search, mediaType, requested, sort, order]);
-  useEffect(() => setSelected(new Set()), [verdict, search, mediaType, requested, sort, order]);
+  useEffect(() => setVisible(PAGE), [verdict, search, filters]);
+  useEffect(() => setSelected(new Set()), [verdict, search, filters]);
 
   const { data: pages, isPending, error, hasNextPage, isFetchingNextPage, fetchNextPage } =
     useInfiniteQuery({
-      queryKey: ["candidates", verdict, search, mediaType, requested, sort, order],
+      queryKey: ["candidates", verdict, search, filters],
       queryFn: ({ pageParam }) =>
         api.candidates(
           verdict,
-          { search, media_type: mediaType, requested, sort, order },
+          {
+            search,
+            media_type: filters.mediaType,
+            requested: filters.requested,
+            genre: filters.genre,
+            override: filters.override,
+            sort: filters.sort,
+            order: filters.order,
+          },
           FETCH_PAGE,
           pageParam,
         ),
@@ -934,10 +1059,11 @@ export function ReviewQueue({
   }, [data, hasNextPage]);
 
   // Overrides change what the queue lists AND what an expanded show's all-seasons
-  // list (and the show panel) show, so both caches refresh together.
+  // list, the show panel, and an open why-panel show, so every cache refreshes together.
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: ["candidates"] });
     void queryClient.invalidateQueries({ queryKey: ["group"] });
+    void queryClient.invalidateQueries({ queryKey: ["candidate"] });
   };
   const setOverride = useMutation({
     mutationFn: ({ key, decision }: { key: string; decision: Override }) =>
@@ -1028,7 +1154,43 @@ export function ReviewQueue({
 
   const tab = TABS.find((t) => t.verdict === verdict) ?? TABS[0]!;
   const groups = data ? toGroups(data) : [];
-  const filtering = Boolean(search || mediaType || requested !== "any");
+  const filtering = Boolean(
+    search ||
+      filters.mediaType ||
+      filters.requested !== "any" ||
+      filters.genre ||
+      filters.override !== "any",
+  );
+  const clearFilters = () => {
+    setSearchInput("");
+    setSearch("");
+    // Sort survives a clear: it orders the list, it hides nothing.
+    setFilters((f) => ({ ...DEFAULT_FILTERS, sort: f.sort, order: f.order }));
+  };
+
+  // The genre choices are what the latest scan actually saw, most common first -- the
+  // same suggestions the policy rule editors use.
+  const { data: genreValues } = useQuery({
+    queryKey: ["vocabulary-values", "genre"],
+    queryFn: () => api.vocabularyValues("genre"),
+    staleTime: 5 * 60 * 1000,
+  });
+  // A remembered genre that the newest scan no longer has stays selectable: the row set
+  // it filters is honest (empty), and the option must exist for the pill to display it.
+  const genreOptions = useMemo(() => {
+    const values = genreValues?.values ?? [];
+    return filters.genre && !values.includes(filters.genre)
+      ? [filters.genre, ...values]
+      : values;
+  }, [genreValues, filters.genre]);
+
+  // How many items the filters are hiding, for the filtered-empty state. Only asked for
+  // when that state is actually on screen: one row, headers only.
+  const { data: unfilteredPage } = useQuery({
+    queryKey: ["candidates-unfiltered", verdict],
+    queryFn: () => api.candidates(verdict, {}, 1, 0),
+    enabled: filtering && !isPending && !error && (data?.length ?? 0) === 0,
+  });
   // The override key each shown card acts on: a show's group key, or a movie's media key.
   const shownGroups = groups.slice(0, visible);
   const shownKeys = shownGroups.map((g) => (g.isShow ? g.key : g.items[0]!.media_key));
@@ -1043,16 +1205,26 @@ export function ReviewQueue({
     }
   }, [visible, groups.length, hasNextPage, isFetchingNextPage, fetchNextPage]);
 
-  // An empty list under a filter should explain itself, not read as broken. The common
-  // surprise: "Requested" on the reap tab is empty because a requested title people
-  // actually watched is protected, not reaped -- so point them at where it did land.
-  const emptyMessage =
-    requested === "yes" && verdict === "condemn"
-      ? "Nothing people requested is on the reap list. A requested title that got watched is " +
-        "protected, not reaped. Look under Spared to see them."
-      : filtering
-        ? "Nothing matches those filters."
-        : tab.empty;
+  // An empty list under a filter should explain itself, not read as broken: say how much
+  // the filters hide, in this tab's own words. The common surprise gets its own sentence:
+  // "Requested" on the reap tab is empty because requested media gets watched, and watched
+  // media is protected, not reaped.
+  const hiddenCount = unfilteredPage?.total ?? 0;
+  const [hiddenOne, hiddenMany] =
+    verdict === "condemn"
+      ? ["condemned item", "condemned items"]
+      : verdict === "protect"
+        ? ["protected item", "protected items"]
+        : ["item in Limbo", "items in Limbo"];
+  const hiddenLine =
+    hiddenCount === 1
+      ? `1 ${hiddenOne} is hidden.`
+      : `${count(hiddenCount)} ${hiddenMany} are hidden.`;
+  const requestedExplainer =
+    filters.requested === "yes" && verdict === "condemn"
+      ? " None of them were requested, which is common: requested media gets watched, and " +
+        "watched media doesn't end up condemned."
+      : "";
 
   return (
     <section className="queue">
@@ -1090,7 +1262,12 @@ export function ReviewQueue({
           />
         </div>
 
-        <Pill icon={<LayersIcon />} value={mediaType} onChange={setMediaType} title="Movies or TV">
+        <Pill
+          icon={<LayersIcon />}
+          value={filters.mediaType}
+          onChange={(v) => setFilters((f) => ({ ...f, mediaType: v }))}
+          title="Movies or TV"
+        >
           {MEDIA_FILTERS.map((f) => (
             <option key={f.value} value={f.value}>
               {f.label}
@@ -1100,8 +1277,8 @@ export function ReviewQueue({
 
         <Pill
           icon={<FunnelIcon />}
-          value={requested}
-          onChange={(v) => setRequested(v as RequestedFilter)}
+          value={filters.requested}
+          onChange={(v) => setFilters((f) => ({ ...f, requested: v as RequestedFilter }))}
           title="Filter by who asked for it through Seerr"
         >
           {REQUESTED_FILTERS.map((f) => (
@@ -1111,8 +1288,40 @@ export function ReviewQueue({
           ))}
         </Pill>
 
+        <Pill
+          icon={<GenreIcon />}
+          value={filters.genre}
+          onChange={(v) => setFilters((f) => ({ ...f, genre: v }))}
+          title="Filter by genre"
+        >
+          <option value="">Any genre</option>
+          {genreOptions.map((g) => (
+            <option key={g} value={g}>
+              {g}
+            </option>
+          ))}
+        </Pill>
+
+        <Pill
+          icon={<OverrideIcon />}
+          value={filters.override}
+          onChange={(v) => setFilters((f) => ({ ...f, override: v as OverrideFilter }))}
+          title="Filter by your own spare and reap decisions"
+        >
+          {OVERRIDE_FILTERS.map((f) => (
+            <option key={f.value} value={f.value}>
+              {f.label}
+            </option>
+          ))}
+        </Pill>
+
         <div className="sort-group">
-          <Pill icon={<SortIcon />} value={sort} onChange={(v) => setSort(v as SortKey)} title="Sort by">
+          <Pill
+            icon={<SortIcon />}
+            value={filters.sort}
+            onChange={(v) => setFilters((f) => ({ ...f, sort: v as SortKey }))}
+            title="Sort by"
+          >
             {SORTS.map((s) => (
               <option key={s.value} value={s.value}>
                 {s.label}
@@ -1121,11 +1330,13 @@ export function ReviewQueue({
           </Pill>
           <button
             className="sort-dir"
-            onClick={() => setOrder((o) => (o === "desc" ? "asc" : "desc"))}
-            title={order === "desc" ? "High to low" : "Low to high"}
-            aria-label={order === "desc" ? "Descending" : "Ascending"}
+            onClick={() =>
+              setFilters((f) => ({ ...f, order: f.order === "desc" ? "asc" : "desc" }))
+            }
+            title={filters.order === "desc" ? "High to low" : "Low to high"}
+            aria-label={filters.order === "desc" ? "Descending" : "Ascending"}
           >
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true" className={order}>
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true" className={filters.order}>
               <path d="M8 3v10M4 9l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
@@ -1149,10 +1360,97 @@ export function ReviewQueue({
         </button>
       </div>
 
+      {/* Every active filter as a removable chip, so a stacked combination is visible at a
+          glance and each piece clears with one tap. Sort is not a chip: it hides nothing. */}
+      {filtering && (
+        <div className="active-filters">
+          {search && (
+            <span className="filter-chip">
+              &ldquo;{search}&rdquo;
+              <button
+                type="button"
+                aria-label={`Stop searching for ${search}`}
+                onClick={() => {
+                  setSearchInput("");
+                  setSearch("");
+                }}
+              >
+                ×
+              </button>
+            </span>
+          )}
+          {filters.mediaType && (
+            <span className="filter-chip">
+              {MEDIA_FILTERS.find((f) => f.value === filters.mediaType)?.label}
+              <button
+                type="button"
+                aria-label="Remove the media type filter"
+                onClick={() => setFilters((f) => ({ ...f, mediaType: "" }))}
+              >
+                ×
+              </button>
+            </span>
+          )}
+          {filters.requested !== "any" && (
+            <span className="filter-chip">
+              {REQUESTED_FILTERS.find((f) => f.value === filters.requested)?.label}
+              <button
+                type="button"
+                aria-label="Remove the requested filter"
+                onClick={() => setFilters((f) => ({ ...f, requested: "any" }))}
+              >
+                ×
+              </button>
+            </span>
+          )}
+          {filters.genre && (
+            <span className="filter-chip">
+              {filters.genre}
+              <button
+                type="button"
+                aria-label="Remove the genre filter"
+                onClick={() => setFilters((f) => ({ ...f, genre: "" }))}
+              >
+                ×
+              </button>
+            </span>
+          )}
+          {filters.override !== "any" && (
+            <span className="filter-chip">
+              {OVERRIDE_FILTERS.find((f) => f.value === filters.override)?.label}
+              <button
+                type="button"
+                aria-label="Remove the override filter"
+                onClick={() => setFilters((f) => ({ ...f, override: "any" }))}
+              >
+                ×
+              </button>
+            </span>
+          )}
+          <button type="button" className="link-btn" onClick={clearFilters}>
+            Clear all
+          </button>
+        </div>
+      )}
+
       {error && <p className="error">{error.message}</p>}
       {isPending && <p className="muted">Loading…</p>}
 
-      {data && data.length === 0 && <p className="empty">{emptyMessage}</p>}
+      {data && data.length === 0 && !filtering && <p className="empty">{tab.empty}</p>}
+      {data && data.length === 0 && filtering && (
+        <div className="empty-filtered">
+          <p className="empty-headline">Nothing here matches your filters.</p>
+          {hiddenCount > 0 && (
+            <p className="muted">
+              {hiddenLine}
+              {requestedExplainer}
+            </p>
+          )}
+          <button type="button" className="sm ghost" onClick={clearFilters}>
+            Clear filters
+          </button>
+        </div>
+      )}
 
       {data && data.length > 0 && (
         <>

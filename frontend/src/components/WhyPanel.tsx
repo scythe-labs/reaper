@@ -16,9 +16,19 @@
 // And it renders for PROTECTED items too, showing the score it is overriding. A tool
 // that only explains its deletions cannot be trusted about its keeps.
 
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import type { CandidateDetail, GateOutcome, Links, Match, Ratings } from "../api";
+import {
+  api,
+  type CandidateDetail,
+  type GateOutcome,
+  type Links,
+  type Match,
+  type Override,
+  type Ratings,
+} from "../api";
 import { bytes, coverage, since } from "../format";
+import { OverrideControls } from "./ReviewQueue";
 
 /** The built-in signal ids. Anything else in `explanation.signals[].id` is a custom
  *  rule's own name, and its row wears the "Your rule" tag. */
@@ -428,6 +438,25 @@ export function WhyPanel({
 }) {
   const { explanation } = item;
 
+  // The panel is where the deciding happens, so Spare and Reap live here too -- the same
+  // mutation shape the cards use, refreshing every surface an override changes (the
+  // queue, an expanded show, the show panel, and this panel's own detail).
+  const queryClient = useQueryClient();
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ["candidates"] });
+    void queryClient.invalidateQueries({ queryKey: ["group"] });
+    void queryClient.invalidateQueries({ queryKey: ["candidate"] });
+  };
+  const setOverride = useMutation({
+    mutationFn: ({ key, decision }: { key: string; decision: Override }) =>
+      api.override(key, decision),
+    onSuccess: refresh,
+  });
+  const clearOverride = useMutation({
+    mutationFn: (key: string) => api.clearOverride(key),
+    onSuccess: refresh,
+  });
+
   const mediaLabel = item.media_type === "season" ? "TV season" : item.media_type;
 
   return (
@@ -577,6 +606,20 @@ export function WhyPanel({
       />
 
       <LeftForYou outcomes={explanation.protections_unknown} />
+
+      {/* Decide without leaving the reasoning. Sticky, so the buttons stay in reach at
+          the end of a long explanation. */}
+      <div className="why-actions">
+        <OverrideControls
+          override={item.override}
+          onSet={(decision) => setOverride.mutate({ key: item.media_key, decision })}
+          onClear={() => clearOverride.mutate(item.media_key)}
+          pending={setOverride.isPending || clearOverride.isPending}
+        />
+        {(setOverride.isError || clearOverride.isError) && (
+          <span className="error">Couldn't save that. Try again.</span>
+        )}
+      </div>
     </aside>
   );
 }

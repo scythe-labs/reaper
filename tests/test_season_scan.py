@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -510,6 +510,18 @@ class TestSeasonWatchStats:
         stats = await season_scan.season_watch_stats(cache_engine, {704, 705}, window_days=365)
         assert stats.user_season_keys[1] == {704, 705}
 
+    async def test_a_users_latest_play_per_season_is_collected(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """Two plays under one season keep the newer timestamp -- the mid-binge expiry
+        judges a viewer by their most recent activity, never their first."""
+        await _episode(cache_engine, season_key=706, user_id=1, days_ago=300, episode=1)
+        await _episode(cache_engine, season_key=706, user_id=1, days_ago=5, episode=2)
+        stats = await season_scan.season_watch_stats(cache_engine, {706}, window_days=365)
+        when = stats.user_season_last[1][706]
+        assert when is not None
+        assert when > utcnow() - timedelta(days=6)
+
 
 class TestProgressByUser:
     def test_progress_is_scoped_to_this_show(self) -> None:
@@ -528,6 +540,29 @@ class TestProgressByUser:
         # which drops the guard to its season-level fallback for that season.
         stats = season_scan.SeasonWatchStats(user_season_keys={7: {701}}, user_season_progress={})
         assert season_scan._progress_by_user(stats, {701: 2}) == {"7": {2: None}}
+
+
+class TestLastWatchedByUser:
+    def test_the_shows_most_recent_play_wins_and_other_shows_are_ignored(self) -> None:
+        old = datetime(2025, 1, 1, tzinfo=UTC)
+        new = datetime(2026, 6, 1, tzinfo=UTC)
+        elsewhere = datetime(2026, 7, 1, tzinfo=UTC)
+        stats = season_scan.SeasonWatchStats(
+            user_season_keys={7: {701, 702, 999}},
+            user_season_last={7: {701: old, 702: new, 999: elsewhere}},
+        )
+        # 999 is another show: its recency must not keep this show's hold alive.
+        assert season_scan._last_watched_by_user(stats, {701: 2, 702: 3}) == {"7": new}
+
+    def test_any_unreadable_timestamp_means_unknown(self) -> None:
+        """One readable-old and one unreadable play: the unreadable one could be recent,
+        so the viewer's whole-show recency is None and their hold stays."""
+        old = datetime(2025, 1, 1, tzinfo=UTC)
+        stats = season_scan.SeasonWatchStats(
+            user_season_keys={7: {701, 702}},
+            user_season_last={7: {701: old, 702: None}},
+        )
+        assert season_scan._last_watched_by_user(stats, {701: 2, 702: 3}) == {"7": None}
 
 
 # ---------------------------------------------------------------------------

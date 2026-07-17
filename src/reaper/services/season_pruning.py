@@ -19,7 +19,11 @@ bug a shipping competitor actually has, and each one resolves toward *keeping* a
   season they last watched *and the next one* -- the one they are about to watch. Without
   this, "keep the last 2 seasons" deletes the season a user is mid-binge on. Unioned
   across viewers, because the set of "next episodes people are about to watch" is the
-  union of everyone's.
+  union of everyone's. The policy can turn the guard off (``keep_in_progress``), and a
+  viewer's hold expires once their whole-show activity is older than the policy's
+  ``in_progress_hold_days`` (see :func:`active_progress`) -- an abandoned half-watched
+  season must not pin a show forever. A viewer whose last-watched time cannot be read
+  keeps their hold.
 
 * **Never touch a currently-airing (or still-downloading) season.** Maintainerr #949: a
   mid-season break longer than the timeout leaves the back half permanently undownloaded.
@@ -28,7 +32,8 @@ bug a shipping competitor actually has, and each one resolves toward *keeping* a
 * **Keep-rule conflict detector.** If the rule would remove a season that has *strictly
   more* viewers than one it keeps, that is almost certainly not what the owner wants
   ("season 1 is the only good one"). Reaper does not silently obey -- it raises a plain
-  warning and refuses to auto-approve, leaving the call to a human.
+  warning and refuses to auto-approve, leaving the call to a human. The policy can turn
+  the detector off (``flag_keep_conflicts``), and then the keep rule is simply followed.
 
 The whole module is pure: it takes already-gathered facts and returns a decision. No
 network, no database, no clock -- so every branch above is tested exhaustively, and the
@@ -39,6 +44,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 
 from reaper.clients.sonarr_stats import SeasonStats, rank_seasons
 
@@ -48,7 +54,8 @@ from reaper.clients.sonarr_stats import SeasonStats, rank_seasons
 SEQUENTIAL_LOOKAHEAD = 0
 
 #: Season 0 is specials: out-of-run content that is frequently the oldest and newest at
-#: once. It is never auto-pruned and never occupies a keep-slot.
+#: once. Never auto-pruned by default (the policy's ``keep_specials`` can allow it) and
+#: never occupies a keep-slot either way.
 SPECIALS_SEASON = 0
 
 
@@ -132,6 +139,32 @@ def sequential_protections(
     return protected
 
 
+def active_progress(
+    progress_by_user: Mapping[str, Mapping[int, int | None]],
+    last_watched_by_user: Mapping[str, datetime | None],
+    *,
+    now: datetime,
+    hold_days: int,
+) -> dict[str, Mapping[int, int | None]]:
+    """Only the viewers whose place in the show is still held -- the expiry half of the
+    sequential guard (policy ``in_progress_hold_days``).
+
+    A viewer counts as still watching when their last play of *this show* is within
+    ``hold_days`` of ``now``. Two deliberate keep-leaning edges: ``hold_days <= 0`` means
+    the hold never expires (every viewer passes), and a viewer with no readable
+    last-watched time keeps their hold -- "we could not look" is not "they quit".
+    Pure: the clock is an argument, never read here.
+    """
+    if hold_days <= 0:
+        return dict(progress_by_user)
+    cutoff = now - timedelta(days=hold_days)
+    return {
+        user: progress
+        for user, progress in progress_by_user.items()
+        if (last := last_watched_by_user.get(user)) is None or last >= cutoff
+    }
+
+
 def plan_series_prune(
     *,
     series_title: str,
@@ -142,6 +175,9 @@ def plan_series_prune(
     progress_by_user: Mapping[str, Mapping[int, int | None]] | None = None,
     season_final_episode: Mapping[int, int | None] | None = None,
     season_lookahead: int = SEQUENTIAL_LOOKAHEAD,
+    keep_in_progress: bool = True,
+    keep_specials: bool = True,
+    flag_keep_conflicts: bool = True,
     airing_seasons: Collection[int] = (),
     watchers_by_season: Mapping[int, int] | None = None,
 ) -> SeriesPrunePlan:
@@ -163,8 +199,13 @@ def plan_series_prune(
     airing = set(airing_seasons)
 
     ranks = rank_seasons(list(seasons))
-    seq_protected = sequential_protections(
-        progress_by_user, season_final_episode, lookahead=season_lookahead
+    # The guard's off-switch empties the protected set here, in the one decision function,
+    # so no caller can half-apply it. Expiry (in_progress_hold_days) happens upstream in
+    # active_progress, which needs the per-viewer timestamps this function never sees.
+    seq_protected = (
+        sequential_protections(progress_by_user, season_final_episode, lookahead=season_lookahead)
+        if keep_in_progress
+        else set()
     )
     total_ranked = len(ranks)
 
@@ -183,6 +224,7 @@ def plan_series_prune(
             keep_last=keep_last,
             keep_first_season=keep_first_season,
             apply_keep_last=apply_keep_last,
+            keep_specials=keep_specials,
             total_ranked=total_ranked,
             first_real=first_real,
             airing=airing,
@@ -193,7 +235,11 @@ def plan_series_prune(
         else:
             protected.append(ProtectedSeason(season_number=n, reason=reason))
 
-    conflicts = _detect_conflicts(prunable, protected, watchers_by_season)
+    # The policy can silence the conflict detector; an empty list is exactly "no conflict
+    # found", so auto_approvable and every downstream consumer behave as if none fired.
+    conflicts = (
+        _detect_conflicts(prunable, protected, watchers_by_season) if flag_keep_conflicts else []
+    )
 
     return SeriesPrunePlan(
         series_title=series_title,
@@ -210,6 +256,7 @@ def _protection_reason(
     keep_last: int,
     keep_first_season: bool,
     apply_keep_last: bool,
+    keep_specials: bool,
     total_ranked: int,
     first_real: int | None,
     airing: set[int],
@@ -219,10 +266,14 @@ def _protection_reason(
 
     Ordered safety-first: the checks that describe an *active* or *fragile* season come
     before the mechanical keep-last rule, so the reason shown is the most important one.
+
+    With ``keep_specials`` off, specials fall through to the checks below: the airing and
+    still-downloading guards still apply, but rank/first-season never do (specials are
+    excluded from both by construction), so an idle Season 0 becomes prunable.
     """
     n = season.season_number
 
-    if n == SPECIALS_SEASON:
+    if n == SPECIALS_SEASON and keep_specials:
         return "specials are never auto-pruned"
     if season.is_incomplete:
         return "Sonarr is still downloading this season"

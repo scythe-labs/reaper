@@ -75,6 +75,7 @@ from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbR
 from reaper.services.season_pruning import (
     SPECIALS_SEASON,
     SeriesPrunePlan,
+    active_progress,
     plan_series_prune,
 )
 
@@ -210,6 +211,11 @@ class SeasonWatchStats:
     position for the mid-binge guard. Only rows with a known episode index and a completed
     watch; a season with only un-backfilled (NULL-index) rows is absent here, so the guard
     falls back to season-level protection for it."""
+
+    user_season_last: dict[int, dict[int, datetime | None]] = field(default_factory=dict)
+    """user_id -> {season rating key -> that user's most recent play under it, or ``None``
+    when the stored timestamp cannot be read}. Rolled up per show, this is what expires an
+    abandoned viewer's mid-binge hold (season_pruning.active_progress)."""
 
 
 def season_media_key(instance_id: int, series_id: int, season_number: int) -> str:
@@ -518,10 +524,14 @@ async def season_watch_stats(
         "GROUP BY parent_rating_key"
     ).bindparams(bindparam("keys", expanding=True))
 
+    # One row per (user, season) with that user's most recent play under it -- the same
+    # coverage the old DISTINCT pair query had, plus the timestamp the mid-binge expiry
+    # needs (season_pruning.active_progress).
     pairs = text(
-        "SELECT DISTINCT parent_rating_key AS k, user_id AS u "
+        "SELECT parent_rating_key AS k, user_id AS u, MAX(watched_at) AS last "
         "FROM watch_event "
-        "WHERE parent_rating_key IN :keys AND media_type = 'episode'"
+        "WHERE parent_rating_key IN :keys AND media_type = 'episode' "
+        "GROUP BY parent_rating_key, user_id"
     ).bindparams(bindparam("keys", expanding=True))
 
     # Episode-precise position: each user's highest COMPLETED episode per season. NULL-index
@@ -550,7 +560,11 @@ async def season_watch_stats(
                 stats.watchers_all_time[key] = int(row.all_w or 0)
                 stats.watchers_window[key] = int(row.win_w or 0)
             for row in (await conn.execute(pairs, {"keys": key_chunk})).all():
-                stats.user_season_keys.setdefault(int(row.u), set()).add(int(row.k))
+                user, key = int(row.u), int(row.k)
+                stats.user_season_keys.setdefault(user, set()).add(key)
+                # from_epoch returns None for an unreadable timestamp; kept as None so the
+                # expiry treats that viewer as still active rather than silently stale.
+                stats.user_season_last.setdefault(user, {})[key] = from_epoch(row.last)
             for row in (await conn.execute(progress, {"keys": key_chunk})).all():
                 stats.user_season_progress.setdefault(int(row.u), {})[int(row.k)] = int(row.max_ep)
 
@@ -577,6 +591,34 @@ def _progress_by_user(
             per_season[season_key_to_number[key]] = progressed.get(key)
         if per_season:
             result[str(user_id)] = per_season
+    return result
+
+
+def _last_watched_by_user(
+    stats: SeasonWatchStats, season_key_to_number: Mapping[int, int]
+) -> dict[str, datetime | None]:
+    """For one show, each viewer's most recent play of ANY of its seasons.
+
+    ``None`` when any of that viewer's per-season timestamps is unreadable: the unreadable
+    one could be their most recent, so the expiry must treat the viewer as still active
+    (season_pruning.active_progress holds on ``None``) rather than judge them stale from a
+    partial view. Scoped to this show's keys, exactly like ``_progress_by_user``.
+    """
+    show_keys = set(season_key_to_number)
+    result: dict[str, datetime | None] = {}
+    for user_id, keys in stats.user_season_keys.items():
+        relevant = keys & show_keys
+        if not relevant:
+            continue
+        per_key = stats.user_season_last.get(user_id, {})
+        times: list[datetime] = []
+        for key in relevant:
+            when = per_key.get(key)
+            if when is None:
+                times.clear()
+                break
+            times.append(when)
+        result[str(user_id)] = max(times) if times else None
     return result
 
 
@@ -637,6 +679,10 @@ async def gather(
     request_index: requested_by.RequestIndex | None = None,
     keep_last_scope: str = "all",
     season_lookahead: int = 0,
+    keep_in_progress: bool = True,
+    in_progress_hold_days: int = 0,
+    keep_specials: bool = True,
+    flag_keep_conflicts: bool = True,
     membership_index: lists.MembershipIndex | None = None,
 ) -> list[SeasonJudgement]:
     """Gather every prunable season across every Sonarr instance, ready to judge.
@@ -690,6 +736,14 @@ async def gather(
                 keep_last=keep_last_seasons,
                 keep_first_season=keep_first_season,
                 apply_keep_last=_keep_last_applies(series, keep_last_scope, request_index),
+                # keep_specials must reach this offline pass too: with it off, a show whose
+                # only removable season is Season 0 has something to act on and must not be
+                # counted fully-protected before the evidence pass ever sees it. The other
+                # toggles are passed for symmetry; without watch evidence the sequential
+                # guard and the conflict detector protect nothing here either way.
+                keep_in_progress=keep_in_progress,
+                keep_specials=keep_specials,
+                flag_keep_conflicts=flag_keep_conflicts,
                 airing_seasons=airing_seasons(series, seasons),
             )
             if not plan.prunable:
@@ -792,6 +846,10 @@ async def gather(
         degrade(str(exc))
         ratings = {}
 
+    # The one clock read for the mid-binge expiry, taken once so every show in this scan
+    # judges viewer activity against the same instant -- the snapshot discipline.
+    now = utcnow()
+
     judgements: list[SeasonJudgement] = []
     for item in work:
         judgements.extend(
@@ -799,6 +857,7 @@ async def gather(
                 item,
                 stats=stats,
                 horizon=horizon,
+                now=now,
                 active_rating_keys=active_rating_keys,
                 activity_degraded=activity_degraded,
                 keep_last_seasons=keep_last_seasons,
@@ -808,6 +867,10 @@ async def gather(
                 request_index=request_index,
                 keep_last_scope=keep_last_scope,
                 season_lookahead=season_lookahead,
+                keep_in_progress=keep_in_progress,
+                in_progress_hold_days=in_progress_hold_days,
+                keep_specials=keep_specials,
+                flag_keep_conflicts=flag_keep_conflicts,
                 ratings=ratings,
                 membership_index=membership_index,
             )
@@ -822,6 +885,7 @@ def _judge_series(
     *,
     stats: SeasonWatchStats,
     horizon: datetime,
+    now: datetime | None = None,
     active_rating_keys: set[int],
     activity_degraded: bool,
     keep_last_seasons: int,
@@ -832,6 +896,10 @@ def _judge_series(
     request_index: requested_by.RequestIndex | None = None,
     keep_last_scope: str = "all",
     season_lookahead: int = 0,
+    keep_in_progress: bool = True,
+    in_progress_hold_days: int = 0,
+    keep_specials: bool = True,
+    flag_keep_conflicts: bool = True,
     ratings: dict[str, ImdbRating] | None = None,
 ) -> list[SeasonJudgement]:
     """Build a judgement for every content-bearing season of one series.
@@ -876,7 +944,15 @@ def _judge_series(
     # keep-rule conflict detector both need per-user and per-season watcher counts that
     # only exist after the Plex resolution and the mirror read.
     key_to_number = {s.rating_key: n for n, s in item.seasons_in_plex.items()}
-    progress = _progress_by_user(stats, key_to_number)
+    # Expire abandoned viewers before the guard sees them: a place in the show is held
+    # only while its viewer stayed active within the policy's hold window. The helper
+    # keeps every viewer whose last-watched time cannot be read, and 0 disables expiry.
+    progress = active_progress(
+        _progress_by_user(stats, key_to_number),
+        _last_watched_by_user(stats, key_to_number),
+        now=now or utcnow(),
+        hold_days=in_progress_hold_days,
+    )
     watchers_by_season = {
         n: stats.watchers_all_time.get(s.rating_key, 0) for n, s in item.seasons_in_plex.items()
     }
@@ -889,6 +965,9 @@ def _judge_series(
         progress_by_user=progress,
         season_final_episode=item.season_final_episode,
         season_lookahead=season_lookahead,
+        keep_in_progress=keep_in_progress,
+        keep_specials=keep_specials,
+        flag_keep_conflicts=flag_keep_conflicts,
         airing_seasons=airing_seasons(series, item.seasons),
         watchers_by_season=watchers_by_season,
     )

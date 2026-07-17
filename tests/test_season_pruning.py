@@ -8,8 +8,11 @@ toward keeping a season; the ones that prune are the ones where every guard agre
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.services.season_pruning import (
+    active_progress,
     plan_series_prune,
     sequential_protections,
 )
@@ -211,6 +214,143 @@ class TestKeepRuleConflict:
         )
         assert plan.auto_approvable
         assert 2 in plan.prunable  # dormant middle season, cleanly prunable
+
+    def test_the_detector_can_be_switched_off(self) -> None:
+        """flag_keep_conflicts=False: the same lopsided watch pattern raises nothing, and
+        the plan is auto-approvable -- the owner asked Reaper to follow the rule quietly."""
+        seasons = [_season(n) for n in range(1, 5)]
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=seasons,
+            keep_last=2,
+            keep_first_season=False,
+            flag_keep_conflicts=False,
+            watchers_by_season={1: 40, 2: 5, 3: 2, 4: 1},
+        )
+        assert 1 in plan.prunable
+        assert plan.conflicts == []
+        assert plan.auto_approvable
+
+
+NOW = datetime(2026, 7, 17, tzinfo=UTC)
+
+
+def _days_ago(days: int) -> datetime:
+    return NOW - timedelta(days=days)
+
+
+#: Two viewers mid-show, reused across the expiry cases below.
+PROGRESS = {"alice": {3: 5}, "bob": {5: 8}}
+
+
+class TestInProgressExpiry:
+    """active_progress: the hold half of the mid-binge guard. Every edge keeps the viewer."""
+
+    def test_zero_hold_days_never_expires(self) -> None:
+        last = {"alice": _days_ago(10_000), "bob": _days_ago(10_000)}
+        assert active_progress(PROGRESS, last, now=NOW, hold_days=0) == PROGRESS
+
+    def test_a_stale_viewer_is_dropped_and_a_fresh_one_kept(self) -> None:
+        last = {"alice": _days_ago(300), "bob": _days_ago(3)}
+        held = active_progress(PROGRESS, last, now=NOW, hold_days=180)
+        assert set(held) == {"bob"}
+
+    def test_activity_exactly_at_the_bound_still_holds(self) -> None:
+        """>= not >: reduced precision on the boundary resolves toward keeping."""
+        last = {"alice": _days_ago(180), "bob": _days_ago(181)}
+        held = active_progress(PROGRESS, last, now=NOW, hold_days=180)
+        assert set(held) == {"alice"}
+
+    def test_an_unreadable_last_watch_keeps_the_hold(self) -> None:
+        """None means "we could not look", which must never read as "they quit"."""
+        last: dict[str, datetime | None] = {"alice": None}
+        held = active_progress(PROGRESS, last, now=NOW, hold_days=180)
+        assert "alice" in held
+        # bob is absent from the map entirely -- same unknown, same hold.
+        assert "bob" in held
+
+    def test_an_expired_viewer_no_longer_pins_a_season(self) -> None:
+        """End to end through the planner: the same mid-binge show prunes season 3 once
+        its only viewer's activity is filtered out as abandoned."""
+        seasons = [_season(n) for n in range(1, 7)]
+        held = active_progress({"alice": {3: 5}}, {"alice": _days_ago(400)}, now=NOW, hold_days=180)
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=seasons,
+            keep_last=2,
+            keep_first_season=False,
+            progress_by_user=held,
+            season_final_episode={3: 10},
+        )
+        assert 3 in plan.prunable
+
+
+class TestInProgressToggle:
+    def test_switching_the_guard_off_removes_its_protection(self) -> None:
+        seasons = [_season(n) for n in range(1, 7)]
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=seasons,
+            keep_last=2,
+            keep_first_season=False,
+            keep_in_progress=False,
+            progress_by_user={"alice": {3: 5}},  # partway through season 3, ignored
+            season_final_episode={3: 10},
+        )
+        assert 3 in plan.prunable
+
+    def test_the_guard_is_on_by_default(self) -> None:
+        seasons = [_season(n) for n in range(1, 7)]
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=seasons,
+            keep_last=2,
+            keep_first_season=False,
+            progress_by_user={"alice": {3: 5}},
+            season_final_episode={3: 10},
+        )
+        assert 3 not in plan.prunable
+
+
+class TestKeepSpecialsToggle:
+    def test_specials_become_prunable_when_allowed(self) -> None:
+        seasons = [_season(0), _season(1), _season(2)]
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=seasons,
+            keep_last=0,
+            keep_first_season=False,
+            keep_specials=False,
+        )
+        assert 0 in plan.prunable
+
+    def test_specials_never_spend_a_keep_slot_either_way(self) -> None:
+        """keep_last=1 with specials allowed to go: the newest REAL season takes the slot,
+        specials do not shift the ranking, and idle specials are still prunable."""
+        seasons = [_season(0), _season(1), _season(2)]
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=seasons,
+            keep_last=1,
+            keep_first_season=False,
+            keep_specials=False,
+        )
+        assert 2 not in plan.prunable  # rank 1, kept by the rule
+        assert 0 in plan.prunable
+
+    def test_still_downloading_specials_are_left_alone(self) -> None:
+        """Turning keep_specials off surrenders only the specials rule; the airing and
+        still-downloading guards still apply to Season 0."""
+        seasons = [_season(0, files=3, wanted=8), _season(1)]
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=seasons,
+            keep_last=0,
+            keep_first_season=False,
+            keep_specials=False,
+        )
+        assert 0 not in plan.prunable
+        assert "downloading" in _reasons(plan)[0]
 
 
 class TestKeepLastScope:

@@ -118,6 +118,7 @@ export interface CandidatePage {
 }
 
 export type RequestedFilter = "any" | "yes" | "no";
+export type OverrideFilter = "any" | "spare" | "reap" | "none";
 export type SortKey = "score" | "size" | "year" | "title";
 export type SortOrder = "asc" | "desc";
 
@@ -125,6 +126,8 @@ export interface CandidateQuery {
   search?: string;
   media_type?: string;
   requested?: RequestedFilter;
+  genre?: string;
+  override?: OverrideFilter;
   sort?: SortKey;
   order?: SortOrder;
 }
@@ -273,6 +276,10 @@ export interface PolicyBody {
   keep_first_season: boolean;
   keep_last_scope: "all" | "requested";
   season_lookahead: number;
+  keep_in_progress: boolean;
+  in_progress_hold_days: number;
+  keep_specials: boolean;
+  flag_keep_conflicts: boolean;
   gates: GateSetting[];
   signals: SignalSetting[];
   protect_conditions: Condition[];
@@ -682,6 +689,8 @@ export const api = {
     if (q.search) params.set("search", q.search);
     if (q.media_type) params.set("media_type", q.media_type);
     if (q.requested && q.requested !== "any") params.set("requested", q.requested);
+    if (q.genre) params.set("genre", q.genre);
+    if (q.override && q.override !== "any") params.set("override", q.override);
     if (q.sort) params.set("sort", q.sort);
     if (q.order) params.set("order", q.order);
     params.set("limit", String(limit));

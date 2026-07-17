@@ -1698,6 +1698,43 @@ export function PolicyEditor() {
               <span>Always keep a show's first season, so a new viewer can still start it</span>
             </label>
 
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={draft.keep_in_progress}
+                onChange={(e) => update({ keep_in_progress: e.target.checked })}
+              />
+              <span>Keep seasons someone is partway through</span>
+            </label>
+            <p className="help">
+              Reaper holds the season a viewer is midway into, plus the next one once they finish
+              it. Turn this off and being mid-show protects nothing.
+            </p>
+
+            <label className="field">
+              <span className="field-label">
+                <span>
+                  Stop holding someone's place after{" "}
+                  <input
+                    type="number"
+                    min={0}
+                    className="inline-number"
+                    disabled={!draft.keep_in_progress}
+                    value={draft.in_progress_hold_days}
+                    onChange={(e) =>
+                      update({ in_progress_hold_days: Math.max(0, Number(e.target.value)) })
+                    }
+                  />{" "}
+                  days without watching
+                </span>
+              </span>
+              <span className="help">
+                If someone has not watched any of the show in this many days, Reaper treats the
+                show as abandoned by them and lets go of their place. Set to 0 to hold it forever.
+                When Reaper can't tell when they last watched, it keeps holding.
+              </span>
+            </label>
+
             <label className="field">
               <span className="field-label">
                 <span>
@@ -1706,6 +1743,7 @@ export function PolicyEditor() {
                     type="number"
                     min={0}
                     className="inline-number"
+                    disabled={!draft.keep_in_progress}
                     value={draft.season_lookahead}
                     onChange={(e) =>
                       update({ season_lookahead: Math.max(0, Number(e.target.value)) })
@@ -1715,10 +1753,36 @@ export function PolicyEditor() {
                 </span>
               </span>
               <span className="help">
-                Reaper protects the season a viewer is part-way through. Set this above 0 to also
-                keep the seasons just ahead of where they are.
+                Set this above 0 to also keep the seasons just ahead of where each viewer is.
               </span>
             </label>
+
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={draft.keep_specials}
+                onChange={(e) => update({ keep_specials: e.target.checked })}
+              />
+              <span>Never remove specials</span>
+            </label>
+            <p className="help">
+              On: specials (Season 0) are always kept. Off: specials are judged like any other
+              season. Either way, specials never count toward the newest seasons you keep.
+            </p>
+
+            <label className="toggle">
+              <input
+                type="checkbox"
+                checked={draft.flag_keep_conflicts}
+                onChange={(e) => update({ flag_keep_conflicts: e.target.checked })}
+              />
+              <span>Ask me first when a removal looks unusual</span>
+            </label>
+            <p className="help">
+              When a season your rule would remove was watched by more people than a season it
+              keeps, Reaper marks it "Needs a look" and waits for you. Turn this off and Reaper
+              follows your keep rule without asking.
+            </p>
           </div>
         )}
 

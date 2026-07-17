@@ -299,6 +299,28 @@ class PolicyBody(Frozen):
     ``0`` protects exactly the season they are mid-way through, or the next one if they have
     finished the current. Replaces the old hardcoded look-ahead. Movies ignore it."""
 
+    keep_in_progress: bool = True
+    """Season pruning: protect the season a viewer is partway through (and the next one,
+    once they finish it) -- the sequential-progression guard in ``services.season_pruning``.
+    On by default; turning it off removes that guard entirely. Movies ignore it."""
+
+    in_progress_hold_days: int = Field(default=180, ge=0)
+    """How long a viewer's place in a show is held after their last watch of that show.
+    Past this many days without watching, the show counts as abandoned by that viewer and
+    their half-finished season no longer protects anything. ``0`` holds forever. A viewer
+    whose last-watched time cannot be read keeps their hold (fail closed). Only meaningful
+    while ``keep_in_progress`` is on; movies ignore it."""
+
+    keep_specials: bool = True
+    """Season pruning: never remove specials (Season 0). On by default. When off, specials
+    are judged like any other season -- they can be condemned by score -- but they still
+    never occupy a keep-last slot and the airing/still-downloading guards still apply."""
+
+    flag_keep_conflicts: bool = True
+    """Season pruning: when a season the keep rule would remove was watched by more people
+    than a season it keeps, block it as "Needs a look" instead of removing it. On by
+    default. When off, the keep rule is followed without flagging."""
+
     gates: tuple[GateSetting, ...]
     signals: tuple[SignalSetting, ...]
 

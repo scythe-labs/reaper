@@ -428,6 +428,10 @@ async def scan(
                 request_index=request_index,
                 keep_last_scope=tv_policy.keep_last_scope,
                 season_lookahead=tv_policy.season_lookahead,
+                keep_in_progress=tv_policy.keep_in_progress,
+                in_progress_hold_days=tv_policy.in_progress_hold_days,
+                keep_specials=tv_policy.keep_specials,
+                flag_keep_conflicts=tv_policy.flag_keep_conflicts,
                 membership_index=membership_index,
             )
         )
