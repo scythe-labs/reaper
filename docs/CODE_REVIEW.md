@@ -44,6 +44,10 @@
 > and Leaving Soon, editable in Settings > Plex). Still open: I-3's requests-app-aware
 > warning (needs instance knowledge inside `inspect()`).
 
+> **Later findings (2026-07-17).** One finding raised after this pass is recorded under
+> "Findings after this pass" below, numbered separately: L-1 (`AuthGuard` lets every
+> non-`http` scope through unauthenticated). Open.
+
 **TLDR.** The safety architecture is genuinely sound where it is exercised: the gate and
 signal engine's fail-closed math checks out, the execute route's interlock chain is
 correct end to end, and auth/session handling is solid. The serious problems are almost
@@ -662,6 +666,28 @@ usable.
 `window_days` (legal at 1 day, which puts FEW_WATCHERS near full pressure library-wide)
 or a `keep_last_scope="requested"` policy with no Seerr configured (the floor then
 applies to everything, silently). Both are cheap warnings in the existing pattern.
+
+---
+
+## Findings after this pass
+
+Raised after the `5b885f5` snapshot, so they are numbered separately and are not part of
+that pass's 55. Same format, same bar.
+
+**L-1. `AuthGuard` passes every non-`http` scope through unauthenticated.** `medium ·
+latent auth bypass` — `src/reaper/api/middleware.py:88`
+`__call__` returns early on `scope["type"] != "http"`, handing the connection to the app
+without the CSRF check, the open-path check, or `resolve_session`. Nothing is exposed
+today: no `websocket` route is declared anywhere, so `lifespan` is the only non-`http`
+scope that arrives, and it must pass through. But this is the single front door the rest
+of the API's auth hangs on, and it fails *open* on the branch nobody reads: the first
+`websocket` route added is born unauthenticated, with no error at the point of the
+mistake. CSRF does not extend there either, since the browser WebSocket API cannot send
+`X-Reaper-CSRF`.
+**Fix:** Fail closed on the scope types the app does not serve. Let `lifespan` through and
+reject `websocket` until a handshake exists that authenticates the session cookie and
+validates `Origin` itself. Surfaced by the websockets review recorded in PLAN.md's
+deferred deletion-progress note, which names this a prerequisite for any push endpoint.
 
 ---
 
