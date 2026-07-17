@@ -275,6 +275,24 @@ export interface GradedKeep {
   direction: "high_keeps" | "low_keeps";
 }
 
+/** Which rating source a keep bar reads. Movies can back every source (Radarr carries
+ *  them); TV backs IMDb plus whatever Plex serves for the show. */
+export type RatingSource =
+  | "imdb"
+  | "tmdb"
+  | "rotten_tomatoes_critic"
+  | "rotten_tomatoes_audience"
+  | "metacritic";
+
+/** One "keep it if it clears this bar" rule. `floor` is in tenths (7.5 -> 75), and reads
+ *  the same for a percentage source (75% -> 75). `min_votes` only bites on sources that
+ *  count votes (IMDb, TMDb); it is 0 for the percentage sources. */
+export interface RatingRule {
+  source: RatingSource;
+  floor: number;
+  min_votes: number;
+}
+
 export interface PolicyBody {
   name: string;
   media_type: string;
@@ -295,6 +313,8 @@ export interface PolicyBody {
   graded_keeps: GradedKeep[];
   keep_tags: string[];
   keep_tags_match: "any" | "all";
+  keep_rating_rules: RatingRule[];
+  keep_rating_match: "any" | "all";
 }
 
 /** The distribution of content-season counts across shows in the latest snapshot, so the
@@ -572,6 +592,9 @@ export interface ScanStatus {
   phase: string;
   done: number;
   total: number;
+  /** A monotonic 0-100 for the progress bar. Rises smoothly across the scan's phases,
+   *  unlike done/total whose denominator changes meaning between them. */
+  percent: number;
   detail: string;
   error: string | null;
   snapshot_id: number | null;

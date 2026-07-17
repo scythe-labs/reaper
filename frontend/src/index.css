@@ -1605,6 +1605,51 @@ a.rating-chip:hover {
   accent-color: var(--accent);
 }
 
+/* Keep well-rated titles: a stack of per-source bars, each a rule-control row in its own
+   inset well so the sources read as a set rather than one run-on line. */
+.rating-bars {
+  margin-top: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.rating-bar {
+  margin-top: 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.65rem;
+}
+/* The editor's per-bar source label. Deliberately NOT `.rating-src`, which the why-panel
+   rating chips own -- reusing that name bled this width/colour into the why panel. */
+.rating-bar-src {
+  min-width: 11rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.rating-remove {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1.05rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+}
+.rating-remove:hover {
+  color: var(--condemn);
+}
+.rating-bars select {
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
 /* The owner's own protect conditions. Each stored rule reads as a green "keep it when…" chip
    (protect-coloured, because that is all it can do); the add row is field + operator + value. */
 .conditions {
@@ -3989,6 +4034,13 @@ button.danger:hover:not(:disabled) {
   gap: 0.45rem;
   white-space: nowrap;
 }
+.log-wrap-btn {
+  white-space: nowrap;
+}
+.log-wrap-btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .live-dot {
   width: 8px;
   height: 8px;
@@ -4014,8 +4066,20 @@ button.danger:hover:not(:disabled) {
   font-size: 0.78rem;
   line-height: 1.7;
   padding: 0.6rem 0.9rem;
-  height: 26rem;
+  height: 34rem;
+  min-height: 16rem;
+  max-height: 82vh;
+  resize: vertical;
   overflow: auto;
+}
+/* Word wrap, off by default. Long *arr paths and tracebacks then fold within the row
+   instead of scrolling sideways. */
+.log-console.log-wrap .log-row {
+  white-space: normal;
+}
+.log-console.log-wrap .log-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .log-row {
   display: flex;

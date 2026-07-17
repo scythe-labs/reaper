@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from reaper.engine.fields import FieldType, Lane, Op
 from reaper.engine.gates import GateId
-from reaper.engine.policy import CustomCondemnSpec, GradedKeepSpec
+from reaper.engine.policy import CustomCondemnSpec, GradedKeepSpec, RatingRuleSpec
 from reaper.engine.signals import SignalId
 
 
@@ -429,6 +429,10 @@ class PolicyIn(BaseModel):
     graded_keeps: list[GradedKeepSpec] = Field(default_factory=list)
     keep_tags: list[str] = Field(default_factory=lambda: ["reaper-keep"])
     keep_tags_match: Literal["any", "all"] = "any"
+    # The engine spec is reused directly (like custom_condemn/graded_keeps) so its
+    # per-source vote-floor validation runs on the wire.
+    keep_rating_rules: list[RatingRuleSpec] = Field(default_factory=list)
+    keep_rating_match: Literal["any", "all"] = "any"
 
 
 class PolicyWarningOut(BaseModel):

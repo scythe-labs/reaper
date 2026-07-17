@@ -42,8 +42,9 @@ from typing import Annotated, ClassVar, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from reaper.engine.fields import BY_KEY, Condition, Lane, Op
-from reaper.engine.gates import GateId
+from reaper.engine.gates import GateId, RatingRule
 from reaper.engine.signals import CustomSignalConfig, KeepConfig, SignalId
+from reaper.ratings import RatingSource, is_percentage_source, source_label
 
 SCHEMA_VERSION: Literal[2] = 2
 SCORER_VERSION: Literal[2] = 2
@@ -89,17 +90,10 @@ class GateSetting(Frozen):
         if not self.enabled:
             return self
 
-        if self.gate is GateId.RATING_FLOOR:
-            if not 1 <= self.threshold <= 100:
-                raise ValueError(
-                    "The IMDb floor is in tenths: 7.5 is 75. It must be between 1 and 100."
-                )
-            if self.secondary < 1:
-                raise ValueError(
-                    "A vote floor of 0 makes the rating floor meaningless: it would "
-                    "protect an 8.3 rating drawn from 388 votes. Use at least 1 "
-                    "(1000 is a sensible default)."
-                )
+        # The rating floor no longer lives here: it is a set of per-source bars
+        # (``PolicyBody.keep_rating_rules``), each validated by ``RatingRuleSpec``. The
+        # RATING_FLOOR gate setting is now only the on/off switch, so it carries no
+        # threshold of its own to police.
         if self.gate is GateId.SERVER_POPULARITY and self.threshold < 1:
             raise ValueError(
                 "Keeping anything watched by 0 people would protect your whole library. "
@@ -255,6 +249,41 @@ class GradedKeepSpec(Frozen):
         return self
 
 
+class RatingRuleSpec(Frozen):
+    """One "keep it if it clears this bar" rule, for one rating source.
+
+    Integers only, like every policy number, so the hash stays byte-stable. ``floor`` is
+    in tenths (7.5 -> 75) and reads identically for a percentage source (75% -> 75), since
+    Plex normalises an 84% score to 8.4 whose tenths are 84. ``min_votes`` only means
+    something on the sources that count votes (IMDb, TMDb); for a percentage source
+    (Rotten Tomatoes, Metacritic) it is required to be 0, because a vote floor there would
+    silently do nothing.
+    """
+
+    source: RatingSource
+    floor: int = Field(ge=1, le=100)
+    min_votes: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _vote_floor_matches_the_source(self) -> Self:
+        if is_percentage_source(self.source):
+            if self.min_votes != 0:
+                raise ValueError(
+                    f"{source_label(self.source)} is a percentage with no vote count, so a "
+                    "vote floor on it would do nothing. Leave the votes at 0 for this source."
+                )
+        elif self.min_votes < 1:
+            # A rating floor with no vote floor protects an 8.3 drawn from a few hundred
+            # votes -- a number that means nothing. The same refusal the single-source gate
+            # carried, now per source that actually counts votes.
+            raise ValueError(
+                f"A vote floor of 0 makes the {source_label(self.source)} bar meaningless: it "
+                "would protect a high score drawn from a handful of votes. Use at least 1 "
+                "(1000 is a sensible default)."
+            )
+        return self
+
+
 class PolicyBody(Frozen):
     """The hashed, immutable part of a policy.
 
@@ -347,6 +376,15 @@ class PolicyBody(Frozen):
     keep_tags_match: Literal["any", "all"] = "any"
     """Whether a title needs ANY of ``keep_tags`` (the usual case) or ALL of them to be kept."""
 
+    keep_rating_rules: tuple[RatingRuleSpec, ...] = ()
+    """The per-source bars behind "Keep well-rated titles" (the RATING_FLOOR gate). A title
+    clearing ANY of them (or ALL, per ``keep_rating_match``) is kept whatever it scores. Empty
+    means the protection keeps nothing, exactly like an empty keep-tag list. Movies can back
+    every source (Radarr carries them); TV backs IMDb plus whatever Plex serves for the show."""
+
+    keep_rating_match: Literal["any", "all"] = "any"
+    """Whether a title needs to clear ANY rating bar (the usual case) or ALL of them."""
+
     @model_validator(mode="after")
     def _at_least_one_signal(self) -> Self:
         if not any(s.weight > 0 for s in self.signals) and not any(
@@ -383,6 +421,12 @@ class PolicyBody(Frozen):
         keep_names = [k.name for k in self.graded_keeps]
         if len(set(keep_names)) != len(keep_names):
             raise ValueError("Two keep rules share a name; the second would silently double-count.")
+        rating_sources = [r.source for r in self.keep_rating_rules]
+        if len(set(rating_sources)) != len(rating_sources):
+            raise ValueError(
+                "The same rating source is listed twice. Set one bar per source, or the "
+                "second would silently win."
+            )
         return self
 
     def popularity_window_days(self) -> int:
@@ -397,6 +441,17 @@ class PolicyBody(Frozen):
         return next(
             (g.window_days for g in self.gates if g.gate is GateId.SERVER_POPULARITY and g.enabled),
             365,
+        )
+
+    def rating_rules(self) -> tuple[RatingRule, ...]:
+        """Translate the per-source keep bars into engine rating rules for the gate.
+
+        The one place the policy's rating specs become a gate input, mirroring how
+        ``keep_configs``/``custom_signal_configs`` translate their specs, so the engine gate
+        never imports the policy layer."""
+        return tuple(
+            RatingRule(source=r.source, floor=r.floor, min_votes=r.min_votes)
+            for r in self.keep_rating_rules
         )
 
     def keep_configs(self) -> list[KeepConfig]:
@@ -485,6 +540,47 @@ class PolicyBody(Frozen):
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         return hashlib.sha256(canonical.encode("ascii")).hexdigest()
 
+    #: Fields a frozen-facts replay reproduces exactly, so a change to any of them does NOT
+    #: need a fresh scan: the scorer and the protect/rating gates are pure functions of the
+    #: frozen Facts. Everything ELSE is folded into the evidence hash, deliberately -- an
+    #: allow-list, not a deny-list, so a field nobody remembered to classify defaults to
+    #: "needs a fresh scan" (safe) rather than a stale replay (a plausible wrong preview).
+    #: Notably ``gates`` is NOT here: the popularity gate's window changes the frozen
+    #: watcher counts, so any gate edit re-scans -- a conservative, correct choice.
+    _EVIDENCE_REPLAYABLE_FIELDS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "condemn_at",
+            "coverage_floor_bp",
+            "signals",
+            "custom_condemn",
+            "graded_keeps",
+            "keep_rating_rules",
+            "keep_rating_match",
+            "protect_conditions",
+        }
+    )
+
+    def evidence_hash(self) -> str:
+        """Identifies what a scan under this policy would GATHER and FREEZE per item.
+
+        Two policies with the same evidence hash produce byte-identical Facts (and the same
+        season-pruning guard) for every item -- so the simulator may rebuild those Facts
+        from ``Candidate.facts_json`` and replay the real ``score``/``evaluate_all``/
+        ``decide_verdict`` under the edited policy, exact for any change to the replayable
+        fields (weights, rating bars, custom rules, protect conditions, thresholds).
+
+        When it differs, the edit changed the evidence itself -- the popularity window, a
+        keep-tag, a season-pruning rule, the media type -- so the frozen Facts are stale and
+        a real scan is required. The set of replayable fields is an allow-list, so an
+        unclassified field falls into this hash and forces the safe, honest fresh scan."""
+        payload = {
+            k: v
+            for k, v in self.model_dump(mode="json").items()
+            if k not in self._EVIDENCE_REPLAYABLE_FIELDS
+        }
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+        return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
 
 class ProfileSettings(Frozen):
     """The mutable part: how much Reaper may do, and how long it waits.
@@ -559,31 +655,58 @@ def inspect(
     """
     warnings: list[PolicyWarning] = []
 
-    rating = next((g for g in body.gates if g.gate is GateId.RATING_FLOOR and g.enabled), None)
-    if rating is not None:
-        if rating.threshold >= 90:
+    rating_on = any(g.gate is GateId.RATING_FLOOR and g.enabled for g in body.gates)
+    if rating_on:
+        if not body.keep_rating_rules:
             warnings.append(
                 PolicyWarning(
-                    field="gates.rating_floor.threshold",
+                    field="keep_rating_rules",
                     severity="warn",
                     message=(
-                        f"An IMDb floor of {rating.threshold / 10:.1f} will protect almost "
-                        "nothing: very few films rate that highly. If you meant a Rotten "
-                        "Tomatoes percentage, note this field is IMDb, in tenths: 7.5 is 75."
+                        "Keep well-rated titles is on, but no rating bars are set, so it keeps "
+                        "nothing. Add at least one, or switch the protection off."
                     ),
                 )
             )
-        if rating.threshold <= 20:
-            warnings.append(
-                PolicyWarning(
-                    field="gates.rating_floor.threshold",
-                    severity="warn",
-                    message=(
-                        f"An IMDb floor of {rating.threshold / 10:.1f} protects essentially "
-                        "everything. Did you mean 7.0, which is 70?"
-                    ),
-                )
-            )
+        for rule in body.keep_rating_rules:
+            label = source_label(rule.source)
+            if is_percentage_source(rule.source):
+                # A percentage source read on the 0-10 scale is the usual mix-up: typing 8
+                # meaning "80%" sets an 8% bar that keeps everything.
+                if rule.floor <= 20:
+                    warnings.append(
+                        PolicyWarning(
+                            field="keep_rating_rules",
+                            severity="warn",
+                            message=(
+                                f"A {label} bar of {rule.floor}% protects almost everything. "
+                                "This field is a percentage: for 80% enter 80, not 8."
+                            ),
+                        )
+                    )
+            else:
+                if rule.floor >= 90:
+                    warnings.append(
+                        PolicyWarning(
+                            field="keep_rating_rules",
+                            severity="warn",
+                            message=(
+                                f"A {label} bar of {rule.floor / 10:.1f} will protect almost "
+                                "nothing: very few titles rate that highly."
+                            ),
+                        )
+                    )
+                if rule.floor <= 20:
+                    warnings.append(
+                        PolicyWarning(
+                            field="keep_rating_rules",
+                            severity="warn",
+                            message=(
+                                f"A {label} bar of {rule.floor / 10:.1f} protects essentially "
+                                "everything. Did you mean 7.0?"
+                            ),
+                        )
+                    )
 
     popularity = next(
         (g for g in body.gates if g.gate is GateId.SERVER_POPULARITY and g.enabled), None
@@ -723,10 +846,11 @@ DEFAULT_MOVIE_POLICY = PolicyBody(
         # weight: a weight can be outvoted, and that is exactly how an early version
         # ended up condemning films with a large chance of coming back.
         GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095),
-        # 7.5 out of 10, with at least 1,000 votes. The vote floor is what makes this
-        # mean anything: it rejects the handful of films in any library that rate
-        # highly on a few hundred votes, which a bare rating floor would keep forever.
-        GateSetting(gate=GateId.RATING_FLOOR, threshold=75, secondary=1000),
+        # "Keep well-rated titles". The bars themselves live in keep_rating_rules below;
+        # this setting is only the on/off switch. The default bar is IMDb 7.5 from at
+        # least 1,000 votes -- the vote floor is what makes it mean anything, rejecting
+        # the handful of films that rate highly on a few hundred votes.
+        GateSetting(gate=GateId.RATING_FLOOR),
         # 3 distinct watchers IN THE LAST YEAR. Unwindowed, this protects nearly the
         # whole library and nothing is ever deletable. OTHERS_WATCHING is deliberately
         # absent: it belongs to the requester rule, where "others" means "somebody
@@ -752,6 +876,10 @@ DEFAULT_MOVIE_POLICY = PolicyBody(
         # Size ranks the candidates the score has already chosen. It never decides an
         # item's fate. See docs/SIGNALS.md.
     ),
+    # IMDb 7.5 from at least 1,000 votes -- the single bar the original gate carried,
+    # now expressed as one entry in the multi-source set. Owners add Rotten Tomatoes,
+    # Metacritic or TMDb bars alongside it.
+    keep_rating_rules=(RatingRuleSpec(source=RatingSource.IMDB, floor=75, min_votes=1000),),
 )
 
 
@@ -771,6 +899,10 @@ DEFAULT_TV_POLICY = PolicyBody(
         SignalSetting(signal=SignalId.SEASON_RANK, weight=15, saturate_at=6),
         SignalSetting(signal=SignalId.LOW_RATING, weight=10, saturate_at=60),
     ),
+    # IMDb only by default for TV: Sonarr carries no rich ratings object, so a show's
+    # IMDb score (from the dataset) is the one bar reliably available. Owners may add
+    # Rotten Tomatoes or TMDb bars, which fire only when Plex happens to serve them.
+    keep_rating_rules=(RatingRuleSpec(source=RatingSource.IMDB, floor=75, min_votes=1000),),
 )
 
 

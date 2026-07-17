@@ -1063,32 +1063,34 @@ class TestPolicyValidation:
 
         assert len(body["policy_hash"]) == 64
 
-    def test_a_tomatometer_in_the_imdb_field_is_warned_about(self, client: TestClient) -> None:
-        """No validator can tell an IMDb floor of 96 (a legal 9.6) from a Rotten
-        Tomatoes 96 typed into the wrong box. So it says so instead of pretending."""
+    def test_a_high_imdb_bar_is_warned_about(self, client: TestClient) -> None:
+        """An IMDb bar of 9.6 protects almost nothing. A validator cannot tell that from
+        a genuine choice, so it warns instead of pretending to know."""
         body = client.post(
             "/api/policy/validate",
             json={
                 "condemn_at": 70,
                 "gates": [
-                    {"gate": "rating_floor", "threshold": 96, "secondary": 1000},
+                    {"gate": "rating_floor"},
                     {"gate": "min_dormancy", "threshold": 1095},
                 ],
                 "signals": DEFAULT_SIGNALS,
+                "keep_rating_rules": [{"source": "imdb", "floor": 96, "min_votes": 1000}],
             },
         ).json()
 
-        assert any("Rotten Tomatoes" in w["message"] for w in body["warnings"])
+        assert any("protect almost nothing" in w["message"] for w in body["warnings"])
 
     def test_a_zero_vote_floor_is_refused_outright(self, client: TestClient) -> None:
-        """Provably wrong, so it is a 422 rather than a warning: a rating floor with no
+        """Provably wrong, so it is a 422 rather than a warning: an IMDb bar with no
         vote floor protects an 8.3 drawn from 388 votes."""
         response = client.post(
             "/api/policy/validate",
             json={
                 "condemn_at": 70,
-                "gates": [{"gate": "rating_floor", "threshold": 75, "secondary": 0}],
+                "gates": [{"gate": "rating_floor"}],
                 "signals": DEFAULT_SIGNALS,
+                "keep_rating_rules": [{"source": "imdb", "floor": 75, "min_votes": 0}],
             },
         )
 

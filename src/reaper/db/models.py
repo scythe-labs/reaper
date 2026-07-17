@@ -293,11 +293,19 @@ class Snapshot(Base):
 
     This is what lets the simulator re-decide this snapshot honestly. Moving
     ``condemn_at`` re-compares a *stored* score against a new number, which is exact.
-    Changing a weight or a gate does not: the stored scores and verdicts were produced
-    by the old ones, and the new answer cannot be recovered without re-reading the
-    library. The simulator compares this hash and refuses to report numbers when it
-    differs, rather than reporting confident, stale ones.
+    Changing a weight or a rating bar is exact too, because each Candidate freezes its
+    Facts (``facts_json``); only a change to what the scan *gathered* -- the fields the
+    evidence hash covers -- truly needs a fresh scan.
     """
+
+    evidence_hash: Mapped[str | None] = mapped_column(String(64), default=None)
+    """The policy fields that decide what evidence the scan gathers and freezes: the
+    popularity window, the keep-tags, the season-pruning guard, the media type. Two
+    policies sharing this produce the same frozen Facts for every item, so the simulator
+    may replay the real engine over ``Candidate.facts_json`` and get an exact verdict for
+    any change *outside* these fields (weights, rating bars, custom rules). When it
+    differs, the frozen evidence is stale and a fresh scan is required. See
+    ``PolicyBody.evidence_hash``."""
 
     horizon_at: Mapped[UtcTimestamp]
     """The earliest watch history we hold. Persisted, not computed: media older than
@@ -415,6 +423,13 @@ class Candidate(Base):
     """The why-panel, exactly as the UI renders it and exactly as the audit log keeps
     it. One dict, two sinks -- so what the owner was shown and what actually happened
     cannot drift apart."""
+
+    facts_json: Mapped[str | None] = mapped_column(Text, default=None)
+    """The frozen scoring INPUTS for this item -- its full three-state ``Facts`` plus the
+    season-pruning guard result -- serialised by ``engine.facts_codec``. This is what lets
+    the simulator replay the real engine under an edited policy with zero API calls, exact
+    for any change the evidence hash permits. Nullable for snapshots taken before the field
+    existed; the simulator falls back to "needs a fresh scan" when it is absent."""
 
     created_at: Mapped[UtcTimestamp]
 

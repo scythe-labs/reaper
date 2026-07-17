@@ -217,16 +217,13 @@ class TestGateToggles:
 
 class TestGateThresholds:
     def test_a_higher_rating_floor_never_protects_more(self) -> None:
+        # The rating floor now lives in keep_rating_rules (one IMDb bar), so raise the bar
+        # there and confirm the protected set only ever shrinks.
         protected_at: dict[int, set[str]] = {}
         for floor in (1, 50, 75, 90, 100):
             policy = mutated(
                 DEFAULT_MOVIE_POLICY,
-                gates=[
-                    {**g.model_dump(mode="json"), "threshold": floor}
-                    if g.gate is GateId.RATING_FLOOR
-                    else g.model_dump(mode="json")
-                    for g in DEFAULT_MOVIE_POLICY.gates
-                ],
+                keep_rating_rules=[{"source": "imdb", "floor": floor, "min_votes": 1000}],
             )
             gates = build_gates(policy)
             protected_at[floor] = {

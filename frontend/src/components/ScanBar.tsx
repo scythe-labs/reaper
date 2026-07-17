@@ -58,7 +58,10 @@ export function ScanBar({ snapshot }: { snapshot: Snapshot | undefined }) {
     onSuccess: (started) => queryClient.setQueryData(["scanStatus"], started),
   });
 
-  const pct = status && status.total > 0 ? Math.round((status.done / status.total) * 100) : null;
+  // The server hands us a monotonic 0-100 that rises smoothly across the scan's phases.
+  // (The old done/total math read 100% before any work began, because the early phases
+  // report total=0, then jumped as the denominator changed meaning between phases.)
+  const pct = status ? status.percent : null;
 
   return (
     <section className="scanbar">
@@ -95,7 +98,7 @@ export function ScanBar({ snapshot }: { snapshot: Snapshot | undefined }) {
 
       {scanning && (
         <div className="bar">
-          <div className="bar-fill" style={{ width: pct !== null ? `${pct}%` : "100%" }} />
+          <div className="bar-fill" style={{ width: `${pct ?? 0}%` }} />
         </div>
       )}
 

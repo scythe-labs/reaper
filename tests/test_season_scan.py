@@ -621,7 +621,9 @@ class _FakePlexGuids:
     def __init__(self, items: dict[int, identity.PlexItem]) -> None:
         self._items = items
 
-    async def library_guid_index(self, *, section_type: str) -> dict[int, identity.PlexItem]:
+    async def library_guid_index(
+        self, *, section_type: str, allowed_sections: set[int] | None = None
+    ) -> dict[int, identity.PlexItem]:
         return self._items
 
 

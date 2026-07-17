@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -61,7 +62,9 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.models import Candidate, FirstFlagged, Instance, InstanceKind, PlexServer, Snapshot
 from reaper.db.models import Policy as PolicyModel
+from reaper.engine import facts_codec
 from reaper.engine.fields import Lane, vocabulary
+from reaper.engine.gates import PROTECT, Evaluation, GateId, GateResult, evaluate_all
 from reaper.engine.policy import (
     ConditionSpec,
     GateSetting,
@@ -71,7 +74,9 @@ from reaper.engine.policy import (
     combine_hashes,
     inspect,
 )
-from reaper.engine.verdict import decide_verdict
+from reaper.engine.signals import SignalConfig
+from reaper.engine.signals import score as score_facts
+from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict
 from reaper.services import app_settings, whitelist
 from reaper.services.condemned import reap_is_effective, reap_override_verdict
 from reaper.services.deep_links import build_links
@@ -917,6 +922,9 @@ def _to_body(payload: PolicyIn) -> PolicyBody:
             graded_keeps=tuple(payload.graded_keeps),
             keep_tags=tuple(t.strip() for t in payload.keep_tags if t.strip()),
             keep_tags_match=payload.keep_tags_match,
+            # Already engine specs (RatingRuleSpec) -- passed through, validated on the wire.
+            keep_rating_rules=tuple(payload.keep_rating_rules),
+            keep_rating_match=payload.keep_rating_match,
         )
     except ValidationError as exc:
         raise HTTPException(
@@ -985,6 +993,8 @@ def _policy_out(body: PolicyBody, name: str, *, requests_app_configured: bool) -
             graded_keeps=list(body.graded_keeps),
             keep_tags=list(body.keep_tags),
             keep_tags_match=body.keep_tags_match,
+            keep_rating_rules=list(body.keep_rating_rules),
+            keep_rating_match=body.keep_rating_match,
         ),
         warnings=[
             PolicyWarningOut(field=w.field, message=w.message, severity=w.severity)
@@ -1070,6 +1080,104 @@ async def validate_policy(request: Request, payload: PolicyIn) -> PolicyOut:
     return _policy_out(_to_body(payload), payload.name, requests_app_configured=has_requests_app)
 
 
+def _replay_simulation(
+    rows: list[Candidate], policy: PolicyBody, decisions: dict[str, str]
+) -> SimulationOut:
+    """Re-decide the governed rows by replaying the REAL engine over each row's frozen Facts.
+
+    Reached only when the edit left the evidence hash unchanged, so the frozen Facts (and the
+    season guard) still describe what a scan would gather. For each row we rebuild its Facts,
+    run the same ``evaluate_all`` / ``score`` / ``decide_verdict`` the scan runs
+    (services.snapshot._judge_item), and apply any live hand override -- so the counts are
+    bit-identical to a fresh scan under this policy, with zero API calls. Exact for weight,
+    rating-bar, custom-rule, protect-condition and threshold edits.
+    """
+    from reaper.services.scan_runner import build_gates
+
+    gates = build_gates(policy)
+    signals = [
+        SignalConfig(signal=s.signal, weight=s.weight, saturate_at=s.saturate_at, floor=s.floor)
+        for s in policy.signals
+    ]
+    custom = policy.custom_signal_configs()
+    keeps = policy.keep_configs()
+    window = policy.popularity_window_days()
+
+    histogram = [0] * 10
+    condemned = protected = abstained = 0
+    reclaimable = 0
+    newly = gone = 0
+    # (row, re-decided score) -- the NEW score, since a weight edit moves it, not the stored one.
+    newly_rows: list[tuple[Candidate, int]] = []
+    spared_by: Counter[str] = Counter()
+
+    for row in rows:
+        facts, extra = facts_codec.facts_from_dict(json.loads(row.facts_json or "{}"))
+        override = whitelist.effective_override(row.media_key, decisions)
+
+        # A hand spare enters as an extra PROTECT, exactly as _judge_item merges it; the
+        # frozen season guard rides in `extra`. The reap override is carried into
+        # decide_verdict, which honours it only past the cautious cases.
+        merged_extra = list(extra)
+        if override == "spare":
+            merged_extra.insert(
+                0, GateResult(GateId.WHITELISTED, PROTECT, detail="You spared this by hand.")
+            )
+        evaluation = Evaluation(results=[*merged_extra, *evaluate_all(gates, facts).results])
+        item_score = score_facts(
+            signals, facts, custom_condemn=custom, keeps=keeps, window_days=window
+        )
+        score_value = round(item_score.value)
+        coverage_bp = round(item_score.coverage * 10_000)
+        verdict = decide_verdict(
+            protected=evaluation.protected,
+            blocked=evaluation.blocked,
+            safety_protected=any(
+                r.fired and r.gate in STRUCTURAL_GATES for r in evaluation.results
+            ),
+            score=score_value,
+            coverage_bp=coverage_bp,
+            condemn_at=policy.condemn_at,
+            coverage_floor_bp=policy.coverage_floor_bp,
+            override=override,
+        )
+
+        histogram[min(score_value // 10, 9)] += 1
+        was_condemned = row.verdict == "condemn"
+        if verdict == "condemn":
+            condemned += 1
+            reclaimable += row.size_bytes
+            if not was_condemned:
+                newly += 1
+                newly_rows.append((row, score_value))
+        elif verdict == "protect":
+            protected += 1
+            spared_by.update(r.gate.value for r in evaluation.protectors)
+        else:
+            abstained += 1
+            if was_condemned:
+                gone += 1
+
+    newly_rows.sort(key=lambda rs: rs[1], reverse=True)
+    return SimulationOut(
+        exact=True,
+        condemned=condemned,
+        protected=protected,
+        abstained=abstained,
+        reclaimable_bytes=reclaimable,
+        newly_condemned=newly,
+        no_longer_condemned=gone,
+        histogram=histogram,
+        examples_newly_condemned=[
+            SimExampleOut(title=r.title, year=r.year, score=s) for r, s in newly_rows[:5]
+        ],
+        protected_by=[
+            GateCountOut(gate=gate, count=n)
+            for gate, n in sorted(spared_by.items(), key=lambda kv: (-kv[1], kv[0]))
+        ],
+    )
+
+
 @router.post("/policy/simulate")
 async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
     """Re-decide the last snapshot under a candidate policy. **Zero API calls.**
@@ -1110,29 +1218,14 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
 
         other_type = "movie" if body.media_type == "tv" else "tv"
         other, _ = await active_policy(session, other_type)
-        movie_scoring, tv_scoring = (
-            (body.scoring_hash(), other.scoring_hash())
-            if body.media_type == "movie"
-            else (other.scoring_hash(), body.scoring_hash())
-        )
 
-        if snapshot.scoring_hash != combine_hashes(movie_scoring, tv_scoring):
-            kind = "movies" if body.media_type == "movie" else "TV"
-            return SimulationOut(
-                exact=False,
-                stale_reason=(
-                    "You changed a signal weight or a protection, so the last scan's scores no "
-                    f"longer describe this {kind} policy. Run a scan to score the library under "
-                    "it, then this becomes exact again."
-                ),
-                condemned=0,
-                protected=0,
-                abstained=0,
-                reclaimable_bytes=0,
-                newly_condemned=0,
-                no_longer_condemned=0,
-                histogram=[0] * 10,
+        def _combined(pick: Callable[[PolicyBody], str]) -> str:
+            movie_h, tv_h = (
+                (pick(body), pick(other))
+                if body.media_type == "movie"
+                else (pick(other), pick(body))
             )
+            return combine_hashes(movie_h, tv_h)
 
         rows = (
             (
@@ -1146,6 +1239,37 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
             .all()
         )
         decisions = await whitelist.overrides(session)
+
+        # Three tiers of re-decide, most exact first:
+        #  1. Scoring behaviour unchanged -> re-compare the STORED score against the new
+        #     thresholds. Exact and cheapest (below).
+        #  2. Scoring changed but the EVIDENCE is unchanged, and every governed row froze its
+        #     Facts -> replay the real engine over those Facts. Exact for weight/rating/custom
+        #     edits, still zero API calls.
+        #  3. Otherwise the edit changed what the scan gathers (a window, a keep-tag, a
+        #     season rule) -> the frozen evidence is stale, so refuse rather than guess.
+        if snapshot.scoring_hash != _combined(PolicyBody.scoring_hash):
+            replayable = snapshot.evidence_hash and snapshot.evidence_hash == _combined(
+                PolicyBody.evidence_hash
+            )
+            if replayable and rows and all(r.facts_json for r in rows):
+                return _replay_simulation(list(rows), body, decisions)
+            kind = "movies" if body.media_type == "movie" else "TV"
+            return SimulationOut(
+                exact=False,
+                stale_reason=(
+                    "You changed how the scan reads your library (a watch window, a keep tag, or "
+                    f"a season rule), so the last scan's evidence no longer fits this {kind} "
+                    "policy. Run a scan to apply it, then this becomes exact again."
+                ),
+                condemned=0,
+                protected=0,
+                abstained=0,
+                reclaimable_bytes=0,
+                newly_condemned=0,
+                no_longer_condemned=0,
+                histogram=[0] * 10,
+            )
 
     histogram = [0] * 10
     condemned = protected = abstained = 0

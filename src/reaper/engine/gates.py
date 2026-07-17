@@ -34,6 +34,7 @@ from typing import Literal, Protocol
 
 from reaper.clock import humanize_days, humanize_window
 from reaper.engine.observation import Absent, Known, Observation, Unknown
+from reaper.ratings import Rating, RatingSource, is_percentage_source, source_label
 
 GateOutcome = Literal["PROTECT", "ABSTAIN"]
 PROTECT: GateOutcome = "PROTECT"
@@ -183,6 +184,14 @@ class Facts:
     ``season_rank`` precedent -- so it never condemns and never protects where it does
     not apply."""
 
+    ratings: tuple[Rating, ...] = ()
+    """Every interpretable rating the scan froze for this item, one per source (IMDb,
+    TMDb, Rotten Tomatoes critics/audience, Metacritic). Read only by the multi-source
+    ``RatingFloorGate``, a protection, so a missing or unreadable source can only ever
+    fail to keep a title, never condemn one. Empty by default and for the historical
+    reconstruction (backtest/calibration have no rating source), which simply means the
+    gate does not fire. Not hashed (Facts is evidence, not policy)."""
+
 
 @dataclass(frozen=True, slots=True)
 class GateConfig:
@@ -221,68 +230,117 @@ def _blocked(gate: GateId, observation: Observation[object], what: str) -> GateR
 
 
 @dataclass(frozen=True, slots=True)
-class RatingFloorGate:
-    """Keep anything well-rated by enough people.
+class RatingRule:
+    """One "keep it if it clears this bar" rule, for one rating source.
 
-    The vote floor is not optional. A high score from a handful of voters is noise --
-    an 8.3 from a few hundred votes says nothing -- and a bare rating floor would
-    preserve such an item forever. Every real library holds some of these.
-
-    The rating's *provenance* is pinned by the policy, never inferred: the same
-    Plex field held IMDb on one server and a Rotten Tomatoes percentage on another,
-    and comparing a 7.5 floor against a Tomatometer of 96 protects nothing at all.
+    ``floor`` is in tenths (7.5 -> 75), the same convention the whole policy uses, and it
+    reads the same for a percentage source: 75% is 75, because 84% arrives normalised to
+    8.4 on the 0-10 scale and its tenths are 84. ``min_votes`` only bites on sources that
+    count votes (IMDb, TMDb); it is ignored for Rotten Tomatoes and Metacritic, which are
+    percentages with no vote concept (see ``ratings.Rating.has_meaningful_vote_count``).
     """
 
-    config: GateConfig
+    source: RatingSource
+    floor: int
+    min_votes: int = 0
+
+    def threshold_text(self) -> str:
+        """Just the number, in the source's own units: ``7.5`` or ``75%``."""
+        return f"{self.floor}%" if is_percentage_source(self.source) else f"{self.floor / 10:.1f}"
+
+    def describe_bar(self) -> str:
+        """The full bar, for the why-panel and the checked line: the number, the source, and
+        the vote floor where the source has one (``7.5 on IMDb from 1,000 votes``)."""
+        if is_percentage_source(self.source):
+            return f"{source_label(self.source)} {self.floor}%"
+        bar = f"{self.threshold_text()} on {source_label(self.source)}"
+        if self.min_votes > 0:
+            bar += f" from {self.min_votes:,} votes"
+        return bar
+
+
+@dataclass(frozen=True, slots=True)
+class RatingFloorGate:
+    """Keep anything well-rated by enough people, on ANY source the owner trusts.
+
+    The owner picks a set of bars -- IMDb 7.5 from 1,000 votes, Rotten Tomatoes critics
+    75%, and so on -- and a title clearing **any one** of them is kept (or **all**, if the
+    owner tightens the match). Each bar reads the frozen rating for its source and the
+    single-source case (just IMDb) behaves exactly as the original gate did.
+
+    The vote floor is not optional on the sources that have one: a high score from a
+    handful of voters is noise. The rating's *provenance* is pinned per source, never
+    inferred: the same Plex field held IMDb on one server and a Rotten Tomatoes percentage
+    on another, and ``ratings.Rating`` carries where each number came from so a 7.5 IMDb
+    bar is never compared against a Tomatometer of 96.
+
+    A protection, so it has no CONDEMN outcome: a source we could not read, or a rule with
+    no matching rating, simply does not fire. It cannot delete a file, only keep one.
+    """
+
+    rules: tuple[RatingRule, ...] = ()
+    match: Literal["any", "all"] = "any"
     id: GateId = GateId.RATING_FLOOR
 
-    def evaluate(self, facts: Facts) -> GateResult:
-        floor, min_votes = self.config.threshold, self.config.secondary
-
-        if blocked := _blocked(self.id, facts.imdb_rating_tenths, "the IMDb rating"):
-            return blocked
-        if blocked := _blocked(self.id, facts.imdb_votes, "the IMDb vote count"):
-            return blocked
-
-        rating, votes = facts.imdb_rating_tenths, facts.imdb_votes
-
-        if not isinstance(rating, Known):
-            return GateResult(
-                self.id,
-                ABSTAIN,
-                detail=f"no IMDb rating to keep it on (you keep {floor / 10:.1f}+)",
-            )
-        if not isinstance(votes, Known):
-            return GateResult(self.id, ABSTAIN, detail="no IMDb vote count")
-
-        rating_value, vote_value = rating.value, votes.value
-
-        if vote_value < min_votes:
-            return GateResult(
-                self.id,
-                ABSTAIN,
-                detail=(
-                    f"rated {rating_value / 10:.1f} on IMDb, but from only {vote_value:,} votes, "
-                    f"too few to trust (you need {min_votes:,})"
-                ),
-            )
-        if rating_value >= floor:
-            return GateResult(
-                self.id,
-                PROTECT,
-                detail=(
-                    f"well rated: {rating_value / 10:.1f} on IMDb from {vote_value:,} votes, "
-                    f"at or above the {floor / 10:.1f} you keep"
-                ),
-            )
-        return GateResult(
-            self.id,
-            ABSTAIN,
-            detail=(
-                f"rated {rating_value / 10:.1f} on IMDb from {vote_value:,} votes, "
-                f"below the {floor / 10:.1f} you keep"
-            ),
+    def _miss_phrase(self, rule: RatingRule, rating: Rating | None) -> str:
+        """Why one bar was not cleared, with the item's own numbers where we have them --
+        the "checked and did not fire, with the numbers" explainability the panel needs."""
+        if rating is None:
+            return f"no {source_label(rule.source)} rating (you keep {rule.describe_bar()})"
+        too_few_votes = (
+            rule.min_votes > 0
+            and rating.has_meaningful_vote_count
+            and (rating.votes is None or rating.votes < rule.min_votes)
         )
+        if too_few_votes:
+            return f"{rating.describe_for_user()}, too few to trust (you need {rule.min_votes:,})"
+        return f"{rating.describe_for_user()}, below the {rule.threshold_text()} you keep"
+
+    def evaluate(self, facts: Facts) -> GateResult:
+        if not self.rules:
+            return GateResult(self.id, ABSTAIN, detail="No rating bars are set to keep on.")
+
+        # Fail closed if a source we keep on could not be read. IMDb is the one source that
+        # carries a three-state observation in Facts (imdb_rating_tenths / imdb_votes); the
+        # others come from frozen Radarr/Plex data whose failure degrades the whole snapshot
+        # upstream, so they are never per-item Unknown. When an IMDb bar's own rating cannot
+        # be read, blocking keeps the file rather than silently dropping the protection it
+        # was carrying -- the same fail-closed the single-source gate had.
+        if any(r.source is RatingSource.IMDB for r in self.rules):
+            if blocked := _blocked(self.id, facts.imdb_rating_tenths, "the IMDb rating"):
+                return blocked
+            if blocked := _blocked(self.id, facts.imdb_votes, "the IMDb vote count"):
+                return blocked
+
+        by_source = {r.source: r for r in facts.ratings}
+        cleared: list[str] = []
+        missed: list[str] = []
+        for rule in self.rules:
+            rating = by_source.get(rule.source)
+            if rating is not None and rating.meets(rule.floor / 10, min_votes=rule.min_votes):
+                cleared.append(rating.describe_for_user())
+            else:
+                missed.append(self._miss_phrase(rule, rating))
+
+        # ANY: one cleared bar keeps it. ALL: every bar must clear, and a source we could
+        # not read counts as a miss (there is nothing to clear), so ALL fails closed toward
+        # NOT protecting -- the safe direction for a keep, which can only ever spare a file.
+        protects = bool(cleared) if self.match == "any" else (not missed and bool(self.rules))
+        if protects:
+            return GateResult(self.id, PROTECT, detail="well rated: " + "; ".join(cleared) + ".")
+        if cleared:
+            return GateResult(
+                self.id,
+                ABSTAIN,
+                detail=(
+                    "cleared "
+                    + "; ".join(cleared)
+                    + ", but not every bar you asked for: "
+                    + "; ".join(missed)
+                    + "."
+                ),
+            )
+        return GateResult(self.id, ABSTAIN, detail="; ".join(missed) + ".")
 
 
 @dataclass(frozen=True, slots=True)
@@ -589,6 +647,7 @@ __all__ = [
     "MinDormancyGate",
     "OthersWatchingGate",
     "RatingFloorGate",
+    "RatingRule",
     "ServerPopularityGate",
     "StreamingNowGate",
     "UnmanagedGate",

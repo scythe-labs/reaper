@@ -31,8 +31,8 @@ from reaper.db.models import FirstFlagged
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
 from reaper.engine.observation import Known
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
-from reaper.services import history_sync, lists, season_scan
-from reaper.services.scan_runner import build_gates
+from reaper.services import app_settings, history_sync, lists, season_scan
+from reaper.services.scan_runner import _allowed_sections, build_gates
 from reaper.services.snapshot import Progress, RadarrSource, _release_age_days, candidates, scan
 
 NOW = utcnow().replace(microsecond=0)
@@ -121,6 +121,35 @@ class _StaticList:
 # ---------------------------------------------------------------------------
 # Fixtures and seed helpers
 # ---------------------------------------------------------------------------
+
+
+class TestLibraryScope:
+    """Which Plex libraries the scan enriches against. Scoping only ever removes a
+    library's enrichment, so an absent or unreadable selection must widen to all."""
+
+    async def test_no_configured_libraries_scans_everything(self, session: AsyncSession) -> None:
+        assert await _allowed_sections(session) is None
+
+    async def test_the_enabled_subset_scopes_the_scan(self, session: AsyncSession) -> None:
+        await app_settings.set_plex_libraries(
+            session,
+            [
+                {"key": 1, "title": "Movies", "kind": "movie", "enabled": True},
+                {"key": 2, "title": "4K Movies", "kind": "movie", "enabled": False},
+                {"key": 3, "title": "TV", "kind": "show", "enabled": True},
+            ],
+        )
+        assert await _allowed_sections(session) == {1, 3}
+
+    async def test_an_unreadable_setting_falls_back_to_all(self, tmp_path: Path) -> None:
+        """A settings-read failure must not abort a scan: it defaults to scanning every
+        library (full coverage), never to scanning none."""
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        engine = create_engine(settings)  # no create_all: the app_setting table is missing
+        factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+        async with factory() as s:
+            assert await _allowed_sections(s) is None
+        await engine.dispose()
 
 
 @pytest.fixture
@@ -355,6 +384,58 @@ class TestScanPipelineEndToEnd:
         assert "scoring" in phases
         assert phases[-1] == "done"
 
+        # THE freeze-replay invariant: every candidate froze its Facts, and replaying the
+        # real engine over those frozen Facts under the SAME policy reproduces the stored
+        # verdict, score and coverage EXACTLY. If the codec dropped or flipped any field --
+        # or the replay diverged from _judge_item -- this fails, which is the guard against
+        # the simulator ever showing a wrong preview (a fail-open the moment a weight moves).
+        import json as _json
+
+        from reaper.engine.facts_codec import facts_from_dict
+        from reaper.engine.gates import Evaluation, evaluate_all
+        from reaper.engine.signals import SignalConfig
+        from reaper.engine.signals import score as _score
+        from reaper.engine.verdict import STRUCTURAL_GATES as _STRUCTURAL
+        from reaper.engine.verdict import decide_verdict
+
+        by_type = {
+            "movie": (DEFAULT_MOVIE_POLICY, build_gates(DEFAULT_MOVIE_POLICY)),
+            "season": (DEFAULT_TV_POLICY, build_gates(DEFAULT_TV_POLICY)),
+        }
+        for cand in rows.values():
+            assert cand.facts_json, f"{cand.media_key} froze no facts"
+            policy, gates = by_type[cand.media_type]
+            facts, extra = facts_from_dict(_json.loads(cand.facts_json))
+            evaluation = Evaluation(results=[*extra, *evaluate_all(gates, facts).results])
+            s = _score(
+                [
+                    SignalConfig(
+                        signal=x.signal, weight=x.weight, saturate_at=x.saturate_at, floor=x.floor
+                    )
+                    for x in policy.signals
+                ],
+                facts,
+                custom_condemn=policy.custom_signal_configs(),
+                keeps=policy.keep_configs(),
+                window_days=policy.popularity_window_days(),
+            )
+            score_value = round(s.value)
+            coverage_bp = round(s.coverage * 10_000)
+            verdict = decide_verdict(
+                protected=evaluation.protected,
+                blocked=evaluation.blocked,
+                safety_protected=any(r.fired and r.gate in _STRUCTURAL for r in evaluation.results),
+                score=score_value,
+                coverage_bp=coverage_bp,
+                condemn_at=policy.condemn_at,
+                coverage_floor_bp=policy.coverage_floor_bp,
+            )
+            assert (verdict, score_value, coverage_bp) == (
+                cand.verdict,
+                cand.score,
+                cand.coverage_bp,
+            ), f"replay diverged for {cand.media_key}"
+
     async def test_one_unreachable_radarr_degrades_but_keeps_the_rest(
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
@@ -407,7 +488,7 @@ class TestRunScanHistorySync:
 
         async def fake_scan(engine: Any, session: Any, **kwargs: Any) -> Any:
             captured.update(kwargs)
-            return SimpleNamespace(id=1, item_count=0)
+            return SimpleNamespace(id=1, item_count=0, degraded=False)
 
         async def failing_sync(engine: Any, tautulli: Any) -> Any:
             raise IntegrationError("tautulli", "unreachable (boom)")
@@ -550,7 +631,7 @@ class TestOneScanAtATime:
         async def parked_scan(engine: Any, session: Any, **kwargs: Any) -> Any:
             started.set()
             await release.wait()
-            return SimpleNamespace(id=1, item_count=0)
+            return SimpleNamespace(id=1, item_count=0, degraded=False)
 
         self._stub_pipeline(monkeypatch, parked_scan)
         settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
@@ -591,7 +672,7 @@ class TestOneScanAtATime:
             calls["n"] += 1
             if calls["n"] == 1:
                 raise IntegrationError("radarr", "unreachable (boom)")
-            return SimpleNamespace(id=2, item_count=0)
+            return SimpleNamespace(id=2, item_count=0, degraded=False)
 
         self._stub_pipeline(monkeypatch, failing_then_fine)
         settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
@@ -732,7 +813,7 @@ class TestKeepHistoryCoverage:
 
         async def fake_scan(engine: Any, session: Any, **kwargs: Any) -> Any:
             captured.update(kwargs)
-            return SimpleNamespace(id=1, item_count=0)
+            return SimpleNamespace(id=1, item_count=0, degraded=False)
 
         class _OffTautulli(_UsersTautulli):
             def __init__(self) -> None:

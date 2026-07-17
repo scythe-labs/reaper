@@ -454,7 +454,9 @@ class PlexClient:
 
         return await asyncio.to_thread(read)
 
-    async def library_guid_index(self, *, section_type: str) -> dict[int, PlexItem]:
+    async def library_guid_index(
+        self, *, section_type: str, allowed_sections: set[int] | None = None
+    ) -> dict[int, PlexItem]:
         """Every library item as the resolver sees it, keyed by Plex ``rating_key``.
 
         The enrichment behind id-based matching. For each library section of
@@ -494,6 +496,12 @@ class PlexClient:
             show_keys: list[int] = []
             for section in server.library.sections():
                 if section.type != section_type:
+                    continue
+                # Only the libraries the operator included in scans (Settings -> Plex). None
+                # means every library of this type; a set scopes the sweep. Filtered on the
+                # SAME section keys the Tautulli spine uses (services.library_index), so the
+                # two never disagree about which sections were read.
+                if allowed_sections is not None and int(section.key) not in allowed_sections:
                     continue
                 start = 0
                 while True:

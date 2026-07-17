@@ -46,7 +46,7 @@ from reaper.clients.plex import PlexClient
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
 from reaper.db.models import Candidate, FirstFlagged, Snapshot
-from reaper.engine import identity
+from reaper.engine import facts_codec, identity
 from reaper.engine.gates import PROTECT, Evaluation, Facts, Gate, GateId, GateResult, evaluate_all
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
@@ -59,7 +59,7 @@ from reaper.engine.signals import (
     score,
 )
 from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict
-from reaper.ratings import Rating, from_radarr
+from reaper.ratings import Rating, RatingSource, from_radarr, merge_by_source
 from reaper.services import (
     history_sync,
     library_index,
@@ -217,6 +217,26 @@ def build_facts(
         rating = Absent(source="imdb")
         votes = Absent(source="imdb")
 
+    # The multi-source keep gate reads this. The IMDb dataset value goes first (it carries
+    # the authoritative vote count the score already uses), then Radarr's ratings object
+    # (IMDb/TMDb/RT-critic/Metacritic), then Plex's two slots (which can add the RT
+    # audience score). merge_by_source keeps one per source, first writer winning, and
+    # drops any UNKNOWN-source value -- so a protection is never decided on a number we
+    # cannot interpret. No extra fetch: all three are already frozen on the item.
+    dataset_rating = (
+        [
+            Rating(
+                source=RatingSource.IMDB,
+                value=entry.average_rating,
+                votes=int(entry.num_votes),
+                provider="imdb-dataset",
+            )
+        ]
+        if entry is not None
+        else []
+    )
+    rating_set = merge_by_source(dataset_rating, list(item.arr_ratings), list(item.plex_ratings))
+
     # --- lists --------------------------------------------------------------
     # Whitelist and curated are DIFFERENT reasons to keep a file, and collapsing them
     # would tell the owner "whitelisted" about a film they never touched. The why-panel
@@ -284,6 +304,7 @@ def build_facts(
             Known(value=item.quality, source="radarr") if item.quality else Absent(source="radarr")
         ),
         show_ended=Absent(source="radarr"),  # a movie is not a series
+        ratings=rating_set,
     )
 
 
@@ -319,6 +340,7 @@ async def scan(
     grace_days: int = 14,
     extra_degrade_reasons: Sequence[str] | None = None,
     on_progress: ProgressFn | None = None,
+    allowed_sections: set[int] | None = None,
 ) -> Snapshot:
     """Gather, freeze, judge, persist. Read-only throughout.
 
@@ -433,6 +455,7 @@ async def scan(
                 keep_specials=tv_policy.keep_specials,
                 flag_keep_conflicts=tv_policy.flag_keep_conflicts,
                 membership_index=membership_index,
+                allowed_sections=allowed_sections,
             )
         )
 
@@ -447,7 +470,11 @@ async def scan(
         log.info("snapshot.radarr", instance=source.name, movies=len(movies))
         return movies
 
-    index_task = _spawn(build_movie_index(tautulli, plex, degrade=context.degrade))
+    index_task = _spawn(
+        build_movie_index(
+            tautulli, plex, degrade=context.degrade, allowed_sections=allowed_sections
+        )
+    )
     movie_tasks = [_spawn(_movies_from(source)) for source in radarrs]
 
     items: list[RawItem] = []
@@ -520,6 +547,10 @@ async def scan(
         # combination of both -- movie first, TV second. See policy.combine_hashes.
         policy_hash=combine_hashes(movie_policy.policy_hash(), tv_policy.policy_hash()),
         scoring_hash=combine_hashes(movie_policy.scoring_hash(), tv_policy.scoring_hash()),
+        # What was gathered and frozen: lets the simulator replay a weight/rating edit from
+        # each Candidate's facts_json without a re-scan (services.snapshot._judge_item freezes
+        # them). Movie first, TV second, exactly like the other combined hashes.
+        evidence_hash=combine_hashes(movie_policy.evidence_hash(), tv_policy.evidence_hash()),
         horizon_at=context.horizon,
         item_count=len(items) + len(season_judgements),
         degraded=context.degraded,
@@ -820,6 +851,12 @@ def _judge_item(
                 match_status=match_status,
                 merged_rating_keys=merged_rating_keys,
             ),
+            # The frozen scoring inputs: the Facts plus the season-pruning guard (extra_results,
+            # NOT the hand-override, which is re-applied live at replay time from the override
+            # map). This is what the simulator replays under an edited policy. See facts_codec.
+            facts_json=json.dumps(
+                facts_codec.facts_to_dict(facts, extra_results=tuple(extra_results))
+            ),
             created_at=now,
         )
     )
@@ -1063,16 +1100,20 @@ async def build_movie_index(
     plex: PlexClient | None,
     *,
     degrade: Callable[[str], None],
+    allowed_sections: set[int] | None = None,
 ) -> identity.PlexIndex:
     """The Plex movie library, inverted for id / basename / title matching.
 
     One shared implementation with ``season_scan.build_tv_index`` -- see
     ``services.library_index`` for the spine + sweep design and its failure
-    semantics. A movie-only deployment with no Plex configured simply gets no
-    enrichment; its snapshot was already un-executable, since a real reap refuses
-    without Plex.
+    semantics. ``allowed_sections`` scopes the read to the movie libraries the operator
+    included in scans (``None`` = all). A movie-only deployment with no Plex configured
+    simply gets no enrichment; its snapshot was already un-executable, since a real reap
+    refuses without Plex.
     """
-    return await library_index.build_index(tautulli, plex, section_type="movie", degrade=degrade)
+    return await library_index.build_index(
+        tautulli, plex, section_type="movie", degrade=degrade, allowed_sections=allowed_sections
+    )
 
 
 def _movie_file_basename(movie: Mapping[str, Any]) -> str | None:

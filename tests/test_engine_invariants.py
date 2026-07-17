@@ -25,6 +25,7 @@ from reaper.engine.gates import (
     GateId,
     OthersWatchingGate,
     RatingFloorGate,
+    RatingRule,
     ServerPopularityGate,
     StreamingNowGate,
     UnmanagedGate,
@@ -33,6 +34,15 @@ from reaper.engine.gates import (
 )
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.signals import SignalConfig, SignalId, score
+from reaper.ratings import Rating, RatingSource
+
+_IMDB_BAR = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=1000)
+
+
+def _imdb(value: float, votes: int) -> tuple[Rating, ...]:
+    """One frozen IMDb rating, as the scan would carry it into ``Facts.ratings``."""
+    return (Rating(source=RatingSource.IMDB, value=value, votes=votes, provider="imdb-dataset"),)
+
 
 # --- generators -------------------------------------------------------------
 
@@ -69,7 +79,7 @@ def facts(draw: st.DrawFn) -> Facts:
 
 
 ALL_GATES = [
-    RatingFloorGate(GateConfig(GateId.RATING_FLOOR, threshold=75, secondary=1000)),
+    RatingFloorGate(rules=(_IMDB_BAR,)),
     StreamingNowGate(GateConfig(GateId.STREAMING_NOW)),
     ServerPopularityGate(GateConfig(GateId.SERVER_POPULARITY, threshold=3)),
     WhitelistGate(GateConfig(GateId.WHITELISTED)),
@@ -250,58 +260,77 @@ class TestProtectionAlwaysBeatsScore:
         assert evaluate_all(ALL_GATES, item).protected is True  # ...and is kept anyway
 
 
+def _rating_facts(ratings: tuple[Rating, ...]) -> Facts:
+    """A minimal Facts carrying only what the rating gate reads, so the rating tests state
+    just the ratings under test."""
+    return Facts(
+        title="x",
+        days_observed_unwatched=Known(value=900.0, source="t"),
+        distinct_watchers=Absent(source="t"),
+        distinct_watchers_all_time=Absent(source="t"),
+        size_bytes=Known(value=1, source="t"),
+        imdb_rating_tenths=Absent(source="t"),
+        imdb_votes=Absent(source="t"),
+        season_rank=Absent(source="t"),
+        is_streaming_now=Known(value=False, source="t"),
+        is_managed=Known(value=True, source="t"),
+        in_curated_list=Absent(source="t"),
+        is_whitelisted=Known(value=False, source="t"),
+        others_watching=Known(value=0, source="t"),
+        ratings=ratings,
+    )
+
+
 class TestRatingGate:
     def test_the_vote_floor_rejects_noise(self) -> None:
         """8.3 from a few hundred votes is noise, not quality, and a bare rating
         floor would protect it forever."""
-        gate = RatingFloorGate(GateConfig(GateId.RATING_FLOOR, threshold=75, secondary=1000))
-        item = Facts(
-            title="Obscure",
-            days_observed_unwatched=Known(value=900.0, source="t"),
-            distinct_watchers=Absent(source="t"),
-            distinct_watchers_all_time=Absent(source="t"),
-            size_bytes=Known(value=1, source="t"),
-            imdb_rating_tenths=Known(value=83, source="imdb"),  # 8.3
-            imdb_votes=Known(value=388, source="imdb"),  # ...from 388 votes
-            season_rank=Absent(source="t"),
-            is_streaming_now=Known(value=False, source="t"),
-            is_managed=Known(value=True, source="t"),
-            in_curated_list=Absent(source="t"),
-            is_whitelisted=Known(value=False, source="t"),
-            others_watching=Known(value=0, source="t"),
-        )
-
-        result = gate.evaluate(item)
+        gate = RatingFloorGate(rules=(_IMDB_BAR,))  # IMDb 7.5 from 1,000 votes
+        result = gate.evaluate(_rating_facts(_imdb(8.3, votes=388)))
 
         assert result.outcome == ABSTAIN
         assert "388 votes" in result.detail  # too few to trust the 8.3
         assert "1,000" in result.detail  # ...against the vote floor
 
-    def test_a_stale_ratings_dataset_blocks_rather_than_silently_unprotecting(self) -> None:
-        """The inverted failure. Everywhere else, missing data protects. A missing
-        RATING removes protection -- so it must be reported as blocked, loudly, not
-        quietly treated as 'this film is unrated and therefore fair game'."""
-        gate = RatingFloorGate(GateConfig(GateId.RATING_FLOOR, threshold=75, secondary=1000))
-        item = Facts(
-            title="Casablanca",
-            days_observed_unwatched=Known(value=900.0, source="t"),
-            distinct_watchers=Absent(source="t"),
-            distinct_watchers_all_time=Absent(source="t"),
-            size_bytes=Known(value=1, source="t"),
-            imdb_rating_tenths=Unknown(reason="IMDb dataset is stale", source="imdb"),
-            imdb_votes=Unknown(reason="IMDb dataset is stale", source="imdb"),
-            season_rank=Absent(source="t"),
-            is_streaming_now=Known(value=False, source="t"),
-            is_managed=Known(value=True, source="t"),
-            in_curated_list=Absent(source="t"),
-            is_whitelisted=Known(value=False, source="t"),
-            others_watching=Known(value=0, source="t"),
+    def test_a_missing_rating_never_protects_and_never_blocks(self) -> None:
+        """A title with no rating for the bar's source is simply not kept on that bar --
+        it ABSTAINS, never PROTECTs, and (unlike the score gates) never blocks the whole
+        verdict. A degraded IMDb dataset is caught upstream, where it degrades the whole
+        snapshot to un-executable; the keep gate itself only ever spares a file."""
+        gate = RatingFloorGate(rules=(_IMDB_BAR,))
+        result = gate.evaluate(_rating_facts(()))  # no ratings at all
+
+        assert result.outcome == ABSTAIN
+        assert result.blocked is False
+        assert "no IMDb rating" in result.detail
+
+    def test_a_second_source_can_keep_a_title_imdb_would_not(self) -> None:
+        """The point of multi-source: a film below the IMDb bar but above the Rotten
+        Tomatoes critics bar is kept, on ANY-of matching."""
+        gate = RatingFloorGate(
+            rules=(_IMDB_BAR, RatingRule(source=RatingSource.ROTTEN_TOMATOES_CRITIC, floor=75)),
+            match="any",
         )
+        ratings = (
+            Rating(source=RatingSource.IMDB, value=6.8, votes=500_000, provider="imdb-dataset"),
+            Rating(source=RatingSource.ROTTEN_TOMATOES_CRITIC, value=8.4, votes=None, provider="p"),
+        )
+        result = gate.evaluate(_rating_facts(ratings))
 
-        result = gate.evaluate(item)
+        assert result.outcome == PROTECT
+        assert "Rotten Tomatoes critics 84%" in result.detail
 
-        assert result.blocked is True
-        assert "could not check" in result.detail
+    def test_all_of_matching_needs_every_bar(self) -> None:
+        """Under ALL matching, clearing one bar is not enough: a source we cannot read
+        counts as a miss, so ALL fails toward NOT protecting -- the safe direction."""
+        gate = RatingFloorGate(
+            rules=(_IMDB_BAR, RatingRule(source=RatingSource.ROTTEN_TOMATOES_CRITIC, floor=75)),
+            match="all",
+        )
+        # Clears IMDb, but carries no Rotten Tomatoes score to clear the second bar.
+        result = gate.evaluate(_rating_facts(_imdb(8.2, votes=200_000)))
+
+        assert result.outcome == ABSTAIN
 
 
 class TestExplainability:
@@ -322,6 +351,8 @@ class TestExplainability:
             in_curated_list=Absent(source="lists"),
             is_whitelisted=Known(value=False, source="plex"),
             others_watching=Known(value=0, source="tautulli"),
+            # A below-floor IMDb rating, so the rating gate reports its actual number.
+            ratings=_imdb(6.0, votes=50_000),
         )
 
         evaluation = evaluate_all(ALL_GATES, item)

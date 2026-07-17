@@ -14,6 +14,7 @@ if one were attempted.
 
 from __future__ import annotations
 
+import time
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING, Any
 
@@ -87,10 +88,11 @@ def _release_scan() -> None:
 
 #: Every gate the catalogue knows how to build. A gate in a policy with no entry here
 #: would be a protection that silently does not fire, so the builder raises instead.
+#: RATING_FLOOR is absent on purpose: it takes a set of per-source bars from the policy
+#: rather than a single GateConfig, so ``build_gates`` constructs it explicitly.
 GATE_TYPES: dict[GateId, type] = {
     GateId.WHITELISTED: WhitelistGate,
     GateId.STREAMING_NOW: StreamingNowGate,
-    GateId.RATING_FLOOR: RatingFloorGate,
     GateId.SERVER_POPULARITY: ServerPopularityGate,
     GateId.OTHERS_WATCHING: OthersWatchingGate,
     GateId.CURATED_LIST: CuratedListGate,
@@ -110,6 +112,14 @@ def build_gates(policy: PolicyBody) -> list[Gate]:
     gates: list[Gate] = []
     for setting in policy.gates:
         if not setting.enabled:
+            continue
+        # "Keep well-rated titles" is a set of per-source bars, not a single threshold, so
+        # it is built from the policy's rating rules rather than a GateConfig. An enabled
+        # gate with no bars keeps nothing -- harmless, like an empty keep-tag list.
+        if setting.gate is GateId.RATING_FLOOR:
+            gates.append(
+                RatingFloorGate(rules=policy.rating_rules(), match=policy.keep_rating_match)
+            )
             continue
         gate_type = GATE_TYPES.get(setting.gate)
         if gate_type is None:
@@ -137,6 +147,33 @@ def build_gates(policy: PolicyBody) -> list[Gate]:
 
     gates.extend(CustomProtectGate(c.to_condition()) for c in policy.protect_conditions)
     return gates
+
+
+async def _allowed_sections(session: AsyncSession) -> set[int] | None:
+    """Which Plex library section keys the scan may enrich against, from the operator's
+    Settings -> Plex choice.
+
+    ``None`` means "no scoping configured, use every library" -- the safe default, and the
+    inverse of the deletion-path empty-selection rule: this list only ever *removes* a
+    library's enrichment (its items then resolve unmatched and are kept), so an empty or
+    absent selection must widen to all, never narrow to none. Once the operator HAS synced
+    their libraries and turned some off, the enabled subset scopes the sweep and the spine;
+    if they have turned every one off, that explicit choice is honoured (an empty set,
+    which enriches nothing).
+
+    This is a configuration input that only ever *narrows* enrichment, not an evidence
+    source (rule 28). If it cannot be read, the safe fallback is the FULL-coverage
+    behaviour -- scan every library -- so a settings-read hiccup is logged and defaults to
+    ``None`` rather than aborting the whole scan.
+    """
+    try:
+        libraries = await app_settings.get_plex_libraries(session)
+    except Exception as exc:
+        log.warning("scan.library_scope_unreadable", error=str(exc))
+        return None
+    if not libraries:
+        return None
+    return {int(lib["key"]) for lib in libraries if lib.get("enabled")}
 
 
 async def build_sources(
@@ -450,6 +487,13 @@ async def _run_scan_locked(
     """The pipeline body. Only ever entered holding the one-scan claim (see run_scan)."""
     emit = on_progress or (lambda _p: None)
 
+    # Wall-clock metrics, so an operator can see how long a scan takes and where the time
+    # goes. Monotonic, never the wall clock: a clock adjustment mid-scan must not produce a
+    # negative or wildly wrong duration in the log.
+    scan_started = time.monotonic()
+    history_ms = 0
+    lists_ms = 0
+
     async with AsyncExitStack() as stack:
         # Sources are constructed INSIDE the stack scope, and build_sources enters each
         # client the moment it exists -- so a failure constructing a later client, or
@@ -466,6 +510,7 @@ async def _run_scan_locked(
             # snapshot._record_first_flagged); a longer gap than this means a genuine
             # departure.
             profile_settings = await profiles.active_profile_settings(policy_session)
+            allowed_sections = await _allowed_sections(policy_session)
         movie_gates = build_gates(movie_policy)
         tv_gates = build_gates(tv_policy)
 
@@ -480,10 +525,13 @@ async def _run_scan_locked(
         # after the first time, but on a fresh install it is what populates the table at
         # all -- without it every item's dormancy is Unknown and the scan judges nothing.
         emit(Progress("history", 0, 0, "syncing watch history"))
+        history_started = time.monotonic()
         try:
             hist = await history_sync.sync(cache_engine, tautulli)
-            log.info("scan.history_synced", rows=hist.rows)
+            history_ms = round((time.monotonic() - history_started) * 1000)
+            log.info("scan.history_synced", rows=hist.rows, duration_ms=history_ms)
         except IntegrationError as exc:
+            history_ms = round((time.monotonic() - history_started) * 1000)
             # The mirror is the primary condemning evidence: dormancy and watcher counts
             # are read from it, and a play that landed after the last successful sync is
             # invisible to scoring (the streaming veto covers only right-now, and the
@@ -532,6 +580,7 @@ async def _run_scan_locked(
         # map and an Unknown-producing index -- so overlapping them changes only the wait.
         # gather_reaped so an unexpected failure on one branch cancels and drains the
         # others before the exit stack closes the clients they are still reading through.
+        lists_started = time.monotonic()
         synced, requested, request_index = await gather_reaped(
             snapshot_service.sync_protection_lists(
                 cache_engine,
@@ -554,13 +603,17 @@ async def _run_scan_locked(
             # available-only.
             requested_by.build_request_index(seerr),
         )
-        log.info("scan.lists_synced", **{str(k): v for k, v in synced.items()})
+        lists_ms = round((time.monotonic() - lists_started) * 1000)
+        log.info(
+            "scan.lists_synced", duration_ms=lists_ms, **{str(k): v for k, v in synced.items()}
+        )
         # A whitelist that failed to sync with an empty keep-list fails OPEN -- the worst
         # direction. Degrade the snapshot for each such list so it cannot be executed.
         pre_scan_degradations += await snapshot_service.protection_sync_degradations(
             cache_engine, synced
         )
 
+        gather_started = time.monotonic()
         snapshot = await snapshot_service.scan(
             cache_engine,
             session,
@@ -580,9 +633,26 @@ async def _run_scan_locked(
             grace_days=profile_settings.grace_days,
             extra_degrade_reasons=pre_scan_degradations,
             on_progress=on_progress,
+            allowed_sections=allowed_sections,
         )
+        gather_ms = round((time.monotonic() - gather_started) * 1000)
         await session.commit()
         emit(Progress("complete", snapshot.item_count, snapshot.item_count, str(snapshot.id)))
+
+        # The one line an operator reads to answer "how long did that take, and where did
+        # the time go?" -- total plus the phase breakdown, all monotonic milliseconds.
+        # scoring is pure in-memory, so gather_ms is dominated by the source reads (the TV
+        # season resolution above all), which is where any tuning effort should go.
+        log.info(
+            "scan.completed",
+            snapshot=snapshot.id,
+            items=snapshot.item_count,
+            degraded=snapshot.degraded,
+            total_ms=round((time.monotonic() - scan_started) * 1000),
+            history_ms=history_ms,
+            lists_ms=lists_ms,
+            gather_ms=gather_ms,
+        )
 
         # The snapshot is committed, so the grace set just changed -- this is the moment
         # the "Leaving Soon" shelf (and the Discord heads-up) go stale. Best-effort by

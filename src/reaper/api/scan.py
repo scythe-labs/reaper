@@ -33,6 +33,34 @@ log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/api")
 
 
+#: Each phase's slice of the 0-100 bar, in order. The scan reports progress as (done, total)
+#: within a phase, but ``total`` changes meaning between phases (a handful of gather steps,
+#: then the item count for scoring), so a raw done/total jumps around. Mapping each phase to
+#: a fixed band and filling within it gives one bar that only ever rises. The bands are the
+#: rough share of a real scan's wall clock, with gathering and scoring the long ones.
+_PHASE_BANDS: dict[str, tuple[int, int]] = {
+    "starting": (0, 2),
+    "history": (2, 12),
+    "lists": (12, 18),
+    "gathering": (18, 45),
+    "scoring": (45, 98),
+    "done": (98, 100),
+    "complete": (100, 100),
+}
+
+
+def _phase_percent(phase: str, done: int, total: int) -> int:
+    """A monotonic 0-100 for the progress bar, from the phase and its within-phase fraction.
+
+    An unknown phase spans the whole bar so it can never read as complete early. ``total``
+    of 0 (the history and lists phases report no sub-steps) sits at the band's start rather
+    than dividing by zero, which is what made the old bar read 100% before any work began.
+    """
+    lo, hi = _PHASE_BANDS.get(phase, (0, 100))
+    fraction = min(1.0, max(0.0, done / total)) if total > 0 else 0.0
+    return round(lo + (hi - lo) * fraction)
+
+
 class ScanStatus(BaseModel):
     """Where a scan has got to. Polled by the browser; mutated in place by the running job."""
 
@@ -40,6 +68,10 @@ class ScanStatus(BaseModel):
     phase: str = "idle"
     done: int = 0
     total: int = 0
+    percent: int = 0
+    """A monotonic 0-100 for the progress bar. Derived from the phase and its fraction so it
+    only ever rises; the browser renders this directly instead of dividing done by a total
+    whose meaning changes between phases."""
     detail: str = ""
     error: str | None = None
     snapshot_id: int | None = None
@@ -69,6 +101,7 @@ async def start_scan(request: Request) -> ScanStatus:
     status.phase = "starting"
     status.done = 0
     status.total = 0
+    status.percent = 0
     status.detail = ""
     status.error = None
     status.snapshot_id = None
@@ -83,6 +116,11 @@ async def start_scan(request: Request) -> ScanStatus:
         status.done = progress.done
         status.total = progress.total
         status.detail = progress.detail
+        # Monotonic: a phase's band never dips below where the previous one ended, and max()
+        # guards against any out-of-order emit, so the bar cannot jump backward.
+        status.percent = max(
+            status.percent, _phase_percent(progress.phase, progress.done, progress.total)
+        )
 
     async def run() -> None:
         try:
@@ -95,6 +133,7 @@ async def start_scan(request: Request) -> ScanStatus:
             )
             status.snapshot_id = snapshot.id
             status.phase = "complete"
+            status.percent = 100
             status.detail = ""
         except scan_runner.ScanInProgressError as exc:
             # The scheduler's scan beat this one to the shared claim (the guard above only

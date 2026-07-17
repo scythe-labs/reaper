@@ -68,7 +68,7 @@ from reaper.engine.gates import ABSTAIN as GATE_ABSTAIN
 from reaper.engine.gates import PROTECT as GATE_PROTECT
 from reaper.engine.gates import Facts, GateId, GateResult
 from reaper.engine.observation import Absent, Known, Observation, Unknown
-from reaper.ratings import Rating
+from reaper.ratings import Rating, RatingSource, merge_by_source
 from reaper.services import library_index, lists, requested_by
 from reaper.services.display_meta import build_ratings_json
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
@@ -84,10 +84,15 @@ log = structlog.get_logger(__name__)
 #: Fail-safe default for the optional custom-rule fact observations (see gates._UNSET).
 _UNSET_OBS: Absent = Absent(source="unset")
 
-#: How many shows to resolve against Tautulli / Sonarr at once. High enough to collapse
-#: hundreds of sequential round trips into a few batches; low enough that a modest
-#: self-hosted service sees a handful of concurrent reads, never a stampede.
-RESOLVE_CONCURRENCY = 4
+#: How many shows to resolve against Tautulli / Sonarr at once. The single biggest cost in
+#: a TV scan is one Tautulli ``get_children_metadata`` plus one Sonarr ``episodes`` call per
+#: prunable show, and this bounds how many run concurrently. On a large library that is the
+#: longest serial-ish stretch of the whole scan, so this is set high enough to collapse
+#: hundreds of round trips into a handful of batches, and low enough that a modest
+#: self-hosted Tautulli/Sonarr sees a bounded burst, never a stampede. Every call is a
+#: read that fails closed (an unresolved show abstains; a failed episodes() falls back to
+#: season-level protection), so a timeout under load never over-condemns -- it only keeps.
+RESOLVE_CONCURRENCY = 8
 
 
 def _series_summary(series: Mapping[str, Any]) -> str | None:
@@ -331,6 +336,7 @@ def build_season_facts(
     whitelisted: bool,
     curated: list[lists.Membership],
     imdb_rating: ImdbRating | None = None,
+    plex_ratings: tuple[Rating, ...] = (),
     requested: Observation[bool] = _UNSET_OBS,
     show_ended: Observation[bool] = _UNSET_OBS,
     genres: Observation[str] = _UNSET_OBS,
@@ -387,6 +393,24 @@ def build_season_facts(
         Known(value=curated_names, source="lists") if curated else Absent(source="lists")
     )
 
+    # The multi-source keep gate reads this. TV has no Radarr-style ratings object, so it
+    # is the show's IMDb dataset value (applied to each season, like the single-source
+    # rating floor above) plus whatever Plex carries for the show (which may add TMDb or a
+    # Rotten Tomatoes score, depending on the Plex agent). The dataset value wins for IMDb.
+    dataset_rating = (
+        [
+            Rating(
+                source=RatingSource.IMDB,
+                value=imdb_rating.average_rating,
+                votes=int(imdb_rating.num_votes),
+                provider="imdb-dataset",
+            )
+        ]
+        if imdb_rating is not None
+        else []
+    )
+    rating_set = merge_by_source(dataset_rating, list(plex_ratings))
+
     return Facts(
         title=title,
         days_observed_unwatched=dormancy,
@@ -427,6 +451,7 @@ def build_season_facts(
         release_age_days=Absent(source="sonarr"),
         quality=Absent(source="sonarr"),
         show_ended=show_ended,
+        ratings=rating_set,
     )
 
 
@@ -447,14 +472,19 @@ async def build_tv_index(
     plex: PlexClient | None,
     *,
     degrade: Any,
+    allowed_sections: set[int] | None = None,
 ) -> identity.PlexIndex:
     """The Plex show library, inverted for id / basename / title matching.
 
     One shared implementation with ``snapshot.build_movie_index`` -- see
     ``services.library_index`` for the spine + sweep design and its failure semantics.
-    A show's own added_at is not used for dormancy, which is measured per season.
+    ``allowed_sections`` scopes the read to the show libraries the operator included in
+    scans (``None`` = all). A show's own added_at is not used for dormancy, which is
+    measured per season.
     """
-    return await library_index.build_index(tautulli, plex, section_type="show", degrade=degrade)
+    return await library_index.build_index(
+        tautulli, plex, section_type="show", degrade=degrade, allowed_sections=allowed_sections
+    )
 
 
 async def resolve_season_keys(
@@ -684,6 +714,7 @@ async def gather(
     keep_specials: bool = True,
     flag_keep_conflicts: bool = True,
     membership_index: lists.MembershipIndex | None = None,
+    allowed_sections: set[int] | None = None,
 ) -> list[SeasonJudgement]:
     """Gather every prunable season across every Sonarr instance, ready to judge.
 
@@ -715,7 +746,7 @@ async def gather(
     # are fetched concurrently -- the same shape as the movie fan-out in snapshot.scan,
     # with the same reap-on-failure discipline.
     tv_index, *series_lists = await gather_reaped(
-        build_tv_index(tautulli, plex, degrade=degrade),
+        build_tv_index(tautulli, plex, degrade=degrade, allowed_sections=allowed_sections),
         *(_series_from(source) for source in sonarrs),
     )
 
@@ -1011,6 +1042,7 @@ def _judge_series(
             whitelisted=bool(whitelists) or media_key in whitelisted,
             curated=curated,
             imdb_rating=show_rating,
+            plex_ratings=item.show_plex_ratings,
             requested=requested_obs,
             show_ended=show_ended_obs,
             genres=show_genres_obs,

@@ -384,6 +384,11 @@ def facts_as_of(
         # Not applicable outside the requester rule: with no requester, "others" is
         # everyone, and the gate would protect anything ever played.
         others_watching=Absent(source="backtest"),
+        # No multi-source ratings in the historical reconstruction: the dataset carries a
+        # single IMDb value (imdb_rating_tenths above), not Radarr's/Plex's rating objects.
+        # Empty means the multi-source keep gate simply does not fire here -- it only ever
+        # removes a protection from a read-only simulation, never adds delete pressure.
+        ratings=(),
     )
 
 

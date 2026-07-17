@@ -19,10 +19,12 @@ from reaper.engine.policy import (
     GateSetting,
     PolicyBody,
     ProfileSettings,
+    RatingRuleSpec,
     SignalSetting,
     inspect,
 )
 from reaper.engine.signals import SignalId
+from reaper.ratings import RatingSource
 
 
 def _policy(**overrides: object) -> PolicyBody:
@@ -113,6 +115,49 @@ class TestTheHash:
         )
 
 
+class TestEvidenceHash:
+    """The evidence hash gates the zero-scan replay: it stays the same for edits a frozen-
+    facts replay reproduces exactly, and changes for edits that alter what the scan gathers."""
+
+    def test_a_weight_edit_keeps_the_evidence_hash(self) -> None:
+        a = _policy(signals=(SignalSetting(signal=SignalId.UNWATCHED, weight=50, saturate_at=730),))
+        b = _policy(signals=(SignalSetting(signal=SignalId.UNWATCHED, weight=80, saturate_at=730),))
+        assert a.scoring_hash() != b.scoring_hash()  # scoring behaviour moved
+        assert a.evidence_hash() == b.evidence_hash()  # ...but the evidence is the same -> replay
+
+    def test_a_rating_bar_edit_keeps_the_evidence_hash(self) -> None:
+        a = _policy(
+            keep_rating_rules=(RatingRuleSpec(source=RatingSource.IMDB, floor=75, min_votes=1000),)
+        )
+        b = _policy(
+            keep_rating_rules=(RatingRuleSpec(source=RatingSource.IMDB, floor=70, min_votes=1000),)
+        )
+        assert a.scoring_hash() != b.scoring_hash()
+        assert a.evidence_hash() == b.evidence_hash()
+
+    def test_changing_the_popularity_window_changes_the_evidence_hash(self) -> None:
+        # The window re-buckets the frozen watcher counts, so the frozen Facts are stale.
+        a = _policy(
+            gates=(GateSetting(gate=GateId.SERVER_POPULARITY, threshold=3, window_days=365),)
+        )
+        b = _policy(
+            gates=(GateSetting(gate=GateId.SERVER_POPULARITY, threshold=3, window_days=90),)
+        )
+        assert a.evidence_hash() != b.evidence_hash()
+
+    def test_changing_keep_tags_changes_the_evidence_hash(self) -> None:
+        # The whitelist is re-synced from the *arr at scan time, so a new keep-tag needs a scan.
+        a = _policy(keep_tags=("reaper-keep",))
+        b = _policy(keep_tags=("keep-this",))
+        assert a.evidence_hash() != b.evidence_hash()
+
+    def test_changing_a_season_rule_changes_the_evidence_hash(self) -> None:
+        # keep_last_seasons recomputes the frozen season-pruning guard, so it needs a scan.
+        a = _policy(media_type="tv", keep_last_seasons=2)
+        b = _policy(media_type="tv", keep_last_seasons=4)
+        assert a.evidence_hash() != b.evidence_hash()
+
+
 class TestFloorsThatCannotBeZero:
     """0 never means 'disabled' and blank never means 'unlimited'.
 
@@ -122,15 +167,22 @@ class TestFloorsThatCannotBeZero:
     """
 
     def test_a_vote_floor_of_zero_is_refused(self) -> None:
-        """A rating floor without a vote floor protects an 8.3 drawn from a few
-        hundred votes -- a number that means nothing at all."""
+        """A rating bar without a vote floor protects an 8.3 drawn from a few
+        hundred votes -- a number that means nothing at all. IMDb counts votes, so a
+        vote floor is required on it."""
         with pytest.raises(ValidationError, match="vote floor of 0"):
-            GateSetting(gate=GateId.RATING_FLOOR, threshold=75, secondary=0)
+            RatingRuleSpec(source=RatingSource.IMDB, floor=75, min_votes=0)
+
+    def test_a_vote_floor_on_a_percentage_source_is_refused(self) -> None:
+        """Rotten Tomatoes is a percentage with no vote count, so a vote floor on it would
+        silently do nothing -- refuse it rather than let the owner set a dead number."""
+        with pytest.raises(ValidationError, match="no vote count"):
+            RatingRuleSpec(source=RatingSource.ROTTEN_TOMATOES_CRITIC, floor=75, min_votes=500)
 
     def test_a_rating_floor_out_of_range_is_refused(self) -> None:
-        """A Tomatometer percentage above 100 cannot even be spelled."""
-        with pytest.raises(ValidationError, match="tenths"):
-            GateSetting(gate=GateId.RATING_FLOOR, threshold=150, secondary=1000)
+        """A percentage above 100, or an IMDb floor above 10, cannot even be spelled."""
+        with pytest.raises(ValidationError):
+            RatingRuleSpec(source=RatingSource.IMDB, floor=150, min_votes=1000)
 
     def test_a_watcher_floor_of_zero_is_refused(self) -> None:
         """It would protect every item on the server -- which looks safe, until the
@@ -216,9 +268,13 @@ class TestDefaultPolicy:
         assert GateId.UNMANAGED in enabled
 
     def test_the_default_rating_gate_has_a_real_vote_floor(self) -> None:
-        rating = next(g for g in DEFAULT_MOVIE_POLICY.gates if g.gate is GateId.RATING_FLOOR)
-        assert rating.threshold == 75  # 7.5, in tenths
-        assert rating.secondary == 1000
+        # The gate is enabled, and its one default bar is IMDb 7.5 from 1,000 votes.
+        assert any(g.gate is GateId.RATING_FLOOR and g.enabled for g in DEFAULT_MOVIE_POLICY.gates)
+        bars = DEFAULT_MOVIE_POLICY.keep_rating_rules
+        assert len(bars) == 1
+        assert bars[0].source is RatingSource.IMDB
+        assert bars[0].floor == 75  # 7.5, in tenths
+        assert bars[0].min_votes == 1000
 
 
 class TestTheDangerousConfigDetector:
@@ -226,20 +282,25 @@ class TestTheDangerousConfigDetector:
     PROBABLY wrong -- and no validator can tell them apart, because the values are
     legal either way."""
 
-    def test_a_tomatometer_typed_into_the_imdb_field_is_flagged(self) -> None:
-        """The archetype. A user thinking in Rotten Tomatoes types 96. That is a
-        legal IMDb floor (9.6) which protects almost nothing -- and it is
-        indistinguishable, to a validator, from someone who genuinely wants 9.6.
-        So we say so instead of pretending to know."""
-        body = _policy(gates=(GateSetting(gate=GateId.RATING_FLOOR, threshold=96, secondary=1000),))
+    def test_a_very_high_imdb_bar_is_flagged(self) -> None:
+        """A user thinking in Rotten Tomatoes types 96 as an IMDb bar. That is a legal
+        IMDb floor (9.6) which protects almost nothing, and it is indistinguishable, to a
+        validator, from someone who genuinely wants 9.6. So we say so."""
+        body = _policy(
+            gates=(GateSetting(gate=GateId.RATING_FLOOR),),
+            keep_rating_rules=(RatingRuleSpec(source=RatingSource.IMDB, floor=96, min_votes=1000),),
+        )
 
         warnings = inspect(body, ProfileSettings())
 
-        assert any("Rotten Tomatoes" in w.message for w in warnings)
+        assert any("protect almost nothing" in w.message for w in warnings)
 
     def test_a_floor_typed_in_whole_points_is_flagged(self) -> None:
         """Typing 7 meaning 7.0 gives a floor of 0.7, which protects everything."""
-        body = _policy(gates=(GateSetting(gate=GateId.RATING_FLOOR, threshold=7, secondary=1000),))
+        body = _policy(
+            gates=(GateSetting(gate=GateId.RATING_FLOOR),),
+            keep_rating_rules=(RatingRuleSpec(source=RatingSource.IMDB, floor=7, min_votes=1000),),
+        )
 
         warnings = inspect(body, ProfileSettings())
 

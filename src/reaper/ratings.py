@@ -74,6 +74,30 @@ _PERCENTAGE_SOURCES = frozenset(
 )
 
 
+def is_percentage_source(source: RatingSource) -> bool:
+    """Whether a source is a 0-100 percentage (Rotten Tomatoes, Metacritic) rather than a
+    0-10 average. The UI reads this to show a ``%`` box with no vote floor for these, and a
+    ``/10`` box with a vote floor for IMDb/TMDb."""
+    return source in _PERCENTAGE_SOURCES
+
+
+#: Operator-facing names for each source. Never a raw enum value or an id in the UI.
+SOURCE_LABELS: dict[RatingSource, str] = {
+    RatingSource.IMDB: "IMDb",
+    RatingSource.TMDB: "TMDb",
+    RatingSource.ROTTEN_TOMATOES_CRITIC: "Rotten Tomatoes critics",
+    RatingSource.ROTTEN_TOMATOES_AUDIENCE: "Rotten Tomatoes audience",
+    RatingSource.METACRITIC: "Metacritic",
+    RatingSource.TRAKT: "Trakt",
+    RatingSource.TVDB: "TVDB",
+    RatingSource.UNKNOWN: "an unknown source",
+}
+
+
+def source_label(source: RatingSource) -> str:
+    return SOURCE_LABELS.get(source, source.value)
+
+
 @dataclass(frozen=True)
 class Rating:
     """A rating, with the provenance required to interpret it."""
@@ -112,6 +136,19 @@ class Rating:
         """The string the why-panel shows. Provenance is not optional."""
         votes = f" from {self.votes:,} votes" if self.votes else ""
         return f"{self.source.value} {self.value:.1f}/10{votes} (via {self.provider})"
+
+    def describe_for_user(self) -> str:
+        """Plain-language form for operator-facing copy: no id, no provider, native scale.
+
+        Percentage sources read as a percentage (``Rotten Tomatoes critics 84%``); the 0-10
+        sources read on their own scale with the vote count that makes the number mean
+        something (``8.2 on IMDb from 120,000 votes``).
+        """
+        label = source_label(self.source)
+        if self.source in _PERCENTAGE_SOURCES:
+            return f"{label} {round(self.value * 10)}%"
+        votes = f" from {self.votes:,} votes" if self.votes else ""
+        return f"{self.value:.1f} on {label}{votes}"
 
 
 def _to_ten(value: float, source: RatingSource) -> float:
@@ -238,3 +275,22 @@ def from_radarr(ratings: dict[str, Any] | None, *, provider: str = "radarr") -> 
 
 def pick(ratings: list[Rating], source: RatingSource) -> Rating | None:
     return next((r for r in ratings if r.source is source), None)
+
+
+def merge_by_source(*groups: list[Rating] | tuple[Rating, ...]) -> tuple[Rating, ...]:
+    """One rating per source, first writer wins, UNKNOWN dropped.
+
+    The scan holds several rating lists for one item (the IMDb dataset value, Radarr's
+    ``ratings`` object, Plex's two slots). They overlap: a film can carry an IMDb score
+    from both the dataset and Radarr. Pass the groups in **precedence order** (most
+    authoritative first, e.g. the dataset's IMDb, then Radarr, then Plex) and the first
+    rating seen for a source wins. An ``UNKNOWN``-source rating is never admitted, so a
+    protection can never be decided on a number we cannot interpret.
+    """
+    out: dict[RatingSource, Rating] = {}
+    for group in groups:
+        for rating in group:
+            if rating.source is RatingSource.UNKNOWN:
+                continue
+            out.setdefault(rating.source, rating)
+    return tuple(out.values())

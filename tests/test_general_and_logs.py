@@ -41,6 +41,40 @@ from reaper.main import create_app
 from tests._auth import login
 
 
+class TestScanProgressPercent:
+    """The bar reads a monotonic 0-100, never a raw done/total whose denominator changes
+    between phases (which made it start full, then jump to 40%)."""
+
+    def test_the_starting_phase_is_near_zero_not_full(self) -> None:
+        from reaper.api.scan import _phase_percent
+
+        # total=0 in the early phases must sit at the band start, never divide-by-zero to
+        # 100 -- the exact "starts full" bug.
+        assert _phase_percent("starting", 0, 0) == 0
+        assert _phase_percent("history", 0, 0) == 2
+        assert _phase_percent("gathering", 0, 5) == 18
+
+    def test_percent_only_rises_across_a_whole_scan(self) -> None:
+        from reaper.api.scan import _phase_percent
+
+        steps = [
+            ("starting", 0, 0),
+            ("history", 0, 0),
+            ("lists", 0, 0),
+            ("gathering", 2, 5),
+            ("gathering", 5, 5),
+            ("scoring", 0, 3446),
+            ("scoring", 1700, 3446),
+            ("scoring", 3446, 3446),
+            ("done", 3446, 3446),
+            ("complete", 3446, 3446),
+        ]
+        percents = [_phase_percent(p, d, t) for p, d, t in steps]
+        assert percents == sorted(percents), percents  # monotonic
+        assert percents[0] == 0
+        assert percents[-1] == 100
+
+
 @pytest.fixture
 def client(tmp_path: Path) -> Iterator[TestClient]:
     """A logged-in client over an empty database: exactly a fresh install."""

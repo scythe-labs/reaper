@@ -36,6 +36,8 @@ import {
   type Policy,
   type PolicyBody,
   type ProfileSettings,
+  type RatingRule,
+  type RatingSource,
   type SignalSetting,
   type Simulation,
   type VocabField,
@@ -48,7 +50,7 @@ import { Switch } from "./Switch";
 // Plain-English identities for every protection and signal, so the editor reads like a
 // person wrote it instead of exposing the engine's field names. `unit` picks the control:
 // a duration gets a value+unit picker, a rating a 0–10 box, a count a plain number.
-type GateMeta = { label: string; help: string; unit?: "days" | "people" | "rating" };
+type GateMeta = { label: string; help: string; unit?: "days" | "people" };
 
 const GATE_META: Record<string, GateMeta> = {
   min_dormancy: {
@@ -63,8 +65,7 @@ const GATE_META: Record<string, GateMeta> = {
   },
   rating_floor: {
     label: "Keep well-rated titles",
-    help: "A title rated at least this high on IMDb, by enough voters, is kept.",
-    unit: "rating",
+    help: "A title well rated on any source you trust is kept.",
   },
   others_watching: {
     label: "Protect what other people watch",
@@ -304,26 +305,197 @@ function GateRow({ gate, onChange }: { gate: GateSetting; onChange: (g: GateSett
           <span>{(gate.threshold || 1) === 1 ? "person" : "people"}</span>
         </div>
       )}
-      {gate.enabled && meta.unit === "rating" && (
-        <div className="rule-control">
-          <span>IMDb</span>
+    </li>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Keep well-rated: a set of per-source rating bars, cleared ANY-of (or ALL).
+// ---------------------------------------------------------------------------
+
+type RatingSourceMeta = {
+  label: string;
+  scale: "ten" | "pct";
+  votes: boolean;
+  defFloor: number; // in tenths (7.5 -> 75; 75% -> 75)
+  defVotes: number;
+};
+
+const RATING_META: Record<RatingSource, RatingSourceMeta> = {
+  imdb: { label: "IMDb", scale: "ten", votes: true, defFloor: 65, defVotes: 5000 },
+  rotten_tomatoes_critic: { label: "Rotten Tomatoes critics", scale: "pct", votes: false, defFloor: 75, defVotes: 0 },
+  rotten_tomatoes_audience: { label: "Rotten Tomatoes audience", scale: "pct", votes: false, defFloor: 80, defVotes: 0 },
+  metacritic: { label: "Metacritic", scale: "pct", votes: false, defFloor: 70, defVotes: 0 },
+  tmdb: { label: "TMDb", scale: "ten", votes: true, defFloor: 70, defVotes: 500 },
+};
+const RATING_ORDER: RatingSource[] = [
+  "imdb",
+  "rotten_tomatoes_critic",
+  "rotten_tomatoes_audience",
+  "metacritic",
+  "tmdb",
+];
+
+/** One title clears one bar if `describe` reads true; the summary reads the whole set. */
+function describeBar(rule: RatingRule): string {
+  const meta = RATING_META[rule.source];
+  if (meta.scale === "pct") return `${meta.label} ${rule.floor}%`;
+  const votes = meta.votes && rule.min_votes > 0 ? ` from ${rule.min_votes.toLocaleString()}+ votes` : "";
+  return `${(rule.floor / 10).toFixed(1)} on ${meta.label}${votes}`;
+}
+
+/** One editable bar: a source, its threshold in the source's own units, and (for the vote
+ *  sources) a vote floor. Styled with the same rule-control row the other protections use. */
+function RatingBarRow({
+  rule,
+  onChange,
+  onRemove,
+}: {
+  rule: RatingRule;
+  onChange: (r: RatingRule) => void;
+  onRemove: () => void;
+}) {
+  const meta = RATING_META[rule.source];
+  return (
+    <div className="rule-control rating-bar">
+      <span className="rating-bar-src">{meta.label}</span>
+      <span>at least</span>
+      {meta.scale === "ten" ? (
+        <>
           <input
             type="number"
             min={0}
             max={10}
             step={0.1}
-            value={(gate.threshold / 10).toFixed(1)}
-            onChange={(e) => onChange({ ...gate, threshold: Math.round(Number(e.target.value) * 10) })}
+            value={(rule.floor / 10).toFixed(1)}
+            onChange={(e) => onChange({ ...rule, floor: Math.round(Number(e.target.value) * 10) })}
           />
-          <span>from at least</span>
+          <span>/ 10</span>
+          {meta.votes && (
+            <>
+              <span>from at least</span>
+              <input
+                type="number"
+                min={0}
+                step={100}
+                value={rule.min_votes}
+                onChange={(e) => onChange({ ...rule, min_votes: Math.max(0, Number(e.target.value) || 0) })}
+              />
+              <span>votes</span>
+            </>
+          )}
+        </>
+      ) : (
+        <>
           <input
             type="number"
             min={0}
-            step={100}
-            value={gate.secondary}
-            onChange={(e) => onChange({ ...gate, secondary: Number(e.target.value) || 0 })}
+            max={100}
+            step={1}
+            value={rule.floor}
+            onChange={(e) => onChange({ ...rule, floor: Number(e.target.value) || 0 })}
           />
-          <span>votes</span>
+          <span>%</span>
+        </>
+      )}
+      <button
+        type="button"
+        className="rating-remove"
+        onClick={onRemove}
+        aria-label={`Remove the ${meta.label} bar`}
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
+/** "Keep well-rated titles": the toggle, then a bar per source, an add-source picker, an
+ *  any/all switch, and a plain-English summary -- the mockup's layout in the policy's own
+ *  controls. Replaces the single-IMDb row the gate used to carry. */
+function RatingFloorRow({
+  gate,
+  rules,
+  match,
+  mediaType,
+  onGate,
+  onRules,
+  onMatch,
+}: {
+  gate: GateSetting;
+  rules: RatingRule[];
+  match: "any" | "all";
+  mediaType: "movie" | "tv";
+  onGate: (g: GateSetting) => void;
+  onRules: (r: RatingRule[]) => void;
+  onMatch: (m: "any" | "all") => void;
+}) {
+  const used = new Set(rules.map((r) => r.source));
+  const available = RATING_ORDER.filter((s) => !used.has(s));
+  const addSource = (source: RatingSource) => {
+    const meta = RATING_META[source];
+    onRules([...rules, { source, floor: meta.defFloor, min_votes: meta.votes ? meta.defVotes : 0 }]);
+  };
+  const joiner = match === "any" ? ", or " : ", and ";
+  const summary =
+    rules.length === 0
+      ? "No rating bars set, so this protection keeps nothing."
+      : `Keep a title rated at least ${rules.map(describeBar).join(joiner)}.`;
+
+  return (
+    <li className="rule-row">
+      <label className="toggle rule-toggle">
+        <Switch checked={gate.enabled} onChange={(enabled) => onGate({ ...gate, enabled })} />
+        <span className="rule-name">Keep well-rated titles</span>
+      </label>
+      <p className="help rule-help">
+        A title that clears {match === "any" ? "any one" : "all"} of these bars is kept, whatever it
+        scored.
+      </p>
+      {gate.enabled && (
+        <div className="rating-bars">
+          {rules.map((rule, i) => (
+            <RatingBarRow
+              key={rule.source}
+              rule={rule}
+              onChange={(r) => onRules(rules.map((x, j) => (j === i ? r : x)))}
+              onRemove={() => onRules(rules.filter((_, j) => j !== i))}
+            />
+          ))}
+          {available.length > 0 && (
+            <div className="rule-control">
+              <select
+                value=""
+                aria-label="Add a rating source"
+                onChange={(e) => {
+                  if (e.target.value) addSource(e.target.value as RatingSource);
+                }}
+              >
+                <option value="">Add a rating source…</option>
+                {available.map((s) => (
+                  <option key={s} value={s}>
+                    {RATING_META[s].label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {rules.length >= 2 && (
+            <label className="tag-match">
+              <span className="muted">Keep a title that clears</span>
+              <select value={match} onChange={(e) => onMatch(e.target.value as "any" | "all")}>
+                <option value="any">any one of these</option>
+                <option value="all">all of these</option>
+              </select>
+            </label>
+          )}
+          <p className="help">{summary}</p>
+          {mediaType === "tv" && (
+            <p className="help">
+              TV has IMDb, plus any scores Plex carries for the show. Rotten Tomatoes and Metacritic
+              are often missing for TV, so those bars just won't match a show.
+            </p>
+          )}
         </div>
       )}
     </li>
@@ -1072,22 +1244,43 @@ function StaleNotice({
   starting,
   startError,
   onScan,
+  percent,
+  detail,
 }: {
   scanning: boolean;
   starting: boolean;
   startError: string | null;
   onScan: () => void;
+  percent: number;
+  detail: string;
 }) {
   return (
     <div className="sim sim-info">
-      <h3>Needs a fresh scan</h3>
-      <p>
-        You changed a weight or a protection, so the last scan's scores no longer match this
-        policy. Scan to see what it would do.
-      </p>
-      <button className="primary sm" onClick={onScan} disabled={scanning || starting}>
-        {scanning ? "Scanning…" : starting ? "Starting…" : "Scan now"}
-      </button>
+      <h3>{scanning ? "Rescanning to apply your changes" : "Needs a fresh scan"}</h3>
+      {scanning ? (
+        <>
+          <p>
+            Scoring your library under the new policy. You can leave this page; it keeps running,
+            and the numbers here refresh when it finishes.
+          </p>
+          <p className="muted">
+            {detail || "Working"} · {percent}%
+          </p>
+          <div className="bar">
+            <div className="bar-fill" style={{ width: `${percent}%` }} />
+          </div>
+        </>
+      ) : (
+        <>
+          <p>
+            You changed how the scan reads your library (a watch window, a keep tag, or a season
+            rule), so the last scan's evidence no longer fits this policy. Scan to apply it.
+          </p>
+          <button className="primary sm" onClick={onScan} disabled={starting}>
+            {starting ? "Starting…" : "Scan now"}
+          </button>
+        </>
+      )}
       {startError && <p className="error">The scan didn't start: {startError}</p>}
     </div>
   );
@@ -1342,6 +1535,12 @@ export function PolicyEditor({
         cur && cur.media_type === policy.body.media_type ? policy.body : cur,
       );
       void queryClient.invalidateQueries({ queryKey: ["policy", savedType] });
+      // Apply the saved policy to the review queue by re-scanning in the background. The
+      // queue and the simulator read the last snapshot's stored verdicts, which were
+      // produced by the OLD policy; a rescan re-scores the library under the new one, and
+      // the running->stopped effect above refreshes the simulator and queue when it lands.
+      // Idempotent server-side: if a scan is already running this just follows it.
+      startScan.mutate();
     },
   });
 
@@ -1636,32 +1835,69 @@ export function PolicyEditor({
         </p>
 
         <ul className="rule-list">
-          {draft.gates.map((gate, i) => (
-            <GateRow
-              key={gate.gate}
-              gate={gate}
-              onChange={(g) => {
-                const gates = [...draft.gates];
-                gates[i] = g;
-                update({ gates });
-              }}
-            />
-          ))}
+          {draft.gates.map((gate, i) => {
+            const setGate = (g: GateSetting) => {
+              const gates = [...draft.gates];
+              gates[i] = g;
+              update({ gates });
+            };
+            // "Spare titles you've tagged" moves down into its own tags card below, where
+            // the toggle and the tags it depends on sit together -- so it is skipped here.
+            if (gate.gate === "whitelisted") return null;
+            // "Keep well-rated titles" carries a whole set of per-source bars, so it gets
+            // its own row rather than the single-threshold GateRow.
+            if (gate.gate === "rating_floor") {
+              return (
+                <RatingFloorRow
+                  key={gate.gate}
+                  gate={gate}
+                  rules={draft.keep_rating_rules}
+                  match={draft.keep_rating_match}
+                  mediaType={mediaType}
+                  onGate={setGate}
+                  onRules={(keep_rating_rules) => update({ keep_rating_rules })}
+                  onMatch={(keep_rating_match) => update({ keep_rating_match })}
+                />
+              );
+            }
+            return <GateRow key={gate.gate} gate={gate} onChange={setGate} />;
+          })}
         </ul>
 
-        <div className="rules-card">
-          <h3>Tags that spare a title</h3>
-          <p className="blurb">
-            Applies when <em>“Spare titles you've tagged”</em> above is on.
-          </p>
-          <KeepTagsEditor
-            tags={draft.keep_tags}
-            match={draft.keep_tags_match}
-            onTags={(keep_tags) => update({ keep_tags })}
-            onMatch={(keep_tags_match) => update({ keep_tags_match })}
-          />
-          <p className="help">Type each tag exactly as it appears in Sonarr or Radarr.</p>
-        </div>
+        {(() => {
+          const i = draft.gates.findIndex((g) => g.gate === "whitelisted");
+          const whitelist = i >= 0 ? draft.gates[i] : undefined;
+          if (!whitelist) return null;
+          const setWhitelist = (enabled: boolean) => {
+            const gates = [...draft.gates];
+            gates[i] = { ...whitelist, enabled };
+            update({ gates });
+          };
+          return (
+            <div className="rules-card">
+              <h3>Tags that spare a title</h3>
+              <label className="toggle rule-toggle">
+                <Switch checked={whitelist.enabled} onChange={setWhitelist} />
+                <span className="rule-name">Spare titles you've tagged</span>
+              </label>
+              <p className="help rule-help">
+                A title carrying one of these tags in Sonarr/Radarr is kept, whatever it scored. A
+                ‘Never Reap’ Plex collection is honoured too.
+              </p>
+              {whitelist.enabled && (
+                <>
+                  <KeepTagsEditor
+                    tags={draft.keep_tags}
+                    match={draft.keep_tags_match}
+                    onTags={(keep_tags) => update({ keep_tags })}
+                    onMatch={(keep_tags_match) => update({ keep_tags_match })}
+                  />
+                  <p className="help">Type each tag exactly as it appears in Sonarr or Radarr.</p>
+                </>
+              )}
+            </div>
+          );
+        })()}
 
         {mediaType === "tv" && (
           <div className="season-card">
@@ -2005,6 +2241,8 @@ export function PolicyEditor({
               starting={startScan.isPending}
               startError={startScan.error ? startScan.error.message : null}
               onScan={() => startScan.mutate()}
+              percent={scanState?.percent ?? 0}
+              detail={scanState?.detail ?? ""}
             />
           )
         ) : (

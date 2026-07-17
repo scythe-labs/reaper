@@ -68,15 +68,26 @@ async def build_index(
     *,
     section_type: str,
     degrade: Callable[[str], None],
+    allowed_sections: set[int] | None = None,
 ) -> identity.PlexIndex:
     """The Plex library of one ``section_type``, inverted for id / basename / title
-    matching. See the module docstring for the spine + sweep design."""
+    matching. See the module docstring for the spine + sweep design.
+
+    ``allowed_sections`` scopes both reads to the libraries the operator included in scans
+    (Settings -> Plex): ``None`` means every library of this type, a set restricts to those
+    section keys. The **spine and the sweep are filtered on the same set** -- filtering only
+    one would leave the rating-key join reading a section the other never listed, and an
+    inconsistent join is exactly the drift rule 3 forbids. Scoping only ever removes an
+    item's enrichment (it then resolves unmatched and is kept), never adds condemnation.
+    """
 
     async def _sweep() -> dict[int, identity.PlexItem]:
         if plex is None:
             return {}
         try:
-            return await plex.library_guid_index(section_type=section_type)
+            return await plex.library_guid_index(
+                section_type=section_type, allowed_sections=allowed_sections
+            )
         except PlexError as exc:
             degrade(
                 f"Plex GUID sweep failed ({exc}): id matching unavailable, snapshot un-executable"
@@ -89,6 +100,8 @@ async def build_index(
             if library.get("section_type") != section_type:
                 continue
             section_id = int(library["section_id"])
+            if allowed_sections is not None and section_id not in allowed_sections:
+                continue
             start = 0
             while True:
                 page = await tautulli.library_media_info(section_id, start=start, length=1000)

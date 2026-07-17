@@ -31,6 +31,7 @@ from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import PolicyBody
 from reaper.engine.signals import SignalConfig, score
 from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict
+from reaper.ratings import Rating, RatingSource
 from reaper.services.scan_runner import build_gates
 
 FIXTURE = Path(__file__).parent / "fixtures" / "policy_lab_vectors.json"
@@ -86,6 +87,29 @@ def to_observation(name: str, obs: dict[str, Any]) -> Known[Any] | Absent | Unkn
     return Unknown(reason="recorded as unobservable", source="lab")
 
 
+def _ratings_from(f: dict[str, Any]) -> tuple[Rating, ...]:
+    """Synthesize the multi-source rating set from the fixture's IMDb fields.
+
+    The fixture predates the multi-source gate and records only the IMDb dataset value
+    (``imdb_rating_tenths`` / ``imdb_votes``). Production turns that same value into a
+    ``Rating`` in ``Facts.ratings`` (services.snapshot.build_facts), so mirroring it here
+    lets the pinned baseline keep reproducing under the new gate without regenerating the
+    fixture -- the number the gate reads is identical, just carried as a Rating."""
+    tenths = f["imdb_rating_tenths"]
+    if tenths.get("state") != "known":
+        return ()
+    votes_obs = f["imdb_votes"]
+    votes = int(votes_obs["value"]) if votes_obs.get("state") == "known" else None
+    return (
+        Rating(
+            source=RatingSource.IMDB,
+            value=int(tenths["value"]) / 10,
+            votes=votes,
+            provider="imdb-dataset",
+        ),
+    )
+
+
 def to_facts(vector: dict[str, Any]) -> Facts:
     f = vector["facts"]
     return Facts(
@@ -111,6 +135,7 @@ def to_facts(vector: dict[str, Any]) -> Facts:
         release_age_days=to_observation("release_age_days", f["release_age_days"]),
         quality=to_observation("quality", f["quality"]),
         show_ended=to_observation("show_ended", f["show_ended"]),
+        ratings=_ratings_from(f),
     )
 
 

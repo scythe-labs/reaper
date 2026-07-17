@@ -1225,13 +1225,24 @@ function logTime(ts: string): string {
   return parsed.toLocaleTimeString([], { hour12: false });
 }
 
+// The accumulated log window, kept at module scope so it survives navigating away from the
+// Logs tab and back. LogsPanel unmounts when you leave the tab; without this its lines would
+// reset to empty and the panel would show "Nothing yet" until the next poll. Seeded from
+// here on mount, so the last lines are on screen immediately.
+const _logStore: { lines: LogLine[]; cursor: number; wrap: boolean } = {
+  lines: [],
+  cursor: 0,
+  wrap: false,
+};
+
 function LogsPanel() {
   const [live, setLive] = useState(true);
   const [search, setSearch] = useState("");
   const [minLevel, setMinLevel] = useState("all");
-  const [lines, setLines] = useState<LogLine[]>([]);
+  const [wrap, setWrap] = useState(_logStore.wrap);
+  const [lines, setLines] = useState<LogLine[]>(_logStore.lines);
   const [recordLevel, setRecordLevel] = useState<string | null>(null);
-  const cursor = useRef(0);
+  const cursor = useRef(_logStore.cursor);
   const consoleRef = useRef<HTMLDivElement | null>(null);
 
   const logs = useQuery({
@@ -1240,18 +1251,22 @@ function LogsPanel() {
     refetchInterval: live ? 2000 : false,
   });
 
-  // Fold each page into the accumulated window. The seq guard makes this idempotent
-  // when React Query hands the same page twice (mount + focus refetch).
+  // Fold each page into the accumulated window, mirrored into the module store so the
+  // window survives leaving the tab. The seq guard makes this idempotent when React Query
+  // hands the same page twice (mount + focus refetch).
   useEffect(() => {
     const page = logs.data;
     if (!page) return;
     cursor.current = page.last_seq;
+    _logStore.cursor = page.last_seq;
     setRecordLevel(page.level);
     if (page.lines.length) {
       setLines((prev) => {
         const newest = prev.at(-1)?.seq ?? 0;
         const fresh = page.lines.filter((l) => l.seq > newest);
-        return fresh.length ? [...prev, ...fresh].slice(-2000) : prev;
+        const next = fresh.length ? [...prev, ...fresh].slice(-2000) : prev;
+        _logStore.lines = next;
+        return next;
       });
     }
   }, [logs.data]);
@@ -1310,6 +1325,18 @@ function LogsPanel() {
           <span className="live-dot" aria-hidden="true" />
           {live ? "Live · Pause" : "Paused · Resume"}
         </button>
+        <button
+          type="button"
+          className={wrap ? "log-wrap-btn on" : "log-wrap-btn"}
+          aria-pressed={wrap}
+          onClick={() => {
+            const next = !wrap;
+            setWrap(next);
+            _logStore.wrap = next;
+          }}
+        >
+          Wrap {wrap ? "on" : "off"}
+        </button>
         <span className="muted log-count">
           {visible.length === lines.length
             ? `${count(lines.length)} ${lines.length === 1 ? "line" : "lines"}`
@@ -1327,7 +1354,12 @@ function LogsPanel() {
           </button>
         </p>
       ) : (
-        <div className="log-console" ref={consoleRef} role="log" aria-label="Application log">
+        <div
+          className={wrap ? "log-console log-wrap" : "log-console"}
+          ref={consoleRef}
+          role="log"
+          aria-label="Application log"
+        >
           {visible.length === 0 ? (
             <p className="muted log-empty">
               {lines.length === 0
