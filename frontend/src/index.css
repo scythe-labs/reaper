@@ -62,6 +62,14 @@
   --radius: 11px;
   --radius-lg: 18px;
 
+  /* Form control standard. Every text / number / select box shares this chrome, so the
+     app reads as one surface (see .set-control, .rule-control, .field-sm, .condition-add,
+     .qty, .caps-grid): padding 0.42rem 0.6rem; border 1px solid var(--border-strong);
+     border-radius var(--radius-sm); background var(--bg); color var(--text); font: inherit;
+     and on :focus, outline 2px solid var(--accent) with outline-offset 1px. Width is the
+     only thing that varies by context -- compact numbers 5rem, unit selects ~5.25rem, wide
+     text fields 15-22rem -- but the chrome above never does. Reuse it; don't fork it. */
+
   --shadow-sm: 0 1px 2px rgba(16, 18, 27, 0.06), 0 1px 3px rgba(16, 18, 27, 0.05);
   --shadow-md: 0 2px 6px rgba(16, 18, 27, 0.07), 0 8px 24px rgba(16, 18, 27, 0.07);
   --shadow-lg: 0 12px 40px rgba(16, 18, 27, 0.16), 0 4px 12px rgba(16, 18, 27, 0.1);
@@ -1999,6 +2007,12 @@ a.rating-chip:hover {
   gap: 0.5rem;
   font-size: 0.88rem;
 }
+/* Stacked toggles need vertical air between them: without a help line between two
+   toggles their switches sit flush and read as overlapping. Matches the section's
+   control-to-control rhythm. */
+.toggle + .toggle {
+  margin-top: 0.9rem;
+}
 .gate-name,
 .signal-name {
   text-transform: capitalize;
@@ -2441,13 +2455,32 @@ tbody tr.spared-row .title-cell {
   font-size: 0.8rem;
   color: var(--muted);
 }
+/* Compact numeric caps follow the same control standard as the rest of the app
+   (--radius-sm, the settings-form padding, an inherited font, the accent focus ring).
+   A fixed 5rem width -- matching .rule-control -- keeps every box the same size
+   instead of stretching to fill its grid cell. */
 .caps-grid input[type="number"] {
-  padding: 0.3rem 0.4rem;
+  width: 5rem;
+  padding: 0.42rem 0.6rem;
   border: 1px solid var(--border-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
+  font: inherit;
   font-variant-numeric: tabular-nums;
+}
+.caps-grid input[type="number"]:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* The number + unit boxes line up with the bare number and with each other: one width
+   for every number, one for every unit (so GB, TB, weeks and months all read the same). */
+.caps-grid .qty input[type="number"] {
+  flex: none;
+  width: 5rem;
+}
+.caps-grid .qty select {
+  width: 5.25rem;
 }
 .caps-grid label.toggle {
   flex-direction: row;
@@ -2991,12 +3024,32 @@ button.sm {
   min-width: 1.65rem;
   height: 1.35rem;
   padding: 0 0.3rem;
+  border: none;
   border-radius: 5px;
   display: grid;
   place-items: center;
+  font-family: inherit;
   font-size: 0.68rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  /* Each square opens its season's reasoning; the ring (transparent until hover/focus)
+     is reserved up front so hovering never nudges the strip's layout. */
+  cursor: pointer;
+  appearance: none;
+  outline: 1.5px solid transparent;
+  outline-offset: 1px;
+  transition:
+    transform 0.08s ease,
+    outline-color 0.08s ease;
+}
+.strip-sq:hover {
+  transform: translateY(-1px);
+  outline-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.strip-sq:focus-visible {
+  transform: translateY(-1px);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .strip-condemn {
   color: var(--condemn);
@@ -4271,25 +4324,32 @@ button.danger:hover:not(:disabled) {
   display: flex;
   gap: 0.35rem;
 }
+/* The number and its unit share the app's one control standard: --radius-sm corners,
+   the settings-form padding, an inherited font, --bg fill, and the accent focus ring.
+   (Both boxes on the same fill; the select used to sit a shade lighter.) */
 .qty input[type="number"] {
   flex: 1;
   min-width: 0;
-  padding: 0.3rem 0.4rem;
+  padding: 0.42rem 0.6rem;
   border: 1px solid var(--border-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
-  font-variant-numeric: tabular-nums;
   font: inherit;
+  font-variant-numeric: tabular-nums;
 }
 .qty select {
   flex: none;
-  padding: 0.3rem 0.35rem;
+  padding: 0.42rem 0.6rem;
   border: 1px solid var(--border-strong);
-  border-radius: 5px;
-  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
   color: var(--text);
   font: inherit;
+}
+.qty :is(input, select):focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .load-more {
