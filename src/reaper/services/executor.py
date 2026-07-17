@@ -55,16 +55,18 @@ The interlocks, in order, and why each exists:
    exclusion parameter and return 200 while doing nothing, so the 200 is re-read, not
    trusted. A season: verify the unmonitor took *before* deleting any file, then verify no
    file for the season remains after.
+8. **The trash interlock (``emptyTrash``), at the very end of a real run.** The *arr
+   delete is the reclamation -- the file is off disk once Radarr/Sonarr removes it.
+   Purging Plex's stale entry is cosmetic cleanup, and it is the single call that turns
+   an unmounted-library mistake into a lost library, so ``_finalize_plex`` runs it only
+   per affected section and behind three checks: every *arr root folder reports
+   accessible, only path-scoped refreshes were issued, and the section's item count --
+   captured before the first delete -- shrank by no more than what this run deleted under
+   it (``_trash_delta_is_ours``). Any doubt skips the purge: a stale "unavailable" entry
+   is cosmetic, a wrong purge destroys other items' library records.
 
 What is deliberately NOT here yet, and why:
 
-* **The trash interlock (``emptyTrash``).** The *arr delete is the reclamation -- the file
-  is off disk once Radarr/Sonarr removes it. Purging Plex's trash is cosmetic cleanup, and
-  it is the single call that turns an unmounted-library mistake into a lost library, so it
-  belongs behind a per-section count-delta check that needs the path-mapping table Reaper
-  does not have yet. Until then the executor does a best-effort per-item Plex *refresh*
-  (safe: a wrong path silently rescans nothing) and leaves the trash for Plex's own
-  scheduled maintenance. ``PlexClient.empty_trash`` exists, guarded, for when that lands.
 * **Mid-run disarm.** The host arm state is read at the start of a run (and the transport
   guard enforces it on every call). Flipping deletion off *during* a multi-item run does
   not halt the items already in flight -- runs are kept small by the caps and the first-run
@@ -79,10 +81,11 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clients.base import IntegrationError, SafetyViolationError
@@ -154,14 +157,16 @@ class PlexOps(Protocol):
     ``active_streams`` is the pre-delete veto; it raises rather than returning ``[]`` when
     it cannot see sessions, so the executor can fail closed. The rest is the post-delete
     cleanup: ``refresh_path`` rescans one directory so Plex notices the file is gone,
-    ``is_refreshing`` lets the executor wait for that scan to settle, and ``empty_trash``
-    purges the now-missing item so no stale entry lingers.
+    ``is_refreshing`` lets the executor wait for that scan to settle, ``item_count`` feeds
+    the trash interlock's count-delta gate, and ``empty_trash`` purges the now-missing
+    item so no stale entry lingers.
     """
 
     async def active_streams(self) -> list[ActiveStream]: ...
     async def section_paths(self) -> dict[str, list[str]]: ...
     async def refresh_path(self, section_title: str, path: str) -> None: ...
     async def is_refreshing(self, section_title: str) -> bool: ...
+    async def item_count(self, section_title: str) -> int: ...
     async def empty_trash(self, section_title: str) -> None: ...
 
 
@@ -308,29 +313,31 @@ async def _condemned(session: AsyncSession, snapshot_id: int) -> dict[str, Candi
     return {c.media_key: c for c in rows}
 
 
-def _check_caps(
-    deletes: Sequence[_Delete], settings: ProfileSettings, decisions: dict[str, str]
-) -> None:
-    """A run over cap ABORTS before it starts. It never runs the part that fits.
+def _deletable(deletes: Sequence[_Delete], decisions: dict[str, str]) -> list[_Delete]:
+    """The exact set a run will act on: the condemned items minus hand-spares.
 
-    Only the per-run caps are enforced here; the rolling 30-day caps belong to the
-    scheduler, which knows what other runs have happened. Enforcing a partial here would
-    be worse than not enforcing it, because it would delete *some* items and call the run
-    a success.
-
-    The cap is measured over only the items that will *actually* be deleted -- an item the
-    owner spared by hand after the plan was built still carries delete steps (the frozen
-    candidate row still reads ``condemn``) but is skipped per item in ``_one_delete``, so
-    counting it here would abort a legitimate reduced run and quote a count that no longer
-    matches the confirmation phrase the owner approved (which also excludes spares, see
-    runs.py ``_planned_candidates``). This mirrors that surface so enforcement and approval
-    agree. It still fails safe: a spare only ever removes items from the count.
+    Every cap -- per-run and rolling -- counts THIS set, the same one the confirmation
+    phrase counts (runs.py ``_planned_candidates``), so enforcement and approval agree. An
+    item the owner spared by hand after the plan was built still carries delete steps (the
+    frozen candidate row still reads ``condemn``) but is skipped per item in
+    ``_one_delete``; counting it would abort a legitimate reduced run. Fails safe: a spare
+    only ever removes items from the count.
     """
-    deletable = [
+    return [
         d
         for d in deletes
         if whitelist.effective_override(d.candidate.media_key, decisions) != "spare"
     ]
+
+
+def _check_caps(
+    deletes: Sequence[_Delete], settings: ProfileSettings, decisions: dict[str, str]
+) -> None:
+    """A run over its per-run cap ABORTS before it starts. It never runs the part that
+    fits: truncating would make *what* gets deleted depend on sort order. The rolling
+    30-day caps are enforced separately, by ``Executor._check_rolling_caps``, which also
+    aborts rather than truncates."""
+    deletable = _deletable(deletes, decisions)
     items = len(deletable)
     total_bytes = sum(int(d.candidate.size_bytes) for d in deletable)
 
@@ -392,6 +399,11 @@ class Executor:
         # Plex movie sections whose path we refreshed this run -- the ones to purge trash
         # from at the end, once, if the mount is confirmed up.
         self._affected_sections: set[str] = set()
+        # The trash interlock's inputs: each section's item count BEFORE anything was
+        # deleted, and how many Plex entries this run removed under each section. The
+        # purge runs only when a section shrank by no more than what we deleted there.
+        self._section_pre_counts: dict[str, int] = {}
+        self._deleted_by_section: dict[str, int] = {}
         # The manual spare/reap overrides, loaded fresh at the top of execute(). An item
         # spared by hand AFTER the plan was built must not be deleted -- the planner filters
         # spares at plan time, but the owner can spare during the grace window too, so the
@@ -449,6 +461,8 @@ class Executor:
         # no return (see the per-item check in ``_one_delete``).
         self._decisions = await whitelist.overrides(self._session)
         self._affected_sections = set()
+        self._section_pre_counts = {}
+        self._deleted_by_section = {}
 
         # -- interlock 1: the frozen condemned set must still be intact ----
         # Hashed over the WHOLE condemned set -- spared or not -- so that sparing an item
@@ -497,16 +511,43 @@ class Executor:
         # leaves it PLANNED so it can still be dry-run again and, crucially, still executed
         # for real afterwards. The report always carries the outcome for display.
         if not self._dry_run:
+            # The claim is one atomic UPDATE ... WHERE state = 'planned', COMMITTED before
+            # anything is sent. The read-check above gives the friendly refusal; this is
+            # the enforcement: two concurrent execute calls can both read PLANNED, but
+            # only one row-update wins, and the loser refuses rather than re-running the
+            # plan over the winner's journal. The commit also makes EXECUTING durable, so
+            # a process that dies mid-run leaves a run that says so instead of rolling
+            # back to PLANNED as if nothing had been deleted.
+            started = utcnow()
+            claimed = await self._session.execute(
+                update(ReapRun)
+                .where(ReapRun.id == run.id, ReapRun.state == RunState.PLANNED)
+                .values(state=RunState.EXECUTING, started_at=started)
+                .execution_options(synchronize_session=False)
+            )
+            # execute() is typed as the base Result; a DML statement always yields a
+            # CursorResult, which is what carries rowcount.
+            if cast("CursorResult[Any]", claimed).rowcount != 1:
+                raise ExecutionError(
+                    f"Run {run.id} was already claimed by another request. A run executes once."
+                )
             run.state = RunState.EXECUTING
-            run.started_at = utcnow()
-            await self._session.flush()
+            run.started_at = started
+            await self._session.commit()
+
+            # The trash interlock's baseline: every section's item count, read BEFORE
+            # anything is deleted. Best-effort -- a section with no baseline simply never
+            # gets its trash purged (see _trash_delta_is_ours), which is the safe failure.
+            await self._capture_section_counts()
 
         try:
             # -- interlock 3: caps abort the whole run ----------------------
             # Inside the guarded block, so a breach becomes a visible ABORTED report the
             # owner can read -- the same shape as a canary failure -- rather than an
-            # exception that escapes. Either way the run deletes nothing.
+            # exception that escapes. Either way the run deletes nothing. Both the
+            # per-run caps and the rolling 30-day budget are checked, dry run included.
             _check_caps(deletes, self._settings, self._decisions)
+            await self._check_rolling_caps(deletes)
             await self._run_deletes(deletes, report, run.approved_at)
             report.state = RunState.COMPLETED
             if not self._dry_run:
@@ -519,6 +560,12 @@ class Executor:
                 run.state = RunState.ABORTED
                 run.aborted_reason = str(exc)
 
+        # The run's final state is committed BEFORE the Plex cleanup: the purge below can
+        # wait on Plex scans for a while, and the outcome of the run must already be
+        # durable by then, whatever happens during cleanup.
+        if not self._dry_run:
+            await self._session.commit()
+
         # Purge stale Plex entries for whatever was actually removed -- on a COMPLETED or an
         # ABORTED run alike, because a canary can fail its exclusion check *after* its file is
         # already gone (that is the bug that left a stale entry). Post-processing, never fatal:
@@ -527,9 +574,71 @@ class Executor:
         if not self._dry_run and self._affected_sections:
             await self._finalize_plex()
 
-        if not self._dry_run:
-            await self._session.flush()
         return report
+
+    async def _check_rolling_caps(self, deletes: Sequence[_Delete]) -> None:
+        """The 30-day budget: past verified deletions plus THIS run must fit both rolling
+        caps, or the run ABORTS before it starts.
+
+        Abort, never truncate, for the same reason as the per-run caps: a truncated run
+        makes what gets deleted depend on sort order. This is the enforcement that makes
+        the configured monthly budget arithmetically unreachable -- no sequence of runs
+        can exceed it, because each run is admitted only if the whole of it still fits.
+        Checked in dry run too, so the simulation proves the same refusal a real run
+        would hit.
+        """
+        deletable = _deletable(deletes, self._decisions)
+        items = len(deletable)
+        total_bytes = sum(int(d.candidate.size_bytes) for d in deletable)
+        past_items, past_bytes = await self._rolling_30d_deletions()
+
+        if past_items + items > self._settings.max_items_per_30d:
+            raise ExecutionError(
+                f"This run would delete {items} items on top of the {past_items} already "
+                f"deleted in the last 30 days, over the rolling cap of "
+                f"{self._settings.max_items_per_30d}. The run is aborted, not truncated. "
+                "Wait for the window to pass, or raise the cap."
+            )
+        if past_bytes + total_bytes > self._settings.max_bytes_per_30d:
+            raise ExecutionError(
+                f"This run would delete {total_bytes / 1024**3:.0f} GB on top of the "
+                f"{past_bytes / 1024**3:.0f} GB already deleted in the last 30 days, over "
+                f"the rolling cap of {self._settings.max_bytes_per_30d / 1024**3:.0f} GB. "
+                "The run is aborted, not truncated. Wait for the window to pass, or raise "
+                "the cap."
+            )
+
+    async def _rolling_30d_deletions(self) -> tuple[int, int]:
+        """What real runs verifiably deleted in the trailing 30 days: (items, bytes).
+
+        Counted over VERIFIED terminal delete steps -- files that are actually gone --
+        joined back to their frozen candidate rows for sizes, whatever state their run
+        ended in: a crashed or aborted run's verified deletions are still deletions, and
+        leaving them out would let repeated aborts spend past the budget.
+        """
+        cutoff = utcnow() - timedelta(days=30)
+        sizes = (
+            (
+                await self._session.execute(
+                    select(Candidate.size_bytes)
+                    .select_from(ActionStep)
+                    .join(ReapRun, ReapRun.id == ActionStep.run_id)
+                    .join(
+                        Candidate,
+                        (Candidate.snapshot_id == ReapRun.snapshot_id)
+                        & (Candidate.media_key == ActionStep.media_key),
+                    )
+                    .where(
+                        ActionStep.kind.in_(_TERMINAL_DELETE_KINDS),
+                        ActionStep.state == StepState.VERIFIED,
+                        ActionStep.verified_at >= cutoff,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return len(sizes), sum(int(size) for size in sizes)
 
     async def _run_deletes(
         self, deletes: Sequence[_Delete], report: RunReport, approved_at: datetime
@@ -543,6 +652,11 @@ class Executor:
         real_attempt_made = False
         for index, delete in enumerate(deletes):
             outcome = await self._one_delete(delete, is_canary=index == 0, approved_at=approved_at)
+            if not self._dry_run:
+                # Every item's step marks (VERIFIED, FAILED, SKIPPED) are made durable
+                # before the next item is attempted. A crash mid-run must never roll back
+                # the record of files that are already gone.
+                await self._session.commit()
             report.record(outcome)
 
             if outcome.state == StepState.SKIPPED:
@@ -633,11 +747,12 @@ class Executor:
                 title=candidate.title,
             )
 
-        # A real send. Each step is marked SENT (journalled) *before* its guarded call and
-        # VERIFIED only after the world is re-read -- so a crash mid-item leaves a durable
-        # audit record of exactly what was in flight, and a 200 is never mistaken for proof.
-        # That record is not yet auto-reconciled: a crashed (EXECUTING) run is re-planned
-        # from a fresh scan, not resumed -- execute() refuses anything but a PLANNED run.
+        # A real send. Each step is marked SENT and COMMITTED *before* its guarded call,
+        # and VERIFIED (committed again) only after the world is re-read -- so a crash
+        # mid-item leaves a durable audit record of exactly what was in flight, and a 200
+        # is never mistaken for proof. That record is not yet auto-reconciled: a crashed
+        # (EXECUTING) run is re-planned from a fresh scan, not resumed -- execute() refuses
+        # anything but a PLANNED run.
         return await self._send_for_real(delete, is_canary=is_canary)
 
     # -- live pre-delete interlocks: read-only, fail-closed ----------------
@@ -836,8 +951,13 @@ class Executor:
         # Once the file is gone, tell Plex -- whatever the exclusion result. This is what
         # stops a stale entry lingering, and it must fire even when the exclusion check
         # failed (the file is still gone). Best-effort: never affects the item's verdict.
+        # A merged bind lists this one file under several rating keys, so the purge's
+        # count-delta gate is told how many Plex entries this delete removes.
         if gone:
-            await self._best_effort_refresh(str(movie.get("path") or movie.get("folderName") or ""))
+            await self._best_effort_refresh(
+                str(movie.get("path") or movie.get("folderName") or ""),
+                plex_entries=len(self._equivalent_keys(delete.candidate)) or 1,
+            )
 
         if not (excluded and gone):
             # The file is already gone once ``gone`` is True; a missing exclusion is the
@@ -927,7 +1047,7 @@ class Executor:
                 verify, "the season is still monitored after the unmonitor; not deleting files"
             )
             self._mark_step_skipped(delete_step, "unmonitor unverified")
-            await self._session.flush()
+            await self._session.commit()
             checks.append(StepCheck("Deleted the season's episode files", False))
             return StepOutcome(
                 media_key=delete_step.media_key,
@@ -984,15 +1104,40 @@ class Executor:
                 return bool(monitored) if monitored is not None else None
         return None
 
-    async def _best_effort_refresh(self, arr_path: str) -> None:
+    async def _capture_section_counts(self) -> None:
+        """Record every Plex section's item count before anything is deleted.
+
+        The baseline of the trash interlock: ``_finalize_plex`` refuses to purge a section
+        that shrank by more than this run deleted under it, and it can only know that with
+        a before-count. Best-effort and never fatal -- an unreadable count leaves no
+        baseline, and no baseline means the purge is refused for that section. The purge
+        is cosmetic; a wrong purge is a lost library, so any doubt lands on "do not purge".
+        """
+        gateway = self._gateway
+        if gateway is None or gateway.plex is None:
+            return
+        try:
+            sections = await gateway.plex.section_paths()
+        except Exception as exc:
+            log.warning("reap.section_counts_unreadable", error=str(exc))
+            return
+        for title in sections:
+            try:
+                self._section_pre_counts[title] = await gateway.plex.item_count(title)
+            except Exception as exc:
+                log.warning("reap.section_count_unreadable", section=title, error=str(exc))
+
+    async def _best_effort_refresh(self, arr_path: str, *, plex_entries: int = 1) -> None:
         """Nudge Plex to rescan the deleted item's directory. Never fatal.
 
-        Fires whenever the file is gone, so Plex learns the item is missing. When a Plex
-        section location is a prefix of the *arr path, the refresh is path-scoped -- it can
-        only affect items *under that path*, never the whole library, which is what makes the
-        end-of-run trash purge safe. The refreshed section is remembered for that purge. When
-        the path cannot be mapped it does nothing and says so; the file is already gone and
-        Plex will notice on its next scheduled scan regardless.
+        Fires whenever the file is gone, so Plex learns the item is missing. When the
+        *arr path sits inside a Plex section location, the refresh is path-scoped -- it can
+        only affect items *under that path*, never the whole library, which is what makes
+        the end-of-run trash purge safe. The refreshed section is remembered for that
+        purge, along with ``plex_entries`` -- how many Plex listings this delete removes
+        (a merged bind lists one file more than once) -- which feeds the purge's
+        count-delta gate. When the path cannot be mapped it does nothing and says so; the
+        file is already gone and Plex will notice on its next scheduled scan regardless.
         """
         gateway = self._gateway
         if gateway is None or gateway.plex is None or not arr_path:
@@ -1001,10 +1146,13 @@ class Executor:
             sections = await gateway.plex.section_paths()
             for title, locations in sections.items():
                 for location in locations:
-                    if arr_path.startswith(location):
+                    if _path_within(arr_path, location):
                         with declared_mutation():
                             await gateway.plex.refresh_path(title, arr_path)
                         self._affected_sections.add(title)
+                        self._deleted_by_section[title] = self._deleted_by_section.get(
+                            title, 0
+                        ) + max(1, plex_entries)
                         return
             log.info("reap.refresh_unmapped", arr_path=arr_path)
         except PlexError as exc:
@@ -1014,7 +1162,7 @@ class Executor:
         """Purge the stale entries for the files we removed, so Plex's view stays honest.
 
         The single most dangerous call in the app (an unmounted library + a scan + an empty
-        trash is how whole libraries vanish), so it is doubly interlocked:
+        trash is how whole libraries vanish), so it is triply interlocked:
 
         * **The mount must be up.** Every deletion routed through an *arr whose root folder
           reports ``accessible``; if any does not, the volume may be gone and the trash is
@@ -1022,8 +1170,13 @@ class Executor:
         * **Only path-scoped scans ran.** ``_best_effort_refresh`` rescans one directory at
           a time, so the only items Plex could have freshly trashed are the ones under the
           paths we deleted. Reaper never triggers a whole-section scan.
+        * **The count-delta gate** (``_trash_delta_is_ours``). The section must have shrunk
+          since the pre-delete baseline, and by no more than the entries this run deleted
+          under it. A larger shrink means something else -- a mount flap on the Plex host, a
+          nightly scan -- trashed items that are NOT ours, and purging would destroy their
+          library records (watch states, collection membership).
 
-        Either check failing skips the purge and logs it -- the reap already succeeded, and a
+        Any check failing skips the purge and logs it -- the reap already succeeded, and a
         lingering "unavailable" entry is a cosmetic problem, never a lost file. Never raises.
         """
         gateway = self._gateway
@@ -1037,11 +1190,54 @@ class Executor:
         for section in sorted(self._affected_sections):
             try:
                 await self._wait_for_scan(gateway.plex, section)
+                if not await self._trash_delta_is_ours(gateway.plex, section):
+                    continue
                 with declared_mutation():
                     await gateway.plex.empty_trash(section)
                 log.info("reap.trash_purged", section=section)
             except PlexError as exc:
                 log.warning("reap.trash_purge_failed", section=section, error=str(exc))
+
+    async def _trash_delta_is_ours(self, plex: PlexOps, section: str) -> bool:
+        """Did this section shrink by what this run deleted under it, and no more?
+
+        The confirmation the purge requires: ``pre - post`` must be at least 1 (Plex has
+        actually noticed a removal) and at most the number of entries we deleted there. A
+        shrink of zero means Plex has not confirmed OUR deletes either -- perhaps trashed
+        items still count toward the section size on this server -- and purging without
+        confirmation is exactly the mistake this gate exists to prevent, so it refuses and
+        the trash is left to the owner or to Plex's own maintenance. Never raises.
+        """
+        pre = self._section_pre_counts.get(section)
+        expected = self._deleted_by_section.get(section, 0)
+        if pre is None or expected <= 0:
+            log.warning(
+                "reap.trash_purge_skipped",
+                section=section,
+                reason="no pre-delete item count to compare against",
+            )
+            return False
+        try:
+            post = await plex.item_count(section)
+        except Exception as exc:
+            log.warning(
+                "reap.trash_purge_skipped",
+                section=section,
+                reason=f"could not re-read the item count: {exc}",
+            )
+            return False
+        shrink = pre - post
+        if shrink < 1 or shrink > expected:
+            log.warning(
+                "reap.trash_purge_skipped",
+                section=section,
+                pre=pre,
+                post=post,
+                deleted_here=expected,
+                reason="the section did not shrink by exactly what this run deleted",
+            )
+            return False
+        return True
 
     async def _mount_is_up(self) -> bool:
         """Do all the *arr instances we deleted through report their root folders accessible?
@@ -1084,15 +1280,19 @@ class Executor:
     # -- journal state transitions -----------------------------------------
 
     async def _mark_sent(self, step: ActionStep) -> None:
+        # COMMITTED, not merely flushed: the SENT mark is the durable declaration of
+        # intent, written before the request leaves the process. If the process dies
+        # between this commit and the verify, the journal still shows exactly which call
+        # was in flight -- a flush inside a run-long transaction would roll back with it.
         step.state = StepState.SENT
         step.sent_at = utcnow()
-        await self._session.flush()
+        await self._session.commit()
 
     async def _mark_verified(self, step: ActionStep, verification: dict[str, Any]) -> None:
         step.state = StepState.VERIFIED
         step.verified_at = utcnow()
         step.verification_json = json.dumps(verification)
-        await self._session.flush()
+        await self._session.commit()
 
     def _mark_step_failed(self, step: ActionStep, reason: str) -> None:
         step.state = StepState.FAILED
@@ -1147,6 +1347,17 @@ class Executor:
             title=delete.candidate.title,
             checks=[StepCheck(check or reason, True)],
         )
+
+
+def _path_within(path: str, location: str) -> bool:
+    """Is ``path`` the section location itself, or genuinely inside it?
+
+    A raw prefix test is not enough: a section rooted at ``/media/movies`` must never
+    claim files under ``/media/movies-4k/``, or the refresh -- and worse, the end-of-run
+    trash purge -- lands on the wrong section.
+    """
+    root = location.rstrip("/")
+    return path in (root, location) or path.startswith(root + "/")
 
 
 def _row_timestamp(row: object) -> int | None:

@@ -115,7 +115,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
             policy_hash="a" * 64,
             scoring_hash=_fixture_scoring_hash(),
             horizon_at=now,
-            item_count=3,
+            item_count=4,
             degraded=False,
         )
         session.add(snapshot)
@@ -275,6 +275,23 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                             ],
                         }
                     ),
+                    created_at=now,
+                ),
+                # A cleanly-abstained item: every protection was checked (none blocked),
+                # full coverage, score simply below the threshold. This is the only kind
+                # of abstained row a draft threshold may pull in -- the simulator tests
+                # lean on the contrast with "Unmatched" above, whose protections could
+                # not be checked and which must stay abstained at ANY threshold.
+                Candidate(
+                    snapshot_id=snapshot.id,
+                    media_key="radarr:1:13",
+                    title="Example Oldie",
+                    media_type="movie",
+                    size_bytes=500_000_000,
+                    verdict="abstain",
+                    score=45,
+                    coverage_bp=10_000,
+                    explanation_json=_explanation(45),
                     created_at=now,
                 ),
             ]
@@ -484,7 +501,7 @@ class TestSnapshot:
 
         assert body["condemned"] == 1
         assert body["protected"] == 1
-        assert body["abstained"] == 1
+        assert body["abstained"] == 2
         assert body["reclaimable_bytes"] == 5_900_000_000  # condemned only
 
     def test_the_horizon_is_exposed(self, client: TestClient) -> None:
@@ -697,13 +714,14 @@ class TestTheSimulator:
             },
         ).json()
 
-        # The 20%-coverage item stays out, even at a threshold of 1.
-        assert result["condemned"] == 1  # only the 100%-coverage condemned one
+        # The 20%-coverage item stays out, even at a threshold of 1. The two condemned
+        # are the full-coverage rows: the stored-condemned one and the clean abstainer.
+        assert result["condemned"] == 2
 
     def test_the_histogram_covers_every_item(self, client: TestClient) -> None:
         result = self._simulate(client, 70)
 
-        assert sum(result["histogram"]) == 3  # type: ignore[arg-type]
+        assert sum(result["histogram"]) == 4  # type: ignore[arg-type]
 
     def test_a_threshold_only_change_is_exact(self, client: TestClient) -> None:
         """The whole point. Moving condemn_at re-compares a STORED score against a new
@@ -712,8 +730,9 @@ class TestTheSimulator:
 
     def test_it_names_what_a_change_would_newly_condemn(self, client: TestClient) -> None:
         """A count is abstract; a title the owner recognises is what stops a bad
-        threshold. Dropping the coverage floor pulls in the barely-seen item -- and the
-        example names it, highest score first."""
+        threshold. Dropping the threshold pulls in the cleanly-abstained item -- and the
+        example names it. The blocked "Unmatched" row scores higher, yet must not appear:
+        its protections could not be checked, so no threshold may condemn it."""
         result = client.post(
             "/api/policy/simulate",
             json=_policy(condemn_at=40, coverage_floor_bp=0),
@@ -721,7 +740,7 @@ class TestTheSimulator:
 
         assert result["newly_condemned"] == 1
         assert result["examples_newly_condemned"] == [
-            {"title": "Unmatched", "year": None, "score": 50}
+            {"title": "Example Oldie", "year": None, "score": 45}
         ]
 
     def test_examples_are_empty_when_nothing_new_is_flagged(self, client: TestClient) -> None:
@@ -733,6 +752,43 @@ class TestTheSimulator:
         aggregate, from the same stored explanation the why-panel renders."""
         result = self._simulate(client, 70)
         assert result["protected_by"] == [{"gate": "rating_floor", "count": 1}]
+
+    def test_a_blocked_row_is_never_simulated_as_condemned(self, client: TestClient) -> None:
+        """The "Unmatched" fixture abstained because its protections could not be
+        checked -- not because of its score (50) or coverage. Even the loosest possible
+        draft (threshold 1, no coverage floor) must not count it as a deletion: the scan
+        would keep abstaining on it, and a simulator that counts it is telling the owner
+        a plausible wrong number at the very moment they pick a threshold."""
+        result = client.post(
+            "/api/policy/simulate",
+            json=_policy(condemn_at=1, coverage_floor_bp=0),
+        ).json()
+
+        # The stored-condemned row and the clean abstainer, never the blocked row.
+        assert result["condemned"] == 2
+        named = [e["title"] for e in result["examples_newly_condemned"]]
+        assert "Unmatched" not in named
+
+    def test_a_hand_reaped_row_keeps_its_stored_verdict(self, client: TestClient) -> None:
+        """The owner hand-reaped the condemned fixture. A draft threshold above its
+        score must NOT report it "no longer condemned": every scan will keep condemning
+        it while the override stands, and the simulator must agree with the scan."""
+        response = client.post(
+            "/api/override", json={"media_key": "radarr:1:10", "decision": "reap"}
+        )
+        assert response.status_code == 200, response.text
+
+        result = self._simulate(client, 95)  # stricter than the stored 91
+
+        assert result["condemned"] == 1
+        assert result["no_longer_condemned"] == 0
+
+    def test_the_exact_threshold_boundary_condemns_at_and_above(self, client: TestClient) -> None:
+        """condemn_at is "at or above". The stored 91 must count as condemned at a
+        threshold of exactly 91 and drop out at 92 -- the route must decide through the
+        same shared function as the scan, so a `>` typo here can never pass."""
+        assert self._simulate(client, 91)["condemned"] == 1
+        assert self._simulate(client, 92)["condemned"] == 0
 
 
 class TestTheSimulatorRefusesToGuess:
@@ -874,6 +930,32 @@ class TestPolicyPersistence:
         # condition is unconstructable, not merely wrong.
         body = _policy(protect_conditions=[{"field": "whitelisted", "op": "gte", "value": True}])
         assert client.post("/api/policy", json=body).status_code == 422
+
+    def test_a_condition_value_of_the_wrong_type_is_a_422_not_a_saved_landmine(
+        self, client: TestClient
+    ) -> None:
+        """A JSON string on a numeric field used to save and hash cleanly, then crash
+        every subsequent scan inside the judge. It must be refused at save time, naming
+        the field, and nothing may be persisted."""
+        body = _policy(protect_conditions=[{"field": "size_bytes", "op": "gte", "value": "500"}])
+        response = client.post("/api/policy", json=body)
+
+        assert response.status_code == 422
+        assert "whole number" in response.text
+        assert client.get("/api/policy").json()["name"] == "default"  # nothing saved
+
+    def test_a_custom_condemn_rule_with_a_string_value_is_refused_too(
+        self, client: TestClient
+    ) -> None:
+        rule = {
+            "kind": "boolean",
+            "name": "big files",
+            "field": "size_bytes",
+            "op": "gte",
+            "value": "5000000000",
+            "weight": 20,
+        }
+        assert client.post("/api/policy", json=_policy(custom_condemn=[rule])).status_code == 422
 
 
 class TestPolicyValidation:

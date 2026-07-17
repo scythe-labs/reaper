@@ -50,6 +50,7 @@ from reaper.engine.gates import PROTECT, Evaluation, Facts, Gate, GateId, GateRe
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
 from reaper.engine.signals import Score, SignalConfig, SignalId, score
+from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict
 from reaper.ratings import Rating, from_radarr
 from reaper.services import (
     history_sync,
@@ -801,13 +802,6 @@ def _judge_item(
     return verdict
 
 
-#: The protections a manual "reap" override may NOT overrule -- a file that is streaming right
-#: now must not be deleted, and an unmanaged file has no path to delete through. Everything
-#: else (dormancy, rating, popularity, a curated list, the keep list) is a *cautious* judgement
-#: the owner is entitled to overrule by hand.
-_STRUCTURAL_GATES = frozenset({GateId.STREAMING_NOW, GateId.UNMANAGED})
-
-
 def _verdict(
     evaluation: Evaluation,
     score_value: int,
@@ -816,35 +810,29 @@ def _verdict(
     *,
     override: str | None = None,
 ) -> str:
-    """PROTECT beats everything. Then coverage. Then the score.
+    """The scan's adapter onto the ONE decision function, ``engine.verdict``.
 
-    Takes the **stored** integers, not the underlying floats, so that this function and
-    the simulator -- which has only the stored integers to work with -- cannot reach
+    Takes the **stored** integers, not the underlying floats, so that this path and the
+    simulator -- which has only the stored integers to work with -- cannot reach
     different verdicts for the same item under the same policy. Two code paths that
     answer the same question must answer it the same way, and the cheapest way to
-    guarantee that is to give them the same inputs.
+    guarantee that is to give them the same function and the same inputs.
 
     A manual ``"reap"`` override forces CONDEMN -- the owner looked and decided -- but never
     past a hard safety gate (streaming now, unmanaged) or a protection that could not be
     checked; those still protect. A ``"spare"`` override arrives as an extra PROTECT result and
     so is already handled by ``evaluation.protected``.
     """
-    if override == "reap":
-        blocked_by_safety = evaluation.blocked or any(
-            r.fired and r.gate in _STRUCTURAL_GATES for r in evaluation.results
-        )
-        return "protect" if blocked_by_safety else "condemn"
-    if evaluation.protected:
-        return "protect"
-    if evaluation.blocked:
-        # A protection could not be checked. Not being able to look is not the same as
-        # looking and finding nothing.
-        return "abstain"
-    if coverage_bp < policy.coverage_floor_bp:
-        return "abstain"
-    if score_value >= policy.condemn_at:
-        return "condemn"
-    return "abstain"
+    return decide_verdict(
+        protected=evaluation.protected,
+        blocked=evaluation.blocked,
+        safety_protected=any(r.fired and r.gate in STRUCTURAL_GATES for r in evaluation.results),
+        score=score_value,
+        coverage_bp=coverage_bp,
+        condemn_at=policy.condemn_at,
+        coverage_floor_bp=policy.coverage_floor_bp,
+        override=override,
+    )
 
 
 def _explain(

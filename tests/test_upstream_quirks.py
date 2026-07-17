@@ -139,6 +139,18 @@ class TestSeasonRanking:
         keep = {n for n, rank in ranks.items() if rank <= 2}
         assert keep == {4, 5}
 
+    def test_a_fileless_season_does_not_consume_a_rank_slot(self) -> None:
+        """An announced-but-undownloaded next season must not take rank 1: 'keep the
+        last 2' would then protect the empty shell plus one real season and leave the
+        season the rule meant to keep prunable -- the same slot-shift bug the specials
+        exclusion closes, re-entering through empty seasons."""
+        seasons = [self._season(n) for n in (1, 2, 3, 4, 5)] + [self._season(6, files=0)]
+        ranks = rank_seasons(seasons)
+
+        assert 6 not in ranks
+        assert ranks[5] == 1
+        assert ranks[4] == 2
+
 
 class TestRatingProvenance:
     """The published guidance says Plex's ``audienceRating`` is Rotten Tomatoes.

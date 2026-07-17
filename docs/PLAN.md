@@ -7,10 +7,61 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-16 (the scan gathers concurrently; per-item database work is
-batched)
+Last updated: 2026-07-16 (second review pass: every critical and high finding fixed)
 
-### Newest — the scan's wall clock was sequential waiting, and most of it is gone
+### Newest — the second review pass's critical and high findings, fixed
+
+The second whole-codebase review (`docs/CODE_REVIEW.md`, dev @ `5b885f5`) surfaced 1
+critical and 9 high findings; all ten are now fixed, plus the three mediums the review
+bundled with them (B-6, B-9, PE-5). The tree is green: 1,150 backend tests, ruff, mypy,
+`alembic check` against a fresh DB, and the frontend build.
+
+- **The four fail-open protection holes are closed.** TV membership lookups now pass
+  every id the show carries (a tvdb-only keep tag protects again — B-1); fileless
+  seasons no longer consume keep-last slots (`rank_seasons` ranks only content-bearing
+  seasons — B-2); a failed watch-history sync degrades the snapshot instead of scoring
+  quietly on a stale mirror (B-3); and season ranks and the scoring fact stay aligned
+  because both read the same ranker.
+- **The action journal is crash-durable (B-4/B-9).** The PLANNED→EXECUTING claim is an
+  atomic `UPDATE … WHERE state='planned'` committed before the first send; every step
+  mark (SENT before dispatch, VERIFIED after re-read, per-item skips/fails) commits as
+  it happens; the run's final state commits before the Plex cleanup. A killed process
+  now leaves EXECUTING with the exact in-flight step SENT, never a rollback to PLANNED,
+  and the SQLite writer lock is no longer held for the whole run.
+- **The trash purge earned its promised interlock (B-5/B-6).** `_finalize_plex` now
+  refuses to purge unless the section's item count — captured before the first delete —
+  shrank by at least one and by no more than what this run deleted under it, on top of
+  the existing mount check; section mapping matches at path-component boundaries, so
+  `/media/movies` can never claim `/media/movies-4k`. On servers where trashed items
+  still count toward the section size the delta never confirms and the purge simply
+  never runs (cosmetic loss, the safe direction).
+- **The 30-day rolling caps are enforced (P-1).** `Executor._check_rolling_caps` sums
+  the trailing 30 days of VERIFIED terminal deletions (whatever state their run ended
+  in) and aborts — never truncates — any run that would exceed either rolling cap, in
+  dry-run and real runs alike.
+- **One verdict function (PE-1/PE-5).** The condemn/abstain/protect decision now lives
+  in `engine/verdict.py`; the scan, the simulator and the backtest all import it. The
+  simulator no longer re-decides rows whose protections could not be checked (they stay
+  abstained at any threshold) or rows under a hand override (the stored verdict is
+  pinned), and the agreement tests call the real functions instead of a transcription.
+- **Operator-authored condition values are typed (PE-2).** `Condition.validate_for`
+  rejects a value that does not match the field's type at save time (422), and a bad
+  *stored* value degrades that one item as blocked instead of crashing the whole scan.
+- **The backtest is honestly labelled (PE-3).** It remains engine-complete and tested
+  but unreachable; every operator-facing string that told people to "run a backtest"
+  is reworded, the dead `BacktestOut` schema is gone, and the milestone table below now
+  says 🟡 not ✅. Wiring `POST /api/policy/backtest` (+ the calibration prior + minimal
+  UI) is open work — note PE-4 (`expected_regret_rate` crash) and PE-6 (TV calibration
+  join) must land with it.
+- **Tests are hermetic (P-2).** An autouse conftest fixture stubs the lifespan's env
+  seeding and startup catch-up and clears `Settings`' dotenv sources, so no test reads
+  a developer's `.env` or reaches the network.
+
+Note for local runs: `alembic check` against the long-lived dev database fails on a
+pre-existing `instance.verify_tls` server-default quirk of that database; against a
+fresh database (what CI builds) it passes clean.
+
+### Earlier — the scan's wall clock was sequential waiting, and most of it is gone
 
 Measured end to end against a real dual-instance library (movies + TV, all six
 integrations live): the scan dropped to roughly **a fifth** of its previous wall time,
@@ -610,8 +661,8 @@ A pass over the operator console fixed six things a real look surfaced:
 | **M2a** IMDb ratings dataset | ✅ done |
 | **M2b** Curated lists (IMDb Top 250, *arr tags, Plex collections) | ✅ done |
 | **M3a** Scoring engine — gates, signals, observations | ✅ done |
-| **M3b** Policy persistence — immutable rows, hash, caps, autonomy grants | ✅ done |
-| **M3c** Backtest — replay against the operator's own watch history | ✅ done |
+| **M3b** Policy persistence — immutable rows, hash, caps, autonomy grants | 🟡 rows/hash/caps done; the autonomy-grant *flow* is unwired (nothing can create a grant until the backtest ships a route) |
+| **M3c** Backtest — replay against the operator's own watch history | 🟡 engine complete and tested, **not reachable**: no route, CLI or UI calls it yet; operator copy no longer references it until it ships |
 | **M3d** Field registry + authorable protect rules | ✅ done |
 | **M3e** Snapshot pipeline + REST API + SSE progress | ✅ done |
 | **M3f** Signal quality — lift metric, size removed, dormancy gate | ✅ done |
@@ -888,7 +939,7 @@ doc change.**
 | Autonomy | An **earned grant keyed to `policy_hash`** — any edit reverts to approval-required |
 | Caps | **Four**: items + bytes, per-run + rolling 30-day |
 | Kill switch | **One-way**: the UI can disable deletion, never enable it |
-| Backtest | **In v1** — the only thing that makes threshold-tuning real |
+| Backtest | Engine in v1, **surface still unwired** — a `POST /api/policy/backtest` + minimal UI is open work; until then the live simulator is the threshold-tuning surface |
 | Auth | Plex OAuth + `owned == true` check, local fallback that cannot be removed |
 | Migrations | **One baseline until first release.** The dev DB is disposable; after v1 ships, every schema change is additive. |
 

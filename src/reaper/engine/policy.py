@@ -448,7 +448,9 @@ class ProfileSettings(Frozen):
     """
 
     #: Four caps, not two. The rolling BYTE cap is what makes a 4 TB incident
-    #: arithmetically unreachable: no sequence of runs can exceed it.
+    #: arithmetically unreachable: no sequence of runs can exceed it. The per-run caps
+    #: are enforced by ``executor._check_caps`` and the rolling 30-day caps by
+    #: ``Executor._check_rolling_caps``, both aborting (never truncating) before any send.
     max_items_per_run: int = Field(default=10, ge=1, le=1000)
     max_bytes_per_run: int = Field(default=500 * 1_000_000_000, ge=1)
     max_items_per_30d: int = Field(default=100, ge=1)
@@ -460,7 +462,9 @@ class ProfileSettings(Frozen):
     realistically act on."""
 
     require_approval: bool = True
-    """Turned off only by an AutonomyGrant, never directly."""
+    """Designed to be turned off only by an earned AutonomyGrant. That flow is not wired
+    yet (nothing can create a grant today), so until it ships this is a plain setting --
+    and ``inspect`` flags any profile that has it off as a danger."""
 
     @model_validator(mode="after")
     def _run_cap_within_rolling_cap(self) -> Self:
@@ -544,7 +548,8 @@ def inspect(body: PolicyBody, settings: ProfileSettings) -> list[PolicyWarning]:
                 severity="danger",
                 message=(
                     f"A threshold of {body.condemn_at} condemns almost everything the "
-                    "protections do not save. Run a backtest before arming this."
+                    "protections do not save. Check the simulator's counts and review "
+                    "the flagged list carefully before arming this."
                 ),
             )
         )
@@ -567,8 +572,8 @@ def inspect(body: PolicyBody, settings: ProfileSettings) -> list[PolicyWarning]:
                     message=(
                         f'Your rule "{spec.name}" removes things for being large. File size '
                         "measures how much space you reclaim, not whether anyone wants the "
-                        "title -- and big files are usually the popular 4K ones. Backtest this "
-                        "before arming it."
+                        "title, and big files are usually the popular 4K ones. Review what "
+                        "this rule flags over a few scans before arming it."
                     ),
                 )
             )
@@ -595,7 +600,7 @@ def inspect(body: PolicyBody, settings: ProfileSettings) -> list[PolicyWarning]:
                 message=(
                     f"Your keep rules can subtract up to {total_keep} points, at or above your "
                     f"remove threshold of {body.condemn_at}. Together they could keep almost "
-                    "everything -- backtest to check the scorer still finds things to remove."
+                    "everything. Check the simulator still shows items to remove."
                 ),
             )
         )

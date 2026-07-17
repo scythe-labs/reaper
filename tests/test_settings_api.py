@@ -39,25 +39,10 @@ def _make(tmp_path: Path, **overrides: object) -> Settings:
     return settings
 
 
-async def _no_catch_up(*_args: object, **_kwargs: object) -> None:
-    return None
-
-
-def _hermetic(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep the app's startup off the network and off a developer's local ``.env``.
-
-    Two things the lifespan does that a unit test must not: seed instances from a real
-    ``.env.local`` (the seeder would silently pre-populate an install these tests assert is
-    empty), and run the startup catch-up, which downloads the ~280 MB IMDb ratings dataset the
-    first time it sees an empty cache -- a real network fetch that races teardown and makes the
-    suite slow and flaky. Both are stubbed out here so the tests are hermetic and match CI."""
-    monkeypatch.setattr("reaper.main.load_raw_env", lambda _s: {})
-    monkeypatch.setattr("reaper.main.catch_up_on_startup", _no_catch_up)
-
-
 @pytest.fixture
-def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
-    _hermetic(monkeypatch)
+def client(tmp_path: Path) -> Iterator[TestClient]:
+    # Startup seeding and the catch-up network fetch are stubbed for every test by the
+    # autouse ``_hermetic`` fixture in conftest.py, so booting the app here is safe.
     settings = _make(tmp_path)
     with TestClient(create_app(settings)) as c:
         login(c, settings)  # seeds a local admin whose password is TEST_PASSWORD

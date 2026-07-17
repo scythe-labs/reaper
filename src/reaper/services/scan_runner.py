@@ -325,6 +325,11 @@ async def run_scan(
         await stack.enter_async_context(tautulli)
         session = await stack.enter_async_context(session_factory())
 
+        # Failures to gather BEFORE the freeze are collected here and handed to the scan,
+        # which degrades the snapshot for each (loud, viewable, un-executable) exactly as an
+        # in-gather source failure does. None of them may silently pass through.
+        pre_scan_degradations: list[str] = []
+
         # Pull watch history into the local mirror BEFORE scoring reads it. Incremental
         # after the first time, but on a fresh install it is what populates the table at
         # all -- without it every item's dormancy is Unknown and the scan judges nothing.
@@ -333,15 +338,22 @@ async def run_scan(
             hist = await history_sync.sync(cache_engine, tautulli)
             log.info("scan.history_synced", rows=hist.rows)
         except IntegrationError as exc:
+            # The mirror is the primary condemning evidence: dormancy and watcher counts
+            # are read from it, and a play that landed after the last successful sync is
+            # invisible to scoring (the streaming veto covers only right-now, and the
+            # played-since-approval check starts at approval). Scoring quietly on a stale
+            # mirror fails OPEN, so the snapshot must degrade -- loud, viewable, and
+            # un-executable -- exactly like a Plex or whitelist failure below.
             log.warning("scan.history_sync_failed", error=str(exc))
+            pre_scan_degradations.append(
+                f"Watch history could not be refreshed: {exc}. Recent plays may be "
+                "missing, so items were judged on stale evidence and nothing may be "
+                "deleted from this scan."
+            )
 
         # Refresh the protection lists BEFORE scoring reads them, or a "Never Reap"
         # collection and the IMDb Top 250 are silently empty and protect nothing.
         emit(Progress("lists", 0, 0, "refreshing protection lists"))
-        # Failures to gather BEFORE the freeze are collected here and handed to the scan,
-        # which degrades the snapshot for each (loud, viewable, un-executable) exactly as an
-        # in-gather source failure does. None of them may silently pass through.
-        pre_scan_degradations: list[str] = []
 
         # Plex is optional (a movie-only deployment runs without it), but a *configured*
         # Plex that is briefly unreachable must degrade, not crash the whole scan the way an

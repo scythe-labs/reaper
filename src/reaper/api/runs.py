@@ -281,8 +281,11 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
             )
         profile_settings = await active_profile_settings(session)
 
-    # Build the live clients and run in a fresh session, so the run's own journal writes
-    # commit atomically. Every client is closed on the way out, however the run ends.
+    # Build the live clients and run in a fresh session. The executor commits the journal
+    # durably as it goes -- the EXECUTING claim before the first send, every step mark, and
+    # the final run state -- so a crash mid-run leaves an accurate record of what was done;
+    # the commit below is only a backstop for anything still pending. Every client is
+    # closed on the way out, however the run ends.
     gateway, closers = await build_reap_gateway(factory, settings, box)
     async with AsyncExitStack() as stack:
         for client in closers:

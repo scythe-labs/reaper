@@ -70,6 +70,20 @@ class TestKeepLastN:
         assert 2 not in plan.prunable
         assert 2 not in _reasons(plan)
 
+    def test_an_announced_fileless_season_does_not_spend_a_keep_slot(self) -> None:
+        """Seasons 1-5 on disk plus an announced, still-empty season 6. Keep-last-2 must
+        keep seasons 4 and 5: if the fileless season 6 took rank 1, only season 5 among
+        the real seasons would be kept and season 4 would be deleted."""
+        seasons = [_season(n) for n in range(1, 6)] + [_season(6, files=0, size=0)]
+        plan = plan_series_prune(
+            series_title="Show", seasons=seasons, keep_last=2, keep_first_season=False
+        )
+        assert 4 not in plan.prunable
+        assert 5 not in plan.prunable
+        assert {2, 3}.issubset(set(plan.prunable))
+        assert 6 not in plan.prunable
+        assert 6 not in _reasons(plan)
+
 
 class TestKeepFirstSeason:
     def test_the_first_real_season_is_kept_by_default(self) -> None:

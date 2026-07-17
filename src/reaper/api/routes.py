@@ -61,6 +61,7 @@ from reaper.engine.policy import (
     combine_hashes,
     inspect,
 )
+from reaper.engine.verdict import decide_verdict
 from reaper.services import app_settings, whitelist
 from reaper.services.deep_links import build_links
 from reaper.services.display_meta import parse_ratings_json
@@ -705,10 +706,16 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
     move with it -- instantly, without touching Sonarr, Radarr or Tautulli.
 
     **And it only works for the thresholds.** The simulator re-compares *stored* scores
-    and verdicts against new numbers. That is exact for ``condemn_at`` and
-    ``coverage_floor_bp``. It is simply wrong for anything else: change a signal weight
-    or a gate, and every stored score was produced by the old ones. There is no way to
-    recover the new answer from the snapshot -- it would take re-reading the library.
+    and verdicts against new numbers, through the same ``engine.verdict`` decision the
+    scan uses. That is exact for ``condemn_at`` and ``coverage_floor_bp``. It is simply
+    wrong for anything else: change a signal weight or a gate, and every stored score was
+    produced by the old ones. There is no way to recover the new answer from the snapshot
+    -- it would take re-reading the library.
+
+    Two kinds of row are never re-decided on score: a row with a protection that could
+    not be checked stays abstained at any threshold (the scan refuses to condemn on
+    unchecked protections), and a row under a hand override keeps its stored verdict
+    (the owner decided; the scan honours it whatever the threshold).
 
     So rather than return a confident, stale number, it compares the candidate policy's
     ``scoring_hash`` against the snapshot's and, when they differ, **returns nothing but
@@ -764,6 +771,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
             .scalars()
             .all()
         )
+        decisions = await whitelist.overrides(session)
 
     histogram = [0] * 10
     condemned = protected = abstained = 0
@@ -784,8 +792,37 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
             spared_by.update(_fired_gates(row.explanation_json))
             continue
 
-        eligible = row.coverage_bp >= body.coverage_floor_bp
-        now_condemned = eligible and row.score >= body.condemn_at
+        # A hand override pins the verdict, whatever the threshold: the owner looked and
+        # decided, and the scan honours that decision, so the simulator must too.
+        # Re-deciding a hand-reaped row on its score would report it "no longer
+        # condemned" at a draft threshold while every scan keeps condemning it.
+        if whitelist.effective_override(row.media_key, decisions) is not None:
+            if was_condemned:
+                condemned += 1
+                reclaimable += row.size_bytes
+            else:
+                abstained += 1
+            continue
+
+        # A row with a protection that could not be checked abstains at ANY threshold:
+        # the scan refuses to condemn on unchecked protections ("we could not look" is
+        # not "we looked and it was fine"), so counting it as a deletion here would be
+        # exactly the plausible wrong answer this route promises to refuse.
+        if _has_blocked_protections(row.explanation_json):
+            abstained += 1
+            continue
+
+        now_condemned = (
+            decide_verdict(
+                protected=False,
+                blocked=False,
+                score=row.score,
+                coverage_bp=row.coverage_bp,
+                condemn_at=body.condemn_at,
+                coverage_floor_bp=body.coverage_floor_bp,
+            )
+            == "condemn"
+        )
 
         if now_condemned:
             condemned += 1
@@ -833,6 +870,20 @@ def _fired_gates(explanation_json: str) -> list[str]:
     except (ValueError, TypeError):
         return []
     return [str(entry["gate"]) for entry in exp.get("protections_fired") or [] if "gate" in entry]
+
+
+def _has_blocked_protections(explanation_json: str) -> bool:
+    """Did this row store any protection that could not be checked?
+
+    Read from the stored explanation's ``protections_unknown`` block -- the same record
+    the why-panel renders amber -- and defensive like ``_fired_gates``: an unreadable
+    explanation reads as unblocked rather than failing the simulation.
+    """
+    try:
+        exp = json.loads(explanation_json)
+    except (ValueError, TypeError):
+        return False
+    return bool(exp.get("protections_unknown"))
 
 
 # ---------------------------------------------------------------------------

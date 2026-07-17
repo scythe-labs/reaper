@@ -231,6 +231,12 @@ class AutonomyGrant(Base):
 
     It is *earned*, not set: it requires a passing backtest and a run of clean
     supervised executions, both recorded here.
+
+    **Not wired yet.** No route or flow creates or consults grants today -- the
+    backtest that must feed ``backtest_passed`` has no route or UI, so the check
+    constraints below mean no row can honestly exist until that ships. The schema is
+    kept (pre-release, single migration baseline) so the earned-autonomy design stays
+    enforced in the database from day one, and PLAN.md tracks the wiring as open work.
     """
 
     __tablename__ = "autonomy_grant"
@@ -503,12 +509,15 @@ class RunState(enum.StrEnum):
 class StepState(enum.StrEnum):
     """Where one step is in its lifecycle.
 
-    The ordering matters: a step is written as ``PENDING`` **before** the HTTP call, and
-    only moves to ``SENT`` once we know the call was made. A step found still ``SENT`` at
-    startup was in flight when the process died: it is a durable record of precisely what
-    was outstanding, so a reconciler *could* re-probe the *arr to discover whether it
-    actually landed. No such reconciler runs today -- a crashed run is re-planned from a
-    fresh snapshot, not resumed -- so this is an audit trail, not a resume point.
+    The ordering matters: a step is journalled as ``PENDING`` when the plan is built, and
+    is marked ``SENT`` and **committed** immediately before its HTTP call is dispatched --
+    the executor commits every step-state change durably as it happens
+    (``Executor._mark_sent`` / ``_mark_verified``), never inside a run-long transaction.
+    A step found still ``SENT`` at startup was therefore in flight when the process died:
+    a durable record of precisely what was outstanding, so a reconciler *could* re-probe
+    the *arr to discover whether it actually landed. No such reconciler runs today -- a
+    crashed run is re-planned from a fresh snapshot, not resumed -- so this is an audit
+    trail, not a resume point.
     """
 
     PENDING = "pending"  # journalled, not yet sent

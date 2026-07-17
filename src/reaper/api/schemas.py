@@ -472,38 +472,6 @@ class VocabularyOut(BaseModel):
     fields: list[FieldOut]
 
 
-class BacktestOut(BaseModel):
-    cutoff: str
-    condemn_at: int
-
-    condemned: int
-    reclaimable_bytes: int
-    protected: int
-
-    rescued: int
-    """Played DURING the grace window, so the pre-delete re-check spares them. NOT
-    regrets -- counting rescues as failures would slander the policy."""
-
-    regrets: int
-    """Played AFTER the grace period expired. Media that was actually gone when a real
-    person went looking for it."""
-
-    regret_rate: float
-    expected_regret_rate: float
-    """What you'd get by picking randomly among films of the same age."""
-
-    lift: float
-    """How much better than age alone. **Negative means the signals are worse than
-    nothing** and no profile may be armed."""
-
-    prior_is_derived: bool
-    """Was the baseline measured on THIS library, or borrowed? A lift number computed
-    against somebody else's library is worth nothing."""
-
-    beats_random: bool
-    regret_titles: list[str]
-
-
 class LeavingSoonOut(BaseModel):
     """The result of reconciling the Leaving Soon label set against the grace set."""
 

@@ -382,3 +382,81 @@ class TestScanPipelineEndToEnd:
         assert "radarr 'uhd' unreachable" in (snapshot.degraded_reason or "")
         rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
         assert set(rows) == {"radarr:1:1", "radarr:1:2", "radarr:1:3"}
+
+
+class TestRunScanHistorySync:
+    """The orchestrator's handling of the watch-history mirror sync.
+
+    The mirror is the primary condemning evidence -- dormancy and watcher counts are
+    read from it -- so a failed sync must degrade the snapshot (loud, viewable,
+    un-executable), never let the scan score quietly on a stale mirror. A play that
+    landed after the last successful sync is invisible to scoring; only degradation
+    keeps that item deletable-looking snapshot from being executed.
+    """
+
+    async def test_a_failed_history_sync_degrades_the_snapshot(
+        self, tmp_path: Path, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        from reaper.engine.policy import ProfileSettings
+        from reaper.services import scan_runner
+
+        captured: dict[str, Any] = {}
+
+        async def fake_scan(engine: Any, session: Any, **kwargs: Any) -> Any:
+            captured.update(kwargs)
+            return SimpleNamespace(id=1, item_count=0)
+
+        async def failing_sync(engine: Any, tautulli: Any) -> Any:
+            raise IntegrationError("tautulli", "unreachable (boom)")
+
+        class _CmTautulli:
+            async def __aenter__(self) -> _CmTautulli:
+                return self
+
+            async def __aexit__(self, *exc: object) -> None:
+                return None
+
+        async def fake_sources(factory: Any, settings: Any, box: Any) -> Any:
+            return ([], [], _CmTautulli(), None, None)
+
+        async def fake_policies(session: Any) -> Any:
+            return (DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY)
+
+        async def fake_profile(session: Any) -> Any:
+            return ProfileSettings()
+
+        async def fake_sync_lists(engine: Any, **kwargs: Any) -> dict[str, Any]:
+            return {}
+
+        async def fake_sync_degradations(engine: Any, synced: Any) -> list[str]:
+            return []
+
+        monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
+        monkeypatch.setattr(scan_runner.history_sync, "sync", failing_sync)
+        monkeypatch.setattr("reaper.api.routes.active_policies", fake_policies)
+        monkeypatch.setattr(scan_runner.profiles, "active_profile_settings", fake_profile)
+        monkeypatch.setattr(scan_runner.snapshot_service, "scan", fake_scan)
+        monkeypatch.setattr(scan_runner.snapshot_service, "sync_protection_lists", fake_sync_lists)
+        monkeypatch.setattr(
+            scan_runner.snapshot_service, "protection_sync_degradations", fake_sync_degradations
+        )
+
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = create_engine(settings)
+        factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+        try:
+            await scan_runner.run_scan(
+                settings=settings,
+                session_factory=factory,
+                cache_engine=cache_engine,
+                box=None,  # type: ignore[arg-type]  # build_sources is stubbed; never read
+            )
+        finally:
+            await engine.dispose()
+
+        reasons = captured.get("extra_degrade_reasons")
+        assert reasons, "a failed history sync must hand the scan a degradation reason"
+        assert any("Watch history could not be refreshed" in r for r in reasons)
+        assert any("nothing may be deleted" in r for r in reasons)

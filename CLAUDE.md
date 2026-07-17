@@ -193,3 +193,77 @@ the file* and *failing closed*. Read them before touching the safety, auth, or c
     **No em dashes in operator-facing copy** (frontend strings and backend `detail`/message
     strings alike): reword with a period, comma, or colon. Middots as separators
     ("70/100 · 20% of the score") and arrows ("Policy → Deletion") are fine.
+
+## Blockers from the second review pass
+
+Direct constraints from the second whole-codebase review (`docs/CODE_REVIEW.md`, dev @
+`5b885f5`), derived from what that review actually found. Written as blockers, not
+suggestions. They extend the rules above; where one sharpens an earlier rule (22 → 3,
+24 → 7, 30 → 5, 33 → 9, 36 → 17), the newer, more specific obligation governs.
+
+22. **One decision function.** The condemn/abstain/protect decision lives in exactly one
+    engine-level function — `engine/verdict.decide_verdict` — and `snapshot`, `simulate`,
+    and `backtest` must import it. Never write `score >= threshold` or
+    `coverage_bp >= floor` inline outside it, and any agreement test must call the real
+    functions, never a transcribed copy.
+23. **Every re-decision surface handles every stored verdict state.** If you add or
+    consume a Candidate verdict, enumerate all states (protect, abstain-blocked,
+    abstain-by-score, condemn, overrides) at every consumer, and add the blocked/override
+    cases to the simulator test in the same change.
+24. **A comment naming a safeguard must cite its implementing function**, and you must
+    verify that function exists and is called before merging. If you cannot cite it,
+    change the comment in the same commit. The second review pass found six safeguards
+    that existed only as prose.
+25. **Operator-facing copy may only reference features that are wired.** Before writing UI
+    or warning text that names a mechanism (backtest, cap, interlock), confirm the route
+    or UI path exists; a DB constraint or schema for an unwired feature is a blocker, not
+    a placeholder.
+26. **Journal and state-transition writes on the deletion path must be durably committed
+    at each step.** Never rely on `flush()` inside a run-long transaction for anything
+    described as an audit record, and every state-transition guard must be an atomic
+    `UPDATE … WHERE state = :expected`.
+27. **A protection container that cannot be found is an error, never an empty result.**
+    When a tag, collection, or list fetch would replace stored members, distinguish
+    container-missing or malformed-body from genuinely-empty; missing-with-existing-
+    members must raise so the previous membership survives and the snapshot degrades.
+28. **Failure of any evidence source degrades the snapshot.** Any `except` around a source
+    read in the scan pipeline must append to `pre_scan_degradations` (or call
+    `context.degrade`); a bare `log.warning` on a source failure is a review-blocker.
+    Watch history is a source.
+29. **Every identity or membership lookup passes every id the item carries.** When calling
+    `membership_index.lookup` or any cross-system join, pass imdb+tmdb+tvdb together;
+    adding a new id kind to storage requires grepping and updating every lookup call site
+    in the same change.
+30. **Rank, cap, and count computations run over the exact set acted on.** Filter first
+    (content-bearing seasons, non-spared deletable items, fetched-vs-all groups), then
+    rank or count; any number shown beside a destructive button must be derived from the
+    same set the server will act on.
+31. **Derived condemn-lane values round toward keeping.** When precision is reduced on
+    any field that can add deletion pressure (dates from years, sizes, ages), choose the
+    bound that produces less pressure.
+32. **Typed condition values validate against the field's type at the boundary, and
+    evaluation never raises out of a scan.** Rule evaluation errors degrade that item as
+    blocked; a stored policy must not be able to crash `score()` or `evaluate_all`.
+33. **All HTTP goes through `clients/`.** A raw `httpx`/`requests` usage outside
+    `src/reaper/clients/` is a blocker unless this file names it as a sanctioned
+    exception. GET-shaped mutating endpoints must be classified and gated by path in the
+    guard, not assumed safe by method.
+34. **Every constructed client has an owner that closes it.** A client constructed
+    outside an exit stack (or without entering one in the same scope) is a leak; add the
+    close path in the same diff as the construction.
+35. **New `Facts` fields must be populated (or explicitly `Absent` with a comment) in
+    every fact builder**: snapshot movies, season_scan, backtest, calibration. Grep all
+    builders when adding a field; a field populated in one path silently changes scores
+    and coverage in the others.
+36. **Frontend gating and safety surfaces handle `isPending` and `error` explicitly.**
+    `return null` on a failed query for an always-visible component is a blocker, and
+    every async onClick is a mutation with a rendered error state.
+37. **Tests that boot the app must be hermetic.** Use the shared autouse `_hermetic`
+    fixture in `tests/conftest.py`, which stubs env seeding and startup network; never
+    let a test read the developer's `.env` or reach the network.
+38. **Dead safety-adjacent code is deleted, not stockpiled.** A method "for when the
+    interlock lands" (as `PlexClient.item_count` was, until its count-delta interlock
+    landed) must land with its interlock and tests, or not exist.
+39. **Drafts and dirty checks compare canonical forms.** Never compare serialized state
+    with raw `JSON.stringify` across frontend/backend boundaries; re-seed from the server
+    response after a save.

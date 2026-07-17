@@ -89,7 +89,7 @@ def parse_season_stats(season: dict[str, Any]) -> SeasonStats | None:
 
 
 def rank_seasons(seasons: list[SeasonStats], *, include_specials: bool = False) -> dict[int, int]:
-    """Rank seasons newest-first: rank 1 is the most recent season.
+    """Rank seasons newest-first: rank 1 is the most recent season *with files on disk*.
 
     This is what a "keep the last N seasons" rule counts against.
 
@@ -97,7 +97,13 @@ def rank_seasons(seasons: list[SeasonStats], *, include_specials: bool = False) 
     the show, they are frequently the oldest-numbered and newest-dated content at
     once, and letting them occupy a rank slot silently shifts every real season by
     one -- so "keep the last 2" would keep specials plus one real season.
+
+    Seasons without files are excluded for the same reason: an announced-but-
+    undownloaded next season would otherwise take rank 1 and shift every real season
+    down one, so "keep the last 2" would protect the empty shell plus one real season
+    and leave the season the rule meant to keep prunable. There is nothing to keep in
+    a season with no files, so it never occupies a keep-slot.
     """
-    real = [s for s in seasons if include_specials or s.season_number > 0]
+    real = [s for s in seasons if s.has_content and (include_specials or s.season_number > 0)]
     ordered = sorted(real, key=lambda s: s.season_number, reverse=True)
     return {s.season_number: i + 1 for i, s in enumerate(ordered)}

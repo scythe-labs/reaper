@@ -22,6 +22,7 @@ import pytest
 
 from reaper.engine.gates import ABSTAIN, PROTECT, Evaluation, GateId, GateResult
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
+from reaper.engine.verdict import decide_verdict
 from reaper.services.snapshot import _verdict
 
 CLEAN = Evaluation(
@@ -30,17 +31,36 @@ CLEAN = Evaluation(
 PROTECTED = Evaluation(
     results=[GateResult(GateId.RATING_FLOOR, PROTECT, detail="IMDb 8.2 -- above your floor")]
 )
+BLOCKED = Evaluation(
+    results=[
+        GateResult(
+            GateId.SERVER_POPULARITY,
+            ABSTAIN,
+            detail="could not reach Tautulli",
+            blocked=True,
+        )
+    ]
+)
 
 
 def _simulator_verdict(score: int, coverage_bp: int, condemn_at: int, floor_bp: int) -> str:
-    """The simulator's rule, transcribed from ``api.routes.simulate``.
+    """The simulator's re-decision for a clean stored row, as ``api.routes.simulate``
+    actually makes it: the REAL shared function, with the stored integers.
 
-    It has only the stored integers to work with -- that is the entire point of a
-    zero-API-call simulator -- so this is all it can possibly do.
+    Not a transcription. The route imports ``decide_verdict`` and calls it exactly like
+    this for every row it re-decides (protected, blocked and overridden rows are never
+    re-decided -- pinned in ``TestRowsTheSimulatorMustNotReDecide`` below and in the
+    route-level tests in ``test_api.py``), so a regression in the shared function fails
+    here, and a route that stops using it fails the route-level boundary test.
     """
-    if coverage_bp < floor_bp:
-        return "abstain"
-    return "condemn" if score >= condemn_at else "abstain"
+    return decide_verdict(
+        protected=False,
+        blocked=False,
+        score=score,
+        coverage_bp=coverage_bp,
+        condemn_at=condemn_at,
+        coverage_floor_bp=floor_bp,
+    )
 
 
 class TestTheStoredScoreIsTheDecidingScore:
@@ -83,8 +103,7 @@ class TestTheStoredScoreIsTheDecidingScore:
 
 
 class TestAProtectionStillBeatsTheScore:
-    """The simulator transcription above knows nothing about gates -- it does not have
-    to, because it never re-decides a protected row. This pins the reason why."""
+    """The simulator never re-decides a protected row. This pins the reason why."""
 
     def test_a_protected_item_is_protected_at_any_score(self) -> None:
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
@@ -93,19 +112,38 @@ class TestAProtectionStillBeatsTheScore:
 
     def test_a_protection_that_could_not_be_checked_abstains(self) -> None:
         """ "We could not look" is not "we looked and it was fine"."""
-        blocked = Evaluation(
-            results=[
-                GateResult(
-                    GateId.SERVER_POPULARITY,
-                    ABSTAIN,
-                    detail="could not reach Tautulli",
-                    blocked=True,
-                )
-            ]
-        )
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
 
-        assert _verdict(blocked, 100, 10_000, policy) == "abstain"
+        assert _verdict(BLOCKED, 100, 10_000, policy) == "abstain"
+
+
+class TestRowsTheSimulatorMustNotReDecide:
+    """The two row kinds the simulator keeps out of the score comparison, and the scan
+    behaviour that makes that the ONLY correct treatment. The simulator marks a stored
+    row with non-empty ``protections_unknown`` abstained at any threshold, and keeps an
+    overridden row at its stored verdict; these sweeps pin that the scan agrees at every
+    score and threshold, so the route's skip can never drift from production."""
+
+    @pytest.mark.parametrize("score", range(0, 101, 10))
+    @pytest.mark.parametrize("condemn_at", [1, 40, 70, 91, 100])
+    def test_a_blocked_row_abstains_at_every_score_and_threshold(
+        self, score: int, condemn_at: int
+    ) -> None:
+        policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": condemn_at})
+
+        assert _verdict(BLOCKED, score, 10_000, policy) == "abstain"
+
+    @pytest.mark.parametrize("score", range(0, 101, 10))
+    @pytest.mark.parametrize("condemn_at", [1, 40, 70, 91, 100])
+    def test_a_hand_reaped_row_condemns_at_every_threshold(
+        self, score: int, condemn_at: int
+    ) -> None:
+        """A reap override pins the verdict regardless of the score or the threshold --
+        which is exactly why the simulator must keep an overridden row at its stored
+        verdict instead of re-deciding it on score."""
+        policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": condemn_at})
+
+        assert _verdict(CLEAN, score, 10_000, policy, override="reap") == "condemn"
 
 
 class TestAReapOverrideForcesCondemnButNeverPastSafety:

@@ -240,3 +240,63 @@ class TestSeasonPruningNeedsNoBooleanCleverness:
 
         assert evaluate_rules(rules, older_season).matched is True
         assert evaluate_rules(rules, newest_two).matched is False
+
+
+class TestValueTypesAreValidatedAtTheBoundary:
+    """A JSON string on a numeric field ("500" for a byte threshold) used to save and
+    hash cleanly, then crash every subsequent scan inside score()/evaluate_all. The type
+    check makes it a refusal at save time, naming the field."""
+
+    def test_a_string_on_a_numeric_field_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="whole number"):
+            Condition(field="size_bytes", op=Op.GTE, value="500").validate_for(Lane.PROTECT)
+
+    def test_a_bool_on_a_numeric_field_is_refused(self) -> None:
+        """bool is an int subclass in Python; it must not slip through as 0 or 1."""
+        with pytest.raises(ValueError, match="whole number"):
+            Condition(field="days_unwatched", op=Op.GTE, value=True).validate_for(Lane.PROTECT)
+
+    def test_a_number_on_a_text_field_is_refused(self) -> None:
+        """The quiet half of the same bug: contains/in with a non-text value never
+        matches, so the protection the owner believes exists silently does nothing."""
+        with pytest.raises(ValueError, match="expects text"):
+            Condition(field="genre", op=Op.CONTAINS, value=7).validate_for(Lane.PROTECT)
+
+    def test_a_string_on_a_boolean_field_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="true or false"):
+            Condition(field="show_ended", op=Op.EQ, value="yes").validate_for(Lane.PROTECT)
+
+    def test_a_well_typed_condition_still_validates(self) -> None:
+        Condition(field="size_bytes", op=Op.GTE, value=500).validate_for(Lane.PROTECT)
+        Condition(field="genre", op=Op.CONTAINS, value="horror").validate_for(Lane.PROTECT)
+
+
+class TestABadStoredValueDegradesInsteadOfCrashing:
+    """Belt and suspenders under the boundary check: a rule that somehow carries an
+    uncomparable value (stored before the type check existed) must degrade that item as
+    blocked -- amber, could-not-check -- never raise out of a scan."""
+
+    def test_evaluate_returns_blocked_not_an_exception(self) -> None:
+        bad = Condition.__new__(Condition)  # bypass validation, as a legacy stored rule would
+        object.__setattr__(bad, "field", "size_bytes")
+        object.__setattr__(bad, "op", Op.GTE)
+        object.__setattr__(bad, "value", "500")
+
+        result = evaluate(bad, _facts())
+
+        assert result.blocked is True
+        assert result.matched is False
+        assert "could not check" in result.detail
+
+    def test_a_blocked_bad_value_cannot_protect_or_condemn(self) -> None:
+        """Through the gate wrapper: the worst a corrupt stored rule can do is abstain
+        with an amber detail. It can never fire, and it can never crash the judge."""
+        bad = Condition.__new__(Condition)
+        object.__setattr__(bad, "field", "size_bytes")
+        object.__setattr__(bad, "op", Op.GTE)
+        object.__setattr__(bad, "value", "500")
+
+        outcome = CustomProtectGate(bad).evaluate(_facts())
+
+        assert outcome.outcome is ABSTAIN
+        assert outcome.blocked is True

@@ -22,6 +22,11 @@ tells the owner nothing; *"you would have deleted <film>, and <user> watched it 
 months later"* -- naming the real title and the real person -- tells them exactly what
 a threshold of 60 costs.
 
+**Engine-complete, not yet reachable.** No route, CLI or UI calls :func:`run` today, so
+nothing an operator can click runs a backtest; operator-facing copy must not tell them
+to run one until it ships. PLAN.md tracks the wiring (a ``POST /api/policy/backtest``
+plus the calibration prior) as open work.
+
 ## The honesty problem
 
 A backtest flatters itself if you are not careful. Two rules:
@@ -47,6 +52,7 @@ from reaper.engine.gates import Evaluation, Facts, Gate, GateId, evaluate_all
 from reaper.engine.observation import Absent, Known
 from reaper.engine.policy import PolicyBody
 from reaper.engine.signals import SignalConfig, score
+from reaper.engine.verdict import decide_verdict
 
 log = structlog.get_logger(__name__)
 
@@ -110,7 +116,6 @@ class BacktestResult:
 
     considered: int = 0
     skipped_not_yet_added: int = 0
-    skipped_no_history: int = 0
 
     grace_days: int = 14
 
@@ -191,7 +196,9 @@ class BacktestResult:
         version of this engine scored -50%: `SIZE` was condemning 4K blockbusters
         precisely because they were large.
 
-        No profile may be armed while this is negative.
+        This number is what the earned-autonomy flow (AutonomyGrant) is designed to
+        gate on: a negative lift must refuse the grant. That flow -- like this whole
+        module -- is not wired to a route or UI yet, so nothing enforces it today.
         """
         expected = self.expected_regret_rate
         if expected == 0:
@@ -208,8 +215,7 @@ class BacktestResult:
             f"As of {self.cutoff.date()}, at a threshold of {self.condemn_at}:",
             f"  would have deleted   {len(self.condemned):,} items  ({gb:,.0f} GB)",
             f"  protected            {self.protected:,} items",
-            f"  could not judge      {self.skipped_not_yet_added + self.skipped_no_history:,} "
-            f"(not yet added, or outside the watch horizon)",
+            f"  could not judge      {self.skipped_not_yet_added:,} (not yet added at the cutoff)",
         ]
         lines += [
             f"  rescued in grace     {len(self.rescued):,} "
@@ -411,16 +417,14 @@ async def run(
         result.considered += 1
 
         evaluation: Evaluation = evaluate_all(gates, facts)
-        if evaluation.protected or evaluation.blocked:
-            result.protected += 1
-            continue
 
-        # Reach the verdict the SAME way production does (services.snapshot._verdict): decide
-        # on the STORED, ROUNDED integers, not the raw floats, and abstain below the coverage
-        # floor. An honest replay must not diverge from the engine at the exact boundary the
-        # owner is tuning: an item scoring 69.6 rounds to 70 and IS condemned by production, so
-        # the backtest must condemn it too (or it under-counts regret at the threshold); and a
-        # low-coverage item production would abstain on must not be counted as a deletion here.
+        # Reach the verdict through the ONE decision function production uses
+        # (engine.verdict.decide_verdict, via services.snapshot._verdict): decide on the
+        # STORED, ROUNDED integers, not the raw floats. An honest replay must not diverge
+        # from the engine at the exact boundary the owner is tuning: an item scoring 69.6
+        # rounds to 70 and IS condemned by production, so the backtest must condemn it
+        # too (or it under-counts regret at the threshold); and a low-coverage item
+        # production would abstain on must not be counted as a deletion here.
         # Custom condemn rules are scored here too, so the lift gate measures the composed
         # formula (this is what catches a size-based custom rule the way it catches built-in
         # SIZE). Metadata fields the historical reconstruction does not populate (genre,
@@ -431,11 +435,18 @@ async def run(
             custom_condemn=policy.custom_signal_configs(),
             keeps=policy.keep_configs(),
         )
-        score_value = round(item_score.value)
-        coverage_bp = round(item_score.coverage * 10_000)
-        if coverage_bp < policy.coverage_floor_bp:
+        verdict = decide_verdict(
+            protected=evaluation.protected,
+            blocked=evaluation.blocked,
+            score=round(item_score.value),
+            coverage_bp=round(item_score.coverage * 10_000),
+            condemn_at=policy.condemn_at,
+            coverage_floor_bp=policy.coverage_floor_bp,
+        )
+        if verdict == "protect":
+            result.protected += 1
             continue
-        if score_value < policy.condemn_at:
+        if verdict != "condemn":
             continue
 
         result.condemned.append((item.title, item_score.value, item.size_bytes))

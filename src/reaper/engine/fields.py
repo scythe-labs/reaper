@@ -331,6 +331,30 @@ class Condition:
                 f"{spec.label!r} does not support {self.op.value}. "
                 f"Allowed: {', '.join(o.value for o in spec.ops)}."
             )
+        self._validate_value_type(spec)
+
+    def _validate_value_type(self, spec: FieldSpec) -> None:
+        """The typed value must match the field's type, checked at the save boundary.
+
+        JSON keeps ``"500"`` a string on a numeric field (the wire type is
+        ``int | str | bool`` and nothing coerces), so without this check the policy
+        saves and hashes cleanly and the NEXT SCAN crashes inside ``score()`` /
+        ``evaluate_all`` on every item. A 422 naming the field at save time is the
+        honest failure. It also closes the quieter half: ``in``/``contains`` with a
+        non-text value can never match, so a protection the owner believes exists
+        would silently do nothing.
+        """
+        value = self.value
+        if spec.type is FieldType.BOOL:
+            if not isinstance(value, bool):
+                raise ValueError(f"{spec.label!r} expects true or false, got {value!r}.")
+        elif spec.type is FieldType.TEXT:
+            if not isinstance(value, str):
+                raise ValueError(f"{spec.label!r} expects text, got {value!r}.")
+        # Numeric field types (days, bytes, count, rating tenths). bool is an int
+        # subclass in Python, so it must be rejected explicitly.
+        elif isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"{spec.label!r} expects a whole number, got {value!r}.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,13 +395,26 @@ def evaluate(condition: Condition, facts: Facts) -> ConditionResult:
 
     value = observation.value
     target = condition.value
-    matched = _compare(condition.op, value, target)
+    try:
+        matched = _compare(condition.op, value, target)
+        detail = (
+            f"{spec.label}: {_render(spec, value)} {condition.op.value} {_render(spec, target)}"
+        )
+    except ValueError as exc:
+        # Belt and suspenders under validate_for's boundary check: a stored rule whose
+        # value cannot be compared against this field (saved before the type check
+        # existed, or edited by hand) degrades THIS item as blocked -- amber, "could not
+        # check" -- instead of raising out of score()/evaluate_all and aborting the
+        # whole scan. Blocked fails safe in both lanes: a protect condition blocks the
+        # verdict to abstain, a condemn rule adds no pressure and keeps its weight in
+        # the denominator.
+        return ConditionResult(
+            matched=False,
+            blocked=True,
+            detail=f"could not check {spec.label.lower()}: {exc}",
+        )
 
-    return ConditionResult(
-        matched=matched,
-        blocked=False,
-        detail=f"{spec.label}: {_render(spec, value)} {condition.op.value} {_render(spec, target)}",
-    )
+    return ConditionResult(matched=matched, blocked=False, detail=detail)
 
 
 def _compare(op: Op, value: object, target: object) -> bool:
@@ -419,8 +456,8 @@ Mode = Literal["all"]
 """The condemn lane joins conditions with AND, and only AND.
 
 Not an oversight. OR is expressible by making a second profile, which forces the
-owner to name the second thing they mean -- and a named profile can be backtested,
-capped and approved on its own terms. A nested OR cannot.
+owner to name the second thing they mean -- and a named profile can be capped,
+approved and (once the backtest ships) backtested on its own terms. A nested OR cannot.
 """
 
 

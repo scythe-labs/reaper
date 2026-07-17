@@ -5,9 +5,11 @@
 bug a shipping competitor actually has, and each one resolves toward *keeping* a season:
 
 * **Keep the last N.** Rank seasons newest-first; the N most recent are kept. Rank comes
-  from :func:`rank_seasons`, which excludes specials so they cannot silently shift the
-  count. (Season *rank* is also a scoring signal elsewhere -- a beloved old season earns
-  enough negative pressure from its popularity to survive on score. This module is the
+  from :func:`rank_seasons`, which excludes specials AND fileless seasons (an announced
+  next season with nothing downloaded yet) so neither can silently shift the count and
+  spend a keep-slot on nothing. (Season *rank* is also a scoring signal elsewhere -- a
+  beloved old season earns enough negative pressure from its popularity to survive on
+  score. This module is the
   hard floor underneath that: things that must be kept regardless of any score.)
 
 * **Keep the first season.** On by default. The pilot is how anyone starts the show; a
@@ -232,7 +234,7 @@ def _protection_reason(
         if keep_last >= total_ranked:
             plural = "s" if total_ranked != 1 else ""
             return (
-                f"this show has only {total_ranked} season{plural}, so your keep-last-"
+                f"this show has only {total_ranked} season{plural} on disk, so your keep-last-"
                 f"{keep_last} rule keeps all of them"
             )
         return f"within the last {keep_last} seasons (rank {rank})"

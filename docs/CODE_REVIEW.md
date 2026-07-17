@@ -1,466 +1,741 @@
-## 1. Bugs
-
-**1. Docker build fails: README.md declared as project readme but never copied before the uv installs**
-`Dockerfile:32 (install triggering the failure; root cause is the missing README.md at COPY on line 31)`
-Severity: critical
-Description: pyproject.toml declares `readme = "README.md"`, so hatchling's metadata validation requires README.md at build time. The runtime stage copies `pyproject.toml` (line 31) then runs `uv pip install --system --no-cache .` (line 32) and `uv pip install --system --no-deps -e .` (line 37), but README.md is never COPYed into /app. Hatchling raises `OSError: Readme file does not exist: README.md`, so both install steps fail. The container is the production deliverable and cannot be built as written. (The secondary claim about `packages = ["src/reaper"]` making the layer unbuildable is inaccurate and can be disregarded.)
-Failure scenario: An operator or CI runs `docker build .` → build aborts at line 32 with `OSError: Readme file does not exist: README.md`. No image is produced; Reaper cannot be deployed via its documented container path.
-Recommended fix: Change line 31 from `COPY pyproject.toml ./` to `COPY pyproject.toml README.md ./`. Add a `docker build` step to CI to catch this.
-
-**2. Movie→Plex join keys on title alone (last-wins), so duplicate-titled movies bind to the wrong Plex item**
-`src/reaper/services/snapshot.py:685 (root cause in _plex_index); 713/725 (the poisoned join in _raw_items)`
-Severity: high
-Description: `_plex_index` builds a `title.lower() -> row` map with last-write-wins and no year disambiguation; `_raw_items` then does `plex_index.get(title.lower())` and stores that row's `rating_key` as the candidate's `plex_rating_key`. When two movies share a title (remakes/reboots), only one Plex row survives, so both Radarr movies join to whichever Plex row was indexed last. The season path was explicitly hardened against exactly this (`build_tv_index` keeps a `list[ShowRow]` and `match_show` refuses on year conflict). The movie path has `movie['year']` and `row.get('year')` available but uses neither. The mis-join poisons scoring dormancy/popularity and the live execute-time interlocks, since `_being_watched_now` and `_watched_since_approval` both key off the wrong `plex_rating_key`.
-Failure scenario: Library has 'The Mummy' (1999, streamed weekly) and 'The Mummy' (2017, never watched). `_plex_index` keeps only the 2017 row; the 1999 candidate joins to the 2017 key, reads zero recent watchers, and is condemned. At execute time the streaming veto checks the 2017 key against the veto set (which holds the 1999 key someone is watching now) → no match → the 1999 movie is deleted mid-stream.
-Recommended fix: Mirror the season path. Make `_plex_index` return `dict[str, list[dict]]` appending every row per lowercased title. In `_raw_items`, resolve by year the way `match_show` does; on any conflict or unresolved duplicate return no match so `plex_rating_key`/`added_at` stay None (Unknown facts → ABSTAIN, and the executor's `plex_rating_key is None` branch spares it). Never silently bind to the last-indexed row.
-
-**3. Bulk "Reap now" on a selected TV show sends the show group_key, which build_plan rejects**
-`frontend/src/components/ReviewQueue.tsx:979 (frontend/src/components/ReviewQueue.tsx); backend validation at src/reaper/services/planner.py:276-289`
-Severity: high
-Description: In Select mode a TV show is only selectable at the show level, so the only key entering `selected` for a show is `group.key` (the 3-part `sonarr:{inst}:{series}` group_key). Bulk "Reap now" calls `reapNow.mutate([...selected])` → `api.createRun(keys)` → `build_plan`, which validates each key against `condemned_keys` (4-part season keys `sonarr:{inst}:{series}:{season}`). A show group_key is never in that set, so build_plan raises PlanError. Bulk spare/reap override works because it resolves group_key via whitelist, but the reap path does not — an asymmetry that fails only for the destructive action.
-Failure scenario: Operator opens "Would reap", enters Select mode, taps TV shows, clicks "Reap now". The confirmation never opens; `reapNow.error` renders "These items are not condemned in this snapshot…". There is no way to bulk-reap any TV title.
-Recommended fix: Make the reap path symmetric with the override path. Preferably in `build_plan`, mirror `whitelist.effective_override`: when a requested key matches a candidate's `group_key` rather than a `media_key`, expand it to that group's condemned member media_keys before the `unknown` check. Add a test: select a condemned show → Reap now → plan contains all condemned seasons and no PlanError. Currently fails safe (loud 422, no deletion).
-
-**4. An empty media_keys selection builds a whole-library reap plan instead of failing closed**
-`src/reaper/api/runs.py:153`
-Severity: medium
-Description: `only = set(payload.media_keys) if payload and payload.media_keys else None` treats an explicitly-supplied empty list the same as an omitted field, because `[]` is falsy. A 'reap selected' request carrying an empty selection collapses to `only_media_keys=None`, which `build_plan` interprets as 'plan the entire condemned set'. This inverts intent on the destructive-planning path: a selection of nothing becomes a selection of everything. Had the empty set been passed through, `build_plan` would fail closed at its `if not plannable` guard (planner.py:298) with a 422.
-Failure scenario: A UI 'Reap selected' button posts `{"media_keys": []}` when nothing is highlighted. The API builds and journals a full-library reap run covering thousands of condemned items and returns its whole-library confirmation_phrase.
-Recommended fix: Distinguish omitted from explicit empty: `only = set(payload.media_keys) if (payload is not None and payload.media_keys is not None) else None`. An empty explicit selection then fails closed at planner.py:298. Optionally special-case it to a clearer 422 "No items selected to reap."
-
-**5. Leaving Soon Discord announce re-fires on every call in the default read-only path**
-`src/reaper/services/leaving_soon.py:126-130 (announce), driven by 117-119 (recomputed diff) and gated by apply at 79/122; route passes notifier unconditionally at src/reaper/api/leaving_soon.py:81`
-Severity: medium
-Description: The Discord announce is driven by `plan.to_add` (`should_be_labelled - currently_labelled`) with no persisted 'already announced' record. When `apply=False` the label is never written to Plex, so `target.current()` never learns about newly-marked items and `plan.to_add` is recomputed as the ENTIRE in-grace movie set on every invocation. `apply` is False in the default install state (`RuntimeSafety.leaving_soon_write_allowed = destructive_allowed or allow_leaving_soon_unarmed`, both off by default). So the announce is not idempotent in the configuration most installs run in. The single-section `PlexLabelTarget` aggravates this for multi-section movie libraries even when armed.
-Failure scenario: Default install, Discord webhook configured, 5 movies in grace. Operator clicks 'Mark Leaving Soon' (POST /api/leaving-soon/sync) once → embed '5 titles are leaving soon'. Every subsequent click re-posts an identical duplicate embed because nothing was persisted to Plex.
-Recommended fix: Make the announce idempotent independent of whether the write landed. Persist the set of already-announced media keys and announce only keys in `plan.to_add` not already in that set, adding them once announced and pruning as they leave grace (mirroring `plan.to_remove`). In armed/apply=True mode the bug self-corrects after the first click, so the fix mainly addresses the apply=False path. (Simply gating on `applied` would remove the intended read-only heads-up, so the persisted-set approach is preferable.)
-
-**6. The @retry on BaseClient._send can never fire, so no read is ever retried on a transient failure**
-`src/reaper/clients/base.py:159-188`
-Severity: medium
-Description: `_send` is decorated with `@retry(retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)), ...)`, but the body catches those and re-raises them as `IntegrationError` (a RuntimeError) before they can escape. Since all transient transport failures are subclasses of `httpx.TransportError`, every one is converted to `IntegrationError`, which is NOT in the retry predicate. With `reraise=True`, tenacity re-raises on the first attempt without ever retrying. The exponential-backoff retry is dead code.
-Failure scenario: During a multi-minute scan, a single transient blip (dropped connection to Radarr, a ReadTimeout to Tautulli, a DNS hiccup to Seerr) makes `get_json` raise `IntegrationError` immediately with zero retries, aborting the whole scan on the first momentary glitch.
-Recommended fix: Let raw httpx transport errors reach tenacity. Split `_send`: an inner `@retry`-decorated `_request` that calls `self._client.request` and lets `httpx.TransportError`/`TimeoutException` propagate (so the predicate matches and backoff runs); an outer `_send` that maps the final transport failure to `IntegrationError` and still raises `IntegrationError` for `status_code >= 400`. Do NOT add the 4xx/5xx `IntegrationError` to the retry predicate.
-
-**7. Backtest condemn decision diverges from the production verdict function**
-`src/reaper/engine/backtest.py:407-409`
-Severity: medium
-Description: The backtest reimplements the condemn decision instead of reusing `services/snapshot.py::_verdict`. Two divergences: (1) Rounding — production compares the STORED rounded score `round(item_score.value) >= policy.condemn_at`, whereas the backtest compares the raw float `item_score.value < policy.condemn_at`, so items scoring in [condemn_at-0.5, condemn_at) are condemned in production but skipped in backtest. (2) Coverage floor — production abstains when `coverage_bp < policy.coverage_floor_bp`; the backtest never checks coverage, so it condemns low-coverage items production would abstain on. The coverage-floor divergence is active even for the default policy (coverage_floor_bp defaults to 5000).
-Failure scenario: condemn_at=70; item scores 69.6. Production: round(69.6)=70 ≥ 70 → CONDEMN; backtest: 69.6 < 70 → skipped, understating regret at the boundary. Separately, coverage_floor_bp=9000 and a TV item at 85% coverage → production ABSTAINS but backtest condemns, overstating deletions and lift.
-Recommended fix: Have the backtest reach the verdict as production does: `score_value = round(item_score.value)`, `coverage_bp = round(item_score.coverage * 10_000)`, skip when `coverage_bp < policy.coverage_floor_bp`, condemn only when `score_value >= policy.condemn_at`. Better, extract `snapshot.py::_verdict` into the engine layer and call it from both paths so they cannot drift.
-
-**8. Grace clock is never reset when an item is re-condemned after a rescue**
-`src/reaper/services/grace.py:114 (stale value consumed) rooted in snapshot.py:652-658 (writer never resets first_flagged_at, and last_seen_condemned_at is write-only)`
-Severity: medium
-Description: `grace_report` derives the window start from `FirstFlagged.first_flagged_at` and never restarts it. `_record_first_flagged` sets `first_flagged_at` on the first-ever condemn and thereafter only bumps `last_seen_condemned_at` (written but read nowhere). Nothing deletes FirstFlagged when an item leaves the condemned set. When an item condemned long ago is rescued and later re-condemned, its `first_flagged_at` is already older than `grace_days`, so `grace_report` yields `in_grace=False`/`days_remaining=0` and drops it straight into `ready` with no fresh countdown — and `leaving_soon.sync` never labels or warns for a `ready` item. The core safety promise (a grace window before deletion) is violated on the second condemnation. The unused `last_seen_condemned_at` column suggests a reset was intended but never implemented.
-Failure scenario: Movie X condemned at T0 → `first_flagged_at=T0`. User watches it at T1; next scan re-judges protect. ~13 months later it is dormant and re-condemned at T2; `_record_first_flagged` keeps `first_flagged_at=T0`. `ends = T0 + 14 days` (long past) → item is `ready`, days_remaining=0, no Leaving Soon label, no Discord warning, immediately eligible for reap with zero grace the second time.
-Recommended fix: In `_record_first_flagged`, when the existing row's `last_seen_condemned_at` predates `now` by more than the grace window, reset `first_flagged_at = now` (thread `grace_days` in, or use a conservative fixed gap). Alternatively delete the FirstFlagged row whenever an item is judged non-condemn in a fresh, non-degraded snapshot. Key the reset on the gap exceeding the grace window, not any single missed snapshot, to survive transient outages.
-
-**9. Select-mode keyboard toggle leaves dragRef set, so a later mouse hover paints selections**
-`frontend/src/components/ReviewQueue.tsx:711-716 (set), 723 (only clear); triggered from card onKeyDown at lines 407 and 493`
-Severity: medium
-Description: `onSelectDown` sets `dragRef.current = { mode }` and is only cleared by window `pointerup`/`pointercancel`. The card keyboard handlers call `onSelectDown` for Enter/Space in Select mode (casting the KeyboardEvent to a PointerEvent). A keyboard press never emits pointerup/pointercancel, so after selecting with the keyboard `dragRef.current` stays populated; from then on, `onPointerEnter` → `onSelectEnter` applies the stuck mode to every card the mouse merely hovers over, no button held.
-Failure scenario: In Select mode a keyboard user presses Space to select a card, then moves the mouse to click something: every card the cursor passes over gets toggled, silently corrupting the selection a subsequent bulk Spare/Reap/Reap-now acts on.
-Recommended fix: Give keyboard activation its own path that does not set dragRef — call a plain `applySelect(key, selected.has(key) ? "remove" : "add")` in the onKeyDown handlers, or null `dragRef.current` at the end of a keyboard toggle. Belt-and-suspenders: have `onSelectEnter` ignore enters when no pointer button is pressed (check `e.buttons`).
-
-**10. Renaming an instance into a name clash returns 404 Not Found instead of 409 Conflict**
-`src/reaper/api/settings.py:210-211`
-Severity: low
-Description: `update_instance` catches every `instances.InstanceError` and maps it to HTTP 404. But `instances.update_instance` raises InstanceError for two distinct causes: the instance not existing (instances.py:94) and a name collision with another instance of the same kind (instances.py:160). Only the first is a 404; the clash is a conflict and `create_instance` already returns 409 for the identical condition.
-Failure scenario: Admin renames a Radarr instance to a name already used by another Radarr instance. The service raises the name-clash error with status 404, so a client branching on status sees 'the instance disappeared' rather than 'name conflict', inconsistent with the add form's 409.
-Recommended fix: Add InstanceNotFound and InstanceConflict subclasses of InstanceError; map Conflict to 409 and NotFound to 404 in the update route.
-
-**11. save_policy returns the requested name for a content-identical save, but that name is never persisted**
-`src/reaper/api/routes.py:479-491`
-Severity: low
-Description: Because the policy hash excludes the name, saving a policy whose body already exists is a no-op (`if existing is None`), so a name-only change is never written. But the route returns `_policy_out(body, payload.name)` with the new name, while `active_policy` keeps returning the stored row's name. The success response and the next reload disagree.
-Failure scenario: A policy with hash H is stored as 'Aggressive'. The owner changes only the name to 'Nightly' and saves. The response shows 'Nightly' and looks successful, but nothing was written; reopening GET /api/policy shows 'Aggressive'.
-Recommended fix: On the content-identical branch (`existing is not None`), return `_policy_out(body, existing.name)` so the response reflects the persisted name. (Actually renaming would mutate an append-only, hash-referenced row and should not be done without reconsidering those invariants.)
-
-**12. Timeout error message always reports the read timeout even for connect/write/pool timeouts**
-`src/reaper/clients/base.py:175-178 and 234-237`
-Severity: low
-Description: Both `_send` and `_mutate` build the timeout message as `f"timed out after {DEFAULT_TIMEOUT.read}s"`, hardcoding the 30s read timeout. A ConnectTimeout (5s), WriteTimeout (10s), or PoolTimeout (5s) all report '30s', misdirecting an operator diagnosing connectivity.
-Failure scenario: Radarr's host is up but not accepting connections; the client fails with ConnectTimeout after 5s, but the IntegrationError says 'radarr: timed out after 30.0s', suggesting the service is slow rather than unreachable.
-Recommended fix: Replace the hardcoded message in both methods with one reflecting the actual timeout kind, e.g. `f"timed out ({type(exc).__name__})"`, or branch on the httpx timeout subclass to name the specific configured budget.
-
-**13. Per-run caps count items that will be skipped (late-spared), so sparing during grace can trip a false ABORT**
-`src/reaper/services/executor.py:313-314 (count from unfiltered deletes); build at 447-460 and late per-item spare skip at 558`
-Severity: low
-Description: `_check_caps` computes `items = len(deletes)` and `total_bytes` over the full `deletes` list, which still includes items the owner spared by hand AFTER the plan was built (still `verdict='condemn'`, filtered later per-item in `_one_delete`). The cap is measured against the pre-spare plan size, not what will actually be deleted. It fails safe (over-counts) but can block a legitimate reduced run, and the abort message quotes a count that no longer matches the confirmation phrase (which excludes spares).
-Failure scenario: max_items_per_run=50. A 55-item plan is built; the owner spares 10 during grace (intending 45). At execute, `deletes` still has 55 → `_check_caps` raises 'This plan would delete 55 items, over the per-run cap of 50', even though only 45 would be deleted and the phrase said 45.
-Recommended fix: In `_check_caps`, exclude any `d` where `whitelist.effective_override(d.candidate.media_key, self._decisions) == "spare"` before computing `items`/`total_bytes` (pass `self._decisions` in), mirroring `runs.py::_planned_candidates`. Keep abort-not-truncate semantics for the deletable set.
-
-**14. ReapPlan step rows keyed by media_key collide — a TV season emits three steps with the same media_key and ordinal**
-`frontend/src/components/ReapPlan.tsx:34`
-Severity: low
-Description: The steps table renders `<tr key={step.media_key}>`. `planner._season_steps` emits three ActionSteps per season (sonarr_unmonitor, sonarr_verify_unmonitor, sonarr_delete_files), all with the same `media_key` AND the same `ordinal`. React sees duplicate keys within a season and across seasons, producing warnings and mis-keyed reconciliation where the wrong row shows the wrong State/`canary` tag as dry-run states change.
-Failure scenario: A plan including any condemned TV season, dry-run: the table logs 'Encountered two children with the same key' and step states render against the wrong row as the dry run progresses.
-Recommended fix: Key on a value unique among siblings, e.g. `key={`${step.media_key}-${step.kind}`}`, or use the idempotency_key. Review the Report list (line 72) too if outcomes can repeat a media_key.
-
-**15. WhyPanel hero backdrop shows the previous item's art when switching between cached items**
-`frontend/src/components/WhyPanel.tsx:43-46`
-Severity: low
-Description: WhyHero seeds its image src with `useState(`${posterUrl}?kind=art`)` and never resets it when `posterUrl` changes — no `useEffect([posterUrl])`, no key. The panel is mounted without a key and the detail query has no keepPreviousData, so when the new item is cached, `detail` transitions directly A→B without a null in between; WhyPanel is reused rather than remounted and keeps A's src. The sibling Backdrop in ReviewQueue does the reset; WhyHero omits it.
-Failure scenario: Open why-panel for movie A, then re-select a cached neighbor B: the panel's title, score and reasoning are B's, but the hero backdrop still shows A's artwork — misleading on the one screen meant for trustworthy per-item explanation.
-Recommended fix: Mirror Backdrop: `useEffect(() => { fellBack.current = false; setSrc(`${posterUrl}?kind=art`); }, [posterUrl]);`. Alternatively key the panel per item in App.tsx (`<WhyPanel key={detail.id} .../>`).
-
-**16. Undefined --spare token makes the reap-confirm dry-run success message a hardcoded, off-theme green**
-`frontend/src/index.css:2838`
-Severity: low
-Description: `.dry-ok { color: var(--spare, #2f9e57); }` references a CSS variable `--spare` that is never defined anywhere, so the fallback `#2f9e57` always wins in both themes. This is the only 'success/protect' colour not using the semantic `--protect` token, and it is not theme-aware. `.dry-ok` renders in ReapConfirm.tsx (line 94), the modal that confirms deletion.
-Failure scenario: On dark mode an operator passes a dry run in the reap confirmation modal. The 'dry run passed' line renders fixed #2f9e57 on the dark surface instead of `--protect` #5fce97, reading darker/duller and mismatching every other green.
-Recommended fix: Replace `var(--spare, #2f9e57)` with `var(--protect)`. If a distinct spare shade is genuinely intended, define `--spare` in both the light `:root` and the dark-theme block.
-
-## 2. Hacks and Workarounds
-
-**1. Manifest re-check (interlock #1) is a tautology: the executor re-hashes the same frozen snapshot it was planned from**
-`src/reaper/services/executor.py:432-438; docstrings at planner.py:89-103 and 306-311, executor.py:425-438`
-Severity: low
-Description: `execute()` computes `current_hash = manifest_hash(sorted(condemned...))` from `_condemned(session, run.snapshot_id)` and compares it to `run.approved_manifest_hash`, which `build_plan` computed from the identical query over the identical immutable snapshot. Candidate rows are frozen per-snapshot and never mutated, and `execute` never re-reads the live *arr, so the two hashes are always equal — the check can only fire if candidate rows are deleted out from under the run, never if the actual library changed. The docstring sells it as catching 'an item added, removed, or resized', giving false confidence in drift detection that does not exist. The real staleness protection is the route's `confirmation_phrase` recompute.
-Failure scenario: A condemned movie is deleted directly in Radarr, or grows on disk, between approval and execute. The executor re-reads the unchanged frozen rows, recomputes an identical hash, passes interlock #1, and proceeds — the very drift the docstring promises to catch sails through.
-Recommended fix: Rewrite the docstrings to state accurately that interlock #1 is a frozen-snapshot integrity check (detecting loss/tampering of the condemned rows for this snapshot, not live drift), and that live drift is caught by the per-item interlocks (streaming veto, played-since-approval, per-item existence/size re-reads), stale-tab replay by the `run.state` 'executes once' guard and the confirmation-phrase recompute. If manifest-level live drift detection is genuinely wanted, re-read live *arr existence/size per condemned item and compare against frozen sizes rather than re-hashing immutable rows.
-
-**2. PolicyEditor stores scan-transition flag in useMemo instead of useRef**
-`frontend/src/components/PolicyEditor.tsx:593`
-Severity: low
-Description: `const wasScanning = useMemo(() => ({ v: false }), [])` is used as mutable persistent storage across renders and written inside an effect. React documents useMemo as a performance hint with no guarantee the value is preserved; if React discards it, `wasScanning.v` resets to false mid-scan and the running→stopped transition that invalidates ["simulate"]/["snapshot"] is missed. ScanBar and SetupWizard implement the identical pattern correctly with `useRef(false)`.
-Failure scenario: If React drops the memoized object mid-scan, the scan-finished branch never fires, so the simulator keeps showing the stale pre-scan outcome until an unrelated invalidation.
-Recommended fix: Replace with `const wasScanning = useRef(false);`, use `wasScanning.current` in the effect, and drop `wasScanning` from the dependency array — matching ScanBar.tsx and SetupWizard.tsx.
-
-## 3. Refactor Opportunities
-
-**1. Two duplicate segmented-control implementations, plus duplicated banner/safety-state semantics**
-`frontend/src/index.css:214-221 (.views) and 346-365 (.tab) vs 1742-1767 (.segmented/.seg); 242-259 (banner-safe/armed) vs 2593-2602 (safety-state.safe/armed)`
-Severity: low
-Description: The pill segmented control is implemented twice with near-identical rules: `.views`+`.tab` (App.tsx nav) and `.segmented`+`.seg` (PolicyEditor.tsx) — both use `background: var(--surface-2)`, `border-radius: 999px`, and an active state of `background: var(--surface); box-shadow: var(--shadow-sm); font-weight: 600`. Separately, `.safety-state.safe`/`.armed` duplicate the exact soft-bg + color-mix border + dot-colour pattern of `.banner-safe`/`.banner-armed`. Two copies means a colour or radius change to one control silently diverges from the other.
-Failure scenario: A future tweak to the active-tab treatment gets applied to `.tab` but not `.seg`, so the section nav and the policy-scope switch drift apart visually; likewise a banner colour fix misses the safety panel.
-Recommended fix: Extract one shared pill segmented-control base (keep `.segmented`/`.seg` and have App.tsx's nav reuse it, dropping `.views`/`.tab`), and factor the safe/armed soft-surface + color-mix border into shared `.tone-safe`/`.tone-armed` classes consumed by both `.banner-*` and `.safety-state.*`. `.banner-dot` is already shared, so only the container rules need consolidating.
-
-## 4. Performance
-
-**1. IMDb dataset load holds the SQLite cache write lock for the entire multi-minute parse+insert**
-`src/reaper/services/imdb_dataset.py:133-193`
-Severity: medium
-Description: `load` performs the full ~1.69M-row parse and batched INSERT inside a single `engine.begin()` transaction together with the atomic DROP/RENAME swap. The cache DB uses WAL with `busy_timeout=5000` (one writer). Holding one write transaction for the whole load means any other cache writer — history_sync during a scan, lists.sync, the nightly curated refresh — waits at most 5s and then fails with 'database is locked'. Only the DROP/RENAME needs to be atomic; the staging insert does not.
-Failure scenario: On startup, `catch_up_on_startup` kicks off a ratings refresh as a background task. The operator triggers a scan, whose `history_sync.sync` INSERT OR REPLACE blocks on the load's write lock, exceeds 5s, and raises 'database is locked', failing the sync. Same collision for the 3:45 curated-list refresh if the 3:30 ratings load overruns.
-Recommended fix: Split the transaction. Populate `imdb_rating_staging` outside the atomic swap, committing each 10k batch in its own short transaction (or a dedicated connection) so no long-lived write lock is held during the parse. Then a single short `engine.begin()` does only the fast swap (DROP/RENAME/CREATE INDEX + upsert). A killed process mid-populate is already safe because the next run drops the partial staging table and the previous `imdb_rating` stays live until the swap.
-
-**2. list_candidates does not floor limit/offset, so a negative limit returns the entire filtered set**
-`src/reaper/api/routes.py:133-134 (param declarations) and 205 (.limit(min(limit, 500)))`
-Severity: low
-Description: `limit` and `offset` are plain ints with no `Query(ge=...)` constraint, and the query only caps the upper bound (`.limit(min(limit, 500))`), never the lower. A negative limit passes through: `.limit(min(-1, 500))` renders `LIMIT -1`, which SQLite treats as 'no limit', so the whole filtered set is materialised and serialised in one response.
-Failure scenario: `GET /api/candidates?verdict=protect&limit=-1` on a large library returns every protected candidate (thousands of rows with summary/poster fields) in one payload, spiking memory and latency.
-Recommended fix: Constrain the params: `limit: int = Query(100, ge=1, le=500)` and `offset: int = Query(0, ge=0)`, then drop the redundant `min()` (use plain `.limit(limit)`). Or clamp defensively: `.limit(max(1, min(limit, 500))).offset(max(0, offset))`.
-
-**3. IntersectionObserver is torn down and recreated on every ReviewQueue render**
-`frontend/src/components/ReviewQueue.tsx:665 (dependency array); root cause at line 652 where data is allocated fresh each render`
-Severity: low
-Description: The sentinel effect depends on `[data]`, but `data = pages.pages.flatMap(...)` produces a new array reference every render, so the effect disconnects and reconstructs an IntersectionObserver on every render — including every keystroke and every card repaint during drag. If the sentinel is in view when the observer reconnects it fires immediately, so `setVisible(v => v + PAGE)` can run repeatedly while the sentinel stays visible, over-revealing the window.
-Failure scenario: On a large condemned list, typing in the search field or painting a drag selection while the "Showing N of M" sentinel is on screen repeatedly re-fires the observer, jumping `visible` by PAGE each render and mounting far more cards (and lazy poster fetches) than intended.
-Recommended fix: Give the effect a stable dependency. Either memoize data (`useMemo(() => pages ? pages.pages.flatMap((p) => p.items) : undefined, [pages])`) or change the deps to `[data?.length, hasNextPage]`, which also correctly re-runs when the conditionally-rendered sentinel mounts/unmounts.
-
-## 5. Production Readiness
-
-**1. Protection-list (whitelist) sync failures do not degrade the snapshot, so a scan can execute against empty/stale keep-lists**
-`src/reaper/services/scan_runner.py:315-325 (call + log with no inspection); root cause spans snapshot.py:832-872 and 229-345; lists.py:443-470`
-Severity: medium
-Description: `run_scan` calls `sync_protection_lists`, which returns a per-provider map whose values are counts or strings like `"error: ..."`, then only logs it and never inspects it. The function's own docstring says a scan relying on a failed whitelist should treat itself as degraded and calls a fail-open whitelist 'the worst kind of bug this tool can have', but nothing implements that degrade — `context.degrade` isn't even reachable from `run_scan`. The atomic swap preserves prior membership on failure (bounding steady-state damage), but on a first scan (no prior membership) or when a newly-added protection fails to sync, the WhitelistGate/CuratedListGate read empty membership, fail to fire, and the snapshot is NOT degraded and is fully executable.
-Failure scenario: Operator creates a 'Never Reap' Plex collection and runs the first scan. The Plex provider throws; `sync_protection_lists` records `'error: ...'`; `run_scan` logs it and proceeds non-degraded. The membership table is empty, so every film the collection was meant to protect scores normally, several are condemned, and they are reaped despite being on the keep-list.
-Recommended fix: Thread the sync outcome into degradation. After the `synced` map returns, collect any provider slug whose value starts with "error:" and whose resulting membership is empty, and pass those slugs into `snapshot_service.scan(...)` so it calls `context.degrade(...)` — blocking plan-building/execution, matching the IMDb dataset treatment. Minimally, for WHITELIST-kind providers with an error result and zero rows in protection_list_item, force the snapshot degraded.
-
-**2. run_scan aborts the whole scan on an uncaught PlexError from plex.connect(), instead of degrading**
-`src/reaper/services/scan_runner.py:314`
-Severity: medium
-Description: `plex_server = await plex.connect() if plex is not None else None` is not wrapped in try/except. `PlexClient.connect()` raises `PlexError` when Plex is unreachable. Radarr and Tautulli failures degrade the snapshot (loud, viewable, un-executable), and Plex is explicitly optional, yet a transient Plex outage here raises out of `run_scan` and crashes the scan rather than degrading.
-Failure scenario: Plex restarts during the nightly scheduled scan. `plex.connect()` raises PlexError; `run_scan` has no handler; the scan job dies with an exception and no snapshot is produced. Scans appear to stop working whenever Plex flaps.
-Recommended fix: Wrap line 314 in try/except PlexError. On failure set `plex_server=None` so `sync_protection_lists` skips Plex collections, AND surface the failure into the snapshot's degraded state. Critically, treat a skipped Plex whitelist as fail-closed: items a Plex 'Never Reap' collection would have protected must not become reap candidates because the list couldn't refresh (retain last-known whitelist, or mark the snapshot un-executable). Do not simply swallow the error.
-
-**3. CI never builds the Docker image, so a non-building Dockerfile passes green**
-`.gitea/workflows/ci.yml:9-68 (both jobs); demonstrated breakage at Dockerfile:31-32 vs pyproject.toml:9`
-Severity: medium
-Description: The `check` job runs ruff, mypy, pytest and `alembic check`; the `frontend` job runs `npm run build`. Neither ever runs `docker build`. The shipped artifact is the container, yet its buildability is untested in CI — exactly how the critical README.md/COPY-ordering breakage reaches `main` with all checks green.
-Failure scenario: A change to pyproject.toml, COPY ordering, or the base image breaks `docker build` (as it currently is). CI stays green, the PR merges, and the failure is only discovered when an operator tries to build/pull the image.
-Recommended fix: Add a CI job that runs `docker build .` on push/PR so the container is a verified artifact; this immediately catches the current README.md breakage. Optionally gate an image push on tags only.
-
-**4. plex.tv login/authorization calls bypass BaseClient error mapping, defeating owns_server's fail-closed guard**
-`src/reaper/clients/plextv.py:264-282 (resources); also 200-209 (_post) and 248-262 (account); guard at 297-302`
-Severity: low
-Description: `_post`, `account` and `resources` call `self._client.request/get(...)` directly instead of going through `_send`/`get_json`, so transport errors surface as raw httpx exceptions and non-JSON bodies as `json.JSONDecodeError` rather than `IntegrationError`. `owns_server` wraps `owned_servers` in `except IntegrationError` intending to fail closed to `False` on a plex.tv outage, but a real outage produces a raw httpx exception that this narrow except does not catch, so it propagates uncaught (typically a 500 in the login endpoint). The documented 'a plex.tv outage must not become an open door' is only honored for the rare IntegrationError case.
-Failure scenario: plex.tv is briefly unreachable during a PIN flow. `resources()` raises `httpx.ConnectTimeout`; `owns_server`'s except does not match; the raw exception crashes the auth handler instead of cleanly denying access. A plex.tv maintenance HTML page (HTTP 200) makes `resources()`'s `.json()` raise ValueError, which also escapes.
-Recommended fix: Route `account`, `resources`, and `_post` through the base client's error mapping so transport failures and non-JSON bodies become IntegrationError, making `owns_server`'s existing `except IntegrationError` reliably fire and return False. Optionally broaden the guard to `except (IntegrationError, httpx.HTTPError)` as defense in depth.
-
-**5. expected_regret_rate/lift/summary can raise NotCalibratedError instead of degrading gracefully**
-`src/reaper/engine/backtest.py:157-161`
-Severity: low
-Description: `expected_regret_rate` calls `self.prior.rate_for(d)` for every condemned item's dormancy without checking `self.prior.calibrated` or catching the exception. `RewatchPrior.rate_for` deliberately raises `NotCalibratedError` for any dormancy in a thin bucket. Because `lift`, `beats_random`, and `summary()` all funnel through `expected_regret_rate`, a single condemned item in a thin bucket crashes the whole report/arming path, even though `prior_is_derived`/`calibrated` exist to signal partial calibration as reportable.
-Failure scenario: A derived prior has a thin 1095–1825d bucket (12 samples). A backtest condemns a film dormant 1200 days. `summary()` → `beats_random` → `lift` → `expected_regret_rate` → `rate_for(1200)` raises NotCalibratedError; the backtest endpoint 500s instead of showing calibrated-bucket numbers and flagging lift unavailable for that range.
-Recommended fix: In `expected_regret_rate`, don't call `rate_for` unconditionally: either fall back to `rewatch_prior` unless `self.prior is not None and self.prior.calibrated`, or restrict averaged dormancies to calibrated buckets (catching NotCalibratedError per item), and have `lift`/`beats_random`/`summary` report "lift unavailable (uncalibrated buckets)" rather than propagating. Address before wiring `run`/`BacktestResult` to any endpoint.
-
-**6. DataHorizonGate never enforces the horizon; it only abstains with a reassuring message**
-`src/reaper/engine/gates.py:432-437 (gate); derivation clamp at services/snapshot.py:136, engine/backtest.py:306, engine/calibration.py:224`
-Severity: low
-Description: The gate is documented as guarding 'the single biggest mass-deletion vector', but `evaluate()` only fails closed when `days_observed_unwatched` is Unknown and otherwise always returns ABSTAIN with 'Old enough that Reaper's watch history covers it.' It performs no comparison against any horizon and can never PROTECT. The actual horizon defense lives entirely in the derivation of `days_observed_unwatched` (`reference = last_played or max(added_at, horizon)`). So the gate provides no defense-in-depth, its why-panel line asserts 'history covers it' unconditionally, and its Unknown fail-closed duplicates MinDormancyGate.
-Failure scenario: An item added before Tautulli was installed, never played. `days_observed_unwatched` is Known (clamped to now-horizon). DataHorizonGate emits 'Old enough that Reaper's watch history covers it' even though its true pre-horizon watch status is unknowable; a future refactor that stopped clamping upstream would silently lose all protection while this gate still reports 'covered'.
-Recommended fix: Either (a) make the docstring honest (the gate is only a fail-closed on Unknown dormancy that duplicates MinDormancyGate; the true guard is the `max(added_at, horizon)` clamp) and fold its Unknown fail-closed into derivation, or (b) give it teeth by passing `added_at + horizon` into Facts and having it PROTECT (or distinctly report) when `added_at` predates the horizon with no in-horizon plays. Low priority; current deletion safety is not affected.
-
-**7. Crash-recovery is aspirational: idempotency keys and the SENT journal are written but never consumed**
-`src/reaper/services/executor.py:384 (re-entry); 446-460 (rebuild without state filter); 761 + base.py 182-186; 528-535 (canary abort)`
-Severity: low
-Description: `execute()` permits re-running a run already in `EXECUTING` state, and each step is journalled `SENT` before its guarded call with a stable `idempotency_key`. Docstrings promise crash recovery and de-dup, but `idempotency_key` is never read, no reconciler consumes `SENT` steps, and `_send_movie` reads `movie_by_id` up front, which 404s for an already-deleted movie → `_fail`. Because that failed item becomes the canary on a re-run, re-executing a partially-completed run aborts immediately at the first already-deleted movie and never converges. It is fail-safe (nothing double-deletes) but the documented guarantee is unimplemented.
-Failure scenario: A run deletes A and B, then crashes while sending C, leaving the run EXECUTING with A/B VERIFIED and C SENT. An operator re-triggers execute: manifest/caps pass, A is retried first, `movie_by_id(A)` 404s → FAILED → canary → ExecutionError aborts. C is never finished.
-Recommended fix: Either (a) tighten `execute()` to reject `RunState.EXECUTING` (allow only PLANNED) and delete the docstring/idempotency_key claims that promise unimplemented recovery; or (b) actually implement a recovery pass: filter already-VERIFIED steps out of the rebuilt delete list, have a reconciler read SENT/idempotency_key to converge in-flight items, and make `_send_movie` treat an up-front 404 as already-done/VERIFIED only on an explicit recovery pass (never on a first run).
-
-**8. poll_link consumes the pending PIN even when complete_link fails for a transient reason**
-`src/reaper/services/plex_link.py:323-332 (delete in finally); root cause spans complete_link line 187 and _reachable lines 102-106`
-Severity: low
-Description: In `poll_link`, once a token is obtained the `finally` block unconditionally deletes the PendingPlexLogin row, then any exception from `complete_link` propagates. `complete_link` calls `_reachable`, which raises `PlexLinkError` when none of the server's advertised connections answer the probe — a transient condition. Because the pending is already consumed, the next poll hits 'This link request is no longer valid' and the operator must restart the whole plex.tv PIN flow even though sign-in succeeded.
-Failure scenario: Owner completes PIN approval; the backend obtains the token; at that instant Plex is briefly unreachable (mid-restart), so `_reachable` raises. The finally deletes the pending, the request 500s, the browser's next poll gets 'no longer valid', and the owner must re-run the whole sign-in.
-Recommended fix: Consume the pending only on success or a definitively permanent refusal (owns 0 or >1 servers). For a retryable `_reachable` failure, distinguish it (a dedicated retryable subclass, or catching PlexLinkError from `_reachable` specifically) and leave the row intact so the browser can re-poll the still-valid PIN. Preserve delete-on-success to prevent token replay.
-
-**9. DiscordNotifier.post() lets httpx.InvalidURL escape, breaking the "never raises into a scan/plan/run" guarantee**
-`src/reaper/notify/discord.py:73-80`
-Severity: low
-Description: `post()` only catches `httpx.HTTPStatusError` and `httpx.HTTPError`. `httpx.InvalidURL` is a direct subclass of Exception (not an HTTPError), so a malformed webhook makes `client.post(self._url)` raise InvalidURL, bypassing both except clauses and propagating through `announce_leaving_soon()` into `leaving_soon.sync()` at line 130. The module docstring promises nothing here can raise into a scan, plan, or run.
-Failure scenario: Operator sets a webhook with embedded newlines/control characters or a malformed IPv6 host. A Leaving Soon sync applies the Plex label and then raises `httpx.InvalidURL` at notify time, so POST /api/leaving-soon/sync returns 500 after the mutation already happened.
-Recommended fix: Broaden the final catch in `post()` from `except httpx.HTTPError` to `except Exception as exc:` (logging only outcome + `type(exc).__name__`, never `str(exc)`/the URL, since the token lives in the path). Optionally validate/strip the webhook in `build_notifier()` and return None on an unusable URL.
-
-**10. No configuration surface passes old keys to SecretBox, so key-rotation is unreachable and switching REAPER_SECRET_KEY bricks credentials**
-`src/reaper/main.py; crypto.py:36-40 (SecretBox *old_keys unused); main.py:76 and cli.py:158; config.py:75; secrets.py:41-47`
-Severity: low
-Description: SecretBox is always constructed with a single key. config.py exposes only `secret_key` — no field/env for prior keys — and `SecretBox.rotate()` has no caller. So the MultiFernet multi-key capability the docstring advertises cannot be exercised, and following secrets.py's own advice to move to a managed REAPER_SECRET_KEY makes all stored credentials undecryptable.
-Failure scenario: Operator runs for months on the auto-generated `data/secret.key`, then sets REAPER_SECRET_KEY to a fresh value from a secret manager. On next boot SecretBox holds only the new key; every `api_key_enc`/`token_enc` fails to decrypt, all integrations break, and the only recovery is discovering REAPER_SECRET_KEY must equal the exact old secret.key contents.
-Recommended fix: Add a settings field for prior keys (e.g. REAPER_SECRET_KEY_OLD, comma-separated) and thread it as `*old_keys` into SecretBox at main.py:76 and cli.py:158 for a two-key window. At minimum, document explicitly that setting REAPER_SECRET_KEY after first boot must use the existing key contents (or supply the old key alongside). Optionally wire `box.rotate()` to lazily re-encrypt.
-
-**11. Discord 429 rate-limit responses are dropped without honoring Retry-After or retrying**
-`src/reaper/notify/discord.py:70-75`
-Severity: low
-Description: A Discord HTTP 429 is caught as a generic HTTPStatusError, logged as 'discord.rejected', and the embed discarded. Retry-After is ignored and there is no retry. Discord rate-limits per webhook, so bursts of announcements can be silently lost even though the request would succeed shortly after.
-Failure scenario: Several Leaving Soon syncs fire in quick succession and hit the per-webhook limit; the 429'd messages are dropped entirely instead of retried, so users are never warned before titles are deleted.
-Recommended fix: Special-case 429 before the generic handling: read Retry-After, sleep a bounded delay (`min(retry_after, small_max)`), and retry the post once. Keep it best-effort — still catch all errors, still never raise into a scan/plan/run, still never log the URL. On repeated failure, fall through to the existing log and return False.
-
-**12. SafetyBanner renders nothing when the health fetch fails, hiding the only always-on delete/read-only indicator**
-`frontend/src/App.tsx:34-35`
-Severity: low
-Description: SafetyBanner reads the ['health'] query and does `if (!data) return null;`. `data` is undefined not only on first load but on any error of `api.health` (network drop, 500, backend restart). The docstring promises the regime is stated 'always'. On a health-endpoint error the banner silently disappears, losing the safety indicator precisely when the backend is misbehaving.
-Failure scenario: The backend hiccups or /health 500s while the dashboard is open. `data` becomes undefined, SafetyBanner returns null, and the 'Read-only'/'Deletion is on' banner vanishes; the operator cannot tell which regime is active without opening Settings.
-Recommended fix: Read the query's error/loading flags. While loading, render a neutral placeholder; when isError (or data absent after settling), render a caution-styled "Safety state unknown — could not reach the server" instead of returning null. (React Query retains last-known data through refetch errors, so this mainly matters at initial mount when /me succeeds but /health fails.)
-
-**13. request() assumes every successful response has a JSON body, turning any empty 200/204 into an opaque SyntaxError**
-`frontend/src/api.ts:464`
-Severity: low
-Description: The shared `request<T>` helper ends with `return (await response.json()) as T;` with no guard for an empty body; every api.* call routes through it. Today all endpoints return JSON, so this is latent, but the moment anyone adds a 204 No Content or empty-body 200, the call rejects with a raw 'Unexpected end of JSON input' SyntaxError rather than the clean ApiError the rest of the code surfaces. The error path already tolerates this with `.catch(() => null)`; the success path does not.
-Failure scenario: A future DELETE/logout-style endpoint returns 204 with no body. `response.json()` throws SyntaxError; the react-query error is a cryptic parser message with no status code, and UI relying on ApiError.status/message shows nothing useful.
-Recommended fix: Mirror the error branch: `const text = await response.text(); return (text ? JSON.parse(text) : undefined) as T;`, or short-circuit on `response.status === 204`. Purely defensive; can be deferred until an empty-body endpoint is introduced.
-
-**14. Authed swallows a setup-status query error and silently drops the operator onto the dashboard, skipping the wizard**
-`frontend/src/App.tsx:220-233`
-Severity: low
-Description: Authed does `const { data: setup, isLoading } = useQuery({ queryKey: ['setup'], queryFn: api.setupStatus })` and gates the wizard on `if (setup && !setup.complete && !skipped)`. It never inspects the error state. If `api.setupStatus` fails, `setup` stays undefined, `isLoading` goes false, and the guard falls through to `<Dashboard>` — a genuinely unconfigured fresh install is dropped onto an empty dashboard with no error shown.
-Failure scenario: A brand-new install where the setup-status call errors once (backend warming up). The wizard condition short-circuits on `setup` being undefined, Dashboard renders with no instances/scan configured, and the operator has no indication setup was needed.
-Recommended fix: Read isError/error from the setup query. Treat unknown setup status as "setup needed" so a fresh install still lands on SetupWizard (e.g. `if (isError || (setup && !setup.complete)) return <SetupWizard .../>` while honoring `skipped`), or render an explicit error/retry state.
-
-**15. Settings PlexPanel link polling has no timeout — polls forever and disables the button indefinitely**
-`frontend/src/components/Settings.tsx:336`
-Severity: low
-Description: `startLink` opens a 2s `setInterval` that stops only on `status === 'ok'`, a thrown error, or unmount. There is no deadline. If the user opens the Plex approval tab and never approves, the poll runs every 2s for as long as Settings is mounted, leaving "Link with Plex" permanently disabled with no retry. Login's PlexButton implements the correct 5-minute deadline that this one lacks.
-Failure scenario: Operator clicks "Link with Plex", gets distracted, never approves the PIN. Settings keeps POSTing /plex/link/poll every 2 seconds indefinitely, and the button reads "Waiting for Plex…" disabled until a full page reload.
-Recommended fix: Mirror Login.tsx's PlexButton: capture `const deadline = Date.now() + 5*60*1000` before the interval, and at the top of the callback `if (Date.now() > deadline) { clearInterval + setLinking(false) + setMessage("Plex sign-in timed out. Please try again."); return; }`. Optionally add a Cancel button.
-
-**16. Bulk override uses Promise.all — one failed request discards success handling for the rest**
-`frontend/src/components/ReviewQueue.tsx:677-686`
-Severity: low
-Description: The `bulk` mutation maps selected keys to per-key requests and awaits `Promise.all`. Promise.all rejects on the first failure, so `onSuccess` (which invalidates ["candidates"] and clears the selection) never runs even though other requests already succeeded server-side. The UI is left showing a stale, still-selected list that no longer matches the backend.
-Failure scenario: Operator selects 50 items and clicks Spare; item #12's request 500s. All 50 fire, ~49 succeed, but the mutation rejects: the selection isn't cleared and the queue isn't refreshed, so the operator sees 50 still-selected rows with old verdicts and an error, unsure what took effect.
-Recommended fix: Switch the mutationFn to `Promise.allSettled`, then always invalidate ["candidates"] and clear the selection regardless of outcome, and surface a count of failures (e.g. "3 of 50 could not be updated"). Optionally keep only the failed keys selected for retry.
-
-## 6. Security
-
-**1. Local login has no rate limiting / brute-force protection, unauthenticated Argon2id is a CPU-exhaustion vector, and a code comment falsely claims a rate limit exists**
-`src/reaper/api/auth.py:211-224 (POST /local); src/reaper/services/login.py:279-319 (no throttle); src/reaper/auth/passwords.py:18 (false comment); src/reaper/api/middleware.py:51-61 (CSRF bypass); admin_password.py:22 (MIN_PASSWORD_LENGTH=8); /recover at auth.py:242`
-Severity: medium
-Description: The local login route and `/recover` have no per-IP/per-username throttling, backoff, or lockout; a full-tree grep finds no limiter or lockout anywhere. `login_local` runs a full Argon2id `verify_password` on every request (deliberately against a dummy hash even for nonexistent users), so an unauthenticated caller can force heavy CPU work per request. The CSRF middleware does not help — the required header is a fixed literal (`x-reaper-csrf: 1`) any scripted attacker sets trivially. Operators may set an 8-char password with no complexity rules. Worse, passwords.py:18 asserts "Long enough that online guessing is hopeless, and we rate-limit anyway," which is untrue and misleads maintainers. This local account is the always-available anti-lockout path and the credential that arms deletion.
-Failure scenario: Reaper is port-forwarded or on a shared LAN. An attacker scripts thousands of POST /api/auth/local requests with `x-reaper-csrf: 1` and dictionary passwords; each triggers a full Argon2id hash, pinning CPU and denying service, while the same loop brute-forces a weak-but-compliant password ('Summer24') with no lockout — then arms and executes library deletion.
-Recommended fix: Add per-IP and per-username attempt throttling with exponential backoff and temporary lockout on POST /api/auth/local, returning 429 past a threshold (in-memory or DB-backed counter). Cap concurrent in-flight Argon2 verifications with a bounded semaphore. Emit a warning-level log on repeated failures rather than only info-level 'login.local_rejected'. Add a modest per-IP cap on /recover (it redeems a random single-use token, so lower priority). Correct or remove the false "and we rate-limit anyway" clause in passwords.py:18. Optionally raise MIN_PASSWORD_LENGTH or add a weak/breached-password check.
-
-**2. Changing an admin's password does not revoke that admin's existing sessions; the primitive to do so exists but is never called**
-`src/reaper/services/admin_password.py:91 and admins.py:84 (missing revocation); route settings.py:440-454; resolve_session sessions.py:58-93; unused primitive + wrong docstring sessions.py:103-106`
-Severity: medium
-Description: Both password-reset paths — `admin_password.set_password()` and `auth/admins.set_password()` — rewrite `password_hash` but never invalidate existing AuthSession rows. `resolve_session()` validates a cookie purely on token_hash, expiry, and user.is_active, with no dependency on password_hash, so every previously issued cookie stays valid for the full 30-day SESSION_TTL after a password change. `sessions.close_all_for_user()` is exactly the 'sign out everywhere' primitive that would fix this but has ZERO callers, and its docstring falsely claims it is 'also used implicitly when an admin is deactivated' (deactivate() never calls it either).
-Failure scenario: An admin suspects their cookie was stolen and resets the admin password. The attacker's stolen cookie continues to authenticate for up to 30 days because no session row was touched. The operator believes they locked the attacker out; they have not.
-Recommended fix: After a successful password change, call `sessions.close_all_for_user(session, user.id)` before commit in both write paths (or in the callers that own the commit: settings.py:449 and cli.py:120). Consider preserving the acting admin's own token (re-mint via open_session) when self-initiated. Add `close_all_for_user` to `deactivate()` for defense in depth, and fix or delete the inaccurate docstring at sessions.py:104-105.
-
-**3. secret.key is created with default (umask) permissions and only chmod-ed afterward, contradicting the code's own 0600-from-the-outset claim**
-`src/reaper/secrets.py:66`
-Severity: medium
-Description: Lines 63-65 claim the key is created with restrictive permissions from the outset to avoid a world-readable window. But `Path.open('x'|'w')` takes no mode and creates the file with the process default (`0o666 & ~umask`), then `_ensure_owner_only()` chmods to 0600 only after the key is written. The exact window the comment claims to avoid is left open on first boot.
-Failure scenario: On a host with the common umask 0022, first boot writes secret.key as 0644 (world-readable). Between the write and the chmod, any local unprivileged user can read the master key that decrypts every stored Plex account token and Sonarr/Radarr/Tautulli API key.
-Recommended fix: Create the file atomically with owner-only permissions: `fd = os.open(str(path), os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)`, then `os.write`/`os.close`. Optionally wrap in a saved/restored `os.umask(0o077)` to guarantee 0o600 regardless of process umask. Keep `_ensure_owner_only()` as a belt-and-braces step for the reuse path and fix the comment. The "w" fallback branch should likewise chmod before writing.
-
-**4. Committed uv.lock is ignored by both the image build and CI; installs resolve unpinned >= floors, and base images are floating tags**
-`Dockerfile:32 and :37; .gitea/workflows/ci.yml:24; base-image tags at Dockerfile:4 and :20`
-Severity: medium
-Description: A 268 KB uv.lock is committed, but nothing installs from it: the Dockerfile uses `uv pip install --system --no-cache .` / `-e .` and CI uses `uv pip install --system -e ".[dev]"`, all of which resolve the `>=` floors in pyproject.toml fresh at build time. So builds are not reproducible, CI tests one resolved set while the image may ship a newer untested set (including newer transitive cryptography/httpx/plexapi that handle credentials and issue deletes), and both base images are floating tags, not digest-pinned.
-Failure scenario: A compromised or breaking release of a transitive dependency is published; the next `docker build`/CI run silently pulls it because only a `>=` floor is enforced, differing from what was last tested against the lock.
-Recommended fix: Install from the lockfile. In the Dockerfile, COPY uv.lock and use `uv sync --frozen --no-dev` (or `uv export --frozen --no-dev -o requirements.txt` then `uv pip install -r requirements.txt`); in CI use `uv sync --frozen` and add a `uv lock --check` step so a stale lock fails the build. Digest-pin both base images.
-
-**5. Seerr client is built with TLS verification disabled (verify=False), exposing the decrypted API key to MITM**
-`src/reaper/api/fairness.py:56-57`
-Severity: low
-Description: The fairness endpoint constructs SeerrClient with `verify=False`, disabling TLS certificate verification; `box.decrypt(seerr_row.api_key_enc)` is sent over an unvalidated connection. This is a repo-wide pattern (also services/instances.py:203 and services/scan_runner.py:189) and inconsistent with the Tautulli and *arr clients in this same file, which use `verify=True`. An operator cannot see or override this silent insecure default.
-Failure scenario: An operator points Reaper at an https Seerr URL over an untrusted network segment. An on-path attacker presents any certificate; verify=False accepts it, and the decrypted Seerr API key plus full request/response is captured. With verify=True this would fail closed.
-Recommended fix: Make TLS verification a per-instance configurable option defaulting to `verify=True`, so operators with self-signed internal Seerr certs opt in explicitly. Thread the instance's configured verify flag through the three Seerr construction sites instead of the hardcoded `False`, matching the Tautulli/*arr clients.
-
-**6. Recovery link places the single-use token in a URL query string, reintroducing the log exposure the module deliberately avoids**
-`src/reaper/auth/recovery.py:57`
-Severity: low
-Description: `mint_recovery_token()` builds the link as `f"{base_url.rstrip('/')}/recover?token={plaintext}"`. The module goes out of its way to avoid shipping the token to a log aggregator, printing it only to the console, but putting it in a query string undoes much of that care: the GET for the SPA page carries `?token=<secret>`, commonly recorded by reverse-proxy access logs, browser history, and Referer headers. The token is single-use, 15-minute, and obtaining it requires host access, but the recovery admin session it grants is full-power.
-Failure scenario: Operator runs Reaper behind nginx with default access logging and clicks the recovery link. nginx writes `GET /recover?token=<valid-token>` to access.log, shipped to a central store with looser access than container stdout. Anyone with read access who reaches /recover within 15 min gains an admin session.
-Recommended fix: Keep the token out of the URL. Preferred: point the link at `/recover` (no query param) and have the operator paste the token into a field that POSTs to /recover. If the query-string convenience is kept, at minimum document that fronting-proxy access logs may capture the token from the request line. The frontend already strips the token post-redemption; the residual exposure is the initial GET request line — moving it off the URL closes it.
-
-**7. Encryption key is derived from the secret with a single unsalted SHA-256 (no KDF stretching), and secret_key has no length/entropy guard**
-`src/reaper/crypto.py:23-26 (derivation); secrets.py:41-47 (unchecked acceptance in resolve_secret_key); config.py:75 (schema declaration, no validator)`
-Severity: low
-Description: `_derive_fernet_key()` turns REAPER_SECRET_KEY into the Fernet key with one unsalted SHA-256 — fine for the high-entropy auto-generated `token_urlsafe(32)` key, but nothing enforces entropy on an operator-supplied key, and there is no key-stretching. `config.py` declares `secret_key` as an optional SecretStr with no minimum-length/entropy validation, and `resolve_secret_key` accepts any non-empty string. The crypto docstring frames the threat as a DB copied into a backup/issue report/support thread — exactly where an offline dictionary attack applies.
-Failure scenario: Operator sets REAPER_SECRET_KEY='myplexserver2024' (or a memorable passphrase) and later shares the DB in a support thread. An attacker runs a wordlist through SHA-256→Fernet against any `api_key_enc` (billions/sec on a GPU), recovering the full-power Plex account token and *arr keys in seconds.
-Recommended fix: Derive the Fernet key with a real KDF (scrypt or Argon2id) over the secret plus a persisted per-install salt, replacing the bare SHA-256. Do it before first release (pre-release migrations acceptable); MultiFernet allows old-key decryption during transition. Also add a minimum-length/entropy guard in `resolve_secret_key` (or a validator on `Settings.secret_key`) that at least warns on a short/low-entropy operator key, pointing at the `secrets.token_urlsafe(32)` generator. The auto-generated random-key path can stay fast.
-
-**8. redact_secrets only scrubs top-level string values, missing secrets nested in dict/list values**
-`src/reaper/logging.py:50-56`
-Severity: low
-Description: The processor redacts a top-level key whose name is in `_SECRET_KEYS` and applies the query-string regex only to top-level values that are `isinstance(value, str)`. A secret nested inside a dict or list value, a bytes value, or a credential-bearing URL under a non-listed key without '=' passes through in cleartext. Described as the last line of defense for secrets, so the gap matters even though no current call site triggers it.
-Failure scenario: A call like `log.info('arr.request', params={'apikey': key})` or logging a headers dict passes the secret as a nested dict value; redact_secrets leaves it because the value is a dict and 'params' isn't a secret key name. (No such call site exists today — defense-in-depth.)
-Recommended fix: Optionally harden as defense-in-depth: recurse into dict and list values, redacting by key name at any depth and applying `_SECRET_QS` to every str leaf, decoding bytes leaves before matching. A simpler alternative is a lint/convention that secrets are only ever logged as top-level kwargs. Low priority.
-
-**9. Poster proxy relays arbitrary upstream image content-type (incl. image/svg+xml) same-origin with no nosniff**
-`src/reaper/api/poster.py:66-71 (passthrough + missing nosniff); tautulli.py:222 (substring guard admits image/svg+xml)`
-Severity: low
-Description: The poster endpoint returns bytes fetched from Tautulli's pms_image_proxy with the upstream Content-Type passed straight through. The upstream guard in `tautulli._image` only checks that 'image' appears in the content-type, which `image/svg+xml` satisfies. The response is served from Reaper's own origin (/api/poster/{rating_key}) with no `X-Content-Type-Options: nosniff`. An SVG opened/navigated directly renders same-origin, and any embedded `<script>` executes in Reaper's origin; the missing nosniff also permits MIME sniffing. Exploitation requires a malicious/compromised upstream image (normally trusted raster art), so this is defense-in-depth.
-Failure scenario: A compromised Plex artwork entry serves image/svg+xml with script for a rating_key. An authenticated admin opens /api/poster/<key> directly; the SVG executes JavaScript in Reaper's same origin, able to act as the admin against the API.
-Recommended fix: Add `"X-Content-Type-Options": "nosniff"` to the poster Response headers, and tighten the guard in tautulli.py:222 from a `"image" in ctype` substring test to a raster allow-list (image/jpeg, image/png, image/webp), rejecting image/svg+xml. Optionally normalize the served media_type to that allow-list in poster.py.
-
-## 7. UI/UX Consistency
-
-**1. White text on --accent fails WCAG AA contrast in dark mode across the primary CTAs**
-`frontend/src/index.css:315 (button.primary), 2137 (.select-toggle.active), 2229 (.select-done), 393 (.user-avatar-fallback)`
-Severity: medium
-Description: Multiple primary action surfaces set `color: #fff` on `background: var(--accent)`: `button.primary`, `.select-toggle.active`, `.select-done`, and `.user-avatar-fallback`. In dark mode `--accent` becomes `#818cf8`, a light periwinkle; white text on it is only ~3.0:1 — below the 4.5:1 AA threshold for the ~15px, weight-550 button text. These are the most-clicked controls (Scan, Save, Reap, bulk-select actions).
-Failure scenario: An operator on system dark theme sees the primary 'Save policy'/'Reap' buttons and the armed multi-select toggle show white label text on light-indigo at ~3:1. Low-vision users or users on a bright screen struggle to read the single most important action.
-Recommended fix: Add an `--accent-ink` token mirroring `--plex-ink`: `--accent-ink: #fff` in light `:root`, a dark navy (e.g. `#10122b`, ~7:1 against #818cf8) in the dark block. Replace the four `color: #fff` declarations with `color: var(--accent-ink)`. (Darkening dark-mode `--accent` instead would also affect borders/rings that read fine, so the ink token is lower-risk.)
-
-**2. Tab-style navigation is rendered three different ways across the app's primary surfaces**
-`frontend/src/components/ReviewQueue.tsx:771-783 (.tabs container) with index.css:742-747 (.tabs border-bottom) vs index.css:346-365 (.tab), 214-221 (.views), 2338-2356 (.settings-tab), 1742-1767 (.seg)`
-Severity: low
-Description: The same conceptual control — a horizontal row of tabs switching sub-views — has three incompatible treatments. The masthead (`.views`+`.tab`) is a rounded pill group on a surface-2 track. ReviewQueue reuses the identical `.tab` pill but drops it into a `.tabs` container with `border-bottom: 1px solid var(--border)`, so the active pill floats on an underline meant for underline-style tabs. Settings (`.settings-tab`) uses a genuine underline tab. PolicyEditor adds a fourth pattern with `.segmented`/`.seg`.
-Failure scenario: A user on Review sees rounded pill tabs on a horizontal rule; on Settings the tabs become square underline tabs; the Policy media toggle is yet another pill 'segmented' control. The inconsistent shapes make it non-obvious they're the same control, and the ReviewQueue pill-on-a-border looks unfinished.
-Recommended fix: Pick one tab paradigm. Simplest: remove `border-bottom` from `.tabs` so ReviewQueue's `.tab` pills read like the masthead pill group (optionally wrap `.tabs` in the same surface-2 rounded track). Alternatively convert both masthead and ReviewQueue to the `.settings-tab` underline style. Keep `.segmented`/`.seg` for the binary media toggle only. Longer term, consolidate `.tab`, `.settings-tab`, and `.seg`.
-
-**3. Four parallel error/warning message components with no shared system**
-`frontend/src/index.css:261-278, 584, 1374-1391`
-Severity: low
-Description: Inline error/warning messaging is fragmented across four visually distinct treatments used interchangeably. `.error` (red text 0.88rem) is used in many components; `.auth-error` (red text 0.85rem, different margins) is used only in Login for the same concept; `.warn` (amber boxed) appears in Login; `.notice`/`.notice-error`/`.notice-warn` (boxed, bordered) appear only in PolicyEditor. So a validation failure is a red bordered box in Policy, plain red text in Settings, and a slightly-differently-sized plain red text on Login.
-Failure scenario: The same class of message looks different on every screen — boxed and bordered in PolicyEditor, bare red text in Settings/Fairness, near-identical-but-subtly-different bare red text in Login. Users get no consistent cue for 'error' vs 'warning', and `.error`/`.auth-error` are functional duplicates that will drift.
-Recommended fix: Consolidate to one severity-typed notice system, using `.notice`/`.notice-error`/`.notice-warn` as the base. Migrate `.error` and `.auth-error` to `.notice.notice-error` (deleting `.auth-error`), and fold `.warn`/`.warn.danger` into `.notice-warn`/`.notice-error`.
-
-**4. Native browser confirm() dialog used for deletion in Settings, contradicting the app's custom confirmation UX**
-`frontend/src/components/Settings.tsx:239`
-Severity: low
-Description: Removing a service instance triggers an unstyled native `confirm()` dialog. Everywhere else the app builds custom, styled confirmation surfaces (the reap modal, the local-login sheet, the inline password-confirm arm form). A raw OS-chrome alert in an otherwise carefully themed app is a UX disjoint, and it's the only confirmation ignoring light/dark theming and app typography.
-Failure scenario: A user removing a Radarr instance gets a raw 'localhost says…' dialog with default OS buttons — no theming — while the far more consequential 'turn deletion on' and 'reap now' flows use bespoke in-app confirmations.
-Recommended fix: Replace `window.confirm()` with an inline confirm affordance consistent with the app — a two-step "Remove" → "Confirm remove" toggle mirroring the Safety arm flow, or reuse the `.modal` pattern. Cosmetic/consistency only.
-
-**5. Heading hierarchy is inconsistent: GracePanel jumps to <h4>, and ReviewQueue has no <h2> while every other main view does**
-`frontend/src/components/GracePanel.tsx:95,111; ReviewQueue.tsx:770-785 (missing h2), 418,519 (card-title h3)`
-Severity: low
-Description: GracePanel emits `<h4 class="grace-heading">`, but the stylesheet only styles h1/h2/h3 — h4 is unstyled and skips h3, breaking the outline. Every primary view leads with an `<h2>` (Policy, Fairness, Settings panels, the simulator) but ReviewQueue has no top-level heading (it opens into `nav.tabs` then `.blurb`). ReviewQueue also repurposes `<h3>` for every card title, overriding the section-label h3 style and flooding the outline with dozens of card-title h3s.
-Failure scenario: Screen-reader/outline navigation is uneven: Review has no view-level heading and is full of h3 card titles, Grace uses an h4 that skips h3, other views use clean h2→h3. A user relying on heading navigation cannot land on a 'Review' heading the way they can on 'Policy' or 'Fairness'.
-Recommended fix: Give ReviewQueue a view-level `<h2>` (e.g. "Review queue") before the tabs nav. Change GracePanel's two `<h4>` headings to `<h3>` (keeping `.grace-heading` if the smaller size is wanted). Optionally demote `.card-title` from `<h3>` to a styled non-heading element.
-
-**6. Fixed two/four-column grids in Settings and the grace panel have no mobile breakpoint**
-`frontend/src/index.css:2459-2463 (.add-grid); also 2418-2425 (.instance-edit) and 1556-1564 (.grace-list li)`
-Severity: low
-Description: The `@media (max-width: 900px)` collapses only apply to `main.split`, `.editor`, and `.why`. Several fixed multi-column grids never collapse: `.add-grid` (`1fr 1fr`), `.instance-edit` (`1fr 1fr`), and `.grace-list li` (`1fr auto 5rem 4rem`). Inside `.panel` (max-width 760) these are the add/edit-instance forms, which stay two-column on a 375px phone.
-Failure scenario: An operator adds a Radarr/Sonarr instance on a phone: the URL and API-key inputs sit in two ~150px columns too narrow to read pasted values; the edit form and grace rows crowd on the same width. Functional but hard to use, unlike the queue/editor which reflow.
-Recommended fix: Add a mobile breakpoint (e.g. `@media (max-width: 640px)`) setting `.add-grid, .instance-edit { grid-template-columns: 1fr; }` and collapsing/wrapping `.grace-list li`. Alternatively use auto-fit/minmax.
-
-**7. Reap-confirm modal uses max-height:88vh (not dvh), risking clipped actions under mobile browser chrome**
-`frontend/src/index.css:2794`
-Severity: low
-Description: `.modal` sets `max-height: 88vh`. On mobile browsers `vh` resolves to the large viewport (toolbar hidden) while the visible area is smaller, so a centred modal sized to 88vh extends above and below the visible region. The `.why` mobile sheet was deliberately switched to `100dvh` to avoid this, but the reap confirmation modal — the one modal that deletes data — still uses `vh`.
-Failure scenario: On mobile Safari/Chrome with the address bar shown, a reap plan with several items makes the modal ~88vh tall and centred; the confirm-phrase input and Reap/Cancel actions (and header) render partly outside the visible viewport on first paint.
-Recommended fix: Change `.modal` `max-height: 88vh` to `88dvh` for consistency with the `.why` fix. Optionally add a `@media (max-width: 900px)` refinement, but the single-property change suffices.
-
-**8. Form-field label wrappers use three different conventions, so labeled inputs look different per panel**
-`frontend/src/components/Settings.tsx:583-641`
-Severity: low
-Description: Labeled fields are built three ways with three label typographies. Services uses `.field-sm` with a bare `<span>` (0.82rem/muted). Login and PolicyEditor sliders use `.field` + `.field-label` (0.88rem/weight-500/full-color). Limits uses bare `<label>` via `.caps-grid label` (0.8rem/muted). Three sibling panels within the same Settings screen render field labels at different sizes, weights, and colors.
-Failure scenario: Within Settings alone, the 'Name'/'Address' labels (Services, muted 0.82rem) differ from 'Most titles per run' labels (Limits, muted 0.8rem, different wrapper), and Login's 'Username' label is 0.88rem weight-500 full-color. The same 'label-above-input' element is visibly inconsistent between adjacent panels.
-Recommended fix: Standardize on one field-wrapper convention across Settings, Login, and PolicyEditor. Collapse `.field-sm span`, `.field-label`, and `.caps-grid label` into a single shared label style. Prioritize the more visibly divergent case (0.88rem weight-500 full-color vs the 0.8-0.82rem muted variants).
-
-**9. Loading states alternate between a spinner and plain muted text with no rule**
-`frontend/src/components/PolicyEditor.tsx:621 (plus ReviewQueue.tsx:862; Settings.tsx:296,565,737; GracePanel.tsx:48; Fairness.tsx:87; spinner usages App.tsx:225,250 and Login.tsx:107; spinner CSS index.css:443-457)`
-Severity: low
-Description: The app ships a spinner (`.spinner`/`.spinner-lg`) used for the auth gate and Plex wait state, but every data panel falls back to plain muted text: 'Loading policy…', 'Loading…', 'Loading grace…', and a bespoke sentence 'Reading requests from Seerr and history from Tautulli…'. So loading is sometimes a spinner, sometimes 'Loading…', sometimes '<noun> loading…', sometimes a full sentence.
-Failure scenario: Navigating between views, a user sees a spinner on auth, then plain 'Loading…' on Review, then 'Loading policy…' on Policy, then a full sentence on Fairness. No shared loading affordance; text-only states have no motion cue.
-Recommended fix: Standardize the data-panel loading affordance. Either reuse `.spinner` across all panels, or normalize the copy to a single phrasing (e.g. all "Loading…"). (The third Settings occurrence is at line 737, not 738.)
-
-**10. Two adjacent 'Test connection' buttons use different loading labels ('…' vs 'Testing…')**
-`frontend/src/components/Settings.tsx:228`
-Severity: low
-Description: The saved-instance Test button shows a bare ellipsis '…' while pending (`{testSaved.isPending ? "…" : "Test"}`), whereas the add-instance Test button in the same file shows the full 'Testing…' label. Every other async button uses verb+ellipsis ('Adding…', 'Saving…', 'Signing in…', 'Scanning…', 'Planning…', 'Marking…'). The lone '…' is an outlier for the identical action sitting next to its 'Testing…' sibling.
-Failure scenario: A user testing an already-saved instance sees the button collapse to a lone '…', while the visually identical Test button in the Add-service form below says 'Testing…'. The mismatch looks like a bug.
-Recommended fix: Change Settings.tsx:228 to `{testSaved.isPending ? "Testing…" : "Test"}` to match the app-wide verb+ellipsis convention.
-
-## 8. Missing Discord Config in UI
-
-**1. The Discord webhook — the only real notification channel — has no UI control and can be set solely via an env var**
-`frontend/src/components/Settings.tsx:18-26 (missing UI panel); config.py:82 (backend root cause)`
-Severity: medium
-Description: The sole notification setting is `discord_webhook: SecretStr | None` (config.py:82), consumed by `build_notifier(settings)` (notify/discord.py:114) and the `/api/leaving-soon/sync` endpoint (api/leaving_soon.py:72). Its docstrings call it "the *real* notification channel" — the Plex "Leaving Soon" label reaches only users who pinned the library, so Discord is the one channel that actually warns people before deletion. Yet there is NO UI control anywhere: the Settings shell exposes exactly five panels (services, plex, jobs, limits, safety), none touching notifications; api.ts has no notifications endpoint; the only Discord string in the frontend is a read-only status pill `{mark.data.notified && " · Discord notified"}` (GracePanel.tsx:84). Because `build_notifier` reads only `settings.discord_webhook`, the ONLY way to configure it is the undocumented env var `REAPER_DISCORD_WEBHOOK`. This also violates config.py's own stated architecture — bootstrap `Settings` is reserved for pre-DB/kill-switch concerns, while credentials like instance API keys "live in the database, Fernet-encrypted, and are edited in the web UI." The webhook is a credential (its token lives in the URL path), is not needed before the DB, and is not a kill switch, so by the codebase's own rule it belongs in the DB and UI.
-Failure scenario: An operator stands Reaper up entirely through the web UI and never edits config.py or sets REAPER_DISCORD_WEBHOOK because nothing in the UI or docs mentions it. Reaper begins condemning movies; the grace-period 'leaving soon' warning that should reach the household via Discord is silently never sent (`build_notifier` returns None), so the primary safety warning reaches no one and media is deleted after grace with users blindsided. The operator has no in-product way to discover or fix this.
-Recommended fix — full specification:
-- **What it controls:** the Discord webhook URL used by `build_notifier` to post the "Leaving Soon" grace-window announcements.
-- **Where it belongs:** a new **Notifications** panel registered in `Settings.tsx` (the sixth panel alongside services/plex/jobs/limits/safety).
-- **Control type / label / help / validation:** a single masked, write-only secret text input labeled **"Discord webhook URL"**, mirroring the existing write-only-secret pattern used for instance API keys. Help text: "Posts a heads-up to your Discord channel before titles are deleted. The entire URL is a secret — paste the full `https://discord.com/api/webhooks/…` URL." Show a **"Discord connected"** status (derived from a `has_webhook` boolean) rather than echoing the stored value, with **Save**, **Test** (posts a sample embed), and **Remove** actions. Client- and server-side validation must require an https URL whose host is a Discord webhook endpoint (`discord.com`/`discordapp.com` `/api/webhooks/...` path); reject other hosts and strip whitespace.
-- **DB-backed vs env-only:** store the webhook **DB-backed, Fernet-encrypted**, exactly like an instance API key. Keep `REAPER_DISCORD_WEBHOOK` as a **first-boot seed only** (migrated into the DB on first run), not the primary configuration surface.
-- **API change:** change `build_notifier` to read the stored (session-fetched) webhook rather than `Settings`, and update the caller in `api/leaving_soon.py:72`. Add `GET`/`PUT`/`POST-test` routes under `api/settings.py` exposing only `has_webhook` (never the URL). Add the corresponding `api.ts` helpers and register the `notifications` Panel in `Settings.tsx`.
-Severity is medium (not high): the channel IS configurable via env var, destructive actions require explicit arming, and the Plex label is a weaker secondary warning — a real UX/architecture gap, not a correctness defect.
-
-**2. .env.example omits REAPER_DISCORD_WEBHOOK, hiding the only currently-working way to configure notifications**
-`.env.example: append after line 34 (RECOVERY); config.py:82 (discord_webhook) and config.py:97 (allow_unarmed_leaving_soon)`
-Severity: low
-Description: Until a UI control exists (finding above), the sole way to enable Discord notifications is the env var `REAPER_DISCORD_WEBHOOK`, yet `.env.example` never mentions it — it documents SECRET_KEY, DATA_DIR, HOST, PORT, LOG_LEVEL, LOG_JSON, DESTRUCTIVE_ACTIONS_ENABLED, RECOVERY, and seed integration vars, and stops. The same omission applies to `REAPER_ALLOW_UNARMED_LEAVING_SOON` (config.py:97), the flag that lets the 'Leaving Soon' label be written while Reaper is read-only, so the entire warning-before-deletion story is undocumented at the config layer.
-Failure scenario: An operator wanting users warned before deletion reads .env.example end to end, finds no notification option, and concludes Reaper cannot notify — or must read config.py's Python source to discover REAPER_DISCORD_WEBHOOK and guess its format. Meanwhile the UI shows 'Discord notified' as a possible outcome, making the missing config doubly confusing.
-Recommended fix: Add a commented "Notifications" block to .env.example after the RECOVERY entry documenting `REAPER_DISCORD_WEBHOOK` (note the entire URL is a secret; absent = notifications off) and `REAPER_ALLOW_UNARMED_LEAVING_SOON` (reversible label write while read-only; can never permit a file delete). Mirror the seed-integration block's wording. Strictly a documentation omission.
-
-## 9. Improvements
-
-**1. Inconsistent native_enum usage gives some enum columns DB-level CHECK validation and others none**
-`src/reaper/db/models.py:56, 105, 485, 545`
-Severity: low
-Description: `Instance.kind` (line 56) and `AppUser.provider` (line 105) use `Enum(..., native_enum=False)` — plain VARCHAR with no CHECK — while `ReapRun.state` (line 485) and `ActionStep.state` (line 545) use bare `Enum(...)`, which on SQLite emits a named CHECK constraint. Equivalent columns thus get unequal integrity guarantees: an out-of-range state is rejected by the DB, an out-of-range kind/provider is not.
-Failure scenario: A future code path, manual SQL fix, or batch migration writing an invalid `instance.kind` or `app_user.provider` is silently accepted, whereas the identical class of error on `reap_run.state` is rejected — an inconsistent, surprising integrity contract for columns of the same nature.
-Recommended fix: Pick one convention across all enum columns and regenerate the baseline. Either add `native_enum=False` to `ReapRun.state` and `ActionStep.state` for uniform plain-VARCHAR behavior, or drop `native_enum=False` from `Instance.kind` and `AppUser.provider` so all enum columns carry a named CHECK constraint. Consistency, not correctness, is the goal.
+# Whole-codebase review — dev @ `5b885f5`, 2026-07-16
+
+> This is the second whole-codebase review pass. The previous pass (whose findings were
+> fixed) is preserved in git history for this file. Method: seven parallel area reviews
+> (engine, execution path, data services, HTTP clients, API/auth/config, frontend,
+> infra/tests); every critical and high finding was independently re-verified against
+> source before inclusion. 55 findings: 1 critical, 9 high, 20 medium, 25 low.
+
+> **Fix status (2026-07-16).** Every critical and high finding is fixed, each with
+> regression tests: B-1, B-2, B-3, B-4, B-5, PE-1, PE-2, PE-3 (the soften-and-unwire
+> option; wiring the backtest route stays open work in PLAN.md), P-1, P-2 — plus the
+> three mediums the fixes bundle with them: B-6 (with B-5), B-9 (with B-4), and PE-5
+> (with PE-1; `engine/verdict.py` is the one decision function, and
+> `skipped_no_history` is deleted). Details in PLAN.md's newest entry. The remaining
+> medium and low findings are still open.
+
+**TLDR.** The safety architecture is genuinely sound where it is exercised: the gate and
+signal engine's fail-closed math checks out, the execute route's interlock chain is
+correct end to end, and auth/session handling is solid. The serious problems are almost
+all of one species: **safeguards that are claimed but not implemented** (the action
+journal is not crash-durable, the Plex trash purge runs without its promised count-delta
+gate, the 30-day rolling caps are enforced nowhere, the backtest that operator copy tells
+users to run is unreachable), plus **four fail-open holes on the protection side**
+(tvdb-only keep tags never protect TV, a vanished keep tag silently wipes the whitelist,
+a failed history sync scores on stale evidence without degrading, fileless seasons eat
+keep-last slots).
+
+---
+
+## 1. Policy engine
+
+The core invariants hold and are well tested: unsigned signals with a fixed denominator
+(Unknown can only lower score and coverage), strictly subtractive keeps, no CONDEMN
+constructor in the gate lane, round-once-decide-on-stored-ints, byte-stable integer-only
+policy hashing with the correct post-score exclusion set, and an exemplary fail-closed
+identity resolver. The findings are at the edges and seams.
+
+**PE-1. Simulator disagrees with the production verdict on blocked and overridden rows.**
+`high · bug` — `src/reaper/api/routes.py:775-799`, `src/reaper/services/snapshot.py:811`
+`_verdict` returns "abstain" for any row with a blocked protection *before* it reads
+score or coverage, and forces "condemn" for a hand-reap override. The simulate route
+special-cases only `verdict == "protect"` and re-decides everything else on
+`coverage_bp`/`score` alone. A row that abstained because a protection could not be
+checked (score 85, coverage fine) is counted as condemned, and even reported under
+"newly condemned" at thresholds identical to the saved policy; a hand-reaped row below a
+draft threshold shows as "no longer condemned" though the scan keeps condemning it. This
+is exactly the "plausible wrong answer" the route's docstring promises to refuse, and it
+drives the operator's threshold choice.
+**Fix:** Skip re-deciding rows whose stored explanation has non-empty
+`protections_unknown` (or persist a blocked flag on Candidate) and keep override rows at
+their stored verdict. Extend `tests/test_verdict_agreement.py` with blocked and override
+rows.
+
+**PE-2. Operator-authored condition values are never type-checked against the field, and
+a mismatch crashes every scan.** `high · bug` — `src/reaper/engine/fields.py:397` (also
+`:322`), `src/reaper/api/schemas.py:330`
+`Condition.validate_for` checks lane and op only; `value: int | str | bool` at both the
+API and model layer accepts a JSON string on a numeric field (Pydantic's smart union
+keeps `"500"` a str). The policy saves and hashes cleanly; the next scan hits
+`_num("500")`, raises ValueError inside `evaluate_all`/`score()`, and the whole scan
+aborts with a traceback instead of a 422. Reproduced for protect conditions and boolean
+condemn rules. Fail-closed (nothing deletes) but a legal-looking API payload bricks the
+product's core function. Companion gap: `CONTAINS`/`IN` with a non-str value silently
+never match instead of being rejected.
+**Fix:** Validate value type against `FieldSpec.type` in `validate_for` (int for
+DAYS/BYTES/COUNT/RATING_TENTHS, bool for BOOL, str for TEXT). Belt-and-suspenders: make
+`fields.evaluate` catch ValueError and return a blocked `ConditionResult` so a bad stored
+rule degrades per item instead of killing the scan.
+
+**PE-3. The backtest and calibration subsystem is finished, tested, referenced in
+operator copy, and unreachable.** `high · production-readiness` —
+`src/reaper/engine/backtest.py`, `src/reaper/engine/calibration.py`,
+`src/reaper/api/schemas.py:475`, `src/reaper/db/models.py:242`
+No route, CLI, or frontend surface calls `backtest.run` or `calibration.derive`.
+`BacktestOut` is imported by no router. Meanwhile `policy.py:549` warns "Run a backtest
+before arming this", the size-rule warning says "Backtest this before arming it",
+`backtest.py:194` declares "No profile may be armed while this is negative", and
+`CheckConstraint("backtest_passed = 1")` can never be satisfied, so the AutonomyGrant
+flow is dead on arrival. Operators are told to do something the product cannot do.
+**Fix:** Wire `POST /api/policy/backtest` (build gates via `scan_runner.build_gates`,
+derive the prior via `calibration.derive` over the scorer's population) plus minimal UI;
+or soften every operator-facing reference and remove the dead schema until it ships, and
+correct docs/PLAN.md.
+
+**PE-4. `expected_regret_rate` still crashes despite the comment saying the fallback
+prevents it.** `medium · bug` — `src/reaper/engine/backtest.py:160-172`
+The guard is `prior_is_derived` (= `prior.calibrated`), but `Bucket.calibrated` is True
+for an *empty* bucket while `Bucket.rate` is None for it, so one condemned item whose
+dormancy lands in an empty bucket makes `rate_for` raise `NotCalibratedError`, taking
+down `lift`, `beats_random`, and `summary()`. Reproduced.
+**Fix:** Catch `NotCalibratedError` per item and fall back to `rewatch_prior` for that
+item (reporting the mixed provenance), or strengthen the predicate to "every condemned
+dormancy lands in a bucket with a rate".
+
+**PE-5. The condemn decision exists in three places, and the agreement test pins a
+transcription rather than the real code.** `medium · refactor` —
+`src/reaper/services/snapshot.py:811`, `src/reaper/engine/backtest.py:428-439`,
+`src/reaper/api/routes.py:787`, `tests/test_verdict_agreement.py:35`
+`_verdict` is a pure function (Evaluation + ints + PolicyBody) yet backtest re-implements
+it inline behind a comment claiming parity, and simulate re-implements it partially
+(PE-1). The agreement test compares `_verdict` against its own hand-copied
+`_simulator_verdict`, so a route-side regression (e.g. `>` for `>=` at the threshold)
+passes the suite; no route-level test exercises `condemn_at` equal to a stored score.
+Also `BacktestResult.skipped_no_history` is never incremented but is summed into the
+summary line.
+**Fix:** Move the decision into the engine (e.g. `engine/verdict.py`), import it from all
+three call sites, make the agreement test call the real functions, and add a route-level
+simulate test at an exact-threshold boundary. Delete or wire `skipped_no_history`.
+
+**PE-6. `calibration.derive` is structurally wrong for TV.** `medium · bug (latent)` —
+`src/reaper/engine/calibration.py:190-212`
+It joins history on `rating_key` filtered by `media_type`, but TV history rows are
+per-episode (`media_type='episode'`, episode keys) while the population passes show
+keys. `backtest.py:269` documents and solves exactly this with `grandparent_rating_key`.
+Latent only because derive is unwired (PE-3); the moment TV calibration is wired, every
+show reads never-rewatched and the prior claims a ~0% baseline, inverting every lift
+number.
+**Fix:** Parameterize the column/filter pair like backtest `_plays`
+(`grandparent_rating_key` + `'episode'` for TV) and add a TV calibration test before
+wiring.
+
+**PE-7. `Op.IN` is whitespace- and case-sensitive, and IN/EQ can never match
+multi-valued fields.** `medium · bug` — `src/reaper/engine/fields.py:392`
+`str(value) in target.split(",")` means `genre IN "Anime, Documentary"` fails on the
+space, `"horror"` fails on case, and since `genres`/`on_curated_list` facts are
+comma-joined strings ("Horror, Comedy"), a multi-genre title can never equal any single
+element, so IN and EQ on those fields silently never fire. In the protect lane that is a
+protection the operator believes exists doing nothing (rendered green "checked", not
+amber).
+**Fix:** Split with `strip()` and casefold both sides for IN (casefold EQ for TEXT); for
+multi-valued fields evaluate against the fact's own comma-split elements, or drop IN/EQ
+from `genre`/`on_curated_list` and keep CONTAINS.
+
+**PE-8. Release age rounds in the condemn direction.** `low · bug` —
+`src/reaper/services/snapshot.py:1090-1102`
+`date(year, 1, 1)` overstates age by up to ~364 days on a condemn-lane field, so
+`release_age >= N` custom rules over-match. The repo's own principle is to resolve
+ambiguity toward keeping.
+**Fix:** Round to `date(year, 12, 31)` (understates age, fail-safe), or use Radarr's
+actual release-date fields already present in the payload.
+
+**PE-9. A disabled popularity gate still supplies the popularity window.** `low · bug` —
+`src/reaper/services/snapshot.py:1008-1012`, `src/reaper/engine/backtest.py:387-390`
+`_popularity_window` reads `window_days` from the SERVER_POPULARITY setting without
+checking `enabled`, so a disabled gate's stale window (say 30 days) silently drives the
+`distinct_watchers` fact and the FEW_WATCHERS signal, increasing pressure.
+**Fix:** Filter on `g.enabled` in both places, falling back to 365.
+
+**PE-10. Dead engine surface, including a same-named duplicate of a safety class.**
+`low · refactor` — `src/reaper/engine/custom_gate.py:24`, `src/reaper/engine/gates.py:186`
+`engine/custom_gate.py` is imported nowhere; its `CustomProtectGate` (RuleSet-based)
+duplicates the name of the live single-condition gate in `fields.py:447` with different
+semantics. Also unused: `Facts.unknowns()` and
+`observation.describe/value_or/map_known/is_unknown`.
+**Fix:** Delete `custom_gate.py`; prune or test the unused observation helpers.
+
+**PE-11. Boolean and graded custom rules treat `Absent` asymmetrically in coverage.**
+`low · improvement` — `src/reaper/engine/signals.py:271-300`
+A boolean rule reading Absent counts as evaluated (real evidence, no match); a graded
+rule reading Absent counts as unevaluated, dragging coverage down. Both fail safe, but a
+TV policy with a graded rule on a v1-Absent field (e.g. `release_age` on seasons) can
+silently push every season under the coverage floor, and the backtest comment calling
+such rules "inert" is inaccurate (they dilute score and coverage).
+**Fix:** Treat Absent as evaluated-with-zero-pressure in the graded path to match the
+boolean path, and reword the backtest comment.
+
+**PE-12. Tier-1 identity matching does not cross-check id kinds.** `low · improvement` —
+`src/reaper/engine/identity.py:538`
+The first id kind that resolves uniquely binds; a second kind resolving to a *different*
+Plex row is never consulted, so a mis-tagged tmdb id wins silently unless the title+year
+backstop happens to fire. The contradiction veto already exists across tiers.
+**Fix:** Extend the contradiction veto across kinds within tier 1: two kinds disagreeing
+on the rating key means abstain.
+
+**PE-13. Per-item policy config reconstruction.** `low · efficiency` —
+`src/reaper/services/snapshot.py:742-743`, `src/reaper/engine/backtest.py:431-432`
+`policy.custom_signal_configs()` and `keep_configs()` are rebuilt for every item in both
+judge loops. Hoist them out of the loops.
+
+---
+
+## 2. Bugs
+
+**B-1. TV protection lists are matched by IMDb id only, so tvdb-keyed keep tags never
+protect seasons.** `critical · fails open` — `src/reaper/services/season_scan.py:889`,
+`src/reaper/services/lists.py:261-271`, `src/reaper/services/snapshot.py:215`
+`membership_index.lookup(imdb_id=series.get("imdbId") or None)` ignores the tvdb id even
+though `ArrTagRule` stores TV rows with `tvdb_id` and `lookup` accepts it. A show without
+an imdbId in Sonarr (the codebase itself calls this common) that the operator tagged
+`reaper-keep` gets `whitelisted=False`; the gate never fires; its seasons are condemnable
+and executable. The movie path passes two ids; the season path passes one. An
+explicitly-set protection failing open on the deletion path.
+**Fix:** `membership_index.lookup(imdb_id=..., tvdb_id=tvdb_id)` (tvdb_id is already
+computed at line 850); add a season-path test whitelisting via a tvdb-only row.
+
+**B-2. Keep-last-N slots are consumed by seasons with no files.** `high · bug` —
+`src/reaper/clients/sonarr_stats.py:101`, `src/reaper/services/season_pruning.py:231`,
+`src/reaper/services/season_scan.py:840`
+`rank_seasons` ranks every non-special season regardless of `has_content`, and
+protection is `rank <= keep_last`. Reproduced by script: seasons 1-5 on disk plus an
+announced fileless season 6, `keep_last=2` protects only season 5 among real seasons and
+deletes season 4. This re-introduces, through empty seasons, the exact rank-slot-shift
+bug the module documents for specials. Any continuing show with an
+announced-but-undownloaded next season hits it.
+**Fix:** Rank over content-bearing seasons only (`[s for s in seasons if s.has_content]`)
+in `plan_series_prune`, align the `season_rank` scoring fact, add a regression test.
+
+**B-3. A failed watch-history sync only logs a warning; the scan then scores on the
+stale mirror and stays executable.** `high · fails open` —
+`src/reaper/services/scan_runner.py:332-336`, `src/reaper/services/executor.py:702`
+Dormancy and watcher counts come from the local mirror; on `IntegrationError` the sync
+failure goes to `log.warning` and is *not* appended to `pre_scan_degradations`, unlike
+Plex and whitelist failures ten lines later. A play that landed after the last successful
+sync is invisible: the streaming veto covers only right-now, and
+`_watched_since_approval` checks plays at/after approval only. So an item watched during
+the stale window can be condemned, approved, and deleted. Three independent reviews
+converged on this. Rule 2 violation: the primary condemning evidence source fails open.
+**Fix:** Append a degradation reason on sync failure (degraded snapshots already refuse
+planning at `planner.py:252`); optionally also degrade when the mirror's newest event is
+older than a bound.
+
+**B-4. The action journal is not crash-durable: every SENT/VERIFIED mark only flushes
+inside one run-long transaction.** `high · bug` —
+`src/reaper/services/executor.py:1086-1095`, `src/reaper/api/runs.py:303`,
+`src/reaper/db/models.py:508`
+The single commit happens after the whole run returns. Kill the process after item 6 of
+10 has deleted: the transaction rolls back, the run reverts to PLANNED with all steps
+PENDING, and the operator cannot tell from Reaper that six files are gone. The "durable
+audit record of what was in flight" claimed at `executor.py:636`, `planner.py:5`, and
+`models.py:508` (StepState: "a step found still SENT at startup was in flight") does not
+exist; the "a run executes once" guard is voided (re-execution converges only by accident
+on the canary's 404). Side effect: the open write transaction holds the SQLite writer
+lock for the entire multi-minute run. Three independent reviews converged on this.
+**Fix:** Commit the PLANNED→EXECUTING flip before the first send and commit after every
+step-state change (or journal on a dedicated per-step-committed connection). Pair with
+B-9's atomic claim.
+
+**B-5. `empty_trash` runs on every real run without the count-delta interlock three
+docstrings claim, and the module docstring says it is not wired at all.**
+`high · claimed safeguard missing` — `src/reaper/services/executor.py:1041` (and
+`:59-67`), `src/reaper/clients/plex.py:646` (and `:473`)
+`plex.py:646` promises the executor "only ever runs it after confirming the section
+shrank by roughly what was deleted and no more"; `PlexClient.item_count` ("the input to
+the trash interlock") has zero callers; `executor.py:67` still says trash is left to
+Plex's own maintenance. Concrete hazard: Plex's nightly scan trashed 300 entries while a
+mount flapped on the Plex host; the \*arr root-folder check (`_mount_is_up`) passes
+because those are different mounts; Reaper reaps one movie and purges the whole section
+trash, destroying 300 items' library records (watch states, collection membership).
+**Fix:** Implement the promised delta gate using `item_count` (record pre-delete counts
+per affected section; skip the purge when the section shrank by more than this run
+deleted under it), or stop purging; in the same change make all three docstrings agree
+with the code.
+
+**B-6. Plex section mapping matches on a raw string prefix.** `medium · bug` —
+`src/reaper/services/executor.py:1004`
+`arr_path.startswith(location)` lets a section rooted at `/media/movies` claim files
+under `/media/movies-4k/`, refreshing and (with B-5) trash-purging the wrong section.
+**Fix:** `arr_path == location or arr_path.startswith(location.rstrip("/") + "/")`.
+
+**B-7. A vanished keep tag or collection, or a malformed 200, silently wipes the
+whitelist.** `medium · fails open` — `src/reaper/services/lists.py:239` (and
+`:308-312`), `src/reaper/clients/arr.py:70`
+Two paths, one failure: (a) a tag renamed or deleted in the \*arr, or a deleted "Never
+Reap" collection, returns `[]` which sync treats as success, atomically replacing a
+populated whitelist with nothing; `protection_sync_degradations` only inspects "error:"
+outcomes, so the snapshot is not degraded and previously-protected titles become
+executable on the same scan. (b) `tags()` masks a non-list 200 body (reverse-proxy error
+page) as `[]`, feeding the same wipe. The Top 250 provider refuses a truncated payload
+for exactly this reason; the whitelist providers have no analogous guard.
+**Fix:** Distinguish container-missing/malformed from genuinely-empty: when the tag or
+collection does not exist (or the body is not a list) and the stored list currently has
+members, raise `IntegrationError` so the atomic swap keeps the previous membership and
+the empty-membership degradation applies.
+
+**B-8. `refresh_path` is a GET in plexapi, so the GuardedSession never gates it, while
+the adjacent comment claims everything below requires arming plus a declared mutation.**
+`medium · guard gap` — `src/reaper/clients/plex.py:552-555`
+plexapi's `LibrarySection.update` issues `/library/sections/{key}/refresh` via GET. On a
+server with Plex's "empty trash after every scan" library setting, an ungated refresh of
+a path with missing files auto-purges those items: the GET-shaped-mutation class the
+Tautulli client solves with a command allow-list, unsolved on the Plex twin.
+**Fix:** Teach GuardedSession to treat known GET-shaped mutating paths (`/refresh`) as
+mutations, or add the safety check inside `refresh_path`; correct the comment either way.
+
+**B-9. Double-execute TOCTOU: the "a run executes once" check is a non-atomic
+read-check-write.** `medium · race` — `src/reaper/services/executor.py:412`
+Two concurrent POSTs to execute both read PLANNED and both run; the second re-executes
+and clobbers the first's journal and final state (seasons re-verify as deleted-again,
+double-counting bytes). Becomes strictly worse once B-4 introduces mid-run commits.
+**Fix:** Claim atomically: `UPDATE reap_run SET state='executing' WHERE id=:id AND
+state='planned'`, refuse on rowcount 0.
+
+**B-10. Policy editor silently discards unsaved edits when toggling Movies/TV.**
+`medium · frontend` — `frontend/src/components/PolicyEditor.tsx:1220`
+The effect re-seeds the draft from the saved policy on every media-type change, both
+directions, with no dirty guard on the toggle.
+**Fix:** Gate the switch behind the existing confirm pattern when dirty, or hold one
+draft per media type.
+
+**B-11. The reap confirmation sheet can be closed mid-execution, losing the run report
+and leaving the queue stale.** `medium · frontend` —
+`frontend/src/components/ReapConfirm.tsx:68` (and `:126`)
+Scrim click and Cancel are not gated on `exec.isPending`; unmounting skips `onSuccess`,
+so after a real deletion the per-item checklist never shows and the review queue keeps
+listing deleted items until something else refetches.
+**Fix:** Ignore scrim/Cancel while pending; move invalidation to `onSettled` on a stable
+queryClient; keep the sheet open until the report renders.
+
+**B-12. Saving a policy with a newly added graded rule leaves the editor dirty
+forever.** `medium · frontend` — `frontend/src/components/PolicyEditor.tsx:1308` (and
+`:646-653`), `src/reaper/engine/policy.py:193-198`
+`dirty` is a raw `JSON.stringify` comparison; the frontend inserts `floor` before
+`saturate_at` while the backend serializes the reverse, so identical content compares
+unequal after save. The Save button never returns to "Saved" and the staged banner can
+fail to clear.
+**Fix:** Re-seed the draft from the save response in `onSuccess`, or compare with a
+key-order-insensitive canonicalization.
+
+**B-13. Show cards understate what "Reap now" will plan.** `medium · count mismatch` —
+`frontend/src/components/ReviewQueue.tsx:544`, `src/reaper/services/planner.py:313-324`
+Card season-count and byte totals are computed over fetched pages only, while the planner
+expands the group key over *all* condemned seasons in the snapshot. On large sorted lists
+a show straddling unfetched pages shows "2 seasons · 12 GiB" and plans 6; only the typed
+phrase reveals it. The count-must-match-confirmation rule applied to the card surface.
+**Fix:** Return per-group condemned totals from the server for the card, or label card
+numbers as partial until pagination is exhausted for that group.
+
+**B-14. `_row_timestamp` treats `stopped=0` as epoch 0, the one fail-open corner of the
+played-since-approval check.** `low · bug` — `src/reaper/services/executor.py:1164`
+`0 is not None`, so `date` is never consulted and `0 >= approved_ts` is False: a row with
+`stopped=0` but a post-approval `date` fails to spare.
+**Fix:** `if not value: continue` so falsy falls through to `date`.
+
+**B-15. Grace report filters spares by exact media_key only.** `low · display honesty` —
+`src/reaper/services/grace.py:95`
+Sparing a whole show leaves its condemned seasons listed as "ready" in the grace view
+although planner and executor (which use `effective_override`) will never touch them.
+**Fix:** Filter with `whitelist.effective_override(...) != "spare"` like the planner does.
+
+**B-16. Seerr pagination silently truncates when `pageInfo` is missing.**
+`low · possible` — `src/reaper/clients/seerr.py:214`
+`total or 0` plus `skip >= total` exits after one page of 100 on an envelope-shape
+change; requester attribution and the fairness view quietly undercount.
+**Fix:** Treat a non-empty page with `total == 0` as `IntegrationError`.
+
+**B-17. Instance-create maps validation errors to 409.** `low · wrong status` —
+`src/reaper/api/settings.py:272`
+A blank api_key returns 409 "conflict" with a "required" message; `update_instance`
+already splits `InstanceConflictError` (409) from bare `InstanceError` (422).
+**Fix:** Mirror the update handler's split.
+
+**B-18. A movie without a usable tmdbId is deleted first and only then found
+unverifiable.** `low · ordering` — `src/reaper/services/executor.py:822`
+`_exclusion_landed` returns False for `tmdb_id == 0` after `delete_movie` already ran;
+when it is the canary, the run aborts having performed one irreversible delete it could
+have refused up front.
+**Fix:** Skip the item (fail closed) before `_mark_sent` when the pre-read shows no
+tmdbId.
+
+**B-19. Settings claims a Discord webhook is configured when it no longer decrypts.**
+`low · state mismatch` — `src/reaper/services/app_settings.py:177-187`
+`has_discord_webhook` checks presence; `get_discord_webhook` returns None on decrypt
+failure (e.g. rotated `REAPER_SECRET_KEY`), so the UI says notifications are on while
+every send is skipped and grace warnings never post.
+**Fix:** Attempt decryption in the has-check; ideally surface a "needs re-entry" state.
+
+**B-20. Frontend small-bug cluster.** `low` — six verified items, each with its own
+one-line fix:
+- `PolicyEditor.tsx:1649`: keep-rule field list excludes fields whose matching built-in
+  gate merely *exists*, even disabled; filter `draft.gates` on `enabled`.
+- `ReapPlan.tsx:59` and `ReapConfirm.tsx:88`: `sim-stale` CSS class does not exist;
+  aborted-run notices render unstyled. Rename to `sim-info` or add the rule.
+- `QuantityInput.tsx:15`: size units use binary factors (1024³) labeled "GB" while
+  coercion, presets, and descriptions use decimal 1e9, so the same rule shows two numbers
+  ("465.66 GB" for a 500 GB cap). Pick one convention.
+- `ReapPlan.tsx:133`: `item_count` labeled "steps"; a 4-season plan says "4 steps" above
+  12 step rows. Say "items".
+- `ReviewQueue.tsx:1053`: "Select all" selects the rendered window while its tooltip says
+  "every card loaded". Align one to the other.
+- `PolicyEditor.tsx:1349`: applying a preset before the profile query resolves stages
+  only the policy half while the banner claims both; and `save.onSuccess` writes the
+  response under the current mediaType key, briefly poisoning the other type's cache on a
+  mid-flight toggle. Buffer preset caps until `pace` is non-null; key the cache write by
+  `policy.body.media_type`.
+
+**B-21. Fairness accounting inaccuracies.** `low · display accuracy` —
+`src/reaper/services/fairness.py:120-123` (and `:249-258`)
+`unmatched_requests` mixes units (per-group vs per-request) and never counts no-added-at
+abstentions its docstring claims; a season-level request is charged the whole series'
+`sizeOnDisk` in the ranking column.
+**Fix:** Count unjudgeable per request; pro-rate season requests from Sonarr's per-season
+statistics.
+
+---
+
+## 3. Hacks and workarounds
+
+The repo has zero TODO/FIXME/HACK markers and no skipped tests: discipline is genuinely
+good. What exists instead is a cluster of comments claiming safeguards the code does not
+implement (the repo's own rule 7), plus a few sanctioned-looking bypasses.
+
+**H-1. Claimed-but-unimplemented safeguard comments.** `medium · family` — fix each by
+implementing or correcting the comment in the same change:
+- `executor.py:33` and `planner.py:101`: claim "per-item existence/**size** re-reads at
+  delete time"; only existence is checked. A 2 GB approval upgraded to a 60 GB remux
+  deletes 60 GB while caps and the typed phrase counted 2. Re-read live size and skip on
+  large drift, or drop "size" from both claims.
+- `runs.py:211`: dry-run docstring claims "each per-item veto" runs; the streaming veto,
+  played-since check, and no-rating-key skip run only on real sends. Name exactly what a
+  dry run proves.
+- `planner.py:372`: "Skip it LOUDLY, recorded, not silently dropped" followed by a bare
+  `continue`. Add the log line or reword.
+- `models.py:508`: StepState SENT-at-startup durability claim (see B-4).
+- `executor.py:795`: "executor and clients share one RuntimeSafety, so this cannot
+  happen" is false; the route and `build_reap_gateway` read two snapshots. Pass the
+  route's `safety` in, making the comment true.
+- `tautulli.py:115`: `users()`'s docstring declares the keep_history abstain protection
+  mandatory; `users()` and `keep_history` have zero callers anywhere. A household member
+  with Tautulli history recording off makes everything only they watch look never-played,
+  and no gate abstains. Implement (read users during snapshot; degrade or force
+  nobody-watched signals to abstain when an active user has keep_history off) or delete
+  the method and record the gap in PLAN.md.
+- `frontend/vite.config.ts`: describes the scan endpoint as SSE; the app polls
+  `/api/scan/status`. Correct the comment.
+
+**H-2. HTTP lives outside `clients/` in three places.** `medium · architecture bypass` —
+`src/reaper/services/lists.py:149`, `src/reaper/services/imdb_dataset.py:118`,
+`src/reaper/notify/discord.py:77`
+Raw unguarded `httpx.AsyncClient`s, outside the guard, retry, and error-mapping layers,
+contradicting "the only place HTTP lives". All are GET-or-Discord and contained by broad
+catches, but they get zero retries where BaseClient reads get three.
+**Fix:** Route the two GET fetchers through a thin read-only BaseClient; for Discord
+either document it in CLAUDE.md as the sanctioned exception or allow-list the webhook
+path via `non_media_mutations`.
+
+**H-3. Services import from the API layer.** `low · layering` —
+`src/reaper/services/scan_runner.py:310`
+`from reaper.api.routes import active_policies` inside a function body is a
+circular-import workaround inverting the layering.
+**Fix:** Move `active_policies` into a service module (profiles or a policies service)
+and have routes import it.
+
+**H-4. `eslint-disable` comments with no ESLint.** `low · misleading marker` —
+`frontend/src/components/ReapConfirm.tsx:59`, `frontend/package.json`
+Three disable comments imply a linter pass that does not exist; the frontend has no
+linter or test runner at all (only tsc), including on the component computing the
+client-side execute gate.
+**Fix:** Add ESLint with react-hooks (and ideally vitest for the confirm/gating
+components) to the build gate, or remove the misleading comments.
+
+**H-5. The pytest `live` marker claims "Deselected by default" with no deselection
+mechanism.** `low · claim vs config` — `pyproject.toml:126`
+The first live test added will run against a real instance in plain `uv run pytest` and
+in CI.
+**Fix:** Add `-m "not live"` to addopts or a conftest skip hook, or correct the
+description.
+
+---
+
+## 4. Refactor opportunities
+
+The big one, a shared verdict function, is PE-5. Beyond that:
+
+**R-1. Dead-code sweep.** `low-medium` — `engine/custom_gate.py`, `clients/plex.py`
+(`item_count`, `labels`), `clients/tautulli.py` (`users`), `clients/seerr.py` (`users`),
+`api/schemas.py` (`BacktestOut`), `engine/backtest.py` (`skipped_no_history`)
+Delete or wire, each with a test if wired. Untested safety-adjacent surface misleads
+readers about what the product actually consults and drifts as upstream APIs change.
+
+**R-2. Constrain the benign-label branch structurally.** `low · hardening` —
+`src/reaper/clients/plex.py:203`
+The leaving-soon write branch checks only the opt-in flag; "this branch can NEVER permit
+a deletion" is enforced by call-site discipline alone. Any mutation issued inside a
+`benign_label_write()` block passes with only the unarmed opt-in.
+**Fix:** Require method PUT and a path matching the batch label-edit endpoints, failing
+closed otherwise.
+
+**R-3. Duplicate popularity-window and gate-construction glue.** `low` —
+`src/reaper/services/snapshot.py:1008`, `src/reaper/engine/backtest.py:387`
+`_popularity_window` exists in snapshot and inline in backtest (see PE-9); backtest `run`
+accepts free-form gates relying on callers to remember `build_gates`. Centralize both in
+the engine when extracting the verdict function.
+
+---
+
+## 5. Production readiness
+
+**P-1. The 30-day rolling caps are validated, stored, shown in the UI, and enforced
+nowhere.** `high · claimed safeguard missing` — `src/reaper/services/executor.py:316`,
+`src/reaper/engine/policy.py:450-455`
+The cap docstring delegates them to "the scheduler", which contains no deletion or cap
+logic; policy.py promises "a 4 TB incident arithmetically unreachable: no sequence of
+runs can exceed it". Five runs in a week sail past the 30-day budget without a warning.
+**Fix:** In `execute()` for real runs, sum verified deletions from `ReapRun`/`ActionStep`
+over the trailing 30 days and abort (not truncate) when the run would exceed either
+rolling cap; until then correct the comment and UI copy.
+
+**P-2. ~100 tests boot the real app lifespan non-hermetically: real `.env` credentials
+get encrypted into test DBs and a real ~280 MB IMDb download fires per test.**
+`high · test hermeticity` — `tests/test_app.py:36` and five sibling fixtures,
+`tests/test_settings_api.py:46`
+The repo defines the fix itself (`_hermetic`, stubbing `load_raw_env` and
+`catch_up_on_startup`) but only one file uses it. Verified: the `client` fixtures in
+test_app, test_api (×2), test_auth_gate, test_candidate_pagination,
+test_candidate_filters, and test_review_auth run unstubbed, and `.env` with real service
+keys exists at the repo root. Slow, flaky, network-dependent, and it copies live
+credentials into throwaway DBs.
+**Fix:** Promote `_hermetic` to an autouse conftest fixture; construct test Settings with
+`_env_file=None`.
+
+**P-3. The safety-arm and admin-password endpoints run Argon2 outside the throttle and
+concurrency gate.** `medium · auth hardening` — `src/reaper/api/settings.py:547` (and
+`:557`), `src/reaper/api/auth.py:277`
+`PUT /api/settings/safety` verifies and `POST /api/settings/admin-password` hashes with
+neither `argon2_gate.acquire()` nor any Throttle, unlike login: the exact CPU-exhaustion
+vector the ratelimit module was written to bound. Related (low): the admin password can
+be overwritten by any signed-in session with no current-password confirmation, so the arm
+gate's "shared session" claim only holds against accidental clicks; and login/recovery
+fields have no max-length bounds before hashing.
+**Fix:** Route both through `argon2_gate` plus a per-account throttle; require the
+current password (or recent re-auth) to change it; add `Field(max_length=...)` bounds.
+
+**P-4. Client lifecycle leaks on every scan.** `medium · resource leak` —
+`src/reaper/services/scan_runner.py:320-326`, `src/reaper/clients/plex.py:264`
+The Seerr `httpx.AsyncClient` is built per scan and never entered into the exit stack;
+`PlexClient` has no close at all (its GuardedSession/requests pool is reclaimed only by
+GC) across scan, reap gateway, and leaving-soon; and if `active_policies`/`build_gates`
+raises between client construction and stack entry, every constructed client leaks.
+**Fix:** Enter seerr into the stack; give PlexClient a `close()` and context-manager
+support and enter it too; construct clients inside the stack scope.
+
+**P-5. Redirects carry the mutation-approved extension and credential headers
+cross-origin.** `medium · likely · security` — `src/reaper/clients/base.py:147`
+`follow_redirects=True` with httpx 0.28 strips only `Authorization` on origin change: a
+compromised upstream or proxy can 301 any request to exfiltrate `X-Api-Key`, and a 307 on
+an armed DELETE re-fires it at an attacker-chosen URL with approval intact.
+**Fix:** `follow_redirects=False` for mutating requests; strip credential headers (or
+refuse) on cross-origin redirects for reads.
+
+**P-6. A failed whitelist sync with any prior members does not degrade, unprotecting the
+newest additions.** `medium · deliberate tradeoff` —
+`src/reaper/services/snapshot.py:1400`
+Test-pinned behavior: stale membership "still protects", but a title keep-tagged *today*
+is unprotected in tonight's scan if the sync fails, and the snapshot stays executable.
+**Fix:** Bound the staleness (degrade when the last successful sync exceeds N hours) or
+degrade on any failure, and align the engineering rule's wording with whichever is
+chosen.
+
+**P-7. The fairness report ignores the history horizon.** `medium · data honesty` —
+`src/reaper/services/fairness.py:305-334`
+A shallow Tautulli mirror makes every aged request read "never watched", inflating the
+reclaimable numbers the leaderboard shows: the exact mass-wrong-verdict the scan path
+stores the horizon to prevent. Read-only, but it exists to drive cleanup decisions.
+**Fix:** Clamp the watch clock to the horizon like the scan path does, and surface the
+horizon date in the report.
+
+**P-8. Missing loading/error states on always-visible safety surfaces (rule 17
+family).** `medium · frontend` —
+- `frontend/src/App.tsx:169`: why-panel detail query handles neither loading nor error; a
+  failed fetch leaves a reserved blank column with no message.
+- `frontend/src/components/PolicyEditor.tsx:1257`: simulator shows "Working…" forever on
+  failure; validator transport errors render as policy refusals and lock Save.
+- `frontend/src/components/GracePanel.tsx:49`: `return null` on error reads as "nothing
+  in grace".
+- `frontend/src/components/ScanBar.tsx:53` plus two siblings: async onClick with no error
+  handling; a failed scan start does nothing visible.
+**Fix:** Explicit pending/error fallbacks; distinguish 422 from transport in
+`invalidMessage`; convert fire-and-forget clicks to mutations.
+
+**P-9. Supply-chain pinning gaps.** `low` — one pinning pass across five spots:
+- `Dockerfile:4,20`: base images by floating tag (the repo's own rule 15 asks for
+  digests).
+- `.gitea/workflows/ci.yml:13`: CI actions by mutable major tag in the job that publishes
+  the deletion-capable image; pin to commit SHAs.
+- `.dockerignore:23`: root-anchored patterns (`__pycache__/`, `*.pyc`, `*.key`) miss
+  nested paths, so local builds sweep host bytecode into images; use `**/` forms.
+- `pyproject.toml`: python-dotenv imported directly (`config.py:31`) but undeclared (only
+  transitive via pydantic-settings).
+- `Dockerfile:56`: chowns `/app` to the runtime user when only `/data` needs it; leave
+  code root-owned.
+
+**P-10. Assorted low items.** `low` — each names its own fix; none blocks the others:
+- `main.py:186`: unauthenticated `/api/health` returns armed-state, safety note, and
+  exact version. Keep the open probe to `{"status":"ok"}`.
+- `runs.py:265`: disarming mid-run does not halt an in-flight reap (safety snapshot read
+  once). Documented; either implement a per-item re-read/cancel flag or state plainly in
+  the UI that a started run is atomic.
+- `scheduler.py:115`: scheduled scans bypass the UI's `scan_status` guard, so cron and
+  manual scans can overlap and collide on `FirstFlagged` inserts. Share one scan lock;
+  make the bulk recorder upsert-tolerant.
+- `season_scan.py:511-535` and `fairness.py:282`: unchunked `IN :keys` lists can exceed
+  SQLite's bound-variable limit on very large libraries; chunk at 500 like
+  `imdb_dataset.lookup`.
+- `imdb_dataset.py:169`: the 1.7M-row gzip parse runs on the event loop; move batch
+  production to `asyncio.to_thread`.
+- `plextv.py:246`: PIN poll ignores Retry-After on 429 (fixed 5s); carry the header onto
+  the error and honor it.
+- `plextv.py:324`: the per-service TLS opt-out has no Plex equivalent (`verify=True`
+  hardcoded), so self-signed-HTTPS Plex cannot be linked at all. Fails closed; extend the
+  opt-out with True default.
+- `history_sync.py:73`: the one-day incremental overlap "guarantee" depends on unverified
+  Tautulli date-boundary semantics; widen to two days and soften the comment, or verify
+  and record the real semantics.
+- `crypto.py:36`: fixed application-wide KDF salt and warn-only entropy floor; consider a
+  per-install random salt stored beside `secret.key`, and document that the floor is
+  advisory.
+
+---
+
+## 6. Improvements
+
+**I-1. Operator-copy and design-token fixes.** `low` —
+- `frontend/src/components/WhyPanel.tsx:210`: the verdict headline prints the raw enum,
+  so operators see "ABSTAIN", banned jargon; map to the tab vocabulary (Would reap /
+  Spared / Left alone).
+- `frontend/src/index.css:2720`: `.select-tick.on` hardcodes white on `--accent`, which
+  the file's own comment says fails WCAG AA in dark mode; use `--accent-ink`.
+- Operator-visible backend strings render a double hyphen as an em dash (e.g.
+  `observation.describe`: "could not check -- {reason}", several degrade reasons,
+  requester findings). The no-em-dash copy rule's intent applies; reword with a colon or
+  period where the string reaches the UI.
+
+**I-2. `.env.example` honesty for REAPER_HOST/PORT.** `low` — `.env.example:29`,
+`src/reaper/main.py:89`, Dockerfile CMD
+Documented as server config; nothing binds to them (Dockerfile hardcodes 8420) and their
+only consumer renders a `http://0.0.0.0:8420/recover` recovery link. Honor them in the
+entrypoint, or annotate what they actually affect and default the link host to something
+usable.
+
+**I-3. Policy `inspect()` coverage.** `low` — `src/reaper/engine/policy.py:485`
+`inspect` warns on rating-floor and threshold footguns but not on a very small popularity
+`window_days` (legal at 1 day, which puts FEW_WATCHERS near full pressure library-wide)
+or a `keep_last_scope="requested"` policy with no Seerr configured (the floor then
+applies to everything, silently). Both are cheap warnings in the existing pattern.
+
+---
+
+## Verified clean (do not churn)
+
+For the fixer agent's calibration, these were adversarially checked and held: the
+transport guard's httpx core (non-GET refusal without armed+declared, exact-path
+allow-list, redirect-off-allowlist fails closed) and plexapi funneling through
+GuardedSession; mutation calls unretried (no double-delete on ambiguous timeout) with
+reads retried on the right exception types; the execute route chain (authn → CSRF +
+Sec-Fetch-Site middleware → armed 403 → server-recomputed content-bound phrase 409 →
+executor re-checks → manifest hash → caps abort-not-truncate over the exact deletable set
+→ canary-first ordering → live per-item vetoes, all fail-closed); session security
+(hashed opaque tokens, `__Host-` cookies, absolute expiry, sign-out-everywhere on
+password change/deactivation, throttled and timing-equalized login, atomic 0600
+secret-file creation); grace-clock re-entry reset; None-vs-empty fail-closed at the route
+and planner; degraded snapshots refusing to plan; aware-UTC datetimes end to end; the
+frontend's CSRF coverage, server-owned confirmation phrase, and `Promise.allSettled` bulk
+flows; lockfile-frozen installs, single Alembic baseline with `alembic check` in CI, no
+secrets in the image, non-root container.
+
+---
 
 ## Agent Rules
 
-1. **Always distinguish an omitted field from an explicit empty collection** on any destructive or filtering path — treat `None` and `[]` differently, and make an empty selection fail closed (never expand to "everything").
-2. **Never fail open in the safety/deletion path.** When a whitelist/keep-list sync, a protection source, or an optional dependency (Plex) fails, degrade the snapshot to un-executable rather than proceeding with empty/stale protection data.
-3. **Always disambiguate cross-system joins by a stable identifier (year + title, not title alone)** and refuse to bind on ambiguity (return Unknown/ABSTAIN); never silently last-write-wins into a `dict[title, row]` map.
-4. **Always reuse the single production verdict/decision function** across engine, backtest, planner, and snapshot paths; never reimplement condemn/score/coverage logic (including rounding and floors) in a second place where it can drift.
-5. **Never let a code comment or docstring claim a safeguard that is not implemented** (rate limiting, crash-recovery de-dup, drift detection, 0600-from-creation). Either implement it or correct the comment in the same change.
-6. **Always route external HTTP through the shared client's error-mapping and retry layer** so transport/JSON errors become the domain error type; never call `self._client.request` directly, and ensure `@retry` predicates match the exceptions actually thrown (don't convert-then-fail-to-retry).
-7. **Always add per-IP and per-account throttling with backoff/lockout to authentication and recovery endpoints,** and cap concurrent expensive (Argon2) verifications; never rely on a fixed CSRF header or password length as the only brute-force/DoS defense.
-8. **Always invalidate existing sessions on a credential change** (call the sign-out-everywhere primitive on password reset and deactivation); never leave issued cookies valid solely on token_hash + expiry after the password changes.
-9. **Never place secrets (tokens, keys, API keys) in URL query strings or path components that get logged;** keep them in request bodies/headers, default `verify=True` for TLS, and derive at-rest keys with a salted KDF plus an entropy floor on operator-supplied keys.
-10. **Always create secret files atomically with owner-only mode** (`os.open(..., O_EXCL, 0o600)`), never write-then-chmod.
-11. **Always make notifications and side-effecting writes idempotent across repeated calls,** keying on durably-persisted state (an announced-set) rather than a diff that is never persisted; gate announcements so preview/read-only mode cannot re-spam.
-12. **Always reset time-window clocks (grace) on re-entry into the tracked state,** and remove or consult per-item tracking rows when an item leaves the set; never let stale first-flagged timestamps skip a safety window.
-13. **Never expand caps/counts over items that will later be filtered out;** compute enforcement counts against the exact set that will be acted on, matching the count shown in the user's confirmation.
-14. **Always keep the shipped artifact building in CI** (run `docker build`) and install from the committed lockfile with digest-pinned base images; never let unpinned `>=` floors resolve fresh at build time.
-15. **Always handle React Query loading AND error states in gating/always-on UI** — render an explicit unknown/error fallback for safety indicators and setup gates; never `return null` on missing data for a component whose contract is "always visible."
-16. **Always reuse the existing shared component/token/pattern** for tabs, segmented controls, notices, loading affordances, form-field labels, confirmation dialogs, CSS success/accent colors, and modal sizing (`dvh` on mobile); never introduce a parallel one-off implementation, an undefined CSS variable, a native `confirm()`, or white-on-`--accent` text that fails WCAG AA.
-17. **Always give React components stable keys and stable effect dependencies** (unique-among-siblings list keys, memoized arrays, `useRef` for cross-render mutable flags, and `useEffect` resets on identity-changing props); never key on a value shared by sibling rows or depend an effect on a freshly-allocated array.
-18. **Always use `Promise.allSettled` (not `Promise.all`) for independent bulk operations,** then reconcile UI state (invalidate queries, clear/retain selection) regardless of partial failure.
-19. **Always keep every operator-configurable credential in the DB-backed, encrypted, UI-editable surface and documented in `.env.example`;** never strand a configuration option (e.g. the Discord webhook) as an env-only, undocumented Setting while the UI advertises its outcome.
-20. **Always report the accurate error/status:** map name-clash to 409 (not 404), report the actual timeout kind (not a hardcoded budget), and honor upstream retry signals (Discord Retry-After) instead of dropping them.
+Direct constraints for the next coding agent, derived from what this review actually
+found. Written as blockers, not suggestions. (These extend, and do not replace, the
+engineering rules in CLAUDE.md.)
+
+> **Adopted.** These now live in CLAUDE.md as standing engineering rules 22–39
+> ("Blockers from the second review pass"), lightly updated where the fixes landed
+> (rule 1 cites `engine/verdict.py`; rule 17's `item_count` example is now wired).
+> CLAUDE.md is the maintained copy; this list is the review-time record.
+
+1. **One decision function.** The condemn/abstain/protect decision lives in exactly one
+   engine-level function. `snapshot`, `simulate`, and `backtest` must import it. Never
+   write `score >= threshold` or `coverage_bp >= floor` inline outside it, and any
+   agreement test must call the real functions, never a transcribed copy.
+2. **Every re-decision surface handles every stored verdict state.** If you add or
+   consume a Candidate verdict, enumerate all states (protect, abstain-blocked,
+   abstain-by-score, condemn, overrides) at every consumer, and add the blocked/override
+   cases to the simulator test in the same change.
+3. **A comment naming a safeguard must cite its implementing function**, and you must
+   verify that function exists and is called before merging. If you cannot cite it,
+   change the comment in the same commit. This review found six safeguards that existed
+   only as prose.
+4. **Operator-facing copy may only reference features that are wired.** Before writing UI
+   or warning text that names a mechanism (backtest, cap, interlock), confirm the route
+   or UI path exists; a DB constraint or schema for an unwired feature is a blocker, not
+   a placeholder.
+5. **Journal and state-transition writes on the deletion path must be durably committed
+   at each step.** Never rely on `flush()` inside a run-long transaction for anything
+   described as an audit record, and every state-transition guard must be an atomic
+   `UPDATE … WHERE state = :expected`.
+6. **A protection container that cannot be found is an error, never an empty result.**
+   When a tag, collection, or list fetch would replace stored members, distinguish
+   container-missing or malformed-body from genuinely-empty; missing-with-existing-
+   members must raise so the previous membership survives and the snapshot degrades.
+7. **Failure of any evidence source degrades the snapshot.** Any `except` around a source
+   read in the scan pipeline must append to `pre_scan_degradations` (or call
+   `context.degrade`); a bare `log.warning` on a source failure is a review-blocker.
+   Watch history is a source.
+8. **Every identity or membership lookup passes every id the item carries.** When calling
+   `membership_index.lookup` or any cross-system join, pass imdb+tmdb+tvdb together;
+   adding a new id kind to storage requires grepping and updating every lookup call site
+   in the same change.
+9. **Rank, cap, and count computations run over the exact set acted on.** Filter first
+   (content-bearing seasons, non-spared deletable items, fetched-vs-all groups), then
+   rank or count; any number shown beside a destructive button must be derived from the
+   same set the server will act on.
+10. **Derived condemn-lane values round toward keeping.** When precision is reduced on
+    any field that can add deletion pressure (dates from years, sizes, ages), choose the
+    bound that produces less pressure.
+11. **Typed condition values validate against the field's type at the boundary, and
+    evaluation never raises out of a scan.** Rule evaluation errors degrade that item as
+    blocked; a stored policy must not be able to crash `score()` or `evaluate_all`.
+12. **All HTTP goes through `clients/`.** A raw `httpx`/`requests` usage outside
+    `src/reaper/clients/` is a blocker unless CLAUDE.md names it as a sanctioned
+    exception. GET-shaped mutating endpoints must be classified and gated by path in the
+    guard, not assumed safe by method.
+13. **Every constructed client has an owner that closes it.** A client constructed
+    outside an exit stack (or without entering one in the same scope) is a leak; add the
+    close path in the same diff as the construction.
+14. **New `Facts` fields must be populated (or explicitly `Absent` with a comment) in
+    every fact builder**: snapshot movies, season_scan, backtest, calibration. Grep all
+    builders when adding a field; a field populated in one path silently changes scores
+    and coverage in the others.
+15. **Frontend gating and safety surfaces handle `isPending` and `error` explicitly.**
+    `return null` on a failed query for an always-visible component is a blocker, and
+    every async onClick is a mutation with a rendered error state.
+16. **Tests that boot the app must be hermetic.** Use the shared autouse fixture that
+    stubs env seeding and startup network; never let a test read the developer's `.env`
+    or reach the network.
+17. **Dead safety-adjacent code is deleted, not stockpiled.** A method "for when the
+    interlock lands" (like `item_count`) must land with its interlock and tests, or not
+    exist.
+18. **Drafts and dirty checks compare canonical forms.** Never compare serialized state
+    with raw `JSON.stringify` across frontend/backend boundaries; re-seed from the server
+    response after a save.
+
+---
+
+## Suggested fix order
+
+B-1, B-2, B-3 (fail-open protections, small diffs) → B-4/B-9 (journal durability) →
+B-5/B-6 (trash purge) → P-1 (rolling caps) → PE-1/PE-5 (shared verdict + simulator) →
+PE-2/PE-7 (condition validation) → H-1 (comment truth pass) → the rest by file.

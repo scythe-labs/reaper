@@ -471,13 +471,18 @@ class PlexClient:
                 ) from exc
 
     async def item_count(self, section_title: str) -> int:
-        """How many items a section holds. The input to the trash interlock."""
+        """How many items a section holds. The input to the trash interlock: the executor
+        reads this before its first delete and again before purging, and refuses the purge
+        unless the section shrank by no more than what the run deleted under it."""
         server = await self._connect()
 
         def read() -> int:
             return int(server.library.section(section_title).totalSize)
 
-        return await asyncio.to_thread(read)
+        try:
+            return await asyncio.to_thread(read)
+        except Exception as exc:
+            raise PlexError(f"Could not count items in {section_title!r}: {exc}") from exc
 
     async def is_refreshing(self, section_title: str) -> bool:
         """Is a scan currently running on this section?

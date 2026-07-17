@@ -886,7 +886,12 @@ def _judge_series(
         watchers_by_season=watchers_by_season,
     )
 
-    curated_by_series = membership_index.lookup(imdb_id=series.get("imdbId") or None)
+    # Every id the show carries is passed together: a show without an imdbId in Sonarr is
+    # common, and a keep tag or "Never Reap" row stored under its tvdb or tmdb id must
+    # still protect it. Matching on one id kind alone fails open on the deletion path.
+    curated_by_series = membership_index.lookup(
+        imdb_id=show_imdb_id, tmdb_id=show_tmdb_id, tvdb_id=tvdb_id
+    )
     hard = [m for m in curated_by_series if m.mode is lists.ListMode.HARD]
     whitelists = [m for m in hard if m.is_whitelist]
     curated = [m for m in hard if not m.is_whitelist]

@@ -34,7 +34,7 @@ from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import SignalConfig
 from reaper.engine.signals import score as score_signals
 from reaper.ratings import Rating, RatingSource
-from reaper.services import history_sync, requested_by, season_scan
+from reaper.services import history_sync, lists, requested_by, season_scan
 from reaper.services.scan_runner import build_gates
 from reaper.services.season_pruning import plan_series_prune
 from reaper.services.snapshot import _verdict
@@ -827,6 +827,60 @@ class TestGatherEndToEnd:
         assert stored["imdb"] == 71
         assert stored["imdb_votes"] == 38
         assert stored["rotten_tomatoes_audience"] == 76
+
+    async def test_a_tvdb_only_keep_row_still_whitelists_the_show(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The membership lookup must pass every id the show carries. A show with no
+        imdbId in Sonarr (common) whose keep tag was stored under its tvdb id must still
+        read whitelisted -- an explicitly-set protection that fails open on the deletion
+        path is the worst possible failure."""
+        series = [
+            {
+                "id": 77,
+                "title": "Tagged Show",
+                "year": 2018,
+                "status": "ended",
+                "ended": True,
+                "tvdbId": 5150,  # NO imdbId from Sonarr
+                "seasons": [_season_payload(n) for n in range(1, 6)],
+            }
+        ]
+        tautulli = _FakeTautulli(
+            shows=[
+                {"rating_key": 700, "title": "Tagged Show", "year": 2018, "added_at": "1000000"}
+            ],
+            children={700: [{"media_index": n, "rating_key": 700 + n} for n in range(1, 6)]},
+        )
+        keep_row = lists.Membership(
+            slug="arr-tag-keep",
+            display_name='Sonarr tag "reaper-keep"',
+            mode=lists.ListMode.HARD,
+            kind=lists.ListKind.WHITELIST,
+            rank=None,
+        )
+        index = lists.MembershipIndex(_by_imdb={}, _by_tmdb={}, _by_tvdb={5150: ((0, keep_row),)})
+        _reasons, degrade = _degrade_sink()
+
+        judgements = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(_FakeSonarr(series))],
+            tautulli=tautulli,  # type: ignore[arg-type]
+            horizon=utcnow() - timedelta(days=4000),
+            active_rating_keys=set(),
+            activity_degraded=False,
+            keep_last_seasons=2,
+            keep_first_season=True,
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            membership_index=index,
+        )
+
+        assert judgements, "the show's seasons must still be gathered"
+        for judgement in judgements:
+            assert isinstance(judgement.facts.is_whitelisted, Known)
+            assert judgement.facts.is_whitelisted.value is True
 
     async def test_an_unmatched_series_yields_unresolved_seasons(
         self, cache_engine: AsyncEngine

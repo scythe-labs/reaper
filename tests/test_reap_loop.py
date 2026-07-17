@@ -12,6 +12,7 @@ the independent backstop (proven separately in test_guarded_transport / test_ple
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from datetime import timedelta
@@ -1076,11 +1077,12 @@ class TestPlexCleanup:
     async def test_a_mapped_path_is_refreshed_then_trash_purged(
         self, session: AsyncSession
     ) -> None:
-        """After the file is gone, Plex is refreshed for the affected path, and (mount up)
-        the section's trash is purged so no stale 'unavailable' entry lingers."""
+        """After the file is gone, Plex is refreshed for the affected path, and (mount up,
+        section shrunk by exactly the one delete) the section's trash is purged so no
+        stale 'unavailable' entry lingers."""
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
         run = await _plan(session, snapshot_id)
-        plex = FakePlex(sections={"Movies": ["/movies"]})
+        plex = FakePlex(sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 99]})
         gateway = _gateway(radarr={1: FakeRadarr(path="/movies/Worthless (2001)")}, plex=plex)
 
         report = await _real(session, run, gateway)
@@ -1096,7 +1098,7 @@ class TestPlexCleanup:
         was never told. The refresh must fire whenever the FILE is gone, regardless."""
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
         run = await _plan(session, snapshot_id)
-        plex = FakePlex(sections={"Movies": ["/movies"]})
+        plex = FakePlex(sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 99]})
         # Exclusion never lands -> the item FAILS, but the file is gone.
         gateway = _gateway(
             radarr={1: FakeRadarr(path="/movies/Worthless", land_exclusion=False)}, plex=plex
@@ -1137,6 +1139,64 @@ class TestPlexCleanup:
         assert report.deleted_items == 1  # the delete still succeeded
         assert plex.refreshed == []  # refresh silently skipped, never fatal
         assert plex.emptied == []  # nothing to purge
+
+    async def test_the_trash_is_not_purged_when_the_section_shrank_by_more_than_we_deleted(
+        self, session: AsyncSession
+    ) -> None:
+        """The mass-loss guard the count-delta gate exists for: a mount flap on the PLEX
+        host (invisible to the *arr root-folder check, a different mount) trashed hundreds
+        of entries while we deleted one movie. The section shrank by far more than this
+        run deleted, so purging would destroy those items' library records -- refuse."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+        plex = FakePlex(sections={"Movies": ["/movies"]}, item_counts={"Movies": [400, 99]})
+        gateway = _gateway(radarr={1: FakeRadarr(path="/movies/Worthless")}, plex=plex)
+
+        report = await _real(session, run, gateway)
+
+        assert report.deleted_items == 1  # the reap itself succeeded
+        assert plex.refreshed == [("Movies", "/movies/Worthless")]
+        assert plex.emptied == []  # but the trash was NOT purged
+
+    async def test_the_trash_is_not_purged_when_plex_never_confirmed_the_delete(
+        self, session: AsyncSession
+    ) -> None:
+        """No shrink at all means Plex has not confirmed OUR removals either (on some
+        servers trashed items still count toward the section size). Purging without
+        confirmation is refused; the stale entry is cosmetic and Plex's own maintenance
+        will clear it."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+        plex = FakePlex(sections={"Movies": ["/movies"]})  # count never changes
+        gateway = _gateway(radarr={1: FakeRadarr(path="/movies/Worthless")}, plex=plex)
+
+        report = await _real(session, run, gateway)
+
+        assert report.deleted_items == 1
+        assert plex.refreshed == [("Movies", "/movies/Worthless")]
+        assert plex.emptied == []
+
+    async def test_a_sibling_section_sharing_a_path_prefix_is_never_claimed(
+        self, session: AsyncSession
+    ) -> None:
+        """A section rooted at /media/movies must not claim files under /media/movies-4k:
+        matching on a raw string prefix would refresh -- and trash-purge -- the wrong
+        section. The path must sit inside the location at a path-component boundary."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+        plex = FakePlex(
+            sections={"Movies": ["/media/movies"], "Movies 4K": ["/media/movies-4k"]},
+            item_counts={"Movies 4K": [50, 49]},
+        )
+        gateway = _gateway(
+            radarr={1: FakeRadarr(path="/media/movies-4k/Worthless (2001)")}, plex=plex
+        )
+
+        report = await _real(session, run, gateway)
+
+        assert report.deleted_items == 1
+        assert plex.refreshed == [("Movies 4K", "/media/movies-4k/Worthless (2001)")]
+        assert plex.emptied == ["Movies 4K"]  # never "Movies"
 
 
 # ---------------------------------------------------------------------------
@@ -1387,7 +1447,13 @@ class FakeSonarr:
 
 
 class FakePlex:
-    """A stand-in Plex: controllable streams, section paths, and a record of refreshes."""
+    """A stand-in Plex: controllable streams, section paths, and a record of refreshes.
+
+    ``item_counts`` scripts what ``item_count`` returns per section, in read order (the
+    last value repeats), so a test can make a section "shrink" by exactly what was
+    deleted -- or by more, to prove the purge refuses. The default never shrinks, which
+    the count-delta gate treats as unconfirmed: no purge.
+    """
 
     def __init__(
         self,
@@ -1395,10 +1461,12 @@ class FakePlex:
         streams: list[ActiveStream] | None = None,
         raise_on_streams: bool = False,
         sections: dict[str, list[str]] | None = None,
+        item_counts: dict[str, list[int]] | None = None,
     ) -> None:
         self._streams = streams or []
         self._raise = raise_on_streams
         self._sections = sections or {}
+        self._item_counts = {k: list(v) for k, v in (item_counts or {}).items()}
         self.refreshed: list[tuple[str, str]] = []
         self.emptied: list[str] = []
 
@@ -1415,6 +1483,12 @@ class FakePlex:
 
     async def is_refreshing(self, section_title: str) -> bool:
         return False
+
+    async def item_count(self, section_title: str) -> int:
+        scripted = self._item_counts.get(section_title)
+        if not scripted:
+            return 100
+        return scripted.pop(0) if len(scripted) > 1 else scripted[0]
 
     async def empty_trash(self, section_title: str) -> None:
         self.emptied.append(section_title)
@@ -1455,3 +1529,271 @@ class FakeTautulli:
             key = rating_key if rating_key is not None else parent_rating_key
             return {"data": list(self._rows_by_key.get(key or 0, []))}
         return {"data": list(self._rows)}
+
+
+# ---------------------------------------------------------------------------
+# Journal durability and the atomic EXECUTING claim
+# ---------------------------------------------------------------------------
+
+
+class _DyingRadarr(FakeRadarr):
+    """Succeeds on the first delete, then simulates the process dying on the second."""
+
+    async def delete_movie(
+        self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True
+    ) -> None:
+        if len(self.delete_calls) >= 1:
+            raise RuntimeError("process died mid-send")
+        await super().delete_movie(movie_id, delete_files=delete_files, add_exclusion=add_exclusion)
+
+
+class _BlockingPlex(FakePlex):
+    """Parks the run inside its first live interlock until the test releases it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def active_streams(self) -> list[ActiveStream]:
+        self.entered.set()
+        await self.release.wait()
+        return []
+
+
+class TestJournalDurability:
+    """The action journal is committed at every state change, never held inside one
+    run-long transaction. Kill the process after item 1 of 2 has deleted: the run must
+    still read EXECUTING with item 1 VERIFIED and item 2 SENT from a fresh session --
+    never roll back to PLANNED as if no file were gone."""
+
+    async def test_a_crash_mid_run_leaves_a_durable_journal(self, tmp_path: Path) -> None:
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        engine = create_engine(settings)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+
+        try:
+            async with factory() as session:
+                snapshot_id = await _snapshot_many(
+                    session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
+                )
+                run = await _plan(session, snapshot_id)
+                run_id = run.id
+                await session.commit()
+
+            async with factory() as run_session:
+                executor = Executor(
+                    run_session,
+                    safety=_armed(),
+                    settings=ProfileSettings(),
+                    dry_run=False,
+                    gateway=_gateway(radarr={1: _DyingRadarr()}),
+                    exclusion_poll_delay=0.0,
+                    plex_settle_delay=0.0,
+                )
+                with pytest.raises(RuntimeError, match="process died"):
+                    await executor.execute(run_id)
+                # Deliberately no commit: the process "died" here.
+
+            # A fresh session -- a restart -- must see the durable truth.
+            async with factory() as fresh:
+                run_row = await fresh.get(ReapRun, run_id)
+                assert run_row is not None
+                assert run_row.state is RunState.EXECUTING, (
+                    "a crashed run must stay EXECUTING, not roll back to PLANNED"
+                )
+                steps = {s.media_key: s for s in await _steps(fresh, run_id)}
+                # The canary (smallest, first) really deleted and verified.
+                assert steps["radarr:1:1"].state is StepState.VERIFIED
+                # The second item was declared in flight before the send.
+                assert steps["radarr:1:2"].state is StepState.SENT
+        finally:
+            await engine.dispose()
+
+
+class TestTheExecutingClaimIsAtomic:
+    """The 'a run executes once' guard is an atomic UPDATE ... WHERE state='planned',
+    committed before the first send -- so a second execute arriving while the first is
+    mid-run is refused, instead of re-running the plan over the first one's journal."""
+
+    async def test_a_second_execute_while_one_is_in_flight_is_refused(self, tmp_path: Path) -> None:
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        engine = create_engine(settings)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+
+        try:
+            async with factory() as session:
+                snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+                run = await _plan(session, snapshot_id)
+                run_id = run.id
+                await session.commit()
+
+            plex = _BlockingPlex()
+            radarr = FakeRadarr()
+
+            async with factory() as first_session, factory() as second_session:
+                first = Executor(
+                    first_session,
+                    safety=_armed(),
+                    settings=ProfileSettings(),
+                    dry_run=False,
+                    gateway=_gateway(radarr={1: radarr}, plex=plex),
+                    exclusion_poll_delay=0.0,
+                    plex_settle_delay=0.0,
+                )
+                task = asyncio.create_task(first.execute(run_id))
+                # The first run is now parked mid-run, AFTER committing its claim.
+                await asyncio.wait_for(plex.entered.wait(), timeout=5)
+
+                second = Executor(
+                    second_session,
+                    safety=_armed(),
+                    settings=ProfileSettings(),
+                    dry_run=False,
+                    gateway=_gateway(radarr={1: radarr}, plex=plex),
+                    exclusion_poll_delay=0.0,
+                    plex_settle_delay=0.0,
+                )
+                with pytest.raises(ExecutionError, match="executing"):
+                    await second.execute(run_id)
+
+                plex.release.set()
+                report = await asyncio.wait_for(task, timeout=5)
+                await first_session.commit()
+
+            assert report.state is RunState.COMPLETED
+            # Exactly one delete was ever issued.
+            assert radarr.delete_calls == [1]
+        finally:
+            await engine.dispose()
+
+
+class TestRollingThirtyDayCaps:
+    """The 30-day budget is enforced at execute time, over verified deletions: no
+    sequence of runs may exceed the rolling caps. Abort, never truncate."""
+
+    @staticmethod
+    def _settings(**overrides: int) -> ProfileSettings:
+        base: dict[str, int] = {
+            "max_items_per_run": 10,
+            "max_bytes_per_run": 400 * 10**9,
+            "max_items_per_30d": 100,
+            "max_bytes_per_30d": 500 * 10**9,
+        }
+        base.update(overrides)
+        return ProfileSettings(**base)  # type: ignore[arg-type]
+
+    async def _execute(
+        self, session: AsyncSession, run_id: int, settings: ProfileSettings, *, dry: bool = False
+    ) -> RunReport:
+        executor = Executor(
+            session,
+            safety=_read_only() if dry else _armed(),
+            settings=settings,
+            dry_run=dry,
+            gateway=None if dry else _gateway(radarr={1: FakeRadarr()}),
+            exclusion_poll_delay=0.0,
+            plex_settle_delay=0.0,
+        )
+        return await executor.execute(run_id)
+
+    async def test_a_run_that_would_exceed_the_rolling_byte_cap_aborts(
+        self, session: AsyncSession
+    ) -> None:
+        settings = self._settings()
+
+        # Run 1: 300 GB, well within the per-run cap and the 30-day budget.
+        first_snapshot = await _snapshot_one(
+            session, media_key="radarr:1:1", rating_key=701, size=300 * 10**9
+        )
+        first = await _plan(session, first_snapshot)
+        report = await self._execute(session, first.id, settings)
+        assert report.state is RunState.COMPLETED
+        assert report.deleted_items == 1
+
+        # Run 2: another 300 GB fits the per-run cap but blows the 500 GB rolling budget.
+        second_snapshot = await _snapshot_one(
+            session, media_key="radarr:1:2", rating_key=702, size=300 * 10**9
+        )
+        second = await _plan(session, second_snapshot)
+        radarr = FakeRadarr()
+        executor = Executor(
+            session,
+            safety=_armed(),
+            settings=settings,
+            dry_run=False,
+            gateway=_gateway(radarr={1: radarr}),
+            exclusion_poll_delay=0.0,
+        )
+        report = await executor.execute(second.id)
+
+        assert report.state is RunState.ABORTED
+        assert "30 days" in (report.aborted_reason or "")
+        assert radarr.delete_calls == []  # nothing was deleted: abort, never truncate
+
+    async def test_a_dry_run_reports_the_same_rolling_refusal(self, session: AsyncSession) -> None:
+        settings = self._settings()
+        first_snapshot = await _snapshot_one(
+            session, media_key="radarr:1:1", rating_key=701, size=300 * 10**9
+        )
+        first = await _plan(session, first_snapshot)
+        assert (await self._execute(session, first.id, settings)).deleted_items == 1
+
+        second_snapshot = await _snapshot_one(
+            session, media_key="radarr:1:2", rating_key=702, size=300 * 10**9
+        )
+        second = await _plan(session, second_snapshot)
+        report = await self._execute(session, second.id, settings, dry=True)
+
+        assert report.state is RunState.ABORTED
+        assert "30 days" in (report.aborted_reason or "")
+        # And the dry run did not consume the plan.
+        assert (await session.get(ReapRun, second.id)).state is RunState.PLANNED  # type: ignore[union-attr]
+
+    async def test_the_rolling_item_cap_counts_past_verified_items(
+        self, session: AsyncSession
+    ) -> None:
+        settings = self._settings(max_items_per_run=2, max_items_per_30d=3)
+
+        first_snapshot = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 2 * GB, 702)]
+        )
+        first = await _plan(session, first_snapshot)
+        assert (await self._execute(session, first.id, settings)).deleted_items == 2
+
+        second_snapshot = await _snapshot_many(
+            session, [("radarr:1:3", 1 * GB, 703), ("radarr:1:4", 2 * GB, 704)]
+        )
+        second = await _plan(session, second_snapshot)
+        report = await self._execute(session, second.id, settings)
+
+        assert report.state is RunState.ABORTED
+        assert "rolling cap of 3" in (report.aborted_reason or "")
+
+    async def test_deletions_older_than_thirty_days_fall_out_of_the_window(
+        self, session: AsyncSession
+    ) -> None:
+        settings = self._settings()
+        first_snapshot = await _snapshot_one(
+            session, media_key="radarr:1:1", rating_key=701, size=300 * 10**9
+        )
+        first = await _plan(session, first_snapshot)
+        assert (await self._execute(session, first.id, settings)).deleted_items == 1
+
+        # Age the verified deletion out of the window.
+        for step in await _steps(session, first.id):
+            step.verified_at = utcnow() - timedelta(days=40)
+        await session.commit()
+
+        second_snapshot = await _snapshot_one(
+            session, media_key="radarr:1:2", rating_key=702, size=300 * 10**9
+        )
+        second = await _plan(session, second_snapshot)
+        report = await self._execute(session, second.id, settings)
+
+        assert report.state is RunState.COMPLETED
+        assert report.deleted_items == 1
