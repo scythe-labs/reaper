@@ -1555,8 +1555,9 @@ scans on a copy of the dev DB):
   never show one IMDb value beside a signal that used another. TV inherits the show's
   ratings; seasons get no resolution badge v1 (show listings carry no media).
 - **Deep links are server-computed** (`services/deep_links.py`, reusing `MediaRef.parse`):
-  the panel title opens Plex Web
-  (`{web_url}/desktop/#!/server/{machine_identifier}/details?key=…`), pills open Tautulli
+  the panel title opens Plex Web. The client is served at two paths, chosen by host
+  (`_plex_web_link`): the plex.tv-hosted app uses `/desktop/#!/…` and a self-hosted server
+  uses `/web#!/…` (a Plex Media Server 403s on `/desktop`). Pills open Tautulli
   (`/info?rating_key=`) and the managing *arr — Radarr routes by **tmdbId**, Sonarr by
   **titleSlug** (the internal id in media_key does not resolve in their web UIs), and the
   arr link resolves the instance from `MediaRef.instance_id`, never "the first Radarr"
@@ -1632,8 +1633,10 @@ a copy of the dev DB on an alt port.
   in the latest snapshot across all lanes; the expanded card lists them all (other-lane
   rows dimmed, act from their own tab), and a per-season verdict strip on the card face
   (from compact `group_seasons` marks on the list payload, one rollup query with the
-  reap-plan totals) shows kept vs condemned at a glance. Reap-tab counts stay scoped to
-  what "Reap now" would plan (rule 30): "3 of 12 would be removed · 41.9 GiB".
+  reap-plan totals) shows kept vs condemned at a glance. Each strip square is a button
+  that opens *that* season's reasoning (the mark carries the season's candidate id); the
+  card head still opens the show. Reap-tab counts stay scoped to what "Reap now" would
+  plan (rule 30): "3 of 12 would be removed · 41.9 GiB".
 - **The show info panel.** Art, links, synopsis, the show's status chip, the FULL
   left-for-you sentence (finally somewhere it fits), and the season list; clicking a
   season flips to its complete reasoning with a back-to-show link.
