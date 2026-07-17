@@ -19,7 +19,10 @@ Route notes, verified against the apps' own web UIs:
 * Tautulli's item page is ``/info?rating_key={rating_key}`` against the same Plex
   server Tautulli mirrors.
 * Plex Web addresses a server by ``machineIdentifier`` and an item by its metadata
-  key: ``{web}/desktop/#!/server/{machine_id}/details?key=%2Flibrary%2Fmetadata%2F{rk}``.
+  key. The same single-page client is served at two different paths, so the path is
+  chosen from the host (see ``_plex_web_link``): the plex.tv-hosted app answers under
+  ``/desktop`` (``{web}/desktop/#!/server/{id}/details?key=%2Flibrary%2Fmetadata%2F{rk}``),
+  and a Plex Media Server serves its own copy under ``/web`` (``{web}/web#!/server/...``).
 * Seerr (Overseerr/Jellyseerr) item pages live at ``/movie/{tmdbId}`` / ``/tv/{tmdbId}``.
 * IMDb: ``/title/{imdb_id}/``; TMDb: ``/movie/{id}`` or ``/tv/{id}``. Rotten Tomatoes
   URLs are hand-curated slugs no integration provides, so the RT link is an honest
@@ -29,7 +32,7 @@ Route notes, verified against the apps' own web UIs:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from reaper.services.planner import MediaRef, PlanError
 
@@ -54,6 +57,24 @@ def _base(url: str | None) -> str | None:
     """A usable base URL, trailing slashes stripped, or ``None``."""
     cleaned = (url or "").strip().rstrip("/")
     return cleaned or None
+
+
+def _plex_web_link(web: str, machine_identifier: str, plex_rating_key: int) -> str:
+    """The "open in Plex" URL for one metadata item.
+
+    Plex ships the same single-page client at two different paths depending on who
+    serves it, so the path is chosen from the host rather than hardcoded. The
+    plex.tv-hosted app (the ``app.plex.tv`` default) answers under ``/desktop``. A
+    Plex Media Server serves its own copy under ``/web`` and returns 403 for
+    ``/desktop`` -- so an operator who points this at their own address gets ``/web``.
+    (The hosted app also accepts ``/web`` by redirecting it to ``/desktop``, but the
+    canonical path for each host is sent directly rather than leaning on that.)
+    """
+    metadata_key = quote(f"/library/metadata/{plex_rating_key}", safe="")
+    host = (urlsplit(web).hostname or "").lower()
+    hosted = host == "plex.tv" or host.endswith(".plex.tv")
+    prefix = "desktop/#!" if hosted else "web#!"
+    return f"{web}/{prefix}/server/{machine_identifier}/details?key={metadata_key}"
 
 
 def build_links(
@@ -89,8 +110,7 @@ def build_links(
     plex = None
     web = _base(plex_web_url)
     if web and machine_identifier and plex_rating_key is not None:
-        metadata_key = quote(f"/library/metadata/{plex_rating_key}", safe="")
-        plex = f"{web}/desktop/#!/server/{machine_identifier}/details?key={metadata_key}"
+        plex = _plex_web_link(web, machine_identifier, plex_rating_key)
 
     tautulli = None
     tautulli_base = _base(tautulli_base_url)

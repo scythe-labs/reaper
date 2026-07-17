@@ -165,6 +165,20 @@ class TestBuildLinks:
             "https://app.plex.tv/desktop/#!/server/abc123/details?key=%2Flibrary%2Fmetadata%2F555"
         )
 
+    def test_the_plex_link_uses_web_for_a_self_hosted_address(self) -> None:
+        # The plex.tv-hosted app serves the client under /desktop, but a Plex Media
+        # Server serves its own copy under /web and 403s on /desktop. The path follows
+        # the host so an operator's own address gets a link that resolves.
+        kwargs = {**self.KWARGS, "plex_web_url": "https://plex.example/"}
+        assert build_links("radarr:2:1542", **kwargs).plex == (
+            "https://plex.example/web#!/server/abc123/details?key=%2Flibrary%2Fmetadata%2F555"
+        )
+        # A plex.tv subdomain is still the hosted app, so it keeps /desktop.
+        hosted = {**self.KWARGS, "plex_web_url": "https://app.plex.tv"}
+        assert build_links("radarr:2:1542", **hosted).plex == (
+            "https://app.plex.tv/desktop/#!/server/abc123/details?key=%2Flibrary%2Fmetadata%2F555"
+        )
+
     def test_a_season_and_a_show_route_to_sonarr_by_slug(self) -> None:
         kwargs = {**self.KWARGS, "arr_base_url": "https://sonarr.example"}
         for key in ("sonarr:1:42:3", "sonarr:1:42"):

@@ -654,7 +654,8 @@ class TestPlexWebUrlSetting:
 
         candidates = client.get("/api/candidates?verdict=condemn").json()
         detail = client.get(f"/api/candidates/{candidates[0]['id']}").json()
-        assert detail["links"]["plex"].startswith("https://plex.example/desktop/")
+        # A self-hosted address serves the web client under /web, not /desktop (which 403s).
+        assert detail["links"]["plex"].startswith("https://plex.example/web#!/server/")
 
     def test_a_non_http_address_is_refused_in_plain_words(self, client: TestClient) -> None:
         refused = client.put("/api/settings/plex", json={"web_url": "plex.example"})
