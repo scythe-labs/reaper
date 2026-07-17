@@ -274,3 +274,66 @@ class TestTheDangerousConfigDetector:
     def test_the_shipped_default_raises_no_warnings(self) -> None:
         """A user who changes nothing should see a clean policy."""
         assert inspect(DEFAULT_MOVIE_POLICY, ProfileSettings()) == []
+
+
+class TestRequestedOnlyScopeWithoutSeerr:
+    """ "Requested only" needs Seerr to tell a requested show from an unrequested one.
+
+    With no Seerr, ``season_scan._keep_last_applies`` never gets a Known answer and
+    falls back to protecting, so the floor quietly covers every show: the setting reads
+    narrower than it behaves. The outcome is safe, which is exactly why nothing else
+    surfaces it.
+    """
+
+    def _tv(self, **overrides: object) -> PolicyBody:
+        base = {"media_type": "tv", "keep_last_seasons": 2, "keep_last_scope": "requested"}
+        return _policy(**{**base, **overrides})
+
+    def test_it_is_flagged_when_no_requests_app_is_connected(self) -> None:
+        warnings = inspect(self._tv(), ProfileSettings(), requests_app_configured=False)
+
+        flagged = [w for w in warnings if w.field == "keep_last_scope"]
+        assert len(flagged) == 1
+        assert flagged[0].severity == "warn"
+        assert "Seerr" in flagged[0].message
+
+    def test_it_is_silent_when_seerr_is_connected(self) -> None:
+        """The scope does what it says, so there is nothing to report."""
+        warnings = inspect(self._tv(), ProfileSettings(), requests_app_configured=True)
+
+        assert not [w for w in warnings if w.field == "keep_last_scope"]
+
+    def test_it_is_silent_under_the_all_shows_scope(self) -> None:
+        """ "All shows" reads nothing about requests, so Seerr's absence changes nothing."""
+        warnings = inspect(
+            self._tv(keep_last_scope="all"), ProfileSettings(), requests_app_configured=False
+        )
+
+        assert not [w for w in warnings if w.field == "keep_last_scope"]
+
+    def test_it_is_silent_when_the_floor_is_off(self) -> None:
+        """At 0 seasons the floor never fires, so its scope decides nothing and saying
+        the scope is being ignored would be noise about a setting that does nothing."""
+        warnings = inspect(
+            self._tv(keep_last_seasons=0), ProfileSettings(), requests_app_configured=False
+        )
+
+        assert not [w for w in warnings if w.field == "keep_last_scope"]
+
+    def test_a_movie_policy_is_never_flagged(self) -> None:
+        """Movies have no seasons; the keep-last floor is a TV notion."""
+        warnings = inspect(
+            _policy(keep_last_scope="requested", keep_last_seasons=2),
+            ProfileSettings(),
+            requests_app_configured=False,
+        )
+
+        assert not [w for w in warnings if w.field == "keep_last_scope"]
+
+    def test_a_caller_that_cannot_tell_stays_quiet(self) -> None:
+        """The default assumes a requests app exists. Telling an operator to connect
+        something they already have is worse than silence, and the warning gates
+        nothing destructive."""
+        assert not [
+            w for w in inspect(self._tv(), ProfileSettings()) if w.field == "keep_last_scope"
+        ]

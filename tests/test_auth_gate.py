@@ -16,7 +16,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
+from starlette.applications import Starlette
+from starlette.routing import WebSocketRoute
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from reaper.api.middleware import AuthGuard
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.main import create_app
@@ -117,3 +121,42 @@ class TestLocalLoginFlow:
 
         assert client.post("/api/auth/logout", headers=CSRF).status_code == 200
         assert client.get("/api/auth/me").status_code == 401
+
+
+class TestOnlyHttpGetsThroughTheGate:
+    """The guard authenticates by reading headers and cookies off an ``http`` scope, so
+    it refuses every other kind rather than passing it through (L-1).
+
+    Reaper declares no websocket route, so nothing is turned away that ever worked. The
+    point is the day someone adds one: it must not be born with no session check and no
+    CSRF, silently, because the guard waved through everything that was not ``http``.
+    """
+
+    def test_a_websocket_route_behind_the_guard_never_runs(self) -> None:
+        reached = False
+
+        async def spy(websocket: WebSocket) -> None:  # pragma: no cover - must not run
+            nonlocal reached
+            reached = True
+            await websocket.accept()
+
+        app = Starlette(routes=[WebSocketRoute("/api/ws", spy)])
+        app.add_middleware(AuthGuard)
+
+        with (
+            TestClient(app) as client,
+            pytest.raises(WebSocketDisconnect) as refused,
+            client.websocket_connect("/api/ws"),
+        ):
+            pass  # pragma: no cover - the connect above never succeeds
+
+        # 1008 is the guard's refusal. Starlette's own not-found close is 1000, so this
+        # pins that the guard turned it away *before* routing, not that the route missed.
+        assert refused.value.code == 1008
+        assert reached is False, "the guard handed a websocket to the app unauthenticated"
+
+    def test_lifespan_still_reaches_the_app(self, settings: Settings) -> None:
+        """The one non-http scope that must pass: startup/shutdown carries no session,
+        and the app never boots if the guard eats it. Entering the context runs it."""
+        with TestClient(create_app(settings)) as client:
+            assert client.get("/api/health").status_code == 200

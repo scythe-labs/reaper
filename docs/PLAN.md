@@ -7,9 +7,43 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-17 (review pass 2: the deliberately-held items, closed)
+Last updated: 2026-07-17 (review pass 2 closed: the last two findings, fixed)
 
-### Newest — review pass 2: the deliberately-held items, closed
+### Newest — the last two findings, and the review is closed
+
+Review pass 2 is fully discharged: all 55 findings, plus the one raised after it (L-1),
+are fixed. Two remained, and both needed a fact the code could not see from where it was
+standing.
+
+- **I-3: "Requested only" now admits when it is doing nothing.** The keep-last-N floor
+  can be scoped to shows someone requested, which needs Seerr to tell a requested show
+  from an unrequested one. With no Seerr, `season_scan._keep_last_applies` never gets a
+  Known answer and falls back to protecting, so the floor quietly covers the whole
+  library: the setting reads narrower than it behaves. That outcome is safe, which is
+  exactly why nothing surfaced it. `engine/policy.inspect` now takes a
+  `requests_app_configured` fact and warns. The reason this sat open is worth recording:
+  the warning is read on `POST /api/policy/validate` (what the editor calls as you type),
+  and that route had no session, so it could not know what was configured. It takes one
+  now. The warning stays quiet when the floor is off (at 0 seasons the scope decides
+  nothing), on movie policies, and when a caller cannot tell -- telling an operator to
+  connect a service they already have is worse than silence.
+- **L-1: the guard refuses what it cannot authenticate.** `AuthGuard` returned early on
+  any scope that was not `http`, handing it to the app with no CSRF check and no
+  `resolve_session`. Latent (Reaper declares no websocket route, so only `lifespan`
+  arrived, and that must pass), but it failed *open* on the branch nobody reads: the
+  first websocket added would have been born unauthenticated with nothing failing at the
+  point of the mistake. `_refuse_scope` now passes `lifespan` and refuses the rest,
+  closing a websocket with 1008 the way Starlette's own router does. A handshake that
+  belongs here must authenticate the cookie and validate `Origin` itself, since the
+  browser WebSocket API cannot send `X-Reaper-CSRF`. This was the prerequisite named in
+  the deferred deletion-progress design note below.
+
+Both were driven against the running app, not just tests: the editor's warnings still
+render and `/api/policy/validate` still answers with the added session (the negative case
+is live, since a Seerr is connected here), and the app boots and serves behind the
+rewritten guard, which is `lifespan` and `http` both proving themselves every request.
+
+### Review pass 2: the deliberately-held items, closed
 
 The items held open at the end of review pass 2 (`docs/CODE_REVIEW.md`, "Held,
 deliberately") are now implemented, each with regression tests. The decisions they were

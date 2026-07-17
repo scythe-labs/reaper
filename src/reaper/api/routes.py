@@ -606,7 +606,20 @@ def _to_body(payload: PolicyIn) -> PolicyBody:
         ) from exc
 
 
-def _policy_out(body: PolicyBody, name: str) -> PolicyOut:
+async def _requests_app_configured(session: AsyncSession) -> bool:
+    """Whether an enabled Seerr exists, which is what lets ``inspect`` say that a
+    "requested only" keep-last scope has nothing to read and is quietly doing nothing."""
+    row = (
+        await session.execute(
+            select(Instance.id).where(
+                Instance.kind == InstanceKind.SEERR, Instance.enabled.is_(True)
+            )
+        )
+    ).first()
+    return row is not None
+
+
+def _policy_out(body: PolicyBody, name: str, *, requests_app_configured: bool) -> PolicyOut:
     return PolicyOut(
         policy_hash=body.policy_hash(),
         name=name,
@@ -645,7 +658,9 @@ def _policy_out(body: PolicyBody, name: str) -> PolicyOut:
         ),
         warnings=[
             PolicyWarningOut(field=w.field, message=w.message, severity=w.severity)
-            for w in inspect(body, ProfileSettings())
+            for w in inspect(
+                body, ProfileSettings(), requests_app_configured=requests_app_configured
+            )
         ],
     )
 
@@ -660,7 +675,8 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
     """Load the active policy for a media type, so the editor opens on what is in force."""
     async with _sessions(request)() as session:
         body, name = await active_policy(session, media_type)
-    return _policy_out(body, name)
+        has_requests_app = await _requests_app_configured(session)
+    return _policy_out(body, name, requests_app_configured=has_requests_app)
 
 
 @router.post("/policy")
@@ -682,13 +698,14 @@ async def save_policy(request: Request, payload: PolicyIn) -> PolicyOut:
 
     async with _sessions(request)() as session:
         active = await active_policy_row(session, body.media_type)
+        has_requests_app = await _requests_app_configured(session)
 
         if active is not None and active.policy_hash == policy_hash:
             # Content-identical to the policy in force: nothing is written and the name
             # is NOT changed. Echo the *persisted* name, not the discarded request name,
             # so the success response matches what the next GET /api/policy will show --
             # otherwise a name-only edit looks like it stuck when it silently did not.
-            return _policy_out(body, active.name)
+            return _policy_out(body, active.name, requests_app_configured=has_requests_app)
 
         session.add(
             PolicyModel(
@@ -701,19 +718,26 @@ async def save_policy(request: Request, payload: PolicyIn) -> PolicyOut:
         )
         await session.commit()
 
-    return _policy_out(body, payload.name)
+    return _policy_out(body, payload.name, requests_app_configured=has_requests_app)
 
 
 @router.post("/policy/validate")
-async def validate_policy(payload: PolicyIn) -> PolicyOut:
+async def validate_policy(request: Request, payload: PolicyIn) -> PolicyOut:
     """Validate, hash, and inspect.
 
     Validation refuses what is *provably* wrong. ``inspect`` warns about what is merely
     *probably* wrong -- and no validator can tell those apart, because the values are
     legal either way. The archetype: an IMDb floor of 96 is a legal 9.6, and is
     indistinguishable from a Rotten Tomatoes 96 typed into the wrong box.
+
+    This is the route the editor calls as you type, so it is where the warnings are
+    actually read. It takes a session for one reason: one warning is about the world
+    outside the policy (a "requested only" scope with no Seerr to read), and a policy
+    cannot see that from its own fields.
     """
-    return _policy_out(_to_body(payload), payload.name)
+    async with _sessions(request)() as session:
+        has_requests_app = await _requests_app_configured(session)
+    return _policy_out(_to_body(payload), payload.name, requests_app_configured=has_requests_app)
 
 
 @router.post("/policy/simulate")

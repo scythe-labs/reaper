@@ -977,6 +977,52 @@ class TestPolicyPersistence:
         assert client.post("/api/policy", json=_policy(custom_condemn=[rule])).status_code == 422
 
 
+_TV_REQUESTED_ONLY = {
+    "media_type": "tv",
+    "condemn_at": 70,
+    "keep_last_seasons": 2,
+    "keep_last_scope": "requested",
+    "gates": DEFAULT_GATES,
+    "signals": DEFAULT_SIGNALS,
+}
+
+
+class TestRequestedOnlyScopeNeedsSeerr:
+    """The editor calls /policy/validate as you type, so that is where this warning has
+    to land. It is the one warning that depends on something outside the policy: whether
+    a Seerr is connected to answer "was this show requested?".
+
+    The client fixture seeds an enabled Seerr, so the connected case is the default here.
+    """
+
+    def _scope_warnings(self, client: TestClient) -> list[dict[str, str]]:
+        body = client.post("/api/policy/validate", json=_TV_REQUESTED_ONLY).json()
+        return [w for w in body["warnings"] if w["field"] == "keep_last_scope"]
+
+    def test_it_is_quiet_while_a_seerr_is_connected(self, client: TestClient) -> None:
+        """The scope does exactly what it says, so there is nothing to report."""
+        assert self._scope_warnings(client) == []
+
+    def test_it_warns_once_the_seerr_is_switched_off(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """A disabled Seerr is not one Reaper can ask, so the floor silently covers every
+        show. Switching it off, rather than deleting the row, is the case a configured-vs-
+        usable mix-up would miss."""
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = sa_create_engine(settings.sync_database_url)
+        with Session(engine) as session:
+            seerr = session.query(Instance).filter(Instance.kind == InstanceKind.SEERR).one()
+            seerr.enabled = False
+            session.commit()
+        engine.dispose()
+
+        flagged = self._scope_warnings(client)
+        assert len(flagged) == 1
+        assert flagged[0]["severity"] == "warn"
+        assert "Seerr" in flagged[0]["message"]
+
+
 class TestPolicyValidation:
     def test_a_valid_policy_is_hashed(self, client: TestClient) -> None:
         body = client.post(

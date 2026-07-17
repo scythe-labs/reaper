@@ -41,12 +41,24 @@
 > insert is conflict-tolerant), per-install KDF salt (`secret.salt` beside
 > `secret.key`; fixed-salt and legacy derivations stay decrypt-only), and Plex TLS
 > opt-out (`PlexServer.verify_tls`, threaded through linking, scans, the reap gateway
-> and Leaving Soon, editable in Settings > Plex). Still open: I-3's requests-app-aware
-> warning (needs instance knowledge inside `inspect()`).
+> and Leaving Soon, editable in Settings > Plex). Still open at the time: I-3's
+> requests-app-aware warning (needs instance knowledge inside `inspect()`), closed in the
+> fourth wave below.
 
 > **Later findings (2026-07-17).** One finding raised after this pass is recorded under
 > "Findings after this pass" below, numbered separately: L-1 (`AuthGuard` lets every
-> non-`http` scope through unauthenticated). Open.
+> non-`http` scope through unauthenticated). Fixed in the fourth wave.
+
+> **Fix status, fourth wave (2026-07-17). This review is closed.** The last two findings
+> are fixed, each with regression tests, and no finding from this pass remains open.
+> **I-3**: `inspect` takes a `requests_app_configured` fact (a policy cannot see it from
+> its own fields), and `POST /api/policy/validate` -- the route the editor calls as you
+> type, and so the one place these warnings are read -- opens a session to answer it. A
+> "requested only" keep-last scope with no enabled Seerr now says that the floor is
+> covering every show, instead of reading narrower than it behaves. **L-1**: `AuthGuard`
+> refuses every scope it cannot authenticate (`_refuse_scope`) and passes only
+> `lifespan`; a websocket route added later is closed with 1008 rather than born with no
+> session check and no CSRF. Details in PLAN.md's newest entry.
 
 **TLDR.** The safety architecture is genuinely sound where it is exercised: the gate and
 signal engine's fail-closed math checks out, the execute route's interlock chain is
@@ -688,6 +700,8 @@ mistake. CSRF does not extend there either, since the browser WebSocket API cann
 reject `websocket` until a handshake exists that authenticates the session cookie and
 validates `Origin` itself. Surfaced by the websockets review recorded in PLAN.md's
 deferred deletion-progress note, which names this a prerequisite for any push endpoint.
+*Fixed (fourth wave): `_refuse_scope` in `api/middleware.py`; `lifespan` passes, anything
+else is refused, and a websocket is closed with 1008 before it reaches the app.*
 
 ---
 

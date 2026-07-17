@@ -500,7 +500,12 @@ class PolicyWarning(Frozen):
     severity: Literal["warn", "danger"]
 
 
-def inspect(body: PolicyBody, settings: ProfileSettings) -> list[PolicyWarning]:
+def inspect(
+    body: PolicyBody,
+    settings: ProfileSettings,
+    *,
+    requests_app_configured: bool = True,
+) -> list[PolicyWarning]:
     """The dangerous-config detector.
 
     Validation refuses what is *provably* wrong. This catches what is merely
@@ -512,6 +517,12 @@ def inspect(body: PolicyBody, settings: ProfileSettings) -> list[PolicyWarning]:
     protects almost nothing. No validator can distinguish that from someone who
     genuinely wants a 9.6 floor. So we say so, loudly, and show the blast radius
     next to it rather than pretending to know.
+
+    ``requests_app_configured`` is the one thing here a policy cannot know about
+    itself: whether the operator has a Seerr connected. It defaults to True, meaning
+    "assume they do, and stay quiet". A caller that cannot tell should not guess,
+    because the only warning it gates says a setting is doing nothing -- and telling
+    someone to connect a service they already have is worse than saying nothing.
     """
     warnings: list[PolicyWarning] = []
 
@@ -617,6 +628,31 @@ def inspect(body: PolicyBody, settings: ProfileSettings) -> list[PolicyWarning]:
                     f"Keeping the last {body.keep_last_seasons} seasons protects every season of "
                     "most shows, so TV pruning is effectively off -- most series have fewer "
                     "seasons than this."
+                ),
+            )
+        )
+
+    # "Requested only" needs Seerr to tell a requested show from an unrequested one.
+    # Without it, season_scan._keep_last_applies never sees a Known answer, so it falls
+    # back to protecting (Unknown counts as "might be requested") and the floor covers
+    # the whole library. That is the safe outcome, and an invisible one: the setting
+    # reads as narrower than it behaves. Only worth saying while the floor is on --
+    # at 0 seasons the scope decides nothing.
+    if (
+        body.media_type == "tv"
+        and body.keep_last_scope == "requested"
+        and body.keep_last_seasons > 0
+        and not requests_app_configured
+    ):
+        warnings.append(
+            PolicyWarning(
+                field="keep_last_scope",
+                severity="warn",
+                message=(
+                    f"Reaper is keeping the last {body.keep_last_seasons} seasons of every "
+                    "show, not just requested ones: telling them apart needs Seerr, and no "
+                    'Seerr service is connected. Connect one, or switch this to "All shows" '
+                    "so the setting says what actually happens."
                 ),
             )
         )
