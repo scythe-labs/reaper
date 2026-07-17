@@ -704,7 +704,7 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
           type="password"
           value={pw}
           onChange={(e) => setPw(e.target.value)}
-          placeholder="at least 8 characters"
+          placeholder="at least 12 characters"
           autoComplete="new-password"
         />
         <button type="submit" className="primary sm" disabled={pw.length < 8 || save.isPending}>
