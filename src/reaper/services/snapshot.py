@@ -669,7 +669,7 @@ async def scan(
 
     # Grace clocks for everything condemned this run, in one batched pass -- the
     # _apply_first_flag decision per key, without a database round trip per item.
-    await _record_first_flagged_bulk(session, condemned_keys, now, grace_days=grace_days)
+    await record_first_flagged_bulk(session, condemned_keys, now, grace_days=grace_days)
 
     await session.flush()
     emit(Progress("done", total, total, f"{condemned} candidates"))
@@ -774,7 +774,7 @@ def _judge_item(
 
     verdict = _verdict(evaluation, score_value, coverage_bp, policy, override=override)
     # The grace clock for a condemned item is set by the CALLER, batched across the whole
-    # run (_record_first_flagged_bulk) -- one query for every condemned key instead of a
+    # run (record_first_flagged_bulk) -- one query for every condemned key instead of a
     # read per item. The decision per key is unchanged: see _apply_first_flag.
 
     session.add(
@@ -967,7 +967,7 @@ def _apply_first_flag(
     missed a snapshot to an outage), the clock restarts. ``last_seen_condemned_at`` exists
     for exactly this reset.
 
-    This is THE decision, applied per key by :func:`_record_first_flagged_bulk` (the only
+    This is THE decision, applied per key by :func:`record_first_flagged_bulk` (the only
     write path to the grace clock). A key with no row yet is RETURNED as a new row rather
     than inserted here, so the recorder can insert it conflict-tolerantly.
     """
@@ -1012,7 +1012,7 @@ async def _insert_first_flags(session: AsyncSession, rows: Sequence[FirstFlagged
         )
 
 
-async def _record_first_flagged_bulk(
+async def record_first_flagged_bulk(
     session: AsyncSession, media_keys: Sequence[str], now: datetime, *, grace_days: int
 ) -> None:
     """Grace bookkeeping for every key condemned in one run, in one read.

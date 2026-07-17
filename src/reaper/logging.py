@@ -16,10 +16,13 @@ from __future__ import annotations
 import logging
 import re
 import sys
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 from structlog.typing import EventDict, WrappedLogger
+
+from reaper import logbuffer
 
 _SECRET_KEYS = frozenset(
     {
@@ -100,6 +103,63 @@ def redact_secrets(_logger: WrappedLogger, _method: str, event_dict: EventDict) 
 # than trying to scrub it after the fact.
 _NOISY_HTTP_LOGGERS = ("httpx", "httpcore", "urllib3", "plexapi")
 
+# Keys the ring's plain-text line should not repeat: they are carried as their own
+# columns (or are rendering internals), not payload.
+_RING_STRUCTURAL_KEYS = frozenset({"event", "level", "timestamp", "exception", "stack"})
+
+
+def _drop_below_level(_logger: WrappedLogger, _method: str, event_dict: EventDict) -> EventDict:
+    """Dynamic level filtering, consulted per event.
+
+    The wrapper class passes everything through and THIS decides, so the operator's
+    Settings -> Logs choice takes effect immediately -- cached bound loggers and all --
+    instead of only applying to loggers bound after a reconfigure.
+    """
+    name = str(event_dict.get("level", "info")).upper()
+    if getattr(logging, name, logging.INFO) < logbuffer.level_no():
+        raise structlog.DropEvent
+    return event_dict
+
+
+def _capture_to_ring(_logger: WrappedLogger, _method: str, event_dict: EventDict) -> EventDict:
+    """Copy the (already redacted) event into the UI's log ring, render-ready.
+
+    Sits after ``redact_secrets`` and ``format_exc_info`` on purpose: the ring must
+    never hold a secret the console would not, and a traceback should arrive as text.
+    Read-only on the event dict -- the real renderer still runs after this.
+    """
+    parts = [str(event_dict.get("event", ""))]
+    parts += [f"{k}={event_dict[k]}" for k in event_dict if k not in _RING_STRUCTURAL_KEYS]
+    exception = event_dict.get("exception")
+    text = " ".join(p for p in parts if p)
+    if exception:
+        text = f"{text}\n{exception}"
+    logbuffer.RING.append(
+        ts=str(event_dict.get("timestamp", "")),
+        level=str(event_dict.get("level", "info")),
+        text=text,
+    )
+    return event_dict
+
+
+class _RingHandler(logging.Handler):
+    """The stdlib bridge: uvicorn, alembic, apscheduler and friends land in the same
+    ring the structlog pipeline feeds, so the Logs tab shows one merged stream.
+
+    Redacts query-string credentials itself -- these records never pass the structlog
+    processors -- and, like any logging handler, must never raise.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            ts = datetime.fromtimestamp(record.created, tz=UTC).isoformat()
+            text = f"{record.name}: {_redact_str(record.getMessage())}"
+            if record.exc_info and record.exc_info[0] is not None:
+                text = f"{text}\n{self.format(record)}"
+            logbuffer.RING.append(ts=ts, level=record.levelname, text=text)
+        except Exception:
+            self.handleError(record)
+
 
 def configure_logging(*, level: str = "INFO", json_logs: bool = False) -> None:
     logging.basicConfig(
@@ -107,6 +167,14 @@ def configure_logging(*, level: str = "INFO", json_logs: bool = False) -> None:
         stream=sys.stdout,
         level=getattr(logging, level.upper()),
     )
+
+    # One ring handler on the root, however many times configure_logging runs (tests
+    # build many apps in one process; stacking handlers would duplicate every line).
+    root = logging.getLogger()
+    if not any(isinstance(h, _RingHandler) for h in root.handlers):
+        root.addHandler(_RingHandler())
+
+    logbuffer.set_level(level)
 
     for name in _NOISY_HTTP_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
@@ -121,12 +189,16 @@ def configure_logging(*, level: str = "INFO", json_logs: bool = False) -> None:
         processors=[
             structlog.contextvars.merge_contextvars,
             structlog.processors.add_log_level,
+            _drop_below_level,
             structlog.processors.TimeStamper(fmt="iso", utc=True),
             redact_secrets,
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
+            _capture_to_ring,
             renderer,
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(getattr(logging, level.upper())),
+        # Filtering happens in _drop_below_level per event, against the LIVE level, so
+        # the Settings -> Logs change needs no reconfigure and no cache invalidation.
+        wrapper_class=structlog.make_filtering_bound_logger(logging.DEBUG),
         cache_logger_on_first_use=True,
     )

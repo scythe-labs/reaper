@@ -783,6 +783,37 @@ class TestTheSimulator:
         assert result["condemned"] == 1
         assert result["no_longer_condemned"] == 0
 
+    def test_a_hand_reap_on_a_protected_row_counts_as_condemned(self, client: TestClient) -> None:
+        """The rating floor is a cautious judgement the owner may overrule: once they
+        hand-reap the protected fixture, the simulator must count it condemned at any
+        threshold, exactly as the plan and the counts now do (services.condemned). At a
+        draft of 95 the stored condemn (91) legitimately drops out, so the hand-reaped
+        row is the ONLY deletion left -- and the protected tally goes to zero."""
+        response = client.post(
+            "/api/override", json={"media_key": "radarr:1:11", "decision": "reap"}
+        )
+        assert response.status_code == 200, response.text
+
+        result = self._simulate(client, 95)
+
+        assert result["condemned"] == 1  # the hand-reap, pinned at any threshold
+        assert result["protected"] == 0
+        assert result["no_longer_condemned"] == 1  # the stored 91 still drops at 95
+
+    def test_a_hand_reap_on_a_blocked_row_is_still_refused(self, client: TestClient) -> None:
+        """The "Unmatched" fixture's protections could not be checked. A hand reap does
+        not beat "we could not look": the engine keeps refusing, so the simulator must
+        not count it as a deletion either. At a draft of 91 the stored condemn still
+        counts, and it must stay the only one."""
+        response = client.post(
+            "/api/override", json={"media_key": "radarr:1:12", "decision": "reap"}
+        )
+        assert response.status_code == 200, response.text
+
+        result = self._simulate(client, 91)
+
+        assert result["condemned"] == 1  # only the stored condemn; the blocked row stays out
+
     def test_the_exact_threshold_boundary_condemns_at_and_above(self, client: TestClient) -> None:
         """condemn_at is "at or above". The stored 91 must count as condemned at a
         threshold of exactly 91 and drop out at 92 -- the route must decide through the

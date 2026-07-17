@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>Reaper</title>
+    <script>
+      // Apply the saved theme override before first paint, so a dark-choice page never
+      // flashes light (or vice versa). "system" stores nothing and the device decides.
+      try {
+        var reaperTheme = localStorage.getItem("reaper-theme");
+        if (reaperTheme === "dark" || reaperTheme === "light") {
+          document.documentElement.dataset.theme = reaperTheme;
+        }
+      } catch (e) {
+        /* storage unavailable: fall back to the device preference */
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -19,6 +19,7 @@ import json
 import re
 from collections import Counter
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import structlog
@@ -30,7 +31,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 if TYPE_CHECKING:
     from sqlalchemy import ColumnElement
 
+from reaper import __version__
 from reaper.api.schemas import (
+    AboutOut,
     CandidateDetail,
     CandidateOut,
     ChipOut,
@@ -55,6 +58,7 @@ from reaper.api.schemas import (
     VocabularyOut,
 )
 from reaper.clock import utcnow
+from reaper.config import Settings
 from reaper.db.models import Candidate, FirstFlagged, Instance, InstanceKind, PlexServer, Snapshot
 from reaper.db.models import Policy as PolicyModel
 from reaper.engine.fields import Lane, vocabulary
@@ -69,6 +73,7 @@ from reaper.engine.policy import (
 )
 from reaper.engine.verdict import decide_verdict
 from reaper.services import app_settings, whitelist
+from reaper.services.condemned import reap_is_effective, reap_override_verdict
 from reaper.services.deep_links import build_links
 from reaper.services.display_meta import parse_ratings_json
 from reaper.services.planner import MediaRef, PlanError
@@ -333,16 +338,17 @@ async def _group_rollups(
     """Two per-show rollups from one sweep of each group's member rows.
 
     **Totals** -- what "Reap now" on each show group would actually plan: (count, bytes)
-    over its condemned, not-hand-spared member seasons across the WHOLE snapshot.
-    The show card's numbers must match the planner's expansion -- ``build_plan`` expands
-    a group key over every condemned member in the snapshot and then drops hand-spares
-    via ``whitelist.effective_override`` -- so this walks the same set with the same
-    override function (rule 30: the number beside a destructive button is derived from
-    the set the server will act on). Never derived from the fetched page, which on a
-    long sorted list can hold only some of a show's seasons (B-13).
+    over its ACTABLE member seasons across the WHOLE snapshot: condemned minus
+    hand-spares, plus hand-reaped seasons whose reap the engine honours
+    (services.condemned). The show card's numbers must match the planner's expansion --
+    ``build_plan`` expands a group key over the same effective set -- so the number
+    beside a destructive button is derived from the set the server will act on
+    (rule 30). Never derived from the fetched page, which on a long sorted list can
+    hold only some of a show's seasons (B-13).
 
     **Marks** -- the show card's season strip: every member's (season, verdict,
-    override) across all lanes, sorted by season number (unnumbered rows last).
+    override, and whether a hand reap actually takes) across all lanes, sorted by
+    season number (unnumbered rows last).
 
     ``IN`` chunked at 500 per the bound-variable limit.
     """
@@ -350,6 +356,10 @@ async def _group_rollups(
         return {}, {}
     totals: dict[str, tuple[int, int]] = dict.fromkeys(group_keys, (0, 0))
     marks: dict[str, list[GroupSeasonMarkOut]] = {key: [] for key in group_keys}
+    # Hand-reaped members whose row is not scan-condemned: whether the reap takes needs
+    # the frozen explanation, fetched in one targeted pass below rather than dragging
+    # every member's JSON through the rollup query. media_key -> (mark, group, bytes).
+    pending: dict[str, tuple[GroupSeasonMarkOut, str, int]] = {}
     keys = sorted(group_keys)
     for start in range(0, len(keys), 500):
         chunk = keys[start : start + 500]
@@ -368,17 +378,38 @@ async def _group_rollups(
         ).all()
         for media_key, group_key, size_bytes, verdict in members:
             override = whitelist.effective_override(media_key, decisions)
-            marks[group_key].append(
-                GroupSeasonMarkOut(
-                    season=_season_number(media_key),
-                    verdict=str(verdict),
-                    override=override,
-                    size_bytes=int(size_bytes),
-                )
+            mark = GroupSeasonMarkOut(
+                season=_season_number(media_key),
+                verdict=str(verdict),
+                override=override,
+                override_effective=(True if override == "reap" and verdict == "condemn" else None),
+                size_bytes=int(size_bytes),
             )
+            marks[group_key].append(mark)
+            if override == "reap" and verdict != "condemn":
+                pending[media_key] = (mark, group_key, int(size_bytes))
             if verdict == "condemn" and override != "spare":
                 count, total_bytes = totals[group_key]
                 totals[group_key] = (count + 1, total_bytes + int(size_bytes))
+
+    pending_keys = sorted(pending)
+    for start in range(0, len(pending_keys), 500):
+        chunk = pending_keys[start : start + 500]
+        rows = (
+            await session.execute(
+                select(Candidate.media_key, Candidate.score, Candidate.explanation_json).where(
+                    Candidate.snapshot_id == snapshot_id, Candidate.media_key.in_(chunk)
+                )
+            )
+        ).all()
+        for media_key, score, explanation_json in rows:
+            mark, group_key, size_bytes = pending[media_key]
+            effective = reap_override_verdict(explanation_json, score=int(score)) == "condemn"
+            mark.override_effective = effective
+            if effective:
+                count, total_bytes = totals[group_key]
+                totals[group_key] = (count + 1, total_bytes + size_bytes)
+
     for members_marks in marks.values():
         members_marks.sort(
             key=lambda m: (m.season is None, m.season if m.season is not None else 0)
@@ -622,6 +653,11 @@ def _candidate_out(
         reason=_primary_reason(r.explanation_json, r.verdict),
         spared=override == "spare",
         override=override,
+        # Whether a hand reap actually takes: decide_verdict honours it past cautious
+        # protections but never past a safety stop or an unchecked protection. The UI
+        # colors the row red only when this is True, so it never promises a removal
+        # the engine will refuse.
+        override_effective=reap_is_effective(r) if override == "reap" else None,
         chip=_chip(r.explanation_json, r.verdict, r.score),
         season_number=_season_number(r.media_key),
         group_seasons=group_seasons,
@@ -1051,8 +1087,9 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
 
     Two kinds of row are never re-decided on score: a row with a protection that could
     not be checked stays abstained at any threshold (the scan refuses to condemn on
-    unchecked protections), and a row under a hand override keeps its stored verdict
-    (the owner decided; the scan honours it whatever the threshold).
+    unchecked protections), and a row under a hand override follows the owner's decision
+    whatever the threshold: a spare protects, and a reap condemns when the engine
+    honours it (services.condemned).
 
     So rather than return a confident, stale number, it compares the candidate policy's
     ``scoring_hash`` against the snapshot's and, when they differ, **returns nothing but
@@ -1122,23 +1159,31 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
 
         was_condemned = row.verdict == "condemn"
 
+        # A hand override wins at any threshold: the owner looked and decided, and the
+        # scan honours that decision, so the simulator must too. A spare protects; a
+        # reap condemns exactly when the engine honours it (services.condemned) -- a
+        # safety stop or an unchecked protection still keeps the file, and re-deciding
+        # such a row on its score would report movement no scan will ever show.
+        override = whitelist.effective_override(row.media_key, decisions)
+        if override is not None:
+            if override == "spare":
+                protected += 1
+                spared_by.update(["whitelisted"])
+            elif reap_is_effective(row):
+                condemned += 1
+                reclaimable += row.size_bytes
+            elif row.verdict == "protect":
+                protected += 1
+                spared_by.update(_fired_gates(row.explanation_json))
+            else:
+                abstained += 1
+            continue
+
         # A protection always wins, whatever the threshold. Only the score-based
         # verdicts can move.
         if row.verdict == "protect":
             protected += 1
             spared_by.update(_fired_gates(row.explanation_json))
-            continue
-
-        # A hand override pins the verdict, whatever the threshold: the owner looked and
-        # decided, and the scan honours that decision, so the simulator must too.
-        # Re-deciding a hand-reaped row on its score would report it "no longer
-        # condemned" at a draft threshold while every scan keeps condemning it.
-        if whitelist.effective_override(row.media_key, decisions) is not None:
-            if was_condemned:
-                condemned += 1
-                reclaimable += row.size_bytes
-            else:
-                abstained += 1
             continue
 
         # A row with a protection that could not be checked abstains at ANY threshold:
@@ -1300,3 +1345,37 @@ async def vocabulary_values(request: Request, field: str) -> FieldValuesOut:
 
     ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
     return FieldValuesOut(field=field, values=[value for value, _ in ranked[:50]])
+
+
+# ---------------------------------------------------------------------------
+# About
+# ---------------------------------------------------------------------------
+
+
+def _db_bytes(base: Path) -> int:
+    """The size of one SQLite database on disk, including its live WAL.
+
+    The -wal file holds committed writes that have not been checkpointed yet, so
+    counting the bare .db alone under-reports what the operator's disk is holding.
+    """
+    total = 0
+    for path in (base, base.with_name(base.name + "-wal")):
+        try:
+            total += path.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+@router.get("/about")
+async def about(request: Request) -> AboutOut:
+    """What's running and where its data lives. Read-only facts for the About page."""
+    settings: Settings = request.app.state.settings
+    data_dir = settings.data_dir
+    return AboutOut(
+        version=__version__,
+        license="AGPL-3.0",
+        data_dir=str(data_dir),
+        reaper_db_bytes=_db_bytes(data_dir / "reaper.db"),
+        cache_db_bytes=_db_bytes(data_dir / "cache.db"),
+    )

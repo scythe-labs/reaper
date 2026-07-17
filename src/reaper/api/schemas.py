@@ -150,6 +150,10 @@ class GroupSeasonMarkOut(BaseModel):
     season: int | None = None
     verdict: str
     override: str | None = None
+    override_effective: bool | None = None
+    """For a ``"reap"`` override: whether the engine honours it (True paints the square
+    solid red), or refuses it for a safety stop or an unchecked protection (False keeps
+    the square in its scan color). None when there is no reap override."""
     size_bytes: int = 0
     """The season's size on disk, so the card can state whole-show totals without a
     second fetch."""
@@ -174,9 +178,10 @@ class CandidateOut(BaseModel):
     group_key: str | None = None
     group_title: str | None = None
     group_condemned_count: int | None = None
-    """How many seasons "Reap now" on this show group would actually plan: its condemned,
-    not-hand-spared seasons across the WHOLE snapshot -- not just the fetched pages, which
-    on a long sorted list can hold only some of a show's seasons. None for movies."""
+    """How many seasons "Reap now" on this show group would actually plan: its actable
+    seasons across the WHOLE snapshot (condemned minus hand-spares, plus effective hand
+    reaps) -- not just the fetched pages, which on a long sorted list can hold only some
+    of a show's seasons. None for movies."""
     group_condemned_bytes: int | None = None
     """The byte total over that same set. The show card must show the number the planner
     will act on, never a partial page sum."""
@@ -198,6 +203,10 @@ class CandidateOut(BaseModel):
     """The owner's manual decision on this item -- ``"spare"``, ``"reap"``, or ``None``. Set
     the moment they click, so the card can show the pending intent before the next scan bakes
     it into the stored verdict. Inherited from the show for a season the owner overrode whole."""
+    override_effective: bool | None = None
+    """For a ``"reap"`` override: whether the engine honours it (it joins the counts, the
+    grace countdown and the next plan), or refuses it for a safety stop or an unchecked
+    protection. None when there is no reap override. The UI shows red only on True."""
     chip: ChipOut | None = None
     """The card's one short status chip (Sanctuary and Limbo lanes). None on condemned
     rows, whose card leads with the amber dormancy pill instead."""
@@ -545,15 +554,19 @@ class VocabularyOut(BaseModel):
 
 
 class LeavingSoonOut(BaseModel):
-    """The result of reconciling the Leaving Soon label set against the grace set."""
+    """The result of one shelf pass across every enabled library."""
 
-    to_add_count: int
-    to_remove_count: int
+    added_count: int
+    cleared_count: int
     applied: bool
-    """Whether the label writes landed. False in read-only mode -- writing a label is
-    guarded like a delete, so the plan is computed and announced but not written."""
+    """Whether the shelf writes landed everywhere. False in read-only mode (the pass is
+    computed and announced but not written), and false when any library failed."""
     notified: bool
-    sample_added: list[str]
+    movies_on_shelves: int
+    seasons_on_shelves: int
+    problems: list[str]
+    """Per-library failures, in plain words. One unreachable library never hides the
+    rest of the pass."""
 
 
 class GraceItemOut(BaseModel):
@@ -633,3 +646,16 @@ class HealthOut(BaseModel):
     version: str
     destructive_actions_enabled: bool
     safety_note: str | None = None
+
+
+class AboutOut(BaseModel):
+    """What's running and where its data lives. Facts only, for the About page and for
+    bug reports; nothing here is editable."""
+
+    version: str
+    license: str
+    data_dir: str
+    reaper_db_bytes: int
+    """Reaper's own database: decisions, audit trail, credentials. Small and precious."""
+    cache_db_bytes: int
+    """The rebuildable cache: watch history, ratings, lists. Large and disposable."""

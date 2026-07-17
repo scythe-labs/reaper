@@ -10,20 +10,374 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { api, type Instance, type InstanceTest, type PlexServerChoice } from "../api";
-import { date } from "../format";
+import {
+  api,
+  type Instance,
+  type InstanceTest,
+  type LogLine,
+  type PlexResourceConnection,
+  type PlexServerChoice,
+} from "../api";
+import { bytes, count, date, since } from "../format";
 import { ScanBar } from "./ScanBar";
 import { KINDS, kindLabel, ServiceModal, TestBadge } from "./ServiceModal";
+import { Switch } from "./Switch";
 
-type Panel = "services" | "plex" | "jobs" | "notifications" | "security";
+export type Panel =
+  | "general"
+  | "services"
+  | "plex"
+  | "jobs"
+  | "notifications"
+  | "security"
+  | "logs"
+  | "about";
 
 const PANELS: { id: Panel; label: string }[] = [
+  { id: "general", label: "General" },
   { id: "services", label: "Services" },
   { id: "plex", label: "Plex" },
   { id: "jobs", label: "Jobs" },
   { id: "notifications", label: "Notifications" },
   { id: "security", label: "Security" },
+  { id: "logs", label: "Logs" },
+  { id: "about", label: "About" },
 ];
+
+// --- General -----------------------------------------------------------------
+
+type ThemeChoice = "system" | "light" | "dark";
+
+function readTheme(): ThemeChoice {
+  try {
+    const stored = localStorage.getItem("reaper-theme");
+    return stored === "light" || stored === "dark" ? stored : "system";
+  } catch {
+    return "system";
+  }
+}
+
+/** Apply and remember the theme. "system" removes the override so the device decides;
+ *  index.html applies the stored choice before first paint, so there is no flash. */
+function applyTheme(choice: ThemeChoice) {
+  const root = document.documentElement;
+  if (choice === "system") {
+    delete root.dataset.theme;
+  } else {
+    root.dataset.theme = choice;
+  }
+  try {
+    if (choice === "system") localStorage.removeItem("reaper-theme");
+    else localStorage.setItem("reaper-theme", choice);
+  } catch {
+    // Storage can be unavailable (private windows); the page still themes for now.
+  }
+}
+
+function GeneralPanel() {
+  const queryClient = useQueryClient();
+  const general = useQuery({ queryKey: ["general-settings"], queryFn: api.general });
+
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+  const [proxies, setProxies] = useState("");
+  const [theme, setTheme] = useState<ThemeChoice>(readTheme);
+  const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [confirmReplace, setConfirmReplace] = useState(false);
+
+  // Seed the editable fields from the server once per load (and re-seed after saves,
+  // which return the canonical stored values -- rule 39).
+  const seeded = useRef(false);
+  useEffect(() => {
+    if (!general.data || seeded.current) return;
+    seeded.current = true;
+    setName(general.data.application_name);
+    setUrl(general.data.application_url ?? "");
+    setProxies(general.data.trusted_proxies.join(", "));
+  }, [general.data]);
+
+  const save = useMutation({
+    mutationFn: api.saveGeneral,
+    onSuccess: (data) => {
+      queryClient.setQueryData(["general-settings"], data);
+      setName(data.application_name);
+      setUrl(data.application_url ?? "");
+      setProxies(data.trusted_proxies.join(", "));
+    },
+  });
+
+  const reveal = useMutation({
+    mutationFn: api.revealApiKey,
+    onSuccess: (r) => setRevealedKey(r.key),
+  });
+  const generate = useMutation({
+    mutationFn: api.generateApiKey,
+    onSuccess: (r) => {
+      setRevealedKey(r.key);
+      setConfirmReplace(false);
+      void queryClient.invalidateQueries({ queryKey: ["general-settings"] });
+    },
+  });
+
+  const copyKey = async () => {
+    let key = revealedKey;
+    if (key === null) {
+      const r = await api.revealApiKey();
+      key = r.key;
+    }
+    await navigator.clipboard.writeText(key);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  const copy = useMutation({ mutationFn: copyKey });
+
+  if (general.isPending) {
+    return <p className="muted">Loading…</p>;
+  }
+  if (general.isError || !general.data) {
+    return <p className="notice notice-error">Couldn't load these settings. Reload to try again.</p>;
+  }
+  const data = general.data;
+
+  const nameDirty = name.trim() !== data.application_name;
+  const urlDirty = url.trim() !== (data.application_url ?? "");
+  const proxiesDirty =
+    proxies
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean)
+      .join(", ") !== data.trusted_proxies.join(", ");
+
+  return (
+    <div className="panel">
+      <h2>General</h2>
+      <p className="muted">How this Reaper presents itself, and how other tools may talk to it.</p>
+
+      <div className="set-group">
+        <h3>Application</h3>
+        <div className="set-rows">
+          <div className="set-row">
+            <span className="set-label">Application name</span>
+            <p className="help">
+              Shown in Discord messages and the browser tab, so you can tell two installs apart.
+            </p>
+            <div className="set-control">
+              <input
+                type="text"
+                value={name}
+                maxLength={60}
+                onChange={(e) => setName(e.target.value)}
+                aria-label="Application name"
+              />
+              {nameDirty && (
+                <button
+                  className="primary"
+                  disabled={save.isPending}
+                  onClick={() => save.mutate({ application_name: name.trim() })}
+                >
+                  Save
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="set-row">
+            <span className="set-label">Application URL</span>
+            <p className="help">
+              Where people reach Reaper, for example https://reaper.example.com. Notifications
+              use it to link back here. Leave empty and notifications simply skip the link.
+            </p>
+            <div className="set-control">
+              <input
+                type="text"
+                value={url}
+                placeholder="https://reaper.example.com"
+                onChange={(e) => setUrl(e.target.value)}
+                aria-label="Application URL"
+              />
+              {urlDirty && (
+                <button
+                  className="primary"
+                  disabled={save.isPending}
+                  onClick={() => save.mutate({ application_url: url.trim() })}
+                >
+                  Save
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="set-row">
+            <span className="set-label">Theme</span>
+            <p className="help">
+              Light or dark. "Match my device" follows your system setting. Applies to this
+              browser only.
+            </p>
+            <div className="set-control">
+              <select
+                value={theme}
+                aria-label="Theme"
+                onChange={(e) => {
+                  const next = e.target.value as ThemeChoice;
+                  setTheme(next);
+                  applyTheme(next);
+                }}
+              >
+                <option value="system">Match my device</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="set-group">
+        <h3>API access</h3>
+        <div className="set-rows">
+          <div className="set-row">
+            <span className="set-label">API key</span>
+            <p className="help">
+              Lets scripts and other apps call the Reaper API without signing in: send it as
+              the X-Api-Key header. A key can read everything, start scans, and edit policy,
+              but it can never turn deletion on, run a reap, or change sign-in settings. Those
+              stay here in the browser, behind your password.
+            </p>
+            <div className="set-control">
+              {data.api_key_set ? (
+                <>
+                  <input
+                    className="keyfield"
+                    type="text"
+                    readOnly
+                    value={revealedKey ?? "••••••••••••••••••••••••"}
+                    aria-label="API key"
+                  />
+                  {revealedKey === null ? (
+                    <button disabled={reveal.isPending} onClick={() => reveal.mutate()}>
+                      Show
+                    </button>
+                  ) : (
+                    <button onClick={() => setRevealedKey(null)}>Hide</button>
+                  )}
+                  <button disabled={copy.isPending} onClick={() => copy.mutate()}>
+                    {copied ? "Copied" : "Copy"}
+                  </button>
+                  {confirmReplace ? (
+                    <>
+                      <button
+                        className="danger"
+                        disabled={generate.isPending}
+                        onClick={() => generate.mutate()}
+                      >
+                        Confirm replace
+                      </button>
+                      <button onClick={() => setConfirmReplace(false)}>Cancel</button>
+                    </>
+                  ) : (
+                    <button
+                      className="ghost"
+                      title="The old key stops working immediately"
+                      onClick={() => setConfirmReplace(true)}
+                    >
+                      Replace…
+                    </button>
+                  )}
+                </>
+              ) : (
+                <button
+                  className="primary"
+                  disabled={generate.isPending}
+                  onClick={() => generate.mutate()}
+                >
+                  {generate.isPending ? "Generating…" : "Generate API key"}
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="set-row">
+            <span className="set-label">API reference</span>
+            <p className="help">
+              Every endpoint, documented from the running app, with a try-it-out client that
+              can use your key. Only visible while signed in.
+            </p>
+            <div className="set-control">
+              <a className="btn-link" href="/api/docs" target="_blank" rel="noreferrer">
+                Open the API reference ↗
+              </a>
+            </div>
+          </div>
+        </div>
+        {(reveal.error || generate.error || copy.error) && (
+          <p className="notice notice-error">
+            {(reveal.error ?? generate.error ?? copy.error)?.message}
+          </p>
+        )}
+      </div>
+
+      <div className="set-group">
+        <h3>Reverse proxy</h3>
+        <div className="set-rows">
+          <div className="set-row">
+            <span className="set-label">Behind a reverse proxy</span>
+            <p className="help">
+              Turn this on if Nginx, Traefik, Caddy or similar sits in front of Reaper. Reaper
+              will then trust the proxy to say which address each visitor really came from,
+              which keeps sign-in rate limits accurate per visitor instead of lumping everyone
+              together.
+            </p>
+            <div className="set-control">
+              <Switch
+                checked={data.proxy_trust_enabled}
+                disabled={save.isPending}
+                ariaLabel="Behind a reverse proxy"
+                onChange={(enabled) => save.mutate({ proxy_trust_enabled: enabled })}
+              />
+            </div>
+          </div>
+          <div className={data.proxy_trust_enabled ? "set-row" : "set-row dim"}>
+            <span className="set-label">Trusted proxy addresses</span>
+            <p className="help">
+              Only requests arriving from these addresses may claim to be forwarded. Comma
+              separated, single addresses or ranges like 172.16.0.0/12.
+            </p>
+            <div className="set-control">
+              <input
+                type="text"
+                value={proxies}
+                disabled={!data.proxy_trust_enabled}
+                placeholder="172.16.0.1, 10.0.0.0/8"
+                onChange={(e) => setProxies(e.target.value)}
+                aria-label="Trusted proxy addresses"
+              />
+              {proxiesDirty && data.proxy_trust_enabled && (
+                <button
+                  className="primary"
+                  disabled={save.isPending}
+                  onClick={() =>
+                    save.mutate({
+                      trusted_proxies: proxies
+                        .split(",")
+                        .map((p) => p.trim())
+                        .filter(Boolean),
+                    })
+                  }
+                >
+                  Save
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+        <p className="group-hint muted">
+          Off by default, and forwarded headers from anywhere else are always ignored: a
+          stranger can't fake their address to dodge the login lockout.
+        </p>
+      </div>
+
+      {save.error && <p className="notice notice-error">{save.error.message}</p>}
+    </div>
+  );
+}
 
 // --- Services --------------------------------------------------------------
 
@@ -165,9 +519,28 @@ export function ServicesPanel() {
 
 // --- Plex ------------------------------------------------------------------
 
+const MANUAL_CONNECTION = "__manual__";
+
+/** The label a connection shows in the picker: where it goes, then how.
+ *
+ *  plex.direct hostnames embed the address as dashes ("192-168-20-73.abc….plex.direct"),
+ *  which reads as noise; show the address itself and keep the certificate goodness as
+ *  the "secure" tag. The full URI stays the option's value, so what is saved is exact. */
+function connectionLabel(c: PlexResourceConnection): string {
+  const kind = c.relay ? "Relay" : c.local ? "Local" : "Remote";
+  let host = c.uri.replace(/^https?:\/\//, "");
+  const direct = /^(\d+)-(\d+)-(\d+)-(\d+)\.[0-9a-f]+\.plex\.direct(:\d+)?$/i.exec(host);
+  if (direct) {
+    host = `${direct[1]}.${direct[2]}.${direct[3]}.${direct[4]}${direct[5] ?? ""}`;
+  }
+  const secure = c.protocol === "https" ? " · secure" : "";
+  return `${kind} · ${host}${secure}`;
+}
+
 export function PlexPanel() {
   const queryClient = useQueryClient();
   const { data } = useQuery({ queryKey: ["plex"], queryFn: api.plexStatus });
+  const linked = data?.linked ?? false;
   const [linking, setLinking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [servers, setServers] = useState<PlexServerChoice[] | null>(null);
@@ -296,104 +669,719 @@ export function PlexPanel() {
     },
   });
 
+  // --- the server and connection pickers, fed by the signed-in account ---------
+
+  const resources = useQuery({
+    queryKey: ["plex-resources"],
+    queryFn: api.plexResources,
+    enabled: linked,
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  const invalidateAllPlex = () => {
+    void queryClient.invalidateQueries({ queryKey: ["plex"] });
+    void queryClient.invalidateQueries({ queryKey: ["plex-resources"] });
+    void queryClient.invalidateQueries({ queryKey: ["plex-libraries"] });
+    void queryClient.invalidateQueries({ queryKey: ["leaving-soon-settings"] });
+  };
+
+  const switchServer = useMutation({
+    mutationFn: (machineId: string) => api.plexSwitchServer(machineId),
+    onSuccess: () => {
+      setMessage(null);
+      invalidateAllPlex();
+    },
+    onError: (e: Error) => setMessage(e.message),
+  });
+
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualHost, setManualHost] = useState("");
+  const [manualPort, setManualPort] = useState("32400");
+  const [manualSsl, setManualSsl] = useState(true);
+  const [connError, setConnError] = useState<string | null>(null);
+
+  const setConnection = useMutation({
+    mutationFn: (uri: string) => api.plexSetConnection(uri),
+    onSuccess: () => {
+      setConnError(null);
+      setManualOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ["plex"] });
+    },
+    onError: (e: Error) => setConnError(e.message),
+  });
+
+  const currentServer =
+    resources.data?.servers.find((s) => s.current) ?? resources.data?.servers[0];
+  const connections = currentServer?.connections ?? [];
+  const savedUri = data?.connection_uri ?? "";
+  const savedIsDiscovered = connections.some((c) => c.uri === savedUri);
+  const connectionValue = manualOpen || !savedIsDiscovered ? MANUAL_CONNECTION : savedUri;
+
+  const openManual = () => {
+    // Seed the manual fields from wherever Reaper is pointed right now.
+    try {
+      const parsed = new URL(savedUri);
+      setManualHost(parsed.hostname);
+      setManualPort(parsed.port || (parsed.protocol === "https:" ? "443" : "32400"));
+      setManualSsl(parsed.protocol === "https:");
+    } catch {
+      setManualHost("");
+      setManualPort("32400");
+      setManualSsl(true);
+    }
+    setConnError(null);
+    setManualOpen(true);
+  };
+
+  const saveManual = () => {
+    const host = manualHost.trim();
+    if (!host) return;
+    const scheme = manualSsl ? "https" : "http";
+    setConnection.mutate(`${scheme}://${host}:${manualPort.trim() || "32400"}`);
+  };
+
+  // --- libraries ---------------------------------------------------------------
+
+  const libraries = useQuery({
+    queryKey: ["plex-libraries"],
+    queryFn: api.plexLibraries,
+    enabled: linked,
+  });
+  const syncLibraries = useMutation({
+    mutationFn: api.syncPlexLibraries,
+    onSuccess: (libs) => queryClient.setQueryData(["plex-libraries"], libs),
+  });
+  const saveLibraries = useMutation({
+    mutationFn: api.setPlexLibraries,
+    onSuccess: (libs) => queryClient.setQueryData(["plex-libraries"], libs),
+  });
+
+  // First visit on a linked install: the list has never been synced, so fetch it once
+  // rather than showing an empty grid with a button to press. The ref makes it
+  // once-per-mount even though the mutation object's identity changes per render.
+  const autoSynced = useRef(false);
+  useEffect(() => {
+    if (linked && libraries.data && libraries.data.length === 0 && !autoSynced.current) {
+      autoSynced.current = true;
+      syncLibraries.mutate();
+    }
+  }, [linked, libraries.data, syncLibraries]);
+
+  const toggleLibrary = (key: number, next: boolean) => {
+    const libs = libraries.data ?? [];
+    const enabled = new Set(libs.filter((l) => l.enabled).map((l) => l.key));
+    if (next) enabled.add(key);
+    else enabled.delete(key);
+    saveLibraries.mutate([...enabled]);
+  };
+
+  // --- Leaving Soon --------------------------------------------------------------
+
+  const leavingSoon = useQuery({
+    queryKey: ["leaving-soon-settings"],
+    queryFn: api.leavingSoonSettings,
+    enabled: linked,
+  });
+  const saveLeavingSoon = useMutation({
+    mutationFn: api.setLeavingSoonSettings,
+    onSuccess: (s) => {
+      queryClient.setQueryData(["leaving-soon-settings"], s);
+      // The Reap page's grace bar reads these to pick its state.
+      void queryClient.invalidateQueries({ queryKey: ["grace"] });
+    },
+  });
+
+  const lsStatus = (() => {
+    if (!leavingSoon.data) return null;
+    const last = leavingSoon.data.last;
+    if (!last) return "Not updated yet. It runs after every scan, or from the Reap page.";
+    const movies = `${count(last.movies)} movie${last.movies === 1 ? "" : "s"}`;
+    const seasons = `${count(last.seasons)} season${last.seasons === 1 ? "" : "s"}`;
+    const wrote = last.applied ? "" : " · preview only, nothing was written in Plex";
+    return `Last updated ${since(last.at)} · ${movies} and ${seasons} on the shelves · next update after the next scan${wrote}`;
+  })();
+
   return (
     <div className="panel">
       <h2>Plex</h2>
       <p className="blurb">
-        Linking Plex lets Reaper mark items "Leaving Soon" during their grace period and read
-        your "Never Reap" collection. It's optional. Scanning works without it.
+        Linking Plex lets Reaper warn your library with a "Leaving Soon" shelf and read your
+        "Never Reap" collection. It's optional. Scanning works without it.
       </p>
-      {data?.linked ? (
-        <div className="plex-status linked">
-          <div>
-            <strong>{data.name}</strong>
-            <div className="muted">{data.connection_uri}</div>
+
+      <div className="set-group">
+        <h3>Connection</h3>
+        <div className="set-rows">
+          {linked && data ? (
+            <div className="set-row">
+              <span className="set-label">{data.name}</span>
+              <p className="help">Signed in with Plex. {data.connection_uri}</p>
+              <div className="set-control">
+                <button
+                  className="ghost"
+                  onClick={() => unlink.mutate()}
+                  disabled={unlink.isPending}
+                >
+                  Unlink
+                </button>
+              </div>
+            </div>
+          ) : servers ? (
+            <div className="set-row">
+              <span className="set-label">Which server should Reaper manage?</span>
+              <p className="help">
+                This account owns more than one Plex server. Reaper will only ever scan and
+                prune the one you pick.
+              </p>
+              <div className="set-control server-pick">
+                {servers.map((s) => (
+                  <button
+                    key={s.machine_identifier}
+                    className="server-pick-row"
+                    onClick={() => void pick(s.machine_identifier)}
+                  >
+                    {s.name}
+                  </button>
+                ))}
+                <button className="link" onClick={cancelChoice}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="set-row">
+              <span className="set-label">No Plex server linked</span>
+              <p className="help">
+                Sign in with Plex and Reaper discovers your servers. It never asks for a
+                token by hand.
+              </p>
+              <div className="set-control">
+                <button className="btn-plex" onClick={startLink} disabled={linking}>
+                  {linking ? "Waiting for Plex…" : "Link with Plex"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {linked && (
+            <div className="set-row">
+              <span className="set-label">Server</span>
+              <p className="help">
+                Plex servers this account can manage. Reaper works with one at a time.
+                {resources.data?.source === "stored" &&
+                  " Showing what was remembered at link time; plex.tv didn't answer."}
+              </p>
+              <div className="set-control">
+                {resources.isPending ? (
+                  <span className="muted">Looking for servers…</span>
+                ) : resources.isError ? (
+                  <>
+                    <span className="muted">Couldn't list this account's servers.</span>
+                    <button className="ghost sm" onClick={() => void resources.refetch()}>
+                      Retry
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <select
+                      value={currentServer?.machine_identifier ?? ""}
+                      disabled={switchServer.isPending}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        if (next && next !== currentServer?.machine_identifier) {
+                          switchServer.mutate(next);
+                        }
+                      }}
+                    >
+                      {(resources.data?.servers ?? []).map((s) => (
+                        <option key={s.machine_identifier} value={s.machine_identifier}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="ghost sm"
+                      disabled={resources.isFetching}
+                      onClick={() => void resources.refetch()}
+                      title="Look for servers again"
+                    >
+                      {resources.isFetching ? "Refreshing…" : "Refresh"}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {linked && (
+            <div className="set-row">
+              <span className="set-label">Connection</span>
+              <p className="help">
+                How Reaper reaches the server. A local address is usually faster; remote
+                works from anywhere. Pick "Manual address" to type your own.
+              </p>
+              <div className="set-control">
+                <select
+                  value={connectionValue}
+                  disabled={setConnection.isPending || resources.isPending}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    if (next === MANUAL_CONNECTION) openManual();
+                    else {
+                      setManualOpen(false);
+                      if (next !== savedUri) setConnection.mutate(next);
+                    }
+                  }}
+                >
+                  {connections.map((c) => (
+                    <option key={c.uri} value={c.uri}>
+                      {connectionLabel(c)}
+                    </option>
+                  ))}
+                  {!savedIsDiscovered && !manualOpen && (
+                    <option value={MANUAL_CONNECTION}>Manual · {savedUri}</option>
+                  )}
+                  {(manualOpen || savedIsDiscovered) && (
+                    <option value={MANUAL_CONNECTION}>Manual address…</option>
+                  )}
+                </select>
+              </div>
+            </div>
+          )}
+
+          {linked && manualOpen && (
+            <div className="set-row">
+              <span className="set-label">Manual address</span>
+              <p className="help">Hostname or IP, port, and whether to use SSL.</p>
+              <div className="set-control">
+                <input
+                  type="text"
+                  value={manualHost}
+                  onChange={(e) => setManualHost(e.target.value)}
+                  placeholder="plex.example.net"
+                  autoComplete="off"
+                />
+                <input
+                  type="text"
+                  className="input-port"
+                  value={manualPort}
+                  onChange={(e) => setManualPort(e.target.value.replace(/\D/g, ""))}
+                  placeholder="32400"
+                  inputMode="numeric"
+                />
+                <label className="toggle" title="Use SSL">
+                  <Switch checked={manualSsl} onChange={setManualSsl} ariaLabel="Use SSL" />
+                  <span>SSL</span>
+                </label>
+                <button
+                  className="primary sm"
+                  disabled={!manualHost.trim() || setConnection.isPending}
+                  onClick={saveManual}
+                >
+                  {setConnection.isPending ? "Checking…" : "Save"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="set-row">
+            <span className="set-label">Check the server's certificate</span>
+            <p className="help">
+              Turn this off only for a server you run yourself, like one with a self-signed
+              certificate.
+            </p>
+            <div className="set-control">
+              <Switch
+                checked={verifyCert}
+                disabled={saveVerify.isPending}
+                ariaLabel="Check the server's certificate"
+                onChange={(next) => {
+                  setVerifyCert(next);
+                  verifyRef.current = next;
+                  if (linked) saveVerify.mutate(next);
+                }}
+              />
+            </div>
           </div>
-          <button className="ghost" onClick={() => unlink.mutate()} disabled={unlink.isPending}>
-            Unlink
-          </button>
+
+          <div className="set-row">
+            <span className="set-label">Plex web address</span>
+            <p className="help">
+              Where links to your library open. Keep the default unless you host your own
+              Plex Web. Clear it and save to go back to the default.
+            </p>
+            <div className="set-control">
+              <input
+                type="url"
+                value={webUrl}
+                onChange={(e) => {
+                  setWebUrl(e.target.value);
+                  setWebUrlError(null);
+                }}
+                placeholder="https://app.plex.tv"
+                autoComplete="off"
+              />
+              {webUrl.trim() !== savedWebUrl && (
+                <button
+                  type="button"
+                  className="primary sm"
+                  disabled={saveWebUrl.isPending}
+                  onClick={() => saveWebUrl.mutate()}
+                >
+                  {saveWebUrl.isPending ? "Saving…" : "Save"}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
-      ) : servers ? (
-        <div className="server-pick">
-          <strong>Which server should Reaper manage?</strong>
-          <p className="muted">
-            This account owns more than one Plex server. Reaper will only ever scan and
-            prune the one you pick.
+
+        {!verifyCert && (
+          <p className="notice notice-warn">
+            Reaper will accept this server's certificate without checking who issued it. Only
+            use this for a server you run yourself, like one with a self-signed certificate.
           </p>
-          {servers.map((s) => (
-            <button
-              key={s.machine_identifier}
-              className="server-pick-row"
-              onClick={() => void pick(s.machine_identifier)}
-            >
-              {s.name}
-            </button>
-          ))}
-          <button className="link" onClick={cancelChoice}>
-            Cancel
-          </button>
-        </div>
-      ) : (
-        <div className="plex-status">
-          <p className="muted">No Plex server linked.</p>
-          <button className="btn-plex" onClick={startLink} disabled={linking}>
-            {linking ? "Waiting for Plex…" : "Link with Plex"}
-          </button>
+        )}
+        {connError && <p className="notice notice-error">{connError}</p>}
+        {webUrlError && <p className="notice notice-error">{webUrlError}</p>}
+        {message && <p className="muted">{message}</p>}
+      </div>
+
+      {linked && (
+        <div className="set-group">
+          <h3>Libraries</h3>
+          <p className="group-blurb">
+            The libraries Reaper may touch in Plex. Leaving Soon shelves are managed only in
+            libraries you turn on. This doesn't change what gets scanned: scanning reads from
+            Radarr and Sonarr.
+          </p>
+          {libraries.isPending || syncLibraries.isPending ? (
+            <p className="muted">Loading libraries…</p>
+          ) : libraries.isError ? (
+            <p className="notice notice-error">
+              Couldn't load the library list. Reload to try again.
+            </p>
+          ) : (
+            <>
+              <div className="lib-head">
+                <span className="muted">
+                  {count((libraries.data ?? []).length)}{" "}
+                  {(libraries.data ?? []).length === 1 ? "library" : "libraries"} found
+                </span>
+                <button
+                  className="ghost sm"
+                  disabled={syncLibraries.isPending}
+                  onClick={() => syncLibraries.mutate()}
+                >
+                  Refresh libraries
+                </button>
+              </div>
+              <div className="lib-grid">
+                {(libraries.data ?? []).map((lib) => (
+                  <div key={lib.key} className={lib.enabled ? "lib-card" : "lib-card off"}>
+                    <span>
+                      {lib.title}
+                      <span className="lib-kind">{lib.kind === "movie" ? "movies" : "tv"}</span>
+                    </span>
+                    <Switch
+                      checked={lib.enabled}
+                      disabled={saveLibraries.isPending}
+                      ariaLabel={`Let Reaper touch ${lib.title}`}
+                      onChange={(next) => toggleLibrary(lib.key, next)}
+                    />
+                  </div>
+                ))}
+              </div>
+              {(saveLibraries.error || syncLibraries.error) && (
+                <p className="notice notice-error">
+                  {(saveLibraries.error ?? syncLibraries.error)?.message}
+                </p>
+              )}
+            </>
+          )}
         </div>
       )}
-      <label className="toggle">
-        <input
-          type="checkbox"
-          checked={verifyCert}
-          disabled={saveVerify.isPending}
-          onChange={(e) => {
-            const next = e.target.checked;
-            setVerifyCert(next);
-            verifyRef.current = next;
-            if (data?.linked) saveVerify.mutate(next);
-          }}
-        />
-        <span>Check the server's certificate</span>
-      </label>
-      {!verifyCert && (
-        <p className="notice notice-warn">
-          Reaper will accept this server's certificate without checking who issued it.
-          Only use this for a server you run yourself, like one with a self-signed
-          certificate.
+
+      {linked && (
+        <div className="set-group">
+          <h3>Leaving Soon</h3>
+          <p className="group-blurb">
+            While an item counts down its grace period, Reaper can put it on a "Leaving Soon"
+            shelf in Plex, so people get a heads-up before it goes: movies in your movie
+            libraries, seasons in your TV libraries.
+          </p>
+          {leavingSoon.isPending ? (
+            <p className="muted">Loading…</p>
+          ) : leavingSoon.isError || !leavingSoon.data ? (
+            <p className="notice notice-error">
+              Couldn't load the Leaving Soon settings. Reload to try again.
+            </p>
+          ) : (
+            <div className="set-rows">
+              <div className="set-row">
+                <span className="set-label">Show "Leaving Soon" in Plex</span>
+                <p className="help">
+                  Reaper keeps a Leaving Soon collection in each library you turned on above,
+                  and puts the matching label on everything in it. Items appear when they
+                  start counting down and drop off when they're spared or removed. Updates
+                  after every scan, or any time from the Reap page.
+                </p>
+                <div className="set-control">
+                  <Switch
+                    checked={leavingSoon.data.enabled}
+                    disabled={saveLeavingSoon.isPending}
+                    ariaLabel='Show "Leaving Soon" in Plex'
+                    onChange={(enabled) => saveLeavingSoon.mutate({ enabled })}
+                  />
+                </div>
+              </div>
+              <div className="set-row">
+                <span className="set-label">Update while read-only</span>
+                <p className="help">
+                  Until deletion is on, Reaper writes nothing to Plex, including this shelf.
+                  Turn this on to let the warning appear while Reaper is still read-only. It
+                  can only manage the collection and label. It can never remove files.
+                </p>
+                <div className="set-control">
+                  <Switch
+                    checked={leavingSoon.data.allow_unarmed}
+                    disabled={saveLeavingSoon.isPending}
+                    ariaLabel="Update while read-only"
+                    onChange={(allow_unarmed) => saveLeavingSoon.mutate({ allow_unarmed })}
+                  />
+                </div>
+              </div>
+              {lsStatus && (
+                <div className="set-row set-status">
+                  <span>{lsStatus}</span>
+                </div>
+              )}
+            </div>
+          )}
+          {saveLeavingSoon.error && (
+            <p className="notice notice-error">{saveLeavingSoon.error.message}</p>
+          )}
+        </div>
+      )}
+
+      {!linked && (
+        <p className="help">
+          Link Plex to pick libraries and turn on the "Leaving Soon" shelf.
         </p>
       )}
-      {message && <p className="muted">{message}</p>}
+    </div>
+  );
+}
 
-      <div className="add-grid">
-        <label className="field-sm wide">
-          <span className="field-label">Plex web address</span>
-          <input
-            type="url"
-            value={webUrl}
-            onChange={(e) => {
-              setWebUrl(e.target.value);
-              setWebUrlError(null);
-            }}
-            placeholder="https://app.plex.tv"
-            autoComplete="off"
-          />
-        </label>
-      </div>
-      <p className="help">
-        Where links to your Plex library open. Keep the default unless you host your own
-        Plex Web. Clear the box and save to go back to the default.
+// --- Logs --------------------------------------------------------------------
+
+const LEVEL_RANK: Record<string, number> = {
+  DEBUG: 10,
+  INFO: 20,
+  WARNING: 30,
+  ERROR: 40,
+  CRITICAL: 50,
+};
+
+function levelClass(level: string): string {
+  const upper = level.toUpperCase();
+  if (upper === "DEBUG") return "log-lv debug";
+  if (upper === "WARNING") return "log-lv warning";
+  if (upper === "ERROR" || upper === "CRITICAL") return "log-lv error";
+  return "log-lv info";
+}
+
+function logTime(ts: string): string {
+  const parsed = new Date(ts);
+  if (Number.isNaN(parsed.getTime())) return "";
+  return parsed.toLocaleTimeString([], { hour12: false });
+}
+
+function LogsPanel() {
+  const [live, setLive] = useState(true);
+  const [search, setSearch] = useState("");
+  const [minLevel, setMinLevel] = useState("all");
+  const [lines, setLines] = useState<LogLine[]>([]);
+  const [recordLevel, setRecordLevel] = useState<string | null>(null);
+  const cursor = useRef(0);
+  const consoleRef = useRef<HTMLDivElement | null>(null);
+
+  const logs = useQuery({
+    queryKey: ["logs"],
+    queryFn: () => api.logs(cursor.current),
+    refetchInterval: live ? 2000 : false,
+  });
+
+  // Fold each page into the accumulated window. The seq guard makes this idempotent
+  // when React Query hands the same page twice (mount + focus refetch).
+  useEffect(() => {
+    const page = logs.data;
+    if (!page) return;
+    cursor.current = page.last_seq;
+    setRecordLevel(page.level);
+    if (page.lines.length) {
+      setLines((prev) => {
+        const newest = prev.at(-1)?.seq ?? 0;
+        const fresh = page.lines.filter((l) => l.seq > newest);
+        return fresh.length ? [...prev, ...fresh].slice(-2000) : prev;
+      });
+    }
+  }, [logs.data]);
+
+  const visible = lines.filter((line) => {
+    if (minLevel !== "all" && (LEVEL_RANK[line.level] ?? 20) < (LEVEL_RANK[minLevel] ?? 0)) {
+      return false;
+    }
+    if (search.trim() === "") return true;
+    const needle = search.trim().toLowerCase();
+    return line.text.toLowerCase().includes(needle) || line.level.toLowerCase().includes(needle);
+  });
+
+  // Follow the newest line while Live; leave the scroll alone while paused so reading
+  // is undisturbed.
+  useEffect(() => {
+    if (!live) return;
+    const el = consoleRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [visible.length, live]);
+
+  const setLevel = useMutation({
+    mutationFn: api.setLogLevel,
+    onSuccess: (page) => setRecordLevel(page.level),
+  });
+
+  return (
+    <div className="panel">
+      <h2>Logs</h2>
+      <p className="muted">
+        What Reaper is doing right now, and the trail of what it did. Every removal decision
+        is answerable from here. The newest {count(2000)} lines are kept.
       </p>
-      <div className="add-actions">
-        <button
-          type="button"
-          className="primary"
-          disabled={saveWebUrl.isPending || webUrl.trim() === savedWebUrl}
-          onClick={() => saveWebUrl.mutate()}
+
+      <div className="logbar">
+        <input
+          type="search"
+          className="log-search"
+          placeholder="Search the log…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          aria-label="Search the log"
+        />
+        <select
+          value={minLevel}
+          onChange={(e) => setMinLevel(e.target.value)}
+          aria-label="Only show this level and up"
         >
-          {saveWebUrl.isPending ? "Saving…" : "Save"}
+          <option value="all">All levels</option>
+          <option value="DEBUG">Debug and up</option>
+          <option value="INFO">Info and up</option>
+          <option value="WARNING">Warnings and up</option>
+          <option value="ERROR">Errors only</option>
+        </select>
+        <button type="button" className={live ? "log-live on" : "log-live"} onClick={() => setLive(!live)}>
+          <span className="live-dot" aria-hidden="true" />
+          {live ? "Live · Pause" : "Paused · Resume"}
         </button>
+        <span className="muted log-count">
+          {visible.length === lines.length
+            ? `${count(lines.length)} ${lines.length === 1 ? "line" : "lines"}`
+            : `${count(visible.length)} of ${count(lines.length)} lines`}
+        </span>
       </div>
-      {webUrlError && <p className="error">{webUrlError}</p>}
+
+      {logs.isPending && lines.length === 0 ? (
+        <p className="muted">Loading the log…</p>
+      ) : logs.isError && lines.length === 0 ? (
+        <p className="notice notice-error">
+          Couldn't load the log.{" "}
+          <button className="ghost sm" onClick={() => void logs.refetch()}>
+            Try again
+          </button>
+        </p>
+      ) : (
+        <div className="log-console" ref={consoleRef} role="log" aria-label="Application log">
+          {visible.length === 0 ? (
+            <p className="muted log-empty">
+              {lines.length === 0
+                ? "Nothing yet. New lines appear here as Reaper works."
+                : "Nothing matches your search."}
+            </p>
+          ) : (
+            visible.map((line) => (
+              <div key={line.seq} className="log-row">
+                <span className="log-t">{logTime(line.ts)}</span>
+                <span className={levelClass(line.level)}>{line.level}</span>
+                <span className="log-text">{line.text}</span>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+      {logs.isError && lines.length > 0 && (
+        <p className="notice notice-error">Live updates hit an error. Retrying…</p>
+      )}
+
+      <div className="set-group log-level-group">
+        <h3>Logging</h3>
+        <div className="set-rows">
+          <div className="set-row">
+            <span className="set-label">Logging level</span>
+            <p className="help">
+              How much Reaper writes, both here and in the container output. Info is the
+              everyday setting. Debug is chatty and best while chasing a problem. Takes
+              effect immediately, no restart.
+            </p>
+            <div className="set-control">
+              <select
+                value={recordLevel ?? "INFO"}
+                disabled={setLevel.isPending || recordLevel === null}
+                aria-label="Logging level"
+                onChange={(e) => setLevel.mutate(e.target.value)}
+              >
+                <option value="DEBUG">Debug</option>
+                <option value="INFO">Info</option>
+                <option value="WARNING">Warning</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        {setLevel.error && <p className="notice notice-error">{setLevel.error.message}</p>}
+      </div>
+    </div>
+  );
+}
+
+// --- About -------------------------------------------------------------------
+
+function AboutPanel() {
+  const { data, isPending, isError } = useQuery({ queryKey: ["about"], queryFn: api.about });
+
+  return (
+    <div className="panel">
+      <h2>About</h2>
+      <p className="blurb">What's running, and where its data lives.</p>
+      {isPending && <p className="muted">Loading…</p>}
+      {isError && (
+        <p className="notice notice-error">Couldn't load this page. Reload to try again.</p>
+      )}
+      {data && (
+        <div className="set-rows">
+          <dl className="about-kv">
+            <dt>Version</dt>
+            <dd>Reaper {data.version}</dd>
+            <dt>License</dt>
+            <dd>{data.license}</dd>
+            <dt>Data folder</dt>
+            <dd>
+              <code>{data.data_dir}</code>
+            </dd>
+            <dt>Reaper's own data</dt>
+            <dd>{bytes(data.reaper_db_bytes)} · decisions, audit trail, credentials</dd>
+            <dt>Rebuildable cache</dt>
+            <dd>{bytes(data.cache_db_bytes)} · watch history, ratings, lists</dd>
+          </dl>
+        </div>
+      )}
     </div>
   );
 }
@@ -810,8 +1798,8 @@ function SecurityPanel() {
 
 // --- shell -----------------------------------------------------------------
 
-export function Settings() {
-  const [panel, setPanel] = useState<Panel>("services");
+export function Settings({ initialPanel }: { initialPanel?: Panel | undefined }) {
+  const [panel, setPanel] = useState<Panel>(initialPanel ?? "general");
   return (
     <div className="settings">
       <nav className="settings-nav" aria-label="Settings sections">
@@ -826,11 +1814,14 @@ export function Settings() {
         ))}
       </nav>
       <div className="settings-body">
+        {panel === "general" && <GeneralPanel />}
         {panel === "services" && <ServicesPanel />}
         {panel === "plex" && <PlexPanel />}
         {panel === "jobs" && <JobsPanel />}
         {panel === "notifications" && <NotificationsPanel />}
         {panel === "security" && <SecurityPanel />}
+        {panel === "logs" && <LogsPanel />}
+        {panel === "about" && <AboutPanel />}
       </div>
     </div>
   );

@@ -7,8 +7,10 @@
 // request each deletion would issue. Building a plan and dry-running it delete nothing; the
 // dry run walks every interlock and sends nothing. Executing goes through ReapConfirm, which
 // requires deletion armed on the host and the exact typed confirmation phrase before it
-// deletes. A plan built here covers the whole condemned set (capped); to reap a hand-picked
-// few, select them in the review queue and use "Reap now".
+// deletes. While deletion is off the Execute button is disabled outright, with the shortest
+// path to the switch beside it — the server would refuse anyway; the UI just stops inviting
+// a click that must fail. A plan built here covers the whole condemned set (capped); to reap
+// a hand-picked few, select them in the review queue and use "Reap now".
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -86,11 +88,25 @@ function Report({ report }: { report: RunReport }) {
   );
 }
 
-export function ReapPlan() {
+export function ReapPlan({
+  onGoToDeletion,
+  onGoToPlexSettings,
+}: {
+  /** Jump to Policy → Deletion, where the switch lives. */
+  onGoToDeletion: () => void;
+  /** Jump to Settings → Plex, where the Leaving Soon switches live. */
+  onGoToPlexSettings: () => void;
+}) {
   const queryClient = useQueryClient();
   const [run, setRun] = useState<Run | null>(null);
   const [report, setReport] = useState<RunReport | null>(null);
   const [confirming, setConfirming] = useState(false);
+
+  // The same query key the deletion toggle and the banner use, so arming updates all
+  // three in one render pass. Unknown must gate like off: a plan must not offer Execute
+  // on a safety state we could not read.
+  const safety = useQuery({ queryKey: ["safety"], queryFn: api.safety });
+  const armed = safety.data?.destructive_enabled ?? false;
 
   const plan = useMutation({
     mutationFn: () => api.createRun(),
@@ -121,7 +137,7 @@ export function ReapPlan() {
         deletion. It can be dry-run end to end. Nothing here deletes anything.
       </p>
 
-      <GracePanel />
+      <GracePanel onGoToPlexSettings={onGoToPlexSettings} />
 
       {plan.error && <p className="error">{plan.error.message}</p>}
 
@@ -137,9 +153,30 @@ export function ReapPlan() {
               {dry.isPending ? "Dry-running…" : "Dry run"}
             </button>
             {run.state === "planned" && (
-              <button className="danger" onClick={() => setConfirming(true)}>
+              <button
+                className="danger"
+                disabled={!armed}
+                title={armed ? undefined : "Turn deletion on first"}
+                onClick={() => setConfirming(true)}
+              >
                 Execute…
               </button>
+            )}
+            {run.state === "planned" && !armed && (
+              <span className="exec-note">
+                {safety.isPending ? (
+                  "Checking whether deletion is on…"
+                ) : (
+                  <>
+                    {safety.isError || !safety.data
+                      ? "Reaper couldn't confirm whether deletion is on, so this plan can't run from here."
+                      : "Deletion is off, so this plan can't run."}{" "}
+                    <button className="link" onClick={onGoToDeletion}>
+                      Turn it on in Policy → Deletion
+                    </button>
+                  </>
+                )}
+              </span>
             )}
           </div>
           {dry.error && <p className="error">{dry.error.message}</p>}

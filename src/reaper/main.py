@@ -4,20 +4,25 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import structlog
 from fastapi import FastAPI
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
-from reaper import __version__
+from reaper import __version__, logbuffer
 from reaper.api.auth import router as auth_router
 from reaper.api.fairness import router as fairness_router
 from reaper.api.grace import router as grace_router
 from reaper.api.leaving_soon import router as leaving_soon_router
-from reaper.api.middleware import AuthGuard
+from reaper.api.logs import router as logs_router
+from reaper.api.middleware import AuthGuard, parse_proxy_networks
 from reaper.api.poster import router as poster_router
 from reaper.api.routes import router
 from reaper.api.runs import router as runs_router
@@ -107,6 +112,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # process can do right now -- an install armed from the web UI must not log
         # "nothing can be deleted" on its next restart. (/api/health reads the same way.)
         safety = await app_settings.runtime_safety(session, settings)
+
+        # The stored logging level wins over the environment seed, like every other
+        # env-seeded switch -- and it applies to this very startup's remaining lines.
+        stored_level = await app_settings.get_log_level_setting(session)
+        if stored_level:
+            logbuffer.set_level(stored_level)
+
+        # The API key's digest and the trusted-proxy networks live on app.state so the
+        # middleware's hot path never touches the database. Both are refreshed by their
+        # settings routes on change; this is the boot-time load.
+        api_key = await app_settings.get_api_key(session, box)
+        app.state.api_key_digest = (
+            hashlib.sha256(api_key.encode("utf-8")).digest() if api_key else None
+        )
+        if await app_settings.proxy_trust_enabled(session):
+            app.state.trusted_proxies = parse_proxy_networks(
+                await app_settings.get_trusted_proxies(session)
+            )
+        else:
+            app.state.trusted_proxies = ()
         await session.commit()
 
     log.info(
@@ -182,6 +207,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version=__version__,
         description="Explainable media library pruning for Plex.",
         lifespan=lifespan,
+        # The stock /docs, /redoc and /openapi.json sit OUTSIDE /api, which the
+        # AuthGuard lets straight through -- so the defaults would publish the whole
+        # API description to anyone who can reach the port. They are disabled here and
+        # served signed-in-only at /api/docs and /api/openapi.json below instead.
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
     )
     app.state.settings = settings
 
@@ -191,6 +223,62 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # tells an anonymous caller nothing: no armed state, no safety note, no exact
         # version. The safety banner reads the authenticated /api/settings/safety.
         return HealthResponse(status="ok")
+
+    def openapi_with_api_key() -> dict[str, Any]:
+        """The stock schema plus the ``X-Api-Key`` security scheme, so the reference
+        UI offers an auth box whose try-it-out requests actually authenticate."""
+        if app.openapi_schema is None:
+            schema = get_openapi(
+                title=app.title,
+                version=app.version,
+                description=app.description,
+                routes=app.routes,
+            )
+            components = schema.setdefault("components", {})
+            components.setdefault("securitySchemes", {})["ApiKey"] = {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-Api-Key",
+                "description": (
+                    "The instance API key from Settings, General. Reads and writes as "
+                    "the operator, but can never turn deletion on, execute a reap, or "
+                    "change sign-in settings."
+                ),
+            }
+            schema["security"] = [{"ApiKey": []}]
+            app.openapi_schema = schema
+        return app.openapi_schema
+
+    @app.get("/api/openapi.json", include_in_schema=False)
+    async def openapi_json() -> JSONResponse:
+        # Inside /api, so the AuthGuard fronts it: a session cookie or a valid API key.
+        return JSONResponse(openapi_with_api_key())
+
+    @app.get("/api/docs", include_in_schema=False)
+    async def api_docs() -> HTMLResponse:
+        # The API reference, rendered by a Scalar bundle the frontend build vendors to
+        # /vendor/scalar.js -- shipped in the container, no CDN, works offline. Signed-in
+        # only, exactly like the schema it renders.
+        return HTMLResponse(
+            "<!doctype html>\n"
+            "<html>\n"
+            "<head>\n"
+            '  <meta charset="utf-8" />\n'
+            "  <title>Reaper API</title>\n"
+            '  <meta name="viewport" content="width=device-width, initial-scale=1" />\n'
+            "</head>\n"
+            "<body>\n"
+            '  <div id="app"></div>\n'
+            '  <script src="/vendor/scalar.js"></script>\n'
+            "  <script>\n"
+            "    Scalar.createApiReference('#app', {\n"
+            "      url: '/api/openapi.json',\n"
+            "      hideClientButton: true,\n"
+            "    });\n"
+            "  </script>\n"
+            "</body>\n"
+            "</html>\n"
+        )
 
     app.include_router(auth_router)
     app.include_router(setup_router)
@@ -203,6 +291,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(fairness_router)
     app.include_router(grace_router)
     app.include_router(leaving_soon_router)
+    app.include_router(logs_router)
 
     # The gate. Every /api route above requires a session and passes a CSRF check,
     # except the health probe and /api/auth (you cannot sign in if signing in needs

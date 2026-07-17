@@ -48,12 +48,13 @@ function season(
     reason: null,
     spared: false,
     override: null,
+    override_effective: null,
     chip,
     season_number: n,
     group_seasons: [
-      { season: 1, verdict: "protect", override: null, size_bytes: 1024 ** 3 },
-      { season: 2, verdict: "condemn", override: null, size_bytes: 1024 ** 3 },
-      { season: 3, verdict: "abstain", override: null, size_bytes: 1024 ** 3 },
+      { season: 1, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+      { season: 2, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+      { season: 3, verdict: "abstain", override: null, override_effective: null, size_bytes: 1024 ** 3 },
     ],
   };
 }

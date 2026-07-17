@@ -22,7 +22,7 @@ from reaper.config import RuntimeSafety
 from reaper.services.plex_link import (
     PlexLinkError,
     PlexLinkRetryableError,
-    _reachable,
+    reachable_connection,
 )
 
 READ_ONLY = RuntimeSafety(destructive_enabled=False)
@@ -245,9 +245,9 @@ class TestReachableProbeIsRetryable:
     """A server unreachable *right now* is a transient failure, not a spent PIN.
 
     ``poll_link`` consumed the pending PIN in a blanket ``finally``, so a probe that failed
-    because the server was mid-restart forced the owner through a fresh OAuth flow despite a
-    successful sign-in. ``_reachable`` now raises the retryable subclass so ``poll_link`` can
-    leave the PIN intact.
+    because the server was mid-restart forced the owner through a fresh OAuth flow despite
+    a successful sign-in. ``reachable_connection`` now raises the retryable subclass so
+    ``poll_link`` can leave the PIN intact.
     """
 
     def test_retryable_is_a_plexlinkerror_subclass(self) -> None:
@@ -264,7 +264,7 @@ class TestReachableProbeIsRetryable:
             return False
 
         # Both the imported name and the source symbol, so the patch holds regardless of how
-        # _reachable references it.
+        # reachable_connection references it.
         monkeypatch.setattr(plex_link_module, "probe_connection", _never_reachable)
         monkeypatch.setattr(plextv_module, "probe_connection", _never_reachable)
 
@@ -287,4 +287,4 @@ class TestReachableProbeIsRetryable:
         )
 
         with pytest.raises(PlexLinkRetryableError):
-            await _reachable(resource, "tok")
+            await reachable_connection(resource, "tok")

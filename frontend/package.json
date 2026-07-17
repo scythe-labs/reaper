@@ -5,7 +5,9 @@
   "type": "module",
   "license": "AGPL-3.0-or-later",
   "scripts": {
+    "predev": "node scripts/copy-scalar.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/copy-scalar.mjs",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
@@ -19,6 +21,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@scalar/api-reference": "^1.62.9",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

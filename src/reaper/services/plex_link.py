@@ -39,6 +39,7 @@ from reaper.clock import expiry, utcnow
 from reaper.config import RuntimeSafety
 from reaper.crypto import SecretBox
 from reaper.db.models import AppSetting, PendingPlexLogin, PlexServer
+from reaper.services import app_settings
 
 log = structlog.get_logger(__name__)
 
@@ -128,7 +129,9 @@ class LinkedServer:
     relay: bool
 
 
-async def _reachable(resource: PlexResource, token: str, *, verify: bool = True) -> PlexConnection:
+async def reachable_connection(
+    resource: PlexResource, token: str, *, verify: bool = True
+) -> PlexConnection:
     """Probe every connection and take the best one that answers.
 
     Ordered local/https, then local/http, then remote, then **relay last**: the relay is
@@ -272,18 +275,30 @@ async def complete_link(
         )
     else:
         resource = owned[0]
-    connection = await _reachable(resource, resource.access_token or token, verify=verify_tls)
+    connection = await reachable_connection(
+        resource, resource.access_token or token, verify=verify_tls
+    )
     token_enc = box.encrypt(resource.access_token or token)
 
     # -- brief DB touch: persist the linked server -------------------------
     async with session_factory() as session:
-        existing = (
-            await session.execute(
-                select(PlexServer).where(
-                    PlexServer.machine_identifier == resource.client_identifier
-                )
-            )
-        ).scalar_one_or_none()
+        rows = list((await session.execute(select(PlexServer))).scalars().all())
+        existing = next(
+            (r for r in rows if r.machine_identifier == resource.client_identifier), None
+        )
+        # One linked server is the invariant every reader (`select(PlexServer).first()`)
+        # relies on. Re-linking a DIFFERENT server must replace, never accumulate: two
+        # rows would make "the" server an arbitrary pick -- exactly the ambiguity a
+        # deletion tool cannot carry.
+        others = [r for r in rows if r is not existing]
+        for other in others:
+            await session.delete(other)
+        if others:
+            # The linked server changed, so everything keyed to the old server's
+            # rating keys and section ids is meaningless now: the library choices and
+            # the announced set start over.
+            await app_settings.set_plex_libraries(session, [])
+            await app_settings.set_leaving_soon_announced(session, set())
 
         row = existing or PlexServer(
             machine_identifier=resource.client_identifier,
@@ -315,6 +330,50 @@ async def complete_link(
         connection_uri=connection.uri,
         local=connection.local,
         relay=connection.relay,
+    )
+
+
+async def switch_server(
+    session_factory: async_sessionmaker[AsyncSession],
+    box: SecretBox,
+    *,
+    machine_identifier: str,
+    safety: RuntimeSafety,
+) -> LinkedServer:
+    """Point Reaper at a different server the same account owns, without a fresh OAuth.
+
+    The stored token is the account credential (see the module docstring), so plex.tv can
+    be asked which servers it owns right now; the choice is resolved against that OWNED
+    list and nothing else, exactly like the link flow. Reuses :func:`complete_link`, so
+    the probe, the single-row invariant, and the stale-state clearing cannot drift from
+    the OAuth path.
+    """
+    async with session_factory() as session:
+        row = (await session.execute(select(PlexServer))).scalars().first()
+        if row is None:
+            raise PlexLinkError("No Plex server is linked yet. Link one first.")
+        token = box.decrypt(row.token_enc)
+        cid = await client_identifier(session)
+        verify_tls = row.verify_tls
+        await session.commit()
+
+    async with PlexTvClient(cid, safety=safety) as plextv:
+        try:
+            account = await plextv.account(token)
+            owned = await plextv.owned_servers(token)
+        except IntegrationError as exc:
+            raise PlexLinkRetryableError(
+                f"Could not ask plex.tv which servers this account owns: {exc}"
+            ) from exc
+
+    return await complete_link(
+        session_factory,
+        box,
+        token=token,
+        account=account,
+        owned=owned,
+        choice=machine_identifier,
+        verify_tls=verify_tls,
     )
 
 

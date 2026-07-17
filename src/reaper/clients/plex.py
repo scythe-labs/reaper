@@ -37,7 +37,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 from xml.etree.ElementTree import Element
 
 import requests
@@ -155,10 +155,10 @@ class PlexError(RuntimeError):
 
 _declared: ContextVar[bool] = ContextVar("reaper_plex_mutation_declared", default=False)
 
-#: Marks the enclosed writes as the "Leaving Soon" label reconcile -- a reversible
-#: mutation that touches no files. Distinct from ``_declared`` so the two paths cannot be
-#: confused: a deletion is armed + journalled; a label write is armed OR host-opted-in.
-_benign_label: ContextVar[bool] = ContextVar("reaper_plex_benign_label", default=False)
+#: Marks the enclosed writes as the "Leaving Soon" shelf reconcile -- reversible
+#: mutations that touch no files. Distinct from ``_declared`` so the two paths cannot be
+#: confused: a deletion is armed + journalled; a shelf write is armed OR opted-in.
+_benign_shelf: ContextVar[bool] = ContextVar("reaper_plex_benign_shelf", default=False)
 
 
 @contextlib.contextmanager
@@ -177,23 +177,26 @@ def declared_mutation() -> Iterator[None]:
 
 
 @contextlib.contextmanager
-def benign_label_write() -> Iterator[None]:
-    """Mark the enclosed writes as the "Leaving Soon" label reconcile.
+def benign_shelf_write() -> Iterator[None]:
+    """Mark the enclosed writes as the "Leaving Soon" shelf reconcile.
 
     Set **only** by the Leaving Soon sync path, exactly as ``declared_mutation`` is set
     only by the executor -- the narrowness is what keeps this from becoming a general
     licence to write. It tells :class:`GuardedSession` the write is the reversible,
-    file-touching-nothing label rather than a deletion, so it may be permitted in
-    read-only mode *if the operator opted in on the host*. It never permits a delete,
-    and that is enforced structurally, not by call-site discipline: the benign branch
-    matches only a PUT to the batch label-edit endpoint (``_LABEL_EDIT``); any other
-    verb or path inside this block falls back to the armed-and-declared rule.
+    file-touching-nothing shelf (the label batch edit and the collection edits) rather
+    than a deletion, so it may be permitted in read-only mode *if the operator turned on
+    "Update while read-only" in Settings -> Plex*. It never permits a delete, and that is
+    enforced structurally, not by call-site discipline: the benign branch matches only
+    the exact shapes in ``_benign_shape``; any other verb or path inside this block
+    falls back to the armed-and-declared rule. In particular ``DELETE
+    /library/metadata/{key}`` -- the request that removes an item AND its files on a
+    server allowing media deletion -- matches no benign shape and never can.
     """
-    token = _benign_label.set(True)
+    token = _benign_shelf.set(True)
     try:
         yield
     finally:
-        _benign_label.reset(token)
+        _benign_shelf.reset(token)
 
 
 #: GET-shaped mutations. Plex triggers a section scan with ``GET
@@ -204,9 +207,35 @@ def benign_label_write() -> Iterator[None]:
 #: these paths as mutations regardless of verb.
 _GET_SHAPED_MUTATIONS = re.compile(r"^/library/sections/[^/]+/refresh$")
 
-#: The one write shape ``benign_label_write`` may permit: plexapi's batch label edit,
-#: a PUT to ``/library/sections/{key}/all``.
+#: The write shapes ``benign_shelf_write`` may permit, each matched by exact method AND
+#: path so the benign branch can never widen:
+#:
+#: * the batch label edit -- ``PUT /library/sections/{key}/all``;
+#: * creating a collection -- ``POST /library/collections``;
+#: * adding items to one -- ``PUT /library/collections/{key}/items``;
+#: * removing one item from one -- ``DELETE /library/collections/{key}/children/{key}``.
+#:
+#: Removing the last item deletes the collection on the server side, so an empty shelf
+#: disappears without ever issuing ``DELETE /library/metadata/{key}`` -- the shape that
+#: deletes an item (and, on a permissive server, its files), which is deliberately NOT
+#: on this list and must never be added to it.
 _LABEL_EDIT = re.compile(r"^/library/sections/[^/]+/all$")
+_COLLECTION_CREATE = re.compile(r"^/library/collections$")
+_COLLECTION_ADD = re.compile(r"^/library/collections/[^/]+/items$")
+_COLLECTION_REMOVE = re.compile(r"^/library/collections/[^/]+/children/[^/]+$")
+
+
+def _benign_shape(method: str, path: str) -> bool:
+    """Whether this request is one of the exact shelf-write shapes. Anything else --
+    any other verb, any other path -- is not benign, whatever context it runs in."""
+    verb = method.upper()
+    if verb == "PUT":
+        return bool(_LABEL_EDIT.match(path)) or bool(_COLLECTION_ADD.match(path))
+    if verb == "POST":
+        return bool(_COLLECTION_CREATE.match(path))
+    if verb == "DELETE":
+        return bool(_COLLECTION_REMOVE.match(path))
+    return False
 
 
 class GuardedSession(requests.Session):
@@ -224,23 +253,20 @@ class GuardedSession(requests.Session):
         path = urlsplit(url).path
         mutates = method.upper() not in SAFE_METHODS or bool(_GET_SHAPED_MUTATIONS.match(path))
         if mutates:
-            if (
-                _benign_label.get()
-                and method.upper() == "PUT"
-                and _LABEL_EDIT.match(path) is not None
-            ):
-                # The "Leaving Soon" label reconcile: reversible, touches no file, and
-                # structurally confined to the batch label-edit endpoint. Gated like a
-                # delete by default (needs arming); an operator may opt in to allowing
-                # it while read-only so the grace-period warning can appear before
-                # deletion is ever enabled. This branch can NEVER permit a deletion:
-                # a DELETE, or a PUT to any other path, does not match it and falls
-                # through to the armed-and-declared rule below.
+            if _benign_shelf.get() and _benign_shape(method, path):
+                # The "Leaving Soon" shelf reconcile: reversible, touches no file, and
+                # structurally confined to the label batch edit and the collection
+                # edits (see _benign_shape). Gated like a delete by default (needs
+                # arming); an operator may opt in to allowing it while read-only so the
+                # grace-period warning can appear before deletion is ever enabled. This
+                # branch can NEVER permit a deletion: a verb+path outside _benign_shape
+                # does not match it and falls through to the armed-and-declared rule.
                 if not self._safety.leaving_soon_write_allowed:
                     raise SafetyViolationError(
-                        f"Blocked {method} to Plex (Leaving Soon label). Enable deletion, "
-                        "or set REAPER_ALLOW_UNARMED_LEAVING_SOON=true on the host to allow "
-                        "this benign, reversible label write while read-only."
+                        f"Blocked {method} to Plex (Leaving Soon shelf). Turn deletion "
+                        'on, or turn on "Update while read-only" under Settings, Plex, '
+                        "Leaving Soon to allow this reversible shelf write while "
+                        "Reaper is read-only."
                     )
             elif not self._safety.destructive_allowed:
                 raise SafetyViolationError(
@@ -263,6 +289,22 @@ def normalise_label(tag: str) -> str:
     every comparison goes through here.
     """
     return tag.strip().casefold()
+
+
+@dataclass(frozen=True)
+class PlexSection:
+    """One video library, as the pickers and the Leaving Soon reconcile see it."""
+
+    key: int
+    title: str
+    kind: str
+    """``"movie"`` or ``"show"`` -- Plex's own section types. Music and photo sections
+    are never surfaced: Reaper has no business in them."""
+
+
+#: Plex's numeric metadata types, for listing and collection creation. Only the two the
+#: shelf works on: movies in movie sections, seasons in show sections.
+_PLEX_TYPE_CODES = {"movie": 1, "season": 3}
 
 
 @dataclass(frozen=True)
@@ -563,37 +605,135 @@ class PlexClient:
             log.warning("plex.refresh_state_unreadable", section=section_title, error=str(exc))
             return True
 
-    async def movie_section_titles(self) -> list[str]:
-        """The titles of the movie libraries. Leaving Soon operates on movies (the reap
-        loop is movies-first), so this is where its label lives. A read."""
-        server = await self._connect()
+    async def labelled_in_section(self, section_key: int, *, kind: str, label: str) -> set[int]:
+        """The rating keys in one section carrying ``label``, at the level the shelf
+        works on: movies in a movie section, seasons in a show section.
 
-        def read() -> list[str]:
-            return [s.title for s in server.library.sections() if s.type == "movie"]
-
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(f"Could not list Plex movie sections: {exc}") from exc
-
-    async def items_with_label(self, section_title: str, label: str) -> set[int]:
-        """The rating keys in a section currently carrying ``label``.
-
-        A read (``section.search`` is a GET), so it works in read-only mode -- which is
-        what makes the "Leaving Soon" reconcile computable without arming anything: you can
-        see what is marked and what *would* change before any write is permitted. Matched
-        the way Plex stored it; the search term is the label's display form.
+        A raw container read rather than ``section.search`` so a show section filters at
+        the season level (``type=3``): the object walk searches shows by default, and a
+        label sitting on a season would be invisible to it -- which would re-add the
+        label forever. GETs only.
         """
+        code = _PLEX_TYPE_CODES["movie" if kind == "movie" else "season"]
         server = await self._connect()
 
         def read() -> set[int]:
-            section = server.library.section(section_title)
-            return {int(item.ratingKey) for item in section.search(label=label)}
+            keys: set[int] = set()
+            start = 0
+            while True:
+                container = server.query(  # type: ignore[no-untyped-call]
+                    f"/library/sections/{section_key}/all?type={code}"
+                    f"&label={quote(label)}"
+                    f"&X-Plex-Container-Start={start}&X-Plex-Container-Size={SWEEP_PAGE_SIZE}"
+                )
+                elements = [el for el in container if el.get("ratingKey")]
+                keys.update(int(el.get("ratingKey") or 0) for el in elements)
+                start += len(elements)
+                total = int(container.get("totalSize") or container.get("size") or 0)
+                if not elements or len(elements) < SWEEP_PAGE_SIZE or (total and start >= total):
+                    break
+            return keys
 
         try:
             return await asyncio.to_thread(read)
         except Exception as exc:
-            raise PlexError(f"Could not read items labelled {label!r}: {exc}") from exc
+            raise PlexError(
+                f"Could not read items labelled {label!r} in section {section_key}: {exc}"
+            ) from exc
+
+    async def video_sections(self) -> list[PlexSection]:
+        """Every movie and show library on the server, for the library picker.
+
+        A read. Music, photo and other section types are filtered out here, not in the
+        UI: Reaper has no feature that touches them, so they are never even offered.
+        """
+        server = await self._connect()
+
+        def read() -> list[PlexSection]:
+            return [
+                PlexSection(key=int(s.key), title=str(s.title), kind=str(s.type))
+                for s in server.library.sections()
+                if s.type in ("movie", "show")
+            ]
+
+        try:
+            return await asyncio.to_thread(read)
+        except Exception as exc:
+            raise PlexError(f"Could not list Plex libraries: {exc}") from exc
+
+    async def section_rating_keys(self, section_key: int, *, kind: str) -> set[int]:
+        """Every rating key in one section, at the level the shelf works on: movies in a
+        movie section (``type=1``), seasons in a show section (``type=3``).
+
+        This is what scopes the reconcile per library: the grace list's rating keys are
+        intersected with this set, so an item is only ever marked in the section it
+        actually lives in. A read, paged like the GUID sweep.
+        """
+        code = _PLEX_TYPE_CODES["movie" if kind == "movie" else "season"]
+        server = await self._connect()
+
+        def read() -> set[int]:
+            keys: set[int] = set()
+            start = 0
+            while True:
+                container = server.query(  # type: ignore[no-untyped-call]
+                    f"/library/sections/{section_key}/all?type={code}"
+                    f"&X-Plex-Container-Start={start}&X-Plex-Container-Size={SWEEP_PAGE_SIZE}"
+                )
+                elements = [el for el in container if el.get("ratingKey")]
+                keys.update(int(el.get("ratingKey") or 0) for el in elements)
+                start += len(elements)
+                total = int(container.get("totalSize") or container.get("size") or 0)
+                if not elements or len(elements) < SWEEP_PAGE_SIZE or (total and start >= total):
+                    break
+            return keys
+
+        try:
+            return await asyncio.to_thread(read)
+        except Exception as exc:
+            raise PlexError(f"Could not list section {section_key}: {exc}") from exc
+
+    async def find_collection(self, section_key: int, name: str) -> int | None:
+        """The rating key of the collection called ``name`` in one section, or ``None``.
+
+        Matched casefolded, because Plex title-cases tags and titles on the way in. A
+        read.
+        """
+        server = await self._connect()
+        wanted = normalise_label(name)
+
+        def read() -> int | None:
+            container = server.query(  # type: ignore[no-untyped-call]
+                f"/library/sections/{section_key}/collections"
+            )
+            for el in container:
+                title = str(el.get("title") or "")
+                key = el.get("ratingKey")
+                if key and normalise_label(title) == wanted:
+                    return int(key)
+            return None
+
+        try:
+            return await asyncio.to_thread(read)
+        except Exception as exc:
+            raise PlexError(
+                f"Could not look for the {name!r} collection in section {section_key}: {exc}"
+            ) from exc
+
+    async def collection_children(self, collection_key: int) -> set[int]:
+        """The rating keys currently on one collection. A read."""
+        server = await self._connect()
+
+        def read() -> set[int]:
+            container = server.query(  # type: ignore[no-untyped-call]
+                f"/library/collections/{collection_key}/children"
+            )
+            return {int(el.get("ratingKey") or 0) for el in container if el.get("ratingKey")}
+
+        try:
+            return await asyncio.to_thread(read)
+        except Exception as exc:
+            raise PlexError(f"Could not read collection {collection_key}: {exc}") from exc
 
     # -- writing -----------------------------------------------------------
     #
@@ -663,6 +803,115 @@ class PlexClient:
             raise
         except Exception as exc:
             raise PlexError(f"Could not remove label {label!r}: {exc}") from exc
+
+    @staticmethod
+    def _metadata_uri(machine_identifier: str, rating_keys: list[int]) -> str:
+        """The ``server://`` URI form Plex's collection endpoints take items in."""
+        ids = ",".join(str(k) for k in rating_keys)
+        return f"server://{machine_identifier}/com.plexapp.plugins.library/library/metadata/{ids}"
+
+    async def create_collection(
+        self, section_key: int, *, kind: str, name: str, rating_keys: list[int]
+    ) -> int | None:
+        """Create a collection holding ``rating_keys`` and return its rating key.
+
+        The write behind the first shelf in a library. ``POST /library/collections`` --
+        one of the exact shapes ``benign_shelf_write`` permits, so it is writable while
+        read-only only when the operator opted in. Creating with the items inline (the
+        ``uri`` form plexapi itself uses) rather than create-then-add, because Plex
+        refuses an empty collection. Items beyond the first batch are added by the
+        caller through :meth:`add_to_collection`.
+        """
+        if not rating_keys:
+            return None
+        code = _PLEX_TYPE_CODES["movie" if kind == "movie" else "season"]
+        server = await self._connect()
+        first = rating_keys[:BATCH_SIZE]
+
+        def write() -> int | None:
+            params = urlencode(
+                {
+                    "type": code,
+                    "title": name,
+                    "smart": 0,
+                    "sectionId": section_key,
+                    "uri": self._metadata_uri(str(server.machineIdentifier), first),
+                }
+            )
+            container = server.query(  # type: ignore[no-untyped-call]
+                f"/library/collections?{params}", method=server._session.post
+            )
+            for el in container if container is not None else []:
+                key = el.get("ratingKey")
+                if key:
+                    return int(key)
+            return None
+
+        try:
+            created = await asyncio.to_thread(write)
+        except SafetyViolationError:
+            raise
+        except Exception as exc:
+            raise PlexError(f"Could not create the {name!r} collection: {exc}") from exc
+
+        if created is not None and len(rating_keys) > BATCH_SIZE:
+            await self.add_to_collection(created, rating_keys[BATCH_SIZE:])
+        return created
+
+    async def add_to_collection(self, collection_key: int, rating_keys: list[int]) -> None:
+        """Put items on an existing collection, in batches.
+
+        ``PUT /library/collections/{key}/items`` -- a benign shelf shape. Items already
+        on the collection are left as they are by Plex, so re-adding is harmless.
+        """
+        if not rating_keys:
+            return
+        server = await self._connect()
+
+        def write() -> None:
+            machine = str(server.machineIdentifier)
+            for start in range(0, len(rating_keys), BATCH_SIZE):
+                chunk = rating_keys[start : start + BATCH_SIZE]
+                params = urlencode({"uri": self._metadata_uri(machine, chunk)})
+                server.query(  # type: ignore[no-untyped-call]
+                    f"/library/collections/{collection_key}/items?{params}",
+                    method=server._session.put,
+                )
+
+        try:
+            await asyncio.to_thread(write)
+        except SafetyViolationError:
+            raise
+        except Exception as exc:
+            raise PlexError(f"Could not add items to collection {collection_key}: {exc}") from exc
+
+    async def remove_from_collection(self, collection_key: int, rating_keys: list[int]) -> None:
+        """Take items off a collection, one request per item (the only shape Plex has).
+
+        ``DELETE /library/collections/{key}/children/{ratingKey}`` -- a benign shelf
+        shape: it detaches the item from the collection and touches nothing else.
+        Removing the last item deletes the collection itself on the server side, which
+        is exactly how an empty shelf disappears rather than lingering as a dead row.
+        """
+        if not rating_keys:
+            return
+        server = await self._connect()
+
+        def write() -> None:
+            for key in rating_keys:
+                server.query(  # type: ignore[no-untyped-call]
+                    f"/library/collections/{collection_key}/children/{key}",
+                    method=server._session.delete,
+                )
+
+        try:
+            await asyncio.to_thread(write)
+        except SafetyViolationError:
+            raise
+        except Exception as exc:
+            raise PlexError(
+                f"Could not remove items from collection {collection_key}: {exc}"
+            ) from exc
 
     async def refresh_path(self, section_title: str, path: str) -> None:
         """Rescan **one directory**, not the whole section.

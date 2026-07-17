@@ -11,7 +11,7 @@
 // exists; it is shown so the countdown is honest, not so anything fires on its own.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type GraceItem } from "../api";
+import { api, type GraceItem, type LeavingSoonResult } from "../api";
 import { bytes, count } from "../format";
 
 function ItemRow({ item, onCancel, pending }: { item: GraceItem; onCancel: () => void; pending: boolean }) {
@@ -29,9 +29,47 @@ function ItemRow({ item, onCancel, pending }: { item: GraceItem; onCancel: () =>
   );
 }
 
-export function GracePanel() {
+/** The one line that reports what an update pass did, honestly: what changed, whether
+ *  the writes landed, and where to allow them when they didn't. */
+function UpdateResult({
+  result,
+  onGoToPlexSettings,
+}: {
+  result: LeavingSoonResult;
+  onGoToPlexSettings: () => void;
+}) {
+  if (!result.applied) {
+    return (
+      <span className="muted">
+        {count(result.added_count)} to add, {count(result.cleared_count)} to clear · preview
+        only. Reaper is read-only, so nothing is written in Plex.{" "}
+        <button className="link" onClick={onGoToPlexSettings}>
+          Allow updates while read-only in Settings → Plex
+        </button>
+        , or turn deletion on.
+      </span>
+    );
+  }
+  return (
+    <span className="muted">
+      {count(result.added_count)} added, {count(result.cleared_count)} cleared · shelves
+      updated in Plex{result.notified && " · Discord notified"}. Updates on its own after
+      every scan.
+    </span>
+  );
+}
+
+export function GracePanel({ onGoToPlexSettings }: { onGoToPlexSettings: () => void }) {
   const queryClient = useQueryClient();
   const { data, isPending, isError } = useQuery({ queryKey: ["grace"], queryFn: api.grace });
+
+  // Which of the three bar states to show: off (with the way to turn it on), or the
+  // update button. The settings are read fresh here so flipping the switch in Settings
+  // is reflected the next time this panel renders.
+  const settings = useQuery({
+    queryKey: ["leaving-soon-settings"],
+    queryFn: api.leavingSoonSettings,
+  });
 
   const cancel = useMutation({
     mutationFn: (mediaKey: string) => api.spare(mediaKey),
@@ -43,7 +81,10 @@ export function GracePanel() {
     },
   });
 
-  const mark = useMutation({ mutationFn: api.syncLeavingSoon });
+  const mark = useMutation({
+    mutationFn: api.syncLeavingSoon,
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["leaving-soon-settings"] }),
+  });
 
   if (isPending) return <p className="muted">Loading…</p>;
   // An unreadable grace list must never look like an empty one: items may be counting
@@ -84,17 +125,34 @@ export function GracePanel() {
       </p>
 
       <div className="leaving-soon-bar">
-        <button disabled={mark.isPending} onClick={() => mark.mutate()}>
-          {mark.isPending ? "Marking…" : "Mark “Leaving Soon” in Plex"}
-        </button>
-        {mark.data && (
+        {settings.isPending ? (
+          <span className="muted">Checking the Leaving Soon settings…</span>
+        ) : settings.isError || !settings.data ? (
           <span className="muted">
-            {mark.data.to_add_count} to mark, {mark.data.to_remove_count} to clear
-            {mark.data.notified && " · Discord notified"}
-            {mark.data.applied
-              ? " · label written in Plex"
-              : " · preview only (enable deletion, or set REAPER_ALLOW_UNARMED_LEAVING_SOON)"}
+            Couldn't check the Leaving Soon settings. The countdown above is unaffected.
           </span>
+        ) : !settings.data.enabled ? (
+          <span className="muted">
+            Leaving Soon in Plex is off, so nobody browsing your libraries gets a warning
+            there.{" "}
+            <button className="link" onClick={onGoToPlexSettings}>
+              Turn it on in Settings → Plex.
+            </button>
+          </span>
+        ) : (
+          <>
+            <button disabled={mark.isPending} onClick={() => mark.mutate()}>
+              {mark.isPending ? "Updating…" : "Update “Leaving Soon” now"}
+            </button>
+            {mark.data ? (
+              <UpdateResult result={mark.data} onGoToPlexSettings={onGoToPlexSettings} />
+            ) : (
+              <span className="muted">Updates on its own after every scan.</span>
+            )}
+          </>
+        )}
+        {mark.data && mark.data.problems.length > 0 && (
+          <span className="ls-problems">{mark.data.problems.join(" · ")}</span>
         )}
         {mark.error && <span className="error">{mark.error.message}</span>}
       </div>

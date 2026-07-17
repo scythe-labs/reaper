@@ -114,6 +114,95 @@
   }
 }
 
+/* Forced themes: the Settings → General choice, stamped on <html> as data-theme by
+   index.html before first paint. Each block must mirror its token set above EXACTLY --
+   the attribute selector outranks the media query in both directions, which is what
+   lets "Light" win on a dark device and "Dark" win on a light one. "Match my device"
+   stores nothing, so the media query above decides as always. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #0e0f13;
+  --surface: #191b21;
+  --surface-2: #22242c;
+  --hover: #23252d;
+  --border: #2b2e37;
+  --border-strong: #3a3e49;
+  --text: #edeef1;
+  --muted: #9ba1af;
+  --faint: #6b7180;
+
+  --condemn: #ff8086;
+  --condemn-soft: #2c1618;
+  --protect: #5fce97;
+  --protect-soft: #12241b;
+  --abstain: #9ba1af;
+  --unknown: #e0a33f;
+  --unknown-soft: #2a2013;
+
+  --accent: #818cf8;
+  --accent-hover: #a5aefb;
+  --accent-soft: #1e1f3a;
+  --accent-ring: rgba(129, 140, 248, 0.4);
+  --accent-ink: #10122b;
+
+  --plex: #e5a00d;
+  --plex-hover: #f2ad1f;
+  --plex-ink: #241a02;
+
+  --media-movie: #4fd0c0;
+  --media-movie-soft: #10312c;
+
+  --imdb: #f5c518;
+  --imdb-ink: #241d02;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55), 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg: #f4f5f8;
+  --surface: #ffffff;
+  --surface-2: #eef0f4;
+  --hover: #f0f2f6;
+  --border: #e4e6ec;
+  --border-strong: #d3d6df;
+  --text: #16181d;
+  --muted: #666b78;
+  --faint: #9aa0ad;
+
+  --condemn: #c62630;
+  --condemn-soft: #fdecec;
+  --protect: #167c4d;
+  --protect-soft: #e6f6ec;
+  --abstain: #666b78;
+  --unknown: #9a6212;
+  --unknown-soft: #fcf3e1;
+
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft: #eae9fd;
+  --accent-ring: rgba(79, 70, 229, 0.35);
+  --accent-ink: #fff;
+
+  --plex: #e5a00d;
+  --plex-hover: #f2ad1f;
+  --plex-ink: #241a02;
+
+  --media-movie: #0b6b63;
+  --media-movie-soft: #dcf3f0;
+
+  --imdb: #f5c518;
+  --imdb-ink: #241d02;
+
+  --shadow-sm: 0 1px 2px rgba(16, 18, 27, 0.06), 0 1px 3px rgba(16, 18, 27, 0.05);
+  --shadow-md: 0 2px 6px rgba(16, 18, 27, 0.07), 0 8px 24px rgba(16, 18, 27, 0.07);
+  --shadow-lg: 0 12px 40px rgba(16, 18, 27, 0.16), 0 4px 12px rgba(16, 18, 27, 0.1);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -2116,6 +2205,13 @@ a.rating-chip:hover {
   font-size: 1.05rem;
   letter-spacing: 0.03em;
 }
+/* The one-line reason Execute is disabled, with the shortest path to the switch. Takes
+   the full row under the plan summary's controls. */
+.exec-note {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
 
 .plan-steps {
   margin-top: 1rem;
@@ -2199,6 +2295,13 @@ details.grace summary {
   flex-wrap: wrap;
   margin: 0.5rem 0;
   font-size: 0.85rem;
+}
+/* Per-library failures from an update pass: amber (the "could not look" tone), not
+   red -- the pass continued and the healthy libraries are up to date. */
+.ls-problems {
+  flex-basis: 100%;
+  color: var(--unknown);
+  font-size: 0.82rem;
 }
 
 /* Fairness view */
@@ -2730,6 +2833,21 @@ button.sm {
   background: var(--condemn-soft);
   color: var(--condemn);
 }
+/* Hand decisions wear SOLID chips: outlined chips are Reaper's verdicts, filled ones
+   are yours. The refused-reap case stays amber (chip-reap-refused): the ask is noted,
+   the file is still held, and the text says why. */
+.chip-hand-reap {
+  background: var(--condemn);
+  color: var(--condemn-soft);
+}
+.chip-hand-spare {
+  background: var(--protect);
+  color: var(--protect-soft);
+}
+.chip-reap-refused {
+  background: var(--unknown-soft);
+  color: var(--unknown);
+}
 
 /* The file's resolution, worn next to the size. Quiet by design: it informs a keep/reap
    call ("that's our only 4K copy") without competing with the verdict colours. */
@@ -2804,6 +2922,16 @@ button.sm {
   color: var(--condemn);
   background: var(--condemn-soft);
 }
+/* Hand decisions read SOLID here too, mirroring the card chips: outlined pills are
+   Reaper's verdicts, filled pills are yours. */
+.status-hand-reap {
+  color: var(--condemn-soft);
+  background: var(--condemn);
+}
+.status-hand-spare {
+  color: var(--protect-soft);
+  background: var(--protect);
+}
 
 /* The season strip: one square per season of the show, colored by its lane across the
    WHOLE snapshot -- kept and condemned side by side without expanding anything. A hand
@@ -2838,11 +2966,18 @@ button.sm {
   color: var(--muted);
   background: var(--surface-2);
 }
+/* A hand override paints the square SOLID -- "you chose this" reads at a glance next
+   to the outlined scan verdicts. A reap that the engine refuses (someone streaming,
+   an unmanaged file) never gets the solid fill; the square keeps its scan color. */
 .strip-ov-spare {
-  box-shadow: inset 0 0 0 1.5px var(--protect);
+  color: var(--protect-soft);
+  background: var(--protect);
+  box-shadow: none;
 }
 .strip-ov-reap {
-  box-shadow: inset 0 0 0 1.5px var(--condemn);
+  color: var(--condemn-soft);
+  background: var(--condemn);
+  box-shadow: none;
 }
 
 /* --- hand overrides: the paired Spare / Reap toggle ---------------------------------------- */
@@ -3193,8 +3328,10 @@ button.sm {
   font-weight: 600;
 }
 
+/* Settings panels fill the page frame like every other page; the row grid keeps labels
+   readable on the left and controls on the right however wide the card runs. */
 .panel {
-  max-width: 760px;
+  max-width: none;
 }
 .panel h2 {
   font-size: 1.15rem;
@@ -3205,7 +3342,7 @@ button.sm {
 
 /* services: one section per kind, a grid of compact cards, add/edit in a modal */
 .panel-wide {
-  max-width: 1040px;
+  max-width: none;
 }
 .service-section {
   margin-bottom: 1.6rem;
@@ -3535,6 +3672,402 @@ button.danger:hover:not(:disabled) {
   flex-wrap: wrap;
 }
 .safety-row .help { margin-top: 0.2rem; max-width: 46ch; }
+
+/* ==========================================================================
+   The settings standard: switches and rows
+   ==========================================================================
+   Every on/off STATE renders as .switch; checkboxes remain only for picking items
+   from a list. .set-rows / .set-row is the standard settings layout: name on the
+   left, help under it, control on the right. */
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex: none;
+}
+.switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.switch .slider {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  pointer-events: none;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+.switch .slider::before {
+  content: "";
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  left: 2px;
+  top: 2px;
+  background: var(--muted);
+  transition:
+    transform 0.15s,
+    background 0.15s;
+}
+.switch input:checked + .slider {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.switch input:checked + .slider::before {
+  transform: translateX(18px);
+  background: var(--accent-ink);
+}
+.switch input:focus-visible + .slider {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.switch input:disabled {
+  cursor: not-allowed;
+}
+.switch input:disabled + .slider {
+  opacity: 0.5;
+}
+@media (prefers-reduced-motion: reduce) {
+  .switch .slider,
+  .switch .slider::before {
+    transition: none;
+  }
+}
+
+.set-group {
+  margin-top: 1.7rem;
+}
+.set-group > h3 {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 0.35rem;
+}
+.set-group > .group-blurb {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0 0 0.7rem;
+  max-width: 72ch;
+}
+
+.set-rows {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+.set-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.25rem 1.5rem;
+  align-items: center;
+  padding: 0.85rem 1.1rem;
+}
+.set-row + .set-row {
+  border-top: 1px solid var(--border);
+}
+.set-row .set-label {
+  grid-column: 1;
+  grid-row: 1;
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+.set-row .help {
+  grid-column: 1;
+  grid-row: 2;
+  margin: 0;
+  max-width: 62ch;
+  overflow-wrap: anywhere;
+}
+.set-row .set-control {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.set-row.dimmed .set-label,
+.set-row.dimmed .help {
+  opacity: 0.55;
+}
+.set-row.set-status {
+  grid-template-columns: 1fr;
+  padding: 0.6rem 1.1rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+.set-row .set-control input,
+.set-row .set-control select {
+  padding: 0.42rem 0.6rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.88rem;
+  min-width: 15rem;
+  /* A long value (a plex.direct hostname, say) must not squeeze the label column
+     into a sliver: the control caps and ellipsizes, the full value stays readable
+     in the dropdown itself. */
+  max-width: 22rem;
+  text-overflow: ellipsis;
+}
+.set-row .set-control input:focus,
+.set-row .set-control select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.set-row .set-control input.input-port {
+  min-width: 5rem;
+  width: 5rem;
+}
+@media (max-width: 640px) {
+  .set-row {
+    grid-template-columns: 1fr;
+  }
+  .set-row .set-control {
+    grid-column: 1;
+    grid-row: 3;
+    justify-self: start;
+    flex-wrap: wrap;
+  }
+  .set-row .set-control input,
+  .set-row .set-control select {
+    min-width: 0;
+    width: 100%;
+  }
+  .set-row .set-control input.input-port {
+    width: 5rem;
+  }
+}
+
+/* The Plex libraries picker: one card per video library, a switch on each. */
+.lib-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+}
+.lib-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+  gap: 0.6rem;
+}
+.lib-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  padding: 0.65rem 0.85rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.lib-card .lib-kind {
+  display: block;
+  font-weight: 500;
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin-top: 0.05rem;
+}
+.lib-card.off {
+  opacity: 0.55;
+}
+
+/* About: a plain fact sheet. */
+.about-kv {
+  display: grid;
+  grid-template-columns: 11rem 1fr;
+  gap: 0.55rem 1.1rem;
+  font-size: 0.92rem;
+  padding: 1rem 1.1rem;
+  margin: 0;
+}
+.about-kv dt {
+  color: var(--muted);
+}
+.about-kv dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 560px) {
+  .about-kv {
+    grid-template-columns: 1fr;
+    gap: 0.1rem;
+  }
+  .about-kv dd {
+    margin-bottom: 0.5rem;
+  }
+}
+
+/* ==========================================================================
+   Settings · General and Logs
+   ========================================================================== */
+
+/* The API key, masked or revealed: monospace so a revealed key reads unambiguously. */
+.keyfield {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  min-width: 17rem;
+}
+
+/* A link dressed as the standard button, for rows whose control opens a page. */
+.btn-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.42rem 0.9rem;
+  font-size: 0.88rem;
+  font-weight: 550;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.btn-link:hover {
+  background: var(--hover);
+}
+
+/* The footnote under a settings group: quieter than help, outside the card. */
+.group-hint {
+  font-size: 0.8rem;
+  margin: 0.45rem 0.2rem 0;
+}
+
+/* A row whose control is parked behind a switch above it (trusted proxies while the
+   proxy switch is off): visible so the option is discoverable, dimmed so it reads off. */
+.set-row.dim .set-label,
+.set-row.dim .help {
+  opacity: 0.45;
+}
+
+/* --- the live log viewer --------------------------------------------------- */
+
+.logbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.7rem;
+}
+.log-search {
+  flex: 1 1 18rem;
+  min-width: 12rem;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.9rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+.log-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  white-space: nowrap;
+}
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--faint);
+  flex: none;
+}
+.log-live.on .live-dot {
+  background: var(--protect);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--protect) 18%, transparent);
+}
+.log-count {
+  margin-left: auto;
+  font-size: 0.82rem;
+  white-space: nowrap;
+}
+
+.log-console {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.7;
+  padding: 0.6rem 0.9rem;
+  height: 26rem;
+  overflow: auto;
+}
+.log-row {
+  display: flex;
+  gap: 0.8rem;
+  align-items: baseline;
+  white-space: nowrap;
+}
+.log-t {
+  color: var(--faint);
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.log-lv {
+  flex: none;
+  width: 4.6rem;
+  font-weight: 700;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+}
+.log-lv.debug {
+  color: var(--faint);
+}
+.log-lv.info {
+  color: var(--accent);
+}
+.log-lv.warning {
+  color: var(--unknown);
+}
+.log-lv.error {
+  color: var(--condemn);
+}
+.log-text {
+  color: var(--text);
+  /* Tracebacks arrive as multi-line text; keep their shape without wrapping the row. */
+  white-space: pre;
+}
+.log-empty {
+  margin: 0.4rem 0;
+}
+.log-level-group {
+  margin-top: 1.4rem;
+}
+
+@media (max-width: 640px) {
+  .log-count {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+  .log-console {
+    height: 20rem;
+  }
+}
 
 /* ==========================================================================
    Setup wizard

@@ -32,7 +32,7 @@ from reaper.db.session import create_engine, create_session_factory
 from reaper.notify.discord import DiscordNotifier, Embed, build_notifier
 from reaper.services import app_settings
 from reaper.services.grace import GraceItem, GraceReport
-from reaper.services.leaving_soon import LeavingSoonPlan, sync
+from reaper.services.leaving_soon import announce_new
 
 WEBHOOK = "https://discord.com/api/webhooks/123/token-is-a-secret"
 
@@ -226,17 +226,6 @@ def _report(items: list[GraceItem], *, grace_days: int = 14) -> GraceReport:
     )
 
 
-class _PreviewTarget:
-    """A read-only target: current() never changes because the label is never written --
-    exactly the default unarmed install the re-announce bug lived in."""
-
-    async def current(self) -> set[int]:
-        return set()
-
-    async def apply(self, plan: LeavingSoonPlan) -> None:  # pragma: no cover - never applied
-        raise AssertionError("preview must not write")
-
-
 class _CountingNotifier:
     def __init__(self) -> None:
         self.calls: list[list[str]] = []
@@ -247,66 +236,69 @@ class _CountingNotifier:
 
 
 class TestIdempotentAnnounce:
-    async def test_repeated_preview_syncs_announce_each_title_once(self) -> None:
+    """The announce is driven by the grace set and the persisted announced-set alone --
+    never by the Plex mark diff, which in the default read-only install never shrinks
+    (nothing is written), so it would re-spam the same titles on every pass."""
+
+    async def test_repeated_passes_announce_each_title_once(self) -> None:
         report = _report([_item(1, title="A"), _item(2, title="B")])
         notifier = _CountingNotifier()
 
-        first = await sync(_PreviewTarget(), report, notifier=notifier, apply=False)  # type: ignore[arg-type]
+        _notified, announced = await announce_new(
+            notifier,  # type: ignore[arg-type]
+            report,
+            already_announced=set(),
+        )
         assert sorted(notifier.calls[0]) == ["A", "B"]
 
-        # Second click, same grace set, nothing written to Plex in between. The previously
+        # Second pass, same grace set, nothing written to Plex in between. The previously
         # announced set is fed back in -- there must be no second announce.
-        second = await sync(
-            _PreviewTarget(),
+        notified, announced = await announce_new(
+            notifier,  # type: ignore[arg-type]
             report,
-            notifier=notifier,
-            apply=False,
-            already_announced=set(first.announced),
-        )  # type: ignore[arg-type]
+            already_announced=set(announced),
+        )
         assert len(notifier.calls) == 1  # still just the one announce
-        assert second.notified is False
-        assert set(second.announced) == {1, 2}
+        assert notified is False
+        assert set(announced) == {1, 2}
 
     async def test_a_title_that_leaves_grace_is_announced_afresh_if_it_returns(self) -> None:
         notifier = _CountingNotifier()
         # Announced while in grace.
-        r1 = await sync(
-            _PreviewTarget(), _report([_item(1, title="A")]), notifier=notifier, apply=False
-        )  # type: ignore[arg-type]
-        assert set(r1.announced) == {1}
+        _n1, a1 = await announce_new(
+            notifier,  # type: ignore[arg-type]
+            _report([_item(1, title="A")]),
+            already_announced=set(),
+        )
+        assert set(a1) == {1}
 
         # It leaves grace (watched/spared): the announced set is pruned so it does not linger.
-        r2 = await sync(
-            _PreviewTarget(),
+        _n2, a2 = await announce_new(
+            notifier,  # type: ignore[arg-type]
             _report([]),
-            notifier=notifier,
-            apply=False,
-            already_announced=set(r1.announced),
-        )  # type: ignore[arg-type]
-        assert set(r2.announced) == set()
+            already_announced=set(a1),
+        )
+        assert set(a2) == set()
 
         # It returns to grace later -> announced again, because the record was pruned.
-        r3 = await sync(
-            _PreviewTarget(),
+        _n3, a3 = await announce_new(
+            notifier,  # type: ignore[arg-type]
             _report([_item(1, title="A")]),
-            notifier=notifier,
-            apply=False,
-            already_announced=set(r2.announced),
-        )  # type: ignore[arg-type]
+            already_announced=set(a2),
+        )
         assert list(notifier.calls) == [["A"], ["A"]]  # two announces, once each spell
-        assert set(r3.announced) == {1}
+        assert set(a3) == {1}
 
     async def test_a_failed_announce_is_not_recorded_so_it_retries(self) -> None:
         class _FailingNotifier:
             async def announce_leaving_soon(self, titles: list[str], *, grace_days: int) -> bool:
                 return False
 
-        result = await sync(
-            _PreviewTarget(),
+        notified, announced = await announce_new(
+            _FailingNotifier(),  # type: ignore[arg-type]
             _report([_item(1, title="A")]),
-            notifier=_FailingNotifier(),
-            apply=False,
-        )  # type: ignore[arg-type]
-        assert result.notified is False
-        # Not marked announced: a later sync will try again rather than swallow the warning.
-        assert set(result.announced) == set()
+            already_announced=set(),
+        )
+        assert notified is False
+        # Not marked announced: a later pass will try again rather than swallow the warning.
+        assert set(announced) == set()

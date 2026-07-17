@@ -18,7 +18,7 @@ import pytest
 from reaper.clients.base import SafetyViolationError
 from reaper.clients.plex import (
     GuardedSession,
-    benign_label_write,
+    benign_shelf_write,
     declared_mutation,
     normalise_label,
 )
@@ -26,8 +26,8 @@ from reaper.config import RuntimeSafety
 
 ARMED = RuntimeSafety(destructive_enabled=True)
 READ_ONLY = RuntimeSafety(destructive_enabled=False)
-# The host opted in to writing the benign Leaving Soon label while still read-only.
-LABEL_UNARMED = RuntimeSafety(destructive_enabled=False, allow_leaving_soon_unarmed=True)
+# The operator opted in to writing the benign Leaving Soon shelf while still read-only.
+SHELF_UNARMED = RuntimeSafety(destructive_enabled=False, allow_leaving_soon_unarmed=True)
 
 
 class TestAMutatingCallIsRefusedUnlessArmedAndDeclared:
@@ -76,58 +76,94 @@ class TestAMutatingCallIsRefusedUnlessArmedAndDeclared:
             session.post("http://127.0.0.1:1/library/x")
 
 
-class TestTheBenignLeavingSoonLabelIsGatedSeparately:
-    """Writing the Leaving Soon label is a mutation, but a reversible one that touches no
-    file. It is gated like a delete by default, and an operator can opt in to allowing it
-    while read-only -- but that opt-in must never leak into the deletion path."""
+class TestTheBenignShelfIsGatedSeparately:
+    """Writing the Leaving Soon shelf (label + collection) is a mutation, but a
+    reversible one that touches no file. It is gated like a delete by default, and an
+    operator can opt in to allowing it while read-only -- but that opt-in must never
+    leak into the deletion path."""
 
     def test_the_label_is_blocked_when_read_only_and_not_opted_in(self) -> None:
         session = GuardedSession(READ_ONLY)
-        with benign_label_write(), pytest.raises(SafetyViolationError, match="Leaving Soon"):
+        with benign_shelf_write(), pytest.raises(SafetyViolationError, match="Leaving Soon"):
             session.put("http://127.0.0.1:1/library/sections/3/all?type=1&id=42")
 
     def test_the_label_writes_when_armed(self) -> None:
         """Armed is at least as permissive as a delete, so the label goes through to the
         real transport (a connection error, not a safety refusal). No declaration needed:
-        the label is not journalled through the executor."""
+        the shelf is not journalled through the executor."""
         session = GuardedSession(ARMED)
-        with benign_label_write(), pytest.raises(Exception) as caught:
+        with benign_shelf_write(), pytest.raises(Exception) as caught:
             session.put("http://127.0.0.1:1/library/sections/3/all?type=1&id=42", timeout=0.05)
         assert not isinstance(caught.value, SafetyViolationError)
 
-    def test_the_label_writes_read_only_when_the_host_opted_in(self) -> None:
+    def test_the_label_writes_read_only_when_opted_in(self) -> None:
         """The whole point: the warning can be written during the grace countdown, before
         deletion is ever enabled."""
-        session = GuardedSession(LABEL_UNARMED)
-        with benign_label_write(), pytest.raises(Exception) as caught:
+        session = GuardedSession(SHELF_UNARMED)
+        with benign_shelf_write(), pytest.raises(Exception) as caught:
             session.put("http://127.0.0.1:1/library/sections/3/all?type=1&id=42", timeout=0.05)
         assert not isinstance(caught.value, SafetyViolationError)
 
-    def test_the_benign_branch_is_confined_to_the_label_edit_endpoint(self) -> None:
-        """The 'labels only' promise is structural: inside a benign block, a PUT to any
+    def test_creating_a_collection_is_a_shelf_shape(self) -> None:
+        """POST /library/collections rides the same opt-in as the label."""
+        session = GuardedSession(SHELF_UNARMED)
+        with benign_shelf_write(), pytest.raises(Exception) as caught:
+            session.post(
+                "http://127.0.0.1:1/library/collections?type=1&title=Leaving+Soon",
+                timeout=0.05,
+            )
+        assert not isinstance(caught.value, SafetyViolationError)
+
+    def test_adding_collection_items_is_a_shelf_shape(self) -> None:
+        session = GuardedSession(SHELF_UNARMED)
+        with benign_shelf_write(), pytest.raises(Exception) as caught:
+            session.put("http://127.0.0.1:1/library/collections/900/items?uri=x", timeout=0.05)
+        assert not isinstance(caught.value, SafetyViolationError)
+
+    def test_removing_a_collection_child_is_a_shelf_shape(self) -> None:
+        """The one DELETE the shelf may issue: detaching an item from the collection.
+        It touches nothing but the collection membership."""
+        session = GuardedSession(SHELF_UNARMED)
+        with benign_shelf_write(), pytest.raises(Exception) as caught:
+            session.delete("http://127.0.0.1:1/library/collections/900/children/42", timeout=0.05)
+        assert not isinstance(caught.value, SafetyViolationError)
+
+    def test_deleting_metadata_is_never_a_shelf_shape(self) -> None:
+        """THE load-bearing negative. ``DELETE /library/metadata/{key}`` removes an item
+        and -- on a server allowing media deletion -- its files. It must never ride the
+        shelf opt-in, inside a benign block or not."""
+        session = GuardedSession(SHELF_UNARMED)
+        with benign_shelf_write(), pytest.raises(SafetyViolationError, match="turned off"):
+            session.delete("http://127.0.0.1:1/library/metadata/900")
+
+    def test_the_benign_branch_is_confined_to_the_shelf_endpoints(self) -> None:
+        """The 'shelf only' promise is structural: inside a benign block, a PUT to any
         OTHER path (say, emptyTrash) falls back to the armed-and-declared rule instead
-        of riding the label opt-in."""
-        session = GuardedSession(LABEL_UNARMED)
-        with benign_label_write(), pytest.raises(SafetyViolationError, match="turned off"):
+        of riding the opt-in."""
+        session = GuardedSession(SHELF_UNARMED)
+        with benign_shelf_write(), pytest.raises(SafetyViolationError, match="turned off"):
             session.put("http://127.0.0.1:1/library/sections/3/emptyTrash")
 
-    def test_the_benign_branch_is_confined_to_put(self) -> None:
-        """A DELETE to the label-edit path inside a benign block is not a label write."""
-        session = GuardedSession(LABEL_UNARMED)
-        with benign_label_write(), pytest.raises(SafetyViolationError, match="turned off"):
+    def test_the_benign_branch_is_verb_exact(self) -> None:
+        """A DELETE to the label-edit path inside a benign block is not a label write,
+        and a POST to the collection-items path is not an add."""
+        session = GuardedSession(SHELF_UNARMED)
+        with benign_shelf_write(), pytest.raises(SafetyViolationError, match="turned off"):
             session.delete("http://127.0.0.1:1/library/sections/3/all?type=1&id=42")
+        with benign_shelf_write(), pytest.raises(SafetyViolationError, match="turned off"):
+            session.post("http://127.0.0.1:1/library/collections/900/items?uri=x")
 
     def test_the_opt_in_does_not_unlock_deletions(self) -> None:
-        """A delete is NOT wrapped in benign_label_write, so the opt-in flag is invisible
-        to it. Allowing a reversible label must never widen what can be deleted."""
-        session = GuardedSession(LABEL_UNARMED)
+        """A delete is NOT wrapped in benign_shelf_write, so the opt-in flag is invisible
+        to it. Allowing a reversible shelf must never widen what can be deleted."""
+        session = GuardedSession(SHELF_UNARMED)
         with declared_mutation(), pytest.raises(SafetyViolationError, match="turned off"):
             session.delete("http://127.0.0.1:1/movie/1?deleteFiles=true")
 
     def test_the_benign_flag_does_not_leak_past_its_block(self) -> None:
         """Outside the context, a write is back on the strict delete path."""
-        session = GuardedSession(LABEL_UNARMED)
-        with benign_label_write():
+        session = GuardedSession(SHELF_UNARMED)
+        with benign_shelf_write():
             pass
         with pytest.raises(SafetyViolationError, match="turned off"):
             session.put("http://127.0.0.1:1/library/x")
@@ -174,10 +210,10 @@ class TestLeavingSoonWriteAllowed:
         assert READ_ONLY.leaving_soon_write_allowed is False
 
     def test_the_opt_in_allows_it_while_read_only(self) -> None:
-        assert LABEL_UNARMED.leaving_soon_write_allowed is True
+        assert SHELF_UNARMED.leaving_soon_write_allowed is True
 
     def test_the_opt_in_never_allows_deletion(self) -> None:
-        assert LABEL_UNARMED.destructive_allowed is False
+        assert SHELF_UNARMED.destructive_allowed is False
 
 
 class TestLabelNormalisation:

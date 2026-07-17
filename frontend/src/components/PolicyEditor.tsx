@@ -43,6 +43,7 @@ import {
 import { bytes, count } from "../format";
 import { DeletionToggle } from "./DeletionToggle";
 import { QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
+import { Switch } from "./Switch";
 
 // Plain-English identities for every protection and signal, so the editor reads like a
 // person wrote it instead of exposing the engine's field names. `unit` picks the control:
@@ -272,10 +273,9 @@ function GateRow({ gate, onChange }: { gate: GateSetting; onChange: (g: GateSett
   return (
     <li className="rule-row">
       <label className="toggle rule-toggle">
-        <input
-          type="checkbox"
+        <Switch
           checked={gate.enabled}
-          onChange={(e) => onChange({ ...gate, enabled: e.target.checked })}
+          onChange={(enabled) => onChange({ ...gate, enabled })}
         />
         <span className="rule-name">{meta.label}</span>
       </label>
@@ -1214,9 +1214,16 @@ const SECTIONS = [
   { id: "pace", label: "Pace and limits" },
   { id: "deletion", label: "Deletion" },
 ] as const;
-type SectionId = (typeof SECTIONS)[number]["id"];
+export type PolicySectionId = (typeof SECTIONS)[number]["id"];
+type SectionId = PolicySectionId;
 
-export function PolicyEditor() {
+export function PolicyEditor({
+  focus,
+}: {
+  /** A cross-page jump target ("Turn it on in Policy → Deletion" lands on the Deletion
+   *  section). The nonce makes each jump fire once, however often the caller re-renders. */
+  focus?: { section: PolicySectionId; nonce: number } | null;
+}) {
   const queryClient = useQueryClient();
   // Movies and TV are tuned separately -- keep-last-N seasons and season rank only make
   // sense for TV -- so this toggle picks which policy you are editing.
@@ -1356,14 +1363,30 @@ export function PolicyEditor() {
   // app uses (never a native confirm()).
   const [pendingSwitch, setPendingSwitch] = useState<"movie" | "tv" | null>(null);
 
-  // Section jump targets for the rail.
-  const sectionRefs: Record<SectionId, React.RefObject<HTMLHeadingElement | null>> = {
-    flags: useRef<HTMLHeadingElement>(null),
-    kept: useRef<HTMLHeadingElement>(null),
-    pace: useRef<HTMLHeadingElement>(null),
-    deletion: useRef<HTMLHeadingElement>(null),
-  };
+  // Section jump targets for the rail. Memoized (the refs themselves are stable) so the
+  // cross-page-jump effect below can depend on the record without refiring every render.
+  const flagsRef = useRef<HTMLHeadingElement>(null);
+  const keptRef = useRef<HTMLHeadingElement>(null);
+  const paceRef = useRef<HTMLHeadingElement>(null);
+  const deletionRef = useRef<HTMLHeadingElement>(null);
+  const sectionRefs: Record<SectionId, React.RefObject<HTMLHeadingElement | null>> = useMemo(
+    () => ({ flags: flagsRef, kept: keptRef, pace: paceRef, deletion: deletionRef }),
+    [],
+  );
   const [activeSection, setActiveSection] = useState<SectionId>("flags");
+
+  // A cross-page jump lands on a specific section. The editor may still be loading when
+  // the jump arrives (the headings do not exist until the draft renders), so the draft is
+  // a dependency: once it loads, this refires and consumes the nonce exactly once.
+  const handledFocus = useRef(0);
+  useEffect(() => {
+    if (!focus || draft === null || focus.nonce === handledFocus.current) return;
+    const target = sectionRefs[focus.section]?.current;
+    if (!target) return;
+    handledFocus.current = focus.nonce;
+    target.scrollIntoView({ block: "start" });
+    setActiveSection(focus.section);
+  }, [focus, sectionRefs, draft]);
 
   if (!draft) return <p className="muted">Loading…</p>;
 
@@ -1690,19 +1713,17 @@ export function PolicyEditor() {
             </label>
 
             <label className="toggle">
-              <input
-                type="checkbox"
+              <Switch
                 checked={draft.keep_first_season}
-                onChange={(e) => update({ keep_first_season: e.target.checked })}
+                onChange={(keep_first_season) => update({ keep_first_season })}
               />
               <span>Always keep a show's first season, so a new viewer can still start it</span>
             </label>
 
             <label className="toggle">
-              <input
-                type="checkbox"
+              <Switch
                 checked={draft.keep_in_progress}
-                onChange={(e) => update({ keep_in_progress: e.target.checked })}
+                onChange={(keep_in_progress) => update({ keep_in_progress })}
               />
               <span>Keep seasons someone is partway through</span>
             </label>
@@ -1758,10 +1779,9 @@ export function PolicyEditor() {
             </label>
 
             <label className="toggle">
-              <input
-                type="checkbox"
+              <Switch
                 checked={draft.keep_specials}
-                onChange={(e) => update({ keep_specials: e.target.checked })}
+                onChange={(keep_specials) => update({ keep_specials })}
               />
               <span>Never remove specials</span>
             </label>
@@ -1771,10 +1791,9 @@ export function PolicyEditor() {
             </p>
 
             <label className="toggle">
-              <input
-                type="checkbox"
+              <Switch
                 checked={draft.flag_keep_conflicts}
-                onChange={(e) => update({ flag_keep_conflicts: e.target.checked })}
+                onChange={(flag_keep_conflicts) => update({ flag_keep_conflicts })}
               />
               <span>Ask me first when a removal looks unusual</span>
             </label>
@@ -1862,10 +1881,9 @@ export function PolicyEditor() {
         ) : (
           <>
             <label className="toggle pace-approval">
-              <input
-                type="checkbox"
+              <Switch
                 checked={pace.require_approval}
-                onChange={(e) => updatePace({ require_approval: e.target.checked })}
+                onChange={(require_approval) => updatePace({ require_approval })}
               />
               <span>Ask me before every run deletes anything</span>
             </label>

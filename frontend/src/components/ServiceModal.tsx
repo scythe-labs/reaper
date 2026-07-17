@@ -12,6 +12,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, type Instance, type InstanceTest } from "../api";
+import { Switch } from "./Switch";
 
 export const KINDS: { value: string; label: string; hint: string; port: string }[] = [
   { value: "radarr", label: "Radarr", hint: "Your movies. At least one is required.", port: "7878" },
@@ -247,17 +248,13 @@ export function ServiceModal({
             />
           </label>
           <label className="toggle">
-            <input type="checkbox" checked={ssl} onChange={(e) => setSsl(e.target.checked)} />
+            <Switch checked={ssl} onChange={setSsl} />
             <span>Use SSL</span>
           </label>
           {ssl && (
             <>
               <label className="toggle">
-                <input
-                  type="checkbox"
-                  checked={verifyCert}
-                  onChange={(e) => setVerifyCert(e.target.checked)}
-                />
+                <Switch checked={verifyCert} onChange={setVerifyCert} />
                 <span>Check the server's certificate</span>
               </label>
               {!verifyCert && (
@@ -283,11 +280,7 @@ export function ServiceModal({
           </label>
           {editing && (
             <label className="toggle">
-              <input
-                type="checkbox"
-                checked={enabled}
-                onChange={(e) => setEnabled(e.target.checked)}
-              />
+              <Switch checked={enabled} onChange={setEnabled} />
               <span>Enabled</span>
             </label>
           )}

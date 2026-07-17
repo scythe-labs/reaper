@@ -26,6 +26,7 @@ import {
 import {
   api,
   type Candidate,
+  type Chip,
   type GroupSeasonMark,
   type Override,
   type OverrideFilter,
@@ -469,12 +470,46 @@ function CheckSquareIcon() {
   );
 }
 
-/** The chip a card shows once the owner has overridden it by hand -- pending until the next
- *  scan moves it for real. */
-function OverrideChip({ override }: { override: Override | null }) {
-  if (override === "spare") return <span className="chip chip-spared">Spared · will be kept</span>;
-  if (override === "reap") return <span className="chip chip-reap">Reap · will be removed</span>;
-  return null;
+/** The reason text behind a kept row's chip ("Kept · playing right now" -> "playing
+ *  right now"), for the refused-reap pill's honest wording. */
+function chipWhy(chip: Chip | null): string | null {
+  if (!chip) return null;
+  return chip.text.replace(/^Kept · /, "");
+}
+
+/** The chip a card shows once the owner has overridden it by hand. Solid fills are the
+ *  owner's decisions; outlined chips are Reaper's. A reap takes effect immediately --
+ *  counts, grace countdown, the next plan -- unless the engine refuses it (someone is
+ *  watching right now, or the file isn't managed), which reads amber and says why. */
+function OverrideChip({
+  override,
+  effective,
+  keptWhy,
+}: {
+  override: Override | null;
+  effective?: boolean | null | undefined;
+  keptWhy?: string | null | undefined;
+}) {
+  if (override === "spare") {
+    return <span className="chip chip-hand-spare">Spared by hand · will be kept</span>;
+  }
+  if (override !== "reap") return null;
+  if (effective === false) {
+    return (
+      <span className="chip chip-reap-refused">
+        Reap requested · kept for now: {keptWhy ?? "a safety stop applies"}
+      </span>
+    );
+  }
+  return <span className="chip chip-hand-reap">Reaped by hand · will be removed</span>;
+}
+
+/** Whether a show-level reap actually takes anywhere: true when any season's reap is
+ *  honoured, false when every one is refused, undefined outside a reap override. */
+function groupReapEffective(items: Candidate[]): boolean | undefined {
+  const reaped = items.filter((s) => s.override === "reap");
+  if (reaped.length === 0) return undefined;
+  return reaped.some((s) => s.override_effective !== false);
 }
 
 /** The single decision that governs a whole show: what all of its seasons agree on, or null
@@ -560,26 +595,34 @@ const MARK_LABELS: Record<string, string> = {
 
 /** The season strip: one small square per season of the show, colored by its lane
  *  across the WHOLE snapshot -- so "which seasons stay and which go" reads at a glance
- *  without expanding anything. A hand override draws a ring in its color. */
+ *  without expanding anything. A hand decision paints its square solid; a reap the
+ *  engine refuses keeps its scan color, and the tooltip says both facts. */
 function SeasonStrip({ marks }: { marks: GroupSeasonMark[] }) {
   return (
     <div className="season-strip">
       {marks.map((mark, i) => {
         const name = mark.season === 0 ? "Specials" : `Season ${mark.season ?? "?"}`;
+        const reapRefused = mark.override === "reap" && mark.override_effective === false;
+        const handClass =
+          mark.override === "spare"
+            ? " strip-ov-spare"
+            : mark.override === "reap" && !reapRefused
+              ? " strip-ov-reap"
+              : "";
         const overrideNote =
           mark.override === "spare"
             ? ", you spared it"
-            : mark.override === "reap"
-              ? ", you marked it for reaping"
-              : "";
+            : reapRefused
+              ? ", reap requested but it is kept for now"
+              : mark.override === "reap"
+                ? ", you reaped it by hand"
+                : "";
         return (
           <span
             // Season numbers are unique within one show; an unnumbered row falls back
             // to its position, stable within the response.
             key={mark.season ?? `unnumbered-${i}`}
-            className={`strip-sq strip-${mark.verdict}${
-              mark.override ? ` strip-ov-${mark.override}` : ""
-            }`}
+            className={`strip-sq strip-${mark.verdict}${handClass}`}
             title={`${name}: ${MARK_LABELS[mark.verdict] ?? mark.verdict}${overrideNote}`}
           >
             {mark.season === 0 ? "SP" : (mark.season ?? "·")}
@@ -699,12 +742,18 @@ function SeasonList({
             <Score item={season} />
             <span className="season-title">
               {seasonName(season.title, data.title)}
-              {season.verdict === "condemn" ? (
+              {/* The owner's decision replaces the scan chip: one pill, the truth. */}
+              {season.override !== null ? (
+                <OverrideChip
+                  override={season.override}
+                  effective={season.override_effective}
+                  keptWhy={chipWhy(season.chip)}
+                />
+              ) : season.verdict === "condemn" ? (
                 <CondemnedChip />
               ) : (
                 <StatusChip chip={season.chip} />
               )}
-              <OverrideChip override={season.override} />
             </span>
             <span className="season-size num">{bytes(season.size_bytes)}</span>
             {inLane ? (
@@ -777,7 +826,11 @@ function MovieCard({
             {item.title}
             {item.year && <span className="card-year"> {item.year}</span>}
           </h3>
-          <OverrideChip override={item.override} />
+          <OverrideChip
+            override={item.override}
+            effective={item.override_effective}
+            keptWhy={chipWhy(item.chip)}
+          />
         </div>
         {/* The type chip lives on the meta line, not the title row, so a long title
             never fights a chip for space and the year stays glued to the title. */}
@@ -894,7 +947,7 @@ function ShowCard({
               {group.title}
               {group.year && <span className="card-year"> {group.year}</span>}
             </h3>
-            <OverrideChip override={showOverride} />
+            <OverrideChip override={showOverride} effective={groupReapEffective(group.items)} />
           </div>
           <div className="card-meta">
             <span className="chip chip-tv">TV</span>

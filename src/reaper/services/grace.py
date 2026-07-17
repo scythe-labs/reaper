@@ -26,8 +26,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clock import utcnow
-from reaper.db.models import Candidate, FirstFlagged, Snapshot
+from reaper.db.models import FirstFlagged, Snapshot
 from reaper.services import whitelist
+from reaper.services.condemned import effective_condemned
 
 
 @dataclass(frozen=True)
@@ -65,9 +66,10 @@ async def grace_report(
 ) -> GraceReport:
     """Where every currently-condemned item sits in its grace window.
 
-    Grace is a property of the *latest* snapshot's condemned set: an item no longer
-    condemned (rescued, spared, or re-judged) has left grace by definition and does not
-    appear here.
+    Grace is a property of the *latest* snapshot's EFFECTIVE condemned set
+    (services.condemned): an item no longer condemned (rescued, spared, or re-judged)
+    has left grace by definition, and a hand-reaped item is in it from the moment the
+    owner clicks.
     """
     now = now or utcnow()
     window = timedelta(days=grace_days)
@@ -78,25 +80,11 @@ async def grace_report(
     if latest is None:
         return GraceReport(grace_days, [], [], 0, 0)
 
-    condemned = list(
-        (
-            await session.execute(
-                select(Candidate).where(
-                    Candidate.snapshot_id == latest.id, Candidate.verdict == "condemn"
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    # Cancelling a grace spares the item, but the snapshot it was condemned in is frozen
-    # and still reads "condemn". Exclude spared keys here, exactly as the planner does --
-    # through effective_override, so a spare on a whole show covers its seasons too -- and
-    # a cancelled item leaves the countdown at once rather than lingering until re-scan.
+    # The effective set, not the frozen one: a spare leaves the countdown at once (rather
+    # than lingering until re-scan), and a hand reap ENTERS it at once -- the owner's
+    # decision starts the same grace window and Leaving Soon warning a scan condemn gets.
     decisions = await whitelist.overrides(session)
-    condemned = [
-        c for c in condemned if whitelist.effective_override(c.media_key, decisions) != "spare"
-    ]
+    condemned = list((await effective_condemned(session, latest.id, decisions)).values())
     flagged = {
         f.media_key: f.first_flagged_at
         for f in (

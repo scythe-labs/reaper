@@ -112,12 +112,17 @@ function RatingsRow({ ratings, links }: { ratings: Ratings | null; links: Links 
           <span className="rating-src rating-imdb">IMDb</span> {ratings.imdb.toFixed(1)}
         </RatingChip>
       )}
+      {/* The tomato and popcorn stand alone to save room; the hover text and the
+          accessible label still say which score is which. */}
       {ratings.rt_critic != null && (
         <RatingChip
           href={links.rotten_tomatoes}
           title="Rotten Tomatoes critics score, from Plex. Opens a Rotten Tomatoes search"
         >
-          <span className="rating-src">🍅 RT</span> {ratings.rt_critic}%
+          <span className="rating-src" role="img" aria-label="Rotten Tomatoes critics">
+            🍅
+          </span>{" "}
+          {ratings.rt_critic}%
         </RatingChip>
       )}
       {ratings.rt_audience != null && (
@@ -125,7 +130,10 @@ function RatingsRow({ ratings, links }: { ratings: Ratings | null; links: Links 
           href={links.rotten_tomatoes}
           title="Rotten Tomatoes audience score, from Plex. Opens a Rotten Tomatoes search"
         >
-          <span className="rating-src">🍿 Audience</span> {ratings.rt_audience}%
+          <span className="rating-src" role="img" aria-label="Rotten Tomatoes audience">
+            🍿
+          </span>{" "}
+          {ratings.rt_audience}%
         </RatingChip>
       )}
       {ratings.tmdb != null && (

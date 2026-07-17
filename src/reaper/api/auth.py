@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from reaper.api.middleware import client_ip
 from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import (
     clear_session_cookie,
@@ -76,14 +77,13 @@ def _box(request: Request) -> SecretBox:
 
 
 def _client_ip(request: Request) -> str:
-    # The direct peer address. Deliberately *not* X-Forwarded-For: that header is
-    # attacker-controlled unless a trusted proxy sets it, and trusting it would let
-    # a single host dodge the per-IP lockout by rotating a spoofed value. Behind a
-    # reverse proxy every client collapses to the proxy's address, so the per-IP
-    # lock is coarser there -- which is why the per-username lock (below) runs
-    # alongside it and a successful login always clears both.
-    client = request.client
-    return client.host if client is not None else "unknown"
+    # The peer address, with one deliberate carve-out: when the operator turned on
+    # reverse-proxy trust (Settings -> General) and the peer IS a listed proxy,
+    # X-Forwarded-For is honoured -- see middleware.client_ip for the walk. From any
+    # other peer that header is attacker-controlled and ignored, because trusting it
+    # would let a single host dodge the per-IP lockout by rotating a spoofed value.
+    # The per-username lock (below) still runs alongside either way.
+    return client_ip(request)
 
 
 def _throttled(throttle: Throttle, *keys: str) -> None:

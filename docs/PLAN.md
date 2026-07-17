@@ -7,9 +7,140 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-17 (review pass 2 closed: the last two findings, fixed)
+Last updated: 2026-07-17 (hand-override truth, Settings General + Logs, the API key lane)
 
-### Newest — the last two findings, and the review is closed
+### Newest — hand-override truth, Settings General + Logs, the API key lane
+
+Round three of the settings pass, mocked first (artifact v3, approved) and implemented.
+Four fixes the operator asked for, two new settings tabs, and one honesty bug that ran
+deeper than its symptom.
+
+- **A hand reap now takes effect the moment it is clicked — and tells the truth.** The
+  reported symptom was cosmetic (a hand-reaped season kept its green pill and square);
+  the real finding was that a reap override changed *nothing* until the next scan: not
+  the counts, not grace, not the plan. One new module, `services/condemned.py`, now
+  assembles the **effective condemned set** (scan-condemned minus hand-spares plus
+  hand-reaps that `decide_verdict` honours — rule 22: the reap branch is the engine's,
+  only the plumbing is new), and every acting surface reads it: `grace_report` (and
+  through it the Leaving Soon shelf), `build_plan`'s step expansion, the confirmation
+  phrase (`_planned_candidates`), the executor's per-item keep-set and caps, the
+  per-show rollups behind the card counts, and the simulator. Structural stops
+  (streaming now, unmanaged) and unchecked protections still refuse, and the UI says
+  so: solid red squares/pills for honoured hand decisions, an amber "Reap requested ·
+  kept for now: {why}" for refusals (`override_effective` on rows and season marks).
+  The override routes start the grace clock through the scan's own decision
+  (`snapshot.record_first_flagged_bulk`, now public) and remove it again when a reap is
+  withdrawn from a not-scan-condemned row, so a stale hand clock can never shorten a
+  later real condemnation's window (rule 4). The executor keeps withdrawn-reap items in
+  its walk and skips them *visibly*, mirroring the spare skip.
+- **Settings → General.** Application name (Discord sender name + browser tab title)
+  and application URL (an "Open {name}" link at the end of Discord notices; empty means
+  no link). A **theme** row: Match my device / Light / Dark — the app was already
+  token-based with light defaults and a dark media query, so forced themes are two
+  mirrored token blocks under `:root[data-theme=…]` plus a pre-paint boot script in
+  index.html; the choice is per-browser (localStorage), deliberately not server state.
+  **Reverse proxy trust**, off by default and fail-closed: forwarded addresses are
+  honoured only when the direct peer is one of the operator-listed proxies
+  (`middleware.client_ip` walks X-Forwarded-For right-to-left past trusted hops), which
+  keeps the per-IP login lockout accurate behind Nginx/Traefik/Caddy instead of
+  collapsing every visitor into the proxy's address. Applied live via
+  `app.state.trusted_proxies`; no restart.
+- **The API key lane.** One instance key, generated in the UI, stored encrypted like
+  every credential, compared as a SHA-256 digest in constant time on `app.state` (the
+  hot path never touches the DB). `X-Api-Key` requests are judged on the key alone —
+  never the cookie, and no CSRF check (no cookie, no CSRF risk; the custom header
+  itself is preflight-protected). Bad keys back off per address on the same throttle
+  shape as login. The key is **fenced** off the three irreversible authorities:
+  `PUT /settings/safety` (the deletion switch, either direction), `POST /runs/…/execute`,
+  and sign-in/key management (`admin-password`, `general/api-key`) — a leaked key can
+  read, scan and plan, but can never delete a file or mint its own replacement.
+- **The docs lockdown (found, fixed).** FastAPI's stock `/docs`, `/redoc` and
+  `/openapi.json` sit outside `/api`, which the AuthGuard deliberately passes through —
+  so the whole API description was readable without signing in. The stock routes are
+  disabled; the reference now lives at `/api/docs` (session or API key), rendered by a
+  **Scalar** bundle vendored at build time (`frontend/scripts/copy-scalar.mjs`, predev/
+  prebuild hooks, gitignored `public/vendor/`) — shipped in the container, no CDN,
+  works offline. `/api/openapi.json` carries an `ApiKey` security scheme so Scalar's
+  test client authenticates with the real header.
+- **Settings → Logs.** A 2,000-line in-memory ring (`reaper/logbuffer.py`) fed by a
+  structlog processor placed *after* `redact_secrets` and by a stdlib bridge handler
+  (uvicorn/apscheduler land in the same stream, query-string credentials scrubbed).
+  The UI polls `GET /api/logs?after=<seq>` every 2 s while Live, pauses cleanly,
+  filters by text and by minimum level, and follows the newest line. The recording
+  level is a stored setting applied instantly — the structlog pipeline filters per
+  event against the live level (`make_filtering_bound_logger(DEBUG)` + a dynamic drop
+  processor), so no reconfigure and no restart; `REAPER_LOG_LEVEL` remains only the
+  first-boot seed. Debug/Info/Warning only: hiding errors is not a choice we sell.
+- **Full-width settings.** The `.panel` 760px / `.panel-wide` 1040px caps are gone;
+  every tab fills the same page frame as Review and Reap, and the set-row grid keeps
+  labels left / controls right at any width.
+- **Ratings chips compacted.** The tomato and popcorn now stand alone (`🍅 68%`,
+  `🍿 74%`) with the words in hover text and accessible labels. The audience chip
+  itself already existed; whether it shows depends on Plex supplying an RT audience
+  value in the `audience_rating` slot (agent ratings-source setting), not on Reaper.
+- **Wrong assumption logged:** "the pill fix is display-only." The lane pills were the
+  visible symptom of the deletion path ignoring hand reaps entirely; fixing the pill
+  without the plan/grace/counts would have painted a red promise the server would not
+  keep — the exact class of dishonesty rule 30 exists to prevent. Also confirmed live:
+  the lane header ("N items · X would be freed") counts the *listed lane rows*, while
+  the card count, the plan and the phrase all count the effective set — the numbers
+  beside destructive buttons are the ones bound to the acted-on set.
+
+### Previous — the Leaving Soon shelf, the Plex pickers, and the settings standard
+
+The Reap workflow and the Plex settings surface were reworked in one pass, mocked first
+(two artifact rounds, approved) and implemented against the approved mockups.
+
+- **Execute is gated on arming.** The Reap page reads the same safety query as the
+  banner; while deletion is off the button is disabled, with the reason and a jump
+  straight to Policy → Deletion beside it (the policy editor takes a `focus` prop and
+  scrolls to a section once its heading exists). The server-side arming check stays the
+  backstop; the UI just stops inviting a click that must fail.
+- **Leaving Soon became a shelf, not a label.** What was a movie-only label, reconciled
+  only by hand and gated by a host env var, is now a "Leaving Soon" **collection plus
+  label** per enabled library — movies in movie libraries, seasons in TV libraries —
+  reconciled automatically after every scan and on demand from the Reap page. A label
+  alone was invisible to the household; a collection is a real row on the library's
+  Recommended page. An empty shelf vanishes because removing the last item deletes the
+  collection server-side, so `DELETE /library/metadata/{key}` — the shape that can
+  delete files — is never issued and never permitted: the guard's benign branch
+  (`_benign_shape`) allows exactly the label batch edit and the three collection-edit
+  shapes, verb+path exact, with a pinned negative test that metadata deletion can never
+  ride the shelf opt-in.
+- **The switches moved into the product.** `leaving_soon_enabled` and the read-only
+  opt-in are `app_setting` rows edited under Settings → Plex; the env var seeds the
+  first run only and the stored value wins after (rule 16 honoured, `.env.example`
+  reworded). Turning the feature off — or any single library off — runs one last empty
+  reconcile so no stale shelf lingers.
+- **Server, connection, and library pickers.** Settings → Plex lists the account's
+  servers and every address each can be reached at, live from plex.tv (falling back to
+  the connections stored at link time, marked as possibly stale), probes any address
+  before saving it, and lets the operator pick exactly which video libraries Reaper may
+  touch (new libraries default on). Switching servers reuses `complete_link`, which now
+  also enforces the one-linked-server invariant and clears the library and announced
+  state keyed to the old server.
+- **Assumptions that turned out wrong, found live.** (1) A pass across several
+  libraries reported "preview only" while its writes had landed: a library whose shelf
+  already matched scored `applied=False` and poisoned the aggregate. Nothing-to-write
+  plus permission-to-write IS the applied state; pinned by test. (2) A library toggled
+  off kept its shelf forever, because the reconcile never visits a disabled library
+  again — turning a library off now gives it the same goodbye reconcile the feature-off
+  path gets.
+- **The settings standard.** One shared `Switch` component and one settings-row layout
+  (name left, help beneath, control right) are the app-wide pattern now. Boolean-state
+  checkboxes were swept (Plex cert check, service modal SSL/verify/enabled, policy
+  editor gates, season rules, pace approval); checkboxes remain only where the user
+  picks items from a list. A new About tab reports version, license, data folder, and
+  database sizes from a read-only endpoint.
+
+All gates green: the backend suite grew by the shelf and settings tests, mypy/ruff/
+eslint/vitest/build all clean, and alembic reports no drift (the new settings are
+`app_setting` rows — no schema change, the single baseline stands). Driven end to end
+against the running app: pickers fed by the live account, shelves reconciled against the
+live server with a clean no-op on re-run, and the disabled Execute jumping to the
+deletion switch.
+
+### The last two findings, and the review is closed
 
 Review pass 2 is fully discharged: all 55 findings, plus the one raised after it (L-1),
 are fixed. Two remained, and both needed a fact the code could not see from where it was

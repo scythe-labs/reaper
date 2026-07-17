@@ -37,6 +37,10 @@ export interface GroupSeasonMark {
   season: number | null;
   verdict: Verdict;
   override: Override | null;
+  /** For a "reap" override: whether the engine honours it (true paints the square solid
+   *  red) or refuses it for a safety stop or an unchecked protection (false keeps the
+   *  square in its scan color). Null when there is no reap override. */
+  override_effective: boolean | null;
   /** The season's size on disk, so the card can state whole-show totals without a
    *  second fetch. */
   size_bytes: number;
@@ -78,6 +82,10 @@ export interface Candidate {
    *  they click, so the card shows the pending intent before the next scan bakes it in.
    *  Inherited from the show for a season the owner overrode whole. */
   override: Override | null;
+  /** For a "reap" override: whether the engine honours it -- it joins the counts, the
+   *  grace countdown and the next plan -- or refuses it (someone is watching right now,
+   *  or the file isn't managed). Null when there is no reap override. Red only on true. */
+  override_effective: boolean | null;
   /** The card's one status chip (Sanctuary and Limbo). Null on condemned rows, whose
    *  card leads with the amber dormancy pill instead. */
   chip: Chip | null;
@@ -448,11 +456,88 @@ export interface GraceReport {
 }
 
 export interface LeavingSoonResult {
-  to_add_count: number;
-  to_remove_count: number;
+  added_count: number;
+  cleared_count: number;
+  /** Whether the shelf writes landed everywhere. False in read-only preview, and false
+   *  when any library failed. */
   applied: boolean;
   notified: boolean;
-  sample_added: string[];
+  movies_on_shelves: number;
+  seasons_on_shelves: number;
+  /** Per-library failures, in plain words. */
+  problems: string[];
+}
+
+export interface LeavingSoonSettings {
+  enabled: boolean;
+  allow_unarmed: boolean;
+  last: {
+    at: string;
+    movies: number;
+    seasons: number;
+    applied: boolean;
+  } | null;
+}
+
+export interface PlexResourceConnection {
+  uri: string;
+  local: boolean;
+  relay: boolean;
+  protocol: string;
+}
+
+export interface PlexResource {
+  name: string;
+  machine_identifier: string;
+  /** Whether this is the server Reaper is linked to right now. */
+  current: boolean;
+  connections: PlexResourceConnection[];
+}
+
+export interface PlexResources {
+  /** "plex.tv" when live; "stored" when plex.tv was unreachable and this is the linked
+   *  server's remembered addresses (possibly stale). */
+  source: "plex.tv" | "stored";
+  servers: PlexResource[];
+}
+
+export interface PlexLibrary {
+  key: number;
+  title: string;
+  kind: "movie" | "show";
+  enabled: boolean;
+}
+
+export interface About {
+  version: string;
+  license: string;
+  data_dir: string;
+  reaper_db_bytes: number;
+  cache_db_bytes: number;
+}
+
+export interface GeneralSettings {
+  application_name: string;
+  application_url: string | null;
+  /** Whether a key exists at all; the value only leaves through the reveal call. */
+  api_key_set: boolean;
+  proxy_trust_enabled: boolean;
+  trusted_proxies: string[];
+}
+
+export interface LogLine {
+  seq: number;
+  ts: string;
+  level: string;
+  text: string;
+}
+
+export interface LogsPage {
+  lines: LogLine[];
+  /** The newest sequence number the server has seen: the cursor for the next poll. */
+  last_seq: number;
+  /** The level Reaper is recording at right now. */
+  level: string;
 }
 
 export interface RequesterRow {
@@ -757,6 +842,43 @@ export const api = {
       verify_tls,
     }),
   plexUnlink: () => del<{ removed: boolean }>("/api/settings/plex"),
+
+  /** The servers this Plex account owns and every address each is reachable at. */
+  plexResources: () => request<PlexResources>("/api/settings/plex/resources"),
+  /** Point Reaper at a different server the same account owns. Probed before saving. */
+  plexSwitchServer: (machine_identifier: string) =>
+    put<PlexStatus>("/api/settings/plex/server", { machine_identifier }),
+  /** Save how Reaper reaches the server: a discovered address or a manual one. The
+   *  address is probed with the stored token first; a typo changes nothing. */
+  plexSetConnection: (uri: string, verify_tls?: boolean) =>
+    put<PlexStatus>("/api/settings/plex/connection", { uri, verify_tls }),
+
+  plexLibraries: () => request<PlexLibrary[]>("/api/settings/plex/libraries"),
+  syncPlexLibraries: () => post<PlexLibrary[]>("/api/settings/plex/libraries/sync", {}),
+  setPlexLibraries: (enabled_keys: number[]) =>
+    put<PlexLibrary[]>("/api/settings/plex/libraries", { enabled_keys }),
+
+  leavingSoonSettings: () => request<LeavingSoonSettings>("/api/settings/leaving-soon"),
+  setLeavingSoonSettings: (body: { enabled?: boolean; allow_unarmed?: boolean }) =>
+    put<LeavingSoonSettings>("/api/settings/leaving-soon", body),
+
+  about: () => request<About>("/api/about"),
+
+  general: () => request<GeneralSettings>("/api/settings/general"),
+  saveGeneral: (body: {
+    application_name?: string;
+    application_url?: string;
+    proxy_trust_enabled?: boolean;
+    trusted_proxies?: string[];
+  }) => put<GeneralSettings>("/api/settings/general", body),
+  /** The stored key, for the Show button. Session-only; 404 when none exists yet. */
+  revealApiKey: () => request<{ key: string }>("/api/settings/general/api-key"),
+  /** Generate the key, replacing any previous one, which stops working immediately. */
+  generateApiKey: () => post<{ key: string }>("/api/settings/general/api-key", {}),
+
+  /** The log lines newer than `after`, oldest first, plus the recording level. */
+  logs: (after: number) => request<LogsPage>(`/api/logs?after=${after}`),
+  setLogLevel: (level: string) => put<LogsPage>("/api/logs/level", { level }),
 
   schedule: () => request<Schedule>("/api/settings/schedule"),
   saveSchedule: (scan_cron: string | null) =>

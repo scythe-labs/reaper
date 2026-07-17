@@ -46,6 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from reaper.clock import utcnow
 from reaper.db.models import ActionStep, Candidate, ReapRun, RunState, Snapshot, StepState
 from reaper.services import whitelist
+from reaper.services.condemned import effective_condemned
 
 log = structlog.get_logger(__name__)
 
@@ -246,9 +247,9 @@ async def build_plan(
     these" path, and the safe way to do a first, single, hand-picked deletion. It changes
     only *which items get steps*: the manifest still binds to the **whole** condemned set,
     so if anything else in the snapshot shifts before execution the restricted run is voided
-    too. Every requested key must be condemned in this snapshot and not spared, or the build
-    fails naming the offenders -- a plan must never silently target fewer items than asked,
-    or none at all.
+    too. Every requested key must be actable in this snapshot -- condemned by the scan or
+    hand-reaped, and not spared -- or the build fails naming the offenders: a plan must
+    never silently target fewer items than asked, or none at all.
     """
     snapshot = await session.get(Snapshot, snapshot_id)
     if snapshot is None:
@@ -276,15 +277,16 @@ async def build_plan(
         .all()
     )
 
-    # A snapshot is frozen evidence, so an item spared *after* it was taken still reads
-    # ``condemn`` on its candidate row. Build steps only for the non-spared items, so no plan
-    # ever targets a file the owner told us to keep. A spare on a whole show covers each of
-    # its seasons, so this checks the show key too. The executor re-checks this per item at
-    # execute time, catching a spare added later in the grace window.
+    # A snapshot is frozen evidence, so the owner's overrides since it was taken are
+    # applied here: a spare drops its item (no plan ever targets a file the owner told us
+    # to keep), and a hand reap adds one -- when decide_verdict honours it past the
+    # cautious protections (services.condemned). A decision on a whole show covers each of
+    # its seasons. The executor re-derives this same set per item at execute time,
+    # catching an override changed later in the grace window. Smallest first, so the
+    # canary stays the least costly possible mistake even when a hand reap joins.
     decisions = await whitelist.overrides(session)
-    plannable = [
-        c for c in all_condemned if whitelist.effective_override(c.media_key, decisions) != "spare"
-    ]
+    effective = await effective_condemned(session, snapshot_id, decisions)
+    plannable = sorted(effective.values(), key=lambda c: int(c.size_bytes))
 
     if only_media_keys is not None:
         # "Reap just these." Every requested key must be a condemned, non-spared item in
@@ -301,33 +303,34 @@ async def build_plan(
             raise PlanError("No items were selected to reap.")
 
         condemned_keys = {c.media_key for c in all_condemned}
-        plannable_keys = {c.media_key for c in plannable}
+        plannable_keys = set(effective)
 
         # A TV show is selectable in the review queue only at the show level, so a "reap
         # just these" request can carry a show's group_key (three-part
         # ``sonarr:{inst}:{series}``) instead of the four-part season media_keys beneath it.
-        # Expand each requested group_key to its condemned member seasons before the checks
+        # Expand each requested group_key to its actable member seasons before the checks
         # below -- mirroring ``whitelist.effective_override``, where a decision on a whole
         # show reaches each of its seasons -- so the destructive path is symmetric with the
         # spare/reap override path (otherwise bulk-reaping any TV title is impossible). A
         # spared season is left OUT of the expansion, exactly as the override path keeps it,
         # rather than turning a show-level reap into a loud "these are spared" refusal for a
         # season the owner never named directly. An explicitly-named key is carried through
-        # unchanged, so naming a spared or unknown key still fails loudly below.
+        # unchanged, so naming a spared or unknown key still fails loudly below. Members
+        # come from the effective set, so a hand-reaped season rides its show's bulk reap.
         members_by_group: dict[str, set[str]] = {}
-        for c in all_condemned:
+        for c in effective.values():
             if c.group_key is not None:
                 members_by_group.setdefault(c.group_key, set()).add(c.media_key)
         expanded: set[str] = set()
         for key in requested:
             members = members_by_group.get(key)
-            if members is not None and key not in condemned_keys:
-                expanded |= {m for m in members if m in plannable_keys}
+            if members is not None and key not in condemned_keys and key not in plannable_keys:
+                expanded |= members
             else:
                 expanded.add(key)
         requested = expanded
 
-        unknown = requested - condemned_keys
+        unknown = requested - (condemned_keys | plannable_keys)
         if unknown:
             raise PlanError(
                 "These items are not condemned in this snapshot, so they cannot be reaped: "

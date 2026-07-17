@@ -2,8 +2,8 @@
 """Small singleton settings the admin edits in the web UI.
 
 These live in the ``app_setting`` key/value table, distinct from ``Settings`` (the
-environment/bootstrap concerns that cannot live in the database they protect). Two
-things belong here so far:
+environment/bootstrap concerns that cannot live in the database they protect). What
+belongs here:
 
 * **whether deletion is enabled** -- the one destructive-action switch. It is turned on
   from the web UI, but the route that flips it on first checks the admin password (see
@@ -11,6 +11,9 @@ things belong here so far:
   the first-run default; after that this stored value wins.
 * **the scan schedule** -- an optional cron for an automatic, read-only scan. A scan
   never deletes, so scheduling one is safe; it just keeps the review queue fresh.
+* **the Leaving Soon switches and library choices** -- whether the Plex shelf is on,
+  whether it may be written while read-only (env-seeded, stored value wins), and which
+  Plex libraries Reaper may touch at all.
 
 Every value is stored as JSON so the column stays one shape whatever the type.
 """
@@ -36,11 +39,44 @@ DISCORD_WEBHOOK_KEY = "discord_webhook_enc"
 #: idempotent across repeated syncs even when the Plex label write never lands (preview /
 #: unarmed) -- see :func:`reaper.services.leaving_soon.sync`.
 LEAVING_SOON_ANNOUNCED_KEY = "leaving_soon_announced"
+#: Whether the "Leaving Soon" shelf in Plex is on at all. Off (the default) means Reaper
+#: never touches the shelf and never runs the reconcile on its own.
+LEAVING_SOON_ENABLED_KEY = "leaving_soon_enabled"
+#: Whether the shelf may be written while deletion is off. The stored value wins; the
+#: environment variable (REAPER_ALLOW_UNARMED_LEAVING_SOON) is only the first-run default,
+#: exactly like the deletion switch. Edited in Settings -> Plex.
+LEAVING_SOON_UNARMED_KEY = "leaving_soon_unarmed"
+#: What the last shelf update did and when -- the status line under the Leaving Soon
+#: settings. ``{"at": iso, "movies": n, "seasons": n, "applied": bool}``.
+LEAVING_SOON_LAST_KEY = "leaving_soon_last"
+#: The Plex libraries Reaper may touch, as last synced from the server:
+#: ``[{"key": int, "title": str, "kind": "movie"|"show", "enabled": bool}]``. Only video
+#: libraries are stored; the enabled flags survive a re-sync.
+PLEX_LIBRARIES_KEY = "plex_libraries"
 #: Where "open in Plex" links send the admin. A plain URL, not a secret -- most installs
 #: keep the hosted Plex Web default; a self-hosted Plex Web front-end overrides it.
 PLEX_WEB_URL_KEY = "plex_web_url"
+#: What this install calls itself -- Discord messages and the browser tab. Purely
+#: cosmetic; never used as an identifier anywhere.
+APPLICATION_NAME_KEY = "application_name"
+#: Where people reach this install (``https://reaper.example.com``). Used to build the
+#: links notifications carry; empty means notifications simply carry no links.
+APPLICATION_URL_KEY = "application_url"
+#: The one instance API key, Fernet-encrypted like every stored credential. Sent by
+#: callers as ``X-Api-Key``; the middleware compares a SHA-256 of it (see main.py's
+#: startup, which caches the digest on app.state).
+API_KEY_KEY = "api_key_enc"
+#: Reverse-proxy trust: whether forwarded headers are honored at all, and from which
+#: proxy addresses (single IPs or CIDR ranges). Off by default -- a forwarded header
+#: from an untrusted peer is attacker-controlled and is always ignored.
+PROXY_TRUST_ENABLED_KEY = "proxy_trust_enabled"
+TRUSTED_PROXIES_KEY = "trusted_proxies"
+#: The logging level (DEBUG/INFO/WARNING). Stored value wins; ``REAPER_LOG_LEVEL`` is
+#: only the first-boot seed, like every other env-seeded switch.
+LOG_LEVEL_KEY = "log_level"
 
 DEFAULT_PLEX_WEB_URL = "https://app.plex.tv"
+DEFAULT_APPLICATION_NAME = "Reaper"
 
 
 async def _get(session: AsyncSession, key: str, default: Any) -> Any:
@@ -88,7 +124,7 @@ async def runtime_safety(session: AsyncSession, settings: Settings) -> RuntimeSa
     agrees on whether Reaper may delete right now."""
     return RuntimeSafety(
         destructive_enabled=await destructive_enabled(session, settings),
-        allow_leaving_soon_unarmed=settings.allow_unarmed_leaving_soon,
+        allow_leaving_soon_unarmed=await leaving_soon_unarmed(session, settings),
     )
 
 
@@ -105,6 +141,99 @@ async def set_plex_web_url(session: AsyncSession, url: str | None) -> None:
     """Store the Plex web address. ``None`` or empty resets to the hosted default."""
     cleaned = (url or "").strip().rstrip("/")
     await _set(session, PLEX_WEB_URL_KEY, cleaned or None)
+
+
+# --- application identity ----------------------------------------------------
+
+
+async def get_application_name(session: AsyncSession) -> str:
+    """What this install calls itself. Defaults to "Reaper"."""
+    value = await _get(session, APPLICATION_NAME_KEY, default=None)
+    name = str(value).strip() if value else ""
+    return name or DEFAULT_APPLICATION_NAME
+
+
+async def set_application_name(session: AsyncSession, name: str | None) -> None:
+    """Store the display name. Empty resets to the default."""
+    cleaned = (name or "").strip()
+    await _set(session, APPLICATION_NAME_KEY, cleaned or None)
+
+
+async def get_application_url(session: AsyncSession) -> str | None:
+    """Where people reach this install, or None (notifications carry no links)."""
+    value = await _get(session, APPLICATION_URL_KEY, default=None)
+    return str(value) if value else None
+
+
+async def set_application_url(session: AsyncSession, url: str | None) -> None:
+    cleaned = (url or "").strip().rstrip("/")
+    await _set(session, APPLICATION_URL_KEY, cleaned or None)
+
+
+# --- the instance API key ----------------------------------------------------
+
+
+async def get_api_key(session: AsyncSession, box: SecretBox) -> str | None:
+    """The stored API key, decrypted, or None when none has been generated.
+
+    A stored value that will not decrypt (the secret key changed) reads as absent, the
+    same posture as the Discord webhook: a broken credential is re-generated in the UI,
+    never allowed to break a request path.
+    """
+    stored = await _get(session, API_KEY_KEY, default=None)
+    if stored is None:
+        return None
+    try:
+        return box.decrypt(str(stored))
+    except ValueError:
+        return None
+
+
+async def set_api_key(session: AsyncSession, box: SecretBox, key: str) -> None:
+    await _set(session, API_KEY_KEY, box.encrypt(key))
+
+
+async def clear_api_key(session: AsyncSession) -> None:
+    row = await session.get(AppSetting, API_KEY_KEY)
+    if row is not None:
+        await session.delete(row)
+        await session.flush()
+
+
+# --- reverse proxy trust -----------------------------------------------------
+
+
+async def proxy_trust_enabled(session: AsyncSession) -> bool:
+    """Whether forwarded headers are honored at all. Off by default: fail closed."""
+    return bool(await _get(session, PROXY_TRUST_ENABLED_KEY, default=False))
+
+
+async def set_proxy_trust_enabled(session: AsyncSession, *, enabled: bool) -> None:
+    await _set(session, PROXY_TRUST_ENABLED_KEY, bool(enabled))
+
+
+async def get_trusted_proxies(session: AsyncSession) -> list[str]:
+    """The proxy addresses (IPs or CIDR ranges) whose forwarded headers are trusted.
+    Validated at the API edge; stored as the cleaned strings."""
+    value = await _get(session, TRUSTED_PROXIES_KEY, default=[])
+    return [str(v) for v in value if str(v).strip()]
+
+
+async def set_trusted_proxies(session: AsyncSession, proxies: list[str]) -> None:
+    await _set(session, TRUSTED_PROXIES_KEY, [p.strip() for p in proxies if p.strip()])
+
+
+# --- logging level -----------------------------------------------------------
+
+
+async def get_log_level_setting(session: AsyncSession) -> str | None:
+    """The stored logging level, or None when the environment seed still governs."""
+    value = await _get(session, LOG_LEVEL_KEY, default=None)
+    return str(value) if value else None
+
+
+async def set_log_level(session: AsyncSession, level: str) -> None:
+    await _set(session, LOG_LEVEL_KEY, level.upper())
 
 
 # --- scan schedule ---------------------------------------------------------
@@ -209,3 +338,73 @@ async def get_leaving_soon_announced(session: AsyncSession) -> set[int]:
 async def set_leaving_soon_announced(session: AsyncSession, keys: set[int]) -> None:
     """Persist the announced set. Sorted so the stored JSON is stable and diffable."""
     await _set(session, LEAVING_SOON_ANNOUNCED_KEY, sorted(keys))
+
+
+# --- Leaving Soon switches ---------------------------------------------------
+
+
+async def leaving_soon_enabled(session: AsyncSession) -> bool:
+    """Whether the "Leaving Soon" shelf is on. Off by default: a fresh install touches
+    nothing in Plex until someone turns the shelf on in Settings -> Plex."""
+    return bool(await _get(session, LEAVING_SOON_ENABLED_KEY, default=False))
+
+
+async def set_leaving_soon_enabled(session: AsyncSession, *, enabled: bool) -> None:
+    await _set(session, LEAVING_SOON_ENABLED_KEY, bool(enabled))
+
+
+async def leaving_soon_unarmed(session: AsyncSession, settings: Settings) -> bool:
+    """Whether the shelf may be written while deletion is off.
+
+    The stored value wins; ``REAPER_ALLOW_UNARMED_LEAVING_SOON`` only decides the
+    first-run default, exactly like the deletion switch. This can only ever widen the
+    shelf writes (collection + label); file deletions are untouched by it.
+    """
+    stored = await _get(session, LEAVING_SOON_UNARMED_KEY, default=None)
+    if stored is None:
+        return settings.allow_unarmed_leaving_soon
+    return bool(stored)
+
+
+async def set_leaving_soon_unarmed(session: AsyncSession, *, allowed: bool) -> None:
+    await _set(session, LEAVING_SOON_UNARMED_KEY, bool(allowed))
+
+
+async def get_leaving_soon_last(session: AsyncSession) -> dict[str, Any] | None:
+    """What the last shelf update did: when it ran, how many movies and seasons are on
+    the shelves, and whether the writes actually landed in Plex."""
+    value = await _get(session, LEAVING_SOON_LAST_KEY, default=None)
+    return dict(value) if isinstance(value, dict) else None
+
+
+async def set_leaving_soon_last(
+    session: AsyncSession, *, at: str, movies: int, seasons: int, applied: bool
+) -> None:
+    await _set(
+        session,
+        LEAVING_SOON_LAST_KEY,
+        {"at": at, "movies": movies, "seasons": seasons, "applied": applied},
+    )
+
+
+# --- Plex libraries ----------------------------------------------------------
+
+
+async def get_plex_libraries(session: AsyncSession) -> list[dict[str, Any]]:
+    """The video libraries as last synced from Plex, each with its enabled flag.
+
+    Empty until the first sync. Only what the operator turned on may be touched by the
+    Leaving Soon reconcile; everything else in Plex is invisible to it.
+    """
+    value = await _get(session, PLEX_LIBRARIES_KEY, default=[])
+    return [dict(v) for v in value if isinstance(v, dict)]
+
+
+async def set_plex_libraries(session: AsyncSession, libraries: list[dict[str, Any]]) -> None:
+    """Store the synced library list. Sorted by section key so the JSON is stable."""
+    await _set(session, PLEX_LIBRARIES_KEY, sorted(libraries, key=lambda d: int(d.get("key", 0))))
+
+
+async def enabled_plex_libraries(session: AsyncSession) -> list[dict[str, Any]]:
+    """Just the libraries the operator turned on."""
+    return [lib for lib in await get_plex_libraries(session) if lib.get("enabled")]

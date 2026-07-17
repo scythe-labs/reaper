@@ -107,6 +107,7 @@ from reaper.db.models import (
 )
 from reaper.engine.policy import ProfileSettings
 from reaper.services import whitelist
+from reaper.services.condemned import effective_condemned
 from reaper.services.planner import MediaRef, manifest_hash
 
 if TYPE_CHECKING:
@@ -355,31 +356,29 @@ async def _condemned(session: AsyncSession, snapshot_id: int) -> dict[str, Candi
     return {c.media_key: c for c in rows}
 
 
-def _deletable(deletes: Sequence[_Delete], decisions: dict[str, str]) -> list[_Delete]:
-    """The exact set a run will act on: the condemned items minus hand-spares.
+def _deletable(deletes: Sequence[_Delete], effective_keys: set[str]) -> list[_Delete]:
+    """The exact set a run will act on: the items in the effective condemned set.
 
-    Every cap -- per-run and rolling -- counts THIS set, the same one the confirmation
-    phrase counts (runs.py ``_planned_candidates``), so enforcement and approval agree. An
-    item the owner spared by hand after the plan was built still carries delete steps (the
-    frozen candidate row still reads ``condemn``) but is skipped per item in
-    ``_one_delete``; counting it would abort a legitimate reduced run. Fails safe: a spare
-    only ever removes items from the count.
+    ``effective_keys`` is the membership of ``services.condemned.effective_condemned``,
+    read fresh for this execution: scan-condemned minus hand-spares plus effective hand
+    reaps. Every cap -- per-run and rolling -- counts THIS set, the same one the
+    confirmation phrase counts (runs.py ``_planned_candidates``), so enforcement and
+    approval agree. An item the owner spared (or un-reaped) after the plan was built
+    still carries delete steps but is skipped per item in ``_one_delete``; counting it
+    would abort a legitimate reduced run. Fails safe: an override change only ever
+    removes items from the count of what THIS run sends.
     """
-    return [
-        d
-        for d in deletes
-        if whitelist.effective_override(d.candidate.media_key, decisions) != "spare"
-    ]
+    return [d for d in deletes if d.candidate.media_key in effective_keys]
 
 
 def _check_caps(
-    deletes: Sequence[_Delete], settings: ProfileSettings, decisions: dict[str, str]
+    deletes: Sequence[_Delete], settings: ProfileSettings, effective_keys: set[str]
 ) -> None:
     """A run over its per-run cap ABORTS before it starts. It never runs the part that
     fits: truncating would make *what* gets deleted depend on sort order. The rolling
     30-day caps are enforced separately, by ``Executor._check_rolling_caps``, which also
     aborts rather than truncates."""
-    deletable = _deletable(deletes, decisions)
+    deletable = _deletable(deletes, effective_keys)
     items = len(deletable)
     total_bytes = sum(int(d.candidate.size_bytes) for d in deletable)
 
@@ -458,6 +457,7 @@ class Executor:
         # spares at plan time, but the owner can spare during the grace window too, so the
         # executor re-checks per item. Loaded per run, not per item, so one query serves all.
         self._decisions: dict[str, str] = {}
+        self._effective_keys: set[str] = set()
 
     async def execute(self, run_id: int) -> RunReport:
         run, steps = await _load(self._session, run_id)
@@ -511,9 +511,13 @@ class Executor:
         condemned = await _condemned(self._session, run.snapshot_id)
 
         # The owner's manual overrides, read fresh: a spare added since the plan was built
-        # must still stop the delete, and this is the layer that enforces it at the point of
-        # no return (see the per-item check in ``_one_delete``).
+        # must still stop the delete, and a hand reap withdrawn since must stop its item
+        # too. This is the layer that enforces both at the point of no return (see the
+        # per-item checks in ``_one_delete``). The effective set is what THIS run may
+        # send; the frozen ``condemned`` dict above stays untouched for the manifest.
         self._decisions = await whitelist.overrides(self._session)
+        effective = await effective_condemned(self._session, run.snapshot_id, self._decisions)
+        self._effective_keys = set(effective)
         self._affected_sections = set()
         self._section_pre_counts = {}
         self._deleted_by_section = {}
@@ -538,22 +542,41 @@ class Executor:
                 "is void. Re-scan, re-review, and approve the new plan."
             )
 
-        # Group every step by the item it belongs to, keeping only condemned items that
-        # actually carry an irreversible delete step. An item is one delete unit -- a
+        # Group every step by the item it belongs to, keeping every planned item that
+        # actually carries an irreversible delete step. An item is one delete unit -- a
         # movie's single call, or a season's unmonitor -> verify -> delete triple -- and
         # the canary, caps and interlocks all act on the item, never on a lone step.
         # Ordered by the item's ordinal so the canary (the smallest condemned item,
-        # ordinal 0) is first.
+        # ordinal 0) is first. Planned items OUTSIDE today's effective set (spared, or a
+        # withdrawn hand reap) stay in the walk on purpose: ``_one_delete`` skips each
+        # one visibly, so the report says why an item was kept instead of losing it.
+        candidates_by_key = dict(condemned)
+        planned_keys = {s.media_key for s in steps}
+        missing = sorted(planned_keys - set(candidates_by_key))
+        if missing:
+            extra = (
+                (
+                    await self._session.execute(
+                        select(Candidate).where(
+                            Candidate.snapshot_id == run.snapshot_id,
+                            Candidate.media_key.in_(missing),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            candidates_by_key.update({c.media_key: c for c in extra})
         deletable_keys = {s.media_key for s in steps if s.kind in _TERMINAL_DELETE_KINDS}
         by_item: dict[str, list[ActionStep]] = {}
         for s in steps:
-            if s.media_key in condemned and s.media_key in deletable_keys:
+            if s.media_key in candidates_by_key and s.media_key in deletable_keys:
                 by_item.setdefault(s.media_key, []).append(s)
         deletes = sorted(
             (
                 _Delete(
                     steps=tuple(sorted(item_steps, key=lambda st: (st.ordinal, st.id))),
-                    candidate=condemned[key],
+                    candidate=candidates_by_key[key],
                 )
                 for key, item_steps in by_item.items()
             ),
@@ -600,7 +623,7 @@ class Executor:
             # owner can read -- the same shape as a canary failure -- rather than an
             # exception that escapes. Either way the run deletes nothing. Both the
             # per-run caps and the rolling 30-day budget are checked, dry run included.
-            _check_caps(deletes, self._settings, self._decisions)
+            _check_caps(deletes, self._settings, self._effective_keys)
             await self._check_rolling_caps(deletes)
             await self._run_deletes(deletes, report, run.approved_at)
             report.state = RunState.COMPLETED
@@ -641,7 +664,7 @@ class Executor:
         Checked in dry run too, so the simulation proves the same refusal a real run
         would hit.
         """
-        deletable = _deletable(deletes, self._decisions)
+        deletable = _deletable(deletes, self._effective_keys)
         items = len(deletable)
         total_bytes = sum(int(d.candidate.size_bytes) for d in deletable)
         past_items, past_bytes = await self._rolling_30d_deletions()
@@ -769,6 +792,16 @@ class Executor:
                 delete,
                 "you spared this by hand, so it is kept even though it was in the plan",
                 check="You spared this by hand. Kept.",
+            )
+
+        # The mirror case: an item that was in the plan only because of a hand reap, whose
+        # override has since been removed. It is no longer in the effective set, so it is
+        # kept -- visibly, not silently dropped from the report.
+        if candidate.media_key not in self._effective_keys:
+            return self._mark_skipped(
+                delete,
+                "the hand reap on this was removed, so it is kept",
+                check="No longer marked to reap by hand. Kept.",
             )
 
         if not self._dry_run:

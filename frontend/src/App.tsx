@@ -5,10 +5,10 @@ import { useEffect, useRef, useState } from "react";
 import { api, type AuthUser, type Snapshot, type Verdict } from "./api";
 import { Fairness } from "./components/Fairness";
 import { Login } from "./components/Login";
-import { PolicyEditor } from "./components/PolicyEditor";
+import { PolicyEditor, type PolicySectionId } from "./components/PolicyEditor";
 import { ReapPlan } from "./components/ReapPlan";
 import { ReviewQueue } from "./components/ReviewQueue";
-import { Settings } from "./components/Settings";
+import { Settings, type Panel } from "./components/Settings";
 import { SetupWizard } from "./components/SetupWizard";
 import { ShowPanel } from "./components/ShowPanel";
 import { WhyPanel } from "./components/WhyPanel";
@@ -191,6 +191,27 @@ function Dashboard({ user }: { user: AuthUser }) {
   const [verdict, setVerdict] = useState<Verdict>("condemn");
   const [selected, setSelected] = useState<Selection>(null);
 
+  // Cross-page jumps: "Turn it on in Policy → Deletion" from the Reap page lands on
+  // the Deletion section, "Settings → Plex" lands on the Plex panel. The nonce makes
+  // each jump fire once; plain tab clicks clear the focus so revisiting a page never
+  // replays an old jump.
+  const [policyFocus, setPolicyFocus] = useState<{
+    section: PolicySectionId;
+    nonce: number;
+  } | null>(null);
+  const [settingsFocus, setSettingsFocus] = useState<{ panel: Panel; nonce: number } | null>(
+    null,
+  );
+
+  const goToPolicySection = (section: PolicySectionId) => {
+    setPolicyFocus({ section, nonce: Date.now() });
+    setView("policy");
+  };
+  const goToSettingsPanel = (panel: Panel) => {
+    setSettingsFocus({ panel, nonce: Date.now() });
+    setView("settings");
+  };
+
   const selectedId = selected?.kind === "item" ? selected.id : null;
   const selectedGroupKey = selected?.kind === "group" ? selected.key : null;
 
@@ -201,6 +222,19 @@ function Dashboard({ user }: { user: AuthUser }) {
     // retrying it on a loop would be noise.
     retry: false,
   });
+
+  // The browser tab wears the install's chosen name (Settings → General), so two
+  // Reapers stay tellable-apart. The default title is baked into index.html; only a
+  // non-default name changes it, and a failed read changes nothing.
+  const { data: generalSettings } = useQuery({
+    queryKey: ["general-settings"],
+    queryFn: api.general,
+    staleTime: 60_000,
+  });
+  useEffect(() => {
+    const name = generalSettings?.application_name;
+    if (name && document.title !== name) document.title = name;
+  }, [generalSettings?.application_name]);
 
   const { data: detail, isError: detailError } = useQuery({
     queryKey: ["candidate", selectedId],
@@ -233,7 +267,12 @@ function Dashboard({ user }: { user: AuthUser }) {
             <button
               key={n.id}
               className={view === n.id ? "tab active" : "tab"}
-              onClick={() => setView(n.id)}
+              onClick={() => {
+                // A plain tab visit must not replay an old cross-page jump.
+                setPolicyFocus(null);
+                setSettingsFocus(null);
+                setView(n.id);
+              }}
             >
               {n.label}
             </button>
@@ -282,13 +321,19 @@ function Dashboard({ user }: { user: AuthUser }) {
               ))}
           </>
         ) : view === "policy" ? (
-          <PolicyEditor />
+          <PolicyEditor focus={policyFocus} />
         ) : view === "reap" ? (
-          <ReapPlan />
+          <ReapPlan
+            onGoToDeletion={() => goToPolicySection("deletion")}
+            onGoToPlexSettings={() => goToSettingsPanel("plex")}
+          />
         ) : view === "fairness" ? (
           <Fairness />
         ) : (
-          <Settings />
+          <Settings
+            key={settingsFocus?.nonce ?? "settings"}
+            initialPanel={settingsFocus?.panel}
+          />
         )}
       </main>
     </div>

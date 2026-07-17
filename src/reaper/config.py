@@ -110,12 +110,15 @@ class Settings(BaseSettings):
     # setting it true, and everyone else starts read-only until they turn it on.
     destructive_actions_enabled: bool = False
 
-    # Writing the "Leaving Soon" Plex label is a mutation, but a benign one: it is
-    # reversible and touches no files. Its whole purpose is to WARN users during the
-    # grace countdown -- which is precisely when Reaper is unarmed. Gated like a
-    # delete by default (so it writes only when deletion is enabled); set this true
-    # on the host to allow the label to be written while still read-only. Like the
-    # kill switch, it lives at the host boundary: a browser can never enable it.
+    # Writing the "Leaving Soon" shelf (a Plex collection plus label) is a mutation,
+    # but a benign one: reversible, and it touches no files. Its whole purpose is to
+    # WARN users during the grace countdown -- which is precisely when Reaper is
+    # unarmed. Gated like a delete by default (so it writes only when deletion is
+    # enabled). This is the FIRST-RUN default only: after first boot the stored value
+    # (Settings -> Plex -> "Update while read-only") is the source of truth, exactly
+    # like the deletion switch above. Exposing it in the UI is safe because the guard
+    # confines it structurally to label and collection edits; it can never widen what
+    # may be deleted.
     allow_unarmed_leaving_soon: bool = False
 
     # --- Anti-lockout ---------------------------------------------------------
@@ -257,12 +260,14 @@ class RuntimeSafety(BaseModel):
         description="May Reaper delete right now? Turned on in the UI, password-gated.",
     )
 
-    # Permit the benign "Leaving Soon" label write while deletion is off. It never widens
-    # what can be *deleted* -- file deletions still require destructive_enabled AND a
-    # journalled declaration. This only lets the reversible, file-touching-nothing label be
-    # written, so the grace-period warning can appear before deletion is turned on.
+    # Permit the benign "Leaving Soon" shelf write (collection + label) while deletion is
+    # off. It never widens what can be *deleted* -- file deletions still require
+    # destructive_enabled AND a journalled declaration. Assembled from the stored setting
+    # (Settings -> Plex), which the environment variable only seeds on first run; see
+    # app_settings.leaving_soon_unarmed.
     allow_leaving_soon_unarmed: bool = Field(
-        default=False, description="REAPER_ALLOW_UNARMED_LEAVING_SOON"
+        default=False,
+        description="Settings -> Plex -> Update while read-only (env-seeded)",
     )
 
     @property
@@ -271,10 +276,10 @@ class RuntimeSafety(BaseModel):
 
     @property
     def leaving_soon_write_allowed(self) -> bool:
-        """May the benign Leaving Soon label be written now?
+        """May the benign Leaving Soon shelf (collection + label) be written now?
 
         When deletion is on, yes (it is at least as safe as a delete). When not, only if
-        the operator opted in on the host.
+        the operator turned on "Update while read-only" in Settings -> Plex.
         """
         return self.destructive_allowed or self.allow_leaving_soon_unarmed
 

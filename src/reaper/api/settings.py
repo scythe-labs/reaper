@@ -16,6 +16,11 @@ Two things are true of the whole router:
 
 from __future__ import annotations
 
+import hashlib
+import json
+import secrets
+from ipaddress import ip_network
+from typing import Any
 from urllib.parse import urlsplit
 
 import structlog
@@ -25,19 +30,26 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.api.auth import _client_ip, _throttled
+from reaper.api.middleware import parse_proxy_networks
 from reaper.auth.cookie import read_session_token
 from reaper.auth.ratelimit import argon2_gate, password_throttle
+from reaper.clients.base import IntegrationError
+from reaper.clients.plex import PlexClient, PlexError
+from reaper.clients.plextv import PlexConnection, PlexTvClient, probe_connection
 from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
-from reaper.db.models import InstanceKind, PlexServer
+from reaper.db.models import AppSetting, InstanceKind, PlexServer
 from reaper.notify.discord import DiscordNotifier, Embed, build_notifier
-from reaper.services import admin_password, app_settings, instances
+from reaper.services import admin_password, app_settings, instances, leaving_soon
 from reaper.services.plex_link import (
     PlexLinkError,
+    PlexLinkRetryableError,
     PlexServerChoiceNeededError,
+    client_identifier,
     poll_link,
     start_link,
+    switch_server,
 )
 from reaper.services.scheduler import SCAN_JOB_ID, apply_scan_schedule
 
@@ -168,6 +180,77 @@ class PlexLinkPollOut(BaseModel):
     server: PlexStatusOut | None = None
     # Present only with status "choose_server": the owned servers to pick from.
     servers: list[PlexServerChoiceOut] | None = None
+
+
+class PlexResourceConnectionOut(BaseModel):
+    """One address a server can be reached at, for the connection picker."""
+
+    uri: str
+    local: bool
+    relay: bool
+    protocol: str
+
+
+class PlexResourceOut(BaseModel):
+    name: str
+    machine_identifier: str
+    current: bool
+    """Whether this is the server Reaper is linked to right now."""
+    connections: list[PlexResourceConnectionOut]
+
+
+class PlexResourcesOut(BaseModel):
+    source: str
+    """``"plex.tv"`` when the listing is live, ``"stored"`` when plex.tv could not be
+    reached and this is the linked server's addresses as remembered at link time. Honest
+    about staleness rather than pretending a cache is live."""
+    servers: list[PlexResourceOut]
+
+
+class PlexServerSwitchIn(BaseModel):
+    machine_identifier: str
+
+
+class PlexConnectionIn(BaseModel):
+    """A connection choice: one of the discovered addresses, or a manually typed one.
+    The address is probed before anything is saved -- a typo changes nothing."""
+
+    uri: str
+    verify_tls: bool | None = None
+
+
+class PlexLibraryOut(BaseModel):
+    key: int
+    title: str
+    kind: str
+    """``"movie"`` or ``"show"``."""
+    enabled: bool
+
+
+class PlexLibrariesIn(BaseModel):
+    """The full set of enabled section keys. Keys not in the stored list are ignored;
+    an empty list turns every library off, which just means no shelf is managed
+    anywhere -- this scopes a warning feature, never a deletion."""
+
+    enabled_keys: list[int]
+
+
+class LeavingSoonLastOut(BaseModel):
+    at: str
+    movies: int
+    seasons: int
+    applied: bool
+
+
+class LeavingSoonSettingsOut(BaseModel):
+    enabled: bool
+    allow_unarmed: bool
+    last: LeavingSoonLastOut | None = None
+
+
+class LeavingSoonSettingsIn(BaseModel):
+    enabled: bool | None = None
+    allow_unarmed: bool | None = None
 
 
 class ScheduledJobOut(BaseModel):
@@ -450,6 +533,317 @@ async def plex_unlink(request: Request) -> dict[str, bool]:
     return {"removed": True}
 
 
+async def _linked_server(session: AsyncSession) -> PlexServer:
+    server = (await session.execute(select(PlexServer))).scalars().first()
+    if server is None:
+        raise HTTPException(400, "No Plex server is linked yet. Link one first.")
+    return server
+
+
+@router.get("/plex/resources")
+async def plex_resources(request: Request) -> PlexResourcesOut:
+    """The servers this Plex account owns and every address each can be reached at,
+    for the server and connection pickers.
+
+    Asks plex.tv live using the stored token. When plex.tv cannot be reached, falls
+    back to the linked server's addresses as remembered at link time -- marked
+    ``source: "stored"`` so the UI can say the list may be stale rather than imply it
+    is fresh.
+    """
+    async with _factory(request)() as session:
+        server = await _linked_server(session)
+        current_id = server.machine_identifier
+        token = _box(request).decrypt(server.token_enc)
+        cid = await client_identifier(session)
+        safety = await app_settings.runtime_safety(session, _settings(request))
+        stored_connections = json.loads(server.connections_json or "[]")
+        stored_name = server.name
+        await session.commit()
+
+    try:
+        async with PlexTvClient(cid, safety=safety) as plextv:
+            owned = await plextv.owned_servers(token)
+    except IntegrationError as exc:
+        log.warning("plex.resources_unreachable", error=str(exc))
+        return PlexResourcesOut(
+            source="stored",
+            servers=[
+                PlexResourceOut(
+                    name=stored_name,
+                    machine_identifier=current_id,
+                    current=True,
+                    connections=[
+                        PlexResourceConnectionOut(
+                            uri=str(c.get("uri") or ""),
+                            local=bool(c.get("local")),
+                            relay=bool(c.get("relay")),
+                            protocol=str(c.get("protocol") or "https"),
+                        )
+                        for c in stored_connections
+                        if c.get("uri")
+                    ],
+                )
+            ],
+        )
+
+    return PlexResourcesOut(
+        source="plex.tv",
+        servers=[
+            PlexResourceOut(
+                name=r.name,
+                machine_identifier=r.client_identifier,
+                current=r.client_identifier == current_id,
+                connections=[
+                    PlexResourceConnectionOut(
+                        uri=c.uri, local=c.local, relay=c.relay, protocol=c.protocol
+                    )
+                    for c in r.preferred_connections()
+                ],
+            )
+            for r in owned
+        ],
+    )
+
+
+@router.put("/plex/server")
+async def plex_switch_server(request: Request, payload: PlexServerSwitchIn) -> PlexStatusOut:
+    """Point Reaper at a different server the same account owns.
+
+    Resolved against the live OWNED list from plex.tv and probed before anything is
+    saved. Switching clears the library choices and the announced set -- they were keyed
+    to the old server and would silently mis-target the new one.
+    """
+    async with _factory(request)() as session:
+        safety = await app_settings.runtime_safety(session, _settings(request))
+    try:
+        await switch_server(
+            _factory(request),
+            _box(request),
+            machine_identifier=payload.machine_identifier,
+            safety=safety,
+        )
+    except PlexLinkRetryableError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    except PlexLinkError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    async with _factory(request)() as session:
+        status = await _plex_status(session)
+    log.info("plex.server_switched")
+    return status
+
+
+@router.put("/plex/connection")
+async def plex_set_connection(request: Request, payload: PlexConnectionIn) -> PlexStatusOut:
+    """Save how Reaper reaches the linked server: a discovered address or a manual one.
+
+    The address is probed with the stored token before anything is written, so a typo
+    or a dead address changes nothing. The certificate check rides along when given
+    (a self-signed HTTPS server needs it off to be probed at all).
+    """
+    uri = payload.uri.strip().rstrip("/")
+    parts = urlsplit(uri)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise HTTPException(
+            422, "The server address must be a full URL, like https://192.0.2.10:32400."
+        )
+
+    async with _factory(request)() as session:
+        server = await _linked_server(session)
+        token = _box(request).decrypt(server.token_enc)
+        verify = payload.verify_tls if payload.verify_tls is not None else server.verify_tls
+
+    probe = PlexConnection(
+        uri=uri,
+        address=parts.hostname,
+        port=parts.port or (443 if parts.scheme == "https" else 32400),
+        local=False,
+        relay=False,
+        protocol=parts.scheme,
+    )
+    if not await probe_connection(probe, token, verify=verify):
+        raise HTTPException(
+            502,
+            "Couldn't reach a Plex server at that address, so nothing was changed. "
+            "Check the address and port, and whether the certificate check should be off.",
+        )
+
+    async with _factory(request)() as session:
+        server = await _linked_server(session)
+        server.connection_uri = uri
+        if payload.verify_tls is not None:
+            server.verify_tls = payload.verify_tls
+        server.last_ok_at = utcnow()
+        status = await _plex_status(session)
+        await session.commit()
+    log.info("plex.connection_saved")
+    return status
+
+
+# ---------------------------------------------------------------------------
+# Plex libraries
+# ---------------------------------------------------------------------------
+
+
+def _libraries_out(stored: list[dict[str, Any]]) -> list[PlexLibraryOut]:
+    return [
+        PlexLibraryOut(
+            key=int(lib.get("key", 0)),
+            title=str(lib.get("title", "")),
+            kind=str(lib.get("kind", "movie")),
+            enabled=bool(lib.get("enabled", True)),
+        )
+        for lib in stored
+    ]
+
+
+@router.get("/plex/libraries")
+async def plex_libraries(request: Request) -> list[PlexLibraryOut]:
+    """The video libraries as last synced, each with its enabled flag. Empty until the
+    first sync."""
+    async with _factory(request)() as session:
+        return _libraries_out(await app_settings.get_plex_libraries(session))
+
+
+@router.post("/plex/libraries/sync")
+async def sync_plex_libraries(request: Request) -> list[PlexLibraryOut]:
+    """Refresh the library list from the server.
+
+    Merge, not replace: a library the operator already turned off stays off across a
+    re-sync; a newly discovered library starts ON, so the default install marks every
+    movie and TV library without further setup. Libraries that no longer exist on the
+    server are dropped.
+    """
+    async with _factory(request)() as session:
+        server = await _linked_server(session)
+        safety = await app_settings.runtime_safety(session, _settings(request))
+        stored = {
+            int(lib["key"]): bool(lib.get("enabled", True))
+            for lib in await app_settings.get_plex_libraries(session)
+        }
+        plex = PlexClient(
+            server.connection_uri,
+            _box(request).decrypt(server.token_enc),
+            safety=safety,
+            verify=server.verify_tls,
+        )
+
+    try:
+        sections = await plex.video_sections()
+    except PlexError as exc:
+        raise HTTPException(502, f"Could not reach Plex: {exc}") from exc
+    finally:
+        await plex.aclose()
+
+    merged = [
+        {
+            "key": s.key,
+            "title": s.title,
+            "kind": s.kind,
+            "enabled": stored.get(s.key, True),
+        }
+        for s in sections
+    ]
+    async with _factory(request)() as session:
+        await app_settings.set_plex_libraries(session, merged)
+        result = _libraries_out(await app_settings.get_plex_libraries(session))
+        await session.commit()
+    log.info("plex.libraries_synced", count=len(merged))
+    return result
+
+
+@router.put("/plex/libraries")
+async def set_plex_libraries(request: Request, payload: PlexLibrariesIn) -> list[PlexLibraryOut]:
+    """Turn libraries on or off. The keys name the enabled set; everything else stored
+    turns off. Unknown keys are ignored rather than invented.
+
+    A library that just turned OFF gets one last empty-reconcile (when Reaper is allowed
+    to write), so its "Leaving Soon" shelf does not linger unmanaged -- the reconcile
+    never visits a disabled library again, and a stale warning shelf is a lie.
+    """
+    enabled = {int(k) for k in payload.enabled_keys}
+    async with _factory(request)() as session:
+        stored = await app_settings.get_plex_libraries(session)
+        turned_off = [
+            lib for lib in stored if lib.get("enabled") and int(lib.get("key", 0)) not in enabled
+        ]
+        for lib in stored:
+            lib["enabled"] = int(lib.get("key", 0)) in enabled
+        await app_settings.set_plex_libraries(session, stored)
+        result = _libraries_out(await app_settings.get_plex_libraries(session))
+        await session.commit()
+
+    if turned_off:
+        # Best-effort, after the choice is committed: failure is logged inside, never
+        # raised, and never blocks the settings change itself.
+        await leaving_soon.cleanup_sections(
+            _factory(request), _settings(request), _box(request), sections=turned_off
+        )
+
+    log.info("plex.libraries_set", enabled=len(enabled), cleaned=len(turned_off))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Leaving Soon
+# ---------------------------------------------------------------------------
+
+
+async def _leaving_soon_out(session: AsyncSession, settings: Settings) -> LeavingSoonSettingsOut:
+    last = await app_settings.get_leaving_soon_last(session)
+    return LeavingSoonSettingsOut(
+        enabled=await app_settings.leaving_soon_enabled(session),
+        allow_unarmed=await app_settings.leaving_soon_unarmed(session, settings),
+        last=LeavingSoonLastOut(
+            at=str(last.get("at", "")),
+            movies=int(last.get("movies", 0)),
+            seasons=int(last.get("seasons", 0)),
+            applied=bool(last.get("applied", False)),
+        )
+        if last
+        else None,
+    )
+
+
+@router.get("/leaving-soon")
+async def get_leaving_soon_settings(request: Request) -> LeavingSoonSettingsOut:
+    async with _factory(request)() as session:
+        return await _leaving_soon_out(session, _settings(request))
+
+
+@router.put("/leaving-soon")
+async def set_leaving_soon_settings(
+    request: Request, payload: LeavingSoonSettingsIn
+) -> LeavingSoonSettingsOut:
+    """Flip the Leaving Soon switches. No password: these can only touch the shelf --
+    a collection and a label -- never a file.
+
+    Turning the shelf OFF runs one last pass that takes everything off it (when Reaper
+    is allowed to write), so nothing stale lingers in the library.
+    """
+    async with _factory(request)() as session:
+        was_enabled = await app_settings.leaving_soon_enabled(session)
+        if payload.enabled is not None:
+            await app_settings.set_leaving_soon_enabled(session, enabled=payload.enabled)
+        if payload.allow_unarmed is not None:
+            await app_settings.set_leaving_soon_unarmed(session, allowed=payload.allow_unarmed)
+        await session.commit()
+
+    if was_enabled and payload.enabled is False:
+        # Best-effort: takes everything off the shelves so nothing stale lingers.
+        # Failure is logged inside, never raised -- turning a warning off must succeed.
+        await leaving_soon.cleanup_shelves(_factory(request), _settings(request), _box(request))
+
+    async with _factory(request)() as session:
+        result = await _leaving_soon_out(session, _settings(request))
+    log.info(
+        "leaving_soon.settings_saved",
+        enabled=payload.enabled,
+        allow_unarmed=payload.allow_unarmed,
+    )
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Schedule
 # ---------------------------------------------------------------------------
@@ -717,3 +1111,133 @@ async def test_notifications(request: Request, payload: NotificationsTestIn) -> 
         else "Could not post to that webhook. Check the URL and that the channel still exists."
     )
     return TestOut(ok=ok, detail=detail)
+
+
+# ---------------------------------------------------------------------------
+# General: application identity, the API key, reverse proxy trust
+# ---------------------------------------------------------------------------
+
+
+class GeneralSettingsOut(BaseModel):
+    application_name: str
+    application_url: str | None = None
+    api_key_set: bool
+    """Whether a key exists at all -- the value itself only leaves through the
+    dedicated reveal route, never rides along on a settings read."""
+    proxy_trust_enabled: bool
+    trusted_proxies: list[str]
+
+
+class GeneralSettingsIn(BaseModel):
+    """Partial update: only the fields present change."""
+
+    application_name: str | None = Field(default=None, max_length=60)
+    application_url: str | None = Field(default=None, max_length=500)
+    proxy_trust_enabled: bool | None = None
+    trusted_proxies: list[str] | None = Field(default=None, max_length=20)
+
+
+class ApiKeyOut(BaseModel):
+    key: str
+
+
+async def _general_out(session: AsyncSession) -> GeneralSettingsOut:
+    return GeneralSettingsOut(
+        application_name=await app_settings.get_application_name(session),
+        application_url=await app_settings.get_application_url(session),
+        api_key_set=(await session.get(AppSetting, app_settings.API_KEY_KEY)) is not None,
+        proxy_trust_enabled=await app_settings.proxy_trust_enabled(session),
+        trusted_proxies=await app_settings.get_trusted_proxies(session),
+    )
+
+
+async def _refresh_proxy_state(request: Request, session: AsyncSession) -> None:
+    """Re-derive the middleware's live trusted-proxy networks from what is stored.
+
+    The middleware reads ``app.state.trusted_proxies`` per request, so this is what
+    makes a General save take effect immediately. Disabled means an empty tuple:
+    forwarded headers from anywhere are ignored, exactly like a fresh install.
+    """
+    if await app_settings.proxy_trust_enabled(session):
+        entries = await app_settings.get_trusted_proxies(session)
+        request.app.state.trusted_proxies = parse_proxy_networks(entries)
+    else:
+        request.app.state.trusted_proxies = ()
+
+
+@router.get("/general")
+async def get_general(request: Request) -> GeneralSettingsOut:
+    async with _factory(request)() as session:
+        return await _general_out(session)
+
+
+@router.put("/general")
+async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSettingsOut:
+    """Save the General settings. Partial: only the fields sent change.
+
+    The application URL must be a plain http(s) address (or empty to clear it), and
+    every trusted-proxy entry must parse as an address or a range -- refused with a
+    plain message otherwise, and nothing is changed.
+    """
+    async with _factory(request)() as session:
+        if payload.application_url is not None:
+            cleaned = payload.application_url.strip()
+            if cleaned:
+                parts = urlsplit(cleaned)
+                if parts.scheme not in ("http", "https") or not parts.netloc:
+                    raise HTTPException(
+                        422,
+                        "The application URL must start with http:// or https:// and "
+                        "include a host, like https://reaper.example.com",
+                    )
+        if payload.trusted_proxies is not None:
+            for entry in payload.trusted_proxies:
+                cleaned_entry = entry.strip()
+                if not cleaned_entry:
+                    continue
+                try:
+                    ip_network(cleaned_entry, strict=False)
+                except ValueError:
+                    raise HTTPException(
+                        422,
+                        f"{cleaned_entry!r} is not an address or a range. Use entries "
+                        "like 172.16.0.1 or 172.16.0.0/12.",
+                    ) from None
+
+        if payload.application_name is not None:
+            await app_settings.set_application_name(session, payload.application_name)
+        if payload.application_url is not None:
+            await app_settings.set_application_url(session, payload.application_url)
+        if payload.proxy_trust_enabled is not None:
+            await app_settings.set_proxy_trust_enabled(session, enabled=payload.proxy_trust_enabled)
+        if payload.trusted_proxies is not None:
+            await app_settings.set_trusted_proxies(session, payload.trusted_proxies)
+        await session.commit()
+        await _refresh_proxy_state(request, session)
+        result = await _general_out(session)
+    log.info("settings.general_saved")
+    return result
+
+
+@router.get("/general/api-key")
+async def reveal_api_key(request: Request) -> ApiKeyOut:
+    """The stored key, for the Show button. Session-only: the middleware fences this
+    route away from API-key auth, so a key cannot read or manage itself."""
+    async with _factory(request)() as session:
+        key = await app_settings.get_api_key(session, _box(request))
+    if key is None:
+        raise HTTPException(404, "No API key exists yet. Generate one first.")
+    return ApiKeyOut(key=key)
+
+
+@router.post("/general/api-key")
+async def generate_api_key(request: Request) -> ApiKeyOut:
+    """Generate the key, replacing any previous one. The old key stops working the
+    moment this returns -- rotation IS revocation, there is nothing to clean up."""
+    key = secrets.token_urlsafe(32)
+    async with _factory(request)() as session:
+        await app_settings.set_api_key(session, _box(request), key)
+        await session.commit()
+    request.app.state.api_key_digest = hashlib.sha256(key.encode("utf-8")).digest()
+    log.info("settings.api_key_rotated")
+    return ApiKeyOut(key=key)

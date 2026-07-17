@@ -21,8 +21,12 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.api.schemas import OverrideIn, SpareIn, WhitelistEntryOut
-from reaper.db.models import Candidate, WhitelistEntry
+from reaper.clock import utcnow
+from reaper.db.models import Candidate, FirstFlagged, Snapshot, WhitelistEntry
 from reaper.services import whitelist
+from reaper.services.condemned import reap_is_effective
+from reaper.services.profiles import active_profile_settings
+from reaper.services.snapshot import record_first_flagged_bulk
 
 router = APIRouter(prefix="/api")
 
@@ -64,6 +68,60 @@ async def _resolve_title(session: AsyncSession, media_key: str) -> str:
     return candidate.title
 
 
+async def _affected_candidates(session: AsyncSession, media_key: str) -> list[Candidate]:
+    """The latest snapshot's rows a decision on this key covers: the item itself, or
+    every season of a show-level key. Empty before the first scan."""
+    latest = (
+        await session.execute(select(Snapshot).order_by(Snapshot.id.desc()).limit(1))
+    ).scalar_one_or_none()
+    if latest is None:
+        return []
+    rows = await session.execute(
+        select(Candidate).where(
+            Candidate.snapshot_id == latest.id,
+            or_(Candidate.media_key == media_key, Candidate.group_key == media_key),
+        )
+    )
+    return list(rows.scalars().all())
+
+
+async def _sync_grace_clocks(session: AsyncSession, media_key: str) -> None:
+    """Grace bookkeeping for an override change, so the countdown matches the click.
+
+    A hand reap enters the effective condemned set immediately (services.condemned), so
+    its grace clock starts now -- written through the scan's own clock decision
+    (``snapshot.record_first_flagged_bulk``: set once, reset only on a genuine return),
+    which is what makes "on the list since" and the Leaving Soon warning true from the
+    moment the owner clicks rather than from the next scan.
+
+    The reverse direction cleans up: removing the reap (or flipping it to spare) deletes
+    the clock again for rows the scan did not condemn, so a stale hand-reap timestamp
+    can never shorten the grace window of a later, real condemnation (rule 4). Rows the
+    scan condemned keep their scan-owned clock untouched.
+    """
+    decisions = await whitelist.overrides(session)
+    rows = await _affected_candidates(session, media_key)
+    if not rows:
+        return
+
+    def reaped_now(candidate: Candidate) -> bool:
+        return whitelist.effective_override(
+            candidate.media_key, decisions
+        ) == "reap" and reap_is_effective(candidate)
+
+    to_start = [c.media_key for c in rows if reaped_now(c)]
+    if to_start:
+        profile = await active_profile_settings(session)
+        await record_first_flagged_bulk(session, to_start, utcnow(), grace_days=profile.grace_days)
+    for candidate in rows:
+        if candidate.verdict == "condemn" or reaped_now(candidate):
+            continue
+        clock = await session.get(FirstFlagged, candidate.media_key)
+        if clock is not None:
+            await session.delete(clock)
+    await session.flush()
+
+
 @router.get("/whitelist")
 async def list_whitelist(request: Request) -> list[WhitelistEntryOut]:
     async with _sessions(request)() as session:
@@ -78,6 +136,7 @@ async def spare_item(request: Request, payload: SpareIn) -> WhitelistEntryOut:
         entry = await whitelist.spare(
             session, media_key=payload.media_key, title=title, note=payload.note
         )
+        await _sync_grace_clocks(session, payload.media_key)
         out = _out(entry)
         await session.commit()
         return out
@@ -99,6 +158,7 @@ async def set_override(request: Request, payload: OverrideIn) -> WhitelistEntryO
             decision=payload.decision,
             note=payload.note,
         )
+        await _sync_grace_clocks(session, payload.media_key)
         out = _out(entry)
         await session.commit()
         return out
@@ -110,6 +170,7 @@ async def unspare_item(request: Request, media_key: str) -> dict[str, bool]:
     the file -- it lets the item be judged by the policy again on the next scan."""
     async with _sessions(request)() as session:
         removed = await whitelist.remove_override(session, media_key=media_key)
+        await _sync_grace_clocks(session, media_key)
         await session.commit()
     return {"removed": removed}
 
@@ -119,5 +180,6 @@ async def clear_override(request: Request, media_key: str) -> dict[str, bool]:
     """Remove any override (spare or reap) -- the decision-neutral name for the same action."""
     async with _sessions(request)() as session:
         removed = await whitelist.remove_override(session, media_key=media_key)
+        await _sync_grace_clocks(session, media_key)
         await session.commit()
     return {"removed": removed}

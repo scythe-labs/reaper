@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The gate every request passes through.
 
-Two jobs, both enforced here rather than sprinkled across routers, so that a new
+Three jobs, all enforced here rather than sprinkled across routers, so that a new
 endpoint is protected by *existing at all* rather than by remembering to add a
 dependency:
 
@@ -9,6 +9,12 @@ dependency:
   handful that must work *before* you are logged in -- the health probe and the
   ``/api/auth`` endpoints themselves. There is no per-route opt-in; a route is
   behind auth unless this file names it as open.
+
+* **The API key lane.** A request presenting ``X-Api-Key`` is judged on the key alone
+  (constant-time digest compare, per-address backoff on bad guesses) and never falls
+  back to a cookie. A valid key acts as the operator EXCEPT on the fenced routes --
+  arming, executing, sign-in and key management -- which always need the browser
+  session. See ``_handle_api_key``.
 
 * **CSRF.** A logged-in admin's browser must not be tricked into issuing a
   state-changing request by a page on another origin. Every unsafe method
@@ -39,13 +45,17 @@ handler returns; a pass-through cannot. (Scan progress is *polled* today over
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+from ipaddress import IPv4Network, IPv6Network, ip_address, ip_network
 
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocketClose
 
 from reaper.auth.cookie import read_session_token
+from reaper.auth.ratelimit import Throttle
 from reaper.auth.sessions import resolve_session
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
@@ -56,9 +66,84 @@ _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 _OPEN_EXACT = frozenset({"/api/health"})
 _OPEN_PREFIX = "/api/auth/"
 
+#: Bad API keys back off per address, same shape as the login throttle: a guessed
+#: header must not be a free brute-force channel just because it skips the login form.
+api_key_throttle = Throttle(threshold=5, base_delay=2.0, max_delay=300.0, decay=900.0)
+
+#: What an API key may NEVER do, whatever it sends. The key is for scripts -- reading,
+#: scanning, planning, policy edits. The three irreversible authorities stay in the
+#: browser behind the password: turning deletion on (or touching that switch at all),
+#: executing a reap, and changing how sign-in works. Managing the key itself is fenced
+#: too, so a leaked key cannot mint its own replacement and outlive a rotation.
+_API_KEY_FENCED_EXACT = frozenset(
+    {
+        "/api/settings/safety",
+        "/api/settings/admin-password",
+        "/api/settings/general/api-key",
+    }
+)
+
+
+def _api_key_fenced(path: str) -> bool:
+    if path.startswith("/api/runs/") and path.endswith("/execute"):
+        return True
+    return path in _API_KEY_FENCED_EXACT
+
 
 def _is_open(path: str) -> bool:
     return path in _OPEN_EXACT or path.startswith(_OPEN_PREFIX)
+
+
+def parse_proxy_networks(entries: list[str]) -> tuple[IPv4Network | IPv6Network, ...]:
+    """Parse stored trusted-proxy entries into networks, dropping anything malformed.
+
+    A single address becomes its /32 (or /128) network. Dropping rather than raising is
+    the fail-closed direction here: an unparseable entry trusts NOBODY extra.
+    """
+    networks: list[IPv4Network | IPv6Network] = []
+    for entry in entries:
+        cleaned = entry.strip()
+        if not cleaned:
+            continue
+        try:
+            networks.append(ip_network(cleaned, strict=False))
+        except ValueError:
+            continue
+    return tuple(networks)
+
+
+def client_ip(request: Request) -> str:
+    """The address rate limits key on.
+
+    The direct peer address, unless the operator turned on reverse-proxy trust in
+    Settings -> General AND the peer is one of the proxies they listed -- only then is
+    ``X-Forwarded-For`` consulted, walking from its rightmost hop and returning the
+    first address that is not a trusted proxy. Anyone else's forwarded header is
+    attacker-controlled noise and is ignored, so a stranger cannot rotate spoofed
+    addresses to dodge the per-IP lockout. Any parse trouble falls back to the peer.
+    """
+    client = request.client
+    peer = client.host if client is not None else "unknown"
+    proxies: tuple[IPv4Network | IPv6Network, ...] = getattr(
+        request.app.state, "trusted_proxies", ()
+    )
+    if not proxies:
+        return peer
+    try:
+        peer_ip = ip_address(peer)
+    except ValueError:
+        return peer
+    if not any(peer_ip in net for net in proxies):
+        return peer
+    hops = [h.strip() for h in request.headers.get("x-forwarded-for", "").split(",") if h.strip()]
+    for hop in reversed(hops):
+        try:
+            hop_ip = ip_address(hop)
+        except ValueError:
+            return peer
+        if not any(hop_ip in net for net in proxies):
+            return str(hop_ip)
+    return peer
 
 
 async def _refuse_scope(scope: Scope, receive: Receive, send: Send) -> None:
@@ -133,6 +218,16 @@ class AuthGuard:
 
         request = Request(scope)  # header/cookie/url reads only; the body is never touched
 
+        # The API-key lane, for scripts and other apps. Explicit and exclusive: a
+        # request that presents X-Api-Key is judged on the key alone, never falling
+        # back to a cookie session. No CSRF check on this lane -- CSRF defends cookie
+        # credentials a browser attaches automatically, and no cross-site page can set
+        # this header without a preflight this server never grants.
+        provided_key = request.headers.get("x-api-key")
+        if provided_key is not None and not _is_open(path):
+            await self._handle_api_key(scope, receive, send, request, provided_key, path)
+            return
+
         if scope["method"] not in _SAFE_METHODS and not _csrf_ok(request):
             await _reject(send, 403, "This request was blocked by Reaper's CSRF protection.")
             return
@@ -149,6 +244,48 @@ class AuthGuard:
 
         if user is None:
             await _reject(send, 401, "Not authenticated.")
+            return
+
+        await self.app(scope, receive, send)
+
+    async def _handle_api_key(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+        request: Request,
+        provided: str,
+        path: str,
+    ) -> None:
+        """Judge one request on its API key: throttle bad guesses, fence the
+        password-only routes, and otherwise let it through as the operator.
+
+        Compared as SHA-256 digests in constant time. The digest is cached on
+        ``app.state`` at startup and on every key change, so the hot path never
+        touches the database or the encryption layer.
+        """
+        throttle_key = f"api-key:{client_ip(request)}"
+        if api_key_throttle.retry_after(throttle_key) > 0:
+            await _reject(
+                send, 429, "Too many bad API keys from this address. Wait a moment and try again."
+            )
+            return
+
+        digest: bytes | None = getattr(request.app.state, "api_key_digest", None)
+        provided_digest = hashlib.sha256(provided.encode("utf-8")).digest()
+        if digest is None or not hmac.compare_digest(provided_digest, digest):
+            api_key_throttle.record_failure(throttle_key)
+            await _reject(send, 401, "That API key is not valid.")
+            return
+        api_key_throttle.record_success(throttle_key)
+
+        if _api_key_fenced(path):
+            await _reject(
+                send,
+                403,
+                "An API key cannot do this. Turning deletion on, executing a reap, and "
+                "changing sign-in or key settings all need the web app, signed in.",
+            )
             return
 
         await self.app(scope, receive, send)

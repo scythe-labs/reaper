@@ -62,11 +62,25 @@ class Embed:
 class DiscordNotifier:
     """Posts embeds to one webhook. Construct via :func:`build_notifier`, which returns
     ``None`` when no webhook is configured -- so callers express "notify if we can" as
-    ``if notifier: await notifier.post(...)`` rather than threading config everywhere."""
+    ``if notifier: await notifier.post(...)`` rather than threading config everywhere.
 
-    def __init__(self, webhook_url: str, *, client: httpx.AsyncClient | None = None) -> None:
+    ``app_name`` is the sender name the message wears (Settings -> General), so two
+    installs posting into one channel stay tellable-apart. ``app_url`` adds an "open"
+    link at the end of list messages; empty means no link, never a broken one.
+    """
+
+    def __init__(
+        self,
+        webhook_url: str,
+        *,
+        client: httpx.AsyncClient | None = None,
+        app_name: str = "Reaper",
+        app_url: str | None = None,
+    ) -> None:
         self._url = webhook_url
         self._client = client
+        self._app_name = app_name
+        self._app_url = app_url
 
     async def post(self, embed: Embed) -> bool:
         """Send one embed. Returns whether it landed; never raises.
@@ -75,12 +89,14 @@ class DiscordNotifier:
         code, which carry everything useful without carrying the token.
         """
         client = self._client or httpx.AsyncClient(timeout=_TIMEOUT)
+        payload = embed.to_payload()
+        payload["username"] = self._app_name
         try:
-            response = await client.post(self._url, json=embed.to_payload())
+            response = await client.post(self._url, json=payload)
             # A 429 is not a real failure -- the same message can land moments later. Honour
             # Retry-After and retry once (bounded) rather than silently dropping the warning.
             if response.status_code == 429:
-                response = await self._retry_after_429(client, embed, response)
+                response = await self._retry_after_429(client, payload, embed.title, response)
             response.raise_for_status()
             log.info("discord.posted", status=response.status_code, title=embed.title)
             return True
@@ -101,19 +117,23 @@ class DiscordNotifier:
                 await client.aclose()
 
     async def _retry_after_429(
-        self, client: httpx.AsyncClient, embed: Embed, response: httpx.Response
+        self,
+        client: httpx.AsyncClient,
+        payload: dict[str, object],
+        title: str,
+        response: httpx.Response,
     ) -> httpx.Response:
-        """Wait out one rate-limit and re-post. Returns the retry's response, or the
-        original 429 unchanged when there is nothing useful to wait on -- either way the
-        caller runs ``raise_for_status`` next, so a still-failing 429 becomes the ordinary
-        ``discord.rejected`` path."""
+        """Wait out one rate-limit and re-post the same payload. Returns the retry's
+        response, or the original 429 unchanged when there is nothing useful to wait on
+        -- either way the caller runs ``raise_for_status`` next, so a still-failing 429
+        becomes the ordinary ``discord.rejected`` path."""
         retry_after = _parse_retry_after(response.headers.get("Retry-After"))
         if retry_after is None:
             return response
         # The status, not the URL: the token lives in the path.
-        log.info("discord.rate_limited", retry_after=retry_after, title=embed.title)
+        log.info("discord.rate_limited", retry_after=retry_after, title=title)
         await asyncio.sleep(min(retry_after, _MAX_RETRY_AFTER))
-        return await client.post(self._url, json=embed.to_payload())
+        return await client.post(self._url, json=payload)
 
     async def announce_leaving_soon(self, titles: list[str], *, grace_days: int) -> bool:
         """ "These N titles are leaving soon." The headline count is honest even when the
@@ -126,13 +146,15 @@ class DiscordNotifier:
             lines += f"\n…and {len(titles) - _MAX_TITLES} more."
         count = len(titles)
         noun = "title is" if count == 1 else "titles are"
+        # The way back in: the Application URL from Settings -> General, when set.
+        link = f"\n\n[Open {self._app_name}]({self._app_url})" if self._app_url else ""
         return await self.post(
             Embed(
                 title=f"{count} {noun} leaving soon",
                 description=(
                     f"Unwatched, and past review. They will be removed after the "
                     f"{grace_days}-day grace period unless someone watches them or they "
-                    f"are spared.\n\n{lines}"
+                    f"are spared.\n\n{lines}{link}"
                 ),
             )
         )
@@ -167,4 +189,9 @@ async def build_notifier(
     webhook = await app_settings.get_discord_webhook(session, box, settings)
     if webhook is None:
         return None
-    return DiscordNotifier(webhook, client=client)
+    return DiscordNotifier(
+        webhook,
+        client=client,
+        app_name=await app_settings.get_application_name(session),
+        app_url=await app_settings.get_application_url(session),
+    )

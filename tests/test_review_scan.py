@@ -41,10 +41,10 @@ from reaper.services.snapshot import (
     _fold_merged_watch_stats,
     _insert_first_flags,
     _raw_items,
-    _record_first_flagged_bulk,
     _watch_stats,
     build_movie_index,
     protection_sync_degradations,
+    record_first_flagged_bulk,
 )
 
 # Second precision: the timestamp columns round-trip through SQLite at whole-second
@@ -622,7 +622,7 @@ class TestTheGraceClockRestartsOnReCondemnation:
         )
         await session.flush()
 
-        await _record_first_flagged_bulk(session, ["radarr:1:1"], NOW, grace_days=14)
+        await record_first_flagged_bulk(session, ["radarr:1:1"], NOW, grace_days=14)
 
         row = await session.get(FirstFlagged, "radarr:1:1")
         assert row is not None
@@ -644,7 +644,7 @@ class TestTheGraceClockRestartsOnReCondemnation:
         )
         await session.flush()
 
-        await _record_first_flagged_bulk(session, ["radarr:1:2"], NOW, grace_days=14)
+        await record_first_flagged_bulk(session, ["radarr:1:2"], NOW, grace_days=14)
 
         row = await session.get(FirstFlagged, "radarr:1:2")
         assert row is not None

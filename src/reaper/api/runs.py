@@ -40,6 +40,7 @@ from reaper.crypto import SecretBox
 from reaper.db.models import ActionStep, Candidate, ReapRun, Snapshot
 from reaper.engine.policy import ProfileSettings
 from reaper.services import app_settings, whitelist
+from reaper.services.condemned import effective_condemned
 from reaper.services.executor import ExecutionError, Executor, RunReport
 from reaper.services.planner import PlanError, build_plan, confirmation_phrase
 from reaper.services.profiles import active_profile_settings, save_profile_settings
@@ -83,31 +84,17 @@ async def _planned_candidates(session: AsyncSession, run: ReapRun) -> list[Candi
     The item is the unit the executor's caps count, so the review surface and the enforcement
     surface agree. ``dict.fromkeys`` dedupes in plan order.
 
-    Spared items are excluded here, exactly as the executor skips them: an item spared after
-    the plan was built has steps but will not be deleted, so it must not inflate the
-    confirmation phrase. Recomputed at execute time, this also makes a post-plan spare change
-    the expected phrase -- so the owner is asked to reload and re-confirm the smaller reap
-    rather than silently approving a count that no longer matches.
+    The membership is the EFFECTIVE condemned set (services.condemned), re-read now, exactly
+    as the executor derives it: an item spared after the plan was built has steps but will
+    not be deleted, so it must not inflate the confirmation phrase, and a hand reap whose
+    override was since removed drops out the same way. Recomputed at execute time, this also
+    makes a post-plan override change the expected phrase -- so the owner is asked to reload
+    and re-confirm the changed reap rather than approving a count that no longer matches.
     """
     steps = await _run_steps(session, run)
-    condemned = list(
-        (
-            await session.execute(
-                select(Candidate).where(
-                    Candidate.snapshot_id == run.snapshot_id, Candidate.verdict == "condemn"
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    by_key = {c.media_key: c for c in condemned}
     decisions = await whitelist.overrides(session)
-    return [
-        by_key[k]
-        for k in dict.fromkeys(s.media_key for s in steps)
-        if k in by_key and whitelist.effective_override(k, decisions) != "spare"
-    ]
+    by_key = await effective_condemned(session, run.snapshot_id, decisions)
+    return [by_key[k] for k in dict.fromkeys(s.media_key for s in steps) if k in by_key]
 
 
 async def _run_out(session: AsyncSession, run: ReapRun) -> RunOut:

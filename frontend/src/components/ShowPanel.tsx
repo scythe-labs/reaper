@@ -9,10 +9,28 @@
 // hands off to that season's complete reasoning.
 
 import { useState } from "react";
-import type { Group } from "../api";
+import type { Candidate, Group } from "../api";
 import { bytes } from "../format";
 import { CondemnedChip, StatusChip } from "./StatusChip";
 import { JumpPill, WhyHero } from "./WhyPanel";
+
+/** The one pill a season row wears. The owner's hand decision replaces the scan chip
+ *  (solid means "you chose this"); a reap the engine refuses reads amber and says why,
+ *  because "you asked" and "it is gone" are different facts. */
+function SeasonPill({ season }: { season: Candidate }) {
+  if (season.override === "spare") {
+    return <span className="status-chip status-hand-spare">Spared by hand · will be kept</span>;
+  }
+  if (season.override === "reap") {
+    if (season.override_effective === false) {
+      const why = season.chip ? season.chip.text.replace(/^Kept · /, "") : "a safety stop applies";
+      return <span className="status-chip status-look">Reap requested · kept for now: {why}</span>;
+    }
+    return <span className="status-chip status-hand-reap">Reaped by hand · will be removed</span>;
+  }
+  if (season.verdict === "condemn") return <CondemnedChip />;
+  return <StatusChip chip={season.chip} />;
+}
 
 /** The synopsis, clamped like the why-panel's -- the seasons block is the point here. */
 function ShowSynopsis({ text }: { text: string }) {
@@ -101,11 +119,7 @@ export function ShowPanel({
                       ? `Season ${season.season_number}`
                       : season.title}
                 </span>
-                {season.verdict === "condemn" ? (
-                  <CondemnedChip />
-                ) : (
-                  <StatusChip chip={season.chip} />
-                )}
+                <SeasonPill season={season} />
                 <span className="panel-season-size num">{bytes(season.size_bytes)}</span>
               </button>
             </li>

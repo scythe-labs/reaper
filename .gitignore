@@ -225,3 +225,4 @@ secret.key
 # Frontend
 node_modules/
 frontend/dist/
+frontend/public/vendor/

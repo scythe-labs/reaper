@@ -45,7 +45,7 @@ from reaper.engine.gates import (
     WhitelistGate,
 )
 from reaper.engine.policy import PolicyBody
-from reaper.services import app_settings, history_sync, profiles, requested_by
+from reaper.services import app_settings, history_sync, leaving_soon, profiles, requested_by
 from reaper.services import snapshot as snapshot_service
 from reaper.services.snapshot import Progress, ProgressFn
 
@@ -572,6 +572,12 @@ async def _run_scan_locked(
         )
         await session.commit()
         emit(Progress("complete", snapshot.item_count, snapshot.item_count, str(snapshot.id)))
+
+        # The snapshot is committed, so the grace set just changed -- this is the moment
+        # the "Leaving Soon" shelf (and the Discord heads-up) go stale. Best-effort by
+        # design: after_scan swallows and logs its own failures, because the warning
+        # layer must never fail a scan that already landed.
+        await leaving_soon.after_scan(session_factory, settings, box)
         return snapshot
 
     # AsyncExitStack always yields; this is unreachable but satisfies the type checker,
