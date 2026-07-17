@@ -908,6 +908,25 @@ class TestPolicyPersistence:
 
         assert first["policy_hash"] == second["policy_hash"]
 
+    def test_reverting_to_an_earlier_policy_takes_effect(self, client: TestClient) -> None:
+        """Save A, then B, then A again: the last save must put A back in force.
+
+        The duplicate-save check used to match A's *older* row anywhere in history and
+        skip the write -- 200, reverted body in the response, and B still active. Only
+        re-saving the policy currently in force may no-op; a revert is a real change."""
+        saved_a = client.post("/api/policy", json=_policy(condemn_at=55)).json()
+        saved_b = client.post("/api/policy", json=_policy(condemn_at=80)).json()
+        assert saved_b["policy_hash"] != saved_a["policy_hash"]
+
+        reverted = client.post("/api/policy", json=_policy(condemn_at=55))
+
+        assert reverted.status_code == 200, reverted.text
+        assert reverted.json()["policy_hash"] == saved_a["policy_hash"]
+
+        active = client.get("/api/policy").json()
+        assert active["policy_hash"] == saved_a["policy_hash"]
+        assert active["body"]["condemn_at"] == 55
+
     def test_an_invalid_policy_is_never_persisted(self, client: TestClient) -> None:
         """A dormancy floor under a year is refused by the domain, and the refusal must
         happen before the row is written -- not after."""

@@ -176,19 +176,25 @@ class PendingPlexLogin(Base):
 class Policy(Base):
     """An immutable, content-addressed policy body.
 
-    **Append-only. Never UPDATE.** Editing a policy in the UI writes a *new* row
-    with a new hash; the old row survives because approvals, candidates and audit
-    entries point at it and must remain interpretable years later.
+    **Append-only. Never UPDATE.** Editing a policy in the UI writes a *new* row;
+    the old row survives because approvals, candidates and audit entries point at
+    it and must remain interpretable years later.
 
     ``policy_hash`` covers the semantic fields plus the schema and scorer versions,
     and deliberately excludes ``id``, ``name`` and ``created_at`` -- so renaming a
     policy does not void every pending approval, but changing a threshold does.
+    The hash identifies *content*, not a row, and is deliberately not unique here:
+    reverting to an earlier policy appends a fresh row carrying the earlier hash,
+    so the newest row per media type is always the one in force and the table
+    reads as the complete save history. Rows sharing a hash are byte-identical
+    (the hash is over canonical JSON), so anything pointing at a hash stays
+    unambiguous.
     """
 
     __tablename__ = "policy"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    policy_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    policy_hash: Mapped[str] = mapped_column(String(64), index=True)
     body_json: Mapped[str] = mapped_column(Text)
     """The canonical JSON. Integers only -- floats do not canonicalise, and an
     unstable hash means approvals void themselves at random."""

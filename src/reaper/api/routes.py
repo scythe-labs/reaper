@@ -64,7 +64,7 @@ from reaper.services import app_settings, whitelist
 from reaper.services.deep_links import build_links
 from reaper.services.display_meta import parse_ratings_json
 from reaper.services.planner import MediaRef, PlanError
-from reaper.services.profiles import active_policy
+from reaper.services.profiles import active_policy, active_policy_row
 
 log = structlog.get_logger(__name__)
 
@@ -667,9 +667,12 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
 async def save_policy(request: Request, payload: PolicyIn) -> PolicyOut:
     """Save a policy. **Append-only: this never updates a row.**
 
-    Saving the same policy twice is a no-op rather than a duplicate -- the hash is the
-    identity, so an owner who opens the editor and saves without changing anything does
-    not fork the audit trail.
+    Re-saving the policy already in force is a no-op rather than a duplicate -- the hash
+    is the identity, so an owner who opens the editor and saves without changing anything
+    does not fork the audit trail. Only the *active* row may short-circuit like that:
+    content matching an older, superseded row still appends a fresh row, because "in
+    force" means "newest row for the media type". Skipping that write is how a revert
+    used to vanish -- 200, reverted body in the response, old policy still active.
 
     Note what this does *not* do: it does not arm anything. Reaper still cannot delete,
     and a saved policy takes effect on the next scan.
@@ -678,27 +681,25 @@ async def save_policy(request: Request, payload: PolicyIn) -> PolicyOut:
     policy_hash = body.policy_hash()
 
     async with _sessions(request)() as session:
-        existing = (
-            await session.execute(select(PolicyModel).where(PolicyModel.policy_hash == policy_hash))
-        ).scalar_one_or_none()
+        active = await active_policy_row(session, body.media_type)
 
-        if existing is None:
-            session.add(
-                PolicyModel(
-                    policy_hash=policy_hash,
-                    body_json=body.model_dump_json(),
-                    media_type=body.media_type,
-                    name=payload.name,
-                    created_at=utcnow(),
-                )
-            )
-            await session.commit()
-        else:
-            # Content-identical save: append-only, so nothing is written and the name is
-            # NOT changed. Echo the *persisted* name, not the discarded request name, so
-            # the success response matches what the next GET /api/policy will show --
+        if active is not None and active.policy_hash == policy_hash:
+            # Content-identical to the policy in force: nothing is written and the name
+            # is NOT changed. Echo the *persisted* name, not the discarded request name,
+            # so the success response matches what the next GET /api/policy will show --
             # otherwise a name-only edit looks like it stuck when it silently did not.
-            return _policy_out(body, existing.name)
+            return _policy_out(body, active.name)
+
+        session.add(
+            PolicyModel(
+                policy_hash=policy_hash,
+                body_json=body.model_dump_json(),
+                media_type=body.media_type,
+                name=payload.name,
+                created_at=utcnow(),
+            )
+        )
+        await session.commit()
 
     return _policy_out(body, payload.name)
 

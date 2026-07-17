@@ -50,6 +50,24 @@ async def active_profile_settings(session: AsyncSession) -> ProfileSettings:
     return ProfileSettings.model_validate_json(row.settings_json)
 
 
+async def active_policy_row(session: AsyncSession, media_type: str) -> PolicyModel | None:
+    """The newest saved policy row for one media type -- the row in force.
+
+    "Active" is purely recency: rows are append-only, so whatever was saved last for the
+    media type is what the next scan runs to. Every reader and writer of that rule goes
+    through here, so it cannot drift -- ``save_policy`` in particular must judge "did this
+    save change anything?" against exactly the row a GET would return.
+    """
+    return (
+        await session.execute(
+            select(PolicyModel)
+            .where(PolicyModel.media_type == media_type)
+            .order_by(PolicyModel.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
 async def active_policy(session: AsyncSession, media_type: str = "movie") -> tuple[PolicyBody, str]:
     """The policy Reaper is currently working to, for one media type.
 
@@ -58,18 +76,11 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> tup
     there are two policies, chosen here by ``media_type`` ("movie" or "tv").
 
     The most recently saved one for that type, or the built-in default if none has been saved.
-    Policy rows are **immutable and append-only** -- editing writes a new row with a new hash
-    rather than mutating the old one, because snapshots, approvals and audit entries point at
-    that hash and must stay interpretable years later.
+    Policy rows are **immutable and append-only** -- editing writes a new row rather than
+    mutating the old one, because snapshots, approvals and audit entries point at these
+    rows by hash and must stay interpretable years later.
     """
-    row = (
-        await session.execute(
-            select(PolicyModel)
-            .where(PolicyModel.media_type == media_type)
-            .order_by(PolicyModel.id.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    row = await active_policy_row(session, media_type)
 
     if row is None:
         return (DEFAULT_TV_POLICY if media_type == "tv" else DEFAULT_MOVIE_POLICY), "default"
@@ -89,7 +100,7 @@ async def _ensure_active_policy_row(session: AsyncSession) -> int:
     A profile references a policy by foreign key, but a fresh install has never saved
     one -- it runs on ``DEFAULT_MOVIE_POLICY``, which lives in code, not the table. So we
     persist it (append-only, content-addressed like any policy) and point the profile at
-    it. Idempotent: the same default is never written twice, because the hash is unique.
+    it. Idempotent: the ``latest`` check writes only when the table has no rows at all.
     """
     latest = (
         await session.execute(select(PolicyModel).order_by(PolicyModel.id.desc()).limit(1))

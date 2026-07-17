@@ -1420,6 +1420,22 @@ scans on a copy of the dev DB):
   ordered by id — the previous unordered `.first()` was nondeterministic, exposed by
   env-seeded instances landing beside fixture rows in a test database.
 
+## Policy reverts were silently ignored (found live, fixed)
+
+Saving a policy whose content matched **any** historical row was treated as a
+content-identical no-op — but "active" means *newest row per media type*, so reverting to
+an earlier policy (save A, save B, save A again) returned 200 with the reverted body while
+the newer policy stayed in force. The wrong assumption: "hash already exists ⇒ nothing to
+do" — true only when the match **is** the active row. Fix: `save_policy` short-circuits
+only against the active row (via `_active_policy_row`, the one place the newest-row rule
+now lives) and otherwise appends; `policy.policy_hash` dropped its unique constraint
+(plain index now) so a revert can append a fresh row carrying the earlier hash. The hash
+stays content identity — same hash, byte-identical canonical body — so snapshots and
+approvals stay unambiguous, and the table now reads as the complete save history,
+reverts included. Regression-tested (API test proven failing pre-fix) and verified
+end-to-end against a live scratch server: rows A, B, A with the re-save of active A
+appending nothing.
+
 ## Immediate next steps
 
 1. **The live send** — wire `_send_for_real` + the exclusion-verify + the Plex refresh
