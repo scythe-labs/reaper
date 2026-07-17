@@ -96,7 +96,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S105", "S106", "S107"]   # hardcoded fake secrets in fixtures
+"tests/*" = ["S105", "S106", "S107", "S311"]   # fake secrets in fixtures; seeded rng in generators
+"scripts/*" = ["S311", "T201"]                 # dev tools: seeded rng, console output
 
 [tool.ruff.lint.isort]
 known-first-party = ["reaper"]

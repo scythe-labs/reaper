@@ -301,13 +301,18 @@ def _detect_conflicts(
 ) -> list[PruneConflict]:
     """Flag any prunable season with strictly more viewers than a kept season.
 
-    Compared only against kept seasons that hold content (the ones in ``protected``);
-    specials and empties are not meaningful comparisons. Strictly greater, so an equal
-    count -- common when neither has been watched -- is not a conflict.
+    Compared only against kept seasons that hold content (the ones in ``protected``),
+    and never against Season 0: specials sit outside the run, are rarely watched, and a
+    kept-but-unwatched specials season would otherwise flag every watched prunable
+    season as a conflict -- refusing auto-approval for a comparison that means nothing.
+    Specials are excluded from both sides. Strictly greater, so an equal count --
+    common when neither has been watched -- is not a conflict.
     """
     conflicts: list[PruneConflict] = []
-    kept_numbers = [p.season_number for p in protected]
+    kept_numbers = [p.season_number for p in protected if p.season_number != SPECIALS_SEASON]
     for pruned in prunable:
+        if pruned == SPECIALS_SEASON:
+            continue
         pruned_watchers = watchers_by_season.get(pruned, 0)
         for kept in kept_numbers:
             kept_watchers = watchers_by_season.get(kept, 0)

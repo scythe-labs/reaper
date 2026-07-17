@@ -655,6 +655,128 @@ scoring phase without an explicit yield at the emit points.
 
 ---
 
+## The policy permutation sweep (what held, what broke)
+
+A full offline replay of the newest snapshot (several thousand items, reconstructed into `Facts`
+from the local mirrors and stored explanations) against permutations of every
+user-tunable policy option. Method and harness are in PLAN ("The policy permutation
+lab"); these are the learnings.
+
+### The stored explanation plus the mirrors is a complete record
+
+Every item's verdict, score, and coverage could be reproduced bit-for-bit offline from
+`explanation_json` + `watch_event` + the IMDb mirror. That is worth knowing on its own:
+the why-panel's record really does contain everything that decided an item's fate. Two
+extraction subtleties bit before fidelity reached 100%, both notes for anyone parsing
+stored explanations:
+
+- **A hand spare is a synthetic gate row.** The scan injects the spare as an extra
+  `whitelisted` PROTECT result, so the explanation carries *two* whitelist rows (the
+  synthetic fired one and the real gate's "checked"). Naive per-gate bucketing lets the
+  real row overwrite the spare.
+- **Gate details embed the threshold phrase.** "untouched for just 2 months, 10 days,
+  less than the 1 year Reaper waits" contains two durations; inverting the humanized
+  duration must cut at the comparator first or it reads 435 days instead of 70.
+
+### Negative results: the invariants all held
+
+Across threshold grids, gate subsets, window changes with watchers recomputed per
+window, the whole field×operator custom-rule matrix, graded keeps in both directions,
+Unknown-degradation of every fact singly and in pairs under randomized policies, ~30k
+season-toggle combinations over real show shapes, and ~250 randomized valid policies:
+no crash, no bounds violation, no monotonicity break, and no path where missing data
+moved any item *toward* the condemned set. The unsigned-signal arithmetic ("an outage
+can only lower a score") survived adversarial permutation, including the blackout case
+(every fact Unknown at once scores exactly 0 under any legal policy).
+
+### What broke (both fixed)
+
+- **Name shadowing:** validation accepted a custom rule named `unwatched`; the stored
+  explanation then held two signal rows with one id, the why-panel keyed rows on that id,
+  and the "Your rule" tag logic mis-attributed the owner's rule as built-in. Rejected at
+  the save boundary now. The general lesson repeats rule 19 from the other side: any
+  *stored* identifier a UI keys on needs a uniqueness guarantee at the write boundary,
+  not just among siblings of one kind.
+- **Conflict detector vs specials:** `_detect_conflicts` compared prunable seasons
+  against every protected season including Season 0, while its docstring claimed specials
+  were excluded. On real data every show carries near-unwatched specials, so with
+  specials kept, one watcher on any prunable season produced a spurious "Needs a look"
+  refusal. The docstring was right and the code was wrong — rule 24's failure mode, found
+  by testing the docstring's claim as an invariant.
+
+### The ingest is faithful to the sources (validated outside Reaper)
+
+The permutation sweep validated the engine against Reaper's own mirrors; a second pass
+validated the mirrors against the **sources themselves** (`scripts/validate_ingest.py`,
+read-only), closing the garbage-in half of the loop. Everything the engine decides on
+was checked at least one system further out:
+
+- **Watch history vs live Tautulli.** Sampled rating keys reproduce row counts,
+  last-played, and distinct-watcher counts exactly under the sync's own skip rules;
+  never-played items have no source history either; and the mid-binge guard's exact
+  inputs (per-row episode index and completion status, and the per-user
+  max-completed-episode aggregate) matched on every sampled season, 653 rows compared.
+- **Dormancy derivation vs source `added_at`.** For never-played items, the stored
+  why-panel phrase equals `(scan time - max(added_at, horizon))` recomputed from
+  Tautulli's own metadata, within the two-unit humanize granularity.
+- **IMDb vs the raw `title.ratings.tsv.gz`.** The mirror table is a byte-exact full
+  copy: identical row counts, 500/500 sampled rows exact, all candidate ids exact.
+  Candidate ids absent from the table were absent from the raw file too (correctly
+  `Absent`, never a lookup failure).
+- **Candidates vs live Radarr/Sonarr.** Every movie candidate joined back to its
+  source instance (100% both ways); sizes, quality names, years, and ids matched with
+  zero drift; content-season sets, per-season sizes, and independently recomputed
+  season ranks matched on every sampled show.
+
+Anomalies found, every one explained and none an ingest bug:
+
+- **The mirror lags the live source by exactly the plays since its last sync.** The
+  scan re-syncs before judging, so snapshots never see this lag.
+- **Tautulli's `get_history` prepends live sessions to the list but excludes them from
+  `recordsTotal`.** The paginated set is really `recordsFiltered` long (persisted rows
+  plus current live sessions), so "fetch the last page at `recordsTotal - N`" lands
+  short of the true end by the number of streams playing at that moment -- which
+  *looks* like the oldest rows are missing from the source. A first pass here
+  concluded Tautulli had deleted its three oldest rows and the mirror horizon led the
+  source by 49 minutes; both claims were wrong. Paging past `recordsTotal` returned
+  exactly those three rows, timestamps equal to the mirror's to the second, and each
+  also appears under its item's own `rating_key` history. **The horizon matches the
+  source exactly.** Corollary for the sync itself: page boundaries shift when a stream
+  starts or ends mid-walk, so a row can slip between pages of one sweep; the 2-day
+  incremental overlap and the nightly full re-walk are what absorb that, and the one
+  stray absent old row observed (one row in a six-figure history) is consistent with this and heals
+  on the next sweep.
+- **Upstream metadata drifts under you.** Two titles changed genre lists at the source
+  within hours of the scan. Frozen-at-scan facts are the correct behaviour, but any
+  validation that diffs a snapshot against a live source must budget for source-side
+  mutation, or it will cry wolf.
+- **A validation tolerance is part of the claim.** The humanized dormancy phrase keeps
+  two units, so a "years, months" phrase truncates up to 29 days; a 16-day tolerance
+  mislabels perfectly-derived values as errors. The committed validator uses the bound
+  the phrasing actually guarantees. The same discipline caught the pagination artifact
+  above: verify the anomaly's mechanism before writing it down, because two of the
+  four "anomalies" this pass found were artifacts of the validation itself.
+
+### Shapes worth knowing (ratios, latest snapshot)
+
+- **Unknown facts are real but thin: 0.6% of season rows, zero movie rows** carry an
+  Unknown dormancy or popularity (unmatched/ambiguous in Plex). Real data *under-samples*
+  the Unknown lane — which is exactly why the harness degrades facts synthetically
+  instead of waiting for outages to happen in a fixture.
+- **Every abstain in the snapshot is a plain below-threshold score.** Zero abstains came
+  from a blocked protection and zero from the coverage floor: the items those would
+  catch are protected first (Unknown dormancy PROTECTs via the dormancy gate before
+  coverage is ever consulted). The coverage floor is a deeper backstop than it looks —
+  in a healthy scan it decides nothing, and it only bites when a source fails while the
+  dormancy gate is disabled.
+- **Single-season shows dominate the TV library (~40% of shows)**; permutation tests
+  over "keep last N" need the 1-season shape or they miss the `keep_last >= total`
+  branch entirely.
+- **Shrinking the popularity window from 365 to 7 days condemned nothing new** (with
+  watchers honestly recomputed for the narrow window): the dormancy gate and rating
+  floor pick up the slack. Defence-in-depth is real — single-gate misconfiguration is
+  survivable in this library's shape.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs

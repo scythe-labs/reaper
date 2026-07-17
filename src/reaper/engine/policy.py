@@ -369,6 +369,17 @@ class PolicyBody(Frozen):
             raise ValueError(
                 "Two custom rules share a name; the second would silently double-count."
             )
+        # A custom rule may not take a built-in signal's id as its name. The stored score
+        # breakdown identifies rows by that string, so a rule named "unwatched" would
+        # collide with the built-in row: the why-panel would drop its "Your rule" tag and
+        # render two rows under one key, and the audit record could not tell them apart.
+        builtin = {s.value for s in SignalId}
+        for name in names:
+            if name in builtin:
+                raise ValueError(
+                    f'"{name}" is the name of a built-in signal. Give your rule a '
+                    "different name so the score breakdown cannot confuse the two."
+                )
         keep_names = [k.name for k in self.graded_keeps]
         if len(set(keep_names)) != len(keep_names):
             raise ValueError("Two keep rules share a name; the second would silently double-count.")

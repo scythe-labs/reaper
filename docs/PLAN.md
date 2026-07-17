@@ -1561,6 +1561,61 @@ Everything here came from one annotated-screenshot review of the queue against l
   now stands down whenever the pill is present, on both card kinds; the full sentences
   stay in the panel.
 
+## The policy permutation lab (real-data sweep + standing harness)
+
+The policy engine's option surface — nine gates with thresholds/windows, five weighted
+signals, custom condemn rules over every field × operator, protect conditions, graded
+keeps, two decision thresholds, eight season toggles — was swept against real library
+data, then the sweep became a permanent test harness.
+
+**Method.** Every candidate of the latest non-degraded snapshot (several thousand items) was
+reconstructed offline into engine `Facts` from the local mirrors (watch events, IMDb
+dataset, stored explanations) and replayed through the production code path
+(`build_gates` → `evaluate_all` → `score` → `decide_verdict`). The reconstruction was
+gated on **fidelity**: the replay had to reproduce the stored verdict, score, and
+coverage of every single item before any permutation ran. It did (100% after two
+extraction fixes — both extractor bugs, not engine bugs). On top of that base, ~30k
+season-option combinations, randomized valid policies, the full field×operator custom-rule
+matrix, threshold grids, and Unknown-degradation metamorphics all held their invariants.
+
+**Two real bugs found, both fixed:**
+
+1. **Custom-rule names could shadow built-in signal ids** (`policy._no_duplicates` now
+   rejects them). A rule named `unwatched` produced two rows with one id in the stored
+   explanation: the why-panel keyed rows on that id (duplicate React keys) and its
+   "Your rule" tag test (`BUILTIN_SIGNAL_IDS`) mis-tagged the owner's rule as built-in —
+   an attribution lie in the one panel whose job is honesty.
+2. **The keep-rule conflict detector compared prunable seasons against specials**
+   (`season_pruning._detect_conflicts` now excludes Season 0 from both sides, as its
+   docstring already claimed). A kept-but-unwatched Season 0 flagged every watched
+   prunable season as "Needs a look" — spurious refusals that train the operator to
+   ignore the flag.
+
+**The standing harness** (`tests/test_policy_permutations.py`, 75 tests, ~2s) replays a
+de-identified fixture of real shapes (`tests/fixtures/policy_lab_vectors.json`: 440
+stratified vectors + 100 show shapes, states and day/watcher counts only — no titles,
+keys, or precise sizes) and enforces the invariants as properties: missing data never
+condemns and never raises a score; every protection knob moves the condemned set one way
+only; anything that validates must score; `decide_verdict` matches its spec at every
+boundary; season plans stay consistent under all 32 toggle combinations per show. A
+**pinned baseline** (every vector judged under the shipped default policies at extraction
+time) turns the fixture into an engine-drift trip-wire: any behavioural change to
+scoring shows up as a failing diff and must be acknowledged by regenerating the fixture
+(`scripts/policy_lab_extract.py`, which any operator checkout can re-run against its own
+data) in the same change.
+
+**The other half of the loop: ingest validation against the sources.** The sweep proves
+the engine is faithful to the mirrors; `scripts/validate_ingest.py` (read-only) proves
+the mirrors are faithful to the *sources* — live Tautulli history (row counts,
+last-played, watchers, and the mid-binge guard's episode-index/completion inputs), the
+raw IMDb TSV (byte-exact full copy), and live Radarr/Sonarr (sizes, quality, ids,
+genres, content-season sets, independently recomputed ranks). Run against the six live
+dev instances: zero ingest bugs; the only diffs were plays since the last sync (a scan
+re-syncs first) and upstream genre edits after the scan, plus one validation artifact
+worth knowing: `get_history` prepends live sessions but excludes them from
+`recordsTotal`, so naive last-page pagination hides the oldest rows. See LEARNINGS,
+"The ingest is faithful to the sources".
+
 ## Immediate next steps
 
 1. **The live send** — wire `_send_for_real` + the exclusion-verify + the Plex refresh
