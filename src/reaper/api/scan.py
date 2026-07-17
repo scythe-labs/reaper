@@ -75,6 +75,13 @@ class ScanStatus(BaseModel):
     detail: str = ""
     error: str | None = None
     snapshot_id: int | None = None
+    followup_queued: bool = False
+    """A second scan will start the moment the current one finishes. Set when a start
+    request arrives mid-scan (the auto-rescan after a policy save, usually): the running
+    scan is reading the library under the policies in force when it *began*, so only a
+    scan that starts after the request can reflect the caller's changes. Without this,
+    a save landing mid-scan was silently swallowed -- the snapshot arrived with the old
+    policy's hashes and the "needs a fresh scan" notice never cleared."""
 
 
 def _status(request: Request) -> ScanStatus:
@@ -87,13 +94,17 @@ def _status(request: Request) -> ScanStatus:
 
 @router.post("/scan/start")
 async def start_scan(request: Request) -> ScanStatus:
-    """Start a background scan, or return the one already running.
+    """Start a background scan, or queue one behind the scan already running.
 
-    Idempotent while a scan is in flight: a second click (or a second tab) does not launch a
-    parallel scan, it just gets the current progress back. Read-only throughout.
+    Never launches a parallel scan: a second request while one is in flight queues exactly
+    one follow-up run instead. The follow-up matters because a scan reads the library under
+    the policies in force when it **began** -- whoever asks for a scan mid-run (the
+    auto-rescan after a policy save) needs one that starts after their request, or their
+    change would never be scanned in. Read-only throughout.
     """
     status = _status(request)
     if status.running:
+        status.followup_queued = True
         return status
 
     # Reset for a fresh run. Mutated in place so the polling endpoint sees each update.
@@ -105,6 +116,7 @@ async def start_scan(request: Request) -> ScanStatus:
     status.detail = ""
     status.error = None
     status.snapshot_id = None
+    status.followup_queued = False
 
     settings: Settings = request.app.state.settings
     box: SecretBox = request.app.state.secret_box
@@ -124,17 +136,30 @@ async def start_scan(request: Request) -> ScanStatus:
 
     async def run() -> None:
         try:
-            snapshot = await scan_runner.run_scan(
-                settings=settings,
-                session_factory=factory,
-                cache_engine=cache_engine,
-                box=box,
-                on_progress=on_progress,
-            )
-            status.snapshot_id = snapshot.id
-            status.phase = "complete"
-            status.percent = 100
-            status.detail = ""
+            while True:
+                snapshot = await scan_runner.run_scan(
+                    settings=settings,
+                    session_factory=factory,
+                    cache_engine=cache_engine,
+                    box=box,
+                    on_progress=on_progress,
+                )
+                status.snapshot_id = snapshot.id
+                if not status.followup_queued:
+                    status.phase = "complete"
+                    status.percent = 100
+                    status.detail = ""
+                    return
+                # A start request arrived mid-run, so that caller's changes are not in the
+                # snapshot that just landed. Consume the queue and go again -- the next
+                # run re-reads the active policies. `running` stays true across the
+                # hand-off, so the browser sees one operation, not a flicker of "done".
+                status.followup_queued = False
+                status.phase = "starting"
+                status.done = 0
+                status.total = 0
+                status.percent = 0
+                status.detail = ""
         except scan_runner.ScanInProgressError as exc:
             # The scheduler's scan beat this one to the shared claim (the guard above only
             # sees browser-started scans). Nothing is wrong; say what is happening.
@@ -152,7 +177,10 @@ async def start_scan(request: Request) -> ScanStatus:
             status.phase = "error"
             log.warning("scan.background_failed", error=str(exc))
         finally:
+            # An errored run does not honour a queued follow-up: rerunning would repeat
+            # (or mask) the failure the owner needs to see first.
             status.running = False
+            status.followup_queued = False
 
     # Held on app.state so the task is not garbage-collected mid-run, and can be cancelled on
     # shutdown. It is deliberately NOT tied to this request's lifetime.

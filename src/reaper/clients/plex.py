@@ -46,7 +46,7 @@ import structlog
 from reaper.clients.base import SAFE_METHODS, SafetyViolationError
 from reaper.config import RuntimeSafety
 from reaper.engine.identity import PlexFile, PlexItem, parse_guids, to_basename
-from reaper.ratings import from_plex
+from reaper.ratings import Rating, from_plex
 
 if TYPE_CHECKING:
     from plexapi.server import PlexServer
@@ -62,6 +62,32 @@ SWEEP_PAGE_SIZE = 1000
 
 #: Rating keys per batched ``/library/metadata/{ids}`` read (show folder paths).
 METADATA_BATCH_SIZE = 100
+
+
+def _parse_rating_children(el: Element) -> list[Rating]:
+    """Per-provider scores from full-metadata ``Rating`` children.
+
+    A section listing carries only two rating *slots*, so a library whose agent fills
+    them with, say, IMDb can never show a Rotten Tomatoes score from the listing alone.
+    The full metadata (``/library/metadata/{ids}``) carries one ``Rating`` child per
+    provider score -- critic and audience separately -- each with the provenance image
+    the rest of the codebase requires (measured on a live server, 2026-07-17:
+    ``type="audience" image="rottentomatoes://image.rating.upright"`` is the audience
+    score, ``type="critic" ... .ripe`` the Tomatometer; IMDb and TMDb arrive with
+    ``type="audience"`` and their own images). Values are 0-10 like every Plex rating;
+    ``from_plex`` applies the same provenance and range rules as the slot reads, so an
+    unreadable child is dropped, never guessed at.
+    """
+    out: list[Rating] = []
+    for child in el.findall("Rating"):
+        rating = from_plex(
+            child.get("value"),
+            child.get("image"),
+            audience=child.get("type") == "audience",
+        )
+        if rating is not None:
+            out.append(rating)
+    return out
 
 
 def _parse_sweep_element(el: Element) -> PlexItem:
@@ -476,12 +502,17 @@ class PlexClient:
         object walk silently issued one metadata request *per item* and the "single
         sweep" cost minutes on a large library. Reading the container XML makes a
         missing attribute honestly ``None`` with no hidden network call, and the sweep
-        is a handful of page requests. Show folder paths are the one thing ``/all``
-        never carries, so shows add batched ``/library/metadata/{ids}`` reads (100 per
-        call) for their ``Location`` -- the folder-name tier that narrows a show listed
-        in two sections. Returning full :class:`PlexItem` rows (not just the ids) lets
-        the index builders union in items the Tautulli media-info cache has not listed
-        yet -- a freshly added item exists here first.
+        is a handful of page requests. Two things ``/all`` never carries are filled in
+        by batched ``/library/metadata/{ids}`` reads (100 per call, so ~1 request per
+        100 items): show ``Location`` folder paths -- the folder-name tier that narrows
+        a show listed in two sections -- and, for movies and shows alike, the
+        per-provider ``Rating`` children (``includeRatings=1`` on a listing returns
+        nothing; measured). The listing's two rating slots cannot carry a provider's
+        critic AND audience score, so without the children a library whose slots hold
+        IMDb would never surface a Rotten Tomatoes number at all. Returning full
+        :class:`PlexItem` rows (not just the ids) lets the index builders union in
+        items the Tautulli media-info cache has not listed yet -- a freshly added item
+        exists here first.
 
         GETs only, so it runs in read-only mode through the ``GuardedSession``. It
         **raises** ``PlexError`` on any failure rather than returning a partial map, so
@@ -493,7 +524,7 @@ class PlexClient:
 
         def read() -> dict[int, PlexItem]:
             out: dict[int, PlexItem] = {}
-            show_keys: list[int] = []
+            batch_keys: list[int] = []
             for section in server.library.sections():
                 if section.type != section_type:
                     continue
@@ -514,8 +545,7 @@ class PlexClient:
                     for el in elements:
                         item = _parse_sweep_element(el)
                         out[item.rating_key] = item
-                        if section_type == "show":
-                            show_keys.append(item.rating_key)
+                        batch_keys.append(item.rating_key)
                     start += len(elements)
                     total = int(container.get("totalSize") or container.get("size") or 0)
                     # A short page always ends the section, whether or not the server
@@ -524,10 +554,13 @@ class PlexClient:
                     if short_page or (total and start >= total):
                         break
 
-            # Show folders arrive from batched metadata reads; each Location leaf
-            # becomes the show's basename exactly as the object walk produced it.
-            for chunk_start in range(0, len(show_keys), METADATA_BATCH_SIZE):
-                chunk = show_keys[chunk_start : chunk_start + METADATA_BATCH_SIZE]
+            # The batched metadata reads: show Location folders (each leaf becomes the
+            # show's basename exactly as the object walk produced it), and the Rating
+            # children for every item. The slot ratings from the listing keep precedence;
+            # children only add sources the slots did not carry, so a server whose slots
+            # and children disagree keeps the value the rest of the scan already froze.
+            for chunk_start in range(0, len(batch_keys), METADATA_BATCH_SIZE):
+                chunk = batch_keys[chunk_start : chunk_start + METADATA_BATCH_SIZE]
                 batch = server.query(  # type: ignore[no-untyped-call]
                     "/library/metadata/" + ",".join(str(k) for k in chunk)
                 )
@@ -535,16 +568,26 @@ class PlexClient:
                     rk = el.get("ratingKey")
                     if rk is None or int(rk) not in out:
                         continue
+                    item = out[int(rk)]
+
+                    known = {r.source for r in item.ratings}
+                    extra: list[Rating] = []
+                    for rating in _parse_rating_children(el):
+                        if rating.source not in known:
+                            known.add(rating.source)
+                            extra.append(rating)
+                    if extra:
+                        item = replace(item, ratings=item.ratings + tuple(extra))
+
                     paths = [loc.get("path") for loc in el.findall("Location") if loc.get("path")]
                     leaves = [leaf for leaf in (to_basename(p) for p in paths) if leaf]
-                    if not leaves:
-                        continue
-                    item = out[int(rk)]
-                    out[int(rk)] = replace(
-                        item,
-                        file_basename=leaves[0],
-                        files=item.files or tuple(PlexFile(basename=leaf) for leaf in leaves),
-                    )
+                    if leaves:
+                        item = replace(
+                            item,
+                            file_basename=leaves[0],
+                            files=item.files or tuple(PlexFile(basename=leaf) for leaf in leaves),
+                        )
+                    out[int(rk)] = item
             return out
 
         async with self._sweep_lock:

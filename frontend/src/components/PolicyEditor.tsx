@@ -35,6 +35,7 @@ import {
   type GradedKeep,
   type Policy,
   type PolicyBody,
+  type PolicyWarning,
   type ProfileSettings,
   type RatingRule,
   type RatingSource,
@@ -44,7 +45,8 @@ import {
 } from "../api";
 import { bytes, count } from "../format";
 import { DeletionToggle } from "./DeletionToggle";
-import { QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
+import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
+import { Segmented } from "./Segmented";
 import { Switch } from "./Switch";
 
 // Plain-English identities for every protection and signal, so the editor reads like a
@@ -253,16 +255,39 @@ function KeepTagsEditor({
         />
       </div>
       {tags.length >= 1 && (
-        <label className="tag-match">
+        <div className="tag-match">
           <span className="muted">Keep a title with</span>
-          <select value={match} onChange={(e) => onMatch(e.target.value as "any" | "all")}>
-            <option value="any">any of these tags</option>
-            <option value="all">all of these tags</option>
-          </select>
-        </label>
+          <Segmented
+            value={match}
+            onChange={onMatch}
+            label="How many of these tags a title needs"
+            options={[
+              ["any", "any of these tags"],
+              ["all", "all of these tags"],
+            ]}
+          />
+        </div>
       )}
       {tags.length === 0 && <p className="help">No tags: this protection keeps nothing.</p>}
     </div>
+  );
+}
+
+/** Inline warnings for one control group, rendered beside the control that fixes them.
+ *  Renders nothing when the group has nothing to say. */
+function WarnBlock({ warnings }: { warnings: PolicyWarning[] }) {
+  if (warnings.length === 0) return null;
+  return (
+    <>
+      {warnings.map((w) => (
+        <p
+          key={`${w.field}:${w.message}`}
+          className={`notice notice-inline ${w.severity === "danger" ? "notice-error" : "notice-warn"}`}
+        >
+          {w.message}
+        </p>
+      ))}
+    </>
   );
 }
 
@@ -296,13 +321,14 @@ function GateRow({ gate, onChange }: { gate: GateSetting; onChange: (g: GateSett
       {gate.enabled && meta.unit === "people" && (
         <div className="rule-control">
           <span>at least</span>
-          <input
-            type="number"
-            min={1}
+          <FixedQuantity
             value={gate.threshold || 1}
-            onChange={(e) => onChange({ ...gate, threshold: Number(e.target.value) || 1 })}
+            suffix={(gate.threshold || 1) === 1 ? "person" : "people"}
+            min={1}
+            width="narrow"
+            ariaLabel={`${meta.label} threshold`}
+            onChange={(v) => onChange({ ...gate, threshold: v || 1 })}
           />
-          <span>{(gate.threshold || 1) === 1 ? "person" : "people"}</span>
         </div>
       )}
     </li>
@@ -344,8 +370,9 @@ function describeBar(rule: RatingRule): string {
   return `${(rule.floor / 10).toFixed(1)} on ${meta.label}${votes}`;
 }
 
-/** One editable bar: a source, its threshold in the source's own units, and (for the vote
- *  sources) a vote floor. Styled with the same rule-control row the other protections use. */
+/** One editable bar, as a row of the shared aligned table: the source name in the common
+ *  column, then its threshold (and vote floor, where the source counts votes) in the
+ *  app's one quantity control. */
 function RatingBarRow({
   rule,
   onChange,
@@ -357,50 +384,52 @@ function RatingBarRow({
 }) {
   const meta = RATING_META[rule.source];
   return (
-    <div className="rule-control rating-bar">
-      <span className="rating-bar-src">{meta.label}</span>
-      <span>at least</span>
-      {meta.scale === "ten" ? (
-        <>
-          <input
-            type="number"
-            min={0}
-            max={10}
-            step={0.1}
-            value={(rule.floor / 10).toFixed(1)}
-            onChange={(e) => onChange({ ...rule, floor: Math.round(Number(e.target.value) * 10) })}
-          />
-          <span>/ 10</span>
-          {meta.votes && (
-            <>
-              <span>from at least</span>
-              <input
-                type="number"
-                min={0}
-                step={100}
-                value={rule.min_votes}
-                onChange={(e) => onChange({ ...rule, min_votes: Math.max(0, Number(e.target.value) || 0) })}
-              />
-              <span>votes</span>
-            </>
-          )}
-        </>
-      ) : (
-        <>
-          <input
-            type="number"
+    <div className="bar-line">
+      <span className="bar-src">{meta.label}</span>
+      <span className="bar-set">
+        <span>at least</span>
+        {meta.scale === "ten" ? (
+          <>
+            <FixedQuantity
+              value={(rule.floor / 10).toFixed(1)}
+              suffix="/ 10"
+              min={0}
+              max={10}
+              step={0.1}
+              width="narrow"
+              ariaLabel={`${meta.label} score out of 10`}
+              onChange={(v) => onChange({ ...rule, floor: Math.round(v * 10) })}
+            />
+            {meta.votes && (
+              <>
+                <span>from</span>
+                <FixedQuantity
+                  value={rule.min_votes}
+                  suffix="+ votes"
+                  min={0}
+                  step={100}
+                  ariaLabel={`${meta.label} vote floor`}
+                  onChange={(v) => onChange({ ...rule, min_votes: Math.max(0, v) })}
+                />
+              </>
+            )}
+          </>
+        ) : (
+          <FixedQuantity
+            value={rule.floor}
+            suffix="%"
             min={0}
             max={100}
             step={1}
-            value={rule.floor}
-            onChange={(e) => onChange({ ...rule, floor: Number(e.target.value) || 0 })}
+            width="narrow"
+            ariaLabel={`${meta.label} percentage`}
+            onChange={(v) => onChange({ ...rule, floor: v })}
           />
-          <span>%</span>
-        </>
-      )}
+        )}
+      </span>
       <button
         type="button"
-        className="rating-remove"
+        className="bar-x"
         onClick={onRemove}
         aria-label={`Remove the ${meta.label} bar`}
       >
@@ -410,14 +439,16 @@ function RatingBarRow({
   );
 }
 
-/** "Keep well-rated titles": the toggle, then a bar per source, an add-source picker, an
- *  any/all switch, and a plain-English summary -- the mockup's layout in the policy's own
- *  controls. Replaces the single-IMDb row the gate used to carry. */
+/** "Keep well-rated titles" as a card: the switch in the card header, a bar per source in
+ *  one aligned table, an add-source picker beside the any/all choice, and a plain-English
+ *  summary. Any warning about this protection renders here, beside its fix, not at the
+ *  bottom of the page. */
 function RatingFloorRow({
   gate,
   rules,
   match,
   mediaType,
+  warnings,
   onGate,
   onRules,
   onMatch,
@@ -426,6 +457,8 @@ function RatingFloorRow({
   rules: RatingRule[];
   match: "any" | "all";
   mediaType: "movie" | "tv";
+  /** Server-side policy warnings anchored to the rating rules (field keep_rating_rules). */
+  warnings: { message: string; severity: string }[];
   onGate: (g: GateSetting) => void;
   onRules: (r: RatingRule[]) => void;
   onMatch: (m: "any" | "all") => void;
@@ -439,12 +472,12 @@ function RatingFloorRow({
   const joiner = match === "any" ? ", or " : ", and ";
   const summary =
     rules.length === 0
-      ? "No rating bars set, so this protection keeps nothing."
+      ? "Nothing is kept yet: add a rating source to set the score a title must clear to stay."
       : `Keep a title rated at least ${rules.map(describeBar).join(joiner)}.`;
 
   return (
-    <li className="rule-row">
-      <label className="toggle rule-toggle">
+    <div className="rules-card">
+      <label className="toggle card-head">
         <Switch checked={gate.enabled} onChange={(enabled) => onGate({ ...gate, enabled })} />
         <span className="rule-name">Keep well-rated titles</span>
       </label>
@@ -453,17 +486,21 @@ function RatingFloorRow({
         scored.
       </p>
       {gate.enabled && (
-        <div className="rating-bars">
-          {rules.map((rule, i) => (
-            <RatingBarRow
-              key={rule.source}
-              rule={rule}
-              onChange={(r) => onRules(rules.map((x, j) => (j === i ? r : x)))}
-              onRemove={() => onRules(rules.filter((_, j) => j !== i))}
-            />
-          ))}
-          {available.length > 0 && (
-            <div className="rule-control">
+        <>
+          {rules.length > 0 && (
+            <div className="bar-table">
+              {rules.map((rule, i) => (
+                <RatingBarRow
+                  key={rule.source}
+                  rule={rule}
+                  onChange={(r) => onRules(rules.map((x, j) => (j === i ? r : x)))}
+                  onRemove={() => onRules(rules.filter((_, j) => j !== i))}
+                />
+              ))}
+            </div>
+          )}
+          <div className="bar-foot">
+            {available.length > 0 ? (
               <select
                 value=""
                 aria-label="Add a rating source"
@@ -478,27 +515,42 @@ function RatingFloorRow({
                   </option>
                 ))}
               </select>
-            </div>
+            ) : (
+              <span />
+            )}
+            {rules.length >= 2 && (
+              <Segmented
+                value={match}
+                onChange={onMatch}
+                label="How many bars a title must clear"
+                options={[
+                  ["any", "any one bar keeps it"],
+                  ["all", "every bar must clear"],
+                ]}
+              />
+            )}
+          </div>
+          {warnings.length > 0 ? (
+            warnings.map((w) => (
+              <p
+                key={w.message}
+                className={`notice notice-inline ${w.severity === "danger" ? "notice-error" : "notice-warn"}`}
+              >
+                {w.message}
+              </p>
+            ))
+          ) : (
+            <p className="help">{summary}</p>
           )}
-          {rules.length >= 2 && (
-            <label className="tag-match">
-              <span className="muted">Keep a title that clears</span>
-              <select value={match} onChange={(e) => onMatch(e.target.value as "any" | "all")}>
-                <option value="any">any one of these</option>
-                <option value="all">all of these</option>
-              </select>
-            </label>
-          )}
-          <p className="help">{summary}</p>
           {mediaType === "tv" && (
             <p className="help">
               TV has IMDb, plus any scores Plex carries for the show. Rotten Tomatoes and Metacritic
               are often missing for TV, so those bars just won't match a show.
             </p>
           )}
-        </div>
+        </>
       )}
-    </li>
+    </div>
   );
 }
 
@@ -1241,6 +1293,7 @@ function Histogram({ buckets, threshold }: { buckets: number[]; threshold: numbe
  *  would appear to do nothing. */
 function StaleNotice({
   scanning,
+  followupQueued,
   starting,
   startError,
   onScan,
@@ -1248,6 +1301,10 @@ function StaleNotice({
   detail,
 }: {
   scanning: boolean;
+  /** A scan was already running when the rescan was requested, so a second one starts
+   *  right after it. The copy must say so: the bar the owner is watching belongs to a
+   *  scan that does NOT include their changes yet. */
+  followupQueued: boolean;
   starting: boolean;
   startError: string | null;
   onScan: () => void;
@@ -1260,8 +1317,9 @@ function StaleNotice({
       {scanning ? (
         <>
           <p>
-            Scoring your library under the new policy. You can leave this page; it keeps running,
-            and the numbers here refresh when it finishes.
+            {followupQueued
+              ? "A scan was already running, so your changes go into a second scan that starts right after it. You can leave this page; the numbers here refresh when everything finishes."
+              : "Scoring your library under the new policy. You can leave this page; it keeps running, and the numbers here refresh when it finishes."}
           </p>
           <p className="muted">
             {detail || "Working"} · {percent}%
@@ -1281,7 +1339,9 @@ function StaleNotice({
           </button>
         </>
       )}
-      {startError && <p className="error">The scan didn't start: {startError}</p>}
+      {startError && (
+        <p className="notice notice-error">The scan didn't start: {startError}</p>
+      )}
     </div>
   );
 }
@@ -1492,6 +1552,23 @@ export function PolicyEditor({
     retry: false,
   });
 
+  // Warnings render beside the control they describe (each anchor below claims its
+  // fields); anything no anchor claims still shows in the bottom stack, so a new
+  // warning field can never be silently dropped.
+  const allWarnings = useMemo(() => validation?.warnings ?? [], [validation]);
+  const warningsFor = (pred: (field: string) => boolean) =>
+    allWarnings.filter((w) => pred(w.field));
+  const anchors: ((field: string) => boolean)[] = [
+    (f) => f === "condemn_at",
+    (f) => f.startsWith("gates."),
+    (f) => f === "keep_rating_rules",
+    (f) => f === "keep_last_seasons" || f === "keep_last_scope",
+    (f) => f === "custom_condemn",
+    (f) => f === "graded_keeps",
+    (f) => f === "require_approval",
+  ];
+  const unanchoredWarnings = allWarnings.filter((w) => !anchors.some((p) => p(w.field)));
+
   // A background scan, so the "Scan now" button in the stale notice actually does something.
   const { data: scanState } = useQuery({
     queryKey: ["scanStatus"],
@@ -1670,7 +1747,7 @@ export function PolicyEditor({
             {pendingSwitch === "tv" ? "TV" : "Movies"} discards them.{" "}
             <button
               type="button"
-              className="sm danger"
+              className="danger"
               onClick={() => {
                 setPendingSwitch(null);
                 setMediaType(pendingSwitch);
@@ -1678,7 +1755,7 @@ export function PolicyEditor({
             >
               Discard and switch
             </button>{" "}
-            <button type="button" className="sm ghost" onClick={() => setPendingSwitch(null)}>
+            <button type="button" className="ghost" onClick={() => setPendingSwitch(null)}>
               Keep editing
             </button>
           </div>
@@ -1751,8 +1828,8 @@ export function PolicyEditor({
           <p className="help">{presetHelp}</p>
           {staged !== null && (
             <p className="help">
-              <strong>Staged, not saved.</strong> Review the changes below, then Save {kind}{" "}
-              policy and Save pace &amp; limits.
+              <strong>Staged, not saved.</strong> Review the changes below, then Save changes in
+              the bar at the bottom.
             </p>
           )}
         </div>
@@ -1783,6 +1860,7 @@ export function PolicyEditor({
             Protections below still win. This only decides among titles nothing is keeping.
           </span>
         </label>
+        <WarnBlock warnings={warningsFor((f) => f === "condemn_at")} />
 
         <label className="field">
           <span className="field-label">
@@ -1822,6 +1900,7 @@ export function PolicyEditor({
           condemn={draft.custom_condemn}
           onCondemn={(custom_condemn) => update({ custom_condemn })}
         />
+        <WarnBlock warnings={warningsFor((f) => f === "custom_condemn")} />
 
         <div className="policy-divider" />
 
@@ -1841,28 +1920,37 @@ export function PolicyEditor({
               gates[i] = g;
               update({ gates });
             };
-            // "Spare titles you've tagged" moves down into its own tags card below, where
-            // the toggle and the tags it depends on sit together -- so it is skipped here.
-            if (gate.gate === "whitelisted") return null;
-            // "Keep well-rated titles" carries a whole set of per-source bars, so it gets
-            // its own row rather than the single-threshold GateRow.
-            if (gate.gate === "rating_floor") {
-              return (
-                <RatingFloorRow
-                  key={gate.gate}
-                  gate={gate}
-                  rules={draft.keep_rating_rules}
-                  match={draft.keep_rating_match}
-                  mediaType={mediaType}
-                  onGate={setGate}
-                  onRules={(keep_rating_rules) => update({ keep_rating_rules })}
-                  onMatch={(keep_rating_match) => update({ keep_rating_match })}
-                />
-              );
-            }
+            // Protections that carry their own settings render as cards below the plain
+            // rows (the tags card and the rating card), so the visual weight says which
+            // protections have more to configure. They are skipped here.
+            if (gate.gate === "whitelisted" || gate.gate === "rating_floor") return null;
             return <GateRow key={gate.gate} gate={gate} onChange={setGate} />;
           })}
         </ul>
+        <WarnBlock warnings={warningsFor((f) => f.startsWith("gates."))} />
+
+        {(() => {
+          const i = draft.gates.findIndex((g) => g.gate === "rating_floor");
+          const rating = i >= 0 ? draft.gates[i] : undefined;
+          if (!rating) return null;
+          const setRating = (g: GateSetting) => {
+            const gates = [...draft.gates];
+            gates[i] = g;
+            update({ gates });
+          };
+          return (
+            <RatingFloorRow
+              gate={rating}
+              rules={draft.keep_rating_rules}
+              match={draft.keep_rating_match}
+              mediaType={mediaType}
+              warnings={warningsFor((f) => f === "keep_rating_rules")}
+              onGate={setRating}
+              onRules={(keep_rating_rules) => update({ keep_rating_rules })}
+              onMatch={(keep_rating_match) => update({ keep_rating_match })}
+            />
+          );
+        })()}
 
         {(() => {
           const i = draft.gates.findIndex((g) => g.gate === "whitelisted");
@@ -1875,8 +1963,7 @@ export function PolicyEditor({
           };
           return (
             <div className="rules-card">
-              <h3>Tags that spare a title</h3>
-              <label className="toggle rule-toggle">
+              <label className="toggle card-head">
                 <Switch checked={whitelist.enabled} onChange={setWhitelist} />
                 <span className="rule-name">Spare titles you've tagged</span>
               </label>
@@ -1902,142 +1989,143 @@ export function PolicyEditor({
         {mediaType === "tv" && (
           <div className="season-card">
             <h3>TV season protection</h3>
-            <label className="field">
-              <span className="field-label">
-                <span>
-                  Always keep the newest{" "}
-                  <input
-                    type="number"
-                    min={0}
-                    className="inline-number"
+            <ul className="rule-list">
+              <li className="rule-row">
+                <span className="rule-name">Always keep the newest seasons</span>
+                <div className="rule-control">
+                  <span>the newest</span>
+                  <FixedQuantity
                     value={draft.keep_last_seasons}
-                    onChange={(e) => update({ keep_last_seasons: Math.max(0, Number(e.target.value)) })}
-                  />{" "}
-                  {draft.keep_last_seasons === 1 ? "season" : "seasons"} of a show
-                </span>
-              </span>
-              <span className="help">
-                The most recent seasons of every show are kept outright, whatever they score.
-                There is no upper limit.
-              </span>
-              <SeasonAdvisory keepLast={draft.keep_last_seasons} />
-            </label>
-
-            <label className="field">
-              <span className="field-label">Apply that to</span>
-              <div className="segmented" role="group" aria-label="Keep-last scope">
-                <button
-                  type="button"
-                  className={draft.keep_last_scope === "all" ? "seg active" : "seg"}
-                  onClick={() => update({ keep_last_scope: "all" })}
-                >
-                  All shows
-                </button>
-                <button
-                  type="button"
-                  className={draft.keep_last_scope === "requested" ? "seg active" : "seg"}
-                  onClick={() => update({ keep_last_scope: "requested" })}
-                >
-                  Requested only
-                </button>
-              </div>
-              <span className="help">
-                “Requested only” lets older seasons of shows nobody asked for be removed, while
-                still keeping the recent seasons of requested shows. When Reaper can't tell whether
-                a show was requested, it keeps the seasons to be safe.
-              </span>
-            </label>
-
-            <label className="toggle">
-              <Switch
-                checked={draft.keep_first_season}
-                onChange={(keep_first_season) => update({ keep_first_season })}
-              />
-              <span>Always keep a show's first season, so a new viewer can still start it</span>
-            </label>
-
-            <label className="toggle">
-              <Switch
-                checked={draft.keep_in_progress}
-                onChange={(keep_in_progress) => update({ keep_in_progress })}
-              />
-              <span>Keep seasons someone is partway through</span>
-            </label>
-            <p className="help">
-              Reaper holds the season a viewer is midway into, plus the next one once they finish
-              it. Turn this off and being mid-show protects nothing.
-            </p>
-
-            <label className="field">
-              <span className="field-label">
-                <span>
-                  Stop holding someone's place after{" "}
-                  <input
-                    type="number"
+                    suffix={draft.keep_last_seasons === 1 ? "season" : "seasons"}
                     min={0}
-                    className="inline-number"
-                    disabled={!draft.keep_in_progress}
-                    value={draft.in_progress_hold_days}
-                    onChange={(e) =>
-                      update({ in_progress_hold_days: Math.max(0, Number(e.target.value)) })
-                    }
-                  />{" "}
-                  days without watching
-                </span>
-              </span>
-              <span className="help">
-                If someone has not watched any of the show in this many days, Reaper treats the
-                show as abandoned by them and lets go of their place. Set to 0 to hold it forever.
-                When Reaper can't tell when they last watched, it keeps holding.
-              </span>
-            </label>
+                    width="narrow"
+                    ariaLabel="Newest seasons to always keep"
+                    onChange={(v) => update({ keep_last_seasons: Math.max(0, v) })}
+                  />
+                  <span>of every show</span>
+                </div>
+                <p className="help rule-help">
+                  The most recent seasons of every show are kept outright, whatever they score.
+                  There is no upper limit.
+                </p>
+                <SeasonAdvisory keepLast={draft.keep_last_seasons} />
+              </li>
 
-            <label className="field">
-              <span className="field-label">
-                <span>
-                  When someone's mid-binge, also keep{" "}
-                  <input
-                    type="number"
-                    min={0}
-                    className="inline-number"
-                    disabled={!draft.keep_in_progress}
-                    value={draft.season_lookahead}
-                    onChange={(e) =>
-                      update({ season_lookahead: Math.max(0, Number(e.target.value)) })
-                    }
-                  />{" "}
-                  season{draft.season_lookahead === 1 ? "" : "s"} ahead
-                </span>
-              </span>
-              <span className="help">
-                Set this above 0 to also keep the seasons just ahead of where each viewer is.
-              </span>
-            </label>
+              <li className="rule-row">
+                <span className="rule-name">Apply that to</span>
+                <div className="rule-control">
+                  <Segmented
+                    value={draft.keep_last_scope}
+                    onChange={(keep_last_scope) => update({ keep_last_scope })}
+                    label="Keep-last scope"
+                    options={[
+                      ["all", "All shows"],
+                      ["requested", "Requested only"],
+                    ]}
+                  />
+                </div>
+                <p className="help rule-help">
+                  “Requested only” lets older seasons of shows nobody asked for be removed, while
+                  still keeping the recent seasons of requested shows. When Reaper can't tell
+                  whether a show was requested, it keeps the seasons to be safe.
+                </p>
+              </li>
 
-            <label className="toggle">
-              <Switch
-                checked={draft.keep_specials}
-                onChange={(keep_specials) => update({ keep_specials })}
-              />
-              <span>Never remove specials</span>
-            </label>
-            <p className="help">
-              On: specials (Season 0) are always kept. Off: specials are judged like any other
-              season. Either way, specials never count toward the newest seasons you keep.
-            </p>
+              <li className="rule-row">
+                <label className="toggle rule-toggle">
+                  <Switch
+                    checked={draft.keep_first_season}
+                    onChange={(keep_first_season) => update({ keep_first_season })}
+                  />
+                  <span className="rule-name">Always keep a show's first season</span>
+                </label>
+                <p className="help rule-help">
+                  So a new viewer can still start the show.
+                </p>
+              </li>
 
-            <label className="toggle">
-              <Switch
-                checked={draft.flag_keep_conflicts}
-                onChange={(flag_keep_conflicts) => update({ flag_keep_conflicts })}
-              />
-              <span>Ask me first when a removal looks unusual</span>
-            </label>
-            <p className="help">
-              When a season your rule would remove was watched by more people than a season it
-              keeps, Reaper marks it "Needs a look" and waits for you. Turn this off and Reaper
-              follows your keep rule without asking.
-            </p>
+              <li className="rule-row">
+                <label className="toggle rule-toggle">
+                  <Switch
+                    checked={draft.keep_in_progress}
+                    onChange={(keep_in_progress) => update({ keep_in_progress })}
+                  />
+                  <span className="rule-name">Keep seasons someone is partway through</span>
+                </label>
+                <p className="help rule-help">
+                  Reaper holds the season a viewer is midway into, plus the next one once they
+                  finish it. Turn this off and being mid-show protects nothing.
+                </p>
+                {draft.keep_in_progress && (
+                  <>
+                    <div className="rule-control">
+                      <span>let go of their place after</span>
+                      <FixedQuantity
+                        value={draft.in_progress_hold_days}
+                        suffix="days"
+                        min={0}
+                        width="narrow"
+                        ariaLabel="Days without watching before a held place is released"
+                        onChange={(v) => update({ in_progress_hold_days: Math.max(0, v) })}
+                      />
+                      <span>without watching</span>
+                    </div>
+                    <p className="help rule-help">
+                      If someone has not watched any of the show in this many days, Reaper treats
+                      the show as abandoned by them and lets go of their place. Set to 0 to hold
+                      it forever. When Reaper can't tell when they last watched, it keeps holding.
+                    </p>
+                    <div className="rule-control">
+                      <span>also keep</span>
+                      <FixedQuantity
+                        value={draft.season_lookahead}
+                        suffix={draft.season_lookahead === 1 ? "season" : "seasons"}
+                        min={0}
+                        width="narrow"
+                        ariaLabel="Seasons to keep ahead of a mid-binge viewer"
+                        onChange={(v) => update({ season_lookahead: Math.max(0, v) })}
+                      />
+                      <span>ahead of where they are</span>
+                    </div>
+                    <p className="help rule-help">
+                      Set this above 0 to also keep the seasons just ahead of each viewer.
+                    </p>
+                  </>
+                )}
+              </li>
+
+              <li className="rule-row">
+                <label className="toggle rule-toggle">
+                  <Switch
+                    checked={draft.keep_specials}
+                    onChange={(keep_specials) => update({ keep_specials })}
+                  />
+                  <span className="rule-name">Never remove specials</span>
+                </label>
+                <p className="help rule-help">
+                  On: specials (Season 0) are always kept. Off: specials are judged like any other
+                  season. Either way, specials never count toward the newest seasons you keep.
+                </p>
+              </li>
+
+              <li className="rule-row">
+                <label className="toggle rule-toggle">
+                  <Switch
+                    checked={draft.flag_keep_conflicts}
+                    onChange={(flag_keep_conflicts) => update({ flag_keep_conflicts })}
+                  />
+                  <span className="rule-name">Ask me first when a removal looks unusual</span>
+                </label>
+                <p className="help rule-help">
+                  When a season your rule would remove was watched by more people than a season it
+                  keeps, Reaper marks it "Needs a look" and waits for you. Turn this off and
+                  Reaper follows your keep rule without asking.
+                </p>
+              </li>
+            </ul>
+            <WarnBlock
+              warnings={warningsFor((f) => f === "keep_last_seasons" || f === "keep_last_scope")}
+            />
           </div>
         )}
 
@@ -2050,6 +2138,7 @@ export function PolicyEditor({
           onConditions={(protect_conditions) => update({ protect_conditions })}
           onKeeps={(graded_keeps) => update({ graded_keeps })}
         />
+        <WarnBlock warnings={warningsFor((f) => f === "graded_keeps")} />
 
         {/* A validation failure is an ERROR (red): this policy cannot be saved as-is. */}
         {invalidMessage && (
@@ -2065,40 +2154,16 @@ export function PolicyEditor({
             You can still save: the server checks it again when you do.
           </p>
         )}
-        {/* A warning is AMBER: the policy is legal, but probably not what you meant. */}
-        {validation?.warnings.map((w) => (
-          <p key={w.field} className={`notice ${w.severity === "danger" ? "notice-error" : "notice-warn"}`}>
-            {w.message}
-          </p>
-        ))}
-
-        <div className="editor-actions">
-          <button
-            className="primary"
-            disabled={!dirty || Boolean(invalidMessage) || save.isPending}
-            onClick={() => save.mutate(draft)}
-          >
-            {save.isPending ? "Saving…" : dirty ? `Save ${kind} policy` : "Saved"}
-          </button>
-          {dirty && (
-            <button className="ghost" onClick={() => setDraft(saved?.body ?? null)}>
-              Discard
-            </button>
-          )}
-          {save.error && <p className="notice notice-error">{save.error.message}</p>}
-        </div>
+        {/* Warnings live beside their controls; only one no anchor claims lands here. */}
+        <WarnBlock warnings={unanchoredWarnings} />
 
         <p className="hash">
           {validation && (
             <>
-              {kind} policy <code>{validation.policy_hash.slice(0, 12)}</code>
+              {kind} policy <code>{validation.policy_hash.slice(0, 12)}</code> · saving does not
+              arm anything
             </>
           )}
-        </p>
-
-        <p className="blurb">
-          Saves only your {kind} policy. The {otherKind} one is untouched. Saving does not arm
-          anything, and it takes effect on the next scan.
         </p>
 
         <div className="policy-divider" />
@@ -2123,6 +2188,7 @@ export function PolicyEditor({
               />
               <span>Ask me before every run deletes anything</span>
             </label>
+            <WarnBlock warnings={warningsFor((f) => f === "require_approval")} />
             <div className="caps-grid">
               <label>
                 <span>Most titles per run</span>
@@ -2180,20 +2246,6 @@ export function PolicyEditor({
               A run over a cap stops itself and removes nothing. It never quietly deletes just
               the part that fits.
             </p>
-            <div className="editor-actions">
-              <button
-                className="primary"
-                disabled={!paceDirty || savePace.isPending}
-                onClick={() => savePace.mutate(pace)}
-              >
-                {savePace.isPending ? "Saving…" : paceDirty ? "Save pace & limits" : "Saved"}
-              </button>
-              <span className="muted pace-note">
-                Takes effect immediately. Changing a limit never affects a run you've already
-                approved.
-              </span>
-            </div>
-            {savePace.error && <p className="notice notice-error">{savePace.error.message}</p>}
           </>
         )}
 
@@ -2209,6 +2261,49 @@ export function PolicyEditor({
           never does.
         </p>
         <DeletionToggle />
+
+        {/* THE save bar: one place to save whatever is dirty -- the policy draft, the pace
+            draft, or both (a preset stages both). Pinned to the viewport bottom while it
+            has something to say, so Save is never a scroll away from the edit. */}
+        {(dirty || paceDirty) && (
+          <div className="savebar">
+            <span className="savebar-what">
+              <strong>
+                Unsaved changes: {[dirty ? `${kind} policy` : null, paceDirty ? "pace and limits" : null]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </strong>
+              <br />
+              {dirty && paceDirty
+                ? "Policy changes apply on the next scan, which starts by itself after saving. Pace applies immediately."
+                : dirty
+                  ? `Saves only your ${kind} policy. The ${otherKind} one is untouched. It applies on the next scan, which starts by itself after saving.`
+                  : "Pace applies immediately. Changing a limit never affects a run you've already approved."}
+            </span>
+            <button
+              className="ghost"
+              onClick={() => {
+                if (dirty) setDraft(saved?.body ?? null);
+                if (paceDirty) setPace(savedPace ?? null);
+              }}
+            >
+              Discard
+            </button>
+            <button
+              className="primary"
+              disabled={(dirty && Boolean(invalidMessage)) || save.isPending || savePace.isPending}
+              onClick={() => {
+                // Two independent saves; each failure renders its own notice below.
+                if (dirty) save.mutate(draft);
+                if (paceDirty && pace) savePace.mutate(pace);
+              }}
+            >
+              {save.isPending || savePace.isPending ? "Saving…" : "Save changes"}
+            </button>
+            {save.error && <p className="notice notice-error">{save.error.message}</p>}
+            {savePace.error && <p className="notice notice-error">{savePace.error.message}</p>}
+          </div>
+        )}
       </div>
 
       <div className="editor-sim">
@@ -2238,6 +2333,7 @@ export function PolicyEditor({
           ) : (
             <StaleNotice
               scanning={scanning}
+              followupQueued={scanState?.followup_queued ?? false}
               starting={startScan.isPending}
               startError={startScan.error ? startScan.error.message : null}
               onScan={() => startScan.mutate()}

@@ -31,6 +31,7 @@ _STORED_SOURCES = frozenset(
         RatingSource.TMDB,
         RatingSource.ROTTEN_TOMATOES_CRITIC,
         RatingSource.ROTTEN_TOMATOES_AUDIENCE,
+        RatingSource.TRAKT,
     }
 )
 

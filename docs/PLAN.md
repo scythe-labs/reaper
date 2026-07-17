@@ -7,9 +7,82 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-17 (hand-override truth, Settings General + Logs, the API key lane)
+Last updated: 2026-07-17 (the full ratings row, and the rescan that never applied)
 
-### Newest — hand-override truth, Settings General + Logs, the API key lane
+### Newest — the full ratings row, and the rescan that never applied
+
+Three operator reports, each of which turned out to be a data or sequencing gap rather
+than a display bug.
+
+- **The audience score was missing because no source ever supplied it.** The why-panel
+  has rendered a popcorn chip since the ratings row shipped, but on a library whose
+  Plex agent fills both listing slots with IMDb, no integration ever produced a Rotten
+  Tomatoes audience value: Radarr's object has critic-only RT, and the sweep read only
+  the listing's two slots. The wrong assumption was that the listing carries what Plex
+  knows. It does not — the full metadata's typed `Rating` children carry every provider
+  score, critic and audience separately, at ~97% audience coverage on the sampled
+  library (see LEARNINGS "two rating slots"). The sweep now batch-reads metadata for
+  movies as well as shows (~1 request per 100 items; shows already had the batch for
+  folder paths) and merges children through the same `from_plex` provenance rules,
+  slots winning ties. This also makes the policy's "Rotten Tomatoes audience" keep bar
+  real on slot-poor servers — it could never fire there before.
+- **Trakt is on the card now** (movies): Radarr hands it over at ~99% coverage for
+  free, so it is frozen into the display row (`display_meta._STORED_SOURCES`) and
+  rendered as the percentage Trakt itself displays, linking through
+  `trakt.tv/search/imdb/{id}`. TV has no Trakt source (Sonarr is flat TVDB), so the
+  chip hides there. The RT/TMDb chip hovers no longer claim "from Plex" — with
+  children + Radarr fill the provider varies, and the row does not record it.
+- **"Needs a fresh scan" persisted because the rescan never actually ran.** The
+  auto-rescan fired by a policy save is idempotent with the running scan — and a scan
+  reads the library under the policies in force when it *began*. Save mid-scan, and
+  the "rescan" silently became the old scan; its snapshot landed with the old hashes
+  and the notice never cleared, however many times it completed (verified against the
+  operator's DB: a snapshot finishing 37s after the save carried the pre-save hashes).
+  The fix is a queued follow-up: `POST /scan/start` during a run sets
+  `followup_queued`, the runner starts one fresh scan when the current one drains
+  (`running` never flaps false between them), an errored run drops the queue, and the
+  stale notice says honestly that the changes ride the second scan. Verified live on a
+  DB copy: mid-scan save produced snapshot N (old hashes, mismatched) then snapshot
+  N+1 (matching) with no operator action.
+- Also: the no-rating-sources policy warning and the rating gate's abstain detail are
+  reworded in plain language ("rating bars" was editor jargon that leaked).
+- **The Policy-tab consistency pass, mocked, approved, and implemented** (six findings,
+  operator-approved via the artifact mockup), then the same grammar swept across Reap,
+  Fairness and Settings (Review deliberately untouched, per the operator).
+  - **One quantity control.** `QuantityInput` is now a single fused box (number + unit
+    dropdown), and a new `FixedQuantity` renders unchangeable units ("days", "people",
+    "seasons", "/ 10", "%", "+ votes") as a quiet suffix in the same chrome. Everything
+    that takes a number-with-a-unit uses one of the two: dormancy, watcher floor, caps,
+    grace, season keeps, hold days, lookahead, rating bars. The old third and fourth
+    input sizes (`.rule-control`'s smaller boxes, the rating-bar selects,
+    `.inline-number`) are gone; every box sits on the documented control standard.
+  - **Warnings render beside their fix.** Policy warnings anchor by `field` to the rule
+    they describe (rating rules, gates, thresholds, season keeps, custom rules, the
+    approval toggle); an unanchored field still falls through to the bottom stack, so a
+    new warning can never be silently dropped. The rating card shows its warning in
+    place of the summary line.
+  - **One save bar.** The two Save buttons (policy, pace) became a single sticky bar
+    that appears while anything is dirty, names what changed, states when each part
+    takes effect, and saves both with one click; Discard resets both drafts. The
+    policy-hash line moved to a quiet line at the end of the policy sections.
+  - **One card grammar.** Protections with settings (rating bars, keep-tags) are cards
+    with the switch in the card header; the TV season card matches the same container
+    and its rows use the same rule-row grammar (name, sentence control, help under its
+    own control). The rating bars themselves are rows of one aligned grid (shared
+    source-name column), with a single circled-x remove affordance.
+  - **Segmented for two-option choices.** A new shared `Segmented` component backs
+    Movies/TV, presets, keep-last scope, tags any/all and rating any/all; dropdowns
+    remain only for open lists (sources, fields, units, servers, log levels; every
+    Settings select was checked and has 3+ options).
+  - **One error voice.** Every action failure app-wide (scan start, plan build, dry
+    run, execute, spare, shelf update) now renders as the shared `notice-error`, with
+    a plain-language lead ("The scan didn't start: …"); bare red `.error` text remains
+    only inside the simulator's dedicated failure panel and the review surfaces.
+  - Deferred, deliberately: merging the near-duplicate `.warn` banner into
+    `.notice-warn` would churn the review card (excluded from this pass); left for the
+    next review-UI round.
+
+### Previous — hand-override truth, Settings General + Logs, the API key lane
 
 Round three of the settings pass, mocked first (artifact v3, approved) and implemented.
 Four fixes the operator asked for, two new settings tabs, and one honesty bug that ran
@@ -86,7 +159,7 @@ deeper than its symptom.
   the card count, the plan and the phrase all count the effective set — the numbers
   beside destructive buttons are the ones bound to the acted-on set.
 
-### Previous — the Leaving Soon shelf, the Plex pickers, and the settings standard
+### Earlier — the Leaving Soon shelf, the Plex pickers, and the settings standard
 
 The Reap workflow and the Plex settings surface were reworked in one pass, mocked first
 (two artifact rounds, approved) and implemented against the approved mockups.

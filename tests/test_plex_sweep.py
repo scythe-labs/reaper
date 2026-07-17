@@ -125,27 +125,66 @@ def _client_with(server: _FakeServer) -> PlexClient:
     return client
 
 
+MOVIE_BATCH = """
+<MediaContainer size="2">
+  <Video ratingKey="41">
+    <Rating image="rottentomatoes://image.rating.ripe" value="7.5" type="critic"/>
+    <Rating image="rottentomatoes://image.rating.spilled" value="4.3" type="audience"/>
+    <Rating image="imdb://image.rating" value="5.7" type="audience"/>
+    <Rating image="themoviedb://image.rating" value="5.4" type="audience"/>
+    <Rating image="metacritic://image.rating" value="5.4" type="critic"/>
+  </Video>
+  <Video ratingKey="42"/>
+</MediaContainer>
+"""
+
+
 class TestLibraryGuidIndex:
     @pytest.fixture
     def movie_server(self) -> _FakeServer:
         listing = f'<MediaContainer size="2" totalSize="2">{MOVIE_ROW}{BARE_ROW}</MediaContainer>'
         return _FakeServer(
             [_FakeSection(1, "movie"), _FakeSection(2, "show")],
-            {"/library/sections/1/all": listing},
+            {"/library/sections/1/all": listing, "/library/metadata/41,42": MOVIE_BATCH},
         )
 
-    async def test_movies_come_from_one_listing_request(self, movie_server: _FakeServer) -> None:
+    async def test_movies_come_from_a_listing_plus_one_batched_read(
+        self, movie_server: _FakeServer
+    ) -> None:
         index = await _client_with(movie_server).library_guid_index(section_type="movie")
         assert set(index) == {41, 42}
         assert index[41].ids.tmdb == 4141
-        # THE point: two items, ONE request. No per-item metadata calls, ever.
-        assert len(movie_server.queries) == 1
+        # THE point: two items, TWO requests -- one listing page plus one metadata batch
+        # (100 items per call, for the Rating children). Never a per-item reload.
+        assert len(movie_server.queries) == 2
+
+    async def test_rating_children_add_sources_the_slots_did_not_carry(
+        self, movie_server: _FakeServer
+    ) -> None:
+        """The listing's two slots cannot carry a provider's critic AND audience score;
+        the batched metadata's typed Rating children fill in the rest. The slot value
+        keeps precedence where both name the same source, and a child whose provenance
+        we cannot read (metacritic has no prefix mapping) is dropped, never guessed."""
+        index = await _client_with(movie_server).library_guid_index(section_type="movie")
+        by_source = {r.source: r.value for r in index[41].ratings}
+        assert by_source == {
+            # The slot's 8.4 wins over the child's 4.3 for the same source.
+            RatingSource.ROTTEN_TOMATOES_AUDIENCE: 8.4,
+            RatingSource.ROTTEN_TOMATOES_CRITIC: 7.5,
+            RatingSource.IMDB: 5.7,
+            RatingSource.TMDB: 5.4,
+        }
+        # The bare row's empty metadata adds nothing.
+        assert index[42].ratings == ()
 
     async def test_show_folders_arrive_from_one_batched_read(self) -> None:
         listing = f'<MediaContainer size="1" totalSize="1">{SHOW_ROW}</MediaContainer>'
         batch = (
             '<MediaContainer size="1">'
-            '<Directory ratingKey="90"><Location path="/tv/example show (2005)"/></Directory>'
+            '<Directory ratingKey="90">'
+            '<Location path="/tv/example show (2005)"/>'
+            '<Rating image="rottentomatoes://image.rating.upright" value="8.8" type="audience"/>'
+            "</Directory>"
             "</MediaContainer>"
         )
         server = _FakeServer(
@@ -157,4 +196,8 @@ class TestLibraryGuidIndex:
         # The folder-name tier that narrows a show listed in two sections.
         assert index[90].file_basename == "example show (2005)"
         assert [f.basename for f in index[90].files] == ["example show (2005)"]
+        # The same batch carries the show's Rating children -- no extra request.
+        assert [(r.source, r.value) for r in index[90].ratings] == [
+            (RatingSource.ROTTEN_TOMATOES_AUDIENCE, 8.8)
+        ]
         assert len(server.queries) == 2  # one listing page + one metadata batch

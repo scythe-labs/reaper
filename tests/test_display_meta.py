@@ -113,12 +113,19 @@ class TestBuildRatingsJson:
                 None,
                 arr_ratings=[
                     _rating(RatingSource.METACRITIC, 8.3),
-                    _rating(RatingSource.TRAKT, 7.7),
                     _rating(RatingSource.UNKNOWN, 9.9),
                 ],
             ),
         )
         assert stored == {}
+
+    def test_trakt_is_frozen_for_the_ratings_row(self) -> None:
+        # Radarr's ratings object carries a Trakt score for essentially every movie
+        # (measured: ~99% coverage), and the why-panel now shows it.
+        stored = parse_ratings_json(
+            build_ratings_json(None, arr_ratings=[_rating(RatingSource.TRAKT, 7.7)])
+        )
+        assert stored == {"trakt": 77}
 
     def test_every_stored_value_is_an_int(self) -> None:
         text = build_ratings_json(
@@ -240,6 +247,8 @@ class TestBuildLinks:
         assert links.rotten_tomatoes == (
             "https://www.rottentomatoes.com/search?search=Example%20%26%20Movie"
         )
+        # Trakt's id lookup lands on the title's page from the same frozen imdb id.
+        assert links.trakt == "https://trakt.tv/search/imdb/tt0000001"
 
     def test_a_tv_row_links_tmdb_as_tv(self) -> None:
         links = build_links(
@@ -253,6 +262,7 @@ class TestBuildLinks:
         assert links.imdb is None  # no imdb_id passed
         assert links.tmdb is None
         assert links.rotten_tomatoes is None  # no title passed
+        assert links.trakt is None  # no imdb_id passed
 
 
 # --- the sweep's reload-storm guard ------------------------------------------------
@@ -267,6 +277,12 @@ _LISTING_XML = """
 </MediaContainer>
 """
 
+_METADATA_XML = """
+<MediaContainer size="1">
+  <Video ratingKey="100"/>
+</MediaContainer>
+"""
+
 
 class _StrictSection:
     type = "movie"
@@ -274,12 +290,13 @@ class _StrictSection:
 
 
 class _StrictServer:
-    """Serves ONE canned listing container and counts every request.
+    """Serves canned containers and counts every request.
 
-    The sweep parses the container XML directly, so display metadata can only come
-    from what the listing carried -- and any regression back toward per-item fetches
-    (the reload storm plexapi's object walk silently produced, measured at one HTTP
-    request per title on a real library) shows up here as a second query."""
+    The sweep parses the container XML directly, so listing metadata can only come from
+    what the listing carried, plus ONE deliberate batched metadata read per 100 items
+    (for the Rating children and show folders). Any regression back toward per-item
+    fetches (the reload storm plexapi's object walk silently produced, measured at one
+    HTTP request per title on a real library) shows up here as extra queries."""
 
     def __init__(self) -> None:
         self.queries: list[str] = []
@@ -293,6 +310,8 @@ class _StrictServer:
         self.queries.append(path)
         from xml.etree.ElementTree import fromstring
 
+        if path.startswith("/library/metadata/"):
+            return fromstring(_METADATA_XML)  # noqa: S314 - canned literal
         return fromstring(_LISTING_XML)  # noqa: S314 - canned literal, not untrusted data
 
 
@@ -317,5 +336,6 @@ async def test_the_sweep_reads_only_listing_attributes() -> None:
     }
     # No media on this listing -> no resolution, and the badge stays hidden.
     assert item.video_resolution is None
-    # One item, ONE request: the listing itself. Never a per-item metadata call.
-    assert len(server.queries) == 1
+    # One item, TWO requests: the listing plus one batched metadata read (Rating
+    # children ride it at 100 items per call). Never a hidden per-item reload.
+    assert len(server.queries) == 2

@@ -27,6 +27,8 @@ Route notes, verified against the apps' own web UIs:
 * IMDb: ``/title/{imdb_id}/``; TMDb: ``/movie/{id}`` or ``/tv/{id}``. Rotten Tomatoes
   URLs are hand-curated slugs no integration provides, so the RT link is an honest
   title search rather than a guessed page.
+* Trakt's own slugs are likewise not provided, but ``/search/imdb/{imdb_id}`` is a
+  supported id lookup that lands on the title's page directly.
 """
 
 from __future__ import annotations
@@ -51,6 +53,7 @@ class DeepLinks:
     imdb: str | None = None
     tmdb: str | None = None
     rotten_tomatoes: str | None = None
+    trakt: str | None = None
 
 
 def _base(url: str | None) -> str | None:
@@ -144,6 +147,7 @@ def build_links(
         if title.strip()
         else None
     )
+    trakt = f"https://trakt.tv/search/imdb/{quote(imdb_id, safe='')}" if imdb_id else None
 
     return DeepLinks(
         plex=plex,
@@ -154,4 +158,5 @@ def build_links(
         imdb=imdb,
         tmdb=tmdb,
         rotten_tomatoes=rotten_tomatoes,
+        trakt=trakt,
     )

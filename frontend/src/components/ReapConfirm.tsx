@@ -94,7 +94,11 @@ export function ReapConfirm({
 
         {/* Stage 1 — the dry run */}
         {dry.isPending && <p className="blurb">Dry-running every interlock…</p>}
-        {dry.error && <p className="error">{dry.error.message}</p>}
+        {dry.error && (
+          <p className="notice notice-error">
+            The dry run failed, so nothing can be executed: {dry.error.message}
+          </p>
+        )}
         {report?.dry_run && report.state === "aborted" && (
           <div className="sim sim-info">
             <strong>The plan aborted. Nothing would be touched.</strong>
@@ -132,7 +136,7 @@ export function ReapConfirm({
                 />
               </>
             )}
-            {exec.error && <p className="error">{exec.error.message}</p>}
+            {exec.error && <p className="notice notice-error">{exec.error.message}</p>}
             <div className="reap-confirm-actions">
               <button className="ghost" onClick={close} disabled={exec.isPending}>
                 Cancel

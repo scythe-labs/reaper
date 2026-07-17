@@ -130,7 +130,7 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
         )}
       </div>
       {firstScan.error && (
-        <p className="error">The scan didn't start: {firstScan.error.message}</p>
+        <p className="notice notice-error">The scan didn't start: {firstScan.error.message}</p>
       )}
       {scanMsg && <p className="muted setup-scanmsg">{scanMsg}</p>}
 

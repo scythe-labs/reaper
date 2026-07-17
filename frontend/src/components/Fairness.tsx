@@ -83,7 +83,11 @@ export function Fairness() {
         </p>
       </div>
 
-      {error && <p className="error">{error.message}</p>}
+      {error && (
+        <p className="notice notice-error">
+          Couldn't load the fairness report: {error.message}
+        </p>
+      )}
       {isPending && <p className="muted">Loading…</p>}
 
       {data && (

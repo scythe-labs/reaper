@@ -262,6 +262,35 @@ else's rewatch curve as if it were physics.
 
 ## API footguns (all verified against live instances)
 
+### A section listing's two rating slots hide most of Plex's ratings (measured 2026-07-17)
+
+The `/library/sections/{key}/all` listing carries exactly two rating slots
+(`rating`/`audienceRating` + their images). On a live server whose agent fills the
+audience slot with IMDb, the listing showed **imdb-only for 40/40 sampled movies** —
+no Rotten Tomatoes value anywhere, so a "Rotten Tomatoes audience" protection or chip
+built from the listing alone can never fire on that library shape.
+
+The **full metadata** (`/library/metadata/{ids}`, batchable 100 ids per request)
+carries one typed `Rating` child per provider score, critic and audience separately:
+`type="critic" image="rottentomatoes://image.rating.ripe|rotten"` is the Tomatometer,
+`type="audience" image="rottentomatoes://image.rating.upright|spilled"` the audience
+score, plus `imdb://` and `themoviedb://` children (which arrive as `type="audience"`).
+Coverage on the same sample: RT audience 39/40 movies, RT critic 36/40, IMDb and TMDb
+40/40; shows carry the same children in the folder-path batch the scan already fetches.
+Values are 0-10 like every Plex rating (measured range 2.6–8.9), attributes are exactly
+`(image, type, value)` — no vote counts. `includeRatings=1` on a section listing
+returns **zero** children; the batched metadata read is the only way in.
+
+⇒ The sweep batch-reads metadata for movies too (~1 request per 100 items) and routes
+children through `from_plex(..., audience=type=="audience")`, slots keeping precedence.
+
+### Radarr's ratings object includes Trakt (measured 2026-07-17)
+
+`ratings.trakt` is present with a value on ~99-100% of movies across two live Radarr
+instances (alongside imdb/tmdb/metacritic/rottenTomatoes at their known ~86-100%
+coverages). Sonarr still exposes only the flat TVDB pair, so Trakt on TV would need
+another source; the why-panel simply hides the chip there.
+
 ### Plex title-cases label tags
 
 Write `leaving-soon`, read back `Leaving-Soon`. So any case-sensitive comparison of

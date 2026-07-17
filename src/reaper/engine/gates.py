@@ -298,7 +298,7 @@ class RatingFloorGate:
 
     def evaluate(self, facts: Facts) -> GateResult:
         if not self.rules:
-            return GateResult(self.id, ABSTAIN, detail="No rating bars are set to keep on.")
+            return GateResult(self.id, ABSTAIN, detail="No rating is set that would keep a title.")
 
         # Fail closed if a source we keep on could not be read. IMDb is the one source that
         # carries a three-state observation in Facts (imdb_rating_tenths / imdb_votes); the

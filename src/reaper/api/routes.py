@@ -731,6 +731,7 @@ async def _deep_links(session: AsyncSession, row: Candidate) -> LinksOut:
         imdb=links.imdb,
         tmdb=links.tmdb,
         rotten_tomatoes=links.rotten_tomatoes,
+        trakt=links.trakt,
     )
 
 
@@ -747,6 +748,7 @@ def _ratings_out(ratings_json: str | None) -> RatingsOut | None:
         rt_critic=stored.get("rotten_tomatoes_critic"),
         rt_audience=stored.get("rotten_tomatoes_audience"),
         tmdb=stored.get("tmdb"),
+        trakt=stored.get("trakt"),
     )
 
 

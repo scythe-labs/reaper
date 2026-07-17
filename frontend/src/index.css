@@ -1598,14 +1598,30 @@ a.rating-chip:hover {
   font-size: 0.85rem;
   color: var(--muted);
 }
+/* Rule-row controls sit on the same standard as every other box in the app. */
 .rule-control input[type="number"] {
   width: 5rem;
-  padding: 0.35rem 0.5rem;
+  padding: 0.42rem 0.6rem;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  background: var(--bg);
   color: var(--text);
   font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.rule-control select,
+.bar-foot select {
+  padding: 0.42rem 0.6rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+.rule-control :is(input, select):focus,
+.bar-foot select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .rule-row input[type="range"] {
   width: 100%;
@@ -1613,49 +1629,71 @@ a.rating-chip:hover {
   accent-color: var(--accent);
 }
 
-/* Keep well-rated titles: a stack of per-source bars, each a rule-control row in its own
-   inset well so the sources read as a set rather than one run-on line. */
-.rating-bars {
+/* Keep well-rated titles: the per-source bars as rows of ONE aligned table. The source
+   names share a column sized by the longest, so every "at least" lines up whatever the
+   name's length -- the bars read as a set without each needing its own box. */
+.bar-table {
+  display: grid;
+  grid-template-columns: max-content 1fr auto;
+  column-gap: 0.8rem;
+  row-gap: 0.55rem;
+  align-items: center;
   margin-top: 0.6rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
 }
-.rating-bar {
-  margin-top: 0;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 0.5rem 0.65rem;
+.bar-line {
+  display: contents;
 }
-/* The editor's per-bar source label. Deliberately NOT `.rating-src`, which the why-panel
-   rating chips own -- reusing that name bled this width/colour into the why panel. */
-.rating-bar-src {
-  min-width: 11rem;
+.bar-src {
   font-weight: 600;
-  color: var(--text);
+  font-size: 0.9rem;
+  white-space: nowrap;
 }
-.rating-remove {
-  margin-left: auto;
-  background: none;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 1.05rem;
-  line-height: 1;
-  padding: 0 0.25rem;
-}
-.rating-remove:hover {
-  color: var(--condemn);
-}
-.rating-bars select {
-  padding: 0.3rem 0.5rem;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
+.bar-set {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
   font-size: 0.85rem;
+  color: var(--muted);
+}
+.bar-x {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.bar-x:hover {
+  color: var(--condemn);
+  border-color: var(--condemn);
+}
+.bar-x:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.bar-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.8rem;
+}
+@media (max-width: 700px) {
+  /* Narrow columns: the source name takes its own line and the controls keep aligning. */
+  .bar-table {
+    grid-template-columns: 1fr auto;
+  }
+  .bar-src {
+    grid-column: 1 / -1;
+  }
 }
 
 /* The owner's own protect conditions. Each stored rule reads as a green "keep it when…" chip
@@ -1711,6 +1749,13 @@ a.rating-chip:hover {
 }
 .rules-card > h3 {
   margin-top: 0;
+}
+/* A protection that carries settings is a card whose header IS the protection's switch
+   and name -- the same row grammar as the plain rules, just promoted to a card. */
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
 }
 .rules-table {
   border: 1px solid var(--border);
@@ -1881,23 +1926,20 @@ a.rating-chip:hover {
 .intent-band .help {
   margin-top: 0.5rem;
 }
-.pace-note {
-  font-size: 0.82rem;
-  max-width: 34rem;
-}
 /* The ask-first toggle leads the pace section, above the numeric caps. */
 .pace-approval {
   margin: 0 0 1.1rem;
 }
 /* A bordered card grouping the TV season-protection controls, matching the mockup. */
+/* Same card as .rules-card, so every settings-bearing block on the tab matches. */
 .season-card {
   border: 1px solid var(--border-strong);
   border-radius: 12px;
-  padding: 0.5rem 1.25rem 1rem;
-  margin: 0.5rem 0 0.5rem;
+  padding: 1rem 1.25rem 1.25rem;
+  margin-top: 1.25rem;
 }
 .season-card > h3 {
-  margin-top: 0.75rem;
+  margin-top: 0;
 }
 .inline-weight {
   display: inline-flex;
@@ -1908,18 +1950,6 @@ a.rating-chip:hover {
 }
 .inline-weight input {
   width: 3.5rem;
-}
-/* A bare number the reader completes a sentence with ("keep the newest [ 3 ] seasons"). */
-.inline-number {
-  width: 3.5rem;
-  padding: 0.2rem 0.4rem;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-size: 0.9rem;
-  text-align: center;
 }
 .help-warn {
   color: var(--condemn);
@@ -1973,17 +2003,8 @@ a.rating-chip:hover {
 .tag-match {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  margin-top: 0.5rem;
-  font-size: 0.85rem;
-}
-.tag-match select {
-  padding: 0.3rem 0.5rem;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
   font-size: 0.85rem;
 }
 
@@ -2041,17 +2062,48 @@ a.rating-chip:hover {
   color: var(--muted);
 }
 
-.editor-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  margin: 1.2rem 0 0.4rem;
-}
-
 .hash {
   font-size: 0.78rem;
   color: var(--muted);
   margin: 0.2rem 0 0.8rem;
+}
+
+/* THE save bar: pinned to the viewport bottom while any draft is unsaved. It names what
+   changed, says when each part takes effect, and one button saves it all -- so a preset
+   (which stages the policy AND the pace) is applied with one click, not two saves in two
+   places. Rendered only while there is something to save. */
+.savebar {
+  position: sticky;
+  bottom: 0.6rem;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+  margin-top: 1.2rem;
+  padding: 0.7rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+}
+.savebar-what {
+  flex: 1 1 16rem;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+.savebar-what strong {
+  color: var(--text);
+}
+.savebar-hash {
+  flex-basis: 100%;
+  font-size: 0.75rem;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.savebar .notice {
+  flex-basis: 100%;
+  margin: 0;
 }
 
 /* ---- simulator ----------------------------------------------------------- */
@@ -2106,6 +2158,10 @@ a.rating-chip:hover {
   background: var(--unknown-soft);
   border-color: var(--unknown);
   color: var(--text);
+}
+/* A notice living inside the rule it describes, right under the control that fixes it. */
+.notice-inline {
+  margin: 0.55rem 0 0;
 }
 
 .rule-strength strong {
@@ -4320,36 +4376,58 @@ button.danger:hover:not(:disabled) {
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
+/* THE quantity control: one bordered box holding the number and its unit, whether the
+   unit is a dropdown (caps, dormancy) or a fixed word ("days", "people", "seasons").
+   It follows the app's one control standard (--radius-sm, the settings-form padding,
+   --bg fill, accent focus ring) and is the only shape a number-with-a-unit takes. */
 .qty {
-  display: flex;
-  gap: 0.35rem;
-}
-/* The number and its unit share the app's one control standard: --radius-sm corners,
-   the settings-form padding, an inherited font, --bg fill, and the accent focus ring.
-   (Both boxes on the same fill; the select used to sit a shade lighter.) */
-.qty input[type="number"] {
-  flex: 1;
-  min-width: 0;
-  padding: 0.42rem 0.6rem;
+  display: inline-flex;
+  align-items: stretch;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg);
+  overflow: hidden;
+  vertical-align: middle;
+}
+.qty input[type="number"] {
+  width: 5rem;
+  min-width: 0;
+  padding: 0.42rem 0.35rem 0.42rem 0.6rem;
+  border: none;
+  background: transparent;
   color: var(--text);
   font: inherit;
   font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.qty-narrow input[type="number"] {
+  width: 3.6rem;
 }
 .qty select {
   flex: none;
-  padding: 0.42rem 0.6rem;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
+  padding: 0.42rem 0.5rem;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: var(--surface-2);
   color: var(--text);
   font: inherit;
 }
-.qty :is(input, select):focus {
+.qty .qty-suffix {
+  align-self: center;
+  padding: 0 0.6rem 0 0.1rem;
+  color: var(--muted);
+  font-size: 0.88rem;
+  white-space: nowrap;
+}
+.qty:focus-within {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+.qty :is(input, select):focus {
+  outline: none;
+}
+.qty input:disabled {
+  color: var(--faint);
 }
 
 .load-more {

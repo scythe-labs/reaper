@@ -213,16 +213,20 @@ export interface Links {
   imdb: string | null;
   tmdb: string | null;
   rotten_tomatoes: string | null;
+  trakt: string | null;
 }
 
 /** The external-ratings row. `imdb` is the same number the score used; the percentage
- *  fields are 0-100 ints. Null means that source is unknown for this item. */
+ *  fields are 0-100 ints. `tmdb` and `trakt` are 0-10 scores in tenths, shown as the
+ *  percentages both sites themselves display. Null means that source is unknown for
+ *  this item. */
 export interface Ratings {
   imdb: number | null;
   imdb_votes: number | null;
   rt_critic: number | null;
   rt_audience: number | null;
   tmdb: number | null;
+  trakt: number | null;
 }
 
 export interface CandidateDetail extends Candidate {
@@ -601,6 +605,10 @@ export interface ScanStatus {
   detail: string;
   error: string | null;
   snapshot_id: number | null;
+  /** A second scan starts the moment this one finishes. Set when a scan was requested
+   *  mid-run (a policy save, usually): the running scan began under the old policies,
+   *  so only a scan started after the request can reflect the change. */
+  followup_queued: boolean;
 }
 
 export interface AuthUser {

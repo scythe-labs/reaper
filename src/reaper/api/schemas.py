@@ -112,17 +112,21 @@ class LinksOut(BaseModel):
     imdb: str | None = None
     tmdb: str | None = None
     rotten_tomatoes: str | None = None
+    trakt: str | None = None
 
 
 class RatingsOut(BaseModel):
     """The external-ratings row. ``imdb`` is the same dataset number the scoring signal
-    used (never a second source); the percentage fields are 0-100 ints."""
+    used (never a second source); the percentage fields are 0-100 ints. ``tmdb`` and
+    ``trakt`` are 0-10 scores stored in tenths, shown as the percentages both sites
+    themselves display."""
 
     imdb: float | None = None
     imdb_votes: int | None = None
     rt_critic: int | None = None
     rt_audience: int | None = None
     tmdb: int | None = None
+    trakt: int | None = None
 
 
 class ChipOut(BaseModel):

@@ -663,8 +663,9 @@ def inspect(
                     field="keep_rating_rules",
                     severity="warn",
                     message=(
-                        "Keep well-rated titles is on, but no rating bars are set, so it keeps "
-                        "nothing. Add at least one, or switch the protection off."
+                        "Keep well-rated titles is turned on, but it has no rating sources "
+                        "yet, so it is not keeping anything. Add a rating source to it, or "
+                        "turn the protection off."
                     ),
                 )
             )

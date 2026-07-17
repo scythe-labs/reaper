@@ -139,7 +139,7 @@ export function ReapPlan({
 
       <GracePanel onGoToPlexSettings={onGoToPlexSettings} />
 
-      {plan.error && <p className="error">{plan.error.message}</p>}
+      {plan.error && <p className="notice notice-error">{plan.error.message}</p>}
 
       {run && (
         <>
@@ -179,7 +179,7 @@ export function ReapPlan({
               </span>
             )}
           </div>
-          {dry.error && <p className="error">{dry.error.message}</p>}
+          {dry.error && <p className="notice notice-error">{dry.error.message}</p>}
           {report && <Report report={report} />}
           <Steps run={run} />
         </>

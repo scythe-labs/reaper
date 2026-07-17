@@ -103,9 +103,11 @@ export function ScanBar({ snapshot }: { snapshot: Snapshot | undefined }) {
       )}
 
       {start.error && (
-        <p className="error">The scan didn't start: {start.error.message}</p>
+        <p className="notice notice-error">The scan didn't start: {start.error.message}</p>
       )}
-      {status?.error && <p className="error">{status.error}</p>}
+      {status?.error && (
+        <p className="notice notice-error">The scan hit a problem: {status.error}</p>
+      )}
 
       {snapshot?.degraded && (
         <p className="warn">

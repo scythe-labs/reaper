@@ -607,6 +607,7 @@ class TestPanelHeadFields:
             "imdb": "https://www.imdb.com/title/tt0000001/",
             "tmdb": "https://www.themoviedb.org/movie/603",
             "rotten_tomatoes": "https://www.rottentomatoes.com/search?search=Example%20Movie",
+            "trakt": "https://trakt.tv/search/imdb/tt0000001",
         }
         assert detail["ratings"] == {
             "imdb": 5.9,
@@ -614,6 +615,7 @@ class TestPanelHeadFields:
             "rt_critic": 77,
             "rt_audience": 71,
             "tmdb": 61,
+            "trakt": None,
         }
         assert detail["content_rating"] == "PG-13"
         assert detail["runtime_minutes"] == 95
@@ -637,6 +639,7 @@ class TestPanelHeadFields:
             "tmdb": None,
             # A title always exists, so the RT search still works for an unmatched row.
             "rotten_tomatoes": "https://www.rottentomatoes.com/search?search=Unmatched",
+            "trakt": None,
         }
         assert detail["ratings"] is None
         assert detail["content_rating"] is None

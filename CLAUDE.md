@@ -277,3 +277,48 @@ suggestions. They extend the rules above; where one sharpens an earlier rule (22
 39. **Drafts and dirty checks compare canonical forms.** Never compare serialized state
     with raw `JSON.stringify` across frontend/backend boundaries; re-seed from the server
     response after a save.
+
+## UI grammar (from the operator-approved consistency pass, 2026-07-17)
+
+The whole UI speaks one control grammar. These rules came out of an audit that found the
+same job done three or four different ways on one page (mocked as an artifact, approved,
+then implemented app-wide except the review queue). They sharpen rule 18's "reuse the
+shared pattern" into named obligations; a new variant of any of these is a blocker, not
+a style choice.
+
+40. **A number with a unit is one of two components, always.** A changeable unit is
+    `QuantityInput`; a fixed unit ("days", "people", "seasons", "/ 10", "%", "+ votes")
+    is `FixedQuantity` with the unit as a suffix in the same box (both in
+    `components/QuantityInput.tsx`, sharing the `.qty` chrome). Never a bare
+    `<input type="number">` beside loose unit text, and never a new input size: every
+    text, number, and select box sits on the one control standard documented at the top
+    of `index.css` (`0.42rem 0.6rem` padding, `--border-strong`, `--radius-sm`, `--bg`
+    fill, accent focus ring). Width is the only thing that may vary.
+41. **A choice between two visible options is the shared `Segmented`**
+    (`components/Segmented.tsx`); a `<select>` is only for open lists (rating sources,
+    fields, units, servers, log levels). Growing a segmented past three options may turn
+    it into a select; hiding a binary inside a dropdown is never allowed. `Switch` stays
+    the one on/off control (its file says why), and a settings-bearing group's
+    sub-controls render only while its toggle is on — hidden, not disabled, matching the
+    gates.
+42. **A warning renders beside the control that fixes it.** Policy warnings anchor by
+    `field` to their rule (the anchor list + `WarnBlock` in `PolicyEditor`); adding a
+    warning field means adding an anchor or knowingly letting it fall through to the
+    bottom stack, which exists so no field is ever silently dropped. Action failures
+    everywhere are `.notice.notice-error` with a plain-language lead ("The scan didn't
+    start: …"); bare red `.error` text survives only in the review surfaces and the
+    simulator's dedicated failure panel.
+43. **One save affordance per page.** The policy editor's sticky `.savebar` is the only
+    save UI on that page: it names what is dirty, states when each part takes effect,
+    saves everything with one click, and offers Discard. New savable state on that page
+    joins the bar; never add a second Save button beside it.
+44. **Settings-bearing groups are cards; plain toggles are rows.** A protection or
+    group with sub-configuration is a `.rules-card` with its `Switch` in `.card-head`
+    (rating bars, keep-tags; the season card shares the container); an on/off with
+    nothing else stays a bare `.rule-row`. Rows of repeated per-item controls (the
+    rating bars) align in one grid with a shared label column, never one boxed well
+    per row.
+45. **Help text binds to exactly one control, directly beneath it.** Never one help
+    paragraph covering two controls, and never help detached from the row it explains.
+    Known deferred exception to the notice unification: the `.warn` banner (ScanBar +
+    the review card) merges into `.notice-warn` whenever the review UI is next touched.

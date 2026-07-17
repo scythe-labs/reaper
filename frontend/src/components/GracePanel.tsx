@@ -154,8 +154,10 @@ export function GracePanel({ onGoToPlexSettings }: { onGoToPlexSettings: () => v
         {mark.data && mark.data.problems.length > 0 && (
           <span className="ls-problems">{mark.data.problems.join(" · ")}</span>
         )}
-        {mark.error && <span className="error">{mark.error.message}</span>}
       </div>
+      {mark.error && (
+        <p className="notice notice-error">The shelves didn't update: {mark.error.message}</p>
+      )}
 
       {data.ready.length > 0 && (
         <>
@@ -192,7 +194,11 @@ export function GracePanel({ onGoToPlexSettings }: { onGoToPlexSettings: () => v
         </>
       )}
 
-      {cancel.error && <p className="error">{cancel.error.message}</p>}
+      {cancel.error && (
+        <p className="notice notice-error">
+          The item wasn't spared: {cancel.error.message}
+        </p>
+      )}
     </details>
   );
 }

@@ -96,7 +96,12 @@ function RatingChip({
 function RatingsRow({ ratings, links }: { ratings: Ratings | null; links: Links }) {
   if (!ratings) return null;
   const known =
-    ratings.imdb ?? ratings.rt_critic ?? ratings.rt_audience ?? ratings.tmdb ?? null;
+    ratings.imdb ??
+    ratings.rt_critic ??
+    ratings.rt_audience ??
+    ratings.tmdb ??
+    ratings.trakt ??
+    null;
   if (known === null) return null;
   return (
     <div className="why-ratings">
@@ -117,7 +122,7 @@ function RatingsRow({ ratings, links }: { ratings: Ratings | null; links: Links 
       {ratings.rt_critic != null && (
         <RatingChip
           href={links.rotten_tomatoes}
-          title="Rotten Tomatoes critics score, from Plex. Opens a Rotten Tomatoes search"
+          title="Rotten Tomatoes critics score. Opens a Rotten Tomatoes search"
         >
           <span className="rating-src" role="img" aria-label="Rotten Tomatoes critics">
             🍅
@@ -128,7 +133,7 @@ function RatingsRow({ ratings, links }: { ratings: Ratings | null; links: Links 
       {ratings.rt_audience != null && (
         <RatingChip
           href={links.rotten_tomatoes}
-          title="Rotten Tomatoes audience score, from Plex. Opens a Rotten Tomatoes search"
+          title="Rotten Tomatoes audience score. Opens a Rotten Tomatoes search"
         >
           <span className="rating-src" role="img" aria-label="Rotten Tomatoes audience">
             🍿
@@ -137,8 +142,13 @@ function RatingsRow({ ratings, links }: { ratings: Ratings | null; links: Links 
         </RatingChip>
       )}
       {ratings.tmdb != null && (
-        <RatingChip href={links.tmdb} title="TMDb score, from Plex">
+        <RatingChip href={links.tmdb} title="TMDb user score">
           <span className="rating-src">TMDb</span> {ratings.tmdb}%
+        </RatingChip>
+      )}
+      {ratings.trakt != null && (
+        <RatingChip href={links.trakt} title="Trakt rating. Opens the title on Trakt">
+          <span className="rating-src">Trakt</span> {ratings.trakt}%
         </RatingChip>
       )}
     </div>
