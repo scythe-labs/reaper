@@ -170,11 +170,35 @@ class TestRatingProvenance:
     def test_the_same_field_read_as_rotten_tomatoes_when_the_image_says_so(self) -> None:
         """Same field, different library, different meaning. This is why we read
         provenance instead of trusting the field name."""
-        rating = from_plex("96", "rottentomatoes://image.rating.ripe")
+        rating = from_plex("9.6", "rottentomatoes://image.rating.ripe")
 
         assert rating is not None
         assert rating.source is RatingSource.ROTTEN_TOMATOES_CRITIC
-        assert rating.value == 9.6  # normalised from a 0-100 percentage
+        assert rating.value == 9.6
+
+    def test_plex_rotten_tomatoes_is_already_on_ten_and_is_not_divided_again(self) -> None:
+        """Plex serves every rating slot on 0-10 whatever the source (measured): an
+        84% audience score arrives as "8.4". Dividing it as Radarr's raw
+        percentages need turned it into 0.84 -- displayed as 8%."""
+        audience = from_plex("8.4", "rottentomatoes://image.rating.upright", audience=True)
+
+        assert audience is not None
+        assert audience.value == 8.4
+
+    def test_a_percentage_shaped_plex_value_is_still_read_as_a_percentage(self) -> None:
+        """Defensive: a percentage source above 10 can only be a raw percentage from
+        an agent that skipped Plex's 0-10 normalisation. The value proves the scale."""
+        rating = from_plex("96", "rottentomatoes://image.rating.ripe")
+
+        assert rating is not None
+        assert rating.value == 9.6
+
+    def test_a_value_outside_every_known_scale_is_dropped(self) -> None:
+        """11 cannot be a 0-10 average, and 250 cannot be a percentage. A number we
+        cannot interpret must not protect, condemn, or be displayed."""
+        assert from_plex("11", "imdb://image.rating") is None
+        assert from_plex("-1", "imdb://image.rating") is None
+        assert from_plex("250", "rottentomatoes://image.rating.ripe") is None
 
     def test_the_audience_slot_routes_a_rotten_tomatoes_image_to_the_audience_score(
         self,
@@ -182,7 +206,7 @@ class TestRatingProvenance:
         """Both RT populations arrive as ``rottentomatoes://`` images; only the slot
         tells them apart. Without the flag, the audience score silently became the
         Tomatometer -- and the panel would have shown two 'critic' numbers."""
-        audience = from_plex("84", "rottentomatoes://image.rating.upright", audience=True)
+        audience = from_plex("8.4", "rottentomatoes://image.rating.upright", audience=True)
         assert audience is not None
         assert audience.source is RatingSource.ROTTEN_TOMATOES_AUDIENCE
         assert audience.value == 8.4
@@ -235,6 +259,12 @@ class TestRadarrRatings:
         rt = pick(from_radarr(self.SAMPLE), RatingSource.ROTTEN_TOMATOES_CRITIC)
         assert rt is not None
         assert rt.value == 9.6  # 96% -> 9.6/10
+
+    def test_a_value_outside_every_known_scale_is_dropped(self) -> None:
+        """An IMDb average of 96 is not a rating we know how to read; guessing a
+        scale for it could protect or condemn on a fiction."""
+        assert from_radarr({"imdb": {"votes": 1_000, "value": 96, "type": "user"}}) == []
+        assert from_radarr({"rottenTomatoes": {"votes": 0, "value": 250, "type": "user"}}) == []
 
     def test_votes_zero_on_a_percentage_source_means_no_vote_concept(self) -> None:
         """Radarr reports votes: 0 for Rotten Tomatoes. Read literally, a vote

@@ -476,6 +476,20 @@ exist in the wild; the field means whatever the library's metadata agent decided
 ⇒ **Read provenance from the data. Never infer it from the field name.** An IMDb floor
 of 7.5 compared against a Tomatometer of 96 protects nothing, silently, forever.
 
+### Rating scale is a property of the provider, not the source (verified)
+
+Plex serves **every** rating slot on a 0-10 scale whatever the source: a 96%
+Tomatometer arrives as `9.6`, never `96`. Swept live across every movie and show
+section: thousands of rating values under `imdb://`, `themoviedb://` and
+`rottentomatoes://` images, **not one above 10** — including Rotten Tomatoes values
+that Plex's own UI renders as percentages. Radarr hands the very same Rotten
+Tomatoes / Metacritic scores through as raw percentages (`96`), while its
+IMDb/TMDb/Trakt values are 0-10 averages.
+
+⇒ **Normalise per provider, never per source.** "Divide any Rotten Tomatoes value by
+ten" is exactly right for Radarr and silently turned Plex's 84% into 0.84 — which the
+review view would have displayed as 8%.
+
 ### A rating without a vote count is noise
 
 Every library holds a handful of titles rating ≥ 7.5 on **fewer than 1,000 votes** — an

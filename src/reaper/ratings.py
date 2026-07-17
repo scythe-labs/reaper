@@ -18,13 +18,22 @@ The corollary for the UI: a score is never displayed as a bare number. It is
 displayed with where it came from and when, so a wrong source is visible rather
 than merely wrong.
 
-Two further facts, both measured:
+Three further facts, all measured:
 
 * **Vote counts are mandatory.** A 9.5 from 12 votes is noise. Radarr reports
   ``votes: 0`` for Rotten Tomatoes and Metacritic (they are percentages, not vote
   averages), so a vote floor must apply only to sources that actually have votes.
 * **Radarr's ``type`` field lies.** It reports ``"user"`` for Rotten Tomatoes on a
   value that is plainly the critic Tomatometer (96). Do not trust it.
+* **Scale is a property of the provider, not the source.** Plex serves *every*
+  rating slot on a 0-10 scale whatever the source: a 96% Tomatometer arrives as
+  ``9.6``, never ``96``. A follow-up probe of a live server (2026-07-16) swept
+  every movie and show section and found thousands of rating values across
+  ``imdb://``, ``themoviedb://`` and ``rottentomatoes://`` images with **not one
+  above 10** -- including Rotten Tomatoes values that Plex's own UI displays as
+  percentages. Radarr hands the very same score through raw (``96``). The same
+  number therefore needs opposite handling depending on who delivered it, so
+  normalisation happens per provider, never per field name.
 """
 
 from __future__ import annotations
@@ -106,6 +115,7 @@ class Rating:
 
 
 def _to_ten(value: float, source: RatingSource) -> float:
+    """Radarr-shaped normalisation: its percentage sources arrive raw (96, not 9.6)."""
     return value / 10.0 if source in _PERCENTAGE_SOURCES else value
 
 
@@ -128,6 +138,11 @@ def from_plex(
     the prefix map alone cannot tell them apart, since both arrive as
     ``rottentomatoes://image.rating.*``. (An IMDb or TMDb image in that slot is
     still just an IMDb/TMDb value; only RT keeps two distinct populations.)
+
+    Values arrive already normalised: Plex serves every rating slot on a 0-10
+    scale whatever the source (measured -- see the module docstring), so an 84%
+    Rotten Tomatoes score is ``"8.4"`` here. Raw percentages are a Radarr shape,
+    handled in :func:`from_radarr`, never divided out of a Plex value.
     """
     if value in (None, ""):
         return None
@@ -148,7 +163,19 @@ def from_plex(
         # never condemn -- so it is dropped rather than guessed at.
         return None
 
-    return Rating(source=source, value=_to_ten(number, source), votes=None, provider=provider)
+    # Plex's contract is 0-10 for every slot, so the value passes through
+    # undivided: dividing a Tomatometer here (as Radarr's raw percentages need)
+    # turned an 84% audience score into 0.84, displayed as 8%. Defensively, a
+    # percentage-shaped source above 10 can only be a raw percentage from an
+    # agent that skipped Plex's normalisation -- the value itself proves the scale.
+    if number > 10 and source in _PERCENTAGE_SOURCES:
+        number /= 10.0
+    if not 0.0 <= number <= 10.0:
+        # Outside every scale we know how to read. A number we cannot interpret
+        # must not protect, condemn, or be displayed as if it meant something.
+        return None
+
+    return Rating(source=source, value=number, votes=None, provider=provider)
 
 
 def from_radarr(ratings: dict[str, Any] | None, *, provider: str = "radarr") -> list[Rating]:
@@ -186,6 +213,12 @@ def from_radarr(ratings: dict[str, Any] | None, *, provider: str = "radarr") -> 
         except (TypeError, ValueError):
             continue
 
+        value_on_ten = _to_ten(number, source)
+        if not 0.0 <= value_on_ten <= 10.0:
+            # A 0-10 average above 10, a percentage above 100: outside every
+            # scale we know how to read, so it is dropped rather than guessed at.
+            continue
+
         # Radarr reports votes: 0 for percentage sources. Zero is "no vote
         # concept", not "zero people voted" -- conflating them would make a vote
         # floor reject every Rotten Tomatoes score.
@@ -195,7 +228,7 @@ def from_radarr(ratings: dict[str, Any] | None, *, provider: str = "radarr") -> 
         out.append(
             Rating(
                 source=source,
-                value=_to_ten(number, source),
+                value=value_on_ten,
                 votes=votes,
                 provider=provider,
             )

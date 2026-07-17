@@ -18,7 +18,7 @@ import pytest
 
 from reaper.clients.plex import PlexClient, _parse_sweep_element
 from reaper.config import RuntimeSafety
-from reaper.ratings import RatingSource, from_plex
+from reaper.ratings import RatingSource
 
 
 def fromstring(xml: str) -> Any:
@@ -66,14 +66,11 @@ class TestParseSweepElement:
         assert item.content_rating == "R"
         assert item.runtime_minutes == 121
         # The audience slot with an RT image resolves to the audience source, and the
-        # value is exactly what from_plex produces for the same inputs the plexapi
-        # object walk would have handed it. (from_plex divides Rotten Tomatoes values
-        # by ten; whether Plex's already-0-to-10 audience number should be exempt from
-        # that is a question for the ratings module, not the sweep.)
-        expected = from_plex("8.4", "rottentomatoes://image.rating.upright", audience=True)
-        assert expected is not None
+        # value stays on Plex's 0-10 scale exactly as the attribute carried it:
+        # audienceRating="8.4" is an 84% score. Dividing it again, as Radarr's raw
+        # percentages need, is the regression this pins (8.4 once became 0.84).
         assert any(
-            r.value == expected.value and r.source is RatingSource.ROTTEN_TOMATOES_AUDIENCE
+            r.source is RatingSource.ROTTEN_TOMATOES_AUDIENCE and r.value == 8.4
             for r in item.ratings
         )
 
