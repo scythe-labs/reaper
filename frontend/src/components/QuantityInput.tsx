@@ -9,13 +9,15 @@ import { useState } from "react";
 
 export interface Unit {
   label: string;
-  factor: number; // how many base units one of these is (GB -> 1024**3 bytes)
+  factor: number; // how many base units one of these is (GB -> 1e9 bytes)
 }
 
+// Decimal, matching every other place a rule says GB (presets, coercion, rule
+// descriptions all use 1e9). Mixing conventions showed the same cap as two numbers.
 export const SIZE_UNITS: Unit[] = [
-  { label: "MB", factor: 1024 ** 2 },
-  { label: "GB", factor: 1024 ** 3 },
-  { label: "TB", factor: 1024 ** 4 },
+  { label: "MB", factor: 1e6 },
+  { label: "GB", factor: 1e9 },
+  { label: "TB", factor: 1e12 },
 ];
 
 export const TIME_UNITS: Unit[] = [

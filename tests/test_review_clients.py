@@ -26,6 +26,72 @@ from reaper.services.plex_link import (
 )
 
 READ_ONLY = RuntimeSafety(destructive_enabled=False)
+ARMED = RuntimeSafety(destructive_enabled=True)
+
+
+class TestRedirectsNeverCarryCredentialsAway:
+    """``follow_redirects`` is off at the client. A read may hop within the configured
+    origin only -- the API-key header must never chase a Location elsewhere -- and a
+    redirected mutation is refused outright rather than replayed at a new URL."""
+
+    @respx.mock
+    async def test_a_same_origin_redirect_on_a_read_is_followed(self) -> None:
+        respx.get("https://radarr.test/api/v3/system/status").mock(
+            return_value=httpx.Response(
+                301, headers={"location": "https://radarr.test/api/v4/system/status"}
+            )
+        )
+        respx.get("https://radarr.test/api/v4/system/status").mock(
+            return_value=httpx.Response(200, json={"version": "6.0.0"})
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
+            assert (await client.system_status())["version"] == "6.0.0"
+
+    @respx.mock
+    async def test_a_cross_origin_redirect_on_a_read_is_refused(self) -> None:
+        respx.get("https://radarr.test/api/v3/system/status").mock(
+            return_value=httpx.Response(301, headers={"location": "https://elsewhere.test/x"})
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
+            with pytest.raises(IntegrationError, match="cross-origin"):
+                await client.system_status()
+
+    @respx.mock
+    async def test_a_redirect_loop_gives_up(self) -> None:
+        respx.get("https://radarr.test/api/v3/system/status").mock(
+            return_value=httpx.Response(
+                302, headers={"location": "https://radarr.test/api/v3/system/status"}
+            )
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
+            with pytest.raises(IntegrationError, match="too many redirects"):
+                await client.system_status()
+
+    @respx.mock
+    async def test_a_redirected_mutation_is_refused_not_replayed(self) -> None:
+        """A 307 preserves method and body: auto-following would re-fire the approved
+        DELETE -- credential headers, mutation approval and all -- at whatever URL the
+        upstream chose. It must surface as an error instead."""
+        respx.delete(host="radarr.test", path="/api/v3/movie/5").mock(
+            return_value=httpx.Response(307, headers={"location": "https://elsewhere.test/movie/5"})
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=ARMED) as client:
+            with pytest.raises(IntegrationError, match="refused redirect"):
+                await client.delete_movie(5, delete_files=True, add_exclusion=True)
+
+
+class TestTagsBodyMustBeAList:
+    @respx.mock
+    async def test_a_non_list_200_is_an_error_not_an_empty_whitelist(self) -> None:
+        """A reverse proxy's error page arrives as a 200 with a JSON object (or HTML).
+        Masking it as [] once let a keep-tag sync read an empty whitelist out of an
+        error page and wipe the stored one."""
+        respx.get("https://radarr.test/api/v3/tag").mock(
+            return_value=httpx.Response(200, json={"error": "bad gateway"})
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
+            with pytest.raises(IntegrationError, match="did not return a list"):
+                await client.tags()
 
 
 class TestSendRetriesTransientTransportErrors:

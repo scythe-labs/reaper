@@ -47,9 +47,14 @@ export function ReapConfirm({
     mutationFn: () => api.executeRun(run.id, run.confirmation_phrase),
     onSuccess: (r) => {
       setReport(r);
+      onDone?.();
+    },
+    // onSettled, not onSuccess: even a run that errored or aborted partway may have
+    // deleted items (the canary, the first few steps), so the queue and run history must
+    // refresh either way. queryClient comes from useQueryClient() and is stable.
+    onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: ["runs"] });
       void queryClient.invalidateQueries({ queryKey: ["candidates"] });
-      onDone?.();
     },
   });
 
@@ -64,12 +69,18 @@ export function ReapConfirm({
   const phraseOk = typed.trim() === run.confirmation_phrase;
   const canExecute = armed && dryClean && phraseOk && !exec.isPending;
 
+  // While the real reap is in flight the sheet must stay open: unmounting would lose the
+  // per-item report of what was just deleted. Scrim, ✕ and Cancel all go through here.
+  const close = () => {
+    if (!exec.isPending) onClose();
+  };
+
   return (
-    <div className="modal-scrim" onClick={onClose}>
+    <div className="modal-scrim" onClick={close}>
       <div className="modal reap-confirm" onClick={(e) => e.stopPropagation()}>
         <header className="reap-confirm-head">
           <h2>Reap {count(run.item_count)} items</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
+          <button className="icon-btn" onClick={close} disabled={exec.isPending} aria-label="Close">
             ✕
           </button>
         </header>
@@ -85,7 +96,7 @@ export function ReapConfirm({
         {dry.isPending && <p className="blurb">Dry-running every interlock…</p>}
         {dry.error && <p className="error">{dry.error.message}</p>}
         {report?.dry_run && report.state === "aborted" && (
-          <div className="sim sim-stale">
+          <div className="sim sim-info">
             <strong>The plan aborted. Nothing would be touched.</strong>
             <p>{report.aborted_reason}</p>
           </div>
@@ -123,7 +134,7 @@ export function ReapConfirm({
             )}
             {exec.error && <p className="error">{exec.error.message}</p>}
             <div className="reap-confirm-actions">
-              <button className="ghost" onClick={onClose}>
+              <button className="ghost" onClick={close} disabled={exec.isPending}>
                 Cancel
               </button>
               <button className="danger" disabled={!canExecute} onClick={() => exec.mutate()}>

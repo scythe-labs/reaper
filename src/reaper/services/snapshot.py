@@ -49,7 +49,14 @@ from reaper.engine import identity
 from reaper.engine.gates import PROTECT, Evaluation, Facts, Gate, GateId, GateResult, evaluate_all
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
-from reaper.engine.signals import Score, SignalConfig, SignalId, score
+from reaper.engine.signals import (
+    CustomSignalConfig,
+    KeepConfig,
+    Score,
+    SignalConfig,
+    SignalId,
+    score,
+)
 from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict
 from reaper.ratings import Rating, from_radarr
 from reaper.services import (
@@ -413,7 +420,7 @@ async def scan(
                 activity_degraded=activity_degraded,
                 keep_last_seasons=tv_policy.keep_last_seasons,
                 keep_first_season=tv_policy.keep_first_season,
-                window_days=_popularity_window(tv_policy),
+                window_days=tv_policy.popularity_window_days(),
                 whitelisted=tag_only_whitelist,
                 degrade=context.degrade,
                 requested=requested,
@@ -464,7 +471,7 @@ async def scan(
         last_played, watchers_window, watchers_all_time = await _watch_stats(
             engine,
             rating_keys={i.plex_rating_key for i in items if i.plex_rating_key},
-            window_days=_popularity_window(movie_policy),
+            window_days=movie_policy.popularity_window_days(),
         )
         # A merged bind is one file listed several times in Plex; its plays are split
         # across the listings' rating keys. Fold each group's stats onto its canonical
@@ -477,7 +484,7 @@ async def scan(
                 for i in items
                 if i.plex_rating_key is not None and i.merged_rating_keys
             },
-            window_days=_popularity_window(movie_policy),
+            window_days=movie_policy.popularity_window_days(),
             last_played=last_played,
             watchers_window=watchers_window,
             watchers_all_time=watchers_all_time,
@@ -525,8 +532,14 @@ async def scan(
 
     movie_signals = _signals(movie_policy)
     tv_signals = _signals(tv_policy)
-    movie_window = _popularity_window(movie_policy)
-    tv_window = _popularity_window(tv_policy)
+    movie_window = movie_policy.popularity_window_days()
+    tv_window = tv_policy.popularity_window_days()
+    # Scoring configs are pure functions of the frozen policies -- identical for every
+    # item -- so build them once here instead of once per item inside the judge loops.
+    movie_custom = movie_policy.custom_signal_configs()
+    movie_keeps = movie_policy.keep_configs()
+    tv_custom = tv_policy.custom_signal_configs()
+    tv_keeps = tv_policy.keep_configs()
     now = utcnow()
     condemned = 0
     total = len(items) + len(season_judgements)
@@ -563,6 +576,8 @@ async def scan(
             facts=facts,
             gates=movie_gates,
             signals=movie_signals,
+            custom_condemn=movie_custom,
+            keeps=movie_keeps,
             policy=movie_policy,
             now=now,
             window_days=movie_window,
@@ -617,6 +632,8 @@ async def scan(
             facts=judgement.facts,
             gates=tv_gates,
             signals=tv_signals,
+            custom_condemn=tv_custom,
+            keeps=tv_keeps,
             policy=tv_policy,
             now=now,
             window_days=tv_window,
@@ -702,6 +719,8 @@ def _judge_item(
     facts: Facts,
     gates: list[Gate],
     signals: list[SignalConfig],
+    custom_condemn: list[CustomSignalConfig],
+    keeps: list[KeepConfig],
     policy: PolicyBody,
     now: datetime,
     window_days: int = 365,
@@ -740,8 +759,8 @@ def _judge_item(
     item_score = score(
         signals,
         facts,
-        custom_condemn=policy.custom_signal_configs(),
-        keeps=policy.keep_configs(),
+        custom_condemn=custom_condemn,
+        keeps=keeps,
         window_days=window_days,
     )
 
@@ -993,13 +1012,6 @@ async def _record_first_flagged_bulk(
 # ---------------------------------------------------------------------------
 
 
-def _popularity_window(policy: PolicyBody) -> int:
-    return next(
-        (g.window_days for g in policy.gates if g.gate is GateId.SERVER_POPULARITY),
-        365,
-    )
-
-
 def _as_year(value: Any) -> int | None:
     """A Plex row's release year, or ``None`` -- used only to disambiguate duplicate titles.
 
@@ -1084,7 +1096,10 @@ def _release_age_days(year: int | None) -> Observation[float]:
     if not year:
         return Absent(source="radarr")
     try:
-        age = (utcnow().date() - date(year, 1, 1)).days
+        # Dec 31, not Jan 1: only the year is known, so resolve the ambiguity toward
+        # keeping. Jan 1 would OVERSTATE age by up to ~364 days on a condemn-lane
+        # field, over-matching every `release_age >= N` rule the owner writes.
+        age = (utcnow().date() - date(year, 12, 31)).days
     except (ValueError, OverflowError):
         return Absent(source="radarr")
     return Known(value=float(max(0, age)), source="radarr")

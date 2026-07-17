@@ -31,7 +31,13 @@ from reaper.db.base import Base
 from reaper.db.models import ActionStep, Candidate, ReapRun, RunState, Snapshot, StepState
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import ProfileSettings
-from reaper.services.executor import ExecutionError, Executor, ReapGateway, RunReport
+from reaper.services.executor import (
+    ExecutionError,
+    Executor,
+    ReapGateway,
+    RunReport,
+    _row_timestamp,
+)
 from reaper.services.planner import (
     MediaRef,
     PlanError,
@@ -585,6 +591,21 @@ class TestARunExecutesOnce:
 # ---------------------------------------------------------------------------
 
 
+class TestRowTimestamp:
+    """The played-since-approval check reads Tautulli rows through this. Tautulli
+    writes ``stopped=0`` -- not a real epoch stamp -- when it has no stop time, and
+    0 compared against any approval time could never spare."""
+
+    def test_a_zero_stop_time_falls_through_to_date(self) -> None:
+        assert _row_timestamp({"stopped": 0, "date": 1_700_000_000}) == 1_700_000_000
+
+    def test_zero_everywhere_is_no_evidence(self) -> None:
+        assert _row_timestamp({"stopped": 0, "date": 0}) is None
+
+    def test_stopped_wins_when_it_is_real(self) -> None:
+        assert _row_timestamp({"stopped": 1_700_000_005, "date": 1_700_000_001}) == 1_700_000_005
+
+
 class TestMovieLiveSend:
     async def test_a_movie_is_deleted_and_the_exclusion_is_verified(
         self, session: AsyncSession
@@ -661,6 +682,30 @@ class TestMovieLiveSend:
         assert report.state is RunState.ABORTED
         assert report.deleted_items == 0
         assert report.aborted_reason is not None and "canary" in report.aborted_reason.lower()
+
+    async def test_a_movie_without_a_tmdb_id_is_refused_before_the_delete(
+        self, session: AsyncSession
+    ) -> None:
+        """With no tmdbId the exclusion re-read can never verify, so the item must be
+        refused BEFORE anything is sent. Discovering it afterwards would strand an
+        irreversible delete behind a check that was doomed from the start -- and as
+        the canary here, it would abort the run having already removed the file."""
+
+        class TmdblessRadarr(FakeRadarr):
+            async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
+                movie = await super().movie_by_id(movie_id)
+                movie.pop("tmdbId")
+                return movie
+
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+        radarr = TmdblessRadarr()
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert radarr.delete_calls == []  # nothing was sent, so nothing was deleted
+        assert report.deleted_items == 0
+        assert report.state is RunState.ABORTED  # the sole item is the canary
 
     async def test_a_movie_still_present_after_the_delete_fails(
         self, session: AsyncSession

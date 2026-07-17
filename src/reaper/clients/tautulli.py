@@ -47,7 +47,6 @@ READ_COMMANDS: Final[frozenset[str]] = frozenset(
         "get_children_metadata",
         "get_item_watch_time_stats",
         "get_item_user_stats",
-        "get_users",  # includes keep_history, which we must know about
         "get_user",
         "get_server_info",
         "get_server_identity",
@@ -109,19 +108,6 @@ class TautulliClient(BaseClient):
     async def server_info(self) -> dict[str, Any]:
         data = await self.call("get_server_info")
         return data if isinstance(data, dict) else {}
-
-    # -- users ----------------------------------------------------------------
-
-    async def users(self) -> list[dict[str, Any]]:
-        """Users, including ``keep_history``.
-
-        A user with history recording disabled is *invisible* in the history table
-        and looks exactly like someone who never watches anything. Any rule that
-        reasons about "nobody watched this" must therefore abstain -- and protect --
-        when such a user is active, or it will condemn media that is being watched.
-        """
-        data = await self.call("get_users")
-        return list(data) if isinstance(data, list) else []
 
     # -- libraries ------------------------------------------------------------
 

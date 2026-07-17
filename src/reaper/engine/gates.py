@@ -29,11 +29,11 @@ from __future__ import annotations
 
 import enum
 from collections.abc import Sequence
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from typing import Literal, Protocol
 
 from reaper.clock import humanize_days, humanize_window
-from reaper.engine.observation import Absent, Known, Observation, Unknown, describe
+from reaper.engine.observation import Absent, Known, Observation, Unknown
 
 GateOutcome = Literal["PROTECT", "ABSTAIN"]
 PROTECT: GateOutcome = "PROTECT"
@@ -182,10 +182,6 @@ class Facts:
     """TV: has the series ended (vs still returning)? ``Absent`` for movies -- the
     ``season_rank`` precedent -- so it never condemns and never protects where it does
     not apply."""
-
-    def unknowns(self) -> list[Unknown]:
-        # fields(), not vars(): slots=True removes __dict__, so vars() raises.
-        return [value for f in fields(self) if isinstance(value := getattr(self, f.name), Unknown)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -597,6 +593,5 @@ __all__ = [
     "StreamingNowGate",
     "UnmanagedGate",
     "WhitelistGate",
-    "describe",
     "evaluate_all",
 ]

@@ -13,9 +13,43 @@ from typing import ClassVar
 
 import pytest
 
+from reaper.clients.base import IntegrationError
+from reaper.clients.seerr import SeerrClient
 from reaper.clients.sonarr_stats import SeasonStats, parse_season_stats, rank_seasons
 from reaper.clock import from_epoch, from_iso
+from reaper.config import RuntimeSafety
 from reaper.ratings import Rating, RatingSource, from_plex, from_radarr, pick
+
+
+class TestSeerrPaginationEnvelope:
+    """``pageInfo.results`` is the only signal that more pages exist. Rows present with
+    the total missing is an envelope-shape change; reading it as total=0 would stop
+    after one page and silently undercount every requester."""
+
+    async def test_rows_without_a_total_refuse_rather_than_truncate(self) -> None:
+        client = SeerrClient("http://seerr.local", "key", safety=RuntimeSafety())
+
+        async def fake_get_json(path: str, **kwargs: object) -> object:
+            return {
+                "pageInfo": {},
+                "results": [
+                    {
+                        "id": i,
+                        "type": "movie",
+                        "createdAt": "2024-01-01T00:00:00.000Z",
+                        "media": {},
+                        "requestedBy": {},
+                    }
+                    for i in range(3)
+                ],
+            }
+
+        client.get_json = fake_get_json  # type: ignore[method-assign]
+        try:
+            with pytest.raises(IntegrationError, match="pageInfo"):
+                await client.all_requests()
+        finally:
+            await client.aclose()
 
 
 class TestEpisodeCountIsNotWhatItLooksLike:

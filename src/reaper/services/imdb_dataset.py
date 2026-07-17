@@ -32,18 +32,22 @@ Two defences:
 
 from __future__ import annotations
 
+import asyncio
 import gzip
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from itertools import islice
 from pathlib import Path
 from typing import IO
+from urllib.parse import urlsplit
 
 import httpx
 import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from reaper.clients.public import PublicClient
 from reaper.clock import utcnow
 
 log = structlog.get_logger(__name__)
@@ -86,6 +90,19 @@ class DatasetDegradedError(RuntimeError):
     """
 
 
+def _take_batch(rows: Iterator[tuple[str, float, int]], size: int) -> list[dict[str, object]]:
+    """The next ``size`` parsed rows as insert parameters.
+
+    Called via ``asyncio.to_thread``: the gunzip + TSV parse behind ``rows`` is
+    CPU-bound, and pulling it batch-by-batch in a worker thread keeps the event loop
+    serving requests during the dataset refresh.
+    """
+    return [
+        {"tconst": tconst, "average_rating": rating, "num_votes": votes}
+        for tconst, rating, votes in islice(rows, size)
+    ]
+
+
 def parse_rows(stream: IO[bytes]) -> Iterator[tuple[str, float, int]]:
     """Parse the gzipped TSV without holding it in memory.
 
@@ -114,14 +131,15 @@ async def download(destination: Path, *, url: str = DATASET_URL) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     tmp = destination.with_suffix(".part")
 
-    async with (
-        httpx.AsyncClient(timeout=httpx.Timeout(60.0)) as client,
-        client.stream("GET", url) as response,
-    ):
-        response.raise_for_status()
-        with tmp.open("wb") as handle:
-            async for chunk in response.aiter_bytes(_CHUNK):
-                handle.write(chunk)
+    # Through clients/ like every other fetch (rule 33): shared timeouts, error mapping,
+    # and redirect policy. The dataset mirror redirects to a CDN, which PublicClient
+    # (credential-less by construction) is allowed to follow.
+    parts = urlsplit(url)
+    path = parts.path + (f"?{parts.query}" if parts.query else "")
+    async with PublicClient(
+        f"{parts.scheme}://{parts.netloc}", timeout=httpx.Timeout(60.0)
+    ) as client:
+        await client.stream_to(path, tmp)
 
     # Rename only once the whole file is on disk, so a killed process cannot leave
     # a truncated archive that parses as a short but valid dataset.
@@ -165,20 +183,17 @@ async def load(engine: AsyncEngine, archive: Path) -> int:
 
     # -- populate staging: one short transaction per batch, no lock held across the parse --
     rows = 0
-    batch: list[dict[str, object]] = []
     with archive.open("rb") as handle:
-        for tconst, rating, votes in parse_rows(handle):
-            batch.append({"tconst": tconst, "average_rating": rating, "num_votes": votes})
-            if len(batch) >= 10_000:
-                async with engine.begin() as conn:
-                    await conn.execute(insert, batch)
-                rows += len(batch)
-                batch.clear()
-
-    if batch:
-        async with engine.begin() as conn:
-            await conn.execute(insert, batch)
-        rows += len(batch)
+        parsed = parse_rows(handle)
+        while True:
+            # The 1.7M-row gunzip + parse is CPU-bound; producing each batch in a worker
+            # thread keeps the event loop serving requests through the refresh.
+            batch = await asyncio.to_thread(_take_batch, parsed, 10_000)
+            if not batch:
+                break
+            async with engine.begin() as conn:
+                await conn.execute(insert, batch)
+            rows += len(batch)
 
     if rows == 0:
         # Never swap in an empty table: it would look exactly like "nothing is rated",

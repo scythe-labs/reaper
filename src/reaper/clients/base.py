@@ -43,6 +43,33 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 DEFAULT_TIMEOUT = httpx.Timeout(connect=5.0, read=30.0, write=10.0, pool=5.0)
 
+#: Redirect statuses handled by hand -- see ``BaseClient._send`` and ``_mutate``.
+_REDIRECTS = frozenset({301, 302, 303, 307, 308})
+
+
+def _origin(url: httpx.URL) -> tuple[str, str, int | None]:
+    """(scheme, host, port) with the scheme's default port filled in, so
+    ``http://a.local`` and ``http://a.local:80`` compare as the same origin."""
+    port = url.port
+    if port is None:
+        port = {"http": 80, "https": 443}.get(url.scheme)
+    return (url.scheme, url.host or "", port)
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    """The Retry-After header as seconds, when the server sent a numeric one.
+
+    The HTTP-date form is legal but rare on these APIs; it reads as None rather than
+    guessed at, and callers fall back to their own pacing.
+    """
+    raw = response.headers.get("retry-after")
+    if raw is None:
+        return None
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return None
+
 
 class SafetyViolationError(RuntimeError):
     """A mutating request was attempted while destructive actions are disabled.
@@ -55,10 +82,19 @@ class SafetyViolationError(RuntimeError):
 class IntegrationError(RuntimeError):
     """An integration could not be reached, or returned an error."""
 
-    def __init__(self, service: str, message: str, *, status: int | None = None) -> None:
+    def __init__(
+        self,
+        service: str,
+        message: str,
+        *,
+        status: int | None = None,
+        retry_after: float | None = None,
+    ) -> None:
         super().__init__(f"{service}: {message}")
         self.service = service
         self.status = status
+        self.retry_after = retry_after
+        """Seconds the server asked us to wait (a numeric Retry-After), or None."""
 
     @property
     def is_auth_failure(self) -> bool:
@@ -132,9 +168,13 @@ class BaseClient:
         verify: bool = True,
         timeout: httpx.Timeout | None = None,
         non_media_mutations: frozenset[str] = frozenset(),
+        allow_cross_origin_redirects: bool = False,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self._safety = safety
+        # Only the credential-less public fetchers may set this (see clients.public):
+        # with an API key on the default headers, a cross-origin redirect is exfiltration.
+        self._allow_cross_origin_redirects = allow_cross_origin_redirects
         self._client = httpx.AsyncClient(
             base_url=self.base_url,
             headers=dict(headers or {}),
@@ -144,7 +184,10 @@ class BaseClient:
                 safety,
                 non_media_mutations=non_media_mutations,
             ),
-            follow_redirects=True,
+            # Never auto-follow: httpx would re-send the credential headers (X-Api-Key
+            # and kin) wherever Location points. Redirect policy lives in _send (a few
+            # same-origin hops for reads) and _mutate (refused outright).
+            follow_redirects=False,
         )
 
     async def __aenter__(self) -> Self:
@@ -198,24 +241,61 @@ class BaseClient:
         ``IntegrationError``. A 4xx/5xx is a definite answer from the service rather than a
         transport failure, so it is never retried, only mapped.
 
+        Redirects are followed HERE, never by httpx (``follow_redirects=False`` on the
+        client): auto-following would re-send the credential headers wherever Location
+        points. A read may follow a few SAME-ORIGIN hops (a reverse proxy adding a
+        trailing slash, say); a cross-origin redirect is refused outright, because the
+        API key must never leave the configured origin. A redirected mutation is refused
+        in :meth:`_mutate`.
+
         ``headers`` are per-request extras (e.g. plex.tv's ``X-Plex-Token``, which differs
         per call and so cannot live on the client's default headers).
         """
-        try:
-            response = await self._request(method, path, params=params, json=json, headers=headers)
-        except httpx.TimeoutException as exc:
-            # Name the actual timeout kind: a ConnectTimeout (5s), WriteTimeout (10s) or
-            # PoolTimeout (5s) is not the read timeout, and reporting a fixed "30s" would
-            # misdirect an operator diagnosing a connectivity problem.
-            raise IntegrationError(self.service, f"timed out ({type(exc).__name__})") from exc
-        except httpx.TransportError as exc:
-            raise IntegrationError(self.service, f"unreachable ({exc})") from exc
+        target = path
+        send_params = params
+        for _ in range(4):  # the request itself, plus at most three same-origin redirects
+            try:
+                response = await self._request(
+                    method, target, params=send_params, json=json, headers=headers
+                )
+            except httpx.TimeoutException as exc:
+                # Name the actual timeout kind: a ConnectTimeout (5s), WriteTimeout (10s)
+                # or PoolTimeout (5s) is not the read timeout, and reporting a fixed
+                # "30s" would misdirect an operator diagnosing a connectivity problem.
+                raise IntegrationError(self.service, f"timed out ({type(exc).__name__})") from exc
+            except httpx.TransportError as exc:
+                raise IntegrationError(self.service, f"unreachable ({exc})") from exc
+
+            if response.status_code not in _REDIRECTS:
+                break
+            location = response.headers.get("location")
+            if method.upper() not in ("GET", "HEAD") or not location:
+                raise IntegrationError(
+                    self.service,
+                    f"refused redirect (HTTP {response.status_code}) for {method} {path}",
+                    status=response.status_code,
+                )
+            next_url = response.request.url.join(location)
+            if not self._allow_cross_origin_redirects and _origin(next_url) != _origin(
+                httpx.URL(self.base_url)
+            ):
+                raise IntegrationError(
+                    self.service,
+                    f"refused cross-origin redirect for {method} {path}: the credential "
+                    f"headers must never leave {httpx.URL(self.base_url).host!r}",
+                    status=response.status_code,
+                )
+            target = str(next_url)
+            send_params = None  # the Location URL already carries its query string
+        else:
+            raise IntegrationError(self.service, f"too many redirects for {method} {path}")
 
         if response.status_code >= 400:
             raise IntegrationError(
                 self.service,
                 f"HTTP {response.status_code} for {method} {path}",
                 status=response.status_code,
+                retry_after=_retry_after_seconds(response),
             )
         return response
 
@@ -277,10 +357,20 @@ class BaseClient:
         except httpx.TransportError as exc:
             raise IntegrationError(self.service, f"unreachable ({exc})") from exc
 
+        if response.status_code in _REDIRECTS:
+            # A redirected mutation is refused, never replayed: auto-following would
+            # re-issue the approved call -- credential headers, mutation approval and
+            # all -- at whatever URL the (possibly compromised) upstream chose.
+            raise IntegrationError(
+                self.service,
+                f"refused redirect (HTTP {response.status_code}) for {method} {path}",
+                status=response.status_code,
+            )
         if response.status_code >= 400:
             raise IntegrationError(
                 self.service,
                 f"HTTP {response.status_code} for {method} {path}",
                 status=response.status_code,
+                retry_after=_retry_after_seconds(response),
             )
         return response

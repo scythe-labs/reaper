@@ -759,6 +759,49 @@ class TestByteIdenticalTwinListings:
 
 
 class TestTheContradictionVeto:
+    def test_two_id_kinds_pointing_to_different_rows_abstains(self) -> None:
+        """Tier 1's own kinds cross-check each other: the tmdb id binds one row, the
+        imdb id names a different one. A mis-tagged external id with no way to know
+        which is wrong -> keep."""
+        index = PlexIndex.build(
+            [
+                _item(100, title="A Title", year=2020, tmdb=1001),
+                _item(200, title="Another Title", year=1999, imdb="tt0000002"),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001, imdb="tt0000002"),
+            title=None,
+            year=None,
+            file_basename=None,
+            index=index,
+        )
+        assert res.rating_key is None
+        assert "contradict" in res.detail.lower()
+
+    def test_two_id_kinds_agreeing_bind_by_the_first(self) -> None:
+        index = PlexIndex.build([_item(100, title="A Title", tmdb=1001, imdb="tt0000001")])
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001, imdb="tt0000001"),
+            title=None,
+            year=None,
+            file_basename=None,
+            index=index,
+        )
+        assert res.rating_key == 100
+
+    def test_a_second_kind_unknown_to_plex_does_not_veto(self) -> None:
+        """An id kind that names nothing in Plex is silence, not disagreement."""
+        index = PlexIndex.build([_item(100, title="A Title", tmdb=1001)])
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001, imdb="tt0009999"),
+            title=None,
+            year=None,
+            file_basename=None,
+            index=index,
+        )
+        assert res.rating_key == 100
+
     def test_id_and_title_pointing_to_different_rows_abstains(self) -> None:
         """Tier 1 resolves rk=100, Tier 3 resolves rk=200. Positive disagreement -> keep."""
         index = PlexIndex.build(

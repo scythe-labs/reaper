@@ -63,47 +63,55 @@ async def sync_leaving_soon(request: Request) -> LeavingSoonOut:
         report = await grace.grace_report(session, grace_days=profile.grace_days)
 
     try:
-        sections = await plex.movie_section_titles()
-    except PlexError as exc:
-        raise HTTPException(502, f"Could not reach Plex: {exc}") from exc
-    if not sections:
-        raise HTTPException(400, "No movie library found in Plex to mark.")
+        try:
+            sections = await plex.movie_section_titles()
+        except PlexError as exc:
+            raise HTTPException(502, f"Could not reach Plex: {exc}") from exc
+        if not sections:
+            raise HTTPException(400, "No movie library found in Plex to mark.")
 
-    target = leaving_soon.PlexLabelTarget(plex, sections[0])
+        target = leaving_soon.PlexLabelTarget(plex, sections[0])
 
-    box: SecretBox = request.app.state.secret_box
-    async with request.app.state.session_factory() as session:
-        # The webhook lives in the DB (encrypted); build_notifier reads it and may seed it
-        # from REAPER_DISCORD_WEBHOOK on first boot, so commit to persist that one-time seed.
-        notifier = await build_notifier(session, box, settings)
-        already_announced = await app_settings.get_leaving_soon_announced(session)
-        await session.commit()
+        box: SecretBox = request.app.state.secret_box
+        async with request.app.state.session_factory() as session:
+            # The webhook lives in the DB (encrypted); build_notifier reads it and may
+            # seed it from REAPER_DISCORD_WEBHOOK on first boot, so commit to persist
+            # that one-time seed.
+            notifier = await build_notifier(session, box, settings)
+            already_announced = await app_settings.get_leaving_soon_announced(session)
+            await session.commit()
 
-    # Write the label only when the guard would permit it -- armed, or the host opted in
-    # via REAPER_ALLOW_UNARMED_LEAVING_SOON. Otherwise this is a preview: it reads what is
-    # labelled, computes the diff, and sends the Discord heads-up, but writes nothing.
-    # Deciding here (rather than letting the guarded write raise) keeps a read-only,
-    # opted-out instance returning an honest ``applied: false`` instead of a 500.
-    apply = safety.leaving_soon_write_allowed
-    try:
-        result = await leaving_soon.sync(
-            target, report, notifier=notifier, apply=apply, already_announced=already_announced
+        # Write the label only when the guard would permit it -- armed, or the host opted
+        # in via REAPER_ALLOW_UNARMED_LEAVING_SOON. Otherwise this is a preview: it reads
+        # what is labelled, computes the diff, and sends the Discord heads-up, but writes
+        # nothing. Deciding here (rather than letting the guarded write raise) keeps a
+        # read-only, opted-out instance returning an honest ``applied: false`` instead of
+        # a 500.
+        apply = safety.leaving_soon_write_allowed
+        try:
+            result = await leaving_soon.sync(
+                target, report, notifier=notifier, apply=apply, already_announced=already_announced
+            )
+        except (PlexError, SafetyViolationError) as exc:
+            raise HTTPException(502, f"Plex refused the reconcile: {exc}") from exc
+
+        # Persist the announced set so a repeated sync does not re-spam the same titles --
+        # the heads-up is idempotent even when the label write never landed (preview /
+        # unarmed).
+        async with request.app.state.session_factory() as session:
+            await app_settings.set_leaving_soon_announced(session, set(result.announced))
+            await session.commit()
+
+        newly = set(result.plan.to_add)
+        sample = [i.title for i in report.in_grace if i.plex_rating_key in newly][:20]
+        return LeavingSoonOut(
+            to_add_count=len(result.plan.to_add),
+            to_remove_count=len(result.plan.to_remove),
+            applied=result.applied,
+            notified=result.notified,
+            sample_added=sample,
         )
-    except (PlexError, SafetyViolationError) as exc:
-        raise HTTPException(502, f"Plex refused the reconcile: {exc}") from exc
-
-    # Persist the announced set so a repeated sync does not re-spam the same titles -- the
-    # heads-up is idempotent even when the label write never landed (preview / unarmed).
-    async with request.app.state.session_factory() as session:
-        await app_settings.set_leaving_soon_announced(session, set(result.announced))
-        await session.commit()
-
-    newly = set(result.plan.to_add)
-    sample = [i.title for i in report.in_grace if i.plex_rating_key in newly][:20]
-    return LeavingSoonOut(
-        to_add_count=len(result.plan.to_add),
-        to_remove_count=len(result.plan.to_remove),
-        applied=result.applied,
-        notified=result.notified,
-        sample_added=sample,
-    )
+    finally:
+        # The route owns this client (rule 34): plexapi's pooled session is closed
+        # however the reconcile ends.
+        await plex.aclose()

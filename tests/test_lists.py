@@ -22,10 +22,12 @@ from reaper.db.session import create_engine
 from reaper.services.lists import (
     IMDB_TOP_250_URL,
     ArrTagRule,
+    ContainerMissingError,
     ImdbTop250,
     ListItem,
     ListKind,
     ListMode,
+    PlexCollection,
     load_membership_index,
     memberships,
     sync,
@@ -78,6 +80,75 @@ class TestArrTagRule:
         assert await ArrTagRule(sonarr, (), "any").fetch() == []  # type: ignore[arg-type]
 
 
+class TestAVanishedContainerNeverWipesTheList:
+    """A renamed keep tag or a deleted "Never Reap" collection is a missing CONTAINER,
+    not an empty membership. With members stored, the sync must fail so the stale list
+    keeps protecting; with nothing stored, it is a quiet first sync."""
+
+    async def test_a_vanished_tag_with_stored_members_keeps_the_membership(
+        self, engine: AsyncEngine
+    ) -> None:
+        good = _FakeSonarr(
+            [{"id": 1, "label": "keep"}],
+            [{"title": "A", "tvdbId": 10, "tags": [1]}],
+        )
+        rule = ArrTagRule(good, ("keep",), "any")  # type: ignore[arg-type]
+        assert await sync(engine, rule, kind=ListKind.WHITELIST) == 1
+
+        renamed = _FakeSonarr([{"id": 1, "label": "hold"}], [])
+        stale = ArrTagRule(renamed, ("keep",), "any")  # type: ignore[arg-type]
+        with pytest.raises(ContainerMissingError):
+            await sync(engine, stale, kind=ListKind.WHITELIST)
+
+        index = await load_membership_index(engine)
+        assert index.lookup(tvdb_id=10)  # the stored membership survived the wipe
+
+    async def test_a_missing_tag_with_nothing_stored_is_an_empty_first_sync(
+        self, engine: AsyncEngine
+    ) -> None:
+        sonarr = _FakeSonarr([{"id": 1, "label": "other"}], [])
+        rule = ArrTagRule(sonarr, ("keep",), "any")  # type: ignore[arg-type]
+        assert await sync(engine, rule, kind=ListKind.WHITELIST) == 0
+
+    async def test_under_all_one_missing_tag_raises_when_members_are_stored(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Under ALL, one absent tag structurally rules every title out -- which is the
+        same wipe wearing a different hat, so it gets the same treatment."""
+        both = _FakeSonarr(
+            [{"id": 1, "label": "keep"}, {"id": 2, "label": "gold"}],
+            [{"title": "B", "tvdbId": 11, "tags": [1, 2]}],
+        )
+        rule = ArrTagRule(both, ("keep", "gold"), "all")  # type: ignore[arg-type]
+        assert await sync(engine, rule, kind=ListKind.WHITELIST) == 1
+
+        one_gone = _FakeSonarr(
+            [{"id": 1, "label": "keep"}],
+            [{"title": "B", "tvdbId": 11, "tags": [1]}],
+        )
+        stale = ArrTagRule(one_gone, ("keep", "gold"), "all")  # type: ignore[arg-type]
+        with pytest.raises(ContainerMissingError):
+            await sync(engine, stale, kind=ListKind.WHITELIST)
+
+    async def test_a_deleted_plex_collection_is_a_missing_container(self) -> None:
+        from plexapi.exceptions import NotFound
+
+        class _Section:
+            def collection(self, name: str) -> object:
+                raise NotFound("gone")
+
+        class _Library:
+            def section(self, name: str) -> _Section:
+                return _Section()
+
+        class _Server:
+            library = _Library()
+
+        provider = PlexCollection(server=_Server(), section_name="Movies")
+        with pytest.raises(ContainerMissingError):
+            await provider.fetch()
+
+
 @pytest.fixture
 async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
     eng = create_engine(Settings(data_dir=tmp_path, secret_key="k"))  # type: ignore[call-arg]
@@ -93,6 +164,20 @@ def _top250_payload(count: int = 250) -> list[dict[str, object]]:
 
 
 class TestImdbTop250:
+    @respx.mock
+    async def test_a_mirror_redirecting_to_a_cdn_still_fetches(self, engine: AsyncEngine) -> None:
+        """The public fetchers carry no credentials, so a cross-origin CDN hop is safe
+        and must be followed -- unlike the credentialed clients, which refuse it."""
+        respx.get(IMDB_TOP_250_URL).mock(
+            return_value=httpx.Response(
+                302, headers={"location": "https://cdn.example.test/top250.json"}
+            )
+        )
+        respx.get("https://cdn.example.test/top250.json").mock(
+            return_value=httpx.Response(200, json=_top250_payload())
+        )
+        assert await sync(engine, ImdbTop250()) == 250
+
     @respx.mock
     async def test_it_fetches_and_stores(self, engine: AsyncEngine) -> None:
         respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=_top250_payload()))

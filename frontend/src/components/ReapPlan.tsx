@@ -56,7 +56,7 @@ function Steps({ run }: { run: Run }) {
 function Report({ report }: { report: RunReport }) {
   if (report.state === "aborted") {
     return (
-      <div className="sim sim-stale">
+      <div className="sim sim-info">
         <h3>The run aborted. Nothing was touched</h3>
         <p>{report.aborted_reason}</p>
       </div>
@@ -130,7 +130,7 @@ export function ReapPlan() {
           <div className="plan-summary">
             <span className="confirm-phrase">{run.confirmation_phrase}</span>
             <span className="muted">
-              {count(run.item_count)} steps · {bytes(run.total_bytes)} · smallest-first, canary
+              {count(run.item_count)} items · {bytes(run.total_bytes)} · smallest-first, canary
               leads
             </span>
             <button onClick={() => dry.mutate(run.id)} disabled={dry.isPending}>

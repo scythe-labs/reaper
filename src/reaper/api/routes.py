@@ -51,8 +51,6 @@ from reaper.db.models import Candidate, FirstFlagged, Instance, InstanceKind, Pl
 from reaper.db.models import Policy as PolicyModel
 from reaper.engine.fields import Lane, vocabulary
 from reaper.engine.policy import (
-    DEFAULT_MOVIE_POLICY,
-    DEFAULT_TV_POLICY,
     ConditionSpec,
     GateSetting,
     PolicyBody,
@@ -66,6 +64,7 @@ from reaper.services import app_settings, whitelist
 from reaper.services.deep_links import build_links
 from reaper.services.display_meta import parse_ratings_json
 from reaper.services.planner import MediaRef, PlanError
+from reaper.services.profiles import active_policy
 
 log = structlog.get_logger(__name__)
 
@@ -597,39 +596,6 @@ def _policy_out(body: PolicyBody, name: str) -> PolicyOut:
             for w in inspect(body, ProfileSettings())
         ],
     )
-
-
-async def active_policy(session: AsyncSession, media_type: str = "movie") -> tuple[PolicyBody, str]:
-    """The policy Reaper is currently working to, for one media type.
-
-    Movies and TV are tuned separately -- keep-last-N seasons and the season-rank signal only
-    make sense for TV, and a library often wants a gentler hand on one than the other -- so
-    there are two policies, chosen here by ``media_type`` ("movie" or "tv").
-
-    The most recently saved one for that type, or the built-in default if none has been saved.
-    Policy rows are **immutable and append-only** -- editing writes a new row with a new hash
-    rather than mutating the old one, because snapshots, approvals and audit entries point at
-    that hash and must stay interpretable years later.
-    """
-    row = (
-        await session.execute(
-            select(PolicyModel)
-            .where(PolicyModel.media_type == media_type)
-            .order_by(PolicyModel.id.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-
-    if row is None:
-        return (DEFAULT_TV_POLICY if media_type == "tv" else DEFAULT_MOVIE_POLICY), "default"
-    return PolicyBody.model_validate_json(row.body_json), row.name
-
-
-async def active_policies(session: AsyncSession) -> tuple[PolicyBody, PolicyBody]:
-    """The (movie, tv) policies in force, in that fixed order -- the pair a scan runs to."""
-    movie, _ = await active_policy(session, "movie")
-    tv, _ = await active_policy(session, "tv")
-    return movie, tv
 
 
 def _candidate_media_type(policy_media_type: str) -> str:

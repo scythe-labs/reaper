@@ -44,20 +44,32 @@ import enum
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
+from urllib.parse import urlsplit
 
-import httpx
 import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from reaper.clients.arr import RadarrClient, SonarrClient
 from reaper.clients.base import IntegrationError
+from reaper.clients.public import PublicClient
 from reaper.clock import utcnow
 from reaper.engine import identity
 
 log = structlog.get_logger(__name__)
 
 IMDB_TOP_250_URL = "https://api.radarr.video/v1/list/imdb/top250"
+
+
+class ContainerMissingError(RuntimeError):
+    """A configured keep container (an *arr tag, a Plex collection) does not exist upstream.
+
+    Distinct from "the container exists and is empty", and the distinction is what
+    ``sync`` keys on: a vanished container over a POPULATED stored list keeps the previous
+    membership and records the failure, while a container the owner simply has not created
+    yet syncs as genuinely empty. A missing container must never read as [] -- that is how
+    a renamed keep tag silently unprotects everything it used to cover.
+    """
 
 
 class ListMode(enum.StrEnum):
@@ -146,10 +158,11 @@ class ImdbTop250:
     url: str = IMDB_TOP_250_URL
 
     async def fetch(self) -> list[ListItem]:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            response = await client.get(self.url)
-            response.raise_for_status()
-            payload = response.json()
+        # Through clients/ like every other fetch (rule 33): the shared retry, timeout,
+        # error-mapping and redirect policy, instead of a bespoke httpx use down here.
+        parts = urlsplit(self.url)
+        async with PublicClient(f"{parts.scheme}://{parts.netloc}") as client:
+            payload = await client.get_json(parts.path)
 
         if not isinstance(payload, list):
             raise IntegrationError(self.slug, "expected a JSON array")
@@ -225,19 +238,25 @@ class ArrTagRule:
                 by_label.setdefault(str(row.get("label", "")).lower(), tag_id)
 
         wanted: set[int] = set()
-        missing = 0
+        missing: list[str] = []
         for tag in self.tags:
             found = by_label.get(tag)
             if found is None:
-                # Not an error. The owner simply has not created this tag yet.
                 log.info("lists.tag_absent", tag=tag, service=self.client.service)
-                missing += 1
+                missing.append(tag)
             else:
                 wanted.add(found)
-        # Nothing can carry a tag that does not exist: with no tags found nothing
-        # matches, and under ALL a single missing tag already rules every title out.
-        if not wanted or (self.match == "all" and missing):
-            return []
+        # A missing tag is a missing CONTAINER, not an empty one: nothing can carry a
+        # tag that does not exist, so returning [] here would be indistinguishable from
+        # "the owner un-tagged everything" and sync() would wipe the stored membership.
+        # Raise whenever the absence decides the outcome -- every tag gone, or any gone
+        # under ALL (one absent tag already rules every title out). Under ANY with some
+        # tags still present, the present tags' members still sync.
+        if missing and (not wanted or self.match == "all"):
+            raise ContainerMissingError(
+                f"keep tag {', '.join(repr(t) for t in missing)} does not exist in "
+                f"{self.client.service}"
+            )
 
         def keeps(media: dict[str, Any]) -> bool:
             carried = set(media.get("tags") or [])
@@ -307,9 +326,15 @@ class PlexCollection:
         try:
             collection = section.collection(self.collection_name)
         except NotFound:
-            # Not an error. The owner simply has not made the collection yet.
+            # The container is not there to ask: deleted, renamed, or simply not yet
+            # created. Which of those it is depends on what is already stored, and
+            # sync() decides -- raising here (rather than returning []) is what lets a
+            # stored membership survive a deleted "Never Reap" collection.
             log.info("lists.plex_collection_absent", collection=self.collection_name)
-            return []
+            raise ContainerMissingError(
+                f"Plex collection {self.collection_name!r} does not exist in section "
+                f"{self.section_name!r}"
+            ) from None
 
         items: list[ListItem] = []
         for item in collection.items():
@@ -416,6 +441,35 @@ async def ensure_schema(engine: AsyncEngine) -> None:
                 await conn.execute(text(statement))
 
 
+async def _record_sync_error(
+    engine: AsyncEngine,
+    provider: ListProvider,
+    *,
+    mode: ListMode,
+    kind: ListKind,
+    weight: int,
+    error: str,
+) -> None:
+    """Record a failed refresh on the list row, leaving its membership untouched."""
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO protection_list "
+                "(slug, display_name, mode, kind, weight, last_error) "
+                "VALUES (:slug, :name, :mode, :kind, :weight, :err) "
+                "ON CONFLICT(slug) DO UPDATE SET last_error = :err"
+            ),
+            {
+                "slug": provider.slug,
+                "name": provider.display_name,
+                "mode": mode.value,
+                "kind": kind.value,
+                "weight": weight,
+                "err": error,
+            },
+        )
+
+
 async def sync(
     engine: AsyncEngine,
     provider: ListProvider,
@@ -428,30 +482,39 @@ async def sync(
 
     The swap is atomic per list: a failed fetch leaves the previous membership intact.
     A protection that silently empties itself is worse than one that is out of date --
-    it would stop protecting without saying so.
+    it would stop protecting without saying so. A missing CONTAINER (a renamed keep
+    tag, a deleted "Never Reap" collection) counts as a failure whenever members are
+    stored, for exactly that reason; it counts as genuinely empty only when there was
+    never anything to protect.
     """
     await ensure_schema(engine)
 
     try:
         items = [i for i in await provider.fetch() if i.has_any_id]
-    except Exception as exc:
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "INSERT INTO protection_list "
-                    "(slug, display_name, mode, kind, weight, last_error) "
-                    "VALUES (:slug, :name, :mode, :kind, :weight, :err) "
-                    "ON CONFLICT(slug) DO UPDATE SET last_error = :err"
-                ),
-                {
-                    "slug": provider.slug,
-                    "name": provider.display_name,
-                    "mode": mode.value,
-                    "kind": kind.value,
-                    "weight": weight,
-                    "err": str(exc),
-                },
+    except ContainerMissingError as exc:
+        async with engine.connect() as conn:
+            stored = (
+                await conn.execute(
+                    text("SELECT COUNT(*) FROM protection_list_item WHERE slug = :slug"),
+                    {"slug": provider.slug},
+                )
+            ).scalar_one()
+        if stored:
+            # The container vanished from under a populated list. Fail, so the atomic
+            # swap below never runs and the previous membership keeps protecting;
+            # succeeding-with-[] would unprotect every stored title on this very scan.
+            await _record_sync_error(
+                engine, provider, mode=mode, kind=kind, weight=weight, error=str(exc)
             )
+            log.warning("lists.container_missing", slug=provider.slug, error=str(exc))
+            raise
+        # Nothing stored and no container to read: the owner has not created it yet.
+        # A genuinely empty first sync, not a failure.
+        items = []
+    except Exception as exc:
+        await _record_sync_error(
+            engine, provider, mode=mode, kind=kind, weight=weight, error=str(exc)
+        )
         log.warning("lists.sync_failed", slug=provider.slug, error=str(exc))
         raise
 

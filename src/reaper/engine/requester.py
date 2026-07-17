@@ -116,8 +116,13 @@ def evaluate(
     policy: RequesterPolicy,
     *,
     now: datetime | None = None,
+    horizon: datetime | None = None,
 ) -> RequesterFinding:
-    """Judge one media item, given every request that points at it."""
+    """Judge one media item, given every request that points at it.
+
+    ``horizon`` is how far back the watch mirror reaches (see ``history_sync.horizon``);
+    the availability clock is clamped to it, exactly as the scan path clamps dormancy.
+    """
     requesters = [r.requester for r in requests]
     names = [r.display_name or r.username or f"user:{r.seerr_user_id}" for r in requesters]
     requester_ids = {r.plex_id for r in requesters if r.plex_id is not None}
@@ -178,6 +183,13 @@ def evaluate(
         )
 
     age = days_since(available_at, now=now)
+    if horizon is not None:
+        # The mirror only reaches back to ``horizon``: an item available for longer than
+        # the mirror is deep cannot honestly read "never watched since it arrived", only
+        # "not watched within the mirror's reach". Clamping the clock keeps a shallow
+        # mirror from inflating every aged request into a reclaimable one -- the exact
+        # mass-wrong-verdict the scan path stores its horizon to prevent.
+        age = min(age, days_since(horizon, now=now))
 
     # -- protections ----------------------------------------------------------
 

@@ -7,9 +7,101 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-16 (second review pass: every critical and high finding fixed)
+Last updated: 2026-07-16 (review pass 2: the medium and low findings cleared too)
 
-### Newest — the second review pass's critical and high findings, fixed
+### Newest — review pass 2: the medium and low findings, cleared
+
+Every remaining finding from `docs/CODE_REVIEW.md` that did not need a product decision
+is now fixed, almost all with regression tests. Green: 1,201 backend tests, ruff, mypy,
+the frontend build, and `alembic upgrade head` + `alembic check` against a fresh DB
+(the long-lived local dev DB still shows the pre-existing `verify_tls` default drift
+noted below; fresh DBs are clean).
+
+- **Fail-closed corrections.** A vanished keep tag or deleted "Never Reap" collection is
+  a missing *container*, never an empty membership: with members stored, `lists.sync`
+  keeps them and records the failure (B-7), and an *arr `/tag` endpoint answering
+  200-with-not-a-list is an error, not an empty whitelist. A movie with no TMDB id is
+  refused *before* the delete is sent (B-18). `stopped=0` in a Tautulli row no longer
+  reads as epoch 0 in the played-since-approval check (B-14). Release age from a bare
+  year rounds to Dec 31, the keeping direction (PE-8). The grace view excludes seasons
+  spared through their show (B-15).
+- **The guard closed its GET-shaped hole (B-8, R-2).** `GuardedSession` classifies
+  `GET /library/sections/{key}/refresh` as a mutation (armed + declared, like
+  `emptyTrash`), and the benign-label branch is structurally confined to
+  `PUT /library/sections/{key}/all`.
+- **Redirects cannot carry credentials away (P-5, H-2).** `follow_redirects` is off;
+  reads follow at most three same-origin hops; a redirected mutation is an error, never
+  a replay. The two public GET fetchers (IMDb Top 250, the ratings dataset) moved into
+  `clients/public.py` (credential-less, so cross-origin CDN hops are allowed there);
+  Discord's webhook POST is documented in CLAUDE.md rule 33 as the sanctioned exception.
+- **Matching that silently never fired now fires (PE-7).** `in`/`eq` trim and casefold
+  both sides, and multi-valued facts (genres, curated lists) match per element.
+- **Engine seams tightened.** The popularity window reads from one `PolicyBody` method
+  and ignores disabled gates (PE-9/R-3); scoring configs are hoisted out of the judge
+  loops (PE-13); the backtest's expected-regret rate survives empty prior buckets,
+  reporting mixed provenance (PE-4); TV calibration joins episode history through the
+  grandparent key (PE-6); graded rules read `Absent` as evaluated-with-zero-pressure,
+  matching the boolean path (PE-11); and a second id kind resolving away from a tier-1
+  bind is a contradiction that abstains (PE-12).
+- **Claimed safeguards now exist or are no longer claimed (H-1).** The dry-run docstring
+  names exactly what a dry run proves; "size re-reads" are no longer claimed anywhere;
+  the planner's no-delete-path skip logs; the execute route hands its own RuntimeSafety
+  snapshot to `build_reap_gateway`, so guard and executor read one switch state; the
+  Tautulli `users()` method is deleted (gap recorded below); the vite proxy comment
+  stopped claiming SSE.
+- **Dead safety-adjacent surface deleted (PE-10/R-1, rule 38).** `engine/custom_gate.py`,
+  `PlexClient.labels`, `SeerrClient.users`, `TautulliClient.users` and its allow-list
+  entry, `Facts.unknowns`, the unused observation helpers, and
+  `whitelist.spared_keys`/`reaped_keys`.
+- **Auth hardening (P-3).** Arming deletion and changing the admin password run behind
+  a dedicated lockout (`password_throttle`) plus the Argon2 concurrency gate, exactly
+  like login; changing an existing password requires the current one (UI field added);
+  every field that reaches Argon2 is length-bounded.
+- **Client lifecycle (P-4, rule 34).** `build_sources` enters every client into the
+  caller's exit stack the moment it is constructed; `PlexClient` gained
+  `aclose()`/context-manager support and is closed by the scan, the reap gateway, and
+  the Leaving Soon route.
+- **Fairness honesty (P-7, B-21).** The judging clock is clamped to the watch mirror's
+  horizon (surfaced as `horizon_at` in the payload and the caption); unjudgeable
+  requests are counted per request; a request that names its seasons is charged those
+  seasons' on-disk sizes, not the whole series.
+- **Supply chain and container (P-9, I-2).** Base images digest-pinned; CI actions
+  pinned to commit SHAs; `.dockerignore` uses `**/` forms; `python-dotenv` declared;
+  only `/data` is chowned; the entrypoint honors `REAPER_HOST`/`REAPER_PORT` and the
+  healthcheck follows the port.
+- **Assorted P-10.** `/api/health` is a bare liveness probe (the banner reads the
+  authenticated safety route, sharing the `["safety"]` query the deletion toggle
+  invalidates); `IN :keys` queries chunk at 500; the IMDb dataset parse runs off the
+  event loop; 429s honor Retry-After; the incremental history overlap widened to two
+  days with its comment softened; `inspect()` warns on a very short popularity window.
+- **Frontend (B-10/B-11/B-12/B-20, P-8, I-1).** Dirty-guarded media-type switch; the
+  reap sheet stays up until its report renders and invalidates in `onSettled`; the
+  editor un-dirties after save by re-seeding from the response; the six B-20
+  one-liners; explicit loading/error states on the always-visible safety surfaces; the
+  verdict headline speaks the tab vocabulary; `.select-tick.on` uses `--accent-ink`.
+
+**Still open, deliberately:**
+
+- B-13 (show cards vs. planner counts) needs a per-group condemned-totals API.
+- H-4: adding ESLint + vitest as build gates is an infra decision.
+- The size-drift re-read at delete time, and any real `keep_history` protection, are
+  features. **Gap recorded:** a household member with Tautulli history recording off is
+  invisible in the history table, so everything only they watch looks never-played, and
+  nothing abstains on it today.
+- P-6 (whether a failed whitelist sync with stored members should degrade after some
+  bound) is a test-pinned tradeoff awaiting a product decision.
+- P-10's disarm-mid-run and shared scan lock change run semantics; the Plex TLS opt-out
+  needs the DB-backed setting surface (rule 16); the per-install KDF salt would break
+  existing at-rest credentials without a migration.
+- I-3's "keep_last_scope=requested with no requests app" warning needs instance
+  knowledge inside `inspect()`; not wired.
+- Found while verifying B-12 (not a review finding): `POST /api/policy` dedups a save
+  against every historical row's hash, and `policy_hash` is UNIQUE, so reverting a
+  policy to previously-saved content returns 200 without becoming active (the active
+  policy is the newest row). Fixing it is a schema decision (drop the unique constraint
+  so a revert can append, or add an activation pointer); being fixed in its own session.
+
+### The second review pass's critical and high findings, fixed
 
 The second whole-codebase review (`docs/CODE_REVIEW.md`, dev @ `5b885f5`) surfaced 1
 critical and 9 high findings; all ten are now fixed, plus the three mediums the review

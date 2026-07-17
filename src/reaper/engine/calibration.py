@@ -177,6 +177,9 @@ async def derive(
     since deleted, whose structural zeroes drag the whole curve down.
 
     It is a required argument, not a default, so it cannot be got wrong by omission.
+
+    ``media_type`` is the POPULATION's type ("movie" or "tv"). For TV the join reads
+    per-episode history through ``grandparent_rating_key`` -- see below.
     """
     if not rating_keys:
         raise NotCalibratedError("No items were supplied, so there is nothing to measure.")
@@ -184,29 +187,39 @@ async def derive(
     cutoff_epoch = int(cutoff.timestamp())
     window_end = int((cutoff + timedelta(days=window_days)).timestamp())
 
+    # TV history rows are PER-EPISODE (media_type='episode', keyed by the episode) while
+    # the population passes SHOW keys, so the join reads the episodes' grandparent key,
+    # exactly like backtest._plays. Joining shows on rating_key would match nothing:
+    # every show would read never-rewatched and the derived prior would claim a near-0%
+    # baseline, inverting every lift number downstream.
+    key_column, history_media_type = (
+        ("grandparent_rating_key", "episode") if media_type == "tv" else ("rating_key", "movie")
+    )
+
     async with engine.connect() as conn:
         before = {
-            int(r.rating_key): from_epoch(r.last)
+            int(r.key): from_epoch(r.last)
             for r in (
                 await conn.execute(
                     text(
-                        "SELECT rating_key, MAX(watched_at) AS last FROM watch_event "
+                        f"SELECT {key_column} AS key, MAX(watched_at) AS last "  # noqa: S608 -- column from a literal two-way map
+                        "FROM watch_event "
                         "WHERE media_type = :mt AND watched_at <= :cut "
-                        "GROUP BY rating_key"
+                        f"GROUP BY {key_column}"
                     ),
-                    {"mt": media_type, "cut": cutoff_epoch},
+                    {"mt": history_media_type, "cut": cutoff_epoch},
                 )
             ).all()
         }
         after = {
-            int(r.rating_key)
+            int(r.key)
             for r in (
                 await conn.execute(
                     text(
-                        "SELECT DISTINCT rating_key FROM watch_event "
+                        f"SELECT DISTINCT {key_column} AS key FROM watch_event "  # noqa: S608 -- column from a literal two-way map
                         "WHERE media_type = :mt AND watched_at > :cut AND watched_at <= :end"
                     ),
-                    {"mt": media_type, "cut": cutoff_epoch, "end": window_end},
+                    {"mt": history_media_type, "cut": cutoff_epoch, "end": window_end},
                 )
             ).all()
         }

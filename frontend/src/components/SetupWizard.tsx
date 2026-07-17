@@ -8,7 +8,7 @@
 // and Plex are offered but optional. You can skip to the full app at any time and finish
 // from Settings; the checklist keeps nagging gently until everything's in place.
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { api } from "../api";
 import { PlexPanel, ServicesPanel } from "./Settings";
@@ -47,10 +47,12 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
       ? `${scanState!.phase}${scanState!.detail ? ` · ${scanState!.detail}` : ""}`
       : null;
 
-  const runFirstScan = async () => {
-    const started = await api.startScan();
-    queryClient.setQueryData(["scanStatus"], started);
-  };
+  // A mutation, not a fire-and-forget async onClick: on a fresh install a failed start
+  // (a service just removed, the server restarting) must say so, not silently do nothing.
+  const firstScan = useMutation({
+    mutationFn: () => api.startScan(),
+    onSuccess: (started) => queryClient.setQueryData(["scanStatus"], started),
+  });
 
   if (!setup) {
     return (
@@ -112,8 +114,12 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
                 Reaper would reap. It only reads, and you approve every deletion by hand later.
               </p>
             </div>
-            <button className="primary btn-lg" onClick={runFirstScan} disabled={scanning}>
-              {scanning ? "Scanning…" : "Run first scan"}
+            <button
+              className="primary btn-lg"
+              onClick={() => firstScan.mutate()}
+              disabled={scanning || firstScan.isPending}
+            >
+              {scanning ? "Scanning…" : firstScan.isPending ? "Starting…" : "Run first scan"}
             </button>
           </>
         ) : (
@@ -123,6 +129,9 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
           </p>
         )}
       </div>
+      {firstScan.error && (
+        <p className="error">The scan didn't start: {firstScan.error.message}</p>
+      )}
       {scanMsg && <p className="muted setup-scanmsg">{scanMsg}</p>}
 
       {setup.complete && (

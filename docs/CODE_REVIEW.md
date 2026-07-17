@@ -11,8 +11,19 @@
 > option; wiring the backtest route stays open work in PLAN.md), P-1, P-2 — plus the
 > three mediums the fixes bundle with them: B-6 (with B-5), B-9 (with B-4), and PE-5
 > (with PE-1; `engine/verdict.py` is the one decision function, and
-> `skipped_no_history` is deleted). Details in PLAN.md's newest entry. The remaining
-> medium and low findings are still open.
+> `skipped_no_history` is deleted). Details in PLAN.md.
+
+> **Fix status, second wave (2026-07-16).** The remaining medium and low findings are
+> fixed, almost all with regression tests: PE-4, PE-6 through PE-13, B-7 through B-12,
+> B-14 through B-21, H-1 (the comment-truth pass plus the small implementations), H-2,
+> H-3, H-5, R-1 through R-3, P-3 through P-5, P-7, P-8, P-9, P-10's mechanical subset,
+> and I-1 through I-3's cheap halves. Held, deliberately: B-13 (needs a per-group
+> totals API), H-4 (adding ESLint/vitest is an infra decision), H-1's size-drift
+> re-read and any real `keep_history` protection (features; the dead method is deleted
+> and the gap is recorded in PLAN.md), P-6 (a test-pinned product decision on
+> staleness), P-10's disarm-mid-run, shared scan lock, per-install KDF salt, and Plex
+> TLS opt-out, and I-3's requests-app-aware warning. Details in PLAN.md's newest
+> entry.
 
 **TLDR.** The safety architecture is genuinely sound where it is exercised: the gate and
 signal engine's fail-closed math checks out, the execute route's interlock chain is

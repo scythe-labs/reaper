@@ -10,6 +10,7 @@ may be told it cannot scan.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack
 from pathlib import Path
 
 import pytest
@@ -61,11 +62,14 @@ class TestBuildSourcesGate:
         await _add(factory, box, InstanceKind.SONARR, "tv")
         await _add(factory, box, InstanceKind.TAUTULLI, "t")
 
-        radarrs, sonarrs, tautulli, seerr, plex = await build_sources(factory, settings, box)
-        assert radarrs == []
-        assert len(sonarrs) == 1
-        assert tautulli is not None
-        assert seerr is None and plex is None
+        async with AsyncExitStack() as stack:
+            radarrs, sonarrs, tautulli, seerr, plex = await build_sources(
+                factory, settings, box, stack=stack
+            )
+            assert radarrs == []
+            assert len(sonarrs) == 1
+            assert tautulli is not None
+            assert seerr is None and plex is None
 
     async def test_radarr_plus_tautulli_is_still_enough(
         self, env: tuple[async_sessionmaker[AsyncSession], Settings, SecretBox]
@@ -74,9 +78,12 @@ class TestBuildSourcesGate:
         await _add(factory, box, InstanceKind.RADARR, "hd")
         await _add(factory, box, InstanceKind.TAUTULLI, "t")
 
-        radarrs, sonarrs, _tautulli, _seerr, _plex = await build_sources(factory, settings, box)
-        assert len(radarrs) == 1
-        assert sonarrs == []
+        async with AsyncExitStack() as stack:
+            radarrs, sonarrs, _tautulli, _seerr, _plex = await build_sources(
+                factory, settings, box, stack=stack
+            )
+            assert len(radarrs) == 1
+            assert sonarrs == []
 
     async def test_no_library_source_is_refused(
         self, env: tuple[async_sessionmaker[AsyncSession], Settings, SecretBox]
@@ -85,7 +92,8 @@ class TestBuildSourcesGate:
         await _add(factory, box, InstanceKind.TAUTULLI, "t")
 
         with pytest.raises(ScanConfigError):
-            await build_sources(factory, settings, box)
+            async with AsyncExitStack() as stack:
+                await build_sources(factory, settings, box, stack=stack)
 
     async def test_no_tautulli_is_refused(
         self, env: tuple[async_sessionmaker[AsyncSession], Settings, SecretBox]
@@ -96,4 +104,5 @@ class TestBuildSourcesGate:
         await _add(factory, box, InstanceKind.SONARR, "tv")
 
         with pytest.raises(ScanConfigError):
-            await build_sources(factory, settings, box)
+            async with AsyncExitStack() as stack:
+                await build_sources(factory, settings, box, stack=stack)

@@ -50,6 +50,7 @@ import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from itertools import batched
 from typing import Any
 
 import structlog
@@ -535,17 +536,23 @@ async def season_watch_stats(
     ).bindparams(bindparam("keys", expanding=True))
 
     async with engine.connect() as conn:
-        for row in (await conn.execute(aggregate, {"keys": keys, "since": since})).all():
-            key = int(row.k)
-            when = from_epoch(row.last)
-            if when is not None:
-                stats.last_played[key] = when
-            stats.watchers_all_time[key] = int(row.all_w or 0)
-            stats.watchers_window[key] = int(row.win_w or 0)
-        for row in (await conn.execute(pairs, {"keys": keys})).all():
-            stats.user_season_keys.setdefault(int(row.u), set()).add(int(row.k))
-        for row in (await conn.execute(progress, {"keys": keys})).all():
-            stats.user_season_progress.setdefault(int(row.u), {})[int(row.k)] = int(row.max_ep)
+        # Chunked like imdb_dataset.lookup: the ``expanding`` bindparam turns every key
+        # into one bound variable, and a very large library can exceed SQLite's limit.
+        # Chunks are disjoint keys, so accumulating across them is exact.
+        for chunk in batched(keys, 500, strict=False):
+            key_chunk = list(chunk)
+            rows = (await conn.execute(aggregate, {"keys": key_chunk, "since": since})).all()
+            for row in rows:
+                key = int(row.k)
+                when = from_epoch(row.last)
+                if when is not None:
+                    stats.last_played[key] = when
+                stats.watchers_all_time[key] = int(row.all_w or 0)
+                stats.watchers_window[key] = int(row.win_w or 0)
+            for row in (await conn.execute(pairs, {"keys": key_chunk})).all():
+                stats.user_season_keys.setdefault(int(row.u), set()).add(int(row.k))
+            for row in (await conn.execute(progress, {"keys": key_chunk})).all():
+                stats.user_season_progress.setdefault(int(row.u), {})[int(row.k)] = int(row.max_ep)
 
     return stats
 

@@ -68,10 +68,12 @@ from reaper.clock import from_epoch, utcnow
 #: A little slack, because grouping can nudge the reported count by a row or two.
 REGRESSION_THRESHOLD = 0.95
 
-#: On an incremental sync, re-ask for one day before our newest row. ``after`` is
-#: date-granular, so this overlap guarantees a play recorded later on our newest day is
-#: never skipped; INSERT OR REPLACE makes the re-fetch free.
-INCREMENTAL_OVERLAP = timedelta(days=1)
+#: On an incremental sync, re-ask for two days before our newest row. ``after`` is
+#: date-granular and Tautulli's exact date-boundary semantics (inclusive or exclusive,
+#: whose midnight) are unverified, so the overlap is generous rather than minimal: it
+#: keeps a play recorded late on our newest day from being skipped, and INSERT OR
+#: REPLACE makes the re-fetch free.
+INCREMENTAL_OVERLAP = timedelta(days=2)
 
 log = structlog.get_logger(__name__)
 

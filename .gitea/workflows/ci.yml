@@ -10,7 +10,10 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Actions are pinned to commit SHAs (the tag in the comment is what the SHA was
+      # resolved from): a mutable tag on a third-party action is an supply-chain door
+      # into the job that builds and publishes the deletion-capable image.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       # Caching depends on job containers being able to reach the runner's cache server.
       # It only works while the runner shares a network with them (container.network on
@@ -19,7 +22,7 @@ jobs:
       # misses is far from free: it once cost this job ~40s and `frontend` ~9m per run, to
       # fetch nothing. If those timeouts reappear, suspect the runner's network, not this.
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
 
@@ -63,10 +66,10 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       # See the note on caching in `check`.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           cache: npm
@@ -93,7 +96,7 @@ jobs:
       # Empty unless the operator has configured the secret; the push step keys off this.
       REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       # The registry host and image path are derived from the run context, never hardcoded:
       # this workflow has to be correct for any operator who forks Reaper onto their own

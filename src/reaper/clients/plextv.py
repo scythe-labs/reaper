@@ -243,7 +243,9 @@ class PlexTvClient(BaseClient):
                 token = await self.check_pin(pin_id)
             except IntegrationError as exc:
                 if exc.status == 429:
-                    await asyncio.sleep(PIN_RATE_LIMIT_BACKOFF)
+                    # Honor the server's own pacing when it names one; the fixed
+                    # backoff is only the fallback for a bare 429.
+                    await asyncio.sleep(exc.retry_after or PIN_RATE_LIMIT_BACKOFF)
                     continue
                 raise
             if token:

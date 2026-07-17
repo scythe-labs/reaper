@@ -15,7 +15,7 @@ still produces the snapshot a sequential gather would have:
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -29,10 +29,11 @@ from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import FirstFlagged
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
+from reaper.engine.observation import Known
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
 from reaper.services import history_sync, lists, season_scan
 from reaper.services.scan_runner import build_gates
-from reaper.services.snapshot import Progress, RadarrSource, candidates, scan
+from reaper.services.snapshot import Progress, RadarrSource, _release_age_days, candidates, scan
 
 NOW = utcnow().replace(microsecond=0)
 LONG_AGO = NOW - timedelta(days=2000)
@@ -418,7 +419,7 @@ class TestRunScanHistorySync:
             async def __aexit__(self, *exc: object) -> None:
                 return None
 
-        async def fake_sources(factory: Any, settings: Any, box: Any) -> Any:
+        async def fake_sources(factory: Any, settings: Any, box: Any, **kwargs: Any) -> Any:
             return ([], [], _CmTautulli(), None, None)
 
         async def fake_policies(session: Any) -> Any:
@@ -435,7 +436,7 @@ class TestRunScanHistorySync:
 
         monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
         monkeypatch.setattr(scan_runner.history_sync, "sync", failing_sync)
-        monkeypatch.setattr("reaper.api.routes.active_policies", fake_policies)
+        monkeypatch.setattr(scan_runner.profiles, "active_policies", fake_policies)
         monkeypatch.setattr(scan_runner.profiles, "active_profile_settings", fake_profile)
         monkeypatch.setattr(scan_runner.snapshot_service, "scan", fake_scan)
         monkeypatch.setattr(scan_runner.snapshot_service, "sync_protection_lists", fake_sync_lists)
@@ -460,3 +461,18 @@ class TestRunScanHistorySync:
         assert reasons, "a failed history sync must hand the scan a degradation reason"
         assert any("Watch history could not be refreshed" in r for r in reasons)
         assert any("nothing may be deleted" in r for r in reasons)
+
+
+class TestReleaseAgeRoundsTowardKeeping:
+    """Only the release YEAR is known, so the derived age must take the bound that
+    produces LESS deletion pressure: the end of the year, not the start."""
+
+    def test_a_year_only_date_reads_as_december_31(self) -> None:
+        obs = _release_age_days(2000)
+        assert isinstance(obs, Known)
+        assert obs.value == float((utcnow().date() - date(2000, 12, 31)).days)
+
+    def test_the_current_year_clamps_to_zero_rather_than_negative(self) -> None:
+        obs = _release_age_days(utcnow().year)
+        assert isinstance(obs, Known)
+        assert obs.value == 0.0

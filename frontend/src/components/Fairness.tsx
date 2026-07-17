@@ -13,7 +13,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, type RequesterRow } from "../api";
-import { bytes, count } from "../format";
+import { bytes, count, date } from "../format";
 
 function pct(row: RequesterRow): number {
   if (row.requests_made === 0) return 0;
@@ -98,6 +98,13 @@ export function Fairness() {
                 {" "}
                 · {count(data.unmatched_requests)} could not be judged (Plex has not matched
                 them)
+              </span>
+            )}
+            {data.horizon_at && (
+              <span className="muted">
+                {" "}
+                · watch history reaches back to {date(data.horizon_at)}, so older plays are
+                invisible here
               </span>
             )}
           </p>

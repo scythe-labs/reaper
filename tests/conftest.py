@@ -23,6 +23,12 @@ from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
 
 import reaper.auth.passwords as _passwords
+from reaper.auth.ratelimit import (
+    argon2_gate,
+    login_throttle,
+    password_throttle,
+    recover_throttle,
+)
 from reaper.config import Settings
 
 _passwords._hasher = PasswordHash((Argon2Hasher(time_cost=1, memory_cost=8, parallelism=1),))
@@ -47,3 +53,10 @@ def _hermetic(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(Settings.model_config, "env_file", None)
     monkeypatch.setattr("reaper.main.load_raw_env", lambda _s: {})
     monkeypatch.setattr("reaper.main.catch_up_on_startup", _no_catch_up)
+    # The auth throttles and the Argon2 gate are process-global singletons; a lockout
+    # provoked by one test (every TestClient shares the same client address) must never
+    # bleed into the next.
+    login_throttle.reset()
+    recover_throttle.reset()
+    password_throttle.reset()
+    argon2_gate.reset()

@@ -174,13 +174,23 @@ async def clear_discord_webhook(session: AsyncSession) -> None:
         await session.flush()
 
 
-async def has_discord_webhook(session: AsyncSession, settings: Settings | None = None) -> bool:
+async def has_discord_webhook(
+    session: AsyncSession, box: SecretBox, settings: Settings | None = None
+) -> bool:
     """Whether a webhook is configured -- the only fact a browser is ever told about it.
 
     Counts an unseeded ``REAPER_DISCORD_WEBHOOK`` too, so the UI reports "connected" from
-    first boot rather than only after the seed has been read once.
+    first boot rather than only after the seed has been read once. A stored value that no
+    longer decrypts (the secret key was rotated) counts as NOT configured: every send
+    skips it (see ``get_discord_webhook``), and the UI must not claim notifications are
+    on while grace warnings silently never post. Re-entering the URL in the UI heals it.
     """
-    if await _get(session, DISCORD_WEBHOOK_KEY, default=None) is not None:
+    stored = await _get(session, DISCORD_WEBHOOK_KEY, default=None)
+    if stored is not None:
+        try:
+            box.decrypt(str(stored))
+        except ValueError:
+            return False
         return True
     if settings is not None and settings.discord_webhook is not None:
         return bool(settings.discord_webhook.get_secret_value().strip())

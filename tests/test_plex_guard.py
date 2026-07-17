@@ -84,7 +84,7 @@ class TestTheBenignLeavingSoonLabelIsGatedSeparately:
     def test_the_label_is_blocked_when_read_only_and_not_opted_in(self) -> None:
         session = GuardedSession(READ_ONLY)
         with benign_label_write(), pytest.raises(SafetyViolationError, match="Leaving Soon"):
-            session.put("http://127.0.0.1:1/library/x")
+            session.put("http://127.0.0.1:1/library/sections/3/all?type=1&id=42")
 
     def test_the_label_writes_when_armed(self) -> None:
         """Armed is at least as permissive as a delete, so the label goes through to the
@@ -92,7 +92,7 @@ class TestTheBenignLeavingSoonLabelIsGatedSeparately:
         the label is not journalled through the executor."""
         session = GuardedSession(ARMED)
         with benign_label_write(), pytest.raises(Exception) as caught:
-            session.put("http://127.0.0.1:1/library/x", timeout=0.05)
+            session.put("http://127.0.0.1:1/library/sections/3/all?type=1&id=42", timeout=0.05)
         assert not isinstance(caught.value, SafetyViolationError)
 
     def test_the_label_writes_read_only_when_the_host_opted_in(self) -> None:
@@ -100,8 +100,22 @@ class TestTheBenignLeavingSoonLabelIsGatedSeparately:
         deletion is ever enabled."""
         session = GuardedSession(LABEL_UNARMED)
         with benign_label_write(), pytest.raises(Exception) as caught:
-            session.put("http://127.0.0.1:1/library/x", timeout=0.05)
+            session.put("http://127.0.0.1:1/library/sections/3/all?type=1&id=42", timeout=0.05)
         assert not isinstance(caught.value, SafetyViolationError)
+
+    def test_the_benign_branch_is_confined_to_the_label_edit_endpoint(self) -> None:
+        """The 'labels only' promise is structural: inside a benign block, a PUT to any
+        OTHER path (say, emptyTrash) falls back to the armed-and-declared rule instead
+        of riding the label opt-in."""
+        session = GuardedSession(LABEL_UNARMED)
+        with benign_label_write(), pytest.raises(SafetyViolationError, match="turned off"):
+            session.put("http://127.0.0.1:1/library/sections/3/emptyTrash")
+
+    def test_the_benign_branch_is_confined_to_put(self) -> None:
+        """A DELETE to the label-edit path inside a benign block is not a label write."""
+        session = GuardedSession(LABEL_UNARMED)
+        with benign_label_write(), pytest.raises(SafetyViolationError, match="turned off"):
+            session.delete("http://127.0.0.1:1/library/sections/3/all?type=1&id=42")
 
     def test_the_opt_in_does_not_unlock_deletions(self) -> None:
         """A delete is NOT wrapped in benign_label_write, so the opt-in flag is invisible
@@ -117,6 +131,39 @@ class TestTheBenignLeavingSoonLabelIsGatedSeparately:
             pass
         with pytest.raises(SafetyViolationError, match="turned off"):
             session.put("http://127.0.0.1:1/library/x")
+
+
+class TestGetShapedMutationsAreGated:
+    """Plex triggers a section scan with GET /library/sections/{key}/refresh -- and on a
+    server that empties trash after every scan, rescanning a path with missing files
+    purges those items. Method filtering alone would wave it through, so the guard
+    classifies the path as a mutation regardless of verb."""
+
+    def test_a_refresh_get_is_blocked_when_read_only(self) -> None:
+        session = GuardedSession(READ_ONLY)
+        with pytest.raises(SafetyViolationError, match="turned off"):
+            session.get("http://127.0.0.1:1/library/sections/3/refresh?path=%2Fmovies%2FX")
+
+    def test_a_refresh_get_is_blocked_when_armed_but_not_declared(self) -> None:
+        session = GuardedSession(ARMED)
+        with pytest.raises(SafetyViolationError, match="not declared"):
+            session.get("http://127.0.0.1:1/library/sections/3/refresh")
+
+    def test_a_refresh_get_passes_when_armed_and_declared(self) -> None:
+        """The executor's path: armed, intent journalled -- the request reaches the real
+        transport (a connection error, not a safety refusal)."""
+        session = GuardedSession(ARMED)
+        with declared_mutation(), pytest.raises(Exception) as caught:
+            session.get("http://127.0.0.1:1/library/sections/3/refresh", timeout=0.05)
+        assert not isinstance(caught.value, SafetyViolationError)
+
+    def test_an_ordinary_section_read_stays_free(self) -> None:
+        """Reads that merely LOOK like the refresh path's neighbours (the section
+        listing is_refreshing polls) must not need arming."""
+        session = GuardedSession(READ_ONLY)
+        with pytest.raises(Exception) as caught:
+            session.get("http://127.0.0.1:1/library/sections/3", timeout=0.05)
+        assert not isinstance(caught.value, SafetyViolationError)
 
 
 class TestLeavingSoonWriteAllowed:

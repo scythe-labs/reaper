@@ -27,6 +27,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
+from itertools import batched
 from typing import Any
 
 import structlog
@@ -81,8 +82,12 @@ class FairnessReport:
     """Deduped by media -- a title requested by three people is counted once here."""
     total_reclaimable_items: int
     unmatched_requests: int
-    """Requests with no rating key or no added-at date: real, but unjudgeable. Shown so
-    the operator knows the numbers describe *most* of their requests, not all."""
+    """Requests that could not be judged, counted PER REQUEST: no Plex match, no media
+    info, or no availability clock to measure against. Shown so the operator knows the
+    numbers describe *most* of their requests, not all."""
+    horizon_at: datetime | None = None
+    """How far back the watch mirror reaches. Older plays are invisible, so the judging
+    clock is clamped here -- shown so the numbers are read against the right window."""
 
 
 def _name(request: MediaRequest) -> str:
@@ -97,6 +102,7 @@ def evaluate_fairness(
     policy: RequesterPolicy,
     *,
     now: datetime | None = None,
+    horizon: datetime | None = None,
 ) -> FairnessReport:
     """Pure aggregation: given requests, watch evidence, and sizes, roll up per requester.
 
@@ -113,14 +119,15 @@ def evaluate_fairness(
     for key, group in grouped.items():
         info = media_by_key.get(key)
         evidence = evidence_by_key.get(key, WatchEvidence())
-        finding = requester.evaluate(group, evidence, policy, now=now)
+        finding = requester.evaluate(group, evidence, policy, now=now, horizon=horizon)
         size = info.size_bytes if info else 0
         title = info.title if info else (group[0].imdb_id or key)
 
-        # An unmatched request (synthetic key, or a matched key we have no media info for)
-        # is counted as seen-but-unjudgeable, not as reclaimable.
-        if key.startswith("unmatched:") or info is None:
-            unmatched += 1
+        # Unjudgeable REQUESTS are counted per request, matching the field's caption: an
+        # unmatched key, a key with no media info, or a group whose availability clock
+        # is unknown (evaluate abstained before it could read one).
+        if key.startswith("unmatched:") or info is None or finding.days_available is None:
+            unmatched += len(group)
 
         condemned = finding.verdict == CONDEMN
         if condemned and info is not None:
@@ -157,6 +164,7 @@ def evaluate_fairness(
         total_reclaimable_bytes=total_reclaimable_bytes,
         total_reclaimable_items=len(reclaimable_keys),
         unmatched_requests=unmatched,
+        horizon_at=horizon,
     )
 
 
@@ -233,6 +241,7 @@ async def _arr_sizes(
                 size_by_tmdb[tmdb] = max(size, size_by_tmdb.get(tmdb, 0))
 
     size_by_tvdb: dict[int, int] = {}
+    season_sizes_by_tvdb: dict[int, dict[int, int]] = {}
     for sonarr in sonarrs:
         try:
             series_list = await sonarr.series()
@@ -245,17 +254,54 @@ async def _arr_sizes(
             size = _as_int(stats.get("sizeOnDisk")) or 0
             if tvdb and size:
                 size_by_tvdb[tvdb] = max(size, size_by_tvdb.get(tvdb, 0))
+            if tvdb:
+                # Per-season sizes too, so a request that names its seasons is charged
+                # what THOSE seasons occupy, not the whole series (B-21).
+                per = season_sizes_by_tvdb.setdefault(tvdb, {})
+                for season in series.get("seasons") or []:
+                    number = _as_int(season.get("seasonNumber"))
+                    season_stats = season.get("statistics") or {}
+                    season_size = _as_int(season_stats.get("sizeOnDisk")) or 0
+                    if number is not None and season_size:
+                        per[number] = max(season_size, per.get(number, 0))
 
     out: dict[str, int] = {}
+    named_seasons: dict[str, set[int]] = {}
+    every_request_named: dict[str, bool] = {}
+    tvdb_for_key: dict[str, int] = {}
     for req in requests:
         if not req.plex_rating_key:
             continue
+        key = str(req.plex_rating_key)
         if req.media_type == "movie":
-            req_size = size_by_tmdb.get(req.tmdb_id) if req.tmdb_id else None
+            movie_size = size_by_tmdb.get(req.tmdb_id) if req.tmdb_id else None
+            if movie_size:
+                out[key] = movie_size
+            continue
+        if not req.tvdb_id:
+            continue
+        tvdb_for_key[key] = req.tvdb_id
+        if req.seasons:
+            named_seasons.setdefault(key, set()).update(req.seasons)
+            every_request_named.setdefault(key, True)
         else:
-            req_size = size_by_tvdb.get(req.tvdb_id) if req.tvdb_id else None
-        if req_size:
-            out[str(req.plex_rating_key)] = req_size
+            every_request_named[key] = False
+
+    for key, tvdb in tvdb_for_key.items():
+        named = named_seasons.get(key, set())
+        per_season = season_sizes_by_tvdb.get(tvdb, {})
+        if every_request_named.get(key) and named and per_season:
+            # Every request for this show names its seasons: charge the union of those
+            # seasons' on-disk sizes, not the whole series. Seasons without per-season
+            # stats contribute nothing here; if none have stats, fall through to the
+            # series total rather than claim zero.
+            named_size = sum(per_season.get(n, 0) for n in named)
+            if named_size:
+                out[key] = named_size
+                continue
+        series_size = size_by_tvdb.get(tvdb)
+        if series_size:
+            out[key] = series_size
     return out
 
 
@@ -292,9 +338,12 @@ async def _evidence_index(
 
     result: dict[str, dict[int, int]] = {}
     async with cache_engine.connect() as conn:
-        rows = (await conn.execute(stmt, {"keys": int_keys})).all()
-    for key, user_id, plays in rows:
-        result.setdefault(str(key), {})[int(user_id)] = int(plays)
+        # Chunked so a very large request set cannot exceed SQLite's bound-variable
+        # limit; chunks are disjoint keys, so plain merging is exact.
+        for chunk in batched(int_keys, 500, strict=False):
+            rows = (await conn.execute(stmt, {"keys": list(chunk)})).all()
+            for key, user_id, plays in rows:
+                result.setdefault(str(key), {})[int(user_id)] = int(plays)
 
     return {
         k: WatchEvidence(plays_by_user=plays, distinct_watchers=len(plays))
@@ -331,4 +380,9 @@ async def build_report(
         media_indexed=len(media),
         keys_with_history=len(evidence),
     )
-    return evaluate_fairness(requests, evidence, media, policy, now=utcnow())
+    # The judging clock is clamped to the mirror's reach (P-7): a shallow mirror must
+    # not make every aged request read never-watched.
+    mirror_horizon = await history_sync.horizon(cache_engine)
+    return evaluate_fairness(
+        requests, evidence, media, policy, now=utcnow(), horizon=mirror_horizon
+    )

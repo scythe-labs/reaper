@@ -117,6 +117,52 @@ class TestDerive:
         assert prior.population == 0
 
 
+async def _episode_play(engine: AsyncEngine, row_id: int, show_key: int, when: datetime) -> None:
+    """One per-episode play. TV history rows carry the show only as the grandparent."""
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO watch_event (row_id, rating_key, grandparent_rating_key, "
+                " user_id, watched_at, watched_status, percent_complete, media_type) "
+                "VALUES (:row_id, :rk, :gp, 1, :at, 1, 100, 'episode')"
+            ),
+            {
+                "row_id": row_id,
+                "rk": 100_000 + row_id,
+                "gp": show_key,
+                "at": int(when.timestamp()),
+            },
+        )
+
+
+class TestTvJoinsOnTheGrandparentKey:
+    """TV history rows are per-episode; the population passes SHOW keys. Joining shows
+    on rating_key finds nothing, reads every show as never-rewatched, and the derived
+    prior then claims a near-zero baseline that inverts every lift number."""
+
+    async def test_a_show_population_reads_episode_history(self, engine: AsyncEngine) -> None:
+        keys = set(range(1, 41))
+        added = {k: CUTOFF - timedelta(days=1200) for k in keys}
+        row = 0
+        for k in keys:  # every show watched (as episodes) well before the cutoff
+            row += 1
+            await _episode_play(engine, row, k, CUTOFF - timedelta(days=1200))
+        for k in list(keys)[:10]:  # a quarter rewatched after it
+            row += 1
+            await _episode_play(engine, row, k, CUTOFF + timedelta(days=30))
+
+        prior = await derive(
+            engine,
+            rating_keys=keys,
+            cutoff=CUTOFF,
+            horizon=HORIZON,
+            added_at=added,
+            media_type="tv",
+        )
+
+        assert prior.rate_for(1200) == pytest.approx(0.25)
+
+
 class TestTheSampleFloor:
     """A bucket of nine items yields 0%, 11%, 22%... none of which mean anything."""
 

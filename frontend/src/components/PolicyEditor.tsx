@@ -28,6 +28,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   api,
+  ApiError,
   type Condition,
   type CustomCondemn,
   type GateSetting,
@@ -1064,8 +1065,19 @@ function Histogram({ buckets, threshold }: { buckets: number[]; threshold: numbe
 
 /** The "needs a scan" state. Informational, not an error: you didn't do anything wrong,
  *  the numbers just can't be re-derived from the old scan. So it's neutral, short, and gives
- *  you the one button that fixes it. */
-function StaleNotice({ scanning, onScan }: { scanning: boolean; onScan: () => void }) {
+ *  you the one button that fixes it. A start that fails says so right here, or the button
+ *  would appear to do nothing. */
+function StaleNotice({
+  scanning,
+  starting,
+  startError,
+  onScan,
+}: {
+  scanning: boolean;
+  starting: boolean;
+  startError: string | null;
+  onScan: () => void;
+}) {
   return (
     <div className="sim sim-info">
       <h3>Needs a fresh scan</h3>
@@ -1073,9 +1085,10 @@ function StaleNotice({ scanning, onScan }: { scanning: boolean; onScan: () => vo
         You changed a weight or a protection, so the last scan's scores no longer match this
         policy. Scan to see what it would do.
       </p>
-      <button className="primary sm" onClick={onScan} disabled={scanning}>
-        {scanning ? "Scanning…" : "Scan now"}
+      <button className="primary sm" onClick={onScan} disabled={scanning || starting}>
+        {scanning ? "Scanning…" : starting ? "Starting…" : "Scan now"}
       </button>
+      {startError && <p className="error">The scan didn't start: {startError}</p>}
     </div>
   );
 }
@@ -1228,9 +1241,16 @@ export function PolicyEditor() {
   // independent, so the Movies/TV toggle never re-seeds it.
   const { data: savedPace } = useQuery({ queryKey: ["profile"], queryFn: api.profile });
   const [pace, setPace] = useState<ProfileSettings | null>(null);
+  // Caps staged by a preset clicked before the profile query resolved. Held here and
+  // folded in the moment the profile arrives, so "staged, not saved" is true for BOTH
+  // halves of a preset; silently dropping the caps half would let the banner overclaim.
+  const [pendingCaps, setPendingCaps] = useState<PresetCaps | null>(null);
   useEffect(() => {
-    if (savedPace && pace === null) setPace(savedPace);
-  }, [savedPace, pace]);
+    if (savedPace && pace === null) {
+      setPace(pendingCaps ? { ...savedPace, ...pendingCaps } : savedPace);
+      if (pendingCaps) setPendingCaps(null);
+    }
+  }, [savedPace, pace, pendingCaps]);
   const savePace = useMutation({
     mutationFn: (s: ProfileSettings) => api.saveProfile(s),
     onSuccess: (s) => {
@@ -1254,7 +1274,7 @@ export function PolicyEditor() {
     return () => clearTimeout(id);
   }, [draft]);
 
-  const { data: simulation } = useQuery({
+  const { data: simulation, error: simError } = useQuery({
     queryKey: ["simulate", debounced],
     queryFn: () => api.simulate(debounced!),
     enabled: debounced !== null,
@@ -1292,16 +1312,29 @@ export function PolicyEditor() {
     wasScanning.current = scanning;
   }, [scanning, queryClient]);
 
-  const startScan = async () => {
-    const started = await api.startScan();
-    queryClient.setQueryData(["scanStatus"], started);
-  };
+  // A mutation, not a fire-and-forget async onClick: a "Scan now" that fails must say so
+  // in the stale notice, or the button appears to do nothing at all.
+  const startScan = useMutation({
+    mutationFn: () => api.startScan(),
+    onSuccess: (started) => queryClient.setQueryData(["scanStatus"], started),
+  });
 
   const save = useMutation({
     mutationFn: (body: PolicyBody) => api.savePolicy(body),
     onSuccess: (policy: Policy) => {
-      queryClient.setQueryData(["policy", mediaType], policy);
-      void queryClient.invalidateQueries({ queryKey: ["policy", mediaType] });
+      // Key the cache write by the media type the SERVER saved, not whichever tab is
+      // showing when the response lands: a mid-flight Movies/TV toggle must not write
+      // one type's policy into the other type's cache.
+      const savedType = policy.body.media_type === "tv" ? "tv" : "movie";
+      queryClient.setQueryData(["policy", savedType], policy);
+      // Re-seed the draft from the server's response so the dirty check compares
+      // canonical forms. The server can order fields differently from the draft the
+      // save was built from, and a raw JSON.stringify comparison would then read
+      // "unsaved changes" forever.
+      setDraft((cur) =>
+        cur && cur.media_type === policy.body.media_type ? policy.body : cur,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["policy", savedType] });
     },
   });
 
@@ -1316,6 +1349,12 @@ export function PolicyEditor() {
   useEffect(() => {
     if (staged !== null && !dirty && !paceDirty) setStaged(null);
   }, [staged, dirty, paceDirty]);
+
+  // The Movies/TV switch the owner asked for while the draft still holds unsaved edits.
+  // Switching re-seeds the draft from the other saved policy, which would silently throw
+  // those edits away -- so it waits here for the same two-step confirm the rest of the
+  // app uses (never a native confirm()).
+  const [pendingSwitch, setPendingSwitch] = useState<"movie" | "tv" | null>(null);
 
   // Section jump targets for the rail.
   const sectionRefs: Record<SectionId, React.RefObject<HTMLHeadingElement | null>> = {
@@ -1332,7 +1371,24 @@ export function PolicyEditor() {
   const updatePace = (patch: Partial<ProfileSettings>) =>
     setPace(pace === null ? null : { ...pace, ...patch });
   const totalWeight = draft.signals.reduce((sum, s) => sum + s.weight, 0);
-  const invalidMessage = invalidError instanceof Error ? invalidError.message : null;
+  // Only a 422 is the server refusing the POLICY ("you can't save this as-is"). Anything
+  // else (a timeout, a 500) means the CHECK itself failed, which must not be dressed up
+  // as a policy error nor lock Save: the server re-validates on save regardless.
+  const invalidMessage =
+    invalidError instanceof ApiError && invalidError.status === 422
+      ? invalidError.message
+      : null;
+  const validatorDown = invalidError !== null && invalidMessage === null;
+
+  const switchMediaType = (next: "movie" | "tv") => {
+    if (next === mediaType) return;
+    if (dirty) {
+      setPendingSwitch(next);
+    } else {
+      setPendingSwitch(null);
+      setMediaType(next);
+    }
+  };
 
   const kind = mediaType === "tv" ? "TV" : "movie";
   const otherKind = mediaType === "tv" ? "movie" : "TV";
@@ -1346,7 +1402,11 @@ export function PolicyEditor() {
       condemn_at: p.condemn_at,
       signals: draft.signals.map((s) => ({ ...s, weight: mix[s.signal] ?? 0 })),
     });
-    updatePace(p.caps);
+    // The pace draft may not exist yet (the profile query can still be loading). Buffer
+    // the caps so they land when it does; staging only the policy half while the banner
+    // claims both would be a lie.
+    if (pace === null) setPendingCaps(p.caps);
+    else updatePace(p.caps);
     setStaged(p.id);
   };
 
@@ -1370,18 +1430,37 @@ export function PolicyEditor() {
           <div className="segmented" role="group" aria-label="Which policy">
             <button
               className={mediaType === "movie" ? "seg active" : "seg"}
-              onClick={() => setMediaType("movie")}
+              onClick={() => switchMediaType("movie")}
             >
               Movies
             </button>
             <button
               className={mediaType === "tv" ? "seg active" : "seg"}
-              onClick={() => setMediaType("tv")}
+              onClick={() => switchMediaType("tv")}
             >
               TV
             </button>
           </div>
         </div>
+        {pendingSwitch !== null && (
+          <div className="notice notice-warn">
+            You have unsaved {kind} policy changes. Switching to{" "}
+            {pendingSwitch === "tv" ? "TV" : "Movies"} discards them.{" "}
+            <button
+              type="button"
+              className="sm danger"
+              onClick={() => {
+                setPendingSwitch(null);
+                setMediaType(pendingSwitch);
+              }}
+            >
+              Discard and switch
+            </button>{" "}
+            <button type="button" className="sm ghost" onClick={() => setPendingSwitch(null)}>
+              Keep editing
+            </button>
+          </div>
+        )}
         <p className="blurb">
           {mediaType === "tv"
             ? "How Reaper judges TV: seasons, not whole shows. Tuned separately from movies."
@@ -1646,7 +1725,9 @@ export function PolicyEditor() {
         <KeepRulesEditor
           conditions={draft.protect_conditions}
           keeps={draft.graded_keeps}
-          gateIds={draft.gates.map((g) => g.gate)}
+          // Only protections that are ON hide their field from custom keeps: a disabled
+          // gate protects nothing, so its field must stay authorable here.
+          gateIds={draft.gates.filter((g) => g.enabled).map((g) => g.gate)}
           onConditions={(protect_conditions) => update({ protect_conditions })}
           onKeeps={(graded_keeps) => update({ graded_keeps })}
         />
@@ -1655,6 +1736,14 @@ export function PolicyEditor() {
         {invalidMessage && (
           <p className="notice notice-error">
             <strong>Can't save this:</strong> {invalidMessage}
+          </p>
+        )}
+        {/* The check itself failing is AMBER, and it does not lock Save: the server
+            checks the policy again on save either way. */}
+        {validatorDown && (
+          <p className="notice notice-warn">
+            Couldn't check this draft just now, so any problem with it can't be shown here.
+            You can still save: the server checks it again when you do.
           </p>
         )}
         {/* A warning is AMBER: the policy is legal, but probably not what you meant. */}
@@ -1812,11 +1901,29 @@ export function PolicyEditor() {
         </p>
         {invalidMessage ? (
           <p className="muted">Fix the policy on the left, then this updates.</p>
+        ) : simError ? (
+          /* Checked BEFORE simulation: keepPreviousData can leave the previous draft's
+             numbers in `simulation` when a refetch fails, and a stale count shown as
+             current is exactly what this column must never do. */
+          <div className="sim sim-info">
+            <h3>Can't show what this would do</h3>
+            <p>
+              The simulator request failed, so there are no numbers to show. Nothing about
+              your library or your saved policy has changed. Adjust any control to try
+              again.
+            </p>
+            <p className="error">{simError.message}</p>
+          </div>
         ) : simulation ? (
           simulation.exact ? (
             <Outcome simulation={simulation} threshold={draft.condemn_at} pace={pace} />
           ) : (
-            <StaleNotice scanning={scanning} onScan={startScan} />
+            <StaleNotice
+              scanning={scanning}
+              starting={startScan.isPending}
+              startError={startScan.error ? startScan.error.message : null}
+              onScan={() => startScan.mutate()}
+            />
           )
         ) : (
           <p className="muted">Working…</p>

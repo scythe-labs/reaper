@@ -67,7 +67,13 @@ class ArrClient(BaseClient):
         """Tags. A `reaper-keep` tag is a zero-integration whitelist: the owner
         applies it in a UI they already use."""
         data = await self.get_json(f"{self.prefix}/tag")
-        return list(data) if isinstance(data, list) else []
+        if not isinstance(data, list):
+            # A 200 whose body is not a list (a reverse proxy's HTML error page, a
+            # schema change) is never "no tags exist". Masking it as [] would let a
+            # keep-tag sync read an empty whitelist out of an error page -- and
+            # atomically replace a populated one with nothing.
+            raise IntegrationError(self.service, f"{self.prefix}/tag did not return a list")
+        return list(data)
 
     async def root_folders(self) -> list[dict[str, Any]]:
         """Root folders, including `accessible`.

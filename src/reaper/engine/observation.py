@@ -27,10 +27,7 @@ error.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
+from typing import Literal
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,34 +69,3 @@ class Unknown:
 
 
 type Observation[T] = Known[T] | Absent | Unknown
-
-
-def is_unknown[T](observation: Observation[T]) -> bool:
-    return isinstance(observation, Unknown)
-
-
-def value_or[T, U](observation: Observation[T], default: U) -> T | U:
-    """Read a value, falling back for both Absent and Unknown.
-
-    Use sparingly, and never on a path that can condemn: it deliberately erases
-    the distinction this module exists to preserve. It is here for display code.
-    """
-    return observation.value if isinstance(observation, Known) else default
-
-
-def map_known[T, U](observation: Observation[T], fn: Callable[[T], U]) -> Observation[U]:
-    """Transform a value, propagating Absent and Unknown untouched."""
-    if isinstance(observation, Known):
-        return Known(value=fn(observation.value), source=observation.source)
-    return observation
-
-
-def describe[T](observation: Observation[T]) -> str:
-    """The string the why-panel shows."""
-    match observation:
-        case Known(value=value, source=source):
-            return f"{value} (via {source})"
-        case Absent(source=source):
-            return f"none (via {source})"
-        case Unknown(reason=reason, source=source):
-            return f"could not check -- {reason} (via {source})"

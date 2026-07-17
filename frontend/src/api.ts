@@ -8,13 +8,6 @@
 
 export type Verdict = "condemn" | "protect" | "abstain";
 
-export interface Health {
-  status: string;
-  version: string;
-  destructive_actions_enabled: boolean;
-  safety_note: string | null;
-}
-
 export interface Snapshot {
   id: number;
   created_at: string;
@@ -419,6 +412,8 @@ export interface FairnessReport {
   total_reclaimable_bytes: number;
   total_reclaimable_items: number;
   unmatched_requests: number;
+  /** How far back the watch history reaches; older plays are invisible to this view. */
+  horizon_at: string | null;
   rows: RequesterRow[];
 }
 
@@ -620,7 +615,6 @@ const put = <T>(path: string, body: unknown): Promise<T> =>
 const del = <T>(path: string): Promise<T> => request<T>(path, { method: "DELETE" });
 
 export const api = {
-  health: () => request<Health>("/api/health"),
   latestSnapshot: () => request<Snapshot>("/api/snapshots/latest"),
   /** One page of the review queue. The full filtered totals (count + bytes, before the page
    *  window) ride along in response headers, so the queue can show "[redacted] items · [redacted]"
@@ -700,8 +694,11 @@ export const api = {
   safety: () => request<Safety>("/api/settings/safety"),
   setDeletion: (enabled: boolean, password?: string) =>
     put<Safety>("/api/settings/safety", { enabled, password: password ?? null }),
-  setAdminPassword: (password: string) =>
-    post<{ ok: boolean }>("/api/settings/admin-password", { password }),
+  setAdminPassword: (password: string, currentPassword?: string) =>
+    post<{ ok: boolean }>("/api/settings/admin-password", {
+      password,
+      current_password: currentPassword ?? null,
+    }),
 
   // The Discord webhook is the one channel that actually warns the household before a title
   // is deleted. Like an API key it is write-only: `has_webhook` says only whether one is set.

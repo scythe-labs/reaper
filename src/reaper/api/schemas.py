@@ -520,6 +520,8 @@ class FairnessReportOut(BaseModel):
     total_reclaimable_bytes: int
     total_reclaimable_items: int
     unmatched_requests: int
+    horizon_at: str | None = None
+    """How far back the watch history reaches; the judging clock is clamped here."""
     rows: list[RequesterRowOut]
 
 

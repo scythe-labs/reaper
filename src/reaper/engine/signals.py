@@ -270,13 +270,23 @@ def evaluate_custom(config: CustomSignalConfig, facts: Facts) -> SignalResult:
 
     if config.kind == "graded":
         observation = spec.read(facts) if spec is not None else None
+        if isinstance(observation, Absent):
+            # Absent is real evidence ("none recorded"), exactly as the boolean path
+            # reads it: zero pressure, weight retained, and EVALUATED. It must not drag
+            # coverage under the floor the way an unreadable (Unknown) input rightly
+            # does, or a graded rule on a field one media type never carries would
+            # silently push every one of its items below the coverage floor.
+            return SignalResult(
+                config.name, 0.0, config.weight, f"{label}: none recorded", evaluated=True
+            )
         raw = (
             float(observation.value)
             if isinstance(observation, Known) and isinstance(observation.value, int | float)
             else None
         )
         if raw is None:
-            # Unknown or absent numeric: zero pressure, weight retained -- fail-safe.
+            # Unknown (we could not look): zero pressure, weight retained, and NOT
+            # evaluated -- coverage honestly reflects the unchecked input.
             return SignalResult(
                 config.name, 0.0, config.weight, f"could not read {label.lower()}", evaluated=False
             )

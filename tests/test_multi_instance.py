@@ -8,6 +8,7 @@ unit tests, because both were failures of *scope* rather than of logic.
 
 from __future__ import annotations
 
+from contextlib import AsyncExitStack
 from pathlib import Path
 
 import pytest
@@ -200,11 +201,18 @@ class TestScanClientsCarryTheTlsChoice:
             def __init__(self, base_url: str, *args: object, **kwargs: object) -> None:
                 seen[base_url] = kwargs.get("verify")
 
+            async def __aenter__(self) -> object:
+                return self
+
+            async def __aexit__(self, *exc: object) -> None:
+                return None
+
         for name in ("RadarrClient", "SonarrClient", "TautulliClient", "SeerrClient"):
             monkeypatch.setattr(scan_runner, name, FakeClient)
 
         try:
-            await scan_runner.build_sources(factory, settings, box)
+            async with AsyncExitStack() as stack:
+                await scan_runner.build_sources(factory, settings, box, stack=stack)
         finally:
             await engine.dispose()
 

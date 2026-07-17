@@ -51,23 +51,6 @@ def effective_override(media_key: str, decisions: dict[str, str]) -> str | None:
     return None
 
 
-async def spared_keys(session: AsyncSession) -> set[str]:
-    """Every ``media_key`` the owner spared (decision = spare). The set the scan and the
-    planner both filter against."""
-    rows = await session.execute(
-        select(WhitelistEntry.media_key).where(WhitelistEntry.decision == "spare")
-    )
-    return set(rows.scalars().all())
-
-
-async def reaped_keys(session: AsyncSession) -> set[str]:
-    """Every ``media_key`` the owner force-marked for reaping (decision = reap)."""
-    rows = await session.execute(
-        select(WhitelistEntry.media_key).where(WhitelistEntry.decision == "reap")
-    )
-    return set(rows.scalars().all())
-
-
 async def overrides(session: AsyncSession) -> dict[str, str]:
     """``media_key -> decision`` for every manual override -- what the scan reads once."""
     rows = await session.execute(select(WhitelistEntry.media_key, WhitelistEntry.decision))

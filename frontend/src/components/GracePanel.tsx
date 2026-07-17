@@ -31,7 +31,7 @@ function ItemRow({ item, onCancel, pending }: { item: GraceItem; onCancel: () =>
 
 export function GracePanel() {
   const queryClient = useQueryClient();
-  const { data, isPending } = useQuery({ queryKey: ["grace"], queryFn: api.grace });
+  const { data, isPending, isError } = useQuery({ queryKey: ["grace"], queryFn: api.grace });
 
   const cancel = useMutation({
     mutationFn: (mediaKey: string) => api.spare(mediaKey),
@@ -46,7 +46,16 @@ export function GracePanel() {
   const mark = useMutation({ mutationFn: api.syncLeavingSoon });
 
   if (isPending) return <p className="muted">Loading…</p>;
-  if (!data) return null;
+  // An unreadable grace list must never look like an empty one: items may be counting
+  // down, or ready, and simply not shown. Say so, in the amber "we could not look" tone.
+  if (isError || !data) {
+    return (
+      <p className="notice notice-warn">
+        Couldn't load the grace countdown. Items may still be waiting or ready to reap,
+        Reaper just can't show them right now. Reload to try again.
+      </p>
+    );
+  }
 
   const soonest = data.in_grace[0]?.days_remaining;
 

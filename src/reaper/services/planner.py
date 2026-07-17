@@ -39,12 +39,15 @@ import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clock import utcnow
 from reaper.db.models import ActionStep, Candidate, ReapRun, RunState, Snapshot, StepState
 from reaper.services import whitelist
+
+log = structlog.get_logger(__name__)
 
 
 class PlanError(RuntimeError):
@@ -99,7 +102,7 @@ def manifest_hash(candidates: Sequence[Candidate]) -> str:
     a run (e.g. retention GC), which voids the approval. It is NOT live drift detection --
     candidate rows are frozen at scan time and nobody re-reads the *arr here, so a title
     deleted or resized in Radarr after approval does not change this hash; that live drift is
-    caught by the executor's per-item interlocks and existence/size re-reads at delete time,
+    caught by the executor's per-item interlocks and existence re-reads at delete time,
     and a stale browser tab is stopped by the route's confirmation-phrase recompute.
 
     Over the media_key and size of each item, sorted so the order candidates arrive in
@@ -352,7 +355,7 @@ async def build_plan(
         # candidate rows for this immutable snapshot, so this fingerprint is a frozen-set
         # integrity check (it catches a condemned candidate row lost or tampered with under
         # the run), NOT live library drift -- nothing re-reads the *arr here. Live drift is
-        # caught by the executor's per-item interlocks and existence/size re-reads at delete
+        # caught by the executor's per-item interlocks and existence re-reads at delete
         # time; a stale tab is stopped by the route's confirmation-phrase recompute.
         approved_manifest_hash=manifest_hash(all_condemned),
         approved_by=approved_by,
@@ -370,8 +373,13 @@ async def build_plan(
             steps = _season_steps(run.id, candidate, ref, ordinal)
         else:
             # A whole-series (three-part) sonarr key is not season pruning and has no
-            # delete path yet. Skip it LOUDLY -- recorded, not silently dropped -- so the
+            # delete path yet. Skip it LOUDLY -- logged, not silently dropped -- so the
             # plan never claims to cover something it does not.
+            log.warning(
+                "plan.no_delete_path",
+                media_key=candidate.media_key,
+                media_type=candidate.media_type,
+            )
             continue
         for step in steps:
             session.add(step)

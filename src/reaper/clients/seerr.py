@@ -213,6 +213,11 @@ class SeerrClient(BaseClient):
 
         total = int((payload.get("pageInfo") or {}).get("results") or 0)
         results = [_parse_request(r) for r in (payload.get("results") or [])]
+        if results and total <= 0:
+            # Rows came back but no total did: the envelope shape changed (pageInfo moved
+            # or was renamed). Treating that as total=0 would stop after one page and
+            # silently undercount every requester, so refuse instead.
+            raise IntegrationError(self.service, "/request returned rows but no pageInfo total")
         return results, total
 
     async def all_requests(self, *, filter_: str = "available") -> list[MediaRequest]:
@@ -227,14 +232,3 @@ class SeerrClient(BaseClient):
                 break
         log.info("seerr.requests_loaded", count=len(out), filter=filter_)
         return out
-
-    async def users(self, *, take: int = 200) -> list[dict[str, Any]]:
-        """Seerr users.
-
-        ``plexId`` and ``email`` are stripped unless the API key maps to an admin
-        with MANAGE_USERS -- and ``plexId`` is the Tautulli join key, so a
-        non-admin key silently makes every requester unmappable.
-        """
-        payload = await self.get_json("/api/v1/user", params={"take": take})
-        results = (payload or {}).get("results") or []
-        return list(results)

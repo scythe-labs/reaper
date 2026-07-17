@@ -27,7 +27,7 @@ from reaper.clients.base import BaseClient, IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
 from reaper.clients.seerr import SeerrClient
 from reaper.clients.tautulli import TautulliClient
-from reaper.config import Settings
+from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind, PlexServer, Snapshot
 from reaper.engine.gates import (
@@ -117,6 +117,8 @@ async def build_sources(
     session_factory: async_sessionmaker[AsyncSession],
     settings: Settings,
     box: SecretBox,
+    *,
+    stack: AsyncExitStack,
 ) -> tuple[
     list[snapshot_service.RadarrSource],
     list[snapshot_service.SonarrSource],
@@ -124,7 +126,7 @@ async def build_sources(
     SeerrClient | None,
     PlexClient | None,
 ]:
-    """Build clients for EVERY enabled instance.
+    """Build clients for EVERY enabled instance, each owned by ``stack``.
 
     Not ``next(...)``. A separate 4K Radarr alongside the HD one is a common setup, and
     scanning whichever came first would silently ignore an entire library while reporting
@@ -135,6 +137,9 @@ async def build_sources(
     with no Sonarr and produces no season candidates; a TV-only deployment runs with no
     Radarr and produces no movie candidates. Seerr is optional -- without it, items
     simply carry no "requested by".
+
+    Every constructed client is entered into the caller's ``stack`` immediately, so
+    there is no window in which a raise can leak one (rule 34).
     """
     async with session_factory() as session:
         safety = await app_settings.runtime_safety(session, settings)
@@ -162,63 +167,60 @@ async def build_sources(
     # the decrypted API key travels on these connections, so certificate verification is
     # only relaxed where the operator explicitly turned it off for that one instance in
     # Settings -- never silently, and never for the others.
-    radarrs = [
-        snapshot_service.RadarrSource(
-            client=RadarrClient(
-                r.base_url,
-                box.decrypt(r.api_key_enc),
-                safety=safety,
-                api_path_prefix=r.api_path_prefix,
-                verify=r.verify_tls,
-            ),
-            instance_id=r.id,
-            name=r.name,
+    # Every client is entered into ``stack`` the moment it is constructed, so a failure
+    # building a LATER one -- or anything the caller does before its own stack entry --
+    # can never leak the earlier ones.
+    radarrs: list[snapshot_service.RadarrSource] = []
+    for r in radarr_rows:
+        rclient = RadarrClient(
+            r.base_url,
+            box.decrypt(r.api_key_enc),
+            safety=safety,
+            api_path_prefix=r.api_path_prefix,
+            verify=r.verify_tls,
         )
-        for r in radarr_rows
-    ]
-    sonarrs = [
-        snapshot_service.SonarrSource(
-            client=SonarrClient(
-                r.base_url,
-                box.decrypt(r.api_key_enc),
-                safety=safety,
-                api_path_prefix=r.api_path_prefix,
-                verify=r.verify_tls,
-            ),
-            instance_id=r.id,
-            name=r.name,
+        await stack.enter_async_context(rclient)
+        radarrs.append(snapshot_service.RadarrSource(client=rclient, instance_id=r.id, name=r.name))
+    sonarrs: list[snapshot_service.SonarrSource] = []
+    for r in sonarr_rows:
+        sclient = SonarrClient(
+            r.base_url,
+            box.decrypt(r.api_key_enc),
+            safety=safety,
+            api_path_prefix=r.api_path_prefix,
+            verify=r.verify_tls,
         )
-        for r in sonarr_rows
-    ]
+        await stack.enter_async_context(sclient)
+        sonarrs.append(snapshot_service.SonarrSource(client=sclient, instance_id=r.id, name=r.name))
     tautulli = TautulliClient(
         tautulli_row.base_url,
         box.decrypt(tautulli_row.api_key_enc),
         safety=safety,
         verify=tautulli_row.verify_tls,
     )
-    seerr = (
-        SeerrClient(
+    await stack.enter_async_context(tautulli)
+    seerr: SeerrClient | None = None
+    if seerr_row is not None:
+        seerr = SeerrClient(
             seerr_row.base_url,
             box.decrypt(seerr_row.api_key_enc),
             safety=safety,
             verify=seerr_row.verify_tls,
         )
-        if seerr_row is not None
-        else None
-    )
-    plex = (
-        PlexClient(plex_uri, plex_token, safety=safety)
-        if plex_uri is not None and plex_token is not None
-        else None
-    )
+        await stack.enter_async_context(seerr)
+    plex: PlexClient | None = None
+    if plex_uri is not None and plex_token is not None:
+        plex = PlexClient(plex_uri, plex_token, safety=safety)
+        await stack.enter_async_context(plex)
     return radarrs, sonarrs, tautulli, seerr, plex
 
 
 async def build_reap_gateway(
     session_factory: async_sessionmaker[AsyncSession],
-    settings: Settings,
     box: SecretBox,
-) -> tuple[ReapGateway, list[BaseClient]]:
+    *,
+    safety: RuntimeSafety,
+) -> tuple[ReapGateway, list[BaseClient | PlexClient]]:
     """Build the live clients a real reap drives, keyed by the instance each item is from.
 
     Returns the gateway plus the httpx-backed clients that must be closed after the run --
@@ -229,14 +231,14 @@ async def build_reap_gateway(
     them (the executor enforces that) -- so they are built when present and simply absent
     otherwise, letting the executor produce the precise refusal.
 
-    The clients are built with the live :class:`RuntimeSafety`; when a real execute reaches
-    them they will be armed, and the transport guard enforces that independently of the
-    executor's own check.
+    The clients are built with the CALLER'S :class:`RuntimeSafety` -- the same snapshot the
+    executor itself runs under -- so the transport guard and the executor can never read
+    two different switch states for one run. The guard still enforces armed-plus-declared
+    independently of the executor's own check.
     """
     from reaper.services.executor import ReapGateway
 
     async with session_factory() as session:
-        safety = await app_settings.runtime_safety(session, settings)
         rows = (
             (await session.execute(select(Instance).where(Instance.enabled.is_(True))))
             .scalars()
@@ -248,7 +250,7 @@ async def build_reap_gateway(
 
     radarr: dict[int, RadarrClient] = {}
     sonarr: dict[int, SonarrClient] = {}
-    closers: list[BaseClient] = []
+    closers: list[BaseClient | PlexClient] = []
     tautulli: TautulliClient | None = None
 
     for row in rows:
@@ -282,6 +284,8 @@ async def build_reap_gateway(
         if plex_uri is not None and plex_token is not None
         else None
     )
+    if plex is not None:
+        closers.append(plex)
 
     gateway = ReapGateway(radarr=radarr, sonarr=sonarr, plex=plex, tautulli=tautulli)
     return gateway, closers
@@ -304,25 +308,25 @@ async def run_scan(
     """
     emit = on_progress or (lambda _p: None)
 
-    radarrs, sonarrs, tautulli, seerr, plex = await build_sources(session_factory, settings, box)
-
-    async with session_factory() as policy_session:
-        from reaper.api.routes import active_policies
-
-        movie_policy, tv_policy = await active_policies(policy_session)
-        # The grace window is a profile setting, read here so the scan can restart the grace
-        # clock for an item that left the condemned set and returned (see
-        # snapshot._record_first_flagged); a longer gap than this means a genuine departure.
-        profile_settings = await profiles.active_profile_settings(policy_session)
-    movie_gates = build_gates(movie_policy)
-    tv_gates = build_gates(tv_policy)
-
     async with AsyncExitStack() as stack:
-        for source in radarrs:
-            await stack.enter_async_context(source.client)
-        for sonarr in sonarrs:
-            await stack.enter_async_context(sonarr.client)
-        await stack.enter_async_context(tautulli)
+        # Sources are constructed INSIDE the stack scope, and build_sources enters each
+        # client the moment it exists -- so a failure constructing a later client, or
+        # anything below, can never leak the earlier ones (rule 34). Seerr and Plex are
+        # owned by the same stack; they used to be reclaimed only by GC.
+        radarrs, sonarrs, tautulli, seerr, plex = await build_sources(
+            session_factory, settings, box, stack=stack
+        )
+
+        async with session_factory() as policy_session:
+            movie_policy, tv_policy = await profiles.active_policies(policy_session)
+            # The grace window is a profile setting, read here so the scan can restart
+            # the grace clock for an item that left the condemned set and returned (see
+            # snapshot._record_first_flagged); a longer gap than this means a genuine
+            # departure.
+            profile_settings = await profiles.active_profile_settings(policy_session)
+        movie_gates = build_gates(movie_policy)
+        tv_gates = build_gates(tv_policy)
+
         session = await stack.enter_async_context(session_factory())
 
         # Failures to gather BEFORE the freeze are collected here and handed to the scan,

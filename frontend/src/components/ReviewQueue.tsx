@@ -1050,7 +1050,7 @@ export function ReviewQueue({
                   return next;
                 })
               }
-              title="Select (or clear) every card loaded"
+              title="Select (or clear) every card shown so far. Scroll to show more."
             >
               {allShownSelected ? "Deselect all" : "Select all"}
             </button>

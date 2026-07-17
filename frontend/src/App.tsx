@@ -31,16 +31,19 @@ const NAV: { id: View; label: string }[] = [
  *  always, because "can this thing delete my library right now?" should never require
  *  reading a settings page to answer. */
 function SafetyBanner() {
-  const { data, isLoading, isError } = useQuery({ queryKey: ["health"], queryFn: api.health });
+  // The same authenticated query key the deletion toggle invalidates, so arming or
+  // disarming updates this banner in the same render pass. (/api/health is a bare
+  // liveness probe now; it deliberately says nothing about the armed state.)
+  const { data, isLoading, isError } = useQuery({ queryKey: ["safety"], queryFn: api.safety });
 
   // On the very first fetch we genuinely know nothing yet -- stay quiet rather than flash a
   // state we might immediately contradict.
   if (isLoading) return null;
 
-  // The banner's whole promise is that the regime is stated *always*. If /health can't be
-  // reached and React Query has no last-known value to show, we must not just disappear --
-  // an absent banner reads as "nothing to worry about". Say the state is unknown, in the
-  // amber "we could not look" tone, so it never reads as safe.
+  // The banner's whole promise is that the regime is stated *always*. If the safety state
+  // can't be read and React Query has no last-known value to show, we must not just
+  // disappear -- an absent banner reads as "nothing to worry about". Say the state is
+  // unknown, in the amber "we could not look" tone, so it never reads as safe.
   if (isError || !data) {
     return (
       <div className="banner banner-unknown">
@@ -53,7 +56,7 @@ function SafetyBanner() {
     );
   }
 
-  if (!data.destructive_actions_enabled) {
+  if (!data.destructive_enabled) {
     return (
       <div className="banner banner-safe">
         <span className="banner-dot" aria-hidden="true" />
@@ -153,6 +156,31 @@ function UserMenu({ user }: { user: AuthUser }) {
   );
 }
 
+/** What the why-panel's column shows while the reasoning is loading, or when it could not
+ *  be loaded at all. The column is already reserved the moment an item is selected, so
+ *  leaving it blank would read as "the app hung"; and it must keep its own close button,
+ *  or a failed fetch would strand the reader in split view. */
+function WhyPanelFallback({ error, onClose }: { error: boolean; onClose: () => void }) {
+  return (
+    <aside className="why">
+      <header className="why-head">
+        <h2>{error ? "Something went wrong" : "Loading…"}</h2>
+        <button className="ghost why-close" onClick={onClose} aria-label="Close">
+          ✕
+        </button>
+      </header>
+      {error ? (
+        <p className="notice notice-error">
+          Couldn't load the reasons for this item. The item itself is unaffected. Close this
+          panel and click the item to try again.
+        </p>
+      ) : (
+        <p className="muted">Fetching what Reaper saw…</p>
+      )}
+    </aside>
+  );
+}
+
 function Dashboard({ user }: { user: AuthUser }) {
   const [view, setView] = useState<View>("review");
   const [verdict, setVerdict] = useState<Verdict>("condemn");
@@ -166,7 +194,7 @@ function Dashboard({ user }: { user: AuthUser }) {
     retry: false,
   });
 
-  const { data: detail } = useQuery({
+  const { data: detail, isError: detailError } = useQuery({
     queryKey: ["candidate", selectedId],
     queryFn: () => api.candidate(selectedId!),
     enabled: selectedId !== null,
@@ -216,7 +244,12 @@ function Dashboard({ user }: { user: AuthUser }) {
               selectedId={selectedId}
               onSelect={setSelectedId}
             />
-            {detail && <WhyPanel item={detail} onClose={() => setSelectedId(null)} />}
+            {selectedId !== null &&
+              (detail ? (
+                <WhyPanel item={detail} onClose={() => setSelectedId(null)} />
+              ) : (
+                <WhyPanelFallback error={detailError} onClose={() => setSelectedId(null)} />
+              ))}
           </>
         ) : view === "policy" ? (
           <PolicyEditor />

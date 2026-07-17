@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import structlog
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from pydantic import BaseModel
 
 from reaper import __version__
@@ -53,9 +53,6 @@ class HealthResponse(BaseModel):
     """
 
     status: str
-    version: str
-    destructive_actions_enabled: bool
-    safety_note: str | None = None
 
 
 @asynccontextmanager
@@ -184,17 +181,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = settings
 
     @app.get("/api/health")
-    async def health(request: Request) -> HealthResponse:
-        # The banner reads this, so it must reflect whether deletion is actually on right
-        # now -- the stored toggle -- not just the environment's first-run default.
-        async with request.app.state.session_factory() as session:
-            safety = await app_settings.runtime_safety(session, settings)
-        return HealthResponse(
-            status="ok",
-            version=__version__,
-            destructive_actions_enabled=safety.destructive_allowed,
-            safety_note=safety.why_blocked(),
-        )
+    async def health() -> HealthResponse:
+        # An UNAUTHENTICATED liveness probe (the container HEALTHCHECK hits it), so it
+        # tells an anonymous caller nothing: no armed state, no safety note, no exact
+        # version. The safety banner reads the authenticated /api/settings/safety.
+        return HealthResponse(status="ok")
 
     app.include_router(auth_router)
     app.include_router(setup_router)

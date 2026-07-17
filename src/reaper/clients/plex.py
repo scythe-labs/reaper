@@ -31,11 +31,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 from collections.abc import Iterator
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 from xml.etree.ElementTree import Element
 
 import requests
@@ -182,13 +184,29 @@ def benign_label_write() -> Iterator[None]:
     only by the executor -- the narrowness is what keeps this from becoming a general
     licence to write. It tells :class:`GuardedSession` the write is the reversible,
     file-touching-nothing label rather than a deletion, so it may be permitted in
-    read-only mode *if the operator opted in on the host*. It never permits a delete.
+    read-only mode *if the operator opted in on the host*. It never permits a delete,
+    and that is enforced structurally, not by call-site discipline: the benign branch
+    matches only a PUT to the batch label-edit endpoint (``_LABEL_EDIT``); any other
+    verb or path inside this block falls back to the armed-and-declared rule.
     """
     token = _benign_label.set(True)
     try:
         yield
     finally:
         _benign_label.reset(token)
+
+
+#: GET-shaped mutations. Plex triggers a section scan with ``GET
+#: /library/sections/{key}/refresh`` -- and on a server with "Empty trash automatically
+#: after every scan" enabled, scanning a path with missing files purges those items'
+#: library records. Method filtering alone would wave that straight through (the same
+#: reason the Tautulli client carries a command allow-list), so the guard classifies
+#: these paths as mutations regardless of verb.
+_GET_SHAPED_MUTATIONS = re.compile(r"^/library/sections/[^/]+/refresh$")
+
+#: The one write shape ``benign_label_write`` may permit: plexapi's batch label edit,
+#: a PUT to ``/library/sections/{key}/all``.
+_LABEL_EDIT = re.compile(r"^/library/sections/[^/]+/all$")
 
 
 class GuardedSession(requests.Session):
@@ -199,13 +217,21 @@ class GuardedSession(requests.Session):
         self._safety = safety
 
     def request(self, method: str, url: str, *args: Any, **kwargs: Any) -> requests.Response:  # type: ignore[override]
-        if method.upper() not in SAFE_METHODS:
-            if _benign_label.get():
-                # A "Leaving Soon" label write: reversible, touches no file. Gated like a
-                # delete by default (needs arming); an operator may opt in to allowing it
-                # while read-only so the grace-period warning can appear before deletion
-                # is ever enabled. This branch can NEVER permit a deletion -- only the
-                # Leaving Soon sync sets the flag, and it writes only labels.
+        path = urlsplit(url).path
+        mutates = method.upper() not in SAFE_METHODS or bool(_GET_SHAPED_MUTATIONS.match(path))
+        if mutates:
+            if (
+                _benign_label.get()
+                and method.upper() == "PUT"
+                and _LABEL_EDIT.match(path) is not None
+            ):
+                # The "Leaving Soon" label reconcile: reversible, touches no file, and
+                # structurally confined to the batch label-edit endpoint. Gated like a
+                # delete by default (needs arming); an operator may opt in to allowing
+                # it while read-only so the grace-period warning can appear before
+                # deletion is ever enabled. This branch can NEVER permit a deletion:
+                # a DELETE, or a PUT to any other path, does not match it and falls
+                # through to the armed-and-declared rule below.
                 if not self._safety.leaving_soon_write_allowed:
                     raise SafetyViolationError(
                         f"Blocked {method} to Plex (Leaving Soon label). Enable deletion, "
@@ -484,6 +510,30 @@ class PlexClient:
         except Exception as exc:
             raise PlexError(f"Could not count items in {section_title!r}: {exc}") from exc
 
+    async def aclose(self) -> None:
+        """Close the underlying plexapi session, if one was ever built.
+
+        plexapi rides one ``requests.Session`` (built in ``_connect``); nothing but GC
+        reclaims its pooled sockets unless this is called. Safe when never connected,
+        and safe to call twice.
+        """
+        server, self._server = self._server, None
+        if server is None:
+            return
+
+        def close() -> None:
+            session = getattr(server, "_session", None)
+            if session is not None:
+                session.close()
+
+        await asyncio.to_thread(close)
+
+    async def __aenter__(self) -> PlexClient:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.aclose()
+
     async def is_refreshing(self, section_title: str) -> bool:
         """Is a scan currently running on this section?
 
@@ -503,24 +553,6 @@ class PlexClient:
         except Exception as exc:
             log.warning("plex.refresh_state_unreadable", section=section_title, error=str(exc))
             return True
-
-    async def labels(self, section_title: str, rating_key: int) -> list[str]:
-        """The labels currently on an item, as Plex actually stores them.
-
-        Returned verbatim (so the UI shows what is really there), but compare them with
-        ``normalise_label`` -- Plex title-cases what you write.
-        """
-        server = await self._connect()
-
-        def read() -> list[str]:
-            item = server.library.section(section_title).fetchItem(rating_key)
-            item.reload()
-            return [str(label.tag) for label in item.labels]
-
-        try:
-            return await asyncio.to_thread(read)
-        except Exception as exc:
-            raise PlexError(f"Could not read labels for {rating_key}: {exc}") from exc
 
     async def movie_section_titles(self) -> list[str]:
         """The titles of the movie libraries. Leaving Soon operates on movies (the reap
@@ -630,6 +662,12 @@ class PlexClient:
         full metadata re-download for every item in the library. They are one word apart
         and differ by orders of magnitude, and confusing them on a large library is an
         outage.
+
+        plexapi issues this as a **GET**, but it is a mutation in effect: on a server set
+        to empty trash after every scan, rescanning a path with missing files purges those
+        items. ``GuardedSession`` therefore classifies the path as a mutation
+        (``_GET_SHAPED_MUTATIONS``), so this call requires arming plus the executor's
+        ``declared_mutation``, exactly like ``empty_trash``.
         """
         server = await self._connect()
 

@@ -23,7 +23,7 @@ import math
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -159,12 +159,15 @@ class PlexPollOut(BaseModel):
 
 
 class LocalLoginIn(BaseModel):
-    username: str
-    password: str
+    # Bounded, like every field that reaches Argon2 or a lockout key: hashing
+    # unbounded input is a CPU-exhaustion vector, and a megabyte "username" should
+    # be a 422, not a lockout-table entry.
+    username: str = Field(max_length=128)
+    password: str = Field(max_length=128)
 
 
 class RecoverIn(BaseModel):
-    token: str
+    token: str = Field(max_length=256)
 
 
 # ---------------------------------------------------------------------------

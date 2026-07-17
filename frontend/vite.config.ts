@@ -11,9 +11,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // The scan endpoint is a long-lived SSE stream; the proxy passes text/event-stream
-      // through unbuffered, so progress events arrive as they are emitted rather than in
-      // one lump when the scan finishes.
+      // Scan progress is POLLED from /api/scan/status (there is no SSE stream); the
+      // proxy just forwards /api to the backend unchanged.
       "/api": {
         target: "http://127.0.0.1:8420",
         changeOrigin: true,

@@ -242,6 +242,36 @@ class TestSeasonPruningNeedsNoBooleanCleverness:
         assert evaluate_rules(rules, newest_two).matched is False
 
 
+class TestTextMatchingIsForgiving:
+    """Plex title-cases stored text and owners type targets by hand, so ``in`` and
+    ``eq`` must not fail on a capital letter or the space after a comma. And genres
+    are comma-joined lists: eq/in evaluate per element there, or a multi-genre title
+    could never match any single genre and the protection would silently never fire."""
+
+    def test_in_survives_spaces_and_case(self) -> None:
+        facts = _facts(quality=Known(value="Bluray-1080p", source="radarr"))
+        cond = Condition(field="quality", op=Op.IN, value="bluray-1080p, SDTV")
+        assert evaluate(cond, facts).matched is True
+
+    def test_eq_on_text_is_case_insensitive(self) -> None:
+        facts = _facts(quality=Known(value="SDTV", source="radarr"))
+        assert evaluate(Condition(field="quality", op=Op.EQ, value="sdtv"), facts).matched is True
+
+    def test_a_multi_genre_title_can_equal_a_single_genre(self) -> None:
+        facts = _facts(genres=Known(value="Horror, Comedy", source="sonarr"))
+        assert evaluate(Condition(field="genre", op=Op.EQ, value="horror"), facts).matched is True
+
+    def test_in_on_genres_matches_any_shared_element(self) -> None:
+        facts = _facts(genres=Known(value="Horror, Comedy", source="sonarr"))
+        cond = Condition(field="genre", op=Op.IN, value="Anime, comedy")
+        assert evaluate(cond, facts).matched is True
+
+    def test_in_with_no_shared_element_does_not_match(self) -> None:
+        facts = _facts(genres=Known(value="Horror, Comedy", source="sonarr"))
+        cond = Condition(field="genre", op=Op.IN, value="Anime, Documentary")
+        assert evaluate(cond, facts).matched is False
+
+
 class TestValueTypesAreValidatedAtTheBoundary:
     """A JSON string on a numeric field ("500" for a byte threshold) used to save and
     hash cleanly, then crash every subsequent scan inside score()/evaluate_all. The type

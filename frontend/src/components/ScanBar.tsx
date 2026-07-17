@@ -10,7 +10,7 @@
 // A scan is read-only: it reads from the *arr and Tautulli, scores, and writes rows to
 // Reaper's own database. GuardedTransport would refuse a mutating call even if one were tried.
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { api, type Snapshot } from "../api";
 import { bytes, count, date } from "../format";
@@ -50,19 +50,25 @@ export function ScanBar({ snapshot }: { snapshot: Snapshot | undefined }) {
     wasScanning.current = scanning;
   }, [scanning, queryClient]);
 
-  async function start() {
+  // A mutation, not a fire-and-forget async onClick: a start that fails must say so,
+  // or the button appears to do nothing at all.
+  const start = useMutation({
+    mutationFn: () => api.startScan(),
     // Seed the cache with the returned status so polling begins immediately.
-    const started = await api.startScan();
-    queryClient.setQueryData(["scanStatus"], started);
-  }
+    onSuccess: (started) => queryClient.setQueryData(["scanStatus"], started),
+  });
 
   const pct = status && status.total > 0 ? Math.round((status.done / status.total) * 100) : null;
 
   return (
     <section className="scanbar">
       <div className="scanbar-main">
-        <button className="primary" onClick={start} disabled={scanning}>
-          {scanning ? "Scanning…" : "Scan library"}
+        <button
+          className="primary"
+          onClick={() => start.mutate()}
+          disabled={scanning || start.isPending}
+        >
+          {scanning ? "Scanning…" : start.isPending ? "Starting…" : "Scan library"}
         </button>
 
         {snapshot && !scanning && (
@@ -93,6 +99,9 @@ export function ScanBar({ snapshot }: { snapshot: Snapshot | undefined }) {
         </div>
       )}
 
+      {start.error && (
+        <p className="error">The scan didn't start: {start.error.message}</p>
+      )}
       {status?.error && <p className="error">{status.error}</p>}
 
       {snapshot?.degraded && (

@@ -47,8 +47,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from reaper.clock import from_epoch
-from reaper.engine.calibration import RewatchPrior
-from reaper.engine.gates import Evaluation, Facts, Gate, GateId, evaluate_all
+from reaper.engine.calibration import NotCalibratedError, RewatchPrior
+from reaper.engine.gates import Evaluation, Facts, Gate, evaluate_all
 from reaper.engine.observation import Absent, Known
 from reaper.engine.policy import PolicyBody
 from reaper.engine.signals import SignalConfig, score
@@ -161,20 +161,38 @@ class BacktestResult:
         """
         if not self.condemned_dormancy:
             return 0.0
+        rates, _ = self._expected_rates()
+        return sum(rates) / len(rates)
 
-        # Use the derived prior ONLY when it is fully calibrated. A partially-calibrated prior
-        # has thin buckets, and ``RewatchPrior.rate_for`` deliberately RAISES
-        # NotCalibratedError for one -- a single condemned item landing there would otherwise
-        # crash the whole report, since lift/beats_random/summary all funnel through here.
-        # Falling back to the shared curve keeps this a reportable "partial calibration" state
-        # rather than a fatal one, and reuses ``prior_is_derived`` so the number and the
-        # summary's "borrowed from another library" label always describe the same rate.
-        rate = (
-            self.prior.rate_for
-            if self.prior is not None and self.prior_is_derived
-            else rewatch_prior
-        )
-        return sum(rate(d) for d in self.condemned_dormancy) / len(self.condemned_dormancy)
+    @property
+    def expected_rate_borrowed_items(self) -> int:
+        """How many condemned items had to borrow the fallback curve for their baseline."""
+        return self._expected_rates()[1]
+
+    def _expected_rates(self) -> tuple[list[float], int]:
+        """Per-item baseline rates, plus how many fell back to the borrowed curve.
+
+        Use the derived prior ONLY when it is fully calibrated -- a thin bucket's rate is
+        noise that looks like measurement, so ``prior_is_derived`` refuses the whole
+        curve then. But a calibrated prior can still hold EMPTY buckets (nothing in the
+        history is that old), and ``RewatchPrior.rate_for`` deliberately raises
+        ``NotCalibratedError`` for one rather than guess. A single condemned item landing
+        in an empty bucket must not crash lift/beats_random/summary, so that ONE ITEM
+        borrows the shared fallback curve, and the count of such items keeps the mixed
+        provenance visible in ``summary()``.
+        """
+        derived = self.prior.rate_for if self.prior is not None and self.prior_is_derived else None
+        rates: list[float] = []
+        borrowed = 0
+        for days in self.condemned_dormancy:
+            if derived is not None:
+                try:
+                    rates.append(derived(days))
+                    continue
+                except NotCalibratedError:
+                    borrowed += 1
+            rates.append(rewatch_prior(days))
+        return rates, borrowed
 
     @property
     def prior_is_derived(self) -> bool:
@@ -232,6 +250,13 @@ class BacktestResult:
                 if self.prior_is_derived
                 else "⚠ borrowed from another library -- not meaningful here"
             )
+            borrowed = self.expected_rate_borrowed_items
+            if self.prior_is_derived and borrowed:
+                source = (
+                    f"measured on your library; {borrowed} of "
+                    f"{len(self.condemned_dormancy)} items are older than its coverage "
+                    "and borrow the fallback curve"
+                )
             lines += [
                 "",
                 f"  regret rate          {self.regret_rate:.0%}",
@@ -390,15 +415,15 @@ async def run(
     names = users or {}
     deleted_at = cutoff + timedelta(days=grace_days)
 
-    popularity_window = next(
-        (g.window_days for g in policy.gates if g.gate is GateId.SERVER_POPULARITY),
-        365,
-    )
+    popularity_window = policy.popularity_window_days()
 
     signals = [
         SignalConfig(signal=s.signal, weight=s.weight, saturate_at=s.saturate_at, floor=s.floor)
         for s in policy.signals
     ]
+    # Hoisted out of the loop exactly like ``signals``: pure functions of the frozen policy.
+    custom_condemn = policy.custom_signal_configs()
+    keeps = policy.keep_configs()
 
     for item in items:
         plays = await _plays(engine, item.rating_key, media_type=policy.media_type)
@@ -428,12 +453,14 @@ async def run(
         # Custom condemn rules are scored here too, so the lift gate measures the composed
         # formula (this is what catches a size-based custom rule the way it catches built-in
         # SIZE). Metadata fields the historical reconstruction does not populate (genre,
-        # quality, ...) read Absent and the rule is inert here -- a known v1 limitation.
+        # quality, ...) read Absent: a boolean rule simply does not match, and a graded
+        # rule adds zero pressure while keeping its weight in the denominator -- the same
+        # fail-safe reading a live scan gives Absent. A known v1 limitation.
         item_score = score(
             signals,
             facts,
-            custom_condemn=policy.custom_signal_configs(),
-            keeps=policy.keep_configs(),
+            custom_condemn=custom_condemn,
+            keeps=keeps,
         )
         verdict = decide_verdict(
             protected=evaluation.protected,

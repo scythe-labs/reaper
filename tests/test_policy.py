@@ -35,6 +35,35 @@ def _policy(**overrides: object) -> PolicyBody:
     return PolicyBody(**{**base, **overrides})  # type: ignore[arg-type]
 
 
+class TestPopularityWindow:
+    """The one place snapshot and backtest read the recent-watchers window from."""
+
+    def test_reads_the_enabled_gates_window(self) -> None:
+        body = _policy(
+            gates=(
+                GateSetting(gate=GateId.WHITELISTED),
+                GateSetting(gate=GateId.SERVER_POPULARITY, threshold=2, window_days=30),
+            )
+        )
+        assert body.popularity_window_days() == 30
+
+    def test_a_disabled_gate_must_not_leak_its_window(self) -> None:
+        """A stale short window on a switched-off gate would quietly raise FEW_WATCHERS
+        pressure across the whole library -- the fact must fall back to the default."""
+        body = _policy(
+            gates=(
+                GateSetting(gate=GateId.WHITELISTED),
+                GateSetting(
+                    gate=GateId.SERVER_POPULARITY, enabled=False, threshold=2, window_days=30
+                ),
+            )
+        )
+        assert body.popularity_window_days() == 365
+
+    def test_no_popularity_gate_falls_back_to_a_year(self) -> None:
+        assert _policy().popularity_window_days() == 365
+
+
 class TestTheHash:
     def test_the_same_policy_hashes_the_same(self) -> None:
         assert _policy().policy_hash() == _policy().policy_hash()

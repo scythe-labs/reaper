@@ -32,7 +32,7 @@ The interlocks, in order, and why each exists:
    does not re-read the *arr here, so a movie deleted or resized in Radarr after approval
    would not change this hash. Live drift is caught elsewhere, by the per-item interlocks
    below (the streaming veto, the played-since-approval check, and the per-item
-   existence/size re-reads at delete time); a stale tab replaying yesterday's plan is
+   existence re-reads at delete time); a stale tab replaying yesterday's plan is
    stopped by the route's confirmation-phrase recompute and the "executes once" guard.
 2. **Manual spare re-check, per item.** The owner may spare an item by hand *after* the
    plan is built -- during the grace window this executor exists for. A spare does not
@@ -473,7 +473,7 @@ class Executor:
         # this is a snapshot-integrity check: it fires if a condemned candidate row is lost or
         # tampered with under the run (e.g. retention GC), NOT if the live library moved --
         # nothing re-reads the *arr here. Real live drift (a movie deleted or resized in
-        # Radarr since approval) is caught by the per-item interlocks and the existence/size
+        # Radarr since approval) is caught by the per-item interlocks and the existence
         # re-reads at delete time, and a stale tab is stopped by the route's confirmation
         # recompute and the "executes once" guard above.
         current_hash = manifest_hash(sorted(condemned.values(), key=lambda c: c.media_key))
@@ -906,10 +906,11 @@ class Executor:
             # canary) survivable -- the run continues with the others.
             return self._fail(delete, f"the *arr call failed: {exc}")
         except SafetyViolationError as exc:
-            # The transport guard refused the mutation mid-send. In production the executor
-            # and clients share one RuntimeSafety, so this cannot happen -- but if it ever
-            # did, a clean failed item (the canary aborts the run) is far better than a
-            # crash that leaves the run in an unknown state.
+            # The transport guard refused the mutation mid-send. The execute route hands
+            # its own RuntimeSafety snapshot to build_reap_gateway, so the guard and this
+            # executor decide from one switch state -- but if they ever disagreed, a clean
+            # failed item (the canary aborts the run) is far better than a crash that
+            # leaves the run in an unknown state.
             return self._fail(delete, f"the transport guard blocked the delete: {exc}")
         except ExecutionError as exc:
             # A missing instance route. Same treatment: fail this item, not the world.
@@ -936,6 +937,17 @@ class Executor:
         # Read the tmdbId now, while the movie still exists, for the exclusion re-read.
         movie = await radarr.movie_by_id(ref.arr_id)
         tmdb_id = int(movie.get("tmdbId") or 0)
+        if tmdb_id == 0:
+            # Fail CLOSED before anything is sent: with no tmdbId, _exclusion_landed can
+            # never verify, so the delete would always end "not fully confirmed" -- and by
+            # then the file would already be gone (worse when this item is the canary).
+            return self._fail(
+                delete,
+                "Radarr lists no TMDB id for this movie, so the import exclusion could "
+                "never be verified after deleting. The file was kept. Fix the movie's "
+                "identification in Radarr, then plan again.",
+                checks=checks,
+            )
 
         await self._mark_sent(step)
         await radarr.delete_movie(ref.arr_id, delete_files=True, add_exclusion=True)
@@ -1371,10 +1383,15 @@ def _row_timestamp(row: object) -> int | None:
         return None
     for field_name in ("stopped", "date"):
         value = row.get(field_name)
-        if value is None:
+        if not value:
+            # None, 0 and "" all mean "no time recorded" -- Tautulli writes 0, not a real
+            # epoch-1970 stamp, for a missing stop time. Fall through to the next field
+            # rather than compare 0 against the approval time (which could never spare).
             continue
         try:
-            return int(value)
+            ts = int(value)
         except (TypeError, ValueError):
             continue
+        if ts > 0:
+            return ts
     return None

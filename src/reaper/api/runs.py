@@ -209,9 +209,12 @@ async def get_run(request: Request, run_id: int) -> RunOut:
 async def dry_run(request: Request, run_id: int) -> RunReportOut:
     """Walk the plan end to end with every interlock, and send nothing.
 
-    This is the proof: the manifest re-check, the caps, the canary ordering and each
-    per-item veto all run for real, but every mutating call is recorded rather than
-    issued. The transport guard sits underneath as the independent backstop.
+    This is the proof: the manifest re-check, the caps and the canary ordering all run
+    for real, and every mutating call is recorded rather than issued. What a dry run
+    deliberately does NOT prove are the live per-item vetoes (someone streaming the item
+    right now, a play landing after approval, a missing rating key): those are
+    moment-of-deletion checks that only run on a real send, where the moment is real.
+    The transport guard sits underneath as the independent backstop.
     """
     settings: Settings = request.app.state.settings
 
@@ -286,7 +289,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
     # the final run state -- so a crash mid-run leaves an accurate record of what was done;
     # the commit below is only a backstop for anything still pending. Every client is
     # closed on the way out, however the run ends.
-    gateway, closers = await build_reap_gateway(factory, settings, box)
+    gateway, closers = await build_reap_gateway(factory, box, safety=safety)
     async with AsyncExitStack() as stack:
         for client in closers:
             await stack.enter_async_context(client)

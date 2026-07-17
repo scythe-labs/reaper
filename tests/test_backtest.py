@@ -11,7 +11,8 @@ from __future__ import annotations
 from datetime import timedelta
 
 from reaper.clock import utcnow
-from reaper.engine.backtest import Item, facts_as_of
+from reaper.engine.backtest import BacktestResult, Item, facts_as_of, rewatch_prior
+from reaper.engine.calibration import Bucket, RewatchPrior
 from reaper.engine.observation import Known
 
 NOW = utcnow()
@@ -28,6 +29,45 @@ def _item(added_days_ago: int = 1000) -> Item:
         imdb_rating_tenths=73,
         imdb_votes=500_000,
     )
+
+
+def _empty_bucket_prior() -> RewatchPrior:
+    """Calibrated as a whole (no THIN buckets), but the old-age bucket is EMPTY --
+    nothing in the history is that old, so it has no rate at all."""
+    return RewatchPrior(
+        buckets=(
+            Bucket(low=0, high=365, samples=40, rewatched=10),
+            Bucket(low=365, high=10**9, samples=0, rewatched=0),
+        ),
+        population=40,
+        window_days=365,
+        computed_at=NOW,
+    )
+
+
+class TestExpectedRegretRateWithEmptyBuckets:
+    """One condemned item landing in an empty bucket must not crash the report --
+    ``rate_for`` deliberately raises for it, so that item borrows the fallback curve."""
+
+    def test_an_item_in_an_empty_bucket_borrows_the_fallback(self) -> None:
+        result = BacktestResult(cutoff=CUTOFF, condemn_at=70, prior=_empty_bucket_prior())
+        result.condemned_dormancy = [400.0]  # lands in the empty bucket
+
+        assert result.prior_is_derived is True
+        assert result.expected_regret_rate == rewatch_prior(400.0)
+        assert result.expected_rate_borrowed_items == 1
+
+    def test_mixed_provenance_is_averaged_and_reported(self) -> None:
+        result = BacktestResult(cutoff=CUTOFF, condemn_at=70, prior=_empty_bucket_prior())
+        result.condemned_dormancy = [100.0, 400.0]
+        result.condemned.append(("A Film", 90.0, 1_000))
+
+        expected = (0.25 + rewatch_prior(400.0)) / 2
+        assert abs(result.expected_regret_rate - expected) < 1e-9
+        assert result.expected_rate_borrowed_items == 1
+        # summary() funnels through the same rates -- it must render, not raise, and
+        # it must say the baseline is partly borrowed.
+        assert "borrow the fallback curve" in result.summary()
 
 
 class TestFactsAreRebuiltAsOfTheCutoff:

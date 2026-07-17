@@ -63,7 +63,11 @@ def _request(
 
 
 def _tv_request(
-    *, tvdb_id: int | None, rating_key: str | None, request_id: int = 1
+    *,
+    tvdb_id: int | None,
+    rating_key: str | None,
+    request_id: int = 1,
+    seasons: tuple[int, ...] = (),
 ) -> MediaRequest:
     return MediaRequest(
         request_id=request_id,
@@ -79,6 +83,7 @@ def _tv_request(
         arr_id=1,
         arr_instance_id=0,
         available_at=NOW - timedelta(days=400),
+        seasons=seasons,
     )
 
 
@@ -129,6 +134,39 @@ class TestArrSizes:
         uhd = _FakeRadarr([{"tmdbId": 1, "sizeOnDisk": 40 * GB}])
         sizes = await fairness._arr_sizes([hd, uhd], [], [req])  # type: ignore[list-item]
         assert sizes == {"700": 40 * GB}
+
+    async def test_a_season_request_is_charged_its_seasons_not_the_series(self) -> None:
+        """A request naming season 2 of a large show is charged what season 2 occupies
+        on disk, not the whole series -- Sonarr's per-season statistics carry it."""
+        req = _tv_request(tvdb_id=99, rating_key="700", seasons=(2,))
+        sonarr = _FakeSonarr(
+            [
+                {
+                    "tvdbId": 99,
+                    "statistics": {"sizeOnDisk": 50 * GB},
+                    "seasons": [
+                        {"seasonNumber": 1, "statistics": {"sizeOnDisk": 40 * GB}},
+                        {"seasonNumber": 2, "statistics": {"sizeOnDisk": 10 * GB}},
+                    ],
+                }
+            ]
+        )
+        sizes = await fairness._arr_sizes([], [sonarr], [req])  # type: ignore[list-item]
+        assert sizes == {"700": 10 * GB}
+
+    async def test_a_request_naming_no_seasons_keeps_the_series_total(self) -> None:
+        req = _tv_request(tvdb_id=99, rating_key="700")
+        sonarr = _FakeSonarr(
+            [
+                {
+                    "tvdbId": 99,
+                    "statistics": {"sizeOnDisk": 50 * GB},
+                    "seasons": [{"seasonNumber": 1, "statistics": {"sizeOnDisk": 40 * GB}}],
+                }
+            ]
+        )
+        sizes = await fairness._arr_sizes([], [sonarr], [req])  # type: ignore[list-item]
+        assert sizes == {"700": 50 * GB}
 
     async def test_no_arr_configured_yields_no_sizes(self) -> None:
         req = _tv_request(tvdb_id=99, rating_key="700")
@@ -199,6 +237,38 @@ class TestRollUp:
 
         assert report.unmatched_requests == 1
         assert report.total_reclaimable_items == 0
+
+    def test_unjudgeable_requests_are_counted_per_request(self) -> None:
+        """Two people's requests for one unjudgeable title are TWO requests the report
+        could not judge -- the caption speaks of requests, so the count must too."""
+        reqs = [
+            _request(plex_id=100, name="Alice", rating_key="555", request_id=1),
+            _request(plex_id=200, name="Bob", rating_key="555", request_id=2),
+        ]
+        # No media info for "555": the whole group is unjudgeable.
+        report = evaluate_fairness(reqs, {}, {}, POLICY, now=NOW)
+        assert report.unmatched_requests == 2
+
+    def test_a_request_with_no_availability_clock_counts_as_unjudgeable(self) -> None:
+        reqs = [_request(plex_id=100, name="Alice", rating_key="555", days_available=None)]
+        media = {"555": MediaInfo(title="No Clock", size_bytes=5 * GB)}
+        report = evaluate_fairness(reqs, {}, media, POLICY, now=NOW)
+        assert report.unmatched_requests == 1
+        assert report.total_reclaimable_items == 0
+
+    def test_the_horizon_clamps_the_availability_clock(self) -> None:
+        """Available for 400 days, but the watch mirror only reaches back 30: that is
+        'not watched in 30 days of visibility', which is under the 90-day floor -- not
+        a reclaimable title. A shallow mirror must not inflate the leaderboard."""
+        reqs = [_request(plex_id=100, name="Alice", rating_key="555", days_available=400)]
+        media = {"555": MediaInfo(title="Aged Title", size_bytes=8 * GB)}
+
+        report = evaluate_fairness(
+            reqs, {}, media, POLICY, now=NOW, horizon=NOW - timedelta(days=30)
+        )
+
+        assert report.total_reclaimable_items == 0
+        assert report.horizon_at == NOW - timedelta(days=30)
 
     def test_rows_are_ordered_by_disk_granted(self) -> None:
         reqs = [

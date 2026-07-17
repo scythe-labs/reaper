@@ -675,11 +675,13 @@ function NotificationsPanel() {
 
 function AdminPasswordForm({ needed }: { needed: boolean }) {
   const queryClient = useQueryClient();
+  const [current, setCurrent] = useState("");
   const [pw, setPw] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const save = useMutation({
-    mutationFn: () => api.setAdminPassword(pw),
+    mutationFn: () => api.setAdminPassword(pw, needed ? undefined : current),
     onSuccess: () => {
+      setCurrent("");
       setPw("");
       setMsg("Password saved.");
       void queryClient.invalidateQueries({ queryKey: ["safety"] });
@@ -690,7 +692,11 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
     <div className="safety-row">
       <div>
         <strong>{needed ? "Set an admin password" : "Change the admin password"}</strong>
-        <p className="help">Choose something long, and keep it somewhere safe.</p>
+        <p className="help">
+          {needed
+            ? "Choose something long, and keep it somewhere safe."
+            : "Changing it needs the current password first."}
+        </p>
       </div>
       <form
         className="pw-form"
@@ -700,6 +706,15 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
           save.mutate();
         }}
       >
+        {!needed && (
+          <input
+            type="password"
+            value={current}
+            onChange={(e) => setCurrent(e.target.value)}
+            placeholder="current password"
+            autoComplete="current-password"
+          />
+        )}
         <input
           type="password"
           value={pw}
@@ -707,7 +722,11 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
           placeholder="at least 12 characters"
           autoComplete="new-password"
         />
-        <button type="submit" className="primary sm" disabled={pw.length < 8 || save.isPending}>
+        <button
+          type="submit"
+          className="primary sm"
+          disabled={pw.length < 8 || (!needed && current.length === 0) || save.isPending}
+        >
           Save
         </button>
         {msg && <span className="muted">{msg}</span>}

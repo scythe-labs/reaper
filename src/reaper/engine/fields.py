@@ -86,6 +86,11 @@ class FieldSpec:
     unit_suffix: str = ""
     """Rendered inside the input, so the unit cannot be misread."""
 
+    multi: bool = False
+    """The fact is a comma-joined list ("Horror, Comedy"), not one value. ``eq`` and
+    ``in`` evaluate per element -- a multi-genre title could otherwise never equal any
+    single genre, and a protection the owner wrote would silently never fire."""
+
     def allows(self, lane: Lane, op: Op) -> bool:
         return lane in self.lanes and op in self.ops
 
@@ -201,6 +206,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         type=FieldType.TEXT,
         lanes=(Lane.PROTECT,),
         ops=TEXT_OPS,
+        multi=True,
         read=lambda f: f.in_curated_list,
     ),
     FieldSpec(
@@ -246,6 +252,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         type=FieldType.TEXT,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=TEXT_OPS,
+        multi=True,
         read=lambda f: f.genres,
     ),
     FieldSpec(
@@ -396,7 +403,7 @@ def evaluate(condition: Condition, facts: Facts) -> ConditionResult:
     value = observation.value
     target = condition.value
     try:
-        matched = _compare(condition.op, value, target)
+        matched = _compare(condition.op, value, target, multi=spec.multi)
         detail = (
             f"{spec.label}: {_render(spec, value)} {condition.op.value} {_render(spec, target)}"
         )
@@ -417,16 +424,37 @@ def evaluate(condition: Condition, facts: Facts) -> ConditionResult:
     return ConditionResult(matched=matched, blocked=False, detail=detail)
 
 
-def _compare(op: Op, value: object, target: object) -> bool:
+def _split_csv(text: str) -> list[str]:
+    """Comma-separated elements, trimmed and casefolded -- how both sides of ``in``
+    (and the multi-valued side of ``eq``) are read."""
+    return [part.strip().casefold() for part in text.split(",") if part.strip()]
+
+
+def _compare(op: Op, value: object, target: object, *, multi: bool = False) -> bool:
     match op:
         case Op.GTE:
             return _num(value) >= _num(target)
         case Op.LTE:
             return _num(value) <= _num(target)
         case Op.EQ:
+            if isinstance(value, str) and isinstance(target, str):
+                # Case- and whitespace-insensitive for text: Plex title-cases what it
+                # stores, and the owner types the target by hand. A multi-valued fact
+                # matches when ANY of its elements equals the target.
+                if multi:
+                    return target.strip().casefold() in _split_csv(value)
+                return value.strip().casefold() == target.strip().casefold()
             return bool(value == target)
         case Op.IN:
-            return isinstance(target, str) and str(value) in target.split(",")
+            if not isinstance(target, str):
+                return False  # rejected at save by validate_for; a stored one cannot match
+            targets = set(_split_csv(target))
+            # Trimmed and casefolded on BOTH sides, or the space after a comma in
+            # "Anime, Documentary" (and Plex's casing) makes the list silently match
+            # nothing. A multi-valued fact matches on any shared element.
+            if multi and isinstance(value, str):
+                return not targets.isdisjoint(_split_csv(value))
+            return str(value).strip().casefold() in targets
         case Op.CONTAINS:
             return isinstance(target, str) and target.lower() in str(value).lower()
 

@@ -72,7 +72,7 @@ async def _snapshot_with(session: AsyncSession, condemned: list[tuple[str, int]]
 class TestService:
     async def test_spare_then_read_back(self, session: AsyncSession) -> None:
         await whitelist.spare(session, media_key="radarr:1:7", title="Kept", note="a favourite")
-        assert await whitelist.spared_keys(session) == {"radarr:1:7"}
+        assert await whitelist.overrides(session) == {"radarr:1:7": "spare"}
         spared = await whitelist.list_spared(session)
         assert (spared[0].title, spared[0].note) == ("Kept", "a favourite")
 
@@ -87,7 +87,7 @@ class TestService:
         await whitelist.spare(session, media_key="radarr:1:7", title="Kept", note=None)
         assert await whitelist.unspare(session, media_key="radarr:1:7") is True
         assert await whitelist.unspare(session, media_key="radarr:1:7") is False
-        assert await whitelist.spared_keys(session) == set()
+        assert await whitelist.overrides(session) == {}
 
 
 class TestOverrideService:
@@ -98,8 +98,6 @@ class TestOverrideService:
         await whitelist.set_override(
             session, media_key="radarr:1:9", title="Gone", decision="reap", note="done with it"
         )
-        assert await whitelist.spared_keys(session) == {"radarr:1:7"}
-        assert await whitelist.reaped_keys(session) == {"radarr:1:9"}
         assert await whitelist.overrides(session) == {"radarr:1:7": "spare", "radarr:1:9": "reap"}
         assert await whitelist.override_for(session, "radarr:1:9") == "reap"
         assert await whitelist.override_for(session, "radarr:1:404") is None
@@ -109,8 +107,7 @@ class TestOverrideService:
         await whitelist.set_override(
             session, media_key="radarr:1:7", title="Kept", decision="reap", note=None
         )
-        assert await whitelist.spared_keys(session) == set()
-        assert await whitelist.reaped_keys(session) == {"radarr:1:7"}
+        assert await whitelist.overrides(session) == {"radarr:1:7": "reap"}
         # is_spared reflects the decision, not mere presence.
         assert await whitelist.is_spared(session, "radarr:1:7") is False
 
@@ -119,7 +116,7 @@ class TestOverrideService:
             session, media_key="radarr:1:9", title="Gone", decision="reap", note=None
         )
         assert await whitelist.remove_override(session, media_key="radarr:1:9") is True
-        assert await whitelist.reaped_keys(session) == set()
+        assert await whitelist.overrides(session) == {}
 
 
 class TestEffectiveOverride:

@@ -83,6 +83,15 @@ class TestInstancesCrud:
         clash = client.post("/api/settings/instances", json=payload)
         assert clash.status_code == 409
 
+    def test_a_blank_name_is_a_validation_error_not_a_conflict(self, client: TestClient) -> None:
+        """Only a name clash is a 409. A blank required field is the caller's payload
+        being wrong, and calling it a conflict misdirects whoever reads the error."""
+        response = client.post(
+            "/api/settings/instances",
+            json={"kind": "radarr", "name": "   ", "base_url": "http://a.local", "api_key": "k"},
+        )
+        assert response.status_code == 422
+
     def test_renaming_into_an_existing_name_is_a_conflict_not_a_not_found(
         self, client: TestClient
     ) -> None:
@@ -269,11 +278,13 @@ class TestSafety:
         assert wrong.status_code == 403
         assert client.get("/api/settings/safety").json()["destructive_enabled"] is False
 
-        # Right password: deletion turns on, and the health banner reflects it.
+        # Right password: deletion turns on, and the settings surface (which the safety
+        # banner reads) reflects it. /api/health deliberately says nothing about it.
         ok = client.put("/api/settings/safety", json={"enabled": True, "password": TEST_PASSWORD})
         assert ok.status_code == 200, ok.text
         assert ok.json()["destructive_enabled"] is True
-        assert client.get("/api/health").json()["destructive_actions_enabled"] is True
+        assert client.get("/api/settings/safety").json()["destructive_enabled"] is True
+        assert "destructive_actions_enabled" not in client.get("/api/health").json()
 
     def test_turning_deletion_off_needs_no_password(self, client: TestClient) -> None:
         client.put("/api/settings/safety", json={"enabled": True, "password": TEST_PASSWORD})
@@ -282,7 +293,10 @@ class TestSafety:
         assert off.json()["destructive_enabled"] is False
 
     def test_setting_a_new_admin_password_then_enabling_with_it(self, client: TestClient) -> None:
-        set_pw = client.post("/api/settings/admin-password", json={"password": "brandnew12345"})
+        set_pw = client.post(
+            "/api/settings/admin-password",
+            json={"password": "brandnew12345", "current_password": TEST_PASSWORD},
+        )
         assert set_pw.status_code == 200, set_pw.text
         # The old password no longer works; the new one does.
         assert (
@@ -297,8 +311,40 @@ class TestSafety:
         assert enabled.json()["destructive_enabled"] is True
 
     def test_a_too_short_password_is_refused(self, client: TestClient) -> None:
-        resp = client.post("/api/settings/admin-password", json={"password": "short"})
+        resp = client.post(
+            "/api/settings/admin-password",
+            json={"password": "short", "current_password": TEST_PASSWORD},
+        )
         assert resp.status_code == 422
+
+    def test_changing_the_password_requires_the_current_one(self, client: TestClient) -> None:
+        """A borrowed signed-in session must not be able to swap the arming credential.
+        The seeded admin already has a password, so omitting (or flubbing) the current
+        one is refused and nothing changes."""
+        omitted = client.post("/api/settings/admin-password", json={"password": "brandnew12345"})
+        assert omitted.status_code == 403
+        wrong = client.post(
+            "/api/settings/admin-password",
+            json={"password": "brandnew12345", "current_password": "not-it"},
+        )
+        assert wrong.status_code == 403
+        # The original password still arms deletion: nothing was changed.
+        armed = client.put(
+            "/api/settings/safety", json={"enabled": True, "password": TEST_PASSWORD}
+        )
+        assert armed.status_code == 200, armed.text
+
+    def test_repeated_wrong_arming_passwords_are_locked_out(self, client: TestClient) -> None:
+        """Arming is a password-guessing surface: past the threshold, further attempts
+        get a 429 with Retry-After instead of another Argon2 verify."""
+        codes = [
+            client.put(
+                "/api/settings/safety", json={"enabled": True, "password": f"wrong-{n}"}
+            ).status_code
+            for n in range(6)
+        ]
+        assert codes[:5] == [403] * 5
+        assert codes[5] == 429
 
 
 class TestSetupStatus:

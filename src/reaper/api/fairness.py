@@ -115,6 +115,7 @@ async def get_fairness(request: Request) -> FairnessReportOut:
         total_reclaimable_bytes=report.total_reclaimable_bytes,
         total_reclaimable_items=report.total_reclaimable_items,
         unmatched_requests=report.unmatched_requests,
+        horizon_at=report.horizon_at.isoformat() if report.horizon_at else None,
         rows=[
             RequesterRowOut(
                 name=row.name,

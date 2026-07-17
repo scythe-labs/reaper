@@ -75,7 +75,7 @@ class TestDiscordWebhookStorage:
             assert raw is not None
             assert "token-is-a-secret" not in str(raw)
             assert await app_settings.get_discord_webhook(session, box, _settings()) == WEBHOOK
-            assert await app_settings.has_discord_webhook(session) is True
+            assert await app_settings.has_discord_webhook(session, box) is True
 
     async def test_clear_turns_notifications_off(
         self, factory: async_sessionmaker[AsyncSession]
@@ -86,7 +86,7 @@ class TestDiscordWebhookStorage:
             await app_settings.clear_discord_webhook(session)
             await session.commit()
         async with factory() as session:
-            assert await app_settings.has_discord_webhook(session) is False
+            assert await app_settings.has_discord_webhook(session, box) is False
             assert await app_settings.get_discord_webhook(session, box, _settings()) is None
 
     async def test_env_webhook_is_seeded_into_the_db_once(
@@ -109,7 +109,9 @@ class TestDiscordWebhookStorage:
     ) -> None:
         async with factory() as session:
             assert (
-                await app_settings.has_discord_webhook(session, _settings(discord_webhook=WEBHOOK))
+                await app_settings.has_discord_webhook(
+                    session, _box(), _settings(discord_webhook=WEBHOOK)
+                )
                 is True
             )
 
@@ -124,6 +126,18 @@ class TestDiscordWebhookStorage:
         other_key = SecretBox("a-different-key")
         async with factory() as session:
             assert await app_settings.get_discord_webhook(session, other_key, _settings()) is None
+
+    async def test_an_undecryptable_stored_webhook_reads_as_not_configured(
+        self, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """The has-check must agree with the send path: a stored webhook that no longer
+        decrypts is skipped by every send, so the UI must not report it as configured."""
+        async with factory() as session:
+            await app_settings.set_discord_webhook(session, _box(), WEBHOOK)
+            await session.commit()
+        other_key = SecretBox("a-different-key")
+        async with factory() as session:
+            assert await app_settings.has_discord_webhook(session, other_key) is False
 
 
 class TestBuildNotifier:

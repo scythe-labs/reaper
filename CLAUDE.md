@@ -247,7 +247,11 @@ suggestions. They extend the rules above; where one sharpens an earlier rule (22
 33. **All HTTP goes through `clients/`.** A raw `httpx`/`requests` usage outside
     `src/reaper/clients/` is a blocker unless this file names it as a sanctioned
     exception. GET-shaped mutating endpoints must be classified and gated by path in the
-    guard, not assumed safe by method.
+    guard, not assumed safe by method. Public unauthenticated GETs go through
+    `clients/public.py`. **Sanctioned exception:** `notify/discord.py`'s webhook POST.
+    The webhook URL embeds a per-operator secret path, which the guard's exact-path
+    allow-list cannot express; the URL is validated to Discord's hosts at the API edge,
+    and the client sends only outbound notifications.
 34. **Every constructed client has an owner that closes it.** A client constructed
     outside an exit stack (or without entering one in the same scope) is a leak; add the
     close path in the same diff as the construction.

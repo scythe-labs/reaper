@@ -533,11 +533,33 @@ def resolve(
 
     # -- Tier 1: external id -------------------------------------------------
     tier1: tuple[int, MatchedBy, str, tuple[int, ...]] | None = None
+    tier1_kind: str | None = None
     for kind in id_priority:
         value = ids.get(kind)
         if value is None:
             continue
         hits = index._by_id(kind).get(value, [])
+        if not hits:
+            # This id kind names nothing in Plex -> consult the next kind.
+            continue
+
+        if tier1 is not None:
+            # A kind already bound; later kinds are consulted as a CROSS-CHECK. A second
+            # id kind resolving away from the bound row means the item's own external
+            # ids contradict each other (one of them is mis-tagged, and there is no way
+            # to know which), so the contradiction veto the tiers already apply to each
+            # other applies within tier 1 as well: abstain. Agreement -- the bound key,
+            # or any listing of its merged group, among this kind's hits -- simply
+            # confirms the bind.
+            assert tier1_kind is not None
+            if {tier1[0], *tier1[3]}.isdisjoint(hits):
+                return Resolution.abstain(
+                    f"Kept: the {tier1_kind.upper()} id and the {kind.upper()} id "
+                    f"{value} name different Plex items; the ids contradict each "
+                    "other, so neither is trusted"
+                )
+            continue
+
         if len(hits) == 1:
             tier1 = (
                 hits[0],
@@ -545,7 +567,8 @@ def resolve(
                 f"Bound to Plex item by {kind.upper()} id {value}",
                 (),
             )
-            break
+            tier1_kind = kind
+            continue  # keep going: the remaining kinds cross-check this bind
         if len(hits) >= 2:
             # Two or more Plex items share this id: the same content in several copies.
             # The *arr item's own file name (and, if several listings carry that name,
@@ -578,8 +601,8 @@ def resolve(
                     f"from all {len(narrowed)} listings",
                     tuple(sorted(narrowed)),
                 )
-            break
-        # len 0: this id kind names nothing in Plex -> try the next kind.
+            tier1_kind = kind
+            # Keep going: the remaining kinds cross-check this bind.
 
     # -- Tier 2: file basename (only if no id bound) -------------------------
     tier2: int | None = None

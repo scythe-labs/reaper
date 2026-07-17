@@ -202,12 +202,20 @@ function KeptNotice({ match }: { match: Match | undefined }) {
   );
 }
 
+/** The verdict headline, in the review queue's own tab words (Condemned Souls / Sanctuary /
+ *  Limbo) rather than the engine's enum -- an operator should never be shown "abstain". */
+const VERDICT_LABELS: Record<string, string> = {
+  condemn: "Condemned",
+  protect: "Sanctuary",
+  abstain: "Limbo",
+};
+
 function Verdict({ item }: { item: CandidateDetail }) {
   const { verdict, score, explanation } = item;
 
   return (
     <div className={`verdict verdict-${verdict}`}>
-      <div className="verdict-label">{verdict}</div>
+      <div className="verdict-label">{VERDICT_LABELS[verdict] ?? verdict}</div>
       <div className="verdict-score">
         <strong>{score}</strong>
         <span className="muted">/100 &middot; your threshold is {explanation.threshold}</span>

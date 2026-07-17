@@ -90,10 +90,13 @@ async def grace_report(
         .all()
     )
     # Cancelling a grace spares the item, but the snapshot it was condemned in is frozen
-    # and still reads "condemn". Exclude spared keys here, exactly as the planner does, so
+    # and still reads "condemn". Exclude spared keys here, exactly as the planner does --
+    # through effective_override, so a spare on a whole show covers its seasons too -- and
     # a cancelled item leaves the countdown at once rather than lingering until re-scan.
-    spared = await whitelist.spared_keys(session)
-    condemned = [c for c in condemned if c.media_key not in spared]
+    decisions = await whitelist.overrides(session)
+    condemned = [
+        c for c in condemned if whitelist.effective_override(c.media_key, decisions) != "spare"
+    ]
     flagged = {
         f.media_key: f.first_flagged_at
         for f in (

@@ -20,11 +20,13 @@ from urllib.parse import urlsplit
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from reaper.api.auth import _client_ip, _throttled
 from reaper.auth.cookie import read_session_token
+from reaper.auth.ratelimit import argon2_gate, password_throttle
 from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
@@ -186,13 +188,17 @@ class SafetyOut(BaseModel):
 
 class SafetyIn(BaseModel):
     enabled: bool
-    password: str | None = None
+    password: str | None = Field(default=None, max_length=128)
     """Required to turn deletion ON (checked against the admin password). Not needed to
-    turn it off -- making Reaper safer is never gated."""
+    turn it off -- making Reaper safer is never gated. Bounded, like every field that
+    reaches Argon2: hashing unbounded input is a CPU-exhaustion vector."""
 
 
 class AdminPasswordIn(BaseModel):
-    password: str
+    password: str = Field(max_length=128)
+    current_password: str | None = Field(default=None, max_length=128)
+    """Required when a password already exists. A borrowed signed-in session must not
+    be able to swap the arming credential without knowing it."""
 
 
 class NotificationsOut(BaseModel):
@@ -269,8 +275,12 @@ async def create_instance(request: Request, payload: InstanceCreateIn) -> Instan
                 api_key=payload.api_key,
                 verify_tls=payload.verify_tls,
             )
-        except instances.InstanceError as exc:
+        except instances.InstanceConflictError as exc:
+            # A duplicate name is a conflict; anything else the service refused (a blank
+            # field, say) is a validation failure -- mirror update_instance's split.
             raise HTTPException(409, str(exc)) from exc
+        except instances.InstanceError as exc:
+            raise HTTPException(422, str(exc)) from exc
         await session.commit()
         return InstanceOut.of(view)
 
@@ -536,7 +546,12 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
     arm the tool. Turning it OFF needs nothing, because making Reaper safer should always be
     one click. If no admin password has been set yet, enabling is refused with a message
     pointing at the password step.
+
+    The verify runs behind the same per-IP + per-account lockout and Argon2 concurrency
+    gate as login (``password_throttle`` / ``argon2_gate``): arming is a password-guessing
+    surface too, and Argon2 is expensive by design.
     """
+    keys = (f"ip:{_client_ip(request)}", "account:safety-arm")
     async with _factory(request)() as session:
         if payload.enabled:
             if not await admin_password.has_password(session):
@@ -544,8 +559,23 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
                     400,
                     "Set an admin password first. It's what confirms turning deletion on.",
                 )
-            if not await admin_password.verify(session, payload.password or ""):
+            _throttled(password_throttle, *keys)
+            if not argon2_gate.acquire():
+                raise HTTPException(
+                    503,
+                    "The server is busy checking passwords. Please try again shortly.",
+                    headers={"Retry-After": "2"},
+                )
+            try:
+                ok = await admin_password.verify(session, payload.password or "")
+            finally:
+                argon2_gate.release()
+            if not ok:
+                for key in keys:
+                    password_throttle.record_failure(key)
                 raise HTTPException(403, "That password didn't match. Deletion stays off.")
+            for key in keys:
+                password_throttle.record_success(key)
         await app_settings.set_destructive_enabled(session, enabled=payload.enabled)
         await session.commit()
         safety = await app_settings.runtime_safety(session, _settings(request))
@@ -559,18 +589,48 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict
     """Set (or change) the admin password.
 
     This is the password that later confirms turning deletion on, and it doubles as the
-    local sign-in / anti-lockout account. Any signed-in admin may set it.
+    local sign-in / anti-lockout account. Setting the FIRST password needs only a
+    signed-in session; changing an existing one also requires the current password, so a
+    borrowed session or an unattended tab cannot quietly swap the arming credential.
+    Verify and hash both run behind the login's lockout and Argon2 concurrency gate.
     """
     # Preserve the caller's own cookie so changing your password does not log you out of
     # the tab you are using; every *other* session for that admin is still revoked.
     keep = read_session_token(request.cookies)
+    keys = (f"ip:{_client_ip(request)}", "account:admin-password")
     async with _factory(request)() as session:
+        if await admin_password.has_password(session):
+            _throttled(password_throttle, *keys)
+            if not argon2_gate.acquire():
+                raise HTTPException(
+                    503,
+                    "The server is busy checking passwords. Please try again shortly.",
+                    headers={"Retry-After": "2"},
+                )
+            try:
+                ok = await admin_password.verify(session, payload.current_password or "")
+            finally:
+                argon2_gate.release()
+            if not ok:
+                for key in keys:
+                    password_throttle.record_failure(key)
+                raise HTTPException(403, "The current password didn't match. Nothing was changed.")
+            for key in keys:
+                password_throttle.record_success(key)
+        if not argon2_gate.acquire():
+            raise HTTPException(
+                503,
+                "The server is busy checking passwords. Please try again shortly.",
+                headers={"Retry-After": "2"},
+            )
         try:
             username = await admin_password.set_password(
                 session, payload.password, keep_session_token=keep
             )
         except admin_password.PasswordError as exc:
             raise HTTPException(422, str(exc)) from exc
+        finally:
+            argon2_gate.release()
         await session.commit()
     log.info("safety.admin_password_set", username=username)
     return {"ok": True}
@@ -586,7 +646,7 @@ async def get_notifications(request: Request) -> NotificationsOut:
     """Whether a Discord webhook is configured. The URL is write-only -- like an API key,
     only its presence is ever reported, never the value."""
     async with _factory(request)() as session:
-        has = await app_settings.has_discord_webhook(session, _settings(request))
+        has = await app_settings.has_discord_webhook(session, _box(request), _settings(request))
     return NotificationsOut(has_webhook=has)
 
 

@@ -19,6 +19,7 @@ dependencies = [
     "uvicorn[standard]>=0.51.0",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.2",
+    "python-dotenv>=1.1.0",      # imported directly (config.load_raw_env), not only transitively
     # Persistence
     "sqlalchemy>=2.0.51",        # plain SQLAlchemy, NOT SQLModel (see docs/decisions.md)
     "alembic>=1.18.5",
@@ -121,7 +122,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "--strict-markers --strict-config"
+addopts = "--strict-markers --strict-config -m 'not live'"
 markers = [
     "live: talks to a real instance; requires .env.local. Deselected by default.",
 ]

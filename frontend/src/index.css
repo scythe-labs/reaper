@@ -2699,7 +2699,8 @@ button.sm {
 }
 
 /* The selection tick that sits in the gutter in place of the chevron. An empty ring until the
-   card is picked, then an accent disc with a white check. */
+   card is picked, then an accent disc with the check in --accent-ink (white fails AA on the
+   lighter dark-mode accent; see the token's own comment). */
 .select-tick {
   display: grid;
   place-items: center;
@@ -2717,7 +2718,7 @@ button.sm {
 .select-tick.on {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
 }
 
 .card-list.has-bulk-bar {

@@ -25,7 +25,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from reaper.clock import utcnow
 from reaper.db.models import Policy as PolicyModel
 from reaper.db.models import Profile
-from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody, ProfileSettings
+from reaper.engine.policy import (
+    DEFAULT_MOVIE_POLICY,
+    DEFAULT_TV_POLICY,
+    PolicyBody,
+    ProfileSettings,
+)
 
 DEFAULT_PROFILE_NAME = "default"
 
@@ -43,6 +48,39 @@ async def active_profile_settings(session: AsyncSession) -> ProfileSettings:
     if row is None:
         return ProfileSettings()
     return ProfileSettings.model_validate_json(row.settings_json)
+
+
+async def active_policy(session: AsyncSession, media_type: str = "movie") -> tuple[PolicyBody, str]:
+    """The policy Reaper is currently working to, for one media type.
+
+    Movies and TV are tuned separately -- keep-last-N seasons and the season-rank signal only
+    make sense for TV, and a library often wants a gentler hand on one than the other -- so
+    there are two policies, chosen here by ``media_type`` ("movie" or "tv").
+
+    The most recently saved one for that type, or the built-in default if none has been saved.
+    Policy rows are **immutable and append-only** -- editing writes a new row with a new hash
+    rather than mutating the old one, because snapshots, approvals and audit entries point at
+    that hash and must stay interpretable years later.
+    """
+    row = (
+        await session.execute(
+            select(PolicyModel)
+            .where(PolicyModel.media_type == media_type)
+            .order_by(PolicyModel.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if row is None:
+        return (DEFAULT_TV_POLICY if media_type == "tv" else DEFAULT_MOVIE_POLICY), "default"
+    return PolicyBody.model_validate_json(row.body_json), row.name
+
+
+async def active_policies(session: AsyncSession) -> tuple[PolicyBody, PolicyBody]:
+    """The (movie, tv) policies in force, in that fixed order -- the pair a scan runs to."""
+    movie, _ = await active_policy(session, "movie")
+    tv, _ = await active_policy(session, "tv")
+    return movie, tv
 
 
 async def _ensure_active_policy_row(session: AsyncSession) -> int:

@@ -43,6 +43,7 @@ __all__ = [
     "Throttle",
     "argon2_gate",
     "login_throttle",
+    "password_throttle",
     "recover_throttle",
 ]
 
@@ -178,4 +179,9 @@ _ARGON2_MAX_CONCURRENCY = max(2, (os.cpu_count() or 2))
 # token and does no hashing, so it gets a looser cap that still stops a flood.
 login_throttle = Throttle(threshold=5, base_delay=2.0, max_delay=300.0, decay=900.0)
 recover_throttle = Throttle(threshold=10, base_delay=1.0, max_delay=120.0, decay=600.0)
+# The settings endpoints that verify the admin password (arming deletion, changing the
+# password itself) share this lockout. They are authenticated, but the admin password is
+# still a guessable secret behind them: a borrowed session cookie or an unattended tab
+# must not get an unthrottled Argon2 oracle. Same strictness as login.
+password_throttle = Throttle(threshold=5, base_delay=2.0, max_delay=300.0, decay=900.0)
 argon2_gate = ConcurrencyGate(_ARGON2_MAX_CONCURRENCY)

@@ -352,6 +352,20 @@ class PolicyBody(Frozen):
             raise ValueError("Two keep rules share a name; the second would silently double-count.")
         return self
 
+    def popularity_window_days(self) -> int:
+        """The window the recent-watchers fact counts over, in days.
+
+        Reads the SERVER_POPULARITY gate's window only while that gate is ENABLED: a
+        disabled gate's leftover window must not keep steering the ``distinct_watchers``
+        fact, where a short stale window quietly raises FEW_WATCHERS pressure across the
+        whole library. Falls back to the 365-day default otherwise. Snapshot and backtest
+        both read the window from here, so the default lives in exactly one place.
+        """
+        return next(
+            (g.window_days for g in self.gates if g.gate is GateId.SERVER_POPULARITY and g.enabled),
+            365,
+        )
+
     def keep_configs(self) -> list[KeepConfig]:
         """Translate the graded-keep specs into engine keep configs for ``score()``."""
         return [
@@ -526,6 +540,22 @@ def inspect(body: PolicyBody, settings: ProfileSettings) -> list[PolicyWarning]:
                     ),
                 )
             )
+
+    popularity = next(
+        (g for g in body.gates if g.gate is GateId.SERVER_POPULARITY and g.enabled), None
+    )
+    if popularity is not None and popularity.window_days < 30:
+        warnings.append(
+            PolicyWarning(
+                field=f"gates.{GateId.SERVER_POPULARITY.value}.window_days",
+                severity="warn",
+                message=(
+                    f"A {popularity.window_days}-day watch window is very short: almost "
+                    "nothing gets watched inside it, so the few-recent-watchers pressure "
+                    "applies to nearly your whole library. A year is the usual setting."
+                ),
+            )
+        )
 
     disabled = {g.gate for g in body.gates if not g.enabled}
     for gate, why in (
