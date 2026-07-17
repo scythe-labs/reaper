@@ -596,8 +596,15 @@ const MARK_LABELS: Record<string, string> = {
 /** The season strip: one small square per season of the show, colored by its lane
  *  across the WHOLE snapshot -- so "which seasons stay and which go" reads at a glance
  *  without expanding anything. A hand decision paints its square solid; a reap the
- *  engine refuses keeps its scan color, and the tooltip says both facts. */
-function SeasonStrip({ marks }: { marks: GroupSeasonMark[] }) {
+ *  engine refuses keeps its scan color, and the tooltip says both facts. Each square
+ *  opens that season's own reasoning (the show card itself opens the show). */
+function SeasonStrip({
+  marks,
+  onOpen,
+}: {
+  marks: GroupSeasonMark[];
+  onOpen: (id: number) => void;
+}) {
   return (
     <div className="season-strip">
       {marks.map((mark, i) => {
@@ -617,16 +624,29 @@ function SeasonStrip({ marks }: { marks: GroupSeasonMark[] }) {
               : mark.override === "reap"
                 ? ", you reaped it by hand"
                 : "";
+        const lane = MARK_LABELS[mark.verdict] ?? mark.verdict;
         return (
-          <span
+          <button
+            type="button"
             // Season numbers are unique within one show; an unnumbered row falls back
             // to its position, stable within the response.
             key={mark.season ?? `unnumbered-${i}`}
             className={`strip-sq strip-${mark.verdict}${handClass}`}
-            title={`${name}: ${MARK_LABELS[mark.verdict] ?? mark.verdict}${overrideNote}`}
+            title={`${name}: ${lane}${overrideNote}. Open for its full reasoning.`}
+            aria-label={`Open ${name}, ${lane}`}
+            onClick={(e) => {
+              // The whole card head opens the show; a square opens just its season.
+              e.stopPropagation();
+              onOpen(mark.id);
+            }}
+            onKeyDown={(e) => {
+              // The card head owns Enter/Space for "open the show". Keep a focused
+              // square from bubbling into it; the button fires its own click natively.
+              if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+            }}
           >
             {mark.season === 0 ? "SP" : (mark.season ?? "·")}
-          </span>
+          </button>
         );
       })}
     </div>
@@ -959,7 +979,7 @@ function ShowCard({
             </span>
             <RequestedChip who={group.requestedBy} />
           </div>
-          {marks && marks.length > 1 && <SeasonStrip marks={marks} />}
+          {marks && marks.length > 1 && <SeasonStrip marks={marks} onOpen={onOpen} />}
           {isReapTab ? (
             // One status line, like the movie card: the pill OR the reason, never both.
             <>

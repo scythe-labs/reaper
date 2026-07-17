@@ -378,6 +378,11 @@ class TestCandidatesCarryTheGroupShape:
             (2, "condemn"),
             (3, "abstain"),
         ]
+        # Each mark carries its season's own candidate id, so clicking a strip square
+        # opens that season's reasoning. This row IS season 3, so its mark points back
+        # to it; every mark's id is a real candidate.
+        assert all(isinstance(m["id"], int) for m in marks)
+        assert next(m["id"] for m in marks if m["season"] == 3) == row["id"]
 
     def test_movie_rows_carry_no_strip(self, client: TestClient) -> None:
         rows = client.get("/api/candidates", params={"verdict": "condemn"}).json()

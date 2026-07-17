@@ -371,6 +371,7 @@ async def _group_rollups(
         members = (
             await session.execute(
                 select(
+                    Candidate.id,
                     Candidate.media_key,
                     Candidate.group_key,
                     Candidate.size_bytes,
@@ -381,9 +382,10 @@ async def _group_rollups(
                 )
             )
         ).all()
-        for media_key, group_key, size_bytes, verdict in members:
+        for candidate_id, media_key, group_key, size_bytes, verdict in members:
             override = whitelist.effective_override(media_key, decisions)
             mark = GroupSeasonMarkOut(
+                id=int(candidate_id),
                 season=_season_number(media_key),
                 verdict=str(verdict),
                 override=override,

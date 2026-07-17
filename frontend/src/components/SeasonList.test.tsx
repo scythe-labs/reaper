@@ -4,7 +4,7 @@
 // reads as broken), and rows from other lanes are visible for the whole-show picture
 // but act only from their own tab -- no Spare/Reap buttons here.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { Candidate, Chip, Group, Verdict } from "../api";
 import { ReviewQueue } from "./ReviewQueue";
@@ -52,9 +52,9 @@ function season(
     chip,
     season_number: n,
     group_seasons: [
-      { season: 1, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3 },
-      { season: 2, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3 },
-      { season: 3, verdict: "abstain", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+      { id: 1, season: 1, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+      { id: 2, season: 2, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+      { id: 3, season: 3, verdict: "abstain", override: null, override_effective: null, size_bytes: 1024 ** 3 },
     ],
   };
 }
@@ -64,7 +64,9 @@ const limboSeason = season(3, 3, "abstain", 82, {
   text: "Needs a look · watched more than a season your rule keeps",
 });
 
-function renderQueue() {
+function renderQueue(
+  overrides: { onSelect?: (id: number) => void; onSelectGroup?: (key: string) => void } = {},
+) {
   apiMock.candidates.mockResolvedValue({
     items: [limboSeason],
     total: 1,
@@ -81,8 +83,8 @@ function renderQueue() {
         onVerdictChange={() => {}}
         selectedId={null}
         selectedGroupKey={null}
-        onSelect={() => {}}
-        onSelectGroup={() => {}}
+        onSelect={overrides.onSelect ?? (() => {})}
+        onSelectGroup={overrides.onSelectGroup ?? (() => {})}
       />
     </QueryClientProvider>,
   );
@@ -102,9 +104,29 @@ describe("the show card", () => {
       await screen.findByText("Needs a look · watched more than a season your rule keeps"),
     ).toBeInTheDocument();
     // The strip marks every season across every lane, not just this tab's.
-    expect(screen.getByTitle("Season 1: kept")).toBeInTheDocument();
-    expect(screen.getByTitle("Season 2: would be removed")).toBeInTheDocument();
-    expect(screen.getByTitle("Season 3: left alone")).toBeInTheDocument();
+    expect(screen.getByTitle("Season 1: kept. Open for its full reasoning.")).toBeInTheDocument();
+    expect(
+      screen.getByTitle("Season 2: would be removed. Open for its full reasoning."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTitle("Season 3: left alone. Open for its full reasoning."),
+    ).toBeInTheDocument();
+  });
+
+  it("opens a season's own reasoning when its strip square is clicked", async () => {
+    const onSelect = vi.fn();
+    const onSelectGroup = vi.fn();
+    renderQueue({ onSelect, onSelectGroup });
+    const { userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    // Season 2's square carries the candidate id 2; clicking it opens that season, not
+    // the show. The square sits inside the card head (which opens the show), so the click
+    // must stop there: onSelect fires with the season, onSelectGroup never does.
+    await user.click(
+      await screen.findByRole("button", { name: "Open Season 2, would be removed" }),
+    );
+    expect(onSelect).toHaveBeenCalledWith(2);
+    expect(onSelectGroup).not.toHaveBeenCalled();
   });
 });
 
@@ -144,7 +166,9 @@ describe("the all-seasons list", () => {
 
     // Only the row from THIS tab (Limbo) carries Spare/Reap; the other two act from
     // their own tabs. Exactly two Spare buttons exist: the card head's and the limbo row's.
-    const rows = screen.getAllByRole("button", { name: /Season \d/ });
+    // Scope to the season list: the card's strip squares are also Season-named buttons.
+    const list = screen.getByRole("list");
+    const rows = within(list).getAllByRole("button", { name: /Season \d/ });
     expect(rows).toHaveLength(3);
     expect(screen.getAllByRole("button", { name: /^Spare$/ })).toHaveLength(2);
   });

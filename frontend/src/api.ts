@@ -34,6 +34,9 @@ export interface Chip {
  *  every lane of the whole snapshot. `season` is null for a row whose key carried
  *  no season number -- shown unnumbered, never dropped. */
 export interface GroupSeasonMark {
+  /** The candidate id for this season, so clicking its square opens that season's own
+   *  reasoning rather than the whole show's panel. */
+  id: number;
   season: number | null;
   verdict: Verdict;
   override: Override | null;

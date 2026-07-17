@@ -147,6 +147,9 @@ class GroupSeasonMarkOut(BaseModel):
     strip shows it unnumbered rather than dropping it (display extraction never errors
     a row off the queue)."""
 
+    id: int
+    """The candidate id for this season, so clicking its square opens that season's own
+    reasoning (not the whole show's panel)."""
     season: int | None = None
     verdict: str
     override: str | None = None
