@@ -14,11 +14,17 @@ from __future__ import annotations
 import stat
 from pathlib import Path
 
+import pytest
 from pydantic import SecretStr
 
 from reaper.config import Settings
 from reaper.crypto import SecretBox
-from reaper.secrets import key_file_path, resolve_secret_key
+from reaper.secrets import (
+    key_file_path,
+    resolve_kdf_salt,
+    resolve_secret_key,
+    salt_file_path,
+)
 
 
 def _settings(tmp_path: Path, key: str | None = None) -> Settings:
@@ -69,6 +75,67 @@ class TestAutoGeneration:
 
         key = resolve_secret_key(settings)
         assert key.strip()
+
+
+class TestPerInstallSalt:
+    """The credential KDF salt is random per install, persisted like the key, and never
+    breaks anything written before it existed."""
+
+    def test_the_salt_is_generated_and_stable_across_boots(self, tmp_path: Path) -> None:
+        first = resolve_kdf_salt(_settings(tmp_path))
+        second = resolve_kdf_salt(_settings(tmp_path))
+
+        assert first and first == second
+        assert salt_file_path(_settings(tmp_path)).is_file()
+
+    def test_the_salt_file_is_not_world_readable(self, tmp_path: Path) -> None:
+        resolve_kdf_salt(_settings(tmp_path))
+        mode = stat.S_IMODE(salt_file_path(_settings(tmp_path)).stat().st_mode)
+        assert mode == 0o600, f"salt file is {oct(mode)}, expected 0o600"
+
+    def test_salts_are_unique_per_installation(self, tmp_path: Path) -> None:
+        a = resolve_kdf_salt(_settings(tmp_path / "a"))
+        b = resolve_kdf_salt(_settings(tmp_path / "b"))
+        assert a != b
+
+    def test_a_junk_salt_file_is_regenerated_rather_than_used(self, tmp_path: Path) -> None:
+        settings = _settings(tmp_path)
+        settings.ensure_data_dir()
+        salt_file_path(settings).write_text("not-hex\n")
+
+        salt = resolve_kdf_salt(settings)
+        assert salt
+        assert bytes.fromhex(salt_file_path(settings).read_text().strip()) == salt
+
+    def test_data_written_before_the_salt_existed_still_decrypts(self, tmp_path: Path) -> None:
+        """The upgrade path: an install whose credentials were encrypted under the fixed
+        v1 salt gains a per-install salt and must still open everything."""
+        old_box = SecretBox("the-key")  # pre-salt derivation
+        ciphertext = old_box.encrypt("sonarr-api-key")
+
+        new_box = SecretBox("the-key", salt=resolve_kdf_salt(_settings(tmp_path)))
+        assert new_box.decrypt(ciphertext) == "sonarr-api-key"
+
+    def test_new_data_is_written_under_the_install_salt(self, tmp_path: Path) -> None:
+        """The point of the change: what a salted box writes, a fixed-salt-only box
+        cannot read -- proof the encrypting derivation really is per-install."""
+        salted = SecretBox("the-key", salt=resolve_kdf_salt(_settings(tmp_path)))
+        ciphertext = salted.encrypt("sonarr-api-key")
+
+        unsalted = SecretBox("the-key")
+        with pytest.raises(ValueError, match="Could not decrypt"):
+            unsalted.decrypt(ciphertext)
+
+    def test_credentials_round_trip_across_boots_with_the_salt(self, tmp_path: Path) -> None:
+        boot1 = SecretBox(
+            resolve_secret_key(_settings(tmp_path)), salt=resolve_kdf_salt(_settings(tmp_path))
+        )
+        ciphertext = boot1.encrypt("sonarr-api-key")
+
+        boot2 = SecretBox(
+            resolve_secret_key(_settings(tmp_path)), salt=resolve_kdf_salt(_settings(tmp_path))
+        )
+        assert boot2.decrypt(ciphertext) == "sonarr-api-key"
 
 
 class TestExplicitKeyWins:

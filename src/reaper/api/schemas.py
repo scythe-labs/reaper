@@ -143,6 +143,13 @@ class CandidateOut(BaseModel):
     requested_by: str | None = None
     group_key: str | None = None
     group_title: str | None = None
+    group_condemned_count: int | None = None
+    """How many seasons "Reap now" on this show group would actually plan: its condemned,
+    not-hand-spared seasons across the WHOLE snapshot -- not just the fetched pages, which
+    on a long sorted list can hold only some of a show's seasons. None for movies."""
+    group_condemned_bytes: int | None = None
+    """The byte total over that same set. The show card must show the number the planner
+    will act on, never a partial page sum."""
     video_resolution: str | None = None
     """Canonical file resolution ("2160", "1080", ..., "sd") for the card's quality
     badge. None hides the badge (TV seasons, unmatched items, pre-rescan rows)."""

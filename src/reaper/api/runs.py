@@ -212,9 +212,10 @@ async def dry_run(request: Request, run_id: int) -> RunReportOut:
     This is the proof: the manifest re-check, the caps and the canary ordering all run
     for real, and every mutating call is recorded rather than issued. What a dry run
     deliberately does NOT prove are the live per-item vetoes (someone streaming the item
-    right now, a play landing after approval, a missing rating key): those are
-    moment-of-deletion checks that only run on a real send, where the moment is real.
-    The transport guard sits underneath as the independent backstop.
+    right now, a play landing after approval, a missing rating key, a file that grew
+    since approval, deletion switched off mid-run): those are moment-of-deletion checks
+    that only run on a real send, where the moment is real. The transport guard sits
+    underneath as the independent backstop.
     """
     settings: Settings = request.app.state.settings
 
@@ -290,6 +291,14 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
     # the commit below is only a backstop for anything still pending. Every client is
     # closed on the way out, however the run ends.
     gateway, closers = await build_reap_gateway(factory, box, safety=safety)
+
+    async def _armed_now() -> bool:
+        # The executor's mid-run kill switch: a FRESH session per read, because the run's
+        # own session caches rows across its per-item commits and would keep reporting
+        # the switch as it stood when the run began.
+        async with factory() as check_session:
+            return await app_settings.destructive_enabled(check_session, settings)
+
     async with AsyncExitStack() as stack:
         for client in closers:
             await stack.enter_async_context(client)
@@ -300,6 +309,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
             settings=profile_settings,
             dry_run=False,
             gateway=gateway,
+            armed_recheck=_armed_now,
         )
         try:
             report = await executor.execute(run_id)

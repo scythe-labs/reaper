@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import math
 import os
+import secrets as pysecrets
 import stat
 from collections import Counter
 from pathlib import Path
@@ -40,7 +41,9 @@ from reaper.config import Settings, generate_secret_key
 log = structlog.get_logger(__name__)
 
 KEY_FILENAME = "secret.key"
+SALT_FILENAME = "secret.salt"
 _OWNER_READ_WRITE = 0o600
+_SALT_BYTES = 16
 
 # A floor below which an operator-supplied REAPER_SECRET_KEY is almost certainly a
 # memorable passphrase rather than a generated key. We warn rather than refuse:
@@ -53,6 +56,52 @@ _WEAK_KEY_MIN_ENTROPY_BITS = 80.0
 
 def key_file_path(settings: Settings) -> Path:
     return settings.data_dir / KEY_FILENAME
+
+
+def salt_file_path(settings: Settings) -> Path:
+    return settings.data_dir / SALT_FILENAME
+
+
+def resolve_kdf_salt(settings: Settings) -> bytes:
+    """The per-install KDF salt, generated and persisted on first use.
+
+    A random salt per install means a dictionary attack against one leaked database
+    cannot be precomputed or reused against another install -- each guess must be
+    stretched per target. The salt is not itself a secret (its job is uniqueness, not
+    concealment), but it lives beside ``secret.key`` at 0600 all the same, and it is
+    minted even when ``REAPER_SECRET_KEY`` comes from the environment: the KEY is the
+    operator's to manage, the salt is install state. Losing the salt file is survivable
+    -- :class:`~reaper.crypto.SecretBox` keeps the fixed v1 salt registered
+    decrypt-only, so a fresh salt only re-keys what is written next -- but back it up
+    with the key anyway so old and new data share one derivation.
+
+    Stored as hex so the file is inspectable and diffable like ``secret.key``.
+    """
+    settings.ensure_data_dir()
+    path = salt_file_path(settings)
+
+    if path.is_file():
+        raw = path.read_text(encoding="utf-8").strip()
+        try:
+            salt = bytes.fromhex(raw)
+        except ValueError:
+            salt = b""
+        if salt:
+            _ensure_owner_only(path)
+            return salt
+        log.warning("kdf_salt.unreadable_file", path=str(path), detail="Regenerating.")
+
+    salt = pysecrets.token_bytes(_SALT_BYTES)
+    _write_key_atomically(path, salt.hex())
+    log.info(
+        "kdf_salt.generated",
+        path=str(path),
+        detail=(
+            "A per-install salt for the credential encryption key was generated and "
+            "saved. Back it up together with secret.key."
+        ),
+    )
+    return salt
 
 
 def resolve_old_keys(settings: Settings) -> list[str]:

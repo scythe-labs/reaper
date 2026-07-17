@@ -39,6 +39,11 @@ export interface Candidate {
   requested_by: string | null;
   group_key: string | null;
   group_title: string | null;
+  /** How many seasons "Reap now" on this show would plan: its condemned, not-spared
+   *  seasons across the whole snapshot, not just the fetched pages. Null for movies. */
+  group_condemned_count: number | null;
+  /** The byte total over that same set: the number the planner will act on. */
+  group_condemned_bytes: number | null;
   /** Canonical file resolution ("2160", "1080", ..., "sd") for the card's quality badge.
    *  Null hides the badge (TV seasons, unmatched items, rows from older scans). */
   video_resolution: string | null;
@@ -509,6 +514,8 @@ export interface PlexStatus {
   name: string | null;
   connection_uri: string | null;
   last_ok_at: string | null;
+  /** Whether the server's TLS certificate is checked. On unless the operator opted out. */
+  verify_tls: boolean;
   /** Where "open in Plex" links point. Defaults to the hosted Plex Web app. */
   web_url: string;
 }
@@ -679,11 +686,19 @@ export const api = {
     post<InstanceTest>(`/api/settings/instances/${id}/test`, {}),
 
   plexStatus: () => request<PlexStatus>("/api/settings/plex"),
-  /** Save where "open in Plex" links point. An empty string resets to the hosted default. */
-  setPlexWebUrl: (web_url: string) => put<PlexStatus>("/api/settings/plex", { web_url }),
+  /**
+   * Save the Plex settings. An empty web_url resets to the hosted default; verify_tls
+   * (only valid once linked) flips the certificate check, omitted keeps it.
+   */
+  setPlexWebUrl: (web_url: string, verify_tls?: boolean) =>
+    put<PlexStatus>("/api/settings/plex", { web_url, verify_tls }),
   plexLinkStart: () => post<PlexLinkStart>("/api/settings/plex/link/start", {}),
-  plexLinkPoll: (pin_id: number, machine_identifier?: string) =>
-    post<PlexLinkPoll>("/api/settings/plex/link/poll", { pin_id, machine_identifier }),
+  plexLinkPoll: (pin_id: number, machine_identifier?: string, verify_tls?: boolean) =>
+    post<PlexLinkPoll>("/api/settings/plex/link/poll", {
+      pin_id,
+      machine_identifier,
+      verify_tls,
+    }),
   plexUnlink: () => del<{ removed: boolean }>("/api/settings/plex"),
 
   schedule: () => request<Schedule>("/api/settings/schedule"),

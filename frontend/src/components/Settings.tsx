@@ -180,6 +180,17 @@ export function PlexPanel() {
   const savedWebUrl = data?.web_url ?? "";
   useEffect(() => setWebUrl(savedWebUrl), [savedWebUrl]);
 
+  // The certificate check. Before linking it rides along with the link polls (so a
+  // self-signed server can be reached at all); once linked it edits the stored server
+  // row directly. The ref keeps the in-flight poll reading the current choice.
+  const [verifyCert, setVerifyCert] = useState(true);
+  const verifyRef = useRef(true);
+  const savedVerify = data?.verify_tls ?? true;
+  useEffect(() => {
+    setVerifyCert(savedVerify);
+    verifyRef.current = savedVerify;
+  }, [savedVerify]);
+
   useEffect(() => () => (pollRef.current ? clearInterval(pollRef.current) : undefined), []);
 
   const saveWebUrl = useMutation({
@@ -189,6 +200,14 @@ export function PlexPanel() {
       void queryClient.invalidateQueries({ queryKey: ["plex"] });
     },
     onError: (e: Error) => setWebUrlError(e.message),
+  });
+
+  // Flip the stored certificate check on the linked server. Sends the SAVED web
+  // address, never the box's half-typed one, so this toggle cannot save a URL edit.
+  const saveVerify = useMutation({
+    mutationFn: (next: boolean) => api.setPlexWebUrl(savedWebUrl, next),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["plex"] }),
+    onError: (e: Error) => setMessage(e.message),
   });
 
   const done = () => {
@@ -211,7 +230,7 @@ export function PlexPanel() {
         return;
       }
       try {
-        const poll = await api.plexLinkPoll(pinId, machineId);
+        const poll = await api.plexLinkPoll(pinId, machineId, verifyRef.current);
         if (poll.status === "ok") {
           setMessage(`Linked to ${poll.server?.name ?? "your server"}.`);
           done();
@@ -249,7 +268,7 @@ export function PlexPanel() {
     if (pinId == null) return;
     setServers(null);
     try {
-      const poll = await api.plexLinkPoll(pinId, machineId);
+      const poll = await api.plexLinkPoll(pinId, machineId, verifyRef.current);
       if (poll.status === "ok") {
         setMessage(`Linked to ${poll.server?.name ?? "your server"}.`);
         done();
@@ -321,6 +340,27 @@ export function PlexPanel() {
             {linking ? "Waiting for Plex…" : "Link with Plex"}
           </button>
         </div>
+      )}
+      <label className="toggle">
+        <input
+          type="checkbox"
+          checked={verifyCert}
+          disabled={saveVerify.isPending}
+          onChange={(e) => {
+            const next = e.target.checked;
+            setVerifyCert(next);
+            verifyRef.current = next;
+            if (data?.linked) saveVerify.mutate(next);
+          }}
+        />
+        <span>Check the server's certificate</span>
+      </label>
+      {!verifyCert && (
+        <p className="notice notice-warn">
+          Reaper will accept this server's certificate without checking who issued it.
+          Only use this for a server you run yourself, like one with a self-signed
+          certificate.
+        </p>
       )}
       {message && <p className="muted">{message}</p>}
 

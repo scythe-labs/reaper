@@ -315,15 +315,19 @@ class PlexTvClient(BaseClient):
         return any(s.client_identifier == machine_identifier for s in servers)
 
 
-async def probe_connection(connection: PlexConnection, token: str, *, timeout: float = 5.0) -> bool:
+async def probe_connection(
+    connection: PlexConnection, token: str, *, timeout: float = 5.0, verify: bool = True
+) -> bool:
     """Is this connection actually reachable?
 
     ``/identity`` is the right probe: it is unauthenticated-ish, cheap, and returns
     the machineIdentifier, so it doubles as a check that we reached the server we
-    think we did.
+    think we did. ``verify`` defaults on; turning it off is the operator's explicit
+    choice for a self-signed HTTPS server (the same per-service opt-out the *arr
+    clients have), threaded through the link flow and stored on the server row.
     """
     try:
-        async with httpx.AsyncClient(timeout=timeout, verify=True) as client:
+        async with httpx.AsyncClient(timeout=timeout, verify=verify) as client:
             response = await client.get(
                 f"{connection.uri.rstrip('/')}/identity",
                 headers={"X-Plex-Token": token, "Accept": "application/json"},

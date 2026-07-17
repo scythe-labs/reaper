@@ -101,9 +101,10 @@ def manifest_hash(candidates: Sequence[Candidate]) -> str:
     the frozen set*: it changes if a condemned candidate row is lost or tampered with under
     a run (e.g. retention GC), which voids the approval. It is NOT live drift detection --
     candidate rows are frozen at scan time and nobody re-reads the *arr here, so a title
-    deleted or resized in Radarr after approval does not change this hash; that live drift is
-    caught by the executor's per-item interlocks and existence re-reads at delete time,
-    and a stale browser tab is stopped by the route's confirmation-phrase recompute.
+    deleted or resized in Radarr after approval does not change this hash; that live drift
+    is caught by the executor's per-item interlocks and its existence and size re-reads at
+    delete time, and a stale browser tab is stopped by the route's confirmation-phrase
+    recompute.
 
     Over the media_key and size of each item, sorted so the order candidates arrive in
     cannot change the hash. Integers only, like every other hash in Reaper.
@@ -355,8 +356,9 @@ async def build_plan(
         # candidate rows for this immutable snapshot, so this fingerprint is a frozen-set
         # integrity check (it catches a condemned candidate row lost or tampered with under
         # the run), NOT live library drift -- nothing re-reads the *arr here. Live drift is
-        # caught by the executor's per-item interlocks and existence re-reads at delete
-        # time; a stale tab is stopped by the route's confirmation-phrase recompute.
+        # caught by the executor's per-item interlocks and its existence and size re-reads
+        # at delete time; a stale tab is stopped by the route's confirmation-phrase
+        # recompute.
         approved_manifest_hash=manifest_hash(all_condemned),
         approved_by=approved_by,
         approved_at=now,

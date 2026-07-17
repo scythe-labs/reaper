@@ -36,7 +36,7 @@ from reaper.config import (
 from reaper.crypto import SecretBox
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
 from reaper.logging import configure_logging
-from reaper.secrets import resolve_old_keys, resolve_secret_key
+from reaper.secrets import resolve_kdf_salt, resolve_old_keys, resolve_secret_key
 from reaper.services import app_settings
 from reaper.services.scheduler import apply_scan_schedule, build_scheduler, catch_up_on_startup
 from reaper.services.seeding import seed_instances
@@ -71,8 +71,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Generates and persists a key on first boot if none was configured. It must
     # persist: it decrypts credentials written on previous boots. Any retired keys
     # (REAPER_SECRET_KEY_OLD) ride along decrypt-only, so a key rotation does not
-    # brick credentials written under the previous key.
-    box = SecretBox(resolve_secret_key(settings), *resolve_old_keys(settings))
+    # brick credentials written under the previous key, and the per-install KDF salt
+    # (secret.salt, minted the same way) makes the derivation unique to this install.
+    box = SecretBox(
+        resolve_secret_key(settings),
+        *resolve_old_keys(settings),
+        salt=resolve_kdf_salt(settings),
+    )
     app.state.secret_box = box
 
     async with factory() as session:

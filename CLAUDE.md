@@ -44,6 +44,8 @@ uv run ruff format --check .
 uv run mypy src/reaper                 # src only; tests are not type-checked
 uv run pytest
 uv run alembic upgrade head            # then `alembic check` for model/migration drift
+npm --prefix frontend run lint         # eslint; the two react-hooks rules are errors
+npm --prefix frontend run test         # vitest component tests (the execute gate first)
 npm --prefix frontend run build        # tsc --noEmit, then vite build
 docker build -t reaper:ci .            # the shipped artifact must build
 ```
@@ -110,7 +112,11 @@ the file* and *failing closed*. Read them before touching the safety, auth, or c
    empty selection must never expand to "everything."
 2. **Never fail open in the safety/deletion path.** When a whitelist/keep-list sync, a
    protection source, or an optional dependency (Plex) fails, degrade the snapshot to
-   **un-executable** rather than proceeding with empty or stale protection data.
+   **un-executable** rather than proceeding with empty or unverifiable protection data.
+   One bounded exception, chosen deliberately (P-6): a failed whitelist refresh may
+   coast on stored membership from a *recent* successful sync
+   (`snapshot.WHITELIST_STALE_AFTER`, 48h) -- the stored copy still protects everything
+   on it; past the bound, or with no record of a successful sync, degrade.
 3. **Reuse the single production verdict/decision function** across engine, backtest,
    planner, and snapshot paths. Never reimplement condemn/score/coverage logic (including
    rounding and floors) in a second place where it can drift.

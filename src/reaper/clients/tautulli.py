@@ -48,6 +48,7 @@ READ_COMMANDS: Final[frozenset[str]] = frozenset(
         "get_item_watch_time_stats",
         "get_item_user_stats",
         "get_user",
+        "get_users",  # includes keep_history, which the scan must know about
         "get_server_info",
         "get_server_identity",
         "pms_image_proxy",  # fetch Plex artwork through Tautulli (read-only)
@@ -108,6 +109,20 @@ class TautulliClient(BaseClient):
     async def server_info(self) -> dict[str, Any]:
         data = await self.call("get_server_info")
         return data if isinstance(data, dict) else {}
+
+    # -- users ----------------------------------------------------------------
+
+    async def users(self) -> list[dict[str, Any]]:
+        """Users, including ``keep_history``.
+
+        A user with history recording disabled is *invisible* in the history table and
+        looks exactly like someone who never watches anything -- so everything only they
+        watch reads never-played. The scan consults this
+        (``scan_runner._keep_history_degradations``) and degrades the snapshot while any
+        active user has it off, because "nobody watched it" cannot be trusted then.
+        """
+        data = await self.call("get_users")
+        return list(data) if isinstance(data, list) else []
 
     # -- libraries ------------------------------------------------------------
 

@@ -419,6 +419,9 @@ class TestRunScanHistorySync:
             async def __aexit__(self, *exc: object) -> None:
                 return None
 
+            async def users(self) -> list[dict[str, Any]]:
+                return []
+
         async def fake_sources(factory: Any, settings: Any, box: Any, **kwargs: Any) -> Any:
             return ([], [], _CmTautulli(), None, None)
 
@@ -476,3 +479,312 @@ class TestReleaseAgeRoundsTowardKeeping:
         obs = _release_age_days(utcnow().year)
         assert isinstance(obs, Known)
         assert obs.value == 0.0
+
+
+# ---------------------------------------------------------------------------
+# One scan at a time -- the claim lives inside run_scan, shared by every caller.
+# ---------------------------------------------------------------------------
+
+
+class TestOneScanAtATime:
+    """The browser's scan button and the scheduler's cron job both come through
+    ``run_scan``, and the one-at-a-time claim lives inside it -- so the two can never
+    overlap and race each other's grace-clock writes, whoever started first."""
+
+    def _stub_pipeline(self, monkeypatch: pytest.MonkeyPatch, parked_scan: Any) -> None:
+        """A run_scan whose body is fully stubbed, with the snapshot step scriptable."""
+        from types import SimpleNamespace
+
+        from reaper.engine.policy import ProfileSettings
+        from reaper.services import scan_runner
+
+        class _CmTautulli:
+            async def __aenter__(self) -> Any:
+                return self
+
+            async def __aexit__(self, *exc: object) -> None:
+                return None
+
+            async def users(self) -> list[dict[str, Any]]:
+                return []
+
+        async def fake_sources(factory: Any, settings: Any, box: Any, **kwargs: Any) -> Any:
+            return ([], [], _CmTautulli(), None, None)
+
+        async def fake_policies(session: Any) -> Any:
+            return (DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY)
+
+        async def fake_profile(session: Any) -> Any:
+            return ProfileSettings()
+
+        async def ok_sync(engine: Any, tautulli: Any, **kwargs: Any) -> Any:
+            return SimpleNamespace(rows=0)
+
+        async def fake_sync_lists(engine: Any, **kwargs: Any) -> dict[str, Any]:
+            return {}
+
+        async def fake_sync_degradations(engine: Any, synced: Any) -> list[str]:
+            return []
+
+        monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
+        monkeypatch.setattr(scan_runner.history_sync, "sync", ok_sync)
+        monkeypatch.setattr(scan_runner.profiles, "active_policies", fake_policies)
+        monkeypatch.setattr(scan_runner.profiles, "active_profile_settings", fake_profile)
+        monkeypatch.setattr(scan_runner.snapshot_service, "scan", parked_scan)
+        monkeypatch.setattr(scan_runner.snapshot_service, "sync_protection_lists", fake_sync_lists)
+        monkeypatch.setattr(
+            scan_runner.snapshot_service, "protection_sync_degradations", fake_sync_degradations
+        )
+
+    async def test_a_second_scan_is_refused_while_one_runs(
+        self, tmp_path: Path, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import asyncio
+        from types import SimpleNamespace
+
+        from reaper.services import scan_runner
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def parked_scan(engine: Any, session: Any, **kwargs: Any) -> Any:
+            started.set()
+            await release.wait()
+            return SimpleNamespace(id=1, item_count=0)
+
+        self._stub_pipeline(monkeypatch, parked_scan)
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = create_engine(settings)
+        factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+        try:
+            kwargs: dict[str, Any] = {
+                "settings": settings,
+                "session_factory": factory,
+                "cache_engine": cache_engine,
+                "box": None,  # build_sources is stubbed; never read
+            }
+            task = asyncio.create_task(scan_runner.run_scan(**kwargs))
+            await asyncio.wait_for(started.wait(), timeout=5)
+
+            with pytest.raises(scan_runner.ScanInProgressError, match="already running"):
+                await scan_runner.run_scan(**kwargs)
+
+            release.set()
+            snapshot = await asyncio.wait_for(task, timeout=5)
+            assert snapshot.id == 1
+        finally:
+            release.set()
+            await engine.dispose()
+
+    async def test_the_claim_is_released_after_a_failed_scan(
+        self, tmp_path: Path, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A scan that dies must not leave the claim held, or no scan could ever run
+        again without a restart."""
+        from types import SimpleNamespace
+
+        from reaper.services import scan_runner
+
+        calls = {"n": 0}
+
+        async def failing_then_fine(engine: Any, session: Any, **kwargs: Any) -> Any:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise IntegrationError("radarr", "unreachable (boom)")
+            return SimpleNamespace(id=2, item_count=0)
+
+        self._stub_pipeline(monkeypatch, failing_then_fine)
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = create_engine(settings)
+        factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+        try:
+            kwargs: dict[str, Any] = {
+                "settings": settings,
+                "session_factory": factory,
+                "cache_engine": cache_engine,
+                "box": None,
+            }
+            with pytest.raises(IntegrationError):
+                await scan_runner.run_scan(**kwargs)
+
+            snapshot = await scan_runner.run_scan(**kwargs)  # the claim was released
+            assert snapshot.id == 2
+        finally:
+            await engine.dispose()
+
+    async def test_the_scheduler_skips_quietly_when_a_scan_is_running(
+        self, tmp_path: Path, cache_engine: AsyncEngine
+    ) -> None:
+        """The cron path must not error, retry, or stack: an in-flight scan means this
+        firing is skipped and the next one runs normally."""
+        from reaper.services import scan_runner, scheduler
+
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = create_engine(settings)
+        factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+        assert scan_runner._claim_scan()  # a scan is "running"
+        try:
+            # Must return without raising -- the refusal is caught and logged.
+            await scheduler.scheduled_scan(settings, factory, cache_engine, None)  # type: ignore[arg-type]
+        finally:
+            scan_runner._release_scan()
+            await engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Keep History coverage -- a user Tautulli is not recording makes "nobody watched
+# it" untrustworthy, so the scan degrades.
+# ---------------------------------------------------------------------------
+
+
+class _UsersTautulli:
+    def __init__(self, rows: list[dict[str, Any]] | None = None, *, raise_error: bool = False):
+        self._rows = rows or []
+        self._raise = raise_error
+
+    async def users(self) -> list[dict[str, Any]]:
+        if self._raise:
+            raise IntegrationError("tautulli", "users unavailable")
+        return list(self._rows)
+
+
+class TestKeepHistoryCoverage:
+    """A household member with Tautulli's per-user Keep History off is invisible in the
+    history table: everything only they watch looks never-played. The scan must degrade
+    while that is true -- and while it cannot even check."""
+
+    async def test_an_active_user_with_recording_off_degrades(self) -> None:
+        from reaper.services.scan_runner import _keep_history_degradations
+
+        reasons = await _keep_history_degradations(
+            _UsersTautulli(
+                [
+                    {"username": "user-one", "is_active": 1, "keep_history": 1},
+                    {"username": "user-two", "is_active": 1, "keep_history": 0},
+                ]
+            )  # type: ignore[arg-type]
+        )
+
+        assert any("user-two" in r for r in reasons)
+        assert any("nothing may be deleted" in r for r in reasons)
+
+    async def test_everyone_recording_is_clean(self) -> None:
+        from reaper.services.scan_runner import _keep_history_degradations
+
+        reasons = await _keep_history_degradations(
+            _UsersTautulli(
+                [
+                    {"username": "user-one", "is_active": 1, "keep_history": 1},
+                    {"username": "user-two", "is_active": True, "keep_history": "1"},
+                ]
+            )  # type: ignore[arg-type]
+        )
+
+        assert reasons == []
+
+    async def test_an_inactive_users_setting_does_not_matter(self) -> None:
+        """A user removed from the server cannot play anything, so their old Keep
+        History setting cannot hide a play."""
+        from reaper.services.scan_runner import _keep_history_degradations
+
+        reasons = await _keep_history_degradations(
+            _UsersTautulli(
+                [
+                    {"username": "user-one", "is_active": 1, "keep_history": 1},
+                    {"username": "departed", "is_active": 0, "keep_history": 0},
+                ]
+            )  # type: ignore[arg-type]
+        )
+
+        assert reasons == []
+
+    async def test_an_unreadable_user_list_degrades(self) -> None:
+        from reaper.services.scan_runner import _keep_history_degradations
+
+        reasons = await _keep_history_degradations(
+            _UsersTautulli(raise_error=True)  # type: ignore[arg-type]
+        )
+
+        assert any("could not check" in r for r in reasons)
+
+    async def test_a_row_missing_the_flag_degrades_as_unconfirmed(self) -> None:
+        """A payload shape we cannot read is not assumed safe: fail closed, loudly and
+        accurately (could-not-confirm, not user-has-it-off)."""
+        from reaper.services.scan_runner import _keep_history_degradations
+
+        reasons = await _keep_history_degradations(
+            _UsersTautulli([{"username": "user-one", "is_active": 1}])  # type: ignore[arg-type]
+        )
+
+        assert any("cannot confirm" in r for r in reasons)
+
+    async def test_the_degradation_reaches_the_snapshot(
+        self, tmp_path: Path, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """End to end through run_scan: the reason lands in extra_degrade_reasons, so the
+        snapshot is marked degraded exactly like any other failed source."""
+        from types import SimpleNamespace
+
+        from reaper.engine.policy import ProfileSettings
+        from reaper.services import scan_runner
+
+        captured: dict[str, Any] = {}
+
+        async def fake_scan(engine: Any, session: Any, **kwargs: Any) -> Any:
+            captured.update(kwargs)
+            return SimpleNamespace(id=1, item_count=0)
+
+        class _OffTautulli(_UsersTautulli):
+            def __init__(self) -> None:
+                super().__init__([{"username": "user-two", "is_active": 1, "keep_history": 0}])
+
+            async def __aenter__(self) -> Any:
+                return self
+
+            async def __aexit__(self, *exc: object) -> None:
+                return None
+
+        async def fake_sources(factory: Any, settings: Any, box: Any, **kwargs: Any) -> Any:
+            return ([], [], _OffTautulli(), None, None)
+
+        async def ok_sync(engine: Any, tautulli: Any, **kwargs: Any) -> Any:
+            return SimpleNamespace(rows=0)
+
+        async def fake_policies(session: Any) -> Any:
+            return (DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY)
+
+        async def fake_profile(session: Any) -> Any:
+            return ProfileSettings()
+
+        async def fake_sync_lists(engine: Any, **kwargs: Any) -> dict[str, Any]:
+            return {}
+
+        async def fake_sync_degradations(engine: Any, synced: Any) -> list[str]:
+            return []
+
+        monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
+        monkeypatch.setattr(scan_runner.history_sync, "sync", ok_sync)
+        monkeypatch.setattr(scan_runner.profiles, "active_policies", fake_policies)
+        monkeypatch.setattr(scan_runner.profiles, "active_profile_settings", fake_profile)
+        monkeypatch.setattr(scan_runner.snapshot_service, "scan", fake_scan)
+        monkeypatch.setattr(scan_runner.snapshot_service, "sync_protection_lists", fake_sync_lists)
+        monkeypatch.setattr(
+            scan_runner.snapshot_service, "protection_sync_degradations", fake_sync_degradations
+        )
+
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = create_engine(settings)
+        factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+        try:
+            await scan_runner.run_scan(
+                settings=settings,
+                session_factory=factory,
+                cache_engine=cache_engine,
+                box=None,  # type: ignore[arg-type]  # build_sources is stubbed; never read
+            )
+        finally:
+            await engine.dispose()
+
+        reasons = captured.get("extra_degrade_reasons")
+        assert reasons, "an unrecorded user must hand the scan a degradation reason"
+        assert any("user-two" in r for r in reasons)

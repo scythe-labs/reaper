@@ -127,15 +127,20 @@ class PlexStatusOut(BaseModel):
     name: str | None = None
     connection_uri: str | None = None
     last_ok_at: str | None = None
+    verify_tls: bool = True
+    """Whether the server's TLS certificate is checked (mirrors the per-instance
+    setting). True when unlinked, since on is the only default."""
     web_url: str = ""
     """Where "open in Plex" links point. Always present, linked or not -- the hosted
     Plex Web default until the operator overrides it."""
 
 
-class PlexWebUrlIn(BaseModel):
-    """The one editable Plex display setting. Empty resets to the hosted default."""
+class PlexUpdateIn(BaseModel):
+    """The editable Plex settings: the display web address (empty resets to the hosted
+    default) and, once linked, the certificate check (omitted keeps the stored value)."""
 
     web_url: str = ""
+    verify_tls: bool | None = None
 
 
 class PlexLinkStartOut(BaseModel):
@@ -148,6 +153,9 @@ class PlexLinkPollIn(BaseModel):
     # Multi-server accounts only: the machine identifier of the owned server the admin
     # picked, echoed back from a "choose_server" response.
     machine_identifier: str | None = None
+    # The certificate-check choice made in the link form. Off lets a self-signed HTTPS
+    # server be reached at all; it is stored on the server row when the link completes.
+    verify_tls: bool = True
 
 
 class PlexServerChoiceOut(BaseModel):
@@ -354,6 +362,7 @@ async def _plex_status(session: AsyncSession) -> PlexStatusOut:
         name=server.name,
         connection_uri=server.connection_uri,
         last_ok_at=server.last_ok_at.isoformat() if server.last_ok_at else None,
+        verify_tls=server.verify_tls,
         web_url=web_url,
     )
 
@@ -365,16 +374,24 @@ async def plex_status(request: Request) -> PlexStatusOut:
 
 
 @router.put("/plex")
-async def set_plex_web_url(request: Request, payload: PlexWebUrlIn) -> PlexStatusOut:
-    """Save where "open in Plex" links point. Empty resets to the hosted default."""
+async def update_plex_settings(request: Request, payload: PlexUpdateIn) -> PlexStatusOut:
+    """Save the Plex settings: the "open in Plex" web address (empty resets to the
+    hosted default) and, once a server is linked, the certificate check."""
     cleaned = payload.web_url.strip()
     if cleaned and not (cleaned.startswith("https://") or cleaned.startswith("http://")):
         raise HTTPException(422, "The Plex web address must start with https:// or http://.")
     async with _factory(request)() as session:
         await app_settings.set_plex_web_url(session, cleaned or None)
+        if payload.verify_tls is not None:
+            server = (await session.execute(select(PlexServer))).scalars().first()
+            if server is None:
+                raise HTTPException(
+                    422, "No Plex server is linked yet. Link one before changing this."
+                )
+            server.verify_tls = payload.verify_tls
         status = await _plex_status(session)
         await session.commit()
-    log.info("settings.plex_web_url_saved")
+    log.info("settings.plex_saved")
     return status
 
 
@@ -397,6 +414,7 @@ async def plex_link_poll(request: Request, payload: PlexLinkPollIn) -> PlexLinkP
             pin_id=payload.pin_id,
             safety=safety,
             choice=payload.machine_identifier,
+            verify_tls=payload.verify_tls,
         )
     except PlexServerChoiceNeededError as exc:
         # The account owns several servers. The PIN stays valid; the browser shows the

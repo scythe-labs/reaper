@@ -212,9 +212,13 @@ _LABEL_EDIT = re.compile(r"^/library/sections/[^/]+/all$")
 class GuardedSession(requests.Session):
     """``GuardedTransport``'s twin, for the one library that does not use httpx."""
 
-    def __init__(self, safety: RuntimeSafety) -> None:
+    def __init__(self, safety: RuntimeSafety, *, verify: bool = True) -> None:
         super().__init__()
         self._safety = safety
+        # requests reads TLS verification off the session. Off is the operator's
+        # explicit per-server choice (PlexServer.verify_tls), mirroring the *arr
+        # clients' opt-out; the default stays on.
+        self.verify = verify
 
     def request(self, method: str, url: str, *args: Any, **kwargs: Any) -> requests.Response:  # type: ignore[override]
         path = urlsplit(url).path
@@ -290,10 +294,13 @@ class ActiveStream:
 class PlexClient:
     """Everything Reaper does to the media server itself."""
 
-    def __init__(self, base_url: str, token: str, *, safety: RuntimeSafety) -> None:
+    def __init__(
+        self, base_url: str, token: str, *, safety: RuntimeSafety, verify: bool = True
+    ) -> None:
         self._base_url = base_url
         self._token = token
         self._safety = safety
+        self._verify = verify
         self._server: PlexServer | None = None
         # The scan runs the movie and show GUID sweeps concurrently with its other
         # gathers. Both sweeps ride ONE plexapi server (one requests.Session), and
@@ -327,7 +334,9 @@ class PlexClient:
             # The guarded session, not plexapi's default. Every write plexapi makes
             # goes through it, so Plex is held to the same rule as everything else.
             return _PlexServer(  # type: ignore[no-untyped-call]
-                self._base_url, self._token, session=GuardedSession(self._safety)
+                self._base_url,
+                self._token,
+                session=GuardedSession(self._safety, verify=self._verify),
             )
 
         async with self._connect_lock:

@@ -442,12 +442,19 @@ class TestPlexStatus:
             "name": None,
             "connection_uri": None,
             "last_ok_at": None,
+            # On is the only default; the operator can opt out per server once linked.
+            "verify_tls": True,
             # Present whether or not a server is linked: links need somewhere to point.
             "web_url": "https://app.plex.tv",
         }
 
     def test_unlinking_when_nothing_is_linked_is_a_noop(self, client: TestClient) -> None:
         assert client.delete("/api/settings/plex").json() == {"removed": False}
+
+    def test_the_certificate_check_cannot_be_set_before_linking(self, client: TestClient) -> None:
+        response = client.put("/api/settings/plex", json={"web_url": "", "verify_tls": False})
+        assert response.status_code == 422
+        assert "Link one" in response.json()["detail"]
 
 
 def _plex_resource(machine_id: str, name: str) -> dict[str, object]:
@@ -521,6 +528,48 @@ class TestPlexLinkChoice:
             assert done.json()["server"]["name"] == "Attic"
 
         assert client.get("/api/settings/plex").json()["linked"] is True
+
+    def test_the_certificate_choice_reaches_the_probe_and_sticks_to_the_row(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Linking with the certificate check off must (a) probe the server without
+        verification -- a self-signed HTTPS Plex is unreachable otherwise -- and (b)
+        store the choice on the server row, where every later client reads it. Flipping
+        it back on afterwards is a plain settings edit."""
+        from reaper.services import plex_link
+
+        captured: dict[str, object] = {}
+        real_probe = plex_link.probe_connection
+
+        async def spying_probe(
+            connection: object, token: str, *, timeout: float = 5.0, verify: bool = True
+        ) -> bool:
+            captured["verify"] = verify
+            return await real_probe(connection, token, timeout=timeout, verify=verify)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(plex_link, "probe_connection", spying_probe)
+
+        with respx.mock:
+            self._mock_plextv()
+            start = client.post("/api/settings/plex/link/start").json()
+            done = client.post(
+                "/api/settings/plex/link/poll",
+                json={
+                    "pin_id": start["pin_id"],
+                    "machine_identifier": "machine-b",
+                    "verify_tls": False,
+                },
+            )
+            assert done.status_code == 200, done.text
+            assert done.json()["status"] == "ok"
+            assert done.json()["server"]["verify_tls"] is False
+
+        assert captured["verify"] is False
+        assert client.get("/api/settings/plex").json()["verify_tls"] is False
+
+        flipped = client.put("/api/settings/plex", json={"web_url": "", "verify_tls": True})
+        assert flipped.status_code == 200
+        assert flipped.json()["verify_tls"] is True
 
     def test_a_pick_matching_nothing_owned_fails_closed(self, client: TestClient) -> None:
         with respx.mock:

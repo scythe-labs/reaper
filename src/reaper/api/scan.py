@@ -96,6 +96,11 @@ async def start_scan(request: Request) -> ScanStatus:
             status.snapshot_id = snapshot.id
             status.phase = "complete"
             status.detail = ""
+        except scan_runner.ScanInProgressError as exc:
+            # The scheduler's scan beat this one to the shared claim (the guard above only
+            # sees browser-started scans). Nothing is wrong; say what is happening.
+            status.error = str(exc)
+            status.phase = "error"
         except (scan_runner.ScanConfigError, IntegrationError) as exc:
             # A misconfiguration (no Radarr/Tautulli yet) or an unreachable source is the
             # owner's to fix -- report it rather than letting the scan die silently and leave

@@ -36,6 +36,7 @@ from reaper.services.executor import (
     Executor,
     ReapGateway,
     RunReport,
+    _grew_materially,
     _row_timestamp,
 )
 from reaper.services.planner import (
@@ -488,6 +489,7 @@ class TestCapsAbortNeverTruncate:
             settings=settings,
             dry_run=False,
             gateway=_gateway(radarr={1: FakeRadarr()}),
+            armed_recheck=_armed_forever,
         ).execute(run.id)
 
         assert report.state is RunState.ABORTED
@@ -589,6 +591,194 @@ class TestARunExecutesOnce:
 # ---------------------------------------------------------------------------
 # The real send -- against fakes, so the whole live path is proven without a server.
 # ---------------------------------------------------------------------------
+
+
+class TestGrewMaterially:
+    """The size-drift allowance: growth within a tenth (or the 256 MiB floor for small
+    items) is jitter; anything past it is an upgrade the owner never approved."""
+
+    def test_growth_past_a_tenth_is_material(self) -> None:
+        assert _grew_materially(10 * GB, 12 * GB)
+
+    def test_growth_within_a_tenth_is_tolerated(self) -> None:
+        assert not _grew_materially(10 * GB, int(10.5 * GB))
+
+    def test_small_items_get_the_floor_not_the_tenth(self) -> None:
+        # A tenth of 100 MiB is 10 MiB -- noise-sized. The 256 MiB floor governs.
+        approved = 100 * 1024**2
+        assert not _grew_materially(approved, approved + 200 * 1024**2)
+        assert _grew_materially(approved, approved + 300 * 1024**2)
+
+    def test_shrinking_is_never_material(self) -> None:
+        # Deleting less than approved is the safe direction.
+        assert not _grew_materially(10 * GB, 1 * GB)
+        assert not _grew_materially(10 * GB, 0)
+
+
+class TestSizeDriftReRead:
+    """The live size is re-read immediately before anything is sent. A file that grew
+    materially since approval was upgraded -- the approval, the caps and the typed phrase
+    all counted the smaller file -- so the item is kept, never deleted unconfirmed."""
+
+    async def test_an_upgraded_movie_is_kept_not_deleted(self, session: AsyncSession) -> None:
+        snapshot_id = await _snapshot_one(
+            session, media_key="radarr:1:1", rating_key=700, size=2 * GB
+        )
+        run = await _plan(session, snapshot_id)
+        radarr = FakeRadarr(size_on_disk=40 * GB)  # upgraded to a remux since approval
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert radarr.delete_calls == []  # nothing was sent
+        assert report.deleted_items == 0
+        assert report.skipped == 1
+        assert report.state is RunState.COMPLETED  # a skip is a protection, not a failure
+        assert "bigger now" in report.outcomes[0].detail
+
+    async def test_a_movie_whose_size_cannot_be_read_is_kept(self, session: AsyncSession) -> None:
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+        radarr = FakeRadarr(size_on_disk=None)  # Radarr reports no sizeOnDisk at all
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert radarr.delete_calls == []
+        assert report.skipped == 1
+
+    async def test_growth_within_the_allowance_still_deletes(self, session: AsyncSession) -> None:
+        snapshot_id = await _snapshot_one(
+            session, media_key="radarr:1:1", rating_key=700, size=10 * GB
+        )
+        run = await _plan(session, snapshot_id)
+        # Within a tenth of the approved size: jitter, not an upgrade.
+        radarr = FakeRadarr(size_on_disk=int(10.5 * GB))
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert report.deleted_items == 1
+        assert radarr.delete_calls == [1]
+
+    async def test_an_upgraded_season_is_kept_before_anything_is_sent(
+        self, session: AsyncSession
+    ) -> None:
+        snapshot_id = await _snapshot_one(
+            session, media_key="sonarr:1:42:3", rating_key=800, media_type="season", size=1 * GB
+        )
+        run = await _plan(session, snapshot_id)
+        sonarr = FakeSonarr(
+            files=[
+                {"id": 101, "seasonNumber": 3, "size": 20 * GB},  # upgraded since approval
+                {"id": 900, "seasonNumber": 4, "size": 50 * 1024**2},
+            ]
+        )
+
+        report = await _real(session, run, _gateway(sonarr={1: sonarr}))
+
+        # The skip fired before even the reversible unmonitor -- the season is untouched.
+        assert sonarr.unmonitor_calls == []
+        assert sonarr.delete_calls == []
+        assert report.skipped == 1
+
+    async def test_a_season_with_an_unreadable_file_size_is_kept(
+        self, session: AsyncSession
+    ) -> None:
+        snapshot_id = await _snapshot_one(
+            session, media_key="sonarr:1:42:3", rating_key=800, media_type="season"
+        )
+        run = await _plan(session, snapshot_id)
+        sonarr = FakeSonarr(
+            files=[
+                {"id": 101, "seasonNumber": 3, "size": 50 * 1024**2},
+                {"id": 102, "seasonNumber": 3},  # no size reported
+            ]
+        )
+
+        report = await _real(session, run, _gateway(sonarr={1: sonarr}))
+
+        assert sonarr.unmonitor_calls == []
+        assert report.skipped == 1
+
+    async def test_a_drift_skip_does_not_consume_the_canary(self, session: AsyncSession) -> None:
+        """The skipped item touched no file, so the next item still gets the canary's
+        halt-on-failure protection -- same rule as every other pre-send skip."""
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+
+        class DriftingFirstRadarr(FakeRadarr):
+            async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
+                movie = await super().movie_by_id(movie_id)
+                if movie_id == 1:
+                    movie["sizeOnDisk"] = 50 * GB  # only the first item drifted
+                return movie
+
+        radarr = DriftingFirstRadarr(fail_ids={2})  # the promoted canary then fails
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        # Movie 1 was kept (drift); movie 2 became the canary, failed, and aborted the run.
+        assert report.state is RunState.ABORTED
+        assert radarr.delete_calls == [2]
+
+
+class TestDisarmMidRun:
+    """Turning deletion off mid-run stops the run before its next item. Files already
+    verified deleted stay deleted; nothing further is sent."""
+
+    async def test_disarming_between_items_halts_the_rest(self, session: AsyncSession) -> None:
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+        radarr = FakeRadarr()
+
+        answers = iter([True, False])  # armed for the first item, off before the second
+
+        async def flipping() -> bool:
+            return next(answers)
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}), armed_recheck=flipping)
+
+        assert report.state is RunState.ABORTED
+        assert "turned off" in (report.aborted_reason or "")
+        assert radarr.delete_calls == [1]  # the second item was never attempted
+        assert report.deleted_items == 1  # the first stays deleted and recorded
+
+    async def test_an_unreadable_switch_fails_closed(self, session: AsyncSession) -> None:
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+        radarr = FakeRadarr()
+
+        async def broken() -> bool:
+            raise RuntimeError("db unreachable")
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}), armed_recheck=broken)
+
+        assert report.state is RunState.ABORTED
+        assert radarr.delete_calls == []  # nothing at all was sent
+
+    async def test_a_real_run_without_the_recheck_is_refused(self, session: AsyncSession) -> None:
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+
+        with pytest.raises(ExecutionError, match="arm check"):
+            await Executor(
+                session,
+                safety=_armed(),
+                settings=ProfileSettings(),
+                dry_run=False,
+                gateway=_gateway(radarr={1: FakeRadarr()}),
+            ).execute(run.id)
+
+    async def test_a_dry_run_needs_no_recheck(self, session: AsyncSession) -> None:
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+
+        report = await Executor(
+            session, safety=_read_only(), settings=ProfileSettings(), dry_run=True
+        ).execute(run.id)
+
+        assert report.state is RunState.COMPLETED
 
 
 class TestRowTimestamp:
@@ -768,7 +958,9 @@ class TestMovieLiveSend:
 
         with respx.mock:
             respx.get("https://radarr.test/api/v3/movie/1").mock(
-                return_value=__import__("httpx").Response(200, json={"id": 1, "tmdbId": 5})
+                return_value=__import__("httpx").Response(
+                    200, json={"id": 1, "tmdbId": 5, "sizeOnDisk": 1024**3}
+                )
             )
             client = RadarrClient("https://radarr.test", "k", safety=_read_only())
             gateway = _gateway(radarr={1: client})
@@ -1343,7 +1535,18 @@ async def _plan(session: AsyncSession, snapshot_id: int) -> ReapRun:
     )
 
 
-async def _real(session: AsyncSession, run: ReapRun, gateway: ReapGateway) -> RunReport:
+async def _armed_forever() -> bool:
+    """The default arm re-check for tests: the switch never flips mid-run."""
+    return True
+
+
+async def _real(
+    session: AsyncSession,
+    run: ReapRun,
+    gateway: ReapGateway,
+    *,
+    armed_recheck: Any = _armed_forever,
+) -> RunReport:
     """Execute a run for real (armed) against the given gateway of fakes. Zero poll delay so
     the exclusion-verification retry does not slow the suite."""
     executor = Executor(
@@ -1352,6 +1555,7 @@ async def _real(session: AsyncSession, run: ReapRun, gateway: ReapGateway) -> Ru
         settings=ProfileSettings(),
         dry_run=False,
         gateway=gateway,
+        armed_recheck=armed_recheck,
         exclusion_poll_delay=0.0,
         plex_settle_delay=0.0,
     )
@@ -1400,12 +1604,16 @@ class FakeRadarr:
         fail_ids: set[int] | None = None,
         exclusion_appears_after: int = 0,
         root_accessible: bool = True,
+        size_on_disk: int | None = 256 * 1024**2,
     ) -> None:
         self._tmdb_id = tmdb_id
         self._land_exclusion = land_exclusion
         self._become_gone = become_gone
         self._path = path
         self._root_accessible = root_accessible
+        # What sizeOnDisk reports; small by default so the drift interlock stays quiet in
+        # tests about other things. None omits the field (an unreadable size).
+        self._size_on_disk = size_on_disk
         self._fail_ids = fail_ids or set()  # ids whose exclusion never lands
         # Radarr adds the exclusion a beat after the delete's 200. This simulates that lag:
         # an exclusion added on read N only becomes visible from read N + this many.
@@ -1418,7 +1626,10 @@ class FakeRadarr:
     async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
         if movie_id in self._deleted and self._become_gone:
             raise IntegrationError("radarr", "movie not found", status=404)
-        return {"id": movie_id, "tmdbId": self._tmdb_id + movie_id, "path": self._path}
+        movie = {"id": movie_id, "tmdbId": self._tmdb_id + movie_id, "path": self._path}
+        if self._size_on_disk is not None:
+            movie["sizeOnDisk"] = self._size_on_disk
+        return movie
 
     async def delete_movie(
         self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True
@@ -1459,10 +1670,13 @@ class FakeSonarr:
         self._season = season
         self._monitored = True
         self._monitored_after = monitored_after_unmonitor
+        # Sizes are small by default so the drift interlock stays quiet in tests about
+        # other things (candidates default to 1 GB).
         self._files = files or [
-            {"id": 101, "seasonNumber": season},
-            {"id": 102, "seasonNumber": season},
-            {"id": 900, "seasonNumber": season + 1},  # a different season -- must be untouched
+            {"id": 101, "seasonNumber": season, "size": 50 * 1024**2},
+            {"id": 102, "seasonNumber": season, "size": 50 * 1024**2},
+            # A different season -- must be untouched.
+            {"id": 900, "seasonNumber": season + 1, "size": 50 * 1024**2},
         ]
         self.unmonitor_calls: list[tuple[int, int]] = []
         self.delete_calls: list[list[int]] = []
@@ -1635,6 +1849,7 @@ class TestJournalDurability:
                     settings=ProfileSettings(),
                     dry_run=False,
                     gateway=_gateway(radarr={1: _DyingRadarr()}),
+                    armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
                     plex_settle_delay=0.0,
                 )
@@ -1687,6 +1902,7 @@ class TestTheExecutingClaimIsAtomic:
                     settings=ProfileSettings(),
                     dry_run=False,
                     gateway=_gateway(radarr={1: radarr}, plex=plex),
+                    armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
                     plex_settle_delay=0.0,
                 )
@@ -1700,6 +1916,7 @@ class TestTheExecutingClaimIsAtomic:
                     settings=ProfileSettings(),
                     dry_run=False,
                     gateway=_gateway(radarr={1: radarr}, plex=plex),
+                    armed_recheck=_armed_forever,
                     exclusion_poll_delay=0.0,
                     plex_settle_delay=0.0,
                 )
@@ -1741,6 +1958,7 @@ class TestRollingThirtyDayCaps:
             settings=settings,
             dry_run=dry,
             gateway=None if dry else _gateway(radarr={1: FakeRadarr()}),
+            armed_recheck=None if dry else _armed_forever,
             exclusion_poll_delay=0.0,
             plex_settle_delay=0.0,
         )
@@ -1772,6 +1990,7 @@ class TestRollingThirtyDayCaps:
             settings=settings,
             dry_run=False,
             gateway=_gateway(radarr={1: radarr}),
+            armed_recheck=_armed_forever,
             exclusion_poll_delay=0.0,
         )
         report = await executor.execute(second.id)

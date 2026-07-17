@@ -541,8 +541,18 @@ function ShowCard({
   pending: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const totalSize = group.items.reduce((sum, s) => sum + s.size_bytes, 0);
-  const label = group.items.length === 1 ? "1 season" : `${group.items.length} seasons`;
+  // On the "Would reap" tab the card must state what "Reap now" will actually plan: the
+  // server's whole-snapshot totals (every condemned season minus hand-spares), never a
+  // sum over the fetched pages, which on a long sorted list can hold only some of a
+  // show's seasons. Other tabs keep the fetched sum; their cards describe what is
+  // listed, not a reap plan.
+  const first = group.items[0]!;
+  const fetchedSize = group.items.reduce((sum, s) => sum + s.size_bytes, 0);
+  const isReapTab = first.verdict === "condemn";
+  const seasonCount =
+    (isReapTab ? first.group_condemned_count : null) ?? group.items.length;
+  const totalSize = (isReapTab ? first.group_condemned_bytes : null) ?? fetchedSize;
+  const label = seasonCount === 1 ? "1 season" : `${seasonCount} seasons`;
   // What the whole show agrees on. A show-level override makes every season inherit it, so
   // this is the show's decision in the common case; a per-season override reads as mixed.
   const showOverride = groupOverride(group.items);

@@ -36,6 +36,7 @@ from typing import Any, Literal
 
 import structlog
 from sqlalchemy import bindparam, select, text
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from reaper.aio import gather_reaped, reap
@@ -662,8 +663,8 @@ async def scan(
             condemned += 1
             condemned_keys.append(judgement.media_key)
 
-    # Grace clocks for everything condemned this run, in one batched pass -- the same
-    # decision per key as _record_first_flagged, without a database round trip per item.
+    # Grace clocks for everything condemned this run, in one batched pass -- the
+    # _apply_first_flag decision per key, without a database round trip per item.
     await _record_first_flagged_bulk(session, condemned_keys, now, grace_days=grace_days)
 
     await session.flush()
@@ -939,13 +940,12 @@ def _explain(
 
 
 def _apply_first_flag(
-    session: AsyncSession,
     existing: FirstFlagged | None,
     media_key: str,
     now: datetime,
     *,
     grace_days: int,
-) -> None:
+) -> FirstFlagged | None:
     """Set the grace clock once, and never move it while the item stays condemned --
     but DO restart it when an item that had left the condemned set comes back.
 
@@ -963,14 +963,12 @@ def _apply_first_flag(
     missed a snapshot to an outage), the clock restarts. ``last_seen_condemned_at`` exists
     for exactly this reset.
 
-    This is THE decision, shared by the one-key and batched recorders below so the two
-    can never drift apart on a safety window.
+    This is THE decision, applied per key by :func:`_record_first_flagged_bulk` (the only
+    write path to the grace clock). A key with no row yet is RETURNED as a new row rather
+    than inserted here, so the recorder can insert it conflict-tolerantly.
     """
     if existing is None:
-        session.add(
-            FirstFlagged(media_key=media_key, first_flagged_at=now, last_seen_condemned_at=now)
-        )
-        return
+        return FirstFlagged(media_key=media_key, first_flagged_at=now, last_seen_condemned_at=now)
 
     last_seen = existing.last_seen_condemned_at
     gap = timedelta(days=grace_days)
@@ -981,6 +979,33 @@ def _apply_first_flag(
         # a clock that was legitimately still running.
         existing.first_flagged_at = now
     existing.last_seen_condemned_at = now
+    return None
+
+
+async def _insert_first_flags(session: AsyncSession, rows: Sequence[FirstFlagged]) -> None:
+    """Insert new grace-clock rows, tolerating a competing writer.
+
+    ``ON CONFLICT DO NOTHING`` on the key: if another writer landed the same key between
+    our read and this write, its row already says "condemned around now" and keeping it
+    is correct -- a primary-key collision must never abort a scan. Chunked at 300 rows
+    (three bound values each) to stay under SQLite's historical 999-variable limit.
+    """
+    for start in range(0, len(rows), 300):
+        chunk = rows[start : start + 300]
+        await session.execute(
+            sqlite_insert(FirstFlagged)
+            .values(
+                [
+                    {
+                        "media_key": row.media_key,
+                        "first_flagged_at": row.first_flagged_at,
+                        "last_seen_condemned_at": row.last_seen_condemned_at,
+                    }
+                    for row in chunk
+                ]
+            )
+            .on_conflict_do_nothing(index_elements=["media_key"])
+        )
 
 
 async def _record_first_flagged_bulk(
@@ -990,7 +1015,8 @@ async def _record_first_flagged_bulk(
 
     The ONLY write path to the grace clock, applying :func:`_apply_first_flag` per key;
     the existing rows arrive in chunked ``IN`` queries instead of a ``session.get`` (and
-    its autoflush) per condemned item.
+    its autoflush) per condemned item, and brand-new keys are inserted conflict-tolerantly
+    (:func:`_insert_first_flags`) so two writers racing on one key cannot abort the scan.
     """
     keys = list(dict.fromkeys(media_keys))
     if not keys:
@@ -1003,8 +1029,13 @@ async def _record_first_flagged_bulk(
         ).scalars()
         for row in rows:
             existing[row.media_key] = row
-    for key in keys:
-        _apply_first_flag(session, existing.get(key), key, now, grace_days=grace_days)
+    new_rows = [
+        new_row
+        for key in keys
+        if (new_row := _apply_first_flag(existing.get(key), key, now, grace_days=grace_days))
+        is not None
+    ]
+    await _insert_first_flags(session, new_rows)
 
 
 # ---------------------------------------------------------------------------
@@ -1400,36 +1431,53 @@ async def sync_protection_lists(
     return synced
 
 
+#: How long a failed whitelist may coast on its stored membership before the snapshot
+#: degrades anyway. A stale-but-populated keep-list still protects everything already on
+#: it, so one missed nightly sync is tolerated (the tradeoff: a title keep-tagged after
+#: the last successful sync is unprotected until the next one). Past this bound the
+#: unprotected window is no longer a blip, so the scan stops being executable until a
+#: sync succeeds. Two nightly cycles plus slack.
+WHITELIST_STALE_AFTER = timedelta(hours=48)
+
+
 async def protection_sync_degradations(
     engine: AsyncEngine, synced: Mapping[str, int | str]
 ) -> list[str]:
     """Which failed protection-list syncs must degrade the snapshot.
 
     ``sync_protection_lists`` records a failed provider as ``"error: ..."`` and then only
-    the caller can decide what to do about it. The atomic swap in ``lists.sync`` keeps the
-    PRIOR membership on a failed refresh, so a transient failure of a list that already has
-    members is bounded -- the previous keep-list still protects -- and need not degrade.
+    the caller can decide what to do about it. Only **whitelist**-kind lists can fail
+    *open* (a curated soft-list that fails merely loses a scoring nudge; it never
+    unprotects a kept title), and a failed whitelist degrades the snapshot in three
+    cases, each resolving toward keeping files:
 
-    The dangerous case, and the one this guards, is a failed **whitelist** with NO
-    membership to fall back on: a first scan, or a newly-added keep-list that has never
-    synced once. The WhitelistGate then reads an empty keep-list, fails to fire, and the
-    snapshot -- unless we degrade it here -- is fully executable against a keep-list that
-    was meant to save those very titles. A whitelist failing open is the worst kind of bug
-    this tool can have, so only those slugs degrade (a curated soft-list that fails merely
-    loses a scoring nudge; it never unprotects a kept title).
+    * **No membership to fall back on.** A first scan, or a newly-added keep-list that
+      has never synced once: the WhitelistGate reads an empty keep-list and fails to
+      fire, so an executable snapshot would reap the very titles the list was meant to
+      save.
+    * **Stored membership older than ``WHITELIST_STALE_AFTER``.** The atomic swap in
+      ``lists.sync`` keeps the prior membership on a failed refresh, so a *fresh-enough*
+      copy still protects and a transient failure need not stop the scan -- but every
+      hour of staleness is an hour in which a newly keep-tagged title is unprotected, so
+      past the bound the snapshot degrades until a sync succeeds.
+    * **No record of a successful sync at all** (members present but no
+      ``last_synced_at``): recency cannot be confirmed, so it is not assumed.
     """
     await lists.ensure_schema(engine)
     reasons: list[str] = []
+    now = utcnow()
     async with engine.connect() as conn:
         for slug, outcome in synced.items():
             if not (isinstance(outcome, str) and outcome.startswith("error:")):
                 continue
-            kind = (
+            row = (
                 await conn.execute(
-                    text("SELECT kind FROM protection_list WHERE slug = :slug"),
+                    text("SELECT kind, last_synced_at FROM protection_list WHERE slug = :slug"),
                     {"slug": slug},
                 )
-            ).scalar_one_or_none()
+            ).one_or_none()
+            kind = row[0] if row is not None else None
+            last_synced_at = row[1] if row is not None else None
             # Only whitelist-kind lists fail *open* when empty. A missing row (never synced
             # even once) is treated as whitelist-shaped -- fail closed rather than guess.
             if kind is not None and str(kind) != lists.ListKind.WHITELIST.value:
@@ -1442,8 +1490,26 @@ async def protection_sync_degradations(
             ).scalar_one()
             if int(members or 0) == 0:
                 reasons.append(
-                    f"protection list '{slug}' failed to sync and its keep-list is empty -- "
+                    f"protection list '{slug}' failed to sync and its keep-list is empty: "
                     "a scan must not reap titles the list would have saved"
+                )
+                continue
+            # Members exist, so the stored copy still protects -- but only a fresh-enough
+            # copy. last_synced_at is written only on success (lists.sync), so it IS the
+            # last successful sync; from_epoch returns None for a null or zero stamp.
+            last_success = from_epoch(last_synced_at)
+            if last_success is None:
+                reasons.append(
+                    f"protection list '{slug}' failed to sync, and Reaper has no record of "
+                    "it ever syncing successfully. Titles on it may be unprotected, so "
+                    "nothing may be deleted from this scan"
+                )
+            elif now - last_success > WHITELIST_STALE_AFTER:
+                hours = int(WHITELIST_STALE_AFTER.total_seconds() // 3600)
+                reasons.append(
+                    f"protection list '{slug}' failed to sync and its stored copy is more "
+                    f"than {hours} hours old. Titles added to it since then are "
+                    "unprotected, so nothing may be deleted from this scan"
                 )
     return reasons
 

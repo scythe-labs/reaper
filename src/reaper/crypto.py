@@ -28,12 +28,14 @@ import hashlib
 
 from cryptography.fernet import Fernet, InvalidToken, MultiFernet
 
-# A fixed, app-wide salt for the credential KDF. A per-install random salt would be
-# stronger, but it would have to live in a file beside secret.key and be threaded
-# through every SecretBox construction; a fixed salt still defeats generic,
-# precomputed rainbow tables, and scrypt's work factor -- not the salt -- is what
-# makes an offline dictionary attack on a weak key expensive.
-_KDF_SALT = b"reaper.at-rest.credential-key.v1"
+# The fixed, app-wide v1 salt for the credential KDF. Since the per-install salt landed
+# (``reaper.secrets.resolve_kdf_salt``, a random salt minted beside secret.key and passed
+# into SecretBox), this fixed value is kept for DECRYPT-ONLY compatibility: data written
+# before an install had its own salt still opens, and new data is always written under
+# the per-install derivation. A construction that passes no salt (tests, mostly) still
+# encrypts under this fixed value, which defeats generic precomputed tables; the
+# per-install salt additionally makes any dictionary attack non-reusable across installs.
+_DEFAULT_KDF_SALT = b"reaper.at-rest.credential-key.v1"
 
 # scrypt cost. n must be a power of two; 2**14 with r=8 needs ~16 MiB and a few ms,
 # which is negligible at boot (a handful of keys) yet a real per-guess cost offline.
@@ -43,11 +45,11 @@ _SCRYPT_P = 1
 _SCRYPT_MAXMEM = 64 * 1024 * 1024
 
 
-def _derive_fernet_key(secret: str) -> bytes:
+def _derive_fernet_key(secret: str, salt: bytes) -> bytes:
     """Stretch the secret into the 32 url-safe base64 bytes Fernet expects, with scrypt."""
     digest = hashlib.scrypt(
         secret.encode("utf-8"),
-        salt=_KDF_SALT,
+        salt=salt,
         n=_SCRYPT_N,
         r=_SCRYPT_R,
         p=_SCRYPT_P,
@@ -73,20 +75,26 @@ class SecretBox:
     """Encrypts and decrypts credentials at rest.
 
     Pass the current key first; any older keys after it are accepted for
-    decryption only.
+    decryption only. ``salt`` is the per-install KDF salt
+    (:func:`reaper.secrets.resolve_kdf_salt`); when given, new data is encrypted
+    under it, while the fixed v1 salt and the legacy SHA-256 derivation remain
+    registered decrypt-only so everything written before still opens.
     """
 
-    def __init__(self, current_key: str, *old_keys: str) -> None:
+    def __init__(self, current_key: str, *old_keys: str, salt: bytes | None = None) -> None:
         if not current_key:
             raise ValueError("A secret key is required to encrypt credentials at rest.")
         keys = [current_key, *old_keys]
-        # For every key, register both derivations: the scrypt key (used to encrypt)
-        # and the legacy SHA-256 key (decrypt-only, so pre-upgrade data still opens).
-        # The very first entry -- scrypt over the *current* key -- is what MultiFernet
-        # encrypts and rotates to.
+        # For every key, register every derivation this install has ever written
+        # under, newest first: the per-install scrypt key (what MultiFernet encrypts
+        # and rotates to), then the fixed-salt scrypt key, then the legacy SHA-256
+        # key -- the latter two decrypt-only, so pre-upgrade data still opens with no
+        # migration and ages out as anything is re-saved or rotated.
         fernets: list[Fernet] = []
         for k in keys:
-            fernets.append(Fernet(_derive_fernet_key(k)))
+            if salt is not None:
+                fernets.append(Fernet(_derive_fernet_key(k, salt)))
+            fernets.append(Fernet(_derive_fernet_key(k, _DEFAULT_KDF_SALT)))
             fernets.append(Fernet(_derive_legacy_fernet_key(k)))
         self._fernet = MultiFernet(fernets)
 

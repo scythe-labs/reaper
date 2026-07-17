@@ -132,6 +132,11 @@ async def scheduled_scan(
             box=secret_box,
         )
         log.info("scheduler.scan_complete", snapshot=snapshot.id, items=snapshot.item_count)
+    except scan_runner.ScanInProgressError:
+        # A scan started from the browser is still running; landing a second one on top
+        # would double-read every source and race the grace clock. Skip this firing --
+        # the next scheduled one runs normally.
+        log.info("scheduler.scan_skipped", reason="a scan is already running")
     except scan_runner.ScanConfigError as exc:
         log.info("scheduler.scan_skipped", reason=str(exc))
     except Exception as exc:

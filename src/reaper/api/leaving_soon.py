@@ -43,7 +43,12 @@ async def _plex_client(request: Request, safety: RuntimeSafety) -> PlexClient | 
         server = (await session.execute(select(PlexServer))).scalars().first()
     if server is None:
         return None
-    return PlexClient(server.connection_uri, box.decrypt(server.token_enc), safety=safety)
+    return PlexClient(
+        server.connection_uri,
+        box.decrypt(server.token_enc),
+        safety=safety,
+        verify=server.verify_tls,
+    )
 
 
 @router.post("/leaving-soon/sync")

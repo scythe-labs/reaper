@@ -39,6 +39,7 @@ from reaper.ratings import Rating, RatingSource
 from reaper.services import history_sync
 from reaper.services.snapshot import (
     _fold_merged_watch_stats,
+    _insert_first_flags,
     _raw_items,
     _record_first_flagged_bulk,
     _watch_stats,
@@ -651,6 +652,35 @@ class TestTheGraceClockRestartsOnReCondemnation:
         assert row.last_seen_condemned_at == NOW  # only the last-seen bumped
 
 
+class TestTheGraceRecorderToleratesACompetingWriter:
+    async def test_an_already_present_key_does_not_abort_the_insert(
+        self, session: AsyncSession
+    ) -> None:
+        """Two writers racing on one key: the loser's insert must do nothing (the winner's
+        row already says "condemned around now"), never raise a primary-key collision out
+        of a scan. Simulated by inserting a row the recorder's read predates."""
+        earlier = NOW - timedelta(hours=1)
+        session.add(
+            FirstFlagged(
+                media_key="radarr:1:9", first_flagged_at=earlier, last_seen_condemned_at=earlier
+            )
+        )
+        await session.flush()
+
+        await _insert_first_flags(
+            session,
+            [
+                FirstFlagged(
+                    media_key="radarr:1:9", first_flagged_at=NOW, last_seen_condemned_at=NOW
+                )
+            ],
+        )
+
+        row = await session.get(FirstFlagged, "radarr:1:9")
+        assert row is not None
+        assert row.first_flagged_at == earlier  # the winner's clock survives
+
+
 # ---------------------------------------------------------------------------
 # A failed whitelist sync with an empty keep-list degrades the snapshot.
 # ---------------------------------------------------------------------------
@@ -666,14 +696,48 @@ class TestProtectionSyncDegradations:
         reasons = await protection_sync_degradations(cache_engine, {"reaper-keep": "error: boom"})
         assert any("reaper-keep" in r for r in reasons)
 
-    async def test_a_failed_whitelist_that_still_has_members_does_not_degrade(
+    async def test_a_failed_whitelist_with_a_fresh_copy_does_not_degrade(
         self, cache_engine: AsyncEngine
     ) -> None:
-        """The atomic swap preserved prior membership, so the keep-list still protects --
-        a transient failure need not stop the scan."""
-        await _seed_list(cache_engine, slug="reaper-keep", kind="whitelist", members=3)
+        """The atomic swap preserved prior membership and the last successful sync is
+        recent, so the keep-list still protects -- a transient failure need not stop the
+        scan."""
+        await _seed_list(
+            cache_engine,
+            slug="reaper-keep",
+            kind="whitelist",
+            members=3,
+            last_synced_at=int(NOW.timestamp()) - 3600,  # an hour ago
+        )
         reasons = await protection_sync_degradations(cache_engine, {"reaper-keep": "error: boom"})
         assert reasons == []
+
+    async def test_a_failed_whitelist_stale_beyond_the_bound_degrades(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """P-6: stale-but-populated protects only within the bound. Past it, every title
+        keep-tagged since the last successful sync has been unprotected for days, so the
+        snapshot degrades until a sync succeeds."""
+        await _seed_list(
+            cache_engine,
+            slug="reaper-keep",
+            kind="whitelist",
+            members=3,
+            last_synced_at=int((NOW - timedelta(days=3)).timestamp()),
+        )
+        reasons = await protection_sync_degradations(cache_engine, {"reaper-keep": "error: boom"})
+        assert any("reaper-keep" in r and "hours old" in r for r in reasons)
+
+    async def test_a_failed_whitelist_with_members_but_no_sync_record_degrades(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """Members with no last-successful-sync stamp: recency cannot be confirmed, so it
+        is not assumed (fail closed)."""
+        await _seed_list(
+            cache_engine, slug="reaper-keep", kind="whitelist", members=3, last_synced_at=None
+        )
+        reasons = await protection_sync_degradations(cache_engine, {"reaper-keep": "error: boom"})
+        assert any("reaper-keep" in r for r in reasons)
 
     async def test_a_failed_curated_list_does_not_degrade(self, cache_engine: AsyncEngine) -> None:
         """A soft curated list failing only loses a scoring nudge; it never unprotects a
@@ -687,7 +751,9 @@ class TestProtectionSyncDegradations:
         assert reasons == []
 
 
-async def _seed_list(engine: AsyncEngine, *, slug: str, kind: str, members: int) -> None:
+async def _seed_list(
+    engine: AsyncEngine, *, slug: str, kind: str, members: int, last_synced_at: int | None = None
+) -> None:
     """Write a protection_list row (with kind) and ``members`` membership rows."""
     from reaper.services import lists
 
@@ -695,11 +761,12 @@ async def _seed_list(engine: AsyncEngine, *, slug: str, kind: str, members: int)
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "INSERT INTO protection_list (slug, display_name, mode, kind, weight, last_error) "
-                "VALUES (:slug, :slug, 'hard', :kind, 0, 'error: boom') "
-                "ON CONFLICT(slug) DO UPDATE SET kind = :kind"
+                "INSERT INTO protection_list "
+                "(slug, display_name, mode, kind, weight, last_error, last_synced_at) "
+                "VALUES (:slug, :slug, 'hard', :kind, 0, 'error: boom', :synced) "
+                "ON CONFLICT(slug) DO UPDATE SET kind = :kind, last_synced_at = :synced"
             ),
-            {"slug": slug, "kind": kind},
+            {"slug": slug, "kind": kind, "synced": last_synced_at},
         )
         for i in range(members):
             await conn.execute(

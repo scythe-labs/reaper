@@ -128,17 +128,19 @@ class LinkedServer:
     relay: bool
 
 
-async def _reachable(resource: PlexResource, token: str) -> PlexConnection:
+async def _reachable(resource: PlexResource, token: str, *, verify: bool = True) -> PlexConnection:
     """Probe every connection and take the best one that answers.
 
     Ordered local/https, then local/http, then remote, then **relay last**: the relay is
     bandwidth-capped and proxied through Plex, so it is a fallback rather than a default.
 
     Every alternative is stored alongside the winner, so that a URI which stops working
-    can be re-resolved later without dragging the owner back through OAuth.
+    can be re-resolved later without dragging the owner back through OAuth. ``verify``
+    is the operator's certificate-check choice for THIS server (a self-signed HTTPS
+    Plex is unreachable with it on); it rides through to every probe.
     """
     for connection in resource.preferred_connections():
-        if await probe_connection(connection, token):
+        if await probe_connection(connection, token, verify=verify):
             return connection
 
     # Retryable, deliberately: a server that answers none of its advertised addresses right
@@ -237,6 +239,7 @@ async def complete_link(
     account: PlexAccount,
     owned: list[PlexResource],
     choice: str | None = None,
+    verify_tls: bool = True,
 ) -> LinkedServer:
     """Turn a signed-in owner's discovered servers into a persisted link.
 
@@ -269,7 +272,7 @@ async def complete_link(
         )
     else:
         resource = owned[0]
-    connection = await _reachable(resource, resource.access_token or token)
+    connection = await _reachable(resource, resource.access_token or token, verify=verify_tls)
     token_enc = box.encrypt(resource.access_token or token)
 
     # -- brief DB touch: persist the linked server -------------------------
@@ -296,6 +299,9 @@ async def complete_link(
         )
         row.token_enc = token_enc
         row.owner_plex_account_id = account.account_id
+        # The certificate-check choice made while linking sticks to the server row;
+        # every later client (scan, reap gateway, Leaving Soon) reads it from here.
+        row.verify_tls = verify_tls
         row.last_ok_at = utcnow()
 
         if existing is None:
@@ -364,6 +370,7 @@ async def poll_link(
     pin_id: int,
     safety: RuntimeSafety,
     choice: str | None = None,
+    verify_tls: bool = True,
 ) -> LinkedServer | None:
     """Check an in-app link once. ``None`` while still pending; the linked server once done.
 
@@ -419,7 +426,13 @@ async def poll_link(
     consume_pending = True
     try:
         linked = await complete_link(
-            session_factory, box, token=token, account=account, owned=owned, choice=choice
+            session_factory,
+            box,
+            token=token,
+            account=account,
+            owned=owned,
+            choice=choice,
+            verify_tls=verify_tls,
         )
     except (PlexLinkRetryableError, PlexServerChoiceNeededError):
         # PIN still valid in both cases; let the browser re-poll it -- after the

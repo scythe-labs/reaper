@@ -81,6 +81,16 @@ jobs:
       - name: Install
         run: npm ci
 
+      # The two classic react-hooks rules run as errors: a conditional hook or a stale
+      # dependency in the execute-gating components is a correctness bug, not style.
+      - name: Lint
+        run: npm run lint
+
+      # Component tests (vitest + Testing Library), led by the reap confirmation's
+      # client-side execute gate -- the one UI surface in front of a deletion.
+      - name: Test
+        run: npm run test
+
       # `npm run build` runs tsc --noEmit first, so a type error fails the build rather
       # than shipping a bundle that throws in the browser.
       - name: Typecheck and build

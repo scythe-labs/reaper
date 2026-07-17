@@ -191,3 +191,16 @@ class TestLabelNormalisation:
 
     def test_distinct_labels_stay_distinct(self) -> None:
         assert normalise_label("leaving-soon") != normalise_label("reaper-keep")
+
+
+class TestSessionTlsChoice:
+    """The Plex session honours the per-server certificate choice (requests reads it
+    off ``Session.verify``), and on is the only default."""
+
+    def test_verification_defaults_on(self) -> None:
+        session = GuardedSession(RuntimeSafety(destructive_enabled=False))
+        assert session.verify is True
+
+    def test_the_opt_out_reaches_requests(self) -> None:
+        session = GuardedSession(RuntimeSafety(destructive_enabled=False), verify=False)
+        assert session.verify is False

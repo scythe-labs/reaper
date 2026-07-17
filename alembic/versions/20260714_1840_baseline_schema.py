@@ -101,6 +101,7 @@ def upgrade() -> None:
     sa.Column('connections_json', sa.Text(), nullable=False),
     sa.Column('token_enc', sa.Text(), nullable=False),
     sa.Column('owner_plex_account_id', sa.Integer(), nullable=False),
+    sa.Column('verify_tls', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.Integer(), nullable=False),
     sa.Column('last_ok_at', sa.Integer(), nullable=True),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_plex_server')),

@@ -57,7 +57,7 @@ interface UrlParts {
  * parsed lands whole in the hostname field, where the operator can see and fix it. */
 export function splitBaseUrl(raw: string): UrlParts {
   const trimmed = raw.trim();
-  let url: URL | null = null;
+  let url: URL | null;
   try {
     url = new URL(trimmed);
   } catch {

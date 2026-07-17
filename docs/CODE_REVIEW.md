@@ -25,6 +25,25 @@
 > TLS opt-out, and I-3's requests-app-aware warning. Details in PLAN.md's newest
 > entry.
 
+> **Fix status, third wave (2026-07-17).** The deliberately-held items are closed,
+> each with regression tests: B-13 (season rows carry per-group condemned totals
+> computed with the planner's own override function); H-4 (ESLint with the two
+> react-hooks rules as errors, plus vitest component tests led by the reap
+> confirmation's execute gate -- both CI gates); H-1's size-drift re-read (the executor
+> re-reads live size before every send and keeps anything that grew materially or
+> cannot be sized) and the `keep_history` protection (`TautulliClient.users` is back
+> and wired: an active user with history recording off degrades the scan, closing the
+> recorded gap); P-6 (a failed whitelist sync now coasts on stored members for at most
+> 48 hours -- `WHITELIST_STALE_AFTER` -- then degrades; rule 2 updated to match);
+> P-10's disarm-mid-run (the executor re-reads the arm switch before every item and
+> aborts the rest of the run when it is off or unreadable), shared scan lock (one
+> claim inside `run_scan`, so cron and manual scans cannot overlap; the grace-clock
+> insert is conflict-tolerant), per-install KDF salt (`secret.salt` beside
+> `secret.key`; fixed-salt and legacy derivations stay decrypt-only), and Plex TLS
+> opt-out (`PlexServer.verify_tls`, threaded through linking, scans, the reap gateway
+> and Leaving Soon, editable in Settings > Plex). Still open: I-3's requests-app-aware
+> warning (needs instance knowledge inside `inspect()`).
+
 **TLDR.** The safety architecture is genuinely sound where it is exercised: the gate and
 signal engine's fail-closed math checks out, the execute route's interlock chain is
 correct end to end, and auth/session handling is solid. The serious problems are almost

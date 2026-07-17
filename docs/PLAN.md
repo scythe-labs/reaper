@@ -7,9 +7,80 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-16 (review pass 2: the medium and low findings cleared too)
+Last updated: 2026-07-17 (review pass 2: the deliberately-held items, closed)
 
-### Newest — review pass 2: the medium and low findings, cleared
+### Newest — review pass 2: the deliberately-held items, closed
+
+The items held open at the end of review pass 2 (`docs/CODE_REVIEW.md`, "Held,
+deliberately") are now implemented, each with regression tests. The decisions they were
+waiting on were made, in every case toward keeping the file:
+
+- **Size-drift re-read at delete time (H-1).** The executor re-reads the item's live
+  size immediately before anything is sent (`sizeOnDisk` for a movie; the season's
+  episode files, before even the reversible unmonitor) and compares it against the
+  frozen approved size. Growth past one tenth of the approved size (256 MiB floor for
+  small items, `_grew_materially`) means the file was upgraded since approval -- the
+  caps and the typed phrase counted a smaller file -- so the item is skipped and kept,
+  as is an item whose current size cannot be read. The interlock list and the planner's
+  manifest comments claim the re-read again, now truthfully.
+- **The keep_history gap is closed (H-1).** `TautulliClient.users()` is back, wired
+  this time (rule 38): every scan reads the user list, and an *active* user with
+  Tautulli's per-user Keep History off degrades the snapshot -- everything only they
+  watch looks never-played, so "nobody watched it" cannot be trusted. Fail-closed both
+  ways: an unreadable user list, or a row whose flag cannot be read, also degrades.
+- **P-6 decided: staleness is bounded, not ignored.** A failed whitelist sync with
+  stored members keeps protecting (the atomic swap preserved the membership) for at
+  most `WHITELIST_STALE_AFTER` (48 hours, two nightly cycles plus slack) past the last
+  *successful* sync -- `protection_list.last_synced_at`, already written only on
+  success, is the record. Beyond the bound, or with no success ever recorded, the
+  snapshot degrades until a sync succeeds. Engineering rule 2 now states the bounded
+  exception.
+- **Disarm mid-run halts the run (P-10).** The executor re-reads the arm switch before
+  every item of a real run, through a fresh session injected by the execute route (the
+  run's own session caches rows across its per-item commits). The moment the switch
+  reads off -- or cannot be read -- the run aborts before its next item; a real run
+  without the recheck wired is refused outright. The module docstring's "deliberately
+  not here yet" section is gone; mid-run disarm is interlock 5.
+- **One scan at a time (P-10).** The one-scan claim lives inside `run_scan` itself, so
+  the browser's button and the scheduler share it wherever the scan started: the
+  scheduler skips (logged) when a scan is running, the scan route surfaces the refusal,
+  and the claim releases however the scan ends. The grace-clock recorder's inserts are
+  additionally conflict-tolerant (`INSERT ... ON CONFLICT DO NOTHING`, the winner's
+  clock survives).
+- **Per-install KDF salt (P-10).** `secret.salt` (16 random bytes, hex, 0600, atomic
+  create) is minted beside `secret.key` on first boot and threaded into `SecretBox`, so
+  the at-rest credential key derivation is unique per install and a dictionary attack
+  cannot be precomputed across installs. Nothing breaks on upgrade: the fixed v1 salt
+  and the legacy SHA-256 derivations stay registered decrypt-only, so pre-salt data
+  opens and ages out as it is re-saved. The entropy floor on operator keys is
+  documented as advisory in `.env.example`.
+- **Plex TLS opt-out (P-10).** `PlexServer.verify_tls` (default on) mirrors the
+  per-instance setting: chosen in the link form (it rides the link polls, so a
+  self-signed HTTPS server can be probed and linked at all), stored on the server row,
+  read by every client construction (scan, reap gateway, Leaving Soon), and editable in
+  Settings > Plex with the same warning copy as the instance modal. `.env.example`
+  documents that TLS choices live in the UI.
+- **B-13: show cards state what "Reap now" will plan.** Season rows in the candidates
+  API carry `group_condemned_count`/`group_condemned_bytes`, computed over the WHOLE
+  snapshot's condemned members minus hand-spares -- using `whitelist.effective_override`,
+  the same function the planner filters with (rule 30) -- so a show straddling unfetched
+  pages can no longer understate its plan. The card uses the server totals on the
+  "Would reap" tab and keeps fetched sums elsewhere (those tabs describe what is
+  listed, not a plan).
+- **H-4 decided: ESLint and vitest are build gates.** Flat-config ESLint with the two
+  classic react-hooks rules as errors (the plugin's newer compiler-era rules are
+  deliberately off: they flag long-standing legitimate patterns, and a gate must stay
+  green to mean anything); the three pre-existing inline disables are finally truthful.
+  Vitest + Testing Library component tests pin the reap confirmation's client-side
+  execute gate (exact-phrase unlock, disarmed state, aborted dry run, cannot dismiss
+  mid-reap, the per-item checklist) plus the size formatter. Both run in CI before the
+  build, and CLAUDE.md's gate list includes them.
+
+Still open after this pass: I-3's "keep_last_scope=requested with no requests app"
+warning (needs instance knowledge inside `inspect()`), and the policy-revert
+uniqueness quirk below (its own session). The `docker build` gate runs in CI.
+
+### Review pass 2: the medium and low findings, cleared
 
 Every remaining finding from `docs/CODE_REVIEW.md` that did not need a product decision
 is now fixed, almost all with regression tests. Green: 1,201 backend tests, ruff, mypy,
@@ -80,7 +151,8 @@ noted below; fresh DBs are clean).
   one-liners; explicit loading/error states on the always-visible safety surfaces; the
   verdict headline speaks the tab vocabulary; `.select-tick.on` uses `--accent-ink`.
 
-**Still open, deliberately:**
+**Still open, deliberately** (as of this entry; every item except I-3 and the
+policy-revert quirk is closed by the pass above):
 
 - B-13 (show cards vs. planner counts) needs a per-group condemned-totals API.
 - H-4: adding ESLint + vitest as build gates is an infra decision.

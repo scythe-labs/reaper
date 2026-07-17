@@ -15,7 +15,7 @@ if one were attempted.
 from __future__ import annotations
 
 from contextlib import AsyncExitStack
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from sqlalchemy import select
@@ -57,6 +57,32 @@ log = structlog.get_logger(__name__)
 
 class ScanConfigError(RuntimeError):
     """A scan cannot run because the required instances are not configured."""
+
+
+class ScanInProgressError(RuntimeError):
+    """A scan is already running, so this one was refused rather than run on top of it."""
+
+
+# One scan at a time, enforced HERE so every caller shares it: the browser's scan button
+# and the scheduler's cron job both come through run_scan, and before this claim existed
+# only the button checked anything (an in-memory flag the scheduler never saw). Two
+# overlapping scans double-read every source and race each other's grace-clock inserts.
+# A plain bool is atomic enough: the API and the scheduler share one event loop, and the
+# check-and-set in _claim_scan never awaits between the check and the set.
+_scan_running = False
+
+
+def _claim_scan() -> bool:
+    global _scan_running
+    if _scan_running:
+        return False
+    _scan_running = True
+    return True
+
+
+def _release_scan() -> None:
+    global _scan_running
+    _scan_running = False
 
 
 #: Every gate the catalogue knows how to build. A gate in a policy with no entry here
@@ -151,6 +177,7 @@ async def build_sources(
         server = (await session.execute(select(PlexServer))).scalars().first()
         plex_token = box.decrypt(server.token_enc) if server is not None else None
         plex_uri = server.connection_uri if server is not None else None
+        plex_verify = server.verify_tls if server is not None else True
 
     radarr_rows = [r for r in rows if r.kind is InstanceKind.RADARR]
     sonarr_rows = [r for r in rows if r.kind is InstanceKind.SONARR]
@@ -210,7 +237,7 @@ async def build_sources(
         await stack.enter_async_context(seerr)
     plex: PlexClient | None = None
     if plex_uri is not None and plex_token is not None:
-        plex = PlexClient(plex_uri, plex_token, safety=safety)
+        plex = PlexClient(plex_uri, plex_token, safety=safety, verify=plex_verify)
         await stack.enter_async_context(plex)
     return radarrs, sonarrs, tautulli, seerr, plex
 
@@ -247,6 +274,7 @@ async def build_reap_gateway(
         server = (await session.execute(select(PlexServer))).scalars().first()
         plex_token = box.decrypt(server.token_enc) if server is not None else None
         plex_uri = server.connection_uri if server is not None else None
+        plex_verify = server.verify_tls if server is not None else True
 
     radarr: dict[int, RadarrClient] = {}
     sonarr: dict[int, SonarrClient] = {}
@@ -280,7 +308,7 @@ async def build_reap_gateway(
             closers.append(tautulli)
 
     plex = (
-        PlexClient(plex_uri, plex_token, safety=safety)
+        PlexClient(plex_uri, plex_token, safety=safety, verify=plex_verify)
         if plex_uri is not None and plex_token is not None
         else None
     )
@@ -289,6 +317,82 @@ async def build_reap_gateway(
 
     gateway = ReapGateway(radarr=radarr, sonarr=sonarr, plex=plex, tautulli=tautulli)
     return gateway, closers
+
+
+def _flag(row: Any, name: str) -> bool | None:
+    """A Tautulli boolean-ish field (``1``/``0``, ``True``/``False``, ``"1"``/``"0"``),
+    or None when the row or field is missing or unreadable -- the caller decides what
+    absence means, because it differs per flag."""
+    if not isinstance(row, dict):
+        return None
+    value = row.get(name)
+    if value is None:
+        return None
+    try:
+        return bool(int(value))
+    except (TypeError, ValueError):
+        return bool(value)
+
+
+async def _keep_history_degradations(tautulli: TautulliClient) -> list[str]:
+    """Degrade the snapshot while Tautulli is not recording history for an active user.
+
+    Tautulli's per-user "Keep History" toggle silently drops that user's plays, so a
+    title only they watch looks never-played -- the exact evidence the condemn lane
+    scores on. While any active user has it off, "nobody watched it" cannot be
+    distinguished from "the recorder was off for the one person watching", so the scan
+    stays viewable but nothing may be deleted from it.
+
+    Fail-closed at every step (watch history is a source, rule 28): an unreadable user
+    list degrades, and so does a user row whose Keep History flag cannot be read. A user
+    marked inactive (removed from the server) is skipped -- their history is not being
+    written anywhere, because they cannot play anything.
+    """
+    try:
+        users = await tautulli.users()
+    except Exception as exc:
+        log.warning("scan.keep_history_unreadable", error=str(exc))
+        return [
+            "Reaper could not check whether Tautulli records watch history for every "
+            f"user ({exc}). If anyone's history is off, their plays are invisible, so "
+            "nothing may be deleted from this scan"
+        ]
+
+    unrecorded: list[str] = []
+    unreadable = 0
+    for row in users:
+        # _flag guards against junk rows itself: a non-dict row reads as None for every
+        # flag, so it lands in the cannot-confirm bucket below rather than crashing.
+        active = _flag(row, "is_active")
+        if active is False:
+            # Inactive means removed from the Plex server: they cannot play anything,
+            # so their history setting cannot hide a play.
+            continue
+        keeps = _flag(row, "keep_history")
+        if keeps is None:
+            unreadable += 1
+        elif not keeps:
+            name = str(row.get("friendly_name") or row.get("username") or "a user")
+            unrecorded.append(name)
+
+    reasons: list[str] = []
+    if unrecorded:
+        shown = ", ".join(sorted(unrecorded)[:5])
+        more = len(unrecorded) - 5
+        if more > 0:
+            shown += f" and {more} more"
+        reasons.append(
+            f"Tautulli is not recording watch history for: {shown}. Anything only they "
+            "watch looks never-played, so nothing may be deleted from this scan. Turn "
+            "on Keep History for them in Tautulli under Users"
+        )
+    if unreadable:
+        reasons.append(
+            f"Reaper could not read the Keep History setting for {unreadable} Tautulli "
+            "user(s), so it cannot confirm their plays are recorded. Nothing may be "
+            "deleted from this scan"
+        )
+    return reasons
 
 
 async def run_scan(
@@ -301,11 +405,38 @@ async def run_scan(
 ) -> Snapshot:
     """The whole read-only pipeline, from configured instances to a persisted snapshot.
 
-    Raises :class:`ScanConfigError` if the required instances are missing, and
-    :class:`IntegrationError` if a source fails hard mid-run. A per-instance failure is
-    caught inside the snapshot and degrades it (loud, viewable, un-executable) rather than
-    aborting -- partial evidence must never look complete.
+    One scan runs at a time, whoever asked: a second call while one is in flight raises
+    :class:`ScanInProgressError` immediately (the scheduler logs it and skips; the scan
+    route surfaces it). Raises :class:`ScanConfigError` if the required instances are
+    missing, and :class:`IntegrationError` if a source fails hard mid-run. A per-instance
+    failure is caught inside the snapshot and degrades it (loud, viewable, un-executable)
+    rather than aborting -- partial evidence must never look complete.
     """
+    if not _claim_scan():
+        raise ScanInProgressError(
+            "A scan is already running. Wait for it to finish, then start another."
+        )
+    try:
+        return await _run_scan_locked(
+            settings=settings,
+            session_factory=session_factory,
+            cache_engine=cache_engine,
+            box=box,
+            on_progress=on_progress,
+        )
+    finally:
+        _release_scan()
+
+
+async def _run_scan_locked(
+    *,
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+    cache_engine: AsyncEngine,
+    box: SecretBox,
+    on_progress: ProgressFn | None = None,
+) -> Snapshot:
+    """The pipeline body. Only ever entered holding the one-scan claim (see run_scan)."""
     emit = on_progress or (lambda _p: None)
 
     async with AsyncExitStack() as stack:
@@ -355,6 +486,13 @@ async def run_scan(
                 "deleted from this scan."
             )
 
+        # The mirror only holds what Tautulli recorded. A user whose per-user "Keep
+        # History" toggle is off is invisible in it: everything only they watch reads
+        # never-played, which is the exact evidence the condemn lane scores on. Checked
+        # every scan, fail-closed both ways (an active user with recording off degrades,
+        # and so does failing to read the user list at all).
+        pre_scan_degradations += await _keep_history_degradations(tautulli)
+
         # Refresh the protection lists BEFORE scoring reads them, or a "Never Reap"
         # collection and the IMDb Top 250 are silently empty and protect nothing.
         emit(Progress("lists", 0, 0, "refreshing protection lists"))
@@ -372,7 +510,7 @@ async def run_scan(
             except PlexError as exc:
                 plex_server = None
                 pre_scan_degradations.append(
-                    f"Plex unreachable: {exc} -- the 'Never Reap' collection could not be "
+                    f"Plex unreachable: {exc}. The 'Never Reap' collection could not be "
                     "refreshed, so no reap may run against a keep-list we could not confirm"
                 )
         # Three independent reads, overlapped: the protection-list refresh (the *arr tag

@@ -37,7 +37,7 @@ from reaper.config import RuntimeSafety, get_settings
 from reaper.crypto import SecretBox
 from reaper.db.models import AppUser
 from reaper.db.session import create_engine, create_session_factory
-from reaper.secrets import resolve_old_keys, resolve_secret_key
+from reaper.secrets import resolve_kdf_salt, resolve_old_keys, resolve_secret_key
 from reaper.services import plex_link
 from reaper.services.plex_link import PlexLinkError, PlexServerChoiceNeededError
 
@@ -158,7 +158,11 @@ async def _cmd_link_plex(server: str | None) -> int:
     engine = create_engine(settings)
     factory = create_session_factory(engine)
     try:
-        box = SecretBox(resolve_secret_key(settings), *resolve_old_keys(settings))
+        box = SecretBox(
+            resolve_secret_key(settings),
+            *resolve_old_keys(settings),
+            salt=resolve_kdf_salt(settings),
+        )
         safety = RuntimeSafety(destructive_enabled=settings.destructive_actions_enabled)
 
         def prompt(url: str) -> None:

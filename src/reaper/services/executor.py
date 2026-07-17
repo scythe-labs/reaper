@@ -11,9 +11,10 @@ Two independent layers guard every mutation, on purpose:
 * **This executor's ``dry_run``.** When set (and it is the default), the executor walks
   the entire plan -- the manifest re-check, the caps, the canary ordering, the spare
   check -- and records what it *would* send, but sends nothing and touches no live service.
-  The two *live* per-item interlocks (the streaming veto and the played-since-approval
-  check) query Plex and Tautulli, so they run only in a real send, not in a dry run; the
-  dry run proves the plan's shape and the reversible checks, not those two live reads.
+  The *live* per-item interlocks (the streaming veto, the played-since-approval check,
+  the size re-read, and the mid-run arm re-check) query live services or fresh state, so
+  they run only in a real send, not in a dry run; the dry run proves the plan's shape and
+  the reversible checks, not those live reads.
 
 * **The transport guard, underneath.** ``GuardedTransport`` (and its ``GuardedSession``
   twin for Plex) refuses any mutating call unless ``REAPER_DESTRUCTIVE_ACTIONS_ENABLED``
@@ -32,7 +33,7 @@ The interlocks, in order, and why each exists:
    does not re-read the *arr here, so a movie deleted or resized in Radarr after approval
    would not change this hash. Live drift is caught elsewhere, by the per-item interlocks
    below (the streaming veto, the played-since-approval check, and the per-item
-   existence re-reads at delete time); a stale tab replaying yesterday's plan is
+   existence and size re-reads at delete time); a stale tab replaying yesterday's plan is
    stopped by the route's confirmation-phrase recompute and the "executes once" guard.
 2. **Manual spare re-check, per item.** The owner may spare an item by hand *after* the
    plan is built -- during the grace window this executor exists for. A spare does not
@@ -44,41 +45,46 @@ The interlocks, in order, and why each exists:
 4. **The canary.** Ordinal 0, the single smallest item, executes and verifies alone.
    Only if the world changed exactly as predicted does the rest proceed. A broken path
    mapping costs one worthless file, not the whole run.
-5. **Active-stream veto, re-polled before every delete.** Not once at the start: a run
+5. **Mid-run disarm halts the run.** The arm switch is re-read before every item
+   (``_still_armed``, through the ``armed_recheck`` the execute route injects -- a fresh
+   read of the same database switch the UI toggles, never this run's cached snapshot).
+   The moment it reads off -- or cannot be read at all -- the run ABORTS before its next
+   item. Files already verified deleted stay deleted (they are not coming back), but
+   nothing further is sent. The transport guard still enforces arming underneath on
+   every single call.
+6. **Active-stream veto, re-polled before every delete.** Not once at the start: a run
    takes minutes and someone can start watching mid-run. Fail-closed -- if Plex cannot be
    read, the item is spared.
-6. **Watched-since-approval.** If anyone played the item after it was approved, it is
+7. **Watched-since-approval.** If anyone played the item after it was approved, it is
    spared -- the grace period existed precisely so this could still happen. Fail-closed on
    any Tautulli error or any history row we cannot precisely timestamp.
-7. **Verify the world changed.** A movie: re-read the exclusion list and assert the tmdbId
+8. **Size re-read at delete time.** The item's live size is re-read immediately before
+   anything is sent (``sizeOnDisk`` on the movie in ``_send_movie``; the season's episode
+   files in ``_send_season``) and compared against the frozen size the owner approved.
+   A file that grew beyond the allowance (``_grew_materially``) was upgraded since the
+   scan -- the approval, the caps and the typed phrase all counted a smaller file -- so
+   the item is skipped (kept), and so is one whose current size cannot be read at all.
+9. **Verify the world changed.** A movie: re-read the exclusion list and assert the tmdbId
    is present *and* the movie is gone -- Sonarr and Radarr each accept the *other's*
    exclusion parameter and return 200 while doing nothing, so the 200 is re-read, not
    trusted. A season: verify the unmonitor took *before* deleting any file, then verify no
    file for the season remains after.
-8. **The trash interlock (``emptyTrash``), at the very end of a real run.** The *arr
-   delete is the reclamation -- the file is off disk once Radarr/Sonarr removes it.
-   Purging Plex's stale entry is cosmetic cleanup, and it is the single call that turns
-   an unmounted-library mistake into a lost library, so ``_finalize_plex`` runs it only
-   per affected section and behind three checks: every *arr root folder reports
-   accessible, only path-scoped refreshes were issued, and the section's item count --
-   captured before the first delete -- shrank by no more than what this run deleted under
-   it (``_trash_delta_is_ours``). Any doubt skips the purge: a stale "unavailable" entry
-   is cosmetic, a wrong purge destroys other items' library records.
-
-What is deliberately NOT here yet, and why:
-
-* **Mid-run disarm.** The host arm state is read at the start of a run (and the transport
-  guard enforces it on every call). Flipping deletion off *during* a multi-item run does
-  not halt the items already in flight -- runs are kept small by the caps and the first-run
-  ratchet, and the per-item veto still catches a new viewer, but a true mid-run kill switch
-  is a follow-up.
+10. **The trash interlock (``emptyTrash``), at the very end of a real run.** The *arr
+    delete is the reclamation -- the file is off disk once Radarr/Sonarr removes it.
+    Purging Plex's stale entry is cosmetic cleanup, and it is the single call that turns
+    an unmounted-library mistake into a lost library, so ``_finalize_plex`` runs it only
+    per affected section and behind three checks: every *arr root folder reports
+    accessible, only path-scoped refreshes were issued, and the section's item count --
+    captured before the first delete -- shrank by no more than what this run deleted under
+    it (``_trash_delta_is_ours``). Any doubt skips the purge: a stale "unavailable" entry
+    is cosmetic, a wrong purge destroys other items' library records.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -118,6 +124,42 @@ _TERMINAL_DELETE_KINDS = frozenset({"radarr_delete", "sonarr_delete_files"})
 #: movie and season checklists read the same. Reaching a send means both of these are True.
 _CHECK_NOT_WATCHING = "Nobody was watching it right now"
 _CHECK_NOT_PLAYED_SINCE = "Not played since you approved it"
+
+#: The size re-read's allowance floor. A file may read a little larger than the frozen
+#: candidate (a rescan rounding differently, a subtitle landing beside a season) without
+#: meaning an upgrade, so growth within one tenth of the approved size -- or within this
+#: floor for small items, where a tenth is noise-sized -- is tolerated. A real quality
+#: upgrade is a step change (a 2 GB web-dl becoming a 40 GB remux) and clears both.
+_SIZE_DRIFT_FLOOR = 256 * 1024**2
+
+
+def _grew_materially(approved_bytes: int, live_bytes: int) -> bool:
+    """Did the item grow past the allowance since it was approved?
+
+    Only growth counts: an item that SHRANK deletes less than the owner approved, which
+    is the safe direction. Growth beyond the allowance means the file was upgraded after
+    the scan -- the approval, the caps and the typed confirmation all counted the smaller
+    file -- so the caller keeps it (rule: the count beside the button must match what is
+    acted on).
+    """
+    return live_bytes > approved_bytes + max(approved_bytes // 10, _SIZE_DRIFT_FLOOR)
+
+
+def _payload_size(value: object) -> int | None:
+    """A byte size read back from a live *arr payload, or None when unreadable.
+
+    None (missing field, junk type, negative) means the size cannot be confirmed, and
+    the caller treats that as drift it cannot rule out: the item is kept.
+    """
+    try:
+        size = int(value)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return None
+    return size if size >= 0 else None
+
+
+def _gb(value: int) -> str:
+    return f"{value / 1024**3:.1f} GB"
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +418,7 @@ class Executor:
         settings: ProfileSettings,
         dry_run: bool = True,
         gateway: ReapGateway | None = None,
+        armed_recheck: Callable[[], Awaitable[bool]] | None = None,
         exclusion_poll_attempts: int = 5,
         exclusion_poll_delay: float = 1.0,
         plex_settle_attempts: int = 10,
@@ -384,6 +427,12 @@ class Executor:
         self._session = session
         self._safety = safety
         self._settings = settings
+        # The mid-run kill switch: re-read before every item of a real run, so turning
+        # deletion off in the UI halts a run already in flight. Injected (the route reads
+        # the database switch through a FRESH session -- this run's own session caches
+        # rows across its per-item commits and would keep answering with the stale
+        # value). Required for a real run; a dry run sends nothing and needs none.
+        self._armed_recheck = armed_recheck
         # dry_run defaults True. Deleting requires opting *in*, at the call site and
         # again at the host via the guard. Nothing deletes by omission.
         self._dry_run = dry_run
@@ -452,6 +501,11 @@ class Executor:
                     "Refusing a real run without Tautulli: the played-since-approval check "
                     "cannot run, and the grace period exists precisely so a late view can "
                     "still spare an item."
+                )
+            if self._armed_recheck is None:
+                raise ExecutionError(
+                    "Refusing a real run without a live arm check: turning deletion off "
+                    "could not stop a run already in progress."
                 )
 
         condemned = await _condemned(self._session, run.snapshot_id)
@@ -651,6 +705,16 @@ class Executor:
         # is exactly what the canary exists to prevent.
         real_attempt_made = False
         for index, delete in enumerate(deletes):
+            # The mid-run kill switch, re-read before EVERY item (the first included --
+            # the route's own check is seconds stale by now). Aborting mid-list is safe
+            # and honest: every earlier item's marks are already committed, and the
+            # abort reason tells the owner exactly why the rest were not touched.
+            if not self._dry_run and not await self._still_armed():
+                raise ExecutionError(
+                    "Deletion was turned off while this run was in progress, so the run "
+                    "stopped here. Anything already deleted stays deleted; nothing "
+                    "further was sent."
+                )
             outcome = await self._one_delete(delete, is_canary=index == 0, approved_at=approved_at)
             if not self._dry_run:
                 # Every item's step marks (VERIFIED, FAILED, SKIPPED) are made durable
@@ -756,6 +820,23 @@ class Executor:
         return await self._send_for_real(delete, is_canary=is_canary)
 
     # -- live pre-delete interlocks: read-only, fail-closed ----------------
+
+    async def _still_armed(self) -> bool:
+        """Is deletion still turned on, right now?
+
+        Read through the injected ``armed_recheck`` -- a fresh look at the same switch
+        the UI toggles -- never this run's cached snapshot. Fail-closed: if the switch
+        cannot be read, we cannot claim permission to continue, so the answer is no and
+        the run stops. (The files already deleted are not affected; this only refuses
+        the next one.)
+        """
+        if self._armed_recheck is None:  # pragma: no cover - execute() guards this
+            return False
+        try:
+            return bool(await self._armed_recheck())
+        except Exception as exc:
+            log.warning("reap.arm_recheck_unreadable", error=str(exc))
+            return False
 
     def _equivalent_keys(self, candidate: Candidate) -> list[int]:
         """Every Plex rating key this candidate's watch evidence lives under.
@@ -936,6 +1017,30 @@ class Executor:
 
         # Read the tmdbId now, while the movie still exists, for the exclusion re-read.
         movie = await radarr.movie_by_id(ref.arr_id)
+
+        # The size re-read: the approval, the caps and the typed phrase all counted the
+        # frozen size, so a file that has grown materially since then (a quality upgrade)
+        # is not the file the owner approved deleting. Skipped, kept, re-reviewable at
+        # its real size after the next scan. An unreadable size is drift we cannot rule
+        # out, so it is kept too.
+        candidate = delete.candidate
+        live_size = _payload_size(movie.get("sizeOnDisk"))
+        if live_size is None:
+            return self._mark_skipped(
+                delete,
+                "Radarr did not report this movie's current size, so Reaper cannot "
+                "confirm it is still the file that was approved. Kept.",
+                check="Couldn't confirm its current size. Kept.",
+            )
+        if _grew_materially(int(candidate.size_bytes), live_size):
+            return self._mark_skipped(
+                delete,
+                f"the file is bigger now ({_gb(live_size)}) than when it was approved "
+                f"({_gb(int(candidate.size_bytes))}), so it was likely upgraded since the "
+                "scan. Kept. Run a new scan to review it at its current size.",
+                check="It grew since you approved it. Kept.",
+            )
+
         tmdb_id = int(movie.get("tmdbId") or 0)
         if tmdb_id == 0:
             # Fail CLOSED before anything is sent: with no tmdbId, _exclusion_landed can
@@ -1043,6 +1148,34 @@ class Executor:
 
         # Reaching here means the two live interlocks already passed for this item.
         checks = [StepCheck(_CHECK_NOT_WATCHING, True), StepCheck(_CHECK_NOT_PLAYED_SINCE, True)]
+
+        # The size re-read, BEFORE the unmonitor so a skip leaves the season untouched:
+        # the season's live episode files, summed, against the frozen size the owner
+        # approved. A season that grew materially (episodes upgraded, or new episodes
+        # landed since the scan) is not what was approved, so it is kept; so is one
+        # whose file sizes cannot all be read.
+        candidate = delete.candidate
+        live_sizes = [
+            _payload_size(f.get("size"))
+            for f in await sonarr.episode_files(ref.arr_id)
+            if int(f.get("seasonNumber", -1)) == ref.season
+        ]
+        if any(size is None for size in live_sizes):
+            return self._mark_skipped(
+                delete,
+                "Sonarr did not report a size for every file in this season, so Reaper "
+                "cannot confirm it is still what was approved. Kept.",
+                check="Couldn't confirm its current size. Kept.",
+            )
+        live_total = sum(size for size in live_sizes if size is not None)
+        if _grew_materially(int(candidate.size_bytes), live_total):
+            return self._mark_skipped(
+                delete,
+                f"this season is bigger now ({_gb(live_total)}) than when it was approved "
+                f"({_gb(int(candidate.size_bytes))}), so its files likely changed since "
+                "the scan. Kept. Run a new scan to review it at its current size.",
+                check="It grew since you approved it. Kept.",
+            )
 
         # 1. Unmonitor (reversible), then VERIFY it actually took before any file is touched.
         await self._mark_sent(unmonitor)

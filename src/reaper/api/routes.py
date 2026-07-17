@@ -263,13 +263,59 @@ async def list_candidates(
             .all()
         }
         decisions = await whitelist.overrides(session)
+        group_totals = await _group_condemned_totals(
+            session, snapshot.id, {r.group_key for r in rows if r.group_key}, decisions
+        )
 
         return [
             _candidate_out(
-                r, flagged.get(r.media_key), whitelist.effective_override(r.media_key, decisions)
+                r,
+                flagged.get(r.media_key),
+                whitelist.effective_override(r.media_key, decisions),
+                group_condemned=group_totals.get(r.group_key) if r.group_key else None,
             )
             for r in rows
         ]
+
+
+async def _group_condemned_totals(
+    session: AsyncSession,
+    snapshot_id: int,
+    group_keys: set[str],
+    decisions: dict[str, str],
+) -> dict[str, tuple[int, int]]:
+    """What "Reap now" on each show group would actually plan: (count, bytes) over its
+    condemned, not-hand-spared member seasons across the WHOLE snapshot.
+
+    The show card's numbers must match the planner's expansion -- ``build_plan`` expands
+    a group key over every condemned member in the snapshot and then drops hand-spares
+    via ``whitelist.effective_override`` -- so this walks the same set with the same
+    override function (rule 30: the number beside a destructive button is derived from
+    the set the server will act on). Never derived from the fetched page, which on a
+    long sorted list can hold only some of a show's seasons (B-13). ``IN`` chunked at
+    500 per the bound-variable limit.
+    """
+    if not group_keys:
+        return {}
+    totals: dict[str, tuple[int, int]] = dict.fromkeys(group_keys, (0, 0))
+    keys = sorted(group_keys)
+    for start in range(0, len(keys), 500):
+        chunk = keys[start : start + 500]
+        members = (
+            await session.execute(
+                select(Candidate.media_key, Candidate.group_key, Candidate.size_bytes).where(
+                    Candidate.snapshot_id == snapshot_id,
+                    Candidate.verdict == "condemn",
+                    Candidate.group_key.in_(chunk),
+                )
+            )
+        ).all()
+        for media_key, group_key, size_bytes in members:
+            if whitelist.effective_override(media_key, decisions) == "spare":
+                continue
+            count, total_bytes = totals[group_key]
+            totals[group_key] = (count + 1, total_bytes + int(size_bytes))
+    return totals
 
 
 def _primary_reason(explanation_json: str, verdict: str) -> str | None:
@@ -331,7 +377,11 @@ def _dormant_for(explanation_json: str) -> str | None:
 
 
 def _candidate_out(
-    r: Candidate, flagged_at: datetime | None = None, override: str | None = None
+    r: Candidate,
+    flagged_at: datetime | None = None,
+    override: str | None = None,
+    *,
+    group_condemned: tuple[int, int] | None = None,
 ) -> CandidateOut:
     return CandidateOut(
         id=r.id,
@@ -356,6 +406,8 @@ def _candidate_out(
         requested_by=r.requested_by,
         group_key=r.group_key,
         group_title=r.group_title,
+        group_condemned_count=group_condemned[0] if group_condemned is not None else None,
+        group_condemned_bytes=group_condemned[1] if group_condemned is not None else None,
         video_resolution=r.video_resolution,
         dormant_for=_dormant_for(r.explanation_json),
         reason=_primary_reason(r.explanation_json, r.verdict),

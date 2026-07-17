@@ -96,6 +96,10 @@ class PlexServer(Base):
     token_enc: Mapped[str] = mapped_column(Text)
     owner_plex_account_id: Mapped[int] = mapped_column(Integer)
 
+    # Verify the server's TLS certificate (mirrors Instance.verify_tls). Off is a
+    # deliberate operator choice for a self-signed HTTPS server, never a silent default.
+    verify_tls: Mapped[bool] = mapped_column(Boolean, default=True)
+
     created_at: Mapped[UtcTimestamp]
     last_ok_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
 
