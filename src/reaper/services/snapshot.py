@@ -76,7 +76,7 @@ log = structlog.get_logger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class Progress:
-    """One step of a scan, streamed to the browser over SSE."""
+    """One step of a scan's progress, polled by the browser via ``GET /api/scan/status``."""
 
     phase: str
     done: int

@@ -4,8 +4,8 @@
 A scan is the same read-only pipeline whether a person clicked "Scan" or a schedule
 fired it at 4am: build the clients from the configured instances, pull watch history
 into the local mirror, refresh the protection lists, then gather-freeze-judge. The only
-difference is where the progress goes -- to an SSE stream for a person, to the log for a
-timer -- so that difference is a callback, and everything else lives here once.
+difference is where the progress goes -- to ``app.state.scan_status`` for a person to poll,
+to the log for a timer -- so that difference is a callback, and everything else lives here once.
 
 **A scan cannot delete anything.** It reads from the *arr and Tautulli, scores, and
 writes rows to Reaper's own database. ``GuardedTransport`` refuses a mutating call even

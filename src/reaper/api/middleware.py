@@ -18,11 +18,13 @@ dependency:
   it must not say ``cross-site``. This runs for the auth endpoints too: forging a
   login is itself an attack.
 
-Implemented as raw ASGI, not ``BaseHTTPMiddleware``, for one concrete reason: the
-scan endpoint streams Server-Sent Events for the length of a library scan, and a
-buffering middleware would hold those progress events until the scan finished. A
-pass-through that only *inspects* the request and then calls the app with the
-original ``send`` leaves the stream untouched.
+Implemented as raw ASGI, not ``BaseHTTPMiddleware``: the guard reads only headers
+and cookies and then calls the app with the original ``receive``/``send``, so it
+never buffers the request body or wraps the response. A ``BaseHTTPMiddleware``
+wrapper can stall a streaming or long-lived response by holding it until the
+handler returns; a pass-through cannot. (Scan progress is *polled* today over
+``GET /api/scan/status``, not streamed. Keeping the guard transport-agnostic means
+a future progress stream would work without revisiting this file.)
 """
 
 from __future__ import annotations

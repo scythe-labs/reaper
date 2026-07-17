@@ -11,8 +11,9 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // Scan progress is POLLED from /api/scan/status (there is no SSE stream); the
-      // proxy just forwards /api to the backend unchanged.
+      // The scan runs as a detached background job; the browser polls GET /api/scan/status
+      // for its progress (see api/scan.py). This is a plain same-origin proxy of /api to the
+      // Python app -- nothing here is SSE- or websocket-specific.
       "/api": {
         target: "http://127.0.0.1:8420",
         changeOrigin: true,

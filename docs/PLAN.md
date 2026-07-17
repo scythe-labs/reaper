@@ -828,7 +828,7 @@ A pass over the operator console fixed six things a real look surfaced:
 | **M3b** Policy persistence — immutable rows, hash, caps, autonomy grants | 🟡 rows/hash/caps done; the autonomy-grant *flow* is unwired (nothing can create a grant until the backtest ships a route) |
 | **M3c** Backtest — replay against the operator's own watch history | 🟡 engine complete and tested, **not reachable**: no route, CLI or UI calls it yet; operator copy no longer references it until it ships |
 | **M3d** Field registry + authorable protect rules | ✅ done |
-| **M3e** Snapshot pipeline + REST API + SSE progress | ✅ done |
+| **M3e** Snapshot pipeline + REST API + polled progress | ✅ done |
 | **M3f** Signal quality — lift metric, size removed, dormancy gate | ✅ done |
 | **M3g** Calibration — rewatch prior derived from the operator's own history | ✅ done |
 | **M4** React SPA — review queue, why-panel, policy editor, live simulator | ✅ done |
@@ -861,7 +861,7 @@ round closed that gap end to end, backend then frontend, and verified it live in
   upkeep jobs (ratings, lists, history) are listed with their next-run times, and an
   **optional automatic scan** can be scheduled by cron (presets + custom). A scan is
   read-only, so scheduling one is safe; the scan pipeline was extracted into
-  `services/scan_runner.py` so the SSE route and the timer run the identical path.
+  `services/scan_runner.py` so the scan route and the timer run the identical path.
 - **The emergency stop is finally wired.** It was defined on `RuntimeSafety` but never read
   from anywhere — every construction site passed only `env_enabled`. Now
   `services/app_settings.runtime_safety` assembles the effective permission at every site,
@@ -885,8 +885,9 @@ and recovery tables) had all been built under M1 — but nothing was wired to it
 `/api` route answered anyone who could reach the port, on a tool that deletes media. Now:
 
 - **A gate in front of the whole API** (`api/middleware.py`, pure ASGI so it never buffers
-  the SSE scan stream): every `/api` route needs a session, except the health probe and
-  `/api/auth`. CSRF on every unsafe method — a custom header plus `Sec-Fetch-Site`.
+  a streaming or long-lived response): every `/api` route needs a session, except the
+  health probe and `/api/auth`. CSRF on every unsafe method — a custom header plus
+  `Sec-Fetch-Site`.
 - **The login flow** (`services/login.py`, `api/auth.py`): Plex sign-in with the ownership
   check, first-run setup that links the server and claims the owner in one step, and the
   local fallback. The browser never handles a Plex token; the backend polls.
@@ -1458,3 +1459,62 @@ appending nothing.
 - **Tests are not type-checked.** CI runs `mypy src/reaper` only; `mypy tests` reports ~190
   errors, almost all "missing py.typed marker" noise. A PEP-561 `py.typed` marker plus a
   handful of real fixes would let the suite be strict too.
+
+## Deferred — watching a deletion run happen (detached execute + re-fetchable status)
+
+Came out of a "would the web interface benefit from websockets?" review. Short answer to
+that question: **no** — the interface's realtime needs are one-way (server → browser) and
+single-operator, which is the WebSocket anti-pattern, and a socket would additionally
+bypass our auth (see the guard note at the end). But the review surfaced one surface with
+real value that we are choosing to **defer**, recorded here so it is ready to pick up.
+
+**The gap.** `POST /api/runs/{id}/execute` (`api/runs.py`, the one route that deletes) is a
+single **blocking** request: the executor walks the manifest re-check, the canary, then
+every item's streaming veto / played-since check / *arr delete / Plex refresh, and only
+returns the whole `RunReport` at the very end (`services/executor.py`, `execute` →
+`_run_deletes`). The UI (`ReapConfirm.tsx`) shows a bare "Reaping…" spinner for the entire
+run and paints the per-item checklist only on success. So the operator watches the
+highest-stakes, minutes-long, irreversible action in the product **blind**: a stalled *arr
+call looks identical to normal progress, and if the tab closes or the request times out the
+after-action report is lost (it lives only in the response, and is never re-fetchable).
+
+**Why deferred, not done now.** The safe fix touches the most safety-sensitive code in the
+app. The prime directive resolves that ambiguity toward not touching it until per-item
+deletion visibility is an actual requirement.
+
+**The design when it is prioritized.** Reuse the pattern the scan already proves
+(`api/scan.py`: a detached `asyncio` task + `app.state.scan_status`, polled over
+`GET /api/scan/status`):
+
+1. **Detach the run.** `execute` kicks off the deletion as a background task and returns a
+   handle immediately, instead of holding the request open for the whole run.
+2. **Add a read-only `GET` run-status endpoint** the browser polls on the existing 1s
+   cadence. It reads per-item outcomes that are **already durably committed mid-run**
+   (`executor.py`, the per-item `_mark_sent` / `_mark_verified` + per-item `session.commit`),
+   so no new instrumentation is needed — only a read model over rows we already write.
+3. **Survives disconnect.** Because status comes from committed rows, closing the tab and
+   returning shows the run's real state and the final report; nothing is lost.
+
+**Guardrails (non-negotiable).** The channel is **observational only** — telemetry out,
+never a control channel. Deletion still flows *only* through the password-armed `execute`
+POST with the exact confirmation phrase and `GuardedTransport`. Detaching the run must not
+weaken any interlock: the canary-first ordering, per-item vetoes, caps that abort-not-
+truncate, and the "a run executes once" atomic guard (`executor.py`) stay exactly as they
+are. The initiating POST keeps its armed-host + confirmation-phrase gate; only the
+*reporting* moves off the request.
+
+**Transport ladder.** (1) Polling a status endpoint is the whole win and needs no new
+transport machinery or operator proxy config — do this first. (2) SSE is an optional later
+polish to shave the ~1s latency, justified only if runs grow large; it is a plain
+authenticated `GET`, so it inherits the existing cookie auth. (3) **WebSockets: never** for
+this — one-way data gains nothing from bidirectionality, and a duplex channel would be a
+second, unaudited mutation path at odds with the safety model.
+
+**Blocker to clear before *any* push endpoint (SSE or WS).** `AuthGuard`
+(`api/middleware.py`) short-circuits every non-`http` scope, so a WebSocket handshake
+reaches the app with **no** `resolve_session` and **no** CSRF check — it would be born
+unauthenticated. SSE avoids this (it is a `GET` on the `http` scope and inherits auth), but
+if a WebSocket is ever added it must authenticate the session cookie itself and validate
+`Origin` at the handshake (the browser WS API cannot send our `X-Reaper-CSRF` header). Worth
+fixing the guard's non-`http` branch to fail closed regardless, so a future endpoint cannot
+slip through.
