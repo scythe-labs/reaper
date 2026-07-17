@@ -209,6 +209,9 @@ class PlexResourcesOut(BaseModel):
 
 class PlexServerSwitchIn(BaseModel):
     machine_identifier: str
+    verify_tls: bool | None = (
+        None  # omitted keeps the stored setting; a self-signed target needs False
+    )
 
 
 class PlexConnectionIn(BaseModel):
@@ -611,7 +614,9 @@ async def plex_switch_server(request: Request, payload: PlexServerSwitchIn) -> P
 
     Resolved against the live OWNED list from plex.tv and probed before anything is
     saved. Switching clears the library choices and the announced set -- they were keyed
-    to the old server and would silently mis-target the new one.
+    to the old server and would silently mis-target the new one. The certificate check
+    rides along when given, so switching to a self-signed server can turn it off in the
+    same step rather than being stuck on the old server's setting.
     """
     async with _factory(request)() as session:
         safety = await app_settings.runtime_safety(session, _settings(request))
@@ -621,6 +626,7 @@ async def plex_switch_server(request: Request, payload: PlexServerSwitchIn) -> P
             _box(request),
             machine_identifier=payload.machine_identifier,
             safety=safety,
+            verify_tls=payload.verify_tls,
         )
     except PlexLinkRetryableError as exc:
         raise HTTPException(502, str(exc)) from exc

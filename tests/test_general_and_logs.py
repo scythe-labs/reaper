@@ -30,7 +30,7 @@ from starlette.requests import Request
 
 from reaper import logbuffer
 from reaper.api.middleware import (
-    _api_key_fenced,
+    _api_key_allowed,
     api_key_throttle,
     client_ip,
     parse_proxy_networks,
@@ -115,23 +115,17 @@ class TestTheApiKeyLane:
         assert client.get("/api/settings/general/api-key").json()["key"] == key
         assert client.get("/api/settings/general").json()["api_key_set"] is True
 
-    def test_the_key_authenticates_without_cookie_or_csrf(self, client: TestClient) -> None:
+    def test_the_key_reads_without_cookie_or_csrf(self, client: TestClient) -> None:
         key = self._issue(client)
         bare = _bare(client)
 
         # No key, no cookie: the gate holds.
         assert bare.get("/api/settings/general").status_code == 401
-        # The key alone reads...
+        # The key alone reads, with NO cookie and NO CSRF header: nothing ambient for a
+        # cross-site page to abuse. A setting *write* still needs the browser (see the
+        # fence test below) -- a config change can transmit a stored secret.
         ok = bare.get("/api/settings/general", headers={"X-Api-Key": key})
         assert ok.status_code == 200
-        # ...and writes, with NO CSRF header: no cookie rides along, so there is no
-        # ambient credential for a cross-site page to abuse.
-        write = bare.put(
-            "/api/settings/general",
-            json={"application_name": "Scripted"},
-            headers={"X-Api-Key": key},
-        )
-        assert write.status_code == 200, write.text
 
     def test_rotation_is_revocation(self, client: TestClient) -> None:
         old = self._issue(client)
@@ -173,12 +167,40 @@ class TestTheApiKeyLane:
             ).status_code
             == 403
         )
+        # And every other setting write. A general write could loosen the proxy trust the
+        # login lockout keys on; a Plex-connection write could hand the stored token to an
+        # attacker's address. Both were reachable before the allowlist inversion.
+        assert (
+            bare.put(
+                "/api/settings/general", json={"application_name": "x"}, headers=headers
+            ).status_code
+            == 403
+        )
+        assert (
+            bare.put(
+                "/api/settings/plex/connection",
+                json={"uri": "https://attacker.example"},
+                headers=headers,
+            ).status_code
+            == 403
+        )
+        assert (
+            bare.put("/api/logs/level", json={"level": "debug"}, headers=headers).status_code == 403
+        )
 
-    def test_the_execute_fence_matches_by_shape(self) -> None:
-        assert _api_key_fenced("/api/runs/12/execute") is True
-        assert _api_key_fenced("/api/runs/12/dry-run") is False
-        assert _api_key_fenced("/api/runs") is False
-        assert _api_key_fenced("/api/settings/safety") is True
+    def test_the_allowlist_matches_by_method_and_shape(self) -> None:
+        # Reads are open to the key, except the one that reveals a stored secret.
+        assert _api_key_allowed("GET", "/api/candidates") is True
+        assert _api_key_allowed("GET", "/api/settings/general") is True
+        assert _api_key_allowed("GET", "/api/settings/general/api-key") is False
+        # Writes are closed except the automation allowlist: scan, plan, policy.
+        assert _api_key_allowed("POST", "/api/scan/start") is True
+        assert _api_key_allowed("POST", "/api/policy") is True
+        assert _api_key_allowed("POST", "/api/runs/12/dry-run") is True
+        assert _api_key_allowed("POST", "/api/runs/12/execute") is False
+        assert _api_key_allowed("PUT", "/api/settings/safety") is False
+        assert _api_key_allowed("PUT", "/api/settings/general") is False
+        assert _api_key_allowed("PUT", "/api/settings/plex/connection") is False
 
 
 class TestTheDocsLockdown:

@@ -358,6 +358,17 @@ async def _keep_history_degradations(tautulli: TautulliClient) -> list[str]:
             "nothing may be deleted from this scan"
         ]
 
+    if not users:
+        # A configured Tautulli always reports at least the owner. An empty result means
+        # the user list was unreadable (a success response with a null/malformed body
+        # coerces to []), which is indistinguishable from "everyone records history", so
+        # fail closed rather than trust it.
+        log.warning("scan.keep_history_empty_user_list")
+        return [
+            "Reaper could not read the Tautulli user list, so it cannot confirm watch "
+            "history is being recorded. Nothing may be deleted from this scan"
+        ]
+
     unrecorded: list[str] = []
     unreadable = 0
     for row in users:

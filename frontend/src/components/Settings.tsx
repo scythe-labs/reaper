@@ -126,6 +126,11 @@ function GeneralPanel() {
       const r = await api.revealApiKey();
       key = r.key;
     }
+    // A self-hosted Reaper is often reached over plain http on a LAN, where the browser
+    // withholds the clipboard API. Say so plainly instead of throwing a raw TypeError.
+    if (!navigator.clipboard) {
+      throw new Error("Copying needs a secure (https) page. Press Show, then select the key by hand.");
+    }
     await navigator.clipboard.writeText(key);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -238,8 +243,8 @@ function GeneralPanel() {
             <span className="set-label">API key</span>
             <p className="help">
               Lets scripts and other apps call the Reaper API without signing in: send it as
-              the X-Api-Key header. A key can read everything, start scans, and edit policy,
-              but it can never turn deletion on, run a reap, or change sign-in settings. Those
+              the X-Api-Key header. A key can read your library, start scans, plan, and edit
+              the policy. It cannot change any setting, turn deletion on, or run a reap. Those
               stay here in the browser, behind your password.
             </p>
             <div className="set-control">
@@ -543,6 +548,9 @@ export function PlexPanel() {
   const linked = data?.linked ?? false;
   const [linking, setLinking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // Failures get their own state so they render as an error, not as grey status text
+  // that reads like "Linked to ...". Info stays in `message`.
+  const [plexError, setPlexError] = useState<string | null>(null);
   const [servers, setServers] = useState<PlexServerChoice[] | null>(null);
   const pollRef = useRef<number | null>(null);
   const pinRef = useRef<number | null>(null);
@@ -579,8 +587,18 @@ export function PlexPanel() {
   // address, never the box's half-typed one, so this toggle cannot save a URL edit.
   const saveVerify = useMutation({
     mutationFn: (next: boolean) => api.setPlexWebUrl(savedWebUrl, next),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["plex"] }),
-    onError: (e: Error) => setMessage(e.message),
+    onSuccess: () => {
+      setPlexError(null);
+      void queryClient.invalidateQueries({ queryKey: ["plex"] });
+    },
+    // The toggle flips optimistically; a failed save must roll it back so the switch
+    // never claims the certificate check is on while the server still has it off. The
+    // switch is disabled while pending, so `!next` is the value before the flip.
+    onError: (e: Error, next: boolean) => {
+      setVerifyCert(!next);
+      verifyRef.current = !next;
+      setPlexError(e.message);
+    },
   });
 
   const done = () => {
@@ -664,9 +682,11 @@ export function PlexPanel() {
   const unlink = useMutation({
     mutationFn: api.plexUnlink,
     onSuccess: () => {
+      setPlexError(null);
       void queryClient.invalidateQueries({ queryKey: ["plex"] });
       void queryClient.invalidateQueries({ queryKey: ["setup"] });
     },
+    onError: (e: Error) => setPlexError(e.message),
   });
 
   // --- the server and connection pickers, fed by the signed-in account ---------
@@ -687,12 +707,15 @@ export function PlexPanel() {
   };
 
   const switchServer = useMutation({
-    mutationFn: (machineId: string) => api.plexSwitchServer(machineId),
+    // Carry the operator's current certificate-check choice, so switching to a
+    // self-signed server they have already turned it off for probes correctly.
+    mutationFn: (machineId: string) => api.plexSwitchServer(machineId, verifyRef.current),
     onSuccess: () => {
       setMessage(null);
+      setPlexError(null);
       invalidateAllPlex();
     },
-    onError: (e: Error) => setMessage(e.message),
+    onError: (e: Error) => setPlexError(e.message),
   });
 
   const [manualOpen, setManualOpen] = useState(false);
@@ -705,6 +728,10 @@ export function PlexPanel() {
     mutationFn: (uri: string) => api.plexSetConnection(uri),
     onSuccess: () => {
       setConnError(null);
+      // A successful connection save fixes reachability, so a prior "couldn't reach"
+      // from a failed switch is now stale: clear it, or a red notice lingers beside a
+      // healthy connection.
+      setPlexError(null);
       setManualOpen(false);
       void queryClient.invalidateQueries({ queryKey: ["plex"] });
     },
@@ -1044,6 +1071,7 @@ export function PlexPanel() {
         )}
         {connError && <p className="notice notice-error">{connError}</p>}
         {webUrlError && <p className="notice notice-error">{webUrlError}</p>}
+        {plexError && <p className="notice notice-error">{plexError}</p>}
         {message && <p className="muted">{message}</p>}
       </div>
 

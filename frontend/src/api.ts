@@ -845,9 +845,11 @@ export const api = {
 
   /** The servers this Plex account owns and every address each is reachable at. */
   plexResources: () => request<PlexResources>("/api/settings/plex/resources"),
-  /** Point Reaper at a different server the same account owns. Probed before saving. */
-  plexSwitchServer: (machine_identifier: string) =>
-    put<PlexStatus>("/api/settings/plex/server", { machine_identifier }),
+  /** Point Reaper at a different server the same account owns. Probed before saving.
+   *  verify_tls rides along so a self-signed target can turn the cert check off in the
+   *  same step; omitted keeps the current setting. */
+  plexSwitchServer: (machine_identifier: string, verify_tls?: boolean) =>
+    put<PlexStatus>("/api/settings/plex/server", { machine_identifier, verify_tls }),
   /** Save how Reaper reaches the server: a discovered address or a manual one. The
    *  address is probed with the stored token first; a typo changes nothing. */
   plexSetConnection: (uri: string, verify_tls?: boolean) =>

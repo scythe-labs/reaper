@@ -142,7 +142,11 @@ def _grace_keys(report: GraceReport) -> tuple[set[int], set[int], dict[int, str]
     """The in-grace rating keys by kind, plus rating key -> title for the announce.
 
     Items Plex never matched (``plex_rating_key is None``) cannot be addressed on a
-    shelf and are excluded here; the Discord channel is their only warning.
+    shelf and are excluded here. They get no heads-up on any channel: the Discord
+    announce in :func:`announce_new` is built from this same set and dedupes on the
+    integer rating key, which an unmatched item does not have. Warning them would need a
+    separate per-item key (their ``media_key``); until then, this is a known gap, not a
+    guarantee.
     """
     movies: set[int] = set()
     seasons: set[int] = set()
@@ -420,9 +424,14 @@ async def after_scan(
             await run_sync(session_factory, settings, box)
             return
         except LeavingSoonDisabledError:
-            pass
+            pass  # shelf off
+        except PlexError:
+            pass  # shelf on, but no server linked or none reachable
 
-        # Shelf off: the Discord heads-up still runs whenever a webhook is set.
+        # Shelf off, or on with no reachable server: the Discord heads-up still runs
+        # whenever a webhook is set. Announcing is a read plus a webhook post, no Plex
+        # write, so it does not depend on the shelf reconcile having succeeded. run_sync
+        # raises PlexError before it announces, so nothing here double-announces.
         async with session_factory() as session:
             notifier = await build_notifier(session, box, settings)
             if notifier is None:

@@ -70,24 +70,43 @@ _OPEN_PREFIX = "/api/auth/"
 #: header must not be a free brute-force channel just because it skips the login form.
 api_key_throttle = Throttle(threshold=5, base_delay=2.0, max_delay=300.0, decay=900.0)
 
-#: What an API key may NEVER do, whatever it sends. The key is for scripts -- reading,
-#: scanning, planning, policy edits. The three irreversible authorities stay in the
-#: browser behind the password: turning deletion on (or touching that switch at all),
-#: executing a reap, and changing how sign-in works. Managing the key itself is fenced
-#: too, so a leaked key cannot mint its own replacement and outlive a rotation.
-_API_KEY_FENCED_EXACT = frozenset(
+#: Reads an API key must never see: they hand back a stored secret in the clear. Every
+#: other read is open to the key (it is for scripts), so this stays a tiny denylist.
+_API_KEY_READ_DENY = frozenset({"/api/settings/general/api-key"})
+
+#: The only writes an API key may drive: scanning, planning, and editing the policy and
+#: reap profile. Everything else that changes state stays behind the signed-in browser --
+#: not just the three irreversible authorities (arming deletion, executing a reap, and
+#: changing sign-in or the key itself), but ALL setting/credential changes. A config write
+#: can hand a stored token to an operator-supplied address or loosen the proxy trust the
+#: login lockout keys on, so those must not ride a header-only credential.
+_API_KEY_WRITE_ALLOW = frozenset(
     {
-        "/api/settings/safety",
-        "/api/settings/admin-password",
-        "/api/settings/general/api-key",
+        "/api/scan/start",
+        "/api/runs",
+        "/api/policy",
+        "/api/policy/validate",
+        "/api/policy/simulate",
+        "/api/profile",
     }
 )
 
 
-def _api_key_fenced(path: str) -> bool:
-    if path.startswith("/api/runs/") and path.endswith("/execute"):
+def _api_key_allowed(method: str, path: str) -> bool:
+    """What one API key may reach, deny-by-default.
+
+    Reads are open except the handful that reveal a stored secret; writes are closed
+    except the explicit automation allowlist. Because a new route is closed to the key
+    until it is deliberately opened here, adding one can never silently widen what a
+    leaked key can do -- the failure a denylist had (the exfiltrating Plex-connection
+    write and the proxy-trust write were both reachable simply by not being listed).
+    """
+    if method in _SAFE_METHODS:
+        return path not in _API_KEY_READ_DENY
+    if path in _API_KEY_WRITE_ALLOW:
         return True
-    return path in _API_KEY_FENCED_EXACT
+    # Planning a specific run: its dry run, but never its execute.
+    return path.startswith("/api/runs/") and path.endswith("/dry-run")
 
 
 def _is_open(path: str) -> bool:
@@ -279,12 +298,13 @@ class AuthGuard:
             return
         api_key_throttle.record_success(throttle_key)
 
-        if _api_key_fenced(path):
+        if not _api_key_allowed(scope["method"], path):
             await _reject(
                 send,
                 403,
-                "An API key cannot do this. Turning deletion on, executing a reap, and "
-                "changing sign-in or key settings all need the web app, signed in.",
+                "This needs the web app, signed in. An API key can read, scan, plan, and "
+                "edit the policy. Changing any setting, arming deletion, and running a "
+                "reap stay behind your password.",
             )
             return
 

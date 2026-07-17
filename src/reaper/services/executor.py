@@ -159,6 +159,23 @@ def _payload_size(value: object) -> int | None:
     return size if size >= 0 else None
 
 
+def _season_number(obj: dict[str, Any]) -> int:
+    """The season an *arr object belongs to, or -1 when it cannot be read.
+
+    Sonarr always sets ``seasonNumber``, but a null or malformed value must not crash a
+    run mid-reap: -1 is a sentinel that matches no real season (0 is Specials, and is
+    preserved), so an unreadable value simply excludes the object from a season match
+    the way a missing field already did -- it never raises out of the executor.
+    """
+    value = obj.get("seasonNumber")
+    if value is None:
+        return -1
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
+
+
 def _gb(value: int) -> str:
     return f"{value / 1024**3:.1f} GB"
 
@@ -1191,7 +1208,7 @@ class Executor:
         live_sizes = [
             _payload_size(f.get("size"))
             for f in await sonarr.episode_files(ref.arr_id)
-            if int(f.get("seasonNumber", -1)) == ref.season
+            if _season_number(f) == ref.season
         ]
         if any(size is None for size in live_sizes):
             return self._mark_skipped(
@@ -1243,14 +1260,14 @@ class Executor:
         file_ids = [
             int(f["id"])
             for f in files
-            if f.get("id") is not None and int(f.get("seasonNumber", -1)) == ref.season
+            if f.get("id") is not None and _season_number(f) == ref.season
         ]
         await self._mark_sent(delete_step)
         await sonarr.delete_episode_files(file_ids)
 
         # 3. Verify no file for this season remains.
         remaining = await sonarr.episode_files(ref.arr_id)
-        still_there = [f for f in remaining if int(f.get("seasonNumber", -1)) == ref.season]
+        still_there = [f for f in remaining if _season_number(f) == ref.season]
         checks.append(
             StepCheck(f"Deleted the season's {len(file_ids)} episode file(s)", not still_there)
         )
@@ -1277,7 +1294,7 @@ class Executor:
     def _season_monitored(series: dict[str, Any], season_number: int) -> bool | None:
         """Is the given season monitored, per a freshly-read series? None if not found."""
         for season in series.get("seasons") or []:
-            if int(season.get("seasonNumber", -1)) == season_number:
+            if _season_number(season) == season_number:
                 monitored = season.get("monitored")
                 return bool(monitored) if monitored is not None else None
         return None

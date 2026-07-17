@@ -339,6 +339,7 @@ async def switch_server(
     *,
     machine_identifier: str,
     safety: RuntimeSafety,
+    verify_tls: bool | None = None,
 ) -> LinkedServer:
     """Point Reaper at a different server the same account owns, without a fresh OAuth.
 
@@ -347,6 +348,10 @@ async def switch_server(
     list and nothing else, exactly like the link flow. Reuses :func:`complete_link`, so
     the probe, the single-row invariant, and the stale-state clearing cannot drift from
     the OAuth path.
+
+    ``verify_tls`` overrides the certificate check for the NEW server; omitted, it keeps
+    the current server's setting. The old value is the wrong default when the target is a
+    different, self-signed server -- the probe would fail with no way to turn it off.
     """
     async with session_factory() as session:
         row = (await session.execute(select(PlexServer))).scalars().first()
@@ -354,7 +359,7 @@ async def switch_server(
             raise PlexLinkError("No Plex server is linked yet. Link one first.")
         token = box.decrypt(row.token_enc)
         cid = await client_identifier(session)
-        verify_tls = row.verify_tls
+        resolved_verify_tls = row.verify_tls if verify_tls is None else verify_tls
         await session.commit()
 
     async with PlexTvClient(cid, safety=safety) as plextv:
@@ -373,7 +378,7 @@ async def switch_server(
         account=account,
         owned=owned,
         choice=machine_identifier,
-        verify_tls=verify_tls,
+        verify_tls=resolved_verify_tls,
     )
 
 
