@@ -96,7 +96,7 @@ class GateSetting(Frozen):
                 )
             if self.secondary < 1:
                 raise ValueError(
-                    "A vote floor of 0 makes the rating floor meaningless -- it would "
+                    "A vote floor of 0 makes the rating floor meaningless: it would "
                     "protect an 8.3 rating drawn from 388 votes. Use at least 1 "
                     "(1000 is a sensible default)."
                 )
@@ -535,7 +535,7 @@ def inspect(
                     severity="warn",
                     message=(
                         f"An IMDb floor of {rating.threshold / 10:.1f} will protect almost "
-                        "nothing -- very few films rate that highly. If you meant a Rotten "
+                        "nothing: very few films rate that highly. If you meant a Rotten "
                         "Tomatoes percentage, note this field is IMDb, in tenths: 7.5 is 75."
                     ),
                 )

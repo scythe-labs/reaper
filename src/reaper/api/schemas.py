@@ -125,6 +125,36 @@ class RatingsOut(BaseModel):
     tmdb: int | None = None
 
 
+class ChipOut(BaseModel):
+    """The one short status chip a card wears, display-ready.
+
+    ``tone`` picks the color, ``text`` is the whole chip. Derived server-side from the
+    stored explanation (never a re-decision): a Sanctuary card's chip names the protection
+    that fired, a Limbo card's names what stopped Reaper short. Condemned cards carry no
+    chip here -- their amber dormancy pill is built from ``dormant_for``."""
+
+    tone: Literal["kept", "quiet", "look"]
+    """``kept`` renders green (a protection fired), ``quiet`` gray (nothing to act on),
+    ``look`` amber-outlined (deliberately left for the owner to decide)."""
+
+    text: str
+
+
+class GroupSeasonMarkOut(BaseModel):
+    """One square of a show card's season strip: the lightest possible per-season mark.
+
+    ``season`` is None for a row whose media_key did not carry a season number -- the
+    strip shows it unnumbered rather than dropping it (display extraction never errors
+    a row off the queue)."""
+
+    season: int | None = None
+    verdict: str
+    override: str | None = None
+    size_bytes: int = 0
+    """The season's size on disk, so the card can state whole-show totals without a
+    second fetch."""
+
+
 class CandidateOut(BaseModel):
     id: int
     media_key: str
@@ -168,6 +198,15 @@ class CandidateOut(BaseModel):
     """The owner's manual decision on this item -- ``"spare"``, ``"reap"``, or ``None``. Set
     the moment they click, so the card can show the pending intent before the next scan bakes
     it into the stored verdict. Inherited from the show for a season the owner overrode whole."""
+    chip: ChipOut | None = None
+    """The card's one short status chip (Sanctuary and Limbo lanes). None on condemned
+    rows, whose card leads with the amber dormancy pill instead."""
+    season_number: int | None = None
+    """The season this row is (from its media_key), for season rows. None for movies and
+    for a key that did not parse -- display only, never identity."""
+    group_seasons: list[GroupSeasonMarkOut] | None = None
+    """The whole show's per-season verdict marks (every lane, whole snapshot), for the
+    show card's season strip. Set on rows that belong to a group; None for movies."""
 
 
 class CandidateDetail(CandidateOut):
@@ -177,6 +216,28 @@ class CandidateDetail(CandidateOut):
     content_rating: str | None = None
     runtime_minutes: int | None = None
     genres: list[str] = Field(default_factory=list)
+
+
+class GroupOut(BaseModel):
+    """One show, whole: the show-level header the info panel draws, plus every season
+    row in the latest snapshot regardless of verdict. Read-only display; the seasons
+    are the same frozen candidate rows the queue lists, never a re-decision."""
+
+    group_key: str
+    title: str
+    year: int | None = None
+    """The earliest season year on record -- the year the show reads as."""
+    poster_url: str | None = None
+    summary: str | None = None
+    size_bytes: int
+    """Total on disk across every season row in the snapshot."""
+    reason: str | None = None
+    chip: ChipOut | None = None
+    """The show-level status line and chip: those of its highest-scoring season, the
+    same member the collapsed card leads with."""
+    links: LinksOut = Field(default_factory=LinksOut)
+    seasons: list[CandidateOut] = Field(default_factory=list)
+    """Every season, sorted by season number (unnumbered rows last)."""
 
 
 class SnapshotOut(BaseModel):

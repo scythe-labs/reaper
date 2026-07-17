@@ -16,6 +16,7 @@ Two routes carry most of the product:
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from datetime import datetime
 
@@ -28,12 +29,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from reaper.api.schemas import (
     CandidateDetail,
     CandidateOut,
+    ChipOut,
     ConditionIn,
     Explanation,
     FieldOut,
     FieldValuesOut,
     GateCountOut,
     GateSettingIn,
+    GroupOut,
+    GroupSeasonMarkOut,
     LinksOut,
     PolicyIn,
     PolicyOut,
@@ -263,7 +267,7 @@ async def list_candidates(
             .all()
         }
         decisions = await whitelist.overrides(session)
-        group_totals = await _group_condemned_totals(
+        group_totals, group_marks = await _group_rollups(
             session, snapshot.id, {r.group_key for r in rows if r.group_key}, decisions
         )
 
@@ -273,49 +277,72 @@ async def list_candidates(
                 flagged.get(r.media_key),
                 whitelist.effective_override(r.media_key, decisions),
                 group_condemned=group_totals.get(r.group_key) if r.group_key else None,
+                group_seasons=group_marks.get(r.group_key) if r.group_key else None,
             )
             for r in rows
         ]
 
 
-async def _group_condemned_totals(
+async def _group_rollups(
     session: AsyncSession,
     snapshot_id: int,
     group_keys: set[str],
     decisions: dict[str, str],
-) -> dict[str, tuple[int, int]]:
-    """What "Reap now" on each show group would actually plan: (count, bytes) over its
-    condemned, not-hand-spared member seasons across the WHOLE snapshot.
+) -> tuple[dict[str, tuple[int, int]], dict[str, list[GroupSeasonMarkOut]]]:
+    """Two per-show rollups from one sweep of each group's member rows.
 
+    **Totals** -- what "Reap now" on each show group would actually plan: (count, bytes)
+    over its condemned, not-hand-spared member seasons across the WHOLE snapshot.
     The show card's numbers must match the planner's expansion -- ``build_plan`` expands
     a group key over every condemned member in the snapshot and then drops hand-spares
     via ``whitelist.effective_override`` -- so this walks the same set with the same
     override function (rule 30: the number beside a destructive button is derived from
     the set the server will act on). Never derived from the fetched page, which on a
-    long sorted list can hold only some of a show's seasons (B-13). ``IN`` chunked at
-    500 per the bound-variable limit.
+    long sorted list can hold only some of a show's seasons (B-13).
+
+    **Marks** -- the show card's season strip: every member's (season, verdict,
+    override) across all lanes, sorted by season number (unnumbered rows last).
+
+    ``IN`` chunked at 500 per the bound-variable limit.
     """
     if not group_keys:
-        return {}
+        return {}, {}
     totals: dict[str, tuple[int, int]] = dict.fromkeys(group_keys, (0, 0))
+    marks: dict[str, list[GroupSeasonMarkOut]] = {key: [] for key in group_keys}
     keys = sorted(group_keys)
     for start in range(0, len(keys), 500):
         chunk = keys[start : start + 500]
         members = (
             await session.execute(
-                select(Candidate.media_key, Candidate.group_key, Candidate.size_bytes).where(
+                select(
+                    Candidate.media_key,
+                    Candidate.group_key,
+                    Candidate.size_bytes,
+                    Candidate.verdict,
+                ).where(
                     Candidate.snapshot_id == snapshot_id,
-                    Candidate.verdict == "condemn",
                     Candidate.group_key.in_(chunk),
                 )
             )
         ).all()
-        for media_key, group_key, size_bytes in members:
-            if whitelist.effective_override(media_key, decisions) == "spare":
-                continue
-            count, total_bytes = totals[group_key]
-            totals[group_key] = (count + 1, total_bytes + int(size_bytes))
-    return totals
+        for media_key, group_key, size_bytes, verdict in members:
+            override = whitelist.effective_override(media_key, decisions)
+            marks[group_key].append(
+                GroupSeasonMarkOut(
+                    season=_season_number(media_key),
+                    verdict=str(verdict),
+                    override=override,
+                    size_bytes=int(size_bytes),
+                )
+            )
+            if verdict == "condemn" and override != "spare":
+                count, total_bytes = totals[group_key]
+                totals[group_key] = (count + 1, total_bytes + int(size_bytes))
+    for members_marks in marks.values():
+        members_marks.sort(
+            key=lambda m: (m.season is None, m.season if m.season is not None else 0)
+        )
+    return totals, marks
 
 
 def _primary_reason(explanation_json: str, verdict: str) -> str | None:
@@ -376,12 +403,153 @@ def _dormant_for(explanation_json: str) -> str | None:
     return None
 
 
+#: The exact detail the scan injects for a hand-spare (services/snapshot.py) -- it wears
+#: the whitelist gate id, so the chip tells it apart by this string.
+_SPARE_DETAIL = "You spared this by hand."
+
+#: Parsers over our own gates' closed detail vocabularies (engine/gates.py,
+#: services/season_pruning.py) -- the WhyPanel's CHECK_COPY/CAUSE_COPY precedent.
+#: Anything unrecognized falls back to a static phrase, never an error.
+_RATED_RE = re.compile(r"^well rated: (\d+(?:\.\d+)?) on IMDb")
+_WATCHED_HERE_RE = re.compile(r"^watched here: (\d+) (?:person|people) in the last (.+)$")
+_OTHERS_RE = re.compile(r"^(\d+) other")
+_KEEP_LAST_RE = re.compile(r"^within the last (\d+) seasons")
+
+
+def _kept_season_phrase(detail: str) -> str:
+    """The chip phrase for a fired season keep rule (season_pruning's closed reasons)."""
+    if detail.startswith("specials"):
+        return "specials are never removed"
+    if detail.startswith("Sonarr is still downloading"):
+        return "still downloading"
+    if detail == "currently airing":
+        return "currently airing"
+    if detail.startswith("the first season"):
+        return "the first season stays"
+    if keep_last := _KEEP_LAST_RE.match(detail):
+        return f"in the last {keep_last.group(1)} seasons you keep"
+    if detail.startswith("this show has only"):
+        return "your keep rule keeps all its seasons"
+    if detail.startswith("a viewer is part-way"):
+        return "someone is partway through"
+    return "your season rule keeps it"
+
+
+def _kept_phrase(gate: str, detail: str) -> str:
+    """The green chip's phrase for the protection that fired, worn as "Kept · {phrase}"."""
+    if detail == _SPARE_DETAIL:
+        return "you spared it"
+    if gate == "whitelisted":
+        return "on your keep list"
+    if gate == "streaming_now":
+        return "playing right now"
+    if gate == "rating_floor":
+        rated = _RATED_RE.match(detail)
+        return f"well rated: {rated.group(1)} on IMDb" if rated else "well rated"
+    if gate == "server_popularity":
+        watched = _WATCHED_HERE_RE.match(detail)
+        if watched:
+            count, window = int(watched.group(1)), watched.group(2)
+            people = "person" if count == 1 else "people"
+            return f"{count} {people} watched it in the last {window}"
+        return "people here still watch it"
+    if gate == "others_watching":
+        others = _OTHERS_RE.match(detail)
+        if others:
+            count = int(others.group(1))
+            return (
+                "someone else is watching it" if count == 1 else f"{count} others are watching it"
+            )
+        return "others are watching it"
+    if gate == "curated_list":
+        return "on a protected list"
+    if gate == "min_dormancy":
+        if detail.startswith("no watch history"):
+            return "no watch history, kept to be safe"
+        return "watched too recently"
+    if gate == "unmanaged":
+        return "not managed by Sonarr or Radarr"
+    if gate == "season_progression":
+        return _kept_season_phrase(detail)
+    if gate == "custom":
+        return "by your rule"
+    return "a protection applies"
+
+
+def _chip(explanation_json: str, verdict: str, score: int) -> ChipOut | None:
+    """The card's one short status chip -- Sanctuary and Limbo lanes only.
+
+    Follows decide_verdict's own precedence (match trouble, then a deliberate
+    left-for-you flag, then checks that couldn't run, then the coverage floor, then
+    the score) so the chip names the fact that actually put the item in its lane.
+    Pure display extraction from the stored explanation: never a re-decision, and
+    never an error that drops a row off the queue. Condemned rows get no chip here;
+    their card leads with the amber dormancy pill (``dormant_for``).
+    """
+    try:
+        exp = json.loads(explanation_json)
+    except (ValueError, TypeError):
+        return None
+
+    if verdict == "protect":
+        fired = exp.get("protections_fired") or []
+        first = fired[0] if fired and isinstance(fired[0], dict) else None
+        if first is None:
+            return None
+        gate = str(first.get("gate") or "")
+        detail = str(first.get("detail") or "")
+        return ChipOut(tone="kept", text=f"Kept · {_kept_phrase(gate, detail)}")
+
+    if verdict != "abstain":
+        return None
+
+    status = (exp.get("match") or {}).get("status")
+    if status == "unmatched":
+        return ChipOut(tone="quiet", text="Couldn't be found in Plex")
+    if status == "ambiguous":
+        return ChipOut(tone="quiet", text="Looks like two different things in Plex")
+
+    unknown = [e for e in exp.get("protections_unknown") or [] if isinstance(e, dict)]
+    for entry in unknown:
+        detail = str(entry.get("detail") or "")
+        if detail and not detail.startswith("could not check"):
+            # A deliberate "decide this yourself" flag -- today, the season keep-rule
+            # conflict -- not a plumbing failure. The one blocked case that wants eyes.
+            if str(entry.get("gate") or "") == "season_progression":
+                return ChipOut(
+                    tone="look",
+                    text="Needs a look · watched more than a season your rule keeps",
+                )
+            return ChipOut(tone="look", text="Needs a look · left for you to decide")
+    if unknown:
+        return ChipOut(tone="quiet", text="Some checks couldn't run")
+
+    threshold = exp.get("threshold")
+    if isinstance(threshold, int):
+        if score >= threshold:
+            # decide_verdict's order: past the blocked cases, an abstain at or above
+            # the threshold can only be the coverage floor.
+            return ChipOut(tone="quiet", text="Too little of it could be checked")
+        return ChipOut(tone="quiet", text=f"Scored {score}, under your {threshold}")
+    return ChipOut(tone="quiet", text="Below your threshold")
+
+
+def _season_number(media_key: str) -> int | None:
+    """The season a key addresses, or None (a movie, or a key that does not parse --
+    display extraction never errors a row off the queue)."""
+    try:
+        return MediaRef.parse(media_key).season
+    except PlanError:
+        return None
+
+
 def _candidate_out(
     r: Candidate,
     flagged_at: datetime | None = None,
     override: str | None = None,
     *,
     group_condemned: tuple[int, int] | None = None,
+    group_seasons: list[GroupSeasonMarkOut] | None = None,
 ) -> CandidateOut:
     return CandidateOut(
         id=r.id,
@@ -413,6 +581,9 @@ def _candidate_out(
         reason=_primary_reason(r.explanation_json, r.verdict),
         spared=override == "spare",
         override=override,
+        chip=_chip(r.explanation_json, r.verdict, r.score),
+        season_number=_season_number(r.media_key),
+        group_seasons=group_seasons,
     )
 
 
@@ -536,6 +707,80 @@ async def candidate_detail(request: Request, candidate_id: int) -> CandidateDeta
             content_rating=row.content_rating,
             runtime_minutes=row.runtime_minutes,
             genres=_genres(row.genres_json),
+        )
+
+
+@router.get("/groups/{group_key}")
+async def group_detail(request: Request, group_key: str) -> GroupOut:
+    """One show, whole: every season row in the latest snapshot, across all lanes.
+
+    Each queue tab lists only its own lane, so this is where "which seasons stay and
+    which go" is answered in one place -- the show info panel and the expanded show
+    card both read it. Frozen candidate rows only; nothing here re-decides a verdict.
+    """
+    async with _sessions(request)() as session:
+        snapshot = await _latest_snapshot(session)
+        if snapshot is None:
+            raise HTTPException(404, "No scan has run yet.")
+        rows = (
+            (
+                await session.execute(
+                    select(Candidate).where(
+                        Candidate.snapshot_id == snapshot.id,
+                        Candidate.group_key == group_key,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not rows:
+            raise HTTPException(404, "That show is not in the latest scan.")
+
+        flagged = {
+            f.media_key: f.first_flagged_at
+            for f in (
+                await session.execute(
+                    select(FirstFlagged).where(
+                        FirstFlagged.media_key.in_([r.media_key for r in rows])
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        }
+        decisions = await whitelist.overrides(session)
+
+        seasons = [
+            _candidate_out(
+                r,
+                flagged.get(r.media_key),
+                whitelist.effective_override(r.media_key, decisions),
+            )
+            for r in rows
+        ]
+        seasons.sort(key=lambda c: (c.season_number is None, c.season_number or 0))
+
+        # The show-level status line: a season deliberately left for the owner wins
+        # (that is the line that wants eyes), else the highest-scoring season -- the
+        # same member the collapsed card leads with.
+        lead = next(
+            (s for s in seasons if s.chip is not None and s.chip.tone == "look"),
+            max(seasons, key=lambda c: c.score),
+        )
+        lead_row = next(r for r in rows if r.id == lead.id)
+
+        return GroupOut(
+            group_key=group_key,
+            title=next((r.group_title for r in rows if r.group_title), rows[0].title),
+            year=min((c.year for c in seasons if c.year), default=None),
+            poster_url=lead.poster_url,
+            summary=next((r.summary for r in rows if r.summary), None),
+            size_bytes=sum(c.size_bytes for c in seasons),
+            reason=lead.reason,
+            chip=lead.chip,
+            links=await _deep_links(session, lead_row),
+            seasons=seasons,
         )
 
 

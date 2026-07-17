@@ -355,7 +355,7 @@ async def scan(
         # earlier throwaway context (then replacing it here) silently dropped the reason, so
         # a scan with no watch history at all -- which can judge nothing safely -- looked
         # non-degraded and executable. Fail closed instead.
-        context.degrade("no watch history at all -- nothing can be judged")
+        context.degrade("no watch history at all: nothing can be judged")
 
     # Failures the caller detected BEFORE the gather (an unreachable Plex, a protection list
     # that failed to sync with an empty keep-list) degrade this snapshot the same loud,

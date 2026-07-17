@@ -1471,6 +1471,45 @@ reverts included. Regression-tested (API test proven failing pre-fix) and verifi
 end-to-end against a live scratch server: rows A, B, A with the re-save of active A
 appending nothing.
 
+## The review-queue readability pass (one chip per lane, whole-show views)
+
+The operator annotated all three queue tabs. Iterated as a rendered mockup first (four
+options approved: seasons-pill expander, strip + full all-seasons list, kept-chip with
+the number, overlay panel on narrow windows), then built and driven end-to-end against
+a copy of the dev DB on an alt port.
+
+- **One status chip per card, colored by lane.** Sanctuary cards drop the amber
+  dormancy pill and the reason paragraph for a single green chip naming the protection
+  that fired, with its number ("Kept · well rated: 6.8 on IMDb"). Limbo cards get a
+  quiet gray chip for the low-stakes causes (under threshold, unmatched, checks that
+  couldn't run) and an amber-outline "Needs a look" chip for the deliberate
+  left-for-you flags (the season keep-rule conflict). Condemned cards are unchanged.
+  The chip is derived server-side in the display layer (`routes._chip`) from the stored
+  explanation — never a re-decision — by parsing the gates' own closed detail
+  vocabularies (the WhyPanel CHECK_COPY precedent); every stored verdict state is
+  enumerated and unit-tested (`tests/test_review_chips.py`).
+- **Cards fold instead of wrapping raggedly.** The type chip moved out of the title row
+  into the meta line; `.card-list` is a CSS container and narrow cards switch to a
+  compact layout (small poster, actions on their own row, score pinned to the corner).
+  Below 1100px the reasoning panel rides over the list as a right-hand sheet instead of
+  stealing a column — the tablet-width split was what crushed the cards.
+- **TV cards: the card opens the show, a labeled pill expands it.** The left chevron
+  gutter is gone (posters sit flush on movies and shows alike); a "N seasons" pill with
+  the chevron in the meta line toggles the season list; clicking the card opens a new
+  show-level panel.
+- **The whole show, everywhere.** `GET /api/groups/{group_key}` returns every season row
+  in the latest snapshot across all lanes; the expanded card lists them all (other-lane
+  rows dimmed, act from their own tab), and a per-season verdict strip on the card face
+  (from compact `group_seasons` marks on the list payload, one rollup query with the
+  reap-plan totals) shows kept vs condemned at a glance. Reap-tab counts stay scoped to
+  what "Reap now" would plan (rule 30): "3 of 12 would be removed · 41.9 GiB".
+- **The show info panel.** Art, links, synopsis, the show's status chip, the FULL
+  left-for-you sentence (finally somewhere it fits), and the season list; clicking a
+  season flips to its complete reasoning with a back-to-show link.
+- **Copy sweep:** six operator-facing backend strings still carried a literal `--`
+  (rating-floor warning and vote-floor error in `engine/policy.py`, two executor
+  errors, two degrade reasons, the Plex-link owner error). All reworded per rule 21.
+
 ## Immediate next steps
 
 1. **The live send** — wire `_send_for_real` + the exclusion-verify + the Plex refresh

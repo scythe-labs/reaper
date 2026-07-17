@@ -12,7 +12,7 @@
 // Reaper judged it -- not a plot synopsis -- because on this screen the question is "why did
 // it decide that?", not "what is this about?". The synopsis lives in the slide-out.
 
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -26,6 +26,7 @@ import {
 import {
   api,
   type Candidate,
+  type GroupSeasonMark,
   type Override,
   type RequestedFilter,
   type Run,
@@ -35,6 +36,7 @@ import {
 } from "../api";
 import { bytes, count } from "../format";
 import { ReapConfirm } from "./ReapConfirm";
+import { CondemnedChip, StatusChip } from "./StatusChip";
 
 //: How many cards to *render* at a time. A tab can hold thousands, so we draw a screenful and
 //  reveal more as you scroll -- keeping the DOM (and the lazy poster fetches) small.
@@ -442,6 +444,181 @@ function RequestedChip({ who }: { who: string | null }) {
   );
 }
 
+/** What a strip square's tooltip says about its season's lane. */
+const MARK_LABELS: Record<string, string> = {
+  condemn: "would be removed",
+  protect: "kept",
+  abstain: "left alone",
+};
+
+/** The season strip: one small square per season of the show, colored by its lane
+ *  across the WHOLE snapshot -- so "which seasons stay and which go" reads at a glance
+ *  without expanding anything. A hand override draws a ring in its color. */
+function SeasonStrip({ marks }: { marks: GroupSeasonMark[] }) {
+  return (
+    <div className="season-strip">
+      {marks.map((mark, i) => {
+        const name = mark.season === 0 ? "Specials" : `Season ${mark.season ?? "?"}`;
+        const overrideNote =
+          mark.override === "spare"
+            ? ", you spared it"
+            : mark.override === "reap"
+              ? ", you marked it for reaping"
+              : "";
+        return (
+          <span
+            // Season numbers are unique within one show; an unnumbered row falls back
+            // to its position, stable within the response.
+            key={mark.season ?? `unnumbered-${i}`}
+            className={`strip-sq strip-${mark.verdict}${
+              mark.override ? ` strip-ov-${mark.override}` : ""
+            }`}
+            title={`${name}: ${MARK_LABELS[mark.verdict] ?? mark.verdict}${overrideNote}`}
+          >
+            {mark.season === 0 ? "SP" : (mark.season ?? "·")}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The season count as the expand control: a small labeled pill with a chevron, in the
+ *  meta line. The card itself opens the show's information panel, so expanding is its
+ *  own, clearly-labeled target rather than the whole-card click. */
+function SeasonExpander({
+  count: seasonCount,
+  open,
+  onToggle,
+}: {
+  count: number;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="season-expander"
+      aria-expanded={open}
+      title={open ? "Hide the season list" : "Show every season and where it stands"}
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle();
+      }}
+    >
+      <svg
+        className={`chevron ${open ? "open" : ""}`}
+        viewBox="0 0 12 12"
+        width="11"
+        height="11"
+        aria-hidden="true"
+      >
+        <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.8" />
+      </svg>
+      {seasonCount === 1 ? "1 season" : `${seasonCount} seasons`}
+    </button>
+  );
+}
+
+/** "Show Title · Season 3" -> "Season 3". The second form strips the pre-middot
+ *  separator still present in titles frozen into older snapshots. */
+function seasonName(title: string, showTitle: string): string {
+  return title.replace(`${showTitle} · `, "").replace(`${showTitle} — `, "");
+}
+
+/** The expanded show: EVERY season in the latest snapshot, whatever its lane, so kept
+ *  and condemned read side by side. Rows from this tab keep their Spare/Reap buttons;
+ *  rows from other lanes are dimmed and act from their own tab (clicking any row still
+ *  opens its full reasoning). */
+function SeasonList({
+  groupKey,
+  tabVerdict,
+  selectedId,
+  onOpen,
+  onSet,
+  onClear,
+  pending,
+}: {
+  groupKey: string;
+  tabVerdict: Verdict;
+  selectedId: number | null;
+  onOpen: (id: number) => void;
+  onSet: (key: string, decision: Override) => void;
+  onClear: (key: string) => void;
+  pending: boolean;
+}) {
+  const { data, isPending, error } = useQuery({
+    queryKey: ["group", groupKey],
+    queryFn: () => api.group(groupKey),
+  });
+
+  // The list is an always-visible surface once expanded: say "loading" and "failed"
+  // out loud rather than rendering nothing under an open chevron.
+  if (isPending) {
+    return <p className="season-list-note muted">Loading seasons…</p>;
+  }
+  if (error || !data) {
+    return (
+      <p className="season-list-note error">
+        Couldn't load the seasons. Collapse and expand to try again.
+      </p>
+    );
+  }
+
+  return (
+    <ul className="season-list">
+      {data.seasons.map((season) => {
+        const inLane = season.verdict === tabVerdict;
+        return (
+          <li
+            key={season.id}
+            className={`season-row clickable ${inLane ? "" : "season-other"} ${
+              season.override === "spare"
+                ? "card-spared"
+                : season.override === "reap"
+                  ? "card-reaped"
+                  : ""
+            } ${season.id === selectedId ? "card-selected" : ""}`}
+            onClick={() => onOpen(season.id)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onOpen(season.id);
+              }
+            }}
+          >
+            <Score item={season} />
+            <span className="season-title">
+              {seasonName(season.title, data.title)}
+              {season.verdict === "condemn" ? (
+                <CondemnedChip />
+              ) : (
+                <StatusChip chip={season.chip} />
+              )}
+              <OverrideChip override={season.override} />
+            </span>
+            <span className="season-size num">{bytes(season.size_bytes)}</span>
+            {inLane ? (
+              <OverrideControls
+                override={season.override}
+                onSet={(d) => onSet(season.media_key, d)}
+                onClear={() => onClear(season.media_key)}
+                pending={pending}
+              />
+            ) : (
+              // Other-lane rows are read-only here: they act from their own tab, and an
+              // empty cell keeps the grid's columns aligned.
+              <span aria-hidden="true" />
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function MovieCard({
   item,
   selected,
@@ -481,9 +658,11 @@ function MovieCard({
       }}
     >
       <Backdrop posterUrl={item.poster_url} />
-      {/* The gutter holds the selection tick in Select mode, and matches the show card's chevron
-          column so every poster (movie and show) lines up at the same left edge. */}
-      <div className="card-gutter">{selectMode && <SelectTick selected={isSelected} />}</div>
+      {selectMode && (
+        <div className="card-tick-col">
+          <SelectTick selected={isSelected} />
+        </div>
+      )}
       <Poster url={item.poster_url} alt={item.title} />
       <div className="card-body">
         <div className="card-title-row">
@@ -491,19 +670,28 @@ function MovieCard({
             {item.title}
             {item.year && <span className="card-year"> {item.year}</span>}
           </h3>
-          <span className="chip chip-movie">Movie</span>
           <OverrideChip override={item.override} />
         </div>
+        {/* The type chip lives on the meta line, not the title row, so a long title
+            never fights a chip for space and the year stays glued to the title. */}
         <div className="card-meta">
+          <span className="chip chip-movie">Movie</span>
           <span>{bytes(item.size_bytes)}</span>
           <ResolutionBadge value={item.video_resolution} />
           <RequestedChip who={item.requested_by} />
         </div>
-        <DormantPill dormantFor={item.dormant_for} />
-        {/* The pill already says "not watched in …", so a reason that says the same
-            thing stands down; any other reason (a protection, a rating) still shows. */}
-        {item.reason && !(item.dormant_for && item.reason.startsWith("not watched in")) && (
-          <p className="card-reason">{item.reason}</p>
+        {/* One status line per card. Condemned leads with the amber dormancy pill (the
+            reason paragraph stands down when it would repeat the pill); Sanctuary and
+            Limbo wear their single short chip, and the full sentences live in the panel. */}
+        {item.verdict === "condemn" ? (
+          <>
+            <DormantPill dormantFor={item.dormant_for} />
+            {item.reason && !(item.dormant_for && item.reason.startsWith("not watched in")) && (
+              <p className="card-reason">{item.reason}</p>
+            )}
+          </>
+        ) : (
+          <StatusChip chip={item.chip} />
         )}
       </div>
       <div className="card-side">
@@ -526,33 +714,39 @@ function MovieCard({
 function ShowCard({
   group,
   selectedId,
+  selectedGroupKey,
   select,
   onOpen,
+  onOpenGroup,
   onSet,
   onClear,
   pending,
 }: {
   group: Group;
   selectedId: number | null;
+  selectedGroupKey: string | null;
   select: CardSelect;
   onOpen: (id: number) => void;
+  onOpenGroup: (key: string) => void;
   onSet: (key: string, decision: Override) => void;
   onClear: (key: string) => void;
   pending: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  // On the "Would reap" tab the card must state what "Reap now" will actually plan: the
-  // server's whole-snapshot totals (every condemned season minus hand-spares), never a
-  // sum over the fetched pages, which on a long sorted list can hold only some of a
-  // show's seasons. Other tabs keep the fetched sum; their cards describe what is
-  // listed, not a reap plan.
   const first = group.items[0]!;
+  // The whole show's shape, across every lane of the snapshot -- what the strip and the
+  // season count draw from. Null only on rows from before this field existed.
+  const marks = first.group_seasons;
+  const totalSeasons = marks?.length ?? group.items.length;
+  const wholeShowBytes = marks?.reduce((sum, m) => sum + m.size_bytes, 0) ?? null;
   const fetchedSize = group.items.reduce((sum, s) => sum + s.size_bytes, 0);
+  // On the "Condemned" tab the byte figure must state what "Reap now" will actually
+  // plan: the server's whole-snapshot totals (every condemned season minus hand-spares),
+  // never a sum over the fetched pages, which on a long sorted list can hold only some
+  // of a show's seasons. Other tabs describe the whole show, which the strip shows.
   const isReapTab = first.verdict === "condemn";
-  const seasonCount =
-    (isReapTab ? first.group_condemned_count : null) ?? group.items.length;
-  const totalSize = (isReapTab ? first.group_condemned_bytes : null) ?? fetchedSize;
-  const label = seasonCount === 1 ? "1 season" : `${seasonCount} seasons`;
+  const condemnedCount = first.group_condemned_count ?? group.items.length;
+  const condemnedBytes = first.group_condemned_bytes ?? fetchedSize;
   // What the whole show agrees on. A show-level override makes every season inherit it, so
   // this is the show's decision in the common case; a per-season override reads as mixed.
   const showOverride = groupOverride(group.items);
@@ -568,37 +762,25 @@ function ShowCard({
       onPointerEnter={() => selectMode && select.onSelectEnter(group.key)}
     >
       <div
-        className="card-head clickable"
-        onClick={() => !selectMode && setOpen((v) => !v)}
+        className={`card-head clickable ${selectedGroupKey === group.key ? "card-selected" : ""}`}
+        onClick={() => !selectMode && onOpenGroup(group.key)}
         role="button"
         tabIndex={0}
-        aria-expanded={selectMode ? undefined : open}
         aria-pressed={selectMode ? isSelected : undefined}
+        aria-label={selectMode ? `Select ${group.title}` : `About ${group.title}`}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            selectMode ? select.onSelectToggle(group.key) : setOpen((v) => !v);
+            selectMode ? select.onSelectToggle(group.key) : onOpenGroup(group.key);
           }
         }}
       >
         <Backdrop posterUrl={group.poster} />
-        {/* The gutter shows the selection tick in Select mode, else the expand chevron; its
-            column is mirrored on movie cards so posters stay aligned down the whole list. */}
-        <div className="card-gutter">
-          {selectMode ? (
+        {selectMode && (
+          <div className="card-tick-col">
             <SelectTick selected={isSelected} />
-          ) : (
-            <svg
-              className={`chevron ${open ? "open" : ""}`}
-              viewBox="0 0 12 12"
-              width="13"
-              height="13"
-              aria-hidden="true"
-            >
-              <path d="M4 2l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.8" />
-            </svg>
-          )}
-        </div>
+          </div>
+        )}
         <Poster url={group.poster} alt={group.title} />
         <div className="card-body">
           <div className="card-title-row">
@@ -606,21 +788,30 @@ function ShowCard({
               {group.title}
               {group.year && <span className="card-year"> {group.year}</span>}
             </h3>
-            <span className="chip chip-tv">TV</span>
             <OverrideChip override={showOverride} />
           </div>
           <div className="card-meta">
+            <span className="chip chip-tv">TV</span>
+            <SeasonExpander count={totalSeasons} open={open} onToggle={() => setOpen((v) => !v)} />
             <span>
-              {label} · {bytes(totalSize)}
-              {!selectMode && ` · ${open ? "hide" : "show"} seasons`}
+              {isReapTab
+                ? `${condemnedCount} of ${totalSeasons} would be removed · ${bytes(condemnedBytes)}`
+                : bytes(wholeShowBytes ?? fetchedSize)}
             </span>
             <RequestedChip who={group.requestedBy} />
           </div>
-          <DormantPill dormantFor={group.dormantFor} />
-          {group.reason &&
-            !(group.dormantFor && group.reason.startsWith("not watched in")) && (
-              <p className="card-reason">{group.reason}</p>
-            )}
+          {marks && marks.length > 1 && <SeasonStrip marks={marks} />}
+          {isReapTab ? (
+            <>
+              <DormantPill dormantFor={group.dormantFor} />
+              {group.reason &&
+                !(group.dormantFor && group.reason.startsWith("not watched in")) && (
+                  <p className="card-reason">{group.reason}</p>
+                )}
+            </>
+          ) : (
+            <StatusChip chip={first.chip} />
+          )}
         </div>
         <div className="card-side">
           {/* Spare or reap the whole show in one go -- the decision covers every season. In
@@ -637,44 +828,15 @@ function ShowCard({
       </div>
 
       {!selectMode && open && (
-        <ul className="season-list">
-          {group.items.map((season) => (
-            <li
-              key={season.id}
-              className={`season-row clickable ${
-                season.override === "spare"
-                  ? "card-spared"
-                  : season.override === "reap"
-                    ? "card-reaped"
-                    : ""
-              } ${season.id === selectedId ? "card-selected" : ""}`}
-              onClick={() => onOpen(season.id)}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  onOpen(season.id);
-                }
-              }}
-            >
-              <Score item={season} />
-              <span className="season-title">
-                {/* Strip the show-name prefix; the second form is the pre-middot separator
-                    still present in titles frozen into older snapshots. */}
-                {season.title.replace(`${group.title} · `, "").replace(`${group.title} — `, "")}
-                <OverrideChip override={season.override} />
-              </span>
-              <span className="season-size num">{bytes(season.size_bytes)}</span>
-              <OverrideControls
-                override={season.override}
-                onSet={(d) => onSet(season.media_key, d)}
-                onClear={() => onClear(season.media_key)}
-                pending={pending}
-              />
-            </li>
-          ))}
-        </ul>
+        <SeasonList
+          groupKey={group.key}
+          tabVerdict={first.verdict}
+          selectedId={selectedId}
+          onOpen={onOpen}
+          onSet={onSet}
+          onClear={onClear}
+          pending={pending}
+        />
       )}
     </article>
   );
@@ -684,12 +846,16 @@ export function ReviewQueue({
   verdict,
   onVerdictChange,
   selectedId,
+  selectedGroupKey,
   onSelect,
+  onSelectGroup,
 }: {
   verdict: Verdict;
   onVerdictChange: (verdict: Verdict) => void;
   selectedId: number | null;
+  selectedGroupKey: string | null;
   onSelect: (id: number) => void;
+  onSelectGroup: (key: string) => void;
 }) {
   const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = useState("");
@@ -767,7 +933,12 @@ export function ReviewQueue({
     // set actually changes; hasNextPage covers the sentinel appearing once more pages exist.
   }, [data, hasNextPage]);
 
-  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["candidates"] });
+  // Overrides change what the queue lists AND what an expanded show's all-seasons
+  // list (and the show panel) show, so both caches refresh together.
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ["candidates"] });
+    void queryClient.invalidateQueries({ queryKey: ["group"] });
+  };
   const setOverride = useMutation({
     mutationFn: ({ key, decision }: { key: string; decision: Override }) =>
       api.override(key, decision),
@@ -1006,8 +1177,10 @@ export function ReviewQueue({
                   key={group.key}
                   group={group}
                   selectedId={selectedId}
+                  selectedGroupKey={selectedGroupKey}
                   select={cardSelect}
                   onOpen={onSelect}
+                  onOpenGroup={onSelectGroup}
                   onSet={onSet}
                   onClear={onClear}
                   pending={pending}

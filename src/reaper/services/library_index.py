@@ -79,7 +79,7 @@ async def build_index(
             return await plex.library_guid_index(section_type=section_type)
         except PlexError as exc:
             degrade(
-                f"Plex GUID sweep failed ({exc}) -- id matching unavailable, snapshot un-executable"
+                f"Plex GUID sweep failed ({exc}): id matching unavailable, snapshot un-executable"
             )
             return {}
 

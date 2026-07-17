@@ -821,10 +821,28 @@ main.split {
   align-items: start;
 }
 
-@media (max-width: 900px) {
+/* Below this, a side-by-side panel would squeeze the cards into a ragged stack -- so
+   the panel rides OVER the list as a right-hand sheet instead, and the cards keep
+   their width. The list stays clickable: picking another card swaps the sheet. */
+@media (max-width: 1100px) {
   main.split {
     grid-template-columns: 1fr;
   }
+  main.split .why {
+    position: fixed;
+    top: 0;
+    right: 0;
+    height: 100dvh;
+    max-height: none;
+    width: min(440px, calc(100vw - 1.25rem));
+    z-index: 40;
+    border-radius: var(--radius) 0 0 var(--radius);
+    border-right: none;
+    box-shadow: var(--shadow-lg);
+  }
+}
+
+@media (max-width: 900px) {
   .masthead {
     flex-wrap: wrap;
   }
@@ -928,6 +946,64 @@ tbody tr.selected {
   top: 1rem;
   max-height: calc(100vh - 2rem);
   overflow-y: auto;
+}
+
+/* The way back up from a season's reasoning to its show. */
+.back-to-show {
+  display: inline-block;
+  margin: 0 0 0.35rem;
+  font-size: 0.82rem;
+}
+
+/* The full sentence behind the show's status chip -- a keep-rule conflict's complete
+   wording, under the show it belongs to. */
+.show-reason {
+  margin: 0.55rem 0 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+/* The show panel's season rows: score, name, chip, size -- each a button that opens
+   the season's full reasoning. */
+.panel-seasons {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.panel-seasons li + li {
+  border-top: 1px solid var(--border);
+}
+.panel-season {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  padding: 0.45rem 0.2rem;
+  background: none;
+  border: none;
+  text-align: left;
+  font-size: 0.88rem;
+  color: var(--text);
+  cursor: pointer;
+  border-radius: 6px;
+}
+.panel-season:hover {
+  background: var(--hover);
+}
+.panel-season .status-chip {
+  min-width: 0;
+}
+.panel-season-name {
+  font-weight: 550;
+  white-space: nowrap;
+}
+.panel-season-size {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 .why-hero {
@@ -2339,6 +2415,36 @@ tbody tr.spared-row .title-cell {
   display: flex;
   flex-direction: column;
   gap: 0.6rem;
+  /* Cards adapt to the width they actually get (a panel can halve it), not the window. */
+  container-type: inline-size;
+}
+
+/* A genuinely narrow card folds instead of wrapping raggedly: smaller poster, the
+   actions on their own row, the score pinned to the top corner -- so the status pill
+   never lands pressed against the buttons. */
+@container (max-width: 560px) {
+  .card,
+  .card-head {
+    flex-wrap: wrap;
+  }
+  /* .card .poster, not bare .poster: the base rule is declared later in the file and
+     would win the specificity tie. */
+  .card .poster {
+    width: 44px;
+    height: 66px;
+  }
+  .card > .card-side,
+  .card-head > .card-side {
+    width: 100%;
+    flex-direction: row;
+    justify-content: flex-end;
+    align-items: center;
+  }
+  .card-side .score {
+    position: absolute;
+    top: 0.7rem;
+    right: 0.7rem;
+  }
 }
 
 .card {
@@ -2582,6 +2688,79 @@ button.sm {
   white-space: nowrap;
 }
 
+/* The one status chip a Sanctuary or Limbo card wears: green "kept because", gray
+   "nothing to act on", amber outline "deliberately left for you to decide". The chip is
+   the deciding fact; the full sentences live in the panel. */
+.status-chip {
+  display: inline-block;
+  align-self: flex-start;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.5;
+  padding: 0.08rem 0.55rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.status-kept {
+  color: var(--protect);
+  background: var(--protect-soft);
+}
+.status-quiet {
+  color: var(--muted);
+  background: var(--surface-2);
+}
+.status-look {
+  color: var(--unknown);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--unknown) 55%, transparent);
+}
+.status-pressure {
+  color: var(--condemn);
+  background: var(--condemn-soft);
+}
+
+/* The season strip: one square per season of the show, colored by its lane across the
+   WHOLE snapshot -- kept and condemned side by side without expanding anything. A hand
+   override draws a ring in its color. */
+.season-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0.1rem 0;
+}
+.strip-sq {
+  min-width: 1.65rem;
+  height: 1.3rem;
+  padding: 0 0.3rem;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  font-size: 0.68rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.strip-condemn {
+  color: var(--condemn);
+  background: var(--condemn-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--condemn) 35%, transparent);
+}
+.strip-protect {
+  color: var(--protect);
+  background: var(--protect-soft);
+}
+.strip-abstain {
+  color: var(--muted);
+  background: var(--surface-2);
+}
+.strip-ov-spare {
+  box-shadow: inset 0 0 0 1.5px var(--protect);
+}
+.strip-ov-reap {
+  box-shadow: inset 0 0 0 1.5px var(--condemn);
+}
+
 /* --- hand overrides: the paired Spare / Reap toggle ---------------------------------------- */
 .override-controls {
   display: inline-flex;
@@ -2792,26 +2971,48 @@ button.sm {
 .card-head:hover {
   background: var(--hover);
 }
-/* A fixed-width column at the far left of every card. On a show it holds the expand chevron
-   (where a left-pointing arrow reads as "this opens"); on a movie it is empty. Because both
-   have it, the posters after it line up down the whole list. */
-.card-gutter {
+/* The selection tick's column, present only in Select mode -- posters otherwise sit
+   flush left on movie and show cards alike. */
+.card-tick-col {
   flex: none;
-  width: 1.2rem;
   display: flex;
   align-items: center;
-  justify-content: center;
   align-self: center;
 }
-.card-head:hover .chevron {
+
+/* The season count as the expand control: a small labeled pill in the meta line. The
+   card itself opens the show's information panel, so expanding gets its own,
+   clearly-labeled target instead of the whole-card click. */
+.season-expander {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.06rem 0.55rem 0.06rem 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
   color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    border-color 0.14s var(--ease),
+    color 0.14s var(--ease);
 }
-.card-head .chevron {
+.season-expander:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.season-expander .chevron {
   color: var(--faint);
   transition: transform 0.18s var(--ease);
   flex: none;
 }
-.card-head .chevron.open {
+.season-expander:hover .chevron {
+  color: currentColor;
+}
+.season-expander .chevron.open {
   transform: rotate(90deg);
 }
 
@@ -2850,6 +3051,24 @@ button.sm {
   gap: 0.4rem;
   font-size: 0.88rem;
   min-width: 0;
+}
+.season-title .status-chip {
+  min-width: 0;
+}
+
+/* The expanded list's own loading / failed states -- an open chevron must never sit
+   over silence. */
+.season-list-note {
+  margin: 0;
+  padding: 0.6rem 0.9rem 0.8rem 2.4rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+/* A season from another tab, listed so the whole show reads at once: visible and
+   clickable for its reasoning, acted on from its own tab. */
+.season-row.season-other {
+  opacity: 0.6;
 }
 .season-size {
   color: var(--muted);

@@ -30,8 +30,8 @@ function RuleTag() {
 }
 
 /** A pill that opens the item in one of the tools that manage it. Hidden without a URL --
- *  a missing link is hidden, never rendered broken. */
-function JumpPill({ href, label }: { href: string | null; label: string }) {
+ *  a missing link is hidden, never rendered broken. Shared with the show panel. */
+export function JumpPill({ href, label }: { href: string | null; label: string }) {
   if (!href) return null;
   return (
     <a className="jump-pill" href={href} target="_blank" rel="noopener noreferrer">
@@ -146,8 +146,9 @@ function Synopsis({ text }: { text: string }) {
 
 /** The backdrop banner at the top of the panel: the item's wide Plex art, fading down into
  *  the panel so the reasoning below reads on a plain surface. Falls back to the poster when
- *  a title has no separate art, and to nothing at all when it has neither. */
-function WhyHero({ posterUrl }: { posterUrl: string }) {
+ *  a title has no separate art, and to nothing at all when it has neither. Shared with the
+ *  show panel. */
+export function WhyHero({ posterUrl }: { posterUrl: string }) {
   const [src, setSrc] = useState(`${posterUrl}?kind=art`);
   const fellBack = useRef(false);
 
@@ -416,7 +417,15 @@ function LeftForYou({ outcomes }: { outcomes: GateOutcome[] }) {
   );
 }
 
-export function WhyPanel({ item, onClose }: { item: CandidateDetail; onClose: () => void }) {
+export function WhyPanel({
+  item,
+  onClose,
+  onShowGroup,
+}: {
+  item: CandidateDetail;
+  onClose: () => void;
+  onShowGroup?: (key: string) => void;
+}) {
   const { explanation } = item;
 
   const mediaLabel = item.media_type === "season" ? "TV season" : item.media_type;
@@ -424,6 +433,17 @@ export function WhyPanel({ item, onClose }: { item: CandidateDetail; onClose: ()
   return (
     <aside className="why">
       {item.poster_url && <WhyHero posterUrl={item.poster_url} />}
+
+      {/* A season's reasoning is one level down from its show: offer the way back up. */}
+      {item.group_key && onShowGroup && (
+        <button
+          type="button"
+          className="link-btn back-to-show"
+          onClick={() => onShowGroup(item.group_key!)}
+        >
+          ◂ Back to {item.group_title ?? "the show"}
+        </button>
+      )}
 
       <header className="why-head">
         <div>

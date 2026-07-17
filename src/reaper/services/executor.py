@@ -492,8 +492,8 @@ class Executor:
                 )
             if self._gateway.plex is None:
                 raise ExecutionError(
-                    "Refusing a real run without Plex: the active-stream veto -- re-polled "
-                    "before every delete -- cannot run, and deleting blind to who is "
+                    "Refusing a real run without Plex: the active-stream veto (re-polled "
+                    "before every delete) cannot run, and deleting blind to who is "
                     "watching is exactly what must never happen."
                 )
             if self._gateway.tautulli is None:
@@ -533,7 +533,7 @@ class Executor:
         current_hash = manifest_hash(sorted(condemned.values(), key=lambda c: c.media_key))
         if current_hash != run.approved_manifest_hash:
             raise ExecutionError(
-                "The condemned set changed since this plan was approved -- an item was "
+                "The condemned set changed since this plan was approved: an item was "
                 "added, removed, or resized. The approval was for a different plan and "
                 "is void. Re-scan, re-review, and approve the new plan."
             )
@@ -1085,7 +1085,7 @@ class Executor:
                 f"delete not fully confirmed (gone={gone}, exclusion_verified={excluded}). "
                 + (
                     "The file was removed, but the import exclusion could not be verified "
-                    "after polling -- a re-request could re-download it."
+                    "after polling, so a re-request could re-download it."
                     if gone
                     else "Radarr returned 200 but the movie is still present."
                 ),

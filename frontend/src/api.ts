@@ -22,6 +22,26 @@ export interface Snapshot {
   reclaimable_bytes: number;
 }
 
+/** The one short status chip a card wears, display-ready from the server. `kept`
+ *  renders green (a protection fired), `quiet` gray (nothing to act on), `look`
+ *  amber-outlined (deliberately left for the owner to decide). */
+export interface Chip {
+  tone: "kept" | "quiet" | "look";
+  text: string;
+}
+
+/** One square of a show card's season strip: the lightest per-season mark, across
+ *  every lane of the whole snapshot. `season` is null for a row whose key carried
+ *  no season number -- shown unnumbered, never dropped. */
+export interface GroupSeasonMark {
+  season: number | null;
+  verdict: Verdict;
+  override: Override | null;
+  /** The season's size on disk, so the card can state whole-show totals without a
+   *  second fetch. */
+  size_bytes: number;
+}
+
 export interface Candidate {
   id: number;
   media_key: string;
@@ -58,9 +78,35 @@ export interface Candidate {
    *  they click, so the card shows the pending intent before the next scan bakes it in.
    *  Inherited from the show for a season the owner overrode whole. */
   override: Override | null;
+  /** The card's one status chip (Sanctuary and Limbo). Null on condemned rows, whose
+   *  card leads with the amber dormancy pill instead. */
+  chip: Chip | null;
+  /** Which season this row is, for season rows. Null for movies and unparseable keys. */
+  season_number: number | null;
+  /** The whole show's per-season verdict marks, for the card's season strip. Null for
+   *  movies. */
+  group_seasons: GroupSeasonMark[] | null;
 }
 
 export type Override = "spare" | "reap";
+
+/** One show, whole: the show-level header plus every season row in the latest
+ *  snapshot regardless of verdict -- what the show panel and the expanded card read. */
+export interface Group {
+  group_key: string;
+  title: string;
+  year: number | null;
+  poster_url: string | null;
+  summary: string | null;
+  size_bytes: number;
+  /** The show-level status line and chip: those of the season that most wants the
+   *  owner's attention, else the highest-scoring one. */
+  reason: string | null;
+  chip: Chip | null;
+  links: Links;
+  /** Every season, sorted by season number (unnumbered rows last). */
+  seasons: Candidate[];
+}
 
 /** One page of candidates, plus the full-set totals the server measured before the page
  *  window -- what the queue header counts and sizes. */
@@ -657,6 +703,8 @@ export const api = {
     };
   },
   candidate: (id: number) => request<CandidateDetail>(`/api/candidates/${id}`),
+  /** One show, whole: every season in the latest snapshot, across all lanes. */
+  group: (key: string) => request<Group>(`/api/groups/${encodeURIComponent(key)}`),
 
   // --- setup + settings ---------------------------------------------------
   setupStatus: () => request<SetupStatus>("/api/setup/status"),

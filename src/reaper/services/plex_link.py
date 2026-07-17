@@ -258,7 +258,7 @@ async def complete_link(
     if not owned:
         raise PlexLinkError(
             f"Signed in as {account.username!r}, but that account does not own a Plex "
-            "server. Reaper must be linked by the server owner -- it is going to be "
+            "server. Reaper must be linked by the server owner: it is going to be "
             "given permission to delete media."
         )
     if choice is not None:

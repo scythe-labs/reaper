@@ -10,10 +10,15 @@ import { ReapPlan } from "./components/ReapPlan";
 import { ReviewQueue } from "./components/ReviewQueue";
 import { Settings } from "./components/Settings";
 import { SetupWizard } from "./components/SetupWizard";
+import { ShowPanel } from "./components/ShowPanel";
 import { WhyPanel } from "./components/WhyPanel";
 import { count, date } from "./format";
 
 type View = "review" | "policy" | "reap" | "fairness" | "settings";
+
+/** What the review screen's side panel is showing: one item's reasoning, one whole
+ *  show, or nothing. A single slot -- opening either closes the other. */
+type Selection = { kind: "item"; id: number } | { kind: "group"; key: string } | null;
 
 const NAV: { id: View; label: string }[] = [
   { id: "review", label: "Review" },
@@ -184,7 +189,10 @@ function WhyPanelFallback({ error, onClose }: { error: boolean; onClose: () => v
 function Dashboard({ user }: { user: AuthUser }) {
   const [view, setView] = useState<View>("review");
   const [verdict, setVerdict] = useState<Verdict>("condemn");
-  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [selected, setSelected] = useState<Selection>(null);
+
+  const selectedId = selected?.kind === "item" ? selected.id : null;
+  const selectedGroupKey = selected?.kind === "group" ? selected.key : null;
 
   const { data: snapshot } = useQuery({
     queryKey: ["snapshot"],
@@ -198,6 +206,12 @@ function Dashboard({ user }: { user: AuthUser }) {
     queryKey: ["candidate", selectedId],
     queryFn: () => api.candidate(selectedId!),
     enabled: selectedId !== null,
+  });
+
+  const { data: groupDetail, isError: groupError } = useQuery({
+    queryKey: ["group", selectedGroupKey],
+    queryFn: () => api.group(selectedGroupKey!),
+    enabled: selectedGroupKey !== null,
   });
 
   return (
@@ -232,23 +246,39 @@ function Dashboard({ user }: { user: AuthUser }) {
       <SafetyBanner />
       {view === "review" && <ScanFreshness snapshot={snapshot} />}
 
-      <main className={selectedId !== null && view === "review" ? "split" : ""}>
+      <main className={selected !== null && view === "review" ? "split" : ""}>
         {view === "review" ? (
           <>
             <ReviewQueue
               verdict={verdict}
               onVerdictChange={(v) => {
                 setVerdict(v);
-                setSelectedId(null);
+                setSelected(null);
               }}
               selectedId={selectedId}
-              onSelect={setSelectedId}
+              selectedGroupKey={selectedGroupKey}
+              onSelect={(id) => setSelected({ kind: "item", id })}
+              onSelectGroup={(key) => setSelected({ kind: "group", key })}
             />
             {selectedId !== null &&
               (detail ? (
-                <WhyPanel item={detail} onClose={() => setSelectedId(null)} />
+                <WhyPanel
+                  item={detail}
+                  onClose={() => setSelected(null)}
+                  onShowGroup={(key) => setSelected({ kind: "group", key })}
+                />
               ) : (
-                <WhyPanelFallback error={detailError} onClose={() => setSelectedId(null)} />
+                <WhyPanelFallback error={detailError} onClose={() => setSelected(null)} />
+              ))}
+            {selectedGroupKey !== null &&
+              (groupDetail ? (
+                <ShowPanel
+                  group={groupDetail}
+                  onOpenSeason={(id) => setSelected({ kind: "item", id })}
+                  onClose={() => setSelected(null)}
+                />
+              ) : (
+                <WhyPanelFallback error={groupError} onClose={() => setSelected(null)} />
               ))}
           </>
         ) : view === "policy" ? (
