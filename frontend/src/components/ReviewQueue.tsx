@@ -48,21 +48,21 @@ const FETCH_PAGE = 100;
 const TABS: { verdict: Verdict; label: string; blurb: string; empty: string }[] = [
   {
     verdict: "condemn",
-    label: "Would reap",
+    label: "Condemned Souls",
     blurb: "Scored at or above your threshold, with nothing protecting them.",
-    empty: "Nothing is on the block. Reaper would not reap anything.",
+    empty: "No souls are on the block.",
   },
   {
     verdict: "protect",
-    label: "Spared",
-    blurb: "Something is protecting these. They stay, whatever they scored.",
-    empty: "Nothing is being spared by a protection right now.",
+    label: "Sanctuary",
+    blurb: "Something is protecting these souls. They stay, whatever they weigh.",
+    empty: "No souls are being spared by a protection right now.",
   },
   {
     verdict: "abstain",
-    label: "Left alone",
+    label: "Limbo",
     blurb: "Below your threshold, or too little to go on. Reaper leaves them be.",
-    empty: "Nothing landed here.",
+    empty: "No souls in Limbo.",
   },
 ];
 
