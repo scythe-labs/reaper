@@ -1847,6 +1847,40 @@ The `.warn` banner exception in rule 45 is still open: ScanBar and the review ca
 their own banner rather than `.notice-warn`, to be merged when the review UI is next
 touched.
 
+## Show status on the wire, and rules that say what they matched
+
+Sonarr's series status was already frozen into every season's Facts, but it never left the
+blob: an operator could write a rule against it and never see it anywhere. It now has a
+column and reaches three surfaces. It is stored as a **string, not a nullable bool**, because
+the value carries four states and a bool would force two of them together: `ended`,
+`continuing`, `unknown` (the server did not say), and null (a movie, where the question does
+not apply). Collapsing "we could not check" into "still going" is exactly the conflation the
+observation model exists to prevent.
+
+The card marks only ended and unknown; no chip means still going, which keeps the common case
+quiet. The season panel and the show panel name all three. `unknown` wears the same amber
+dashed treatment as an unchecked protection, and the label for `Known(False)` is "Still going"
+rather than "Continuing", because that arm also covers upcoming shows.
+
+Custom-rule explanations no longer print operator syntax. `Genre: <list> eq <one>` and
+`True eq True` are now "Genre includes X" and "The show has ended", across the whole
+operator and field-type matrix, in both the matched and unmatched readings.
+
+Three defects fixed alongside, all found while answering an operator's question about a score:
+
+- The season-rank signal called rank 1 "an older season" when rank 1 is the *newest* season
+  on disk, and charged it deletion pressure under that description.
+- The policy editor's "% of the score" divided by the built-in signal weights only, while the
+  engine's denominator also includes custom rules, so every share was overstated and the
+  rules themselves showed none. A rule joins the same denominator, so a rule worth 20 points
+  moved a real item's score by about 3.5; there is now a warning saying so in plain words.
+- `humanize_days` returned "today" for sub-day values, but every caller drops it into a slot
+  that wants a *length*: "not watched in today". It is "less than a day" now.
+
+Known and deliberately not changed: `humanize_days(729)` reads "1 year, 12 months". Rolling
+12 months up to a year would make 364 days read as "1 year", which overstates dormancy, and
+rule 31 says derived condemn-lane values round toward keeping. Left alone pending a decision.
+
 ## Immediate next steps
 
 1. **The live send** — wire `_send_for_real` + the exclusion-verify + the Plex refresh
