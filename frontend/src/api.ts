@@ -465,6 +465,8 @@ export interface WhitelistEntry {
 
 export interface GraceItem {
   media_key: string;
+  /** The snapshot row behind this countdown, so its reasoning can be opened from here. */
+  candidate_id: number;
   title: string;
   size_bytes: number;
   grace_ends_at: string;

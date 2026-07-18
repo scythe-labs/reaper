@@ -20,7 +20,13 @@ function pct(row: RequesterRow): number {
   return Math.round((100 * row.played_by_them) / row.requests_made);
 }
 
-function Row({ row }: { row: RequesterRow }) {
+function Row({
+  row,
+  onOpenInQueue,
+}: {
+  row: RequesterRow;
+  onOpenInQueue?: ((title: string) => void) | undefined;
+}) {
   const [open, setOpen] = useState(false);
   const played = pct(row);
   const hasUnwatched = row.unwatched_titles.length > 0;
@@ -45,7 +51,14 @@ function Row({ row }: { row: RequesterRow }) {
         </td>
         <td className="why-cell">
           {hasUnwatched && (
-            <button className="link" onClick={() => setOpen((o) => !o)}>
+            // "show"/"hide" reads fine beside its own row, but every row's button says the
+            // same thing, so the label spells out whose titles it opens.
+            <button
+              className="link"
+              aria-expanded={open}
+              aria-label={`${open ? "Hide" : "Show"} unwatched titles requested by ${row.name}`}
+              onClick={() => setOpen((o) => !o)}
+            >
               {open ? "hide" : "show"}
             </button>
           )}
@@ -60,7 +73,21 @@ function Row({ row }: { row: RequesterRow }) {
             </p>
             <ul className="unwatched-titles">
               {row.unwatched_titles.map((t) => (
-                <li key={t}>{t}</li>
+                // The next question is always "show me that one", so the title is the way
+                // there. Without a jump handler it stays plain text rather than a dead link.
+                <li key={t}>
+                  {onOpenInQueue ? (
+                    <button
+                      className="link"
+                      title="Find this in the review queue"
+                      onClick={() => onOpenInQueue(t)}
+                    >
+                      {t}
+                    </button>
+                  ) : (
+                    t
+                  )}
+                </li>
               ))}
             </ul>
           </td>
@@ -70,7 +97,12 @@ function Row({ row }: { row: RequesterRow }) {
   );
 }
 
-export function Fairness() {
+export function Fairness({
+  onOpenInQueue,
+}: {
+  /** Jump to the review queue with this title already searched for. */
+  onOpenInQueue?: (title: string) => void;
+}) {
   const { data, isPending, error } = useQuery({ queryKey: ["fairness"], queryFn: api.fairness });
 
   return (
@@ -100,8 +132,8 @@ export function Fairness() {
             {data.unmatched_requests > 0 && (
               <span className="muted">
                 {" "}
-                · {count(data.unmatched_requests)} could not be judged (Plex has not matched
-                them)
+                · {count(data.unmatched_requests)} could not be judged (they couldn't be
+                found in Plex)
               </span>
             )}
             {data.horizon_at && (
@@ -112,23 +144,27 @@ export function Fairness() {
               </span>
             )}
           </p>
-          <table>
-            <thead>
-              <tr>
-                <th>Requester</th>
-                <th className="num">Requests</th>
-                <th className="num">Granted</th>
-                <th className="num">Played</th>
-                <th className="num">Reclaimable</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {data.rows.map((row) => (
-                <Row key={row.name} row={row} />
-              ))}
-            </tbody>
-          </table>
+          {/* Six columns of names and numbers do not fit a phone. The wrapper keeps that
+              scroll sideways inside the table instead of pushing the whole page sideways. */}
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Requester</th>
+                  <th className="num">Requests</th>
+                  <th className="num">Granted</th>
+                  <th className="num">Played</th>
+                  <th className="num">Reclaimable</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map((row) => (
+                  <Row key={row.name} row={row} onOpenInQueue={onOpenInQueue} />
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
     </section>

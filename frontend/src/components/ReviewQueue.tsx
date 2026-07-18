@@ -12,11 +12,12 @@
 // Reaper judged it -- not a plot synopsis -- because on this screen the question is "why did
 // it decide that?", not "what is this about?". The synopsis lives in the slide-out.
 
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type RefObject,
   useCallback,
   useEffect,
   useMemo,
@@ -37,8 +38,9 @@ import {
   type Verdict,
 } from "../api";
 import { bytes, count } from "../format";
+import { useOverrideMutations } from "../useOverrideMutations";
 import { ReapConfirm } from "./ReapConfirm";
-import { CondemnedChip, StatusChip } from "./StatusChip";
+import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
 
 //: How many cards to *render* at a time. A tab can hold thousands, so we draw a screenful and
 //  reveal more as you scroll -- keeping the DOM (and the lazy poster fetches) small.
@@ -239,10 +241,34 @@ function Pill({
       <span className="pill-icon" aria-hidden="true">
         {icon}
       </span>
-      <select value={value} onChange={(e) => onChange(e.target.value)}>
+      {/* The name has to sit on the select itself: the label wraps only a hidden icon, so
+          without this a screen reader reads a row of unnamed dropdowns. */}
+      <select aria-label={title} value={value} onChange={(e) => onChange(e.target.value)}>
         {children}
       </select>
     </label>
+  );
+}
+
+/** One active filter, as a chip that clears just that filter. The × is the button, so its
+ *  label has to name what it stops filtering by: "Remove the genre filter", never a row of
+ *  identical "×" controls. */
+function FilterChip({
+  label,
+  clearLabel,
+  onClear,
+}: {
+  label: ReactNode;
+  clearLabel: string;
+  onClear: () => void;
+}) {
+  return (
+    <span className="filter-chip">
+      {label}
+      <button type="button" aria-label={clearLabel} onClick={onClear}>
+        ×
+      </button>
+    </span>
   );
 }
 
@@ -470,38 +496,35 @@ function CheckSquareIcon() {
   );
 }
 
-/** The reason text behind a kept row's chip ("Kept · playing right now" -> "playing
- *  right now"), for the refused-reap pill's honest wording. */
-function chipWhy(chip: Chip | null): string | null {
-  if (!chip) return null;
-  return chip.text.replace(/^Kept · /, "");
+/** Whether the row a card leads with is on the block. One expression for both card
+ *  shapes: a show card reads its first (highest-scoring) season, a movie card reads
+ *  itself, and neither may drift into asking the question a different way. */
+function isCondemned(item: Candidate): boolean {
+  return item.verdict === "condemn";
 }
 
-/** The chip a card shows once the owner has overridden it by hand. Solid fills are the
- *  owner's decisions; outlined chips are Reaper's. A reap takes effect immediately --
- *  counts, grace countdown, the next plan -- unless the engine refuses it (someone is
- *  watching right now, or the file isn't managed), which reads amber and says why. */
-function OverrideChip({
-  override,
-  effective,
-  keptWhy,
+/** One status line per card. Condemned leads with the amber dormancy pill, and the reason
+ *  paragraph stands down WHENEVER the pill is present -- two status lines is noise whatever
+ *  the reason says; the full sentences live in the panel. Sanctuary and Limbo wear their
+ *  single short chip. */
+function CardStatusLine({
+  condemned,
+  dormantFor,
+  reason,
+  chip,
 }: {
-  override: Override | null;
-  effective?: boolean | null | undefined;
-  keptWhy?: string | null | undefined;
+  condemned: boolean;
+  dormantFor: string | null;
+  reason: string | null;
+  chip: Chip | null;
 }) {
-  if (override === "spare") {
-    return <span className="chip chip-hand-spare">Spared by hand · will be kept</span>;
-  }
-  if (override !== "reap") return null;
-  if (effective === false) {
-    return (
-      <span className="chip chip-reap-refused">
-        Reap requested · kept for now: {keptWhy ?? "a safety stop applies"}
-      </span>
-    );
-  }
-  return <span className="chip chip-hand-reap">Reaped by hand · will be removed</span>;
+  if (!condemned) return <StatusChip chip={chip} />;
+  return (
+    <>
+      <DormantPill dormantFor={dormantFor} />
+      {reason && !dormantFor && <p className="card-reason">{reason}</p>}
+    </>
+  );
 }
 
 /** Whether a show-level reap actually takes anywhere: true when any season's reap is
@@ -534,6 +557,13 @@ type Group = {
   items: Candidate[];
   isShow: boolean;
 };
+
+/** The override key a card acts on: a show's group key, or a movie's own key. One
+ *  expression, so a bulk action can never pick a card by a different name than the one
+ *  the card itself renders under. */
+function groupKeyOf(group: Group): string {
+  return group.isShow ? group.key : group.items[0]!.media_key;
+}
 
 /** Fold the flat candidate list into cards: a movie is its own card; every season of a
  *  show collapses under one show card. Order is preserved, so a group sits where its
@@ -860,18 +890,12 @@ function MovieCard({
           <ResolutionBadge value={item.video_resolution} />
           <RequestedChip who={item.requested_by} />
         </div>
-        {/* One status line per card. Condemned leads with the amber dormancy pill, and the
-            reason paragraph stands down WHENEVER the pill is present -- two status lines is
-            noise whatever the reason says; the full sentences live in the panel. Sanctuary
-            and Limbo wear their single short chip. */}
-        {item.verdict === "condemn" ? (
-          <>
-            <DormantPill dormantFor={item.dormant_for} />
-            {item.reason && !item.dormant_for && <p className="card-reason">{item.reason}</p>}
-          </>
-        ) : (
-          <StatusChip chip={item.chip} />
-        )}
+        <CardStatusLine
+          condemned={isCondemned(item)}
+          dormantFor={item.dormant_for}
+          reason={item.reason}
+          chip={item.chip}
+        />
       </div>
       <div className="card-side">
         <Score item={item} />
@@ -923,7 +947,7 @@ function ShowCard({
   // plan: the server's whole-snapshot totals (every condemned season minus hand-spares),
   // never a sum over the fetched pages, which on a long sorted list can hold only some
   // of a show's seasons. Other tabs describe the whole show, which the strip shows.
-  const isReapTab = first.verdict === "condemn";
+  const isReapTab = isCondemned(first);
   const condemnedCount = first.group_condemned_count ?? group.items.length;
   const condemnedBytes = first.group_condemned_bytes ?? fetchedSize;
   // What the whole show agrees on. A show-level override makes every season inherit it, so
@@ -980,17 +1004,12 @@ function ShowCard({
             <RequestedChip who={group.requestedBy} />
           </div>
           {marks && marks.length > 1 && <SeasonStrip marks={marks} onOpen={onOpen} />}
-          {isReapTab ? (
-            // One status line, like the movie card: the pill OR the reason, never both.
-            <>
-              <DormantPill dormantFor={group.dormantFor} />
-              {group.reason && !group.dormantFor && (
-                <p className="card-reason">{group.reason}</p>
-              )}
-            </>
-          ) : (
-            <StatusChip chip={first.chip} />
-          )}
+          <CardStatusLine
+            condemned={isReapTab}
+            dormantFor={group.dormantFor}
+            reason={group.reason}
+            chip={first.chip}
+          />
         </div>
         <div className="card-side">
           {/* Spare or reap the whole show in one go -- the decision covers every season. In
@@ -1028,6 +1047,8 @@ export function ReviewQueue({
   selectedGroupKey,
   onSelect,
   onSelectGroup,
+  searchFor,
+  stepRef,
 }: {
   verdict: Verdict;
   onVerdictChange: (verdict: Verdict) => void;
@@ -1035,8 +1056,13 @@ export function ReviewQueue({
   selectedGroupKey: string | null;
   onSelect: (id: number) => void;
   onSelectGroup: (key: string) => void;
+  /** A title to look up, pushed in from another view. The nonce applies each jump once,
+   *  so clearing the box afterwards is not undone by the next render. */
+  searchFor?: { term: string; nonce: number } | null;
+  /** Filled in with a way to move the open card one place up or down this list, for the
+   *  keyboard review loop. The queue owns the order, so it owns the walk. */
+  stepRef?: RefObject<((delta: 1 | -1) => void) | null>;
 }) {
-  const queryClient = useQueryClient();
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<QueueFilters>(() => loadFilters(verdict));
@@ -1061,6 +1087,16 @@ export function ReviewQueue({
     return () => clearTimeout(id);
   }, [searchInput]);
 
+  // A title handed over from another view fills the search box, once per jump: the box
+  // shows what is being looked for, so it stays the operator's to edit or clear.
+  const handledSearch = useRef(0);
+  useEffect(() => {
+    if (!searchFor || searchFor.nonce === handledSearch.current) return;
+    handledSearch.current = searchFor.nonce;
+    setSearchInput(searchFor.term);
+    setSearch(searchFor.term);
+  }, [searchFor]);
+
   // Each tab remembers its own filters. On a tab switch, adopt that tab's remembered set
   // and skip the save below for that render -- otherwise the old tab's filters would be
   // written under the new tab's key before the load lands. A ref, not state: it flips
@@ -1078,7 +1114,12 @@ export function ReviewQueue({
   // Start over from the top whenever the list itself changes (a new tab, filter or sort), and
   // drop any selection -- a key picked on one tab is not visible on another.
   useEffect(() => setVisible(PAGE), [verdict, search, filters]);
-  useEffect(() => setSelected(new Set()), [verdict, search, filters]);
+  // The failure notice promises the failed items are still picked, so it has to die with the
+  // selection it refers to -- otherwise it keeps offering a retry over an empty set.
+  useEffect(() => {
+    setSelected(new Set());
+    setBulkFailures(0);
+  }, [verdict, search, filters]);
 
   const { data: pages, isPending, error, hasNextPage, isFetchingNextPage, fetchNextPage } =
     useInfiniteQuery({
@@ -1131,38 +1172,58 @@ export function ReviewQueue({
     // set actually changes; hasNextPage covers the sentinel appearing once more pages exist.
   }, [data, hasNextPage]);
 
-  // Overrides change what the queue lists AND what an expanded show's all-seasons
-  // list, the show panel, and an open why-panel show, so every cache refreshes together.
-  const invalidate = () => {
-    void queryClient.invalidateQueries({ queryKey: ["candidates"] });
-    void queryClient.invalidateQueries({ queryKey: ["group"] });
-    void queryClient.invalidateQueries({ queryKey: ["candidate"] });
-  };
-  const setOverride = useMutation({
-    mutationFn: ({ key, decision }: { key: string; decision: Override }) =>
-      api.override(key, decision),
-    onSuccess: invalidate,
-  });
-  const clearOverride = useMutation({
-    mutationFn: (key: string) => api.clearOverride(key),
-    onSuccess: invalidate,
-  });
+  // The same overrides the why-panel sets, refreshing the same caches: one hook owns
+  // the list of surfaces an override changes.
+  const { setOverride, clearOverride, refresh } = useOverrideMutations();
   const bulk = useMutation({
     // allSettled, not Promise.all: Promise.all rejects on the first failed request and skips
     // onSuccess entirely, so a single 500 among fifty would leave ~49 already-applied changes
     // with the queue unrefreshed and the whole selection still showing stale verdicts. We
-    // instead let every request settle, then always refresh and clear, and tally the failures.
+    // instead let every request settle, then always refresh, and report which ones failed.
+    // Zipped back onto their keys, not counted: "3 failed" is useless in a list of hundreds
+    // if you cannot tell which three.
     mutationFn: async ({ keys, decision }: { keys: string[]; decision: Override | null }) => {
       const results = await Promise.allSettled(
         keys.map((key) => (decision === null ? api.clearOverride(key) : api.override(key, decision))),
       );
-      return results.filter((r) => r.status === "rejected").length;
+      return keys.filter((_, i) => results[i]!.status === "rejected");
     },
     onMutate: () => setBulkFailures(0),
-    onSuccess: (failures) => {
-      invalidate();
-      setSelected(new Set());
-      setBulkFailures(failures);
+    onSuccess: (failedKeys) => {
+      refresh();
+      // The failures stay picked so retrying is one more press of the same button; a clean
+      // run selects nothing, as before.
+      setSelected(new Set(failedKeys));
+      setBulkFailures(failedKeys.length);
+    },
+  });
+  // Pick every card the filters match, not just the ones drawn so far: page the rest of the
+  // list in, then select all of it. On a big library this walks several requests, which is
+  // why it reports pending and failure like any other action. If it ever feels slow, the
+  // cleaner shape is a server route that returns just the matching keys, so the browser
+  // never has to hold the whole list to select it.
+  const selectEverything = useMutation({
+    mutationFn: async () => {
+      let result = await fetchNextPage();
+      let fetched = result.data?.pages.length ?? 0;
+      while (result.hasNextPage && !result.isError) {
+        result = await fetchNextPage();
+        const grown = result.data?.pages.length ?? 0;
+        // A fetch that added no page cannot make progress; stop rather than spin.
+        if (grown <= fetched) break;
+        fetched = grown;
+      }
+      // Short of the whole list, selecting what did arrive would claim "everything matching"
+      // while meaning "some of it". Fail instead, and leave the selection untouched.
+      if (result.hasNextPage || result.isError || !result.data) {
+        throw new Error("The rest of the list didn't load.");
+      }
+      return toGroups(result.data.pages.flatMap((p) => p.items)).map(groupKeyOf);
+    },
+    onSuccess: (keys) => {
+      setSelected(new Set(keys));
+      // This selection is not the one the failure notice was talking about.
+      setBulkFailures(0);
     },
   });
   // Build a plan for exactly the selected items and open the confirmation sheet. Nothing
@@ -1172,7 +1233,13 @@ export function ReviewQueue({
     onSuccess: (run) => setReapRun(run),
   });
   const pending =
-    setOverride.isPending || clearOverride.isPending || bulk.isPending || reapNow.isPending;
+    setOverride.isPending ||
+    clearOverride.isPending ||
+    bulk.isPending ||
+    reapNow.isPending ||
+    // Acting while the rest of the list is still arriving would act on part of what the
+    // operator asked for, under a button that says "everything matching".
+    selectEverything.isPending;
 
   const onSet = (key: string, decision: Override) => setOverride.mutate({ key, decision });
   const onClear = (key: string) => clearOverride.mutate(key);
@@ -1266,9 +1333,53 @@ export function ReviewQueue({
   });
   // The override key each shown card acts on: a show's group key, or a movie's media key.
   const shownGroups = groups.slice(0, visible);
-  const shownKeys = shownGroups.map((g) => (g.isShow ? g.key : g.items[0]!.media_key));
+  const shownKeys = shownGroups.map(groupKeyOf);
   const shownItems = shownGroups.reduce((n, g) => n + g.items.length, 0);
   const allShownSelected = shownKeys.length > 0 && shownKeys.every((k) => selected.has(k));
+  // Whether picking everything the filters match is still worth offering: some card is
+  // either unfetched or drawn-but-unpicked beyond the window the "Select all" button reaches.
+  const moreToSelect =
+    allShownSelected && (hasNextPage || !groups.every((g) => selected.has(groupKeyOf(g))));
+  // Picked cards that are not on screen: the state "Select everything matching" leaves behind.
+  const holdsUndrawn = selected.size > shownKeys.length;
+  // How many cards match, but only when that is knowable: a show card stands for all of its
+  // seasons, so the server's item total is the card count only when the list is movies alone.
+  // Otherwise the button states no number rather than a wrong one.
+  const matchingCards = filters.mediaType === "movie" ? totalItems : null;
+
+  // --- The keyboard review loop ---------------------------------------------------------
+  // Move the open card one place along this list: the list the operator is looking at,
+  // with this tab's filters and sort applied, so the arrows follow the order on screen.
+  // A card is brought into view only when a step put it there; a click needs no scroll.
+  const steppedRef = useRef(false);
+  const step = (delta: 1 | -1) => {
+    const at = groups.findIndex(
+      (g) => (g.isShow && g.key === selectedGroupKey) || g.items.some((i) => i.id === selectedId),
+    );
+    // The open card is not in this list at all (the filters changed under it): nowhere to
+    // step from, so stay where we are.
+    if (at < 0) return;
+    const next = groups[at + delta];
+    if (!next) return;
+    // Stepping past the rendered window reveals the card we are stepping to.
+    if (at + delta >= visible) setVisible(at + delta + 1);
+    steppedRef.current = true;
+    if (next.isShow) onSelectGroup(next.key);
+    else onSelect(next.items[0]!.id);
+  };
+  // Re-registered every render, on purpose: `step` closes over the list as it stands now.
+  useEffect(() => {
+    if (!stepRef) return;
+    stepRef.current = step;
+    return () => {
+      stepRef.current = null;
+    };
+  });
+  useEffect(() => {
+    if (!steppedRef.current) return;
+    steppedRef.current = false;
+    document.querySelector(".card-selected")?.scrollIntoView({ block: "nearest" });
+  }, [selectedId, selectedGroupKey]);
 
   // Keep the server buffer ahead of the render window: once revealed cards reach within a
   // render-page of everything fetched, pull the next server page so scrolling never stalls.
@@ -1304,13 +1415,16 @@ export function ReviewQueue({
       {/* A view-level heading, for parity with Policy/Fairness/Settings so heading navigation
           can land on "Review queue" the way it lands on those views. */}
       <h2>Review queue</h2>
-      <nav className="tabs" role="tablist">
+      <nav className="tabs" aria-label="Queue lists">
         {TABS.map((t) => (
           <button
             key={t.verdict}
-            role="tab"
-            aria-selected={t.verdict === verdict}
             className={t.verdict === verdict ? "tab active" : "tab"}
+            // The list you are on is stated, not just coloured, the same as the masthead
+            // and the settings rail. Plain buttons, not the tabs pattern: these switch a
+            // whole list rather than swapping panels, and none of that pattern's keyboard
+            // contract (arrow keys, a tabpanel to point at) exists here.
+            aria-current={t.verdict === verdict ? "page" : undefined}
             onClick={() => onVerdictChange(t.verdict)}
           >
             {t.label}
@@ -1329,6 +1443,7 @@ export function ReviewQueue({
           <input
             className="search-input"
             type="search"
+            aria-label="Search titles and shows"
             placeholder="Search titles and shows…"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
@@ -1438,67 +1553,42 @@ export function ReviewQueue({
       {filtering && (
         <div className="active-filters">
           {search && (
-            <span className="filter-chip">
-              &ldquo;{search}&rdquo;
-              <button
-                type="button"
-                aria-label={`Stop searching for ${search}`}
-                onClick={() => {
-                  setSearchInput("");
-                  setSearch("");
-                }}
-              >
-                ×
-              </button>
-            </span>
+            <FilterChip
+              label={<>&ldquo;{search}&rdquo;</>}
+              clearLabel={`Stop searching for ${search}`}
+              onClear={() => {
+                setSearchInput("");
+                setSearch("");
+              }}
+            />
           )}
           {filters.mediaType && (
-            <span className="filter-chip">
-              {MEDIA_FILTERS.find((f) => f.value === filters.mediaType)?.label}
-              <button
-                type="button"
-                aria-label="Remove the media type filter"
-                onClick={() => setFilters((f) => ({ ...f, mediaType: "" }))}
-              >
-                ×
-              </button>
-            </span>
+            <FilterChip
+              label={MEDIA_FILTERS.find((f) => f.value === filters.mediaType)?.label}
+              clearLabel="Remove the media type filter"
+              onClear={() => setFilters((f) => ({ ...f, mediaType: "" }))}
+            />
           )}
           {filters.requested !== "any" && (
-            <span className="filter-chip">
-              {REQUESTED_FILTERS.find((f) => f.value === filters.requested)?.label}
-              <button
-                type="button"
-                aria-label="Remove the requested filter"
-                onClick={() => setFilters((f) => ({ ...f, requested: "any" }))}
-              >
-                ×
-              </button>
-            </span>
+            <FilterChip
+              label={REQUESTED_FILTERS.find((f) => f.value === filters.requested)?.label}
+              clearLabel="Remove the requested filter"
+              onClear={() => setFilters((f) => ({ ...f, requested: "any" }))}
+            />
           )}
           {filters.genre && (
-            <span className="filter-chip">
-              {filters.genre}
-              <button
-                type="button"
-                aria-label="Remove the genre filter"
-                onClick={() => setFilters((f) => ({ ...f, genre: "" }))}
-              >
-                ×
-              </button>
-            </span>
+            <FilterChip
+              label={filters.genre}
+              clearLabel="Remove the genre filter"
+              onClear={() => setFilters((f) => ({ ...f, genre: "" }))}
+            />
           )}
           {filters.override !== "any" && (
-            <span className="filter-chip">
-              {OVERRIDE_FILTERS.find((f) => f.value === filters.override)?.label}
-              <button
-                type="button"
-                aria-label="Remove the override filter"
-                onClick={() => setFilters((f) => ({ ...f, override: "any" }))}
-              >
-                ×
-              </button>
-            </span>
+            <FilterChip
+              label={OVERRIDE_FILTERS.find((f) => f.value === filters.override)?.label}
+              clearLabel="Remove the override filter"
+              onClear={() => setFilters((f) => ({ ...f, override: "any" }))}
+            />
           )}
           <button type="button" className="link-btn" onClick={clearFilters}>
             Clear all
@@ -1535,7 +1625,7 @@ export function ReviewQueue({
           </p>
           <div className={`card-list ${selectMode ? "card-list-selecting has-bulk-bar" : ""}`}>
             {shownGroups.map((group) => {
-              const key = group.isShow ? group.key : group.items[0]!.media_key;
+              const key = groupKeyOf(group);
               const cardSelect: CardSelect = {
                 selectMode,
                 isSelected: selected.has(key),
@@ -1595,19 +1685,43 @@ export function ReviewQueue({
             <button
               type="button"
               className="sm ghost"
-              disabled={shownKeys.length === 0}
+              disabled={shownKeys.length === 0 && selected.size === 0}
               onClick={() =>
                 setSelected((prev) => {
+                  // "Select everything matching" can leave far more picked than is drawn, and
+                  // clearing only the drawn cards would strand the rest selected and invisible.
+                  if (holdsUndrawn) return new Set();
                   const next = new Set(prev);
                   if (allShownSelected) shownKeys.forEach((k) => next.delete(k));
                   else shownKeys.forEach((k) => next.add(k));
                   return next;
                 })
               }
-              title="Select (or clear) every card shown so far. Scroll to show more."
+              title={
+                holdsUndrawn
+                  ? "Clear the whole selection, including the cards not drawn yet"
+                  : "Select (or clear) every card drawn so far"
+              }
             >
-              {allShownSelected ? "Deselect all" : "Select all"}
+              {holdsUndrawn || allShownSelected ? "Deselect all" : "Select all"}
             </button>
+            {/* Reach past the drawn cards to the whole filtered list, so a bulk action never
+                depends on scrolling a few thousand cards into existence first. */}
+            {moreToSelect && (
+              <button
+                type="button"
+                className="sm ghost"
+                disabled={selectEverything.isPending}
+                onClick={() => selectEverything.mutate()}
+                title="Load the rest of this list and select all of it"
+              >
+                {selectEverything.isPending
+                  ? "Selecting…"
+                  : matchingCards === null
+                    ? "Select everything matching"
+                    : `Select everything matching (${count(matchingCards)})`}
+              </button>
+            )}
             <button
               type="button"
               className="sm ov-btn ov-spare"
@@ -1654,10 +1768,24 @@ export function ReviewQueue({
         </div>
       )}
 
+      {/* A per-card Spare or Reap that failed says so here, in the same place as the bulk
+          failures -- otherwise the button reads as a click the app ignored. Same wording as
+          the why-panel's, since it is the same action. */}
+      {(setOverride.isError || clearOverride.isError) && (
+        <p className="error bulk-error">Couldn't save that. Try again.</p>
+      )}
+      {selectEverything.isError && (
+        <p className="error bulk-error">
+          Couldn't load the rest of the list, so nothing was selected. Your picks are as they
+          were. Try again.
+        </p>
+      )}
       {bulkFailures > 0 && (
         <p className="error bulk-error">
-          {count(bulkFailures)} {bulkFailures === 1 ? "item" : "items"} could not be updated; the
-          rest were saved.
+          {bulkFailures === 1
+            ? "1 item could not be updated; it is still selected so you can try again."
+            : `${count(bulkFailures)} items could not be updated; they are still selected so ` +
+              "you can try again."}
         </p>
       )}
       {reapNow.error && <p className="error bulk-error">{reapNow.error.message}</p>}

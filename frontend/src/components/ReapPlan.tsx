@@ -15,43 +15,48 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, type Run, type RunReport } from "../api";
-import { bytes, count } from "../format";
+import { bytes, count, date } from "../format";
 import { GracePanel } from "./GracePanel";
 import { ReapConfirm } from "./ReapConfirm";
 
 function Steps({ run }: { run: Run }) {
   return (
-    <table className="plan-steps">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Action</th>
-          <th>Request</th>
-          <th>State</th>
-        </tr>
-      </thead>
-      <tbody>
-        {run.steps.map((step) => (
-          // A TV season emits three steps sharing one media_key AND ordinal (unmonitor,
-          // verify, delete-files), so media_key alone collides. kind is unique within a
-          // season, so media_key+kind is stable per row and reconciles states correctly.
-          <tr key={`${step.media_key}-${step.kind}`}>
-            <td className="num">
-              {step.ordinal}
-              {step.is_canary && <span className="canary-tag">canary</span>}
-            </td>
-            <td>{step.kind.replace(/_/g, " ")}</td>
-            <td>
-              <code>
-                {step.method} {step.path}
-              </code>
-              {step.body && <code className="step-body">{JSON.stringify(step.body)}</code>}
-            </td>
-            <td className="muted">{step.state}</td>
+    // The Request column holds a full API path and a JSON body, so the table has a wider
+    // minimum than a phone. The wrapper keeps that scroll sideways inside the table instead
+    // of pushing the whole page sideways.
+    <div className="table-scroll">
+      <table className="plan-steps">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Action</th>
+            <th>Request</th>
+            <th>State</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {run.steps.map((step) => (
+            // A TV season emits three steps sharing one media_key AND ordinal (unmonitor,
+            // verify, delete-files), so media_key alone collides. kind is unique within a
+            // season, so media_key+kind is stable per row and reconciles states correctly.
+            <tr key={`${step.media_key}-${step.kind}`}>
+              <td className="num">
+                {step.ordinal}
+                {step.is_canary && <span className="canary-tag">test item</span>}
+              </td>
+              <td>{step.kind.replace(/_/g, " ")}</td>
+              <td>
+                <code>
+                  {step.method} {step.path}
+                </code>
+                {step.body && <code className="step-body">{JSON.stringify(step.body)}</code>}
+              </td>
+              <td className="muted">{step.state}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -67,7 +72,7 @@ function Report({ report }: { report: RunReport }) {
   return (
     <div className="sim">
       <p className="blurb">
-        Dry run complete. Every interlock ran; <strong>{count(report.would_delete_items)}</strong>{" "}
+        Dry run complete. Every safety check ran; <strong>{count(report.would_delete_items)}</strong>{" "}
         items were actually deleted (it is a dry run, so this is zero), and{" "}
         {count(report.outcomes.length)} steps were walked.
       </p>
@@ -91,11 +96,14 @@ function Report({ report }: { report: RunReport }) {
 export function ReapPlan({
   onGoToDeletion,
   onGoToPlexSettings,
+  onOpenReasons,
 }: {
   /** Jump to Policy → Deletion, where the switch lives. */
   onGoToDeletion: () => void;
   /** Jump to Settings → Plex, where the Leaving Soon switches live. */
   onGoToPlexSettings: () => void;
+  /** Open one item's reasoning on the review screen, for the countdown list below. */
+  onOpenReasons: (candidateId: number) => void;
 }) {
   const queryClient = useQueryClient();
   const [run, setRun] = useState<Run | null>(null);
@@ -124,6 +132,16 @@ export function ReapPlan({
 
   const { data: history } = useQuery({ queryKey: ["runs"], queryFn: api.runs });
 
+  // Shares the app's snapshot query, so this costs no extra request. A plan is frozen
+  // against the scan it was built from; if a newer scan has landed since, the plan's
+  // list is out of date and the owner should be told before they act on it.
+  // A 404 is the normal no-scan-yet state, not a failure worth retrying.
+  const { data: latestSnapshot } = useQuery({
+    queryKey: ["snapshot"],
+    queryFn: api.latestSnapshot,
+    retry: false,
+  });
+
   return (
     <section className="reap">
       <div className="reap-head">
@@ -137,7 +155,7 @@ export function ReapPlan({
         deletion. It can be dry-run end to end. Nothing here deletes anything.
       </p>
 
-      <GracePanel onGoToPlexSettings={onGoToPlexSettings} />
+      <GracePanel onGoToPlexSettings={onGoToPlexSettings} onOpenReasons={onOpenReasons} />
 
       {plan.error && <p className="notice notice-error">{plan.error.message}</p>}
 
@@ -146,8 +164,8 @@ export function ReapPlan({
           <div className="plan-summary">
             <span className="confirm-phrase">{run.confirmation_phrase}</span>
             <span className="muted">
-              {count(run.item_count)} items · {bytes(run.total_bytes)} · smallest-first, canary
-              leads
+              {count(run.item_count)} items · {bytes(run.total_bytes)} · smallest first, and the
+              first item is a test: if it doesn't go exactly as planned, the run stops.
             </span>
             <button onClick={() => dry.mutate(run.id)} disabled={dry.isPending}>
               {dry.isPending ? "Dry-running…" : "Dry run"}
@@ -197,16 +215,30 @@ export function ReapPlan({
         <div className="run-history">
           <h3>Recent plans</h3>
           <ul>
-            {history.map((r) => (
-              <li key={r.id}>
-                <button className="link" onClick={() => setRun(r)}>
-                  #{r.id}
-                </button>{" "}
-                <span className="muted">
-                  {r.state} · {r.confirmation_phrase}
-                </span>
-              </li>
-            ))}
+            {history.map((r) => {
+              // Clicking a row swaps the plan shown above, so the row that is open says
+              // so rather than leaving the swap silent.
+              const open = run?.id === r.id;
+              const olderScan = latestSnapshot != null && r.snapshot_id !== latestSnapshot.id;
+              const openNote = olderScan
+                ? " · open above, built from an older scan"
+                : " · open above";
+              return (
+                <li key={r.id} className={open ? "open" : undefined}>
+                  <button
+                    className="link"
+                    onClick={() => setRun(r)}
+                    aria-current={open ? "true" : undefined}
+                  >
+                    #{r.id}
+                  </button>{" "}
+                  <span className="muted">
+                    {date(r.approved_at)} · {r.state} · {r.confirmation_phrase}
+                    {open && openNote}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

@@ -14,15 +14,40 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type GraceItem, type LeavingSoonResult } from "../api";
 import { bytes, count } from "../format";
 
-function ItemRow({ item, onCancel, pending }: { item: GraceItem; onCancel: () => void; pending: boolean }) {
+function ItemRow({
+  item,
+  onCancel,
+  onOpenReasons,
+  pending,
+}: {
+  item: GraceItem;
+  onCancel: () => void;
+  onOpenReasons: (candidateId: number) => void;
+  pending: boolean;
+}) {
   return (
     <li>
-      <span className="grace-title">{item.title}</span>
+      {/* "Why is this one counting down?" is the question this list raises, so the title
+          is the way to the answer instead of a name to retype in the review queue. */}
+      <button
+        className="link grace-title"
+        title="Why this one is counting down"
+        onClick={() => onOpenReasons(item.candidate_id)}
+      >
+        {item.title}
+      </button>
       <span className="grace-size muted">{bytes(item.size_bytes)}</span>
       <span className="grace-remaining">
         {item.in_grace ? `${item.days_remaining}d left` : "ready"}
       </span>
-      <button className="link" disabled={pending} onClick={onCancel}>
+      {/* Twenty rows can render twenty "cancel" buttons, so the label names the file each
+          one keeps. */}
+      <button
+        className="link"
+        aria-label={`Cancel the countdown and keep ${item.title}`}
+        disabled={pending}
+        onClick={onCancel}
+      >
         cancel
       </button>
     </li>
@@ -59,7 +84,14 @@ function UpdateResult({
   );
 }
 
-export function GracePanel({ onGoToPlexSettings }: { onGoToPlexSettings: () => void }) {
+export function GracePanel({
+  onGoToPlexSettings,
+  onOpenReasons,
+}: {
+  onGoToPlexSettings: () => void;
+  /** Open one item's reasoning on the review screen. */
+  onOpenReasons: (candidateId: number) => void;
+}) {
   const queryClient = useQueryClient();
   const { data, isPending, isError } = useQuery({ queryKey: ["grace"], queryFn: api.grace });
 
@@ -120,8 +152,8 @@ export function GracePanel({ onGoToPlexSettings }: { onGoToPlexSettings: () => v
 
       <p className="blurb">
         A condemned item waits out {data.grace_days} days before it is eligible to be
-        reaped. Cancel resets nothing else. It spares the file, so it leaves the queue and
-        the plan too.
+        reaped. Cancel does more than stop the clock: it spares the file, so it leaves the
+        queue and the plan too.
       </p>
 
       <div className="leaving-soon-bar">
@@ -169,6 +201,7 @@ export function GracePanel({ onGoToPlexSettings }: { onGoToPlexSettings: () => v
                 item={item}
                 pending={cancel.isPending}
                 onCancel={() => cancel.mutate(item.media_key)}
+                onOpenReasons={onOpenReasons}
               />
             ))}
           </ul>
@@ -185,6 +218,7 @@ export function GracePanel({ onGoToPlexSettings }: { onGoToPlexSettings: () => v
                 item={item}
                 pending={cancel.isPending}
                 onCancel={() => cancel.mutate(item.media_key)}
+                onOpenReasons={onOpenReasons}
               />
             ))}
           </ul>

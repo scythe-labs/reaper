@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { api, type AuthUser, type Snapshot, type Verdict } from "./api";
 import { Fairness } from "./components/Fairness";
@@ -35,7 +35,7 @@ const NAV: { id: View; label: string }[] = [
  *  process rather than a promise about the UI. The banner says which regime you are in,
  *  always, because "can this thing delete my library right now?" should never require
  *  reading a settings page to answer. */
-function SafetyBanner() {
+function SafetyBanner({ onGoToDeletion }: { onGoToDeletion: () => void }) {
   // The same authenticated query key the deletion toggle invalidates, so arming or
   // disarming updates this banner in the same render pass. (/api/health is a bare
   // liveness probe now; it deliberately says nothing about the armed state.)
@@ -55,7 +55,11 @@ function SafetyBanner() {
         <span className="banner-dot" aria-hidden="true" />
         <span>
           <strong>Safety state unknown.</strong> Reaper couldn't reach the server to confirm
-          whether deletion is on. Until it can, treat this as armed and check Policy → Deletion.
+          whether deletion is on. Until it can, treat this as armed and{" "}
+          <button className="link" onClick={onGoToDeletion}>
+            check Policy → Deletion
+          </button>
+          .
         </span>
       </div>
     );
@@ -66,8 +70,11 @@ function SafetyBanner() {
       <div className="banner banner-safe">
         <span className="banner-dot" aria-hidden="true" />
         <span>
-          <strong>Read-only.</strong> Reaper can look but can't remove anything. Turn deletion on
-          in Policy → Deletion when you're ready.
+          <strong>Read-only.</strong> Reaper can look but can't remove anything.{" "}
+          <button className="link" onClick={onGoToDeletion}>
+            Turn deletion on in Policy → Deletion
+          </button>{" "}
+          when you're ready.
         </span>
       </div>
     );
@@ -87,11 +94,21 @@ function SafetyBanner() {
 /** A slim freshness line on the Review screen: when the queue was last built, and a loud
  *  note if that scan came back incomplete (the scan control itself now lives in Settings →
  *  Jobs). Without this, the queue gives no sense of how stale it might be. */
-function ScanFreshness({ snapshot }: { snapshot: Snapshot | undefined }) {
+function ScanFreshness({
+  snapshot,
+  onGoToJobs,
+}: {
+  snapshot: Snapshot | undefined;
+  onGoToJobs: () => void;
+}) {
   if (!snapshot) {
     return (
       <p className="scan-freshness muted">
-        No scan has run yet. Run one from Settings → Jobs to fill the queue.
+        No scan has run yet.{" "}
+        <button className="link" onClick={onGoToJobs}>
+          Run one from Settings → Jobs
+        </button>{" "}
+        to fill the queue.
       </p>
     );
   }
@@ -108,11 +125,18 @@ function ScanFreshness({ snapshot }: { snapshot: Snapshot | undefined }) {
   );
 }
 
-/** The signed-in identity, with a menu to sign out. */
+/** The signed-in identity, with a panel to sign out.
+ *
+ *  A disclosure, not an ARIA menu: it is a button that shows and hides a small panel, and
+ *  it behaves like one (click or Tab away to dismiss, Escape to close). It used to claim
+ *  role="menu", which promises arrow-key navigation between menu items that was never
+ *  implemented, on a panel whose first child is a heading rather than an item. The honest
+ *  simpler role is the one whose keyboard contract this actually keeps. */
 function UserMenu({ user }: { user: AuthUser }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -123,17 +147,38 @@ function UserMenu({ user }: { user: AuthUser }) {
     return () => window.removeEventListener("mousedown", onClick);
   }, [open]);
 
-  const initial = user.username.slice(0, 1).toUpperCase();
-
-  const signOut = async () => {
-    await api.logout().catch(() => undefined);
-    // Force the gate to re-evaluate: /me now 401s and the login screen returns.
-    await queryClient.invalidateQueries({ queryKey: ["me"] });
+  // Clicking away closed it; tabbing away did not, which left the panel hanging open over
+  // a page the keyboard had already moved on from.
+  const onBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false);
+  };
+  // Escape closes and hands focus back to the chip, so the keyboard is where it started.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== "Escape" || !open) return;
+    setOpen(false);
+    triggerRef.current?.focus();
   };
 
+  const initial = user.username.slice(0, 1).toUpperCase();
+
+  // A mutation, not a fire-and-forget async onClick: a sign-out that fails must say so.
+  // The session would still be live, and a swallowed error leaves the menu open with the
+  // user still signed in and nothing to explain why.
+  const signOut = useMutation({
+    mutationFn: () => api.logout(),
+    // onSettled, not onSuccess: either way the gate must re-evaluate. On success /me now
+    // 401s and the login screen returns; on failure the refetch confirms we are still in.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: ["me"] }),
+  });
+
   return (
-    <div className="user-menu" ref={ref}>
-      <button className="user-chip" onClick={() => setOpen((v) => !v)} aria-haspopup="menu">
+    <div className="user-menu" ref={ref} onBlur={onBlur} onKeyDown={onKeyDown}>
+      <button
+        className="user-chip"
+        ref={triggerRef}
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
         {user.thumb_url ? (
           <img src={user.thumb_url} alt="" className="user-avatar" />
         ) : (
@@ -145,16 +190,23 @@ function UserMenu({ user }: { user: AuthUser }) {
         </svg>
       </button>
       {open && (
-        <div className="user-dropdown" role="menu">
+        <div className="user-dropdown">
           <div className="user-dropdown-head">
             <div className="user-name">{user.username}</div>
             <div className="muted user-provider">
               {user.provider === "plex" ? "Plex account" : "Local account"}
             </div>
           </div>
-          <button className="user-dropdown-item" role="menuitem" onClick={signOut}>
-            Sign out
+          <button
+            className="user-dropdown-item"
+            onClick={() => signOut.mutate()}
+            disabled={signOut.isPending}
+          >
+            {signOut.isPending ? "Signing out…" : "Sign out"}
           </button>
+          {signOut.isError && (
+            <p className="notice notice-error notice-inline">Couldn't sign you out. Try again.</p>
+          )}
         </div>
       )}
     </div>
@@ -212,6 +264,21 @@ function Dashboard({ user }: { user: AuthUser }) {
     setView("settings");
   };
 
+  // A title named on another page (a requester's unwatched list) is looked up here rather
+  // than retyped: the queue adopts the search, the same nonce-once shape as the jumps above.
+  const [queueSearch, setQueueSearch] = useState<{ term: string; nonce: number } | null>(null);
+  const goToQueueSearch = (title: string) => {
+    setQueueSearch({ term: title, nonce: Date.now() });
+    setSelected(null);
+    setView("review");
+  };
+  // The grace countdown lists titles without saying why each one is on the clock. Opening
+  // one lands on its reasoning, which lives on the review screen beside the queue.
+  const goToItemReasons = (candidateId: number) => {
+    setSelected({ kind: "item", id: candidateId });
+    setView("review");
+  };
+
   const selectedId = selected?.kind === "item" ? selected.id : null;
   const selectedGroupKey = selected?.kind === "group" ? selected.key : null;
 
@@ -248,6 +315,42 @@ function Dashboard({ user }: { user: AuthUser }) {
     enabled: selectedGroupKey !== null,
   });
 
+  // Reviewing is a loop: read the reasoning, decide, move to the next one. The queue owns
+  // the order the cards are actually in (this tab, these filters, this sort), so it hands
+  // back a way to walk that order instead of this component guessing at it.
+  const stepRef = useRef<((delta: 1 | -1) => void) | null>(null);
+  const hasSelection = selected !== null;
+  useEffect(() => {
+    if (view !== "review" || !hasSelection) return;
+    const onKey = (e: KeyboardEvent) => {
+      // Browser and OS shortcuts keep their meaning, and typing in a field is typing.
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable) {
+        return;
+      }
+      // While a modal is up it owns the keyboard: its own Escape closes it, and the panel
+      // behind it must not move underneath.
+      if (document.querySelector('[role="dialog"]')) return;
+      if (e.key === "Escape") {
+        setSelected(null);
+        return;
+      }
+      const delta =
+        e.key === "ArrowDown" || e.key === "j"
+          ? 1
+          : e.key === "ArrowUp" || e.key === "k"
+            ? -1
+            : 0;
+      if (delta === 0) return;
+      e.preventDefault();
+      stepRef.current?.(delta);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [view, hasSelection]);
+
   return (
     <div className="app">
       <header className="masthead">
@@ -267,6 +370,8 @@ function Dashboard({ user }: { user: AuthUser }) {
             <button
               key={n.id}
               className={view === n.id ? "tab active" : "tab"}
+              // The view you are on is stated, not just coloured.
+              aria-current={view === n.id ? "page" : undefined}
               onClick={() => {
                 // A plain tab visit must not replay an old cross-page jump.
                 setPolicyFocus(null);
@@ -282,8 +387,10 @@ function Dashboard({ user }: { user: AuthUser }) {
         <UserMenu user={user} />
       </header>
 
-      <SafetyBanner />
-      {view === "review" && <ScanFreshness snapshot={snapshot} />}
+      <SafetyBanner onGoToDeletion={() => goToPolicySection("deletion")} />
+      {view === "review" && (
+        <ScanFreshness snapshot={snapshot} onGoToJobs={() => goToSettingsPanel("jobs")} />
+      )}
 
       <main className={selected !== null && view === "review" ? "split" : ""}>
         {view === "review" ? (
@@ -298,6 +405,8 @@ function Dashboard({ user }: { user: AuthUser }) {
               selectedGroupKey={selectedGroupKey}
               onSelect={(id) => setSelected({ kind: "item", id })}
               onSelectGroup={(key) => setSelected({ kind: "group", key })}
+              searchFor={queueSearch}
+              stepRef={stepRef}
             />
             {selectedId !== null &&
               (detail ? (
@@ -326,9 +435,10 @@ function Dashboard({ user }: { user: AuthUser }) {
           <ReapPlan
             onGoToDeletion={() => goToPolicySection("deletion")}
             onGoToPlexSettings={() => goToSettingsPanel("plex")}
+            onOpenReasons={goToItemReasons}
           />
         ) : view === "fairness" ? (
-          <Fairness />
+          <Fairness onOpenInQueue={goToQueueSearch} />
         ) : (
           <Settings
             key={settingsFocus?.nonce ?? "settings"}

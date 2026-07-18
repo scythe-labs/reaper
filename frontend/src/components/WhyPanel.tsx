@@ -16,18 +16,16 @@
 // And it renders for PROTECTED items too, showing the score it is overriding. A tool
 // that only explains its deletions cannot be trusted about its keeps.
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
-  api,
   type CandidateDetail,
   type GateOutcome,
   type Links,
   type Match,
-  type Override,
   type Ratings,
 } from "../api";
 import { bytes, coverage, since } from "../format";
+import { useOverrideMutations } from "../useOverrideMutations";
 import { OverrideControls } from "./ReviewQueue";
 
 /** The built-in signal ids. Anything else in `explanation.signals[].id` is a custom
@@ -157,8 +155,8 @@ function RatingsRow({ ratings, links }: { ratings: Ratings | null; links: Links 
 
 /** The synopsis, clamped to two lines with a "more" to expand. The card shows the *reason*
  *  now, so this slide-out is the one place the plot lives -- but it still should not push the
- *  reasoning below the fold, hence the clamp. */
-function Synopsis({ text }: { text: string }) {
+ *  reasoning below the fold, hence the clamp. Shared with the show panel. */
+export function Synopsis({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <p className="why-summary">
@@ -259,7 +257,8 @@ function Verdict({ item }: { item: CandidateDetail }) {
       {verdict === "abstain" && (
         <p className="verdict-note">
           Reaper is not confident enough to judge this one. It scored below your threshold, or
-          too little of it could be seen. Either way, abstaining keeps the file.
+          too little of it could be seen. Either way, Reaper leaves it alone, and the file is
+          kept.
         </p>
       )}
     </div>
@@ -456,24 +455,9 @@ export function WhyPanel({
 }) {
   const { explanation } = item;
 
-  // The panel is where the deciding happens, so Spare and Reap live here too -- the same
-  // mutation shape the cards use, refreshing every surface an override changes (the
-  // queue, an expanded show, the show panel, and this panel's own detail).
-  const queryClient = useQueryClient();
-  const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: ["candidates"] });
-    void queryClient.invalidateQueries({ queryKey: ["group"] });
-    void queryClient.invalidateQueries({ queryKey: ["candidate"] });
-  };
-  const setOverride = useMutation({
-    mutationFn: ({ key, decision }: { key: string; decision: Override }) =>
-      api.override(key, decision),
-    onSuccess: refresh,
-  });
-  const clearOverride = useMutation({
-    mutationFn: (key: string) => api.clearOverride(key),
-    onSuccess: refresh,
-  });
+  // The panel is where the deciding happens, so Spare and Reap live here too, through the
+  // shared hook the cards use so both refresh the same caches.
+  const { setOverride, clearOverride } = useOverrideMutations();
 
   const mediaLabel = item.media_type === "season" ? "TV season" : item.media_type;
 

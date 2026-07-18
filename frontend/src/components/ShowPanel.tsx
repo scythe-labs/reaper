@@ -8,43 +8,28 @@
 // wording lives here, under the show it belongs to, not on the card). Clicking a season
 // hands off to that season's complete reasoning.
 
-import { useState } from "react";
 import type { Candidate, Group } from "../api";
 import { bytes } from "../format";
-import { CondemnedChip, StatusChip } from "./StatusChip";
-import { JumpPill, WhyHero } from "./WhyPanel";
+import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
+import { JumpPill, Synopsis, WhyHero } from "./WhyPanel";
 
 /** The one pill a season row wears. The owner's hand decision replaces the scan chip
  *  (solid means "you chose this"); a reap the engine refuses reads amber and says why,
- *  because "you asked" and "it is gone" are different facts. */
+ *  because "you asked" and "it is gone" are different facts. The wording is the shared
+ *  chip's, in this list's own class family. */
 function SeasonPill({ season }: { season: Candidate }) {
-  if (season.override === "spare") {
-    return <span className="status-chip status-hand-spare">Spared by hand · will be kept</span>;
-  }
-  if (season.override === "reap") {
-    if (season.override_effective === false) {
-      const why = season.chip ? season.chip.text.replace(/^Kept · /, "") : "a safety stop applies";
-      return <span className="status-chip status-look">Reap requested · kept for now: {why}</span>;
-    }
-    return <span className="status-chip status-hand-reap">Reaped by hand · will be removed</span>;
+  if (season.override !== null) {
+    return (
+      <OverrideChip
+        override={season.override}
+        effective={season.override_effective}
+        keptWhy={chipWhy(season.chip)}
+        family="status-chip"
+      />
+    );
   }
   if (season.verdict === "condemn") return <CondemnedChip />;
   return <StatusChip chip={season.chip} />;
-}
-
-/** The synopsis, clamped like the why-panel's -- the seasons block is the point here. */
-function ShowSynopsis({ text }: { text: string }) {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <p className="why-summary">
-      <span className={expanded ? undefined : "clamp-2"}>{text}</span>
-      {text.length > 150 && (
-        <button className="link-btn" onClick={() => setExpanded((v) => !v)}>
-          {expanded ? "less" : "more"}
-        </button>
-      )}
-    </p>
-  );
 }
 
 export function ShowPanel({
@@ -95,7 +80,7 @@ export function ShowPanel({
         </button>
       </header>
 
-      {group.summary && <ShowSynopsis text={group.summary} />}
+      {group.summary && <Synopsis text={group.summary} />}
 
       <StatusChip chip={group.chip} />
       {/* The full sentence behind the chip -- a keep-rule conflict's complete wording,
