@@ -97,7 +97,15 @@ export interface Candidate {
   /** The whole show's per-season verdict marks, for the card's season strip. Null for
    *  movies. */
   group_seasons: GroupSeasonMark[] | null;
+  /** Whether the show has finished. Null for a movie, where the question doesn't apply,
+   *  and on a row stored before this field existed -- both render nothing at all. */
+  show_status: ShowStatus | null;
 }
+
+/** Whether a show has finished, as three states rather than a bool, so "the server never
+ *  said" can never be drawn as a definite answer. "continuing" is labelled "Still going"
+ *  on screen: that arm also covers a show that hasn't started airing yet. */
+export type ShowStatus = "ended" | "continuing" | "unknown";
 
 export type Override = "spare" | "reap";
 
@@ -115,6 +123,10 @@ export interface Group {
   reason: string | null;
   chip: Chip | null;
   links: Links;
+  /** Whether the show has finished, taken from whichever season rows carry it -- one
+   *  reading of the series is stamped onto every season in the same scan, so they cannot
+   *  disagree. Null only when no row carries it (a snapshot from before this field). */
+  show_status: ShowStatus | null;
   /** Every season, sorted by season number (unnumbered rows last). */
   seasons: Candidate[];
 }
@@ -143,6 +155,12 @@ export interface CandidateQuery {
   order?: SortOrder;
 }
 
+/** What a row actually says, for a reader who only sees the number. Four situations all
+ *  end at zero points and are otherwise indistinguishable: it pushed toward removing, it
+ *  argued for keeping, it did not apply here, or it could not be read. `unreadable` is the
+ *  only one that lowers coverage, and the only one the panel renders amber. */
+export type SignalState = "adds" | "argues_keep" | "not_applicable" | "unreadable";
+
 export interface SignalContribution {
   id: string;
   contribution: number;
@@ -151,6 +169,10 @@ export interface SignalContribution {
   /** False means the input was Unknown. Its weight still counts in the denominator, so
    *  an unevaluated signal drags the score DOWN, never up. */
   evaluated: boolean;
+  /** Optional: rows scored before this field existed carry none. Read a missing one as
+   *  `not_applicable`, never `argues_keep` -- claiming an old row argued for keeping,
+   *  when nothing recorded whether it did, overstates the case for keeping. */
+  state?: SignalState | null;
 }
 
 export interface GateOutcome {

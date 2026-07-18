@@ -5,7 +5,9 @@
 // Every competitor can tell you *which rules matched*. None of them show the work. The
 // three blocks below are, in order of how much trust they buy:
 //
-//   1. The signals that fired, with their actual contributions.
+//   1. The reasons that pushed toward removing, each carrying ITS SHARE OF THE SCORE --
+//      not its raw weight. The shares add up to the number beside them, so the receipt
+//      can be checked by adding it up rather than by dividing by a total never shown.
 //   2. The protections that were checked and did NOT fire -- with the real numbers.
 //      "checked: popular here -- 0 watchers in the last 365 days, your floor is 3".
 //      This is the block that makes a verdict auditable rather than merely asserted.
@@ -23,10 +25,12 @@ import {
   type Links,
   type Match,
   type Ratings,
+  type SignalContribution,
+  type SignalState,
 } from "../api";
 import { bytes, coverage, since } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
-import { OverrideControls } from "./ReviewQueue";
+import { OverrideControls, ShowStatusChip } from "./ReviewQueue";
 
 /** The built-in signal ids. Anything else in `explanation.signals[].id` is a custom
  *  rule's own name, and its row wears the "Your rule" tag. */
@@ -265,38 +269,261 @@ function Verdict({ item }: { item: CandidateDetail }) {
   );
 }
 
-/** One signal's contribution, as a bar you can compare against the others.
+/** Hand out `target` whole points across `values`, in proportion, so the parts sum to the
+ *  total EXACTLY. Rounding each row on its own does not: the six-row worked example gives
+ *  27+11+7+7+4 = 56 against a score of 55, and a receipt that does not add up is worse
+ *  than no receipt at all. Largest remainder fixes that.
  *
- *  The denominator is the signal's *weight*, not the total, so a 70-weight signal
- *  contributing 70 fills the bar. That makes "this signal is maxed out" legible at a
- *  glance, which is the question you actually ask when tuning. */
-function Signal({ signal }: { signal: CandidateDetail["explanation"]["signals"][number] }) {
-  const filled = signal.weight > 0 ? (signal.contribution / signal.weight) * 100 : 0;
+ *  Ties are broken by the larger exact value, then by original position, so the panel
+ *  hands the same point to the same row on every render and never reshuffles. */
+export function allocateShares(values: number[], target: number): number[] {
+  const total = values.reduce((sum, v) => sum + v, 0);
+  if (total <= 0 || target <= 0) return values.map(() => 0);
+
+  const exact = values.map((v) => (v / total) * target);
+  const out = exact.map(Math.floor);
+  let left = target - out.reduce((sum, v) => sum + v, 0);
+
+  const order = exact
+    .map((v, i) => ({ i, frac: v - Math.floor(v), v }))
+    .sort((a, b) => b.frac - a.frac || b.v - a.v || a.i - b.i);
+  for (const { i } of order) {
+    if (left <= 0) break;
+    out[i] = (out[i] ?? 0) + 1;
+    left -= 1;
+  }
+  return out;
+}
+
+/** A row's state, with the fallback for rows scored before the backend recorded one. A
+ *  missing state is read as "did not apply", never as "argued for keeping": nothing
+ *  recorded that it argued for anything, and inventing that overstates the case for
+ *  keeping the file. Old unreadable rows stay amber, because `evaluated` still says so. */
+function stateOf(signal: SignalContribution): SignalState {
+  if (signal.state) return signal.state;
+  if (signal.contribution > 0) return "adds";
+  return signal.evaluated ? "not_applicable" : "unreadable";
+}
+
+/** One row, reduced to exactly what gets drawn. */
+type Row = {
+  signal: SignalContribution;
+  /** Points this row put on the score. Every rendered row's share sums to the group total. */
+  share: number;
+  state: SignalState;
+  /** How much of the whole bar track this row can occupy: its weight over the total. */
+  footprint: number;
+  /** How much of that footprint it actually filled, 0 to 1. */
+  added: number;
+};
+
+/** One row: the points it added, what it was about, and its slice of the whole bar.
+ *
+ *  The bar is measured against the TOTAL, not against the row's own weight. Filling each
+ *  row against itself is what let a 55 render as three near-full bars: every row looked
+ *  maxed out, and the total they were shares of was never on screen. */
+function SignalRow({ row }: { row: Row }) {
+  const { signal, state } = row;
   // A custom condemn rule's id is its own name; built-ins use the closed id set.
   const custom = !BUILTIN_SIGNAL_IDS.has(signal.id);
+  // A yes/no rule of your own either matched or did not, so it cannot land part-way. Flat
+  // chrome, no ramp cap, or the bar would imply a sliding scale that does not exist.
+  const flat = custom && (signal.contribution === 0 || signal.contribution === signal.weight);
 
   return (
-    <li className={signal.evaluated ? "signal" : "signal signal-unknown"}>
-      <div className="signal-head">
-        <span className="signal-amount">
-          {signal.evaluated ? `+${signal.contribution.toFixed(1)}` : "·"}
-          <span className="muted">/{signal.weight}</span>
+    <li className={`sig-row sig-${state}`}>
+      <div className="sig-head">
+        {/* A plus sign is a claim that something was added. A row that added nothing shows
+            a plain 0, and one that added less than a whole point says so rather than
+            rounding its contribution away to "+0". */}
+        <span className="sig-share">
+          {state === "unreadable"
+            ? "·"
+            : row.share > 0
+              ? `+${row.share}`
+              : row.signal.contribution > 0
+                ? "<1"
+                : "0"}
         </span>
-        <span className="signal-detail">
+        <span className="sig-detail">
           {signal.detail}
           {custom && <RuleTag />}
         </span>
       </div>
-      <div className="bar">
-        <div className="bar-fill" style={{ width: `${Math.min(filled, 100)}%` }} />
+      <div className="sig-track">
+        <div
+          className={flat ? "sig-foot sig-foot-flat" : "sig-foot"}
+          style={{ width: `${row.footprint * 100}%` }}
+        >
+          <div className="sig-added" style={{ width: `${row.added * 100}%` }} />
+        </div>
       </div>
-      {!signal.evaluated && (
-        <p className="signal-note">
-          Reaper couldn't check this one, so it added nothing, which can only pull the score{" "}
-          <em>down</em>, never up.
-        </p>
-      )}
     </li>
+  );
+}
+
+/** How many rows a group shows before the rest fold away. Six because a stock policy
+ *  carries three signals for movies and four for TV: a default install never collapses
+ *  anything, and hiding only ever begins once the operator has added rules of their own.
+ *  Never applied to "Couldn't check" -- more reasons Reaper could not read is more cause
+ *  to look, not less. */
+const GROUP_ROW_LIMIT = 6;
+
+/** Biggest share first, so whatever gets folded away is always what mattered least.
+ *  Weight, then id, break the ties an "argued to keep" group is made of (every one of its
+ *  shares is 0), so the same rows land in the same order on every render. */
+function byShare(a: Row, b: Row): number {
+  return (
+    b.share - a.share ||
+    b.signal.weight - a.signal.weight ||
+    a.signal.id.localeCompare(b.signal.id)
+  );
+}
+
+/** A named group of rows. An empty group renders nothing at all.
+ *
+ *  Past `collapseAfter` rows the tail folds into the same disclosure the "didn't apply"
+ *  rules use. The group's total still counts every row, hidden ones included, so opening
+ *  the disclosure never changes the number beside the heading. */
+function SignalGroup({
+  title,
+  rows,
+  total,
+  note,
+  collapseAfter,
+}: {
+  title: string;
+  rows: Row[];
+  total?: number;
+  note?: string;
+  collapseAfter?: number;
+}) {
+  if (rows.length === 0) return null;
+
+  const limit = collapseAfter ?? rows.length;
+  const shown = rows.slice(0, limit);
+  const hidden = rows.slice(limit);
+  const hiddenTotal = hidden.reduce((sum, r) => sum + r.share, 0);
+  // Shares are whole points, so "these added nothing" is exactly zero -- there is no
+  // rounding band to pick a threshold inside. At zero the summary says only how many are
+  // down there, because "adding +0" reads as a bug.
+  const more = hiddenTotal > 0 ? `${hidden.length} more, adding +${hiddenTotal}` : `${hidden.length} more`;
+
+  return (
+    <div className="sig-group">
+      <div className="sig-group-head">
+        <h4>{title}</h4>
+        {total != null && <span className="sig-group-total">+{total}</span>}
+      </div>
+      {note && <p className="sig-group-note">{note}</p>}
+      <ul className="signals">
+        {shown.map((row) => (
+          <SignalRow key={row.signal.id} row={row} />
+        ))}
+      </ul>
+      {hidden.length > 0 && (
+        <details className="sig-rest">
+          <summary>{more}</summary>
+          <ul className="signals">
+            {hidden.map((row) => (
+              <SignalRow key={row.signal.id} row={row} />
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
+/** The scoring receipt: every row carries its share of the score, and the shares add up.
+ *
+ *  WHICH number they add up to: the score BEFORE any graded-keep discount, because that is
+ *  the number these rows produce. The final score is `base_score - keep_discount`, and the
+ *  keeps block below owns the difference. Rows that visibly fail to add up to the number
+ *  beside them are the exact bug this section exists to remove. */
+function Signals({ item }: { item: CandidateDetail }) {
+  const { explanation } = item;
+
+  // A rule carrying no weight is not part of the score and has nothing to report.
+  const signals = explanation.signals.filter((s) => s.weight > 0);
+  const totalWeight = signals.reduce((sum, s) => sum + s.weight, 0);
+  // Sum to the number actually PRINTED beside these rows, derived the same way it is
+  // printed, so the two cannot disagree. Rounding the stored 1-decimal base_score a second
+  // time here would drift: a base of 54.464 stores as 54.5 and rounds up to 55, beside a
+  // heading of 54. Undiscounted, the printed number is the whole score itself.
+  const discounted = (explanation.keep_discount ?? 0) > 0;
+  const target =
+    discounted && explanation.base_score != null
+      ? Number(explanation.base_score.toFixed(0))
+      : Math.round(explanation.score);
+  const shares = allocateShares(
+    signals.map((s) => s.contribution),
+    target,
+  );
+
+  const rows: Row[] = signals.map((signal, i) => ({
+    signal,
+    share: shares[i] ?? 0,
+    state: stateOf(signal),
+    footprint: totalWeight > 0 ? signal.weight / totalWeight : 0,
+    added: signal.weight > 0 ? Math.min(signal.contribution / signal.weight, 1) : 0,
+  }));
+
+  const adds = rows.filter((r) => r.state === "adds").sort(byShare);
+  const argued = rows.filter((r) => r.state === "argues_keep").sort(byShare);
+  const unreadable = rows.filter((r) => r.state === "unreadable");
+  const inapplicable = rows.filter((r) => r.state === "not_applicable");
+  const addedTotal = adds.reduce((sum, r) => sum + r.share, 0);
+
+  return (
+    <section className="block">
+      <h3>Why it scored {explanation.score}</h3>
+      <p className="blurb">
+        Reasons to believe nobody will watch it again. Reaper saw <strong>{coverage(item.coverage_bp)}</strong>{" "}
+        of the evidence.
+      </p>
+
+      <SignalGroup
+        title="Pushed to remove"
+        rows={adds}
+        total={addedTotal}
+        collapseAfter={GROUP_ROW_LIMIT}
+      />
+      <SignalGroup title="Argued to keep" rows={argued} collapseAfter={GROUP_ROW_LIMIT} />
+      {/* "Couldn't check" is never folded away, and never capped. A reason Reaper could not
+          read is the one thing an operator has to see before approving a deletion, and more
+          of them is more cause to look. One note for the group, not one per row. */}
+      <SignalGroup
+        title="Couldn't check"
+        rows={unreadable}
+        note="These pull the score down, never up."
+      />
+
+      {inapplicable.length > 0 && (
+        <details className="sig-rest">
+          <summary>{inapplicable.length} didn't apply here</summary>
+          <ul className="signals">
+            {inapplicable.map((row) => (
+              <SignalRow key={row.signal.id} row={row} />
+            ))}
+          </ul>
+        </details>
+      )}
+
+      <p className="sig-legend">
+        <span className="sig-key sig-key-added" />
+        Added
+        <span className="sig-key sig-key-held" />
+        Held back
+        <span className="sig-key sig-key-unread" />
+        Couldn't check
+        {/* The sum sentence is the legend's last item, not a stray line under it: what the
+            colours mean and what the numbers add to belong on the same line. It needs its own
+            element to BE an item: adjacent bare text nodes collapse into one anonymous flex
+            item, and the row's gap never lands between them. */}
+        <span>{discounted ? "Points before the keep rules." : "Points add up to the score."}</span>
+      </p>
+    </section>
   );
 }
 
@@ -517,6 +744,9 @@ export function WhyPanel({
           </h2>
           <p className="muted why-sub">
             {bytes(item.size_bytes)} &middot; {mediaLabel}
+            {/* All three states here: the panel is where you came to find out. The card
+                stays quiet about a show that is still going. */}
+            <ShowStatusChip status={item.show_status} />
             <JumpPill href={item.links.tautulli} label="Tautulli" />
             <JumpPill href={item.links.seerr} label="Seerr" />
             <JumpPill href={item.links.radarr} label="Radarr" />
@@ -544,18 +774,7 @@ export function WhyPanel({
         </p>
       )}
 
-      <section className="block">
-        <h3>Why it scored {explanation.score}</h3>
-        <p className="blurb">
-          Reasons to believe nobody will watch it again. Reaper saw{" "}
-          <strong>{coverage(item.coverage_bp)}</strong> of the evidence it looks for.
-        </p>
-        <ul className="signals">
-          {explanation.signals.map((signal) => (
-            <Signal key={signal.id} signal={signal} />
-          ))}
-        </ul>
-      </section>
+      <Signals item={item} />
 
       {explanation.keeps && explanation.keeps.length > 0 && (
         <section className="block">

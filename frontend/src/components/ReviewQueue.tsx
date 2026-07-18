@@ -33,6 +33,7 @@ import {
   type OverrideFilter,
   type RequestedFilter,
   type Run,
+  type ShowStatus,
   type SortKey,
   type SortOrder,
   type Verdict,
@@ -616,6 +617,54 @@ function RequestedChip({ who }: { who: string | null }) {
   );
 }
 
+/** What each show status is called on screen, and what it says out of context.
+ *
+ *  "continuing" reads as "Still going", never "Continuing": that state also covers a show
+ *  that hasn't started airing yet, and the softer wording claims only what the server
+ *  actually told us. A chip beside a title is ambiguous to a screen reader ("Ended" what?),
+ *  so each one names its subject in the long form. */
+const SHOW_STATUS_TEXT: Record<ShowStatus, { label: string; about: string }> = {
+  ended: { label: "Ended", about: "This show has ended" },
+  continuing: { label: "Still going", about: "This show hasn't ended, so more may still come" },
+  unknown: {
+    label: "Status unknown",
+    about: "We couldn't check whether this show has ended",
+  },
+};
+
+/** Whether the show has finished, as the one chip both the card and the why-panel wear.
+ *
+ *  The card passes `quiet`, which drops the "still going" chip: on the card, no chip means
+ *  the show is still going. That is the common case, and leaving it unmarked keeps the row
+ *  calm so the two states worth reading stand out. The panel is where you go to find out,
+ *  so it names all three.
+ *
+ *  A status the server never reported wears the amber "we couldn't check" chip in both
+ *  places. It is not a quiet no and not a yes: we could not look, and the chip has to say
+ *  so, the same way an unchecked protection does. Shared with the why-panel. */
+export function ShowStatusChip({
+  status,
+  quiet = false,
+}: {
+  status: ShowStatus | null;
+  quiet?: boolean;
+}) {
+  // Null is a movie, or a row stored before the field existed. Neither is a claim about
+  // any show, so neither draws anything.
+  if (status === null) return null;
+  if (status === "continuing" && quiet) return null;
+  const { label, about } = SHOW_STATUS_TEXT[status];
+  return (
+    <span
+      className={status === "unknown" ? "chip chip-unchecked" : "chip"}
+      title={about}
+      aria-label={about}
+    >
+      {label}
+    </span>
+  );
+}
+
 /** What a strip square's tooltip says about its season's lane. */
 const MARK_LABELS: Record<string, string> = {
   condemn: "would be removed",
@@ -940,6 +989,12 @@ function ShowCard({
   // The whole show's shape, across every lane of the snapshot -- what the strip and the
   // season count draw from. Null only on rows from before this field existed.
   const marks = first.group_seasons;
+  // Whether the show has finished, from the first season row that carries it. This is a
+  // fact about the series, stamped onto every one of its seasons in the same scan, so the
+  // rows of one show cannot disagree; skipping the empty ones keeps a snapshot taken
+  // before this field existed from blanking a show whose other rows do have it. Same
+  // rollup the server does for the show panel.
+  const showStatus = group.items.find((s) => s.show_status)?.show_status ?? null;
   const totalSeasons = marks?.length ?? group.items.length;
   const wholeShowBytes = marks?.reduce((sum, m) => sum + m.size_bytes, 0) ?? null;
   const fetchedSize = group.items.reduce((sum, s) => sum + s.size_bytes, 0);
@@ -1001,6 +1056,9 @@ function ShowCard({
                 ? `${condemnedCount} of ${totalSeasons} would be removed · ${bytes(condemnedBytes)}`
                 : bytes(wholeShowBytes ?? fetchedSize)}
             </span>
+            {/* Ended, or a status we couldn't read. A show that is still going wears
+                nothing here: the quiet row is the common case. */}
+            <ShowStatusChip status={showStatus} quiet />
             <RequestedChip who={group.requestedBy} />
           </div>
           {marks && marks.length > 1 && <SeasonStrip marks={marks} onOpen={onOpen} />}

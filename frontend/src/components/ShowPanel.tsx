@@ -10,6 +10,7 @@
 
 import type { Candidate, Group } from "../api";
 import { bytes } from "../format";
+import { ShowStatusChip } from "./ReviewQueue";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
 import { JumpPill, Synopsis, WhyHero } from "./WhyPanel";
 
@@ -70,6 +71,10 @@ export function ShowPanel({
           </h2>
           <p className="muted why-sub">
             TV show &middot; {seasonLabel} &middot; {bytes(group.size_bytes)}
+            {/* Named here as well as on the card: the card is where you notice a show has
+                ended, this is where you came to find out. A panel that dropped the status
+                the card just showed would read as a contradiction. */}
+            <ShowStatusChip status={group.show_status} />
             <JumpPill href={group.links.sonarr} label="Sonarr" />
             <JumpPill href={group.links.tautulli} label="Tautulli" />
             <JumpPill href={group.links.seerr} label="Seerr" />

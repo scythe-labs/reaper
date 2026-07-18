@@ -6,7 +6,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { Candidate, Chip, Group, Verdict } from "../api";
+import type { Candidate, Chip, Group, ShowStatus, Verdict } from "../api";
 import { ReviewQueue } from "./ReviewQueue";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -24,6 +24,7 @@ function season(
   verdict: Verdict,
   score: number,
   chip: Chip | null,
+  showStatus: ShowStatus | null = null,
 ): Candidate {
   return {
     id,
@@ -50,6 +51,7 @@ function season(
     override: null,
     override_effective: null,
     chip,
+    show_status: showStatus,
     season_number: n,
     group_seasons: [
       { id: 1, season: 1, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3 },
@@ -65,12 +67,17 @@ const limboSeason = season(3, 3, "abstain", 82, {
 });
 
 function renderQueue(
-  overrides: { onSelect?: (id: number) => void; onSelectGroup?: (key: string) => void } = {},
+  overrides: {
+    onSelect?: (id: number) => void;
+    onSelectGroup?: (key: string) => void;
+    items?: Candidate[];
+  } = {},
 ) {
+  const items = overrides.items ?? [limboSeason];
   apiMock.candidates.mockResolvedValue({
-    items: [limboSeason],
-    total: 1,
-    totalBytes: limboSeason.size_bytes,
+    items,
+    total: items.length,
+    totalBytes: items.reduce((sum, i) => sum + i.size_bytes, 0),
     offset: 0,
   });
   const queryClient = new QueryClient({
@@ -113,6 +120,24 @@ describe("the show card", () => {
     ).toBeInTheDocument();
   });
 
+  it("marks an ended show, says so when it couldn't check, and stays quiet otherwise", async () => {
+    // Three shows, one per state. The card names only the two worth reading: no chip is
+    // how "still going" reads, so a bare row must carry no status word at all.
+    const ended = season(11, 1, "abstain", 80, null, "ended");
+    const going = { ...season(12, 1, "abstain", 80, null, "continuing"), group_key: "sonarr:5:43" };
+    const unread = { ...season(13, 1, "abstain", 80, null, "unknown"), group_key: "sonarr:5:44" };
+    renderQueue({ items: [ended, going, unread] });
+
+    expect(await screen.findByTitle("This show has ended")).toHaveTextContent("Ended");
+    expect(
+      screen.getByTitle("We couldn't check whether this show has ended"),
+    ).toHaveTextContent("Status unknown");
+    // The still-going show wears nothing: one card, one chip, and neither is its.
+    expect(screen.queryByText("Still going")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Ended")).toHaveLength(1);
+    expect(screen.getAllByText("Status unknown")).toHaveLength(1);
+  });
+
   it("opens a season's own reasoning when its strip square is clicked", async () => {
     const onSelect = vi.fn();
     const onSelectGroup = vi.fn();
@@ -149,6 +174,7 @@ describe("the all-seasons list", () => {
       reason: null,
       chip: limboSeason.chip,
       links: {} as Group["links"],
+      show_status: null,
       seasons: [
         season(1, 1, "protect", 34, { tone: "kept", text: "Kept · someone is partway through" }),
         season(2, 2, "condemn", 88, null),
