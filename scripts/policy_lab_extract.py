@@ -83,6 +83,38 @@ def obs(state: str, value: Any = None) -> dict[str, Any]:
     return {"state": state, "value": value} if state == "known" else {"state": state}
 
 
+#: ``facts_codec``'s compact keys -> the fixture's spelled-out ones.
+_STATE = {"known": "known", "absent": "absent", "unknown": "unknown"}
+
+
+def stored_obs(
+    frozen: dict[str, Any], field: str, transform: Any = None, *, default: str = "unknown"
+) -> dict[str, Any]:
+    """One observation, read from the snapshot's FROZEN facts rather than re-derived.
+
+    Everything else in this file reconstructs facts from ``explanation_json`` and the
+    gate details, which is a second implementation of the fact layer and drifts from the
+    first. It did: production learned to tell "we looked and there is no rating" from
+    "we had no id to look one up with" (``display_meta.dataset_lookup``), and this script
+    kept collapsing both to ``absent``, so a regenerated fixture could not contain an
+    ``Unknown`` rating however many scans it read. Those two states are opposite
+    instructions to the keep lane, so the harness was sweeping evidence that no real scan
+    produces.
+
+    ``facts_json`` is the evidence the scan froze, which is exactly what the fixture wants
+    a de-identified copy of. ``transform`` blunts precision on the way out (sizes, votes);
+    identifying values must be tokenised by the caller, never passed through.
+    """
+    entry = frozen.get(field)
+    if not isinstance(entry, dict):
+        return obs(default)
+    kind = _STATE.get(str(entry.get("k")), default)
+    if kind != "known":
+        return obs(kind)
+    value = entry.get("v")
+    return obs("known", transform(value) if transform is not None else value)
+
+
 def main() -> None:
     rng = random.Random(42)
     rdb = sqlite3.connect(f"file:{REPO / 'data' / 'reaper.db'}?mode=ro", uri=True)
@@ -141,13 +173,10 @@ def main() -> None:
         window = sum(1 for la in merged.values() if la >= window_start)
         return days, window, len(merged), [float(r) for r in recency]
 
-    def imdb(imdb_id: str | None) -> tuple[int, int] | None:
-        if not imdb_id:
-            return None
-        hit = cdb.execute(
-            "SELECT average_rating, num_votes FROM imdb_rating WHERE tconst=?", (imdb_id,)
-        ).fetchone()
-        return (int(hit[0] * 10), int(hit[1])) if hit else None
+    # An `imdb()` helper lived here, looking ratings up in the cache to rebuild the
+    # rating observation. It was the drift: the snapshot already froze that observation,
+    # with a three-state answer this could not express. Read the frozen facts instead
+    # (stored_obs) rather than asking the dataset a second time.
 
     # ---- genre / quality token maps ----------------------------------------
     genre_freq: Counter[str] = Counter()
@@ -167,18 +196,14 @@ def main() -> None:
     # ---- per-candidate vectors ---------------------------------------------
     movie_pol = DEFAULT_MOVIE_POLICY
     tv_pol = DEFAULT_TV_POLICY
-    unwatched_cfg = {
-        "movie": next(s for s in movie_pol.signals if s.signal.value == "unwatched"),
-        "season": next(s for s in tv_pol.signals if s.signal.value == "unwatched"),
-    }
 
     vectors: list[dict[str, Any]] = []
     group_of: dict[str, list[int]] = {}
     show_watchers: dict[str, dict[int, int]] = {}
 
     cur = rdb.execute(
-        "SELECT media_key, media_type, plex_rating_key, size_bytes, year, genres_json, "
-        "quality, imdb_id, group_key, verdict, score, coverage_bp, explanation_json "
+        "SELECT media_key, media_type, plex_rating_key, year, genres_json, "
+        "quality, group_key, verdict, score, coverage_bp, explanation_json, facts_json "
         "FROM candidate WHERE snapshot_id=?",
         (snap_id,),
     )
@@ -186,19 +211,20 @@ def main() -> None:
         media_key,
         media_type,
         rating_key,
-        size_bytes,
         year,
         genres_json,
         quality,
-        imdb_id,
         group_key,
         _verdict,
         _stored_score,
         _stored_cov,
         explanation_json,
+        facts_json,
     ) in cur:
         exp = json.loads(explanation_json)
-        sig = {s["id"]: s for s in exp["signals"]}
+        # The frozen evidence, which is what the fixture is a de-identified copy of.
+        # Preferred over any reconstruction below; see stored_obs.
+        frozen = (json.loads(facts_json).get("obs") or {}) if facts_json else {}
         gates: dict[str, tuple[str, str]] = {}
         override = None
         for bucket, name in (
@@ -214,50 +240,28 @@ def main() -> None:
 
         merged_keys = (exp.get("match") or {}).get("merged_rating_keys") or None
         keys = merged_keys or ([rating_key] if rating_key else [])
-        days, window, ever, recency = stats(keys, media_type) if keys else (None, 0, 0, [])
+        # Watch-recency days per user, for the show-shape map. The only thing still read
+        # out of the mirror rather than the frozen facts, because it is not a Fact: it
+        # describes the show, not the item.
+        recency = stats(keys, media_type)[3] if keys else []
 
-        # dormancy: exact from the mirror; else invert the stored evaluation
-        unwatched = sig.get("unwatched")
-        cfg = unwatched_cfg[media_type]
-        dormancy: dict[str, Any]
-        if unwatched is None or not unwatched["evaluated"]:
-            dormancy = obs("unknown")
-        elif days is not None:
-            dormancy = obs("known", float(days))
-        else:
-            contribution, weight = unwatched["contribution"], unwatched["weight"]
-            md_detail = gates.get("min_dormancy", ("", ""))[1]
-            if 0 < contribution < weight:
-                dormancy = obs(
-                    "known",
-                    round(cfg.floor + (contribution / weight) * (cfg.saturate_at - cfg.floor)),
-                )
-            elif (parsed := parse_humanized(md_detail)) is not None:
-                dormancy = obs("known", parsed)
-            else:
-                dormancy = obs("unknown")
+        ever_obs = stored_obs(frozen, "distinct_watchers_all_time")
 
-        few = sig.get("few_watchers")
-        watchers_known = few is not None and few["evaluated"]
-
-        hit = imdb(imdb_id)
-        if hit is not None:
-            rating_obs = obs("known", hit[0])
-            votes_obs = obs("known", round_votes(hit[1]))
-        else:
-            rating_obs = obs("absent")
-            votes_obs = obs("absent")
-
-        if media_type == "movie":
-            rank_obs = obs("absent")
-        else:
-            sr = sig.get("season_rank")
-            if sr is None or not sr["evaluated"]:
-                rank_obs = obs("unknown")
-            elif m := re.search(r"number (\d+) counting back", sr["detail"]):
-                rank_obs = obs("known", int(m.group(1)))
-            else:
-                rank_obs = obs("unknown")
+        # Every numeric fact, straight from the frozen evidence.
+        #
+        # These were all reconstructed: dormancy inverted out of a signal's contribution
+        # or parsed back out of a humanized gate detail, season rank pulled out of a
+        # detail string with a regex. That is a second implementation of the fact layer
+        # AND it parses operator-facing copy, so a wording change silently corrupts the
+        # fixture. It did, twice, in one session: the rating states collapsed (see
+        # stored_obs) and every season's rank fell to Unknown when the season-rank
+        # sentence was reworded, quietly deleting 210 known ranks from the sweep.
+        #
+        # `facts_json` is the evidence the scan actually judged. Read that.
+        dormancy = stored_obs(frozen, "days_observed_unwatched", float)
+        rating_obs = stored_obs(frozen, "imdb_rating_tenths")
+        votes_obs = stored_obs(frozen, "imdb_votes", round_votes)
+        rank_obs = stored_obs(frozen, "season_rank", default="absent")
 
         def from_gate(
             gate: str, fired_means: bool, gates: dict[str, tuple[str, str]] = gates
@@ -305,11 +309,9 @@ def main() -> None:
                 "media_type": media_type,
                 "facts": {
                     "days_observed_unwatched": dormancy,
-                    "distinct_watchers": obs("known", window) if watchers_known else obs("unknown"),
-                    "distinct_watchers_all_time": (
-                        obs("known", ever) if watchers_known else obs("unknown")
-                    ),
-                    "size_bytes": obs("known", round_size(int(size_bytes))),
+                    "distinct_watchers": stored_obs(frozen, "distinct_watchers"),
+                    "distinct_watchers_all_time": stored_obs(frozen, "distinct_watchers_all_time"),
+                    "size_bytes": stored_obs(frozen, "size_bytes", round_size),
                     "imdb_rating_tenths": rating_obs,
                     "imdb_votes": votes_obs,
                     "season_rank": rank_obs,
@@ -333,7 +335,7 @@ def main() -> None:
         )
         if media_type == "season" and group_key and season_number is not None:
             group_of.setdefault(group_key, []).append(len(vectors) - 1)
-            show_watchers.setdefault(group_key, {})[season_number] = ever if watchers_known else 0
+            show_watchers.setdefault(group_key, {})[season_number] = ever_obs.get("value") or 0
 
     # ---- stratified sample --------------------------------------------------
     def signature(v: dict[str, Any]) -> tuple:
