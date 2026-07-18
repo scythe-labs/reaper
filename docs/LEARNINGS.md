@@ -291,6 +291,39 @@ instances (alongside imdb/tmdb/metacritic/rottenTomatoes at their known ~86-100%
 coverages). Sonarr still exposes only the flat TVDB pair, so Trakt on TV would need
 another source; the why-panel simply hides the chip there.
 
+### A show folder has no size, so a leaf-only match cannot separate two libraries (measured 2026-07-18)
+
+The negative result that drove the folder corroborator in `engine/identity.py`.
+
+An operator running a split library (an HD *arr instance and a 4K one, mirrored by two
+enabled Plex show sections) keeps a handful of titles in **both**. Those titles are then
+listed twice in Plex under one TVDB guid. The resolver's tier-1 narrowing had two
+corroborators for that case, and on a show **neither can fire**:
+
+- the *file name*, which for a show is the **folder leaf** — and both sections name the
+  folder identically, because both were built by the same *arr naming rules;
+- the *exact byte size*, which a show folder does not have at all (`resolve_show`
+  passed `file_size=None` by construction, and Plex reports no size on a show Location).
+
+So every such title abstained. Measured on a live library: **0.6% of series and the same
+share of season rows, 6 and 13 of them, 3 titles × 2 instances** — every one of them the only
+titles the operator keeps in both libraries. The failure set is exactly "titles
+duplicated across two enabled show sections"; nothing about the titles themselves
+mattered (two were documentaries and one carried a parenthesized year, all coincidence).
+
+The discriminator that *was* available had been thrown away one function earlier:
+`clients/plex.py` reduced each Location to `to_basename(path)` and discarded the rest of
+the path. Measured across all three: leaf identical, **parent folder different, shared
+suffix depth exactly 1**. Keeping the full path and comparing *trailing segments* (never
+whole paths — the mount roots differ, which is why `to_basename` exists) separates them
+cleanly. Re-running the real resolver over the live library: **ambiguous 6 → 0, matched
+972 → 978, unmatched unchanged at 112.**
+
+⇒ Two rules fall out. A discriminator must not be normalized away *before* the place
+that needs it. And on any split library, the segment **above** the leaf is the only thing
+that distinguishes two copies of one title — for shows it is the sole corroborator that
+exists, so a tie there still abstains and always will.
+
 ### Plex title-cases label tags
 
 Write `leaving-soon`, read back `Leaving-Soon`. So any case-sensitive comparison of

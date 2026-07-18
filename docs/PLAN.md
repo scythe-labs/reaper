@@ -1570,6 +1570,53 @@ cluster of related fixes, all live-verified against real services:
 - **The dormancy gate no longer claims "last watched N days ago" for never-played
   items** — the clock runs from arrival, so it says "untouched for just N".
 
+## The folder corroborator: binding a title kept in two libraries
+
+A second operator report of the same family as the round above ("there IS history in
+Tautulli, but the item shows none, and it has no Plex link"). The investigation confirmed
+the safety model held perfectly and found one honest gap plus one unrelated UI bug.
+
+**What was actually happening.** The item was `AMBIGUOUS`, not unmatched: one TVDB id
+naming two Plex listings, because the operator keeps that title in *both* an HD and a [redacted]
+show section. On a **movie** the resolver breaks that tie with the file's exact byte size.
+On a **show** it never could: a show is bound by its folder, both sections name the folder
+identically, and Plex reports no size for a folder. Every such title abstained forever.
+Measured live: 6 of [redacted] series, 13 of [redacted] season rows, all 3 titles the operator keeps
+in both libraries. Details and the measurement in `docs/LEARNINGS.md`.
+
+**The safety model was never in question — worth stating plainly.** An ambiguous item does
+*not* read as "nobody watched it". `season_scan` writes `Unknown` (not `0`) for dormancy,
+watchers and streaming; `signals.score()` is unsigned, so those weights stay in the
+denominator and the missing evidence can only *lower* the score; the four dependent gates
+land in `protections_unknown`, and `decide_verdict` abstains on a blocked protection before
+the score is read, with the coverage floor as a second backstop. All 13 rows scored 7-18
+against a threshold of 70 and stored `protect`. Fail-closed, exactly as designed.
+
+**The fix.** The discriminator existed and was being thrown away one function earlier:
+`clients/plex.py` reduced each Plex Location to its leaf and discarded the path. It now
+keeps the full path on `PlexFile.path`, the *arr side passes its own full path, and
+`identity._narrow_by_path_depth` compares **trailing segments** — never whole paths, since
+the mount roots differ. A listing binds only by being *strictly* deeper than every other;
+a tie, an unreadable path, or a leaf-only match still abstains. Verified end to end against
+the live library: ambiguous 6 → 0, matched 972 → 978, unmatched unchanged at 112.
+
+**The unrelated bug the same report surfaced.** Posters were reported missing everywhere.
+The backend was healthy (every `/api/poster/*` returned 200 when driven), but
+`ReviewQueue.Poster` held a `broken` flag with **no reset on `url`** while its sibling
+`Backdrop` had one — so a single failed image latched the placeholder onto every item that
+row was later reused for, until a full remount. A rule-19 miss, now fixed with a test that
+fails without it. Artwork failures also logged rather than silently swallowed
+(`api/poster.py`, `clients/tautulli.py`), so a placeholder is no longer indistinguishable
+from an item that genuinely has no art.
+
+**Still open, deliberately deferred.** `GroupOut` carries no `match` field, so the *show*
+panel cannot show the "kept to be safe" notice the *season* panel already renders. Worth
+doing next time the review surfaces are touched, alongside the deferred `.warn` → `.notice-
+warn` merge. Also noted: the duplicate cards for one title in two instances are **correct**
+(two instances, two file sets, two delete coordinates) and must not be merged — summing
+their sizes beside a destructive button would violate rule 30 — but nothing yet tells the
+operator the two cards are the same title.
+
 ## First-run honesty fixes (server picker, startup banner, TV-only scans)
 
 Three first-run dead ends found while writing the deployment docs, each fixed with the
