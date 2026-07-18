@@ -485,17 +485,69 @@ function RatingFloorRow({
 /** One signal: a plain-English label, its help, a slider, and a *quantified* readout -- the
  *  raw weight and the share of the score it currently accounts for, because "a lot" told you
  *  nothing you could act on. */
+/** The 100-point removal budget, in the savebar. The whole reason weights can be labelled
+ *  as points: the server refuses any policy whose removal weights do not total exactly 100
+ *  (PolicyBody._weights_total_one_hundred), so the number on a rule IS what it adds.
+ *
+ *  Both directions block Save. Over-budget is obvious. Under-budget matters just as much:
+ *  the score divides by the total, so 75 points would stretch the lane and put every label
+ *  on this page back to lying. Blocking both is what buys the honest labels.
+ *
+ *  Keeps are deliberately NOT in here. A keep discount is points off the same 0-100 score,
+ *  but it is a different lane doing a different job, and folding it in would cap how much
+ *  protection an operator can express. Hence "removal points", not "points".
+ */
+function PointsBudget({ builtIn, yours }: { builtIn: number; yours: number }) {
+  const total = builtIn + yours;
+  const left = 100 - total;
+  const scale = Math.max(total, 100);
+
+  return (
+    <span className="budget">
+      <span className="budget-meter" aria-hidden="true">
+        <i className="budget-built" style={{ width: `${(Math.min(builtIn, 100) / scale) * 100}%` }} />
+        <i className="budget-yours" style={{ width: `${(Math.min(yours, 100) / scale) * 100}%` }} />
+        {left < 0 && <i className="budget-over" style={{ width: `${(-left / scale) * 100}%` }} />}
+        {left > 0 && <i className="budget-free" style={{ width: `${(left / scale) * 100}%` }} />}
+      </span>
+      <span className="budget-line">
+        <span>
+          <strong>{total}</strong> of 100 removal points used
+        </span>
+        {left === 0 ? (
+          <span className="muted">
+            {draftRuleCount(builtIn, yours)}
+          </span>
+        ) : (
+          <span className={left < 0 ? "budget-over-text" : "muted"}>
+            {left < 0 ? `${-left} over` : `${left} left to give out`}
+          </span>
+        )}
+      </span>
+      {left !== 0 && (
+        <span className="notice notice-error budget-notice">
+          {left < 0
+            ? `Your rules add up to ${total} points. Take ${-left} away before saving.`
+            : `Your rules add up to ${total} points. Give out the other ${left} before saving.`}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** "4 built-in signals · 1 of your rules", or just the built-ins when there are no rules. */
+function draftRuleCount(builtIn: number, yours: number): string {
+  return yours > 0 ? `${builtIn} built in · ${yours} yours` : "all on built-in signals";
+}
+
 function SignalRow({
   signal,
-  totalWeight,
   onChange,
 }: {
   signal: SignalSetting;
-  totalWeight: number;
   onChange: (s: SignalSetting) => void;
 }) {
   const meta = SIGNAL_META[signal.signal] ?? { label: titleCase(signal.signal), help: "" };
-  const share = totalWeight > 0 ? Math.round((signal.weight / totalWeight) * 100) : 0;
 
   return (
     <li className="rule-row">
@@ -505,17 +557,24 @@ function SignalRow({
           {signal.weight === 0 ? (
             <span className="muted">off</span>
           ) : (
+            // Points, not a share, and no second number beside it: removal weights total
+            // exactly 100, so the weight IS what it adds. "up to" is not hedging -- a
+            // signal ramps, and pays its full number only at the far end of its range.
             <>
+              <span className="muted">up to </span>
               <strong>{signal.weight}</strong>
-              {/* No "/100" beside the share: the slider already shows the range, and a
-                  weight of 70 written as "70/100" next to "58% of the score" reads as two
-                  answers to the same question. The share is the one that is true. */}
-              <span className="muted"> · {share}% of the score</span>
+              <span className="muted"> points</span>
             </>
           )}
         </span>
       </div>
-      {meta.help && <p className="help rule-help">{meta.help}</p>}
+      {signal.weight === 0 ? (
+        <p className="help rule-help">
+          Its points go back into the pot. Give them to another signal before saving.
+        </p>
+      ) : (
+        meta.help && <p className="help rule-help">{meta.help}</p>
+      )}
       <input
         type="range"
         min={0}
@@ -775,12 +834,9 @@ function SuggestInput({
  *  from/to pair and the rule scales up between them, like the built-in signals. */
 function RemoveRulesEditor({
   condemn,
-  totalWeight,
   onCondemn,
 }: {
   condemn: CustomCondemn[];
-  /** The engine's whole denominator: the built-in weights plus these rules' own. */
-  totalWeight: number;
   onCondemn: (r: CustomCondemn[]) => void;
 }) {
   const { data: condemnVocab } = useQuery({
@@ -858,16 +914,11 @@ function RemoveRulesEditor({
           {condemn.map((r, i) => (
             <div className="rules-row rules-row-simple" key={`c-${r.name}-${i}`}>
               <span className="rules-rule">{describeCondemn(r, condemnAll)}</span>
+              {/* A yes/no rule pays its full number the moment it matches, so it says the
+                  number flat. A sliding rule ramps between its floor and its top, so it
+                  says "up to". Removal weights total 100, so both are literal points. */}
               <span className="rules-weight-remove">
-                {r.kind === "graded" ? `up to +${r.weight}` : `+${r.weight} to the score`}
-                {/* The same readout the built-in signals carry, over the same denominator:
-                    a rule shares the score with them, so its share is the honest number. */}
-                {r.weight > 0 && totalWeight > 0 && (
-                  <span className="muted">
-                    {" "}
-                    · {Math.round((r.weight / totalWeight) * 100)}% of the score
-                  </span>
-                )}
+                {r.kind === "graded" ? `up to +${r.weight} points` : `+${r.weight} points`}
               </span>
               <button className="ghost sm" onClick={() => onCondemn(condemn.filter((_, j) => j !== i))}>
                 Remove
@@ -953,14 +1004,19 @@ function RemoveRulesEditor({
             ) : (
               <SuggestInput field={field} value={rValue} onChange={setRValue} />
             )}
+            {/* One control standard: a number with a fixed unit is a FixedQuantity, never
+                a bare number box beside loose text. "up to" for a ramp, flat for a yes/no,
+                matching how each rule actually pays out. */}
             <label className="inline-weight">
-              {isRamp ? "up to" : "weight"}
-              <input
-                type="number"
+              {isRamp ? "up to" : ""}
+              <FixedQuantity
+                value={rWeight}
+                onChange={setRWeight}
+                suffix="points"
                 min={0}
                 max={100}
-                value={rWeight}
-                onChange={(e) => setRWeight(Number(e.target.value))}
+                width="narrow"
+                ariaLabel="Points this rule adds"
               />
             </label>
             <button
@@ -1409,8 +1465,15 @@ export function PolicyEditor({
     },
   });
 
+  // `needs_save` forces dirty: the server handed back a REPAIRED body (an old policy
+  // rescaled to the 100-point budget), so what is on screen is not what is stored and the
+  // savebar has to say so. Discard cannot clear it either, which is right -- there is no
+  // stored body to go back to that this build can load.
   const dirty = useMemo(
-    () => draft !== null && saved !== undefined && JSON.stringify(draft) !== JSON.stringify(saved.body),
+    () =>
+      draft !== null &&
+      saved !== undefined &&
+      (Boolean(saved.needs_save) || JSON.stringify(draft) !== JSON.stringify(saved.body)),
     [draft, saved],
   );
 
@@ -1468,9 +1531,14 @@ export function PolicyEditor({
   // built-in signals AND the owner's own rules into a single fixed total (engine/signals.py).
   // Dividing by the built-ins alone would overstate every built-in signal's share and leave
   // the owner's rules looking like they cost the score nothing.
-  const totalWeight =
-    draft.signals.reduce((sum, s) => sum + s.weight, 0) +
-    draft.custom_condemn.reduce((sum, c) => sum + c.weight, 0);
+  const builtInWeight = draft.signals.reduce((sum, s) => sum + s.weight, 0);
+  const yourWeight = draft.custom_condemn.reduce((sum, c) => sum + c.weight, 0);
+  const totalWeight = builtInWeight + yourWeight;
+  // The budget the server enforces (PolicyBody._weights_total_one_hundred). Checked here
+  // too so Save is blocked before the round trip, and so the gap is a number the operator
+  // can see moving rather than an error they discover on submit.
+  const REMOVAL_POINTS = 100;
+  const pointsLeft = REMOVAL_POINTS - totalWeight;
   // Only a 422 is the server refusing the POLICY ("you can't save this as-is"). Anything
   // else (a timeout, a 500) means the CHECK itself failed, which must not be dressed up
   // as a policy error nor lock Save: the server re-validates on save regardless.
@@ -1685,7 +1753,6 @@ export function PolicyEditor({
             <SignalRow
               key={signal.signal}
               signal={signal}
-              totalWeight={totalWeight}
               onChange={(s) => {
                 const signals = [...draft.signals];
                 signals[i] = s;
@@ -1697,7 +1764,6 @@ export function PolicyEditor({
 
         <RemoveRulesEditor
           condemn={draft.custom_condemn}
-          totalWeight={totalWeight}
           onCondemn={(custom_condemn) => update({ custom_condemn })}
         />
         <WarnBlock warnings={warningsFor((f) => f === "custom_condemn")} />
@@ -2089,6 +2155,25 @@ export function PolicyEditor({
                 : dirty
                   ? `Saves only your ${kind} policy. The ${otherKind} one is untouched. It applies on the next scan, which starts by itself after saving.`
                   : "Pace applies immediately. Changing a limit never affects a run you've already approved."}
+              {/* The load-time recoveries. Rendered here, beside Save, because they are
+                  about what you are about to write -- and from the response FLAGS, not
+                  the warning list, which is built by re-validating the draft and so can
+                  never carry anything about how the policy loaded. */}
+              {saved?.fell_back && (
+                <span className="notice notice-error budget-notice">
+                  Your saved policy couldn't be read, so this shows the starting one
+                  instead. Nothing has changed on your server. Check the values below,
+                  then save to replace it.
+                </span>
+              )}
+              {saved?.needs_save && !saved.fell_back && (
+                <span className="notice notice-warn budget-notice">
+                  Your points have been spread to add up to 100. Nothing has changed on
+                  your server yet. Each rule keeps the same share it had, so your scores
+                  stay where they are. Review and save.
+                </span>
+              )}
+              {dirty && <PointsBudget builtIn={builtInWeight} yours={yourWeight} />}
             </span>
             <button
               className="ghost"
@@ -2101,7 +2186,11 @@ export function PolicyEditor({
             </button>
             <button
               className="primary"
-              disabled={(dirty && Boolean(invalidMessage)) || save.isPending || savePace.isPending}
+              disabled={
+                (dirty && (Boolean(invalidMessage) || pointsLeft !== 0)) ||
+                save.isPending ||
+                savePace.isPending
+              }
               onClick={() => {
                 // Two independent saves; each failure renders its own notice below.
                 if (dirty) save.mutate(draft);

@@ -378,6 +378,14 @@ export interface Policy {
   name: string;
   body: PolicyBody;
   warnings: PolicyWarning[];
+  /** This body was repaired on the way out and is NOT what is stored. Set when a policy
+   *  written before removal weights had to total 100 was rescaled to fit. The editor
+   *  opens on it dirty so the operator reviews and saves their own tuning in the new
+   *  units; nothing is written, and approvals stay valid, until they do. */
+  needs_save?: boolean;
+  /** The stored body could not be repaired, so this is the shipped default: numbers the
+   *  operator never chose. Louder than needs_save. */
+  fell_back?: boolean;
 }
 
 /** One title the draft would newly flag, for the simulator's "New on the list" block. */

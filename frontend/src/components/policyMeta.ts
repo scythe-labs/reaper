@@ -54,7 +54,9 @@ export const GATE_META: Record<string, GateMeta> = {
 export const SIGNAL_META: Record<string, { label: string; help: string }> = {
   unwatched: {
     label: "How long it's gone unwatched",
-    help: "The longer since anyone played it, the stronger the reason to remove it. The biggest single signal.",
+    // Was "The biggest single signal", which describes the shipped mix rather than the
+    // control, and goes stale the first time the operator moves a slider.
+    help: "The longer since anyone played it, the stronger the reason to remove it. It earns its full points only at the far end.",
   },
   few_watchers: {
     label: "How few people watch it",
@@ -70,7 +72,9 @@ export const SIGNAL_META: Record<string, { label: string; help: string }> = {
   },
   size: {
     label: "How big it is on disk",
-    help: "Off by default. Big files are usually big because they're popular, so size makes a poor reason to delete. It only ranks titles the score has already chosen.",
+    // Was "It only ranks titles the score has already chosen", which stops being true the
+    // moment it carries points: at any non-zero weight it decides, not just ranks.
+    help: "Off by default. Big files are usually big because they're popular, so size makes a poor reason to delete. Give it points and it becomes one.",
   },
 };
 

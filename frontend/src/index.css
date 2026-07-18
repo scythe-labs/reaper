@@ -2308,6 +2308,58 @@ a.rating-chip:hover {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* The 100-point removal budget (PointsBudget in PolicyEditor). Lives inside .savebar-what
+   so it sits under the "unsaved changes" line rather than becoming a second save UI. */
+.budget {
+  display: block;
+  margin-top: 0.5rem;
+}
+.budget-meter {
+  display: flex;
+  height: 7px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.budget-meter i {
+  display: block;
+}
+.budget-built {
+  background: var(--accent);
+}
+.budget-yours {
+  background: color-mix(in srgb, var(--accent) 55%, var(--surface));
+}
+.budget-over {
+  background: var(--condemn);
+}
+/* Dashed, not solid: unspent points are absent rather than allocated to something. */
+.budget-free {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--border-strong) 0 3px,
+    transparent 3px 7px
+  );
+}
+.budget-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+}
+.budget-line strong {
+  font-variant-numeric: tabular-nums;
+}
+.budget-over-text {
+  color: var(--condemn);
+}
+.budget-notice {
+  display: block;
+  margin-top: 0.5rem;
+}
 .savebar .notice {
   flex-basis: 100%;
   margin: 0;
