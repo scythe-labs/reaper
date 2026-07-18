@@ -1823,6 +1823,30 @@ worth knowing: `get_history` prepends live sessions but excludes them from
 `recordsTotal`, so naive last-page pagination hides the oldest rows. See LEARNINGS,
 "The ingest is faithful to the sources".
 
+## The whole-frontend UI/UX review pass (all 82 findings)
+
+`docs/UI_REVIEW.md` swept every component plus the backend strings that surface in the UI,
+and all 82 findings are now fixed and checked off. What it changed, in shape rather than
+item by item: one critical contrast failure (`--faint` carried real text at 2.41:1, now
+decorative-only, with those uses on `--muted` at 4.89-7.40:1); four responsive breakages
+that only existed on a phone, including a why-panel whose full-screen rule never applied
+because a 1100px `main.split .why` outranked the 900px bare `.why`; a sweep making every
+gating query state its unknown state instead of asserting a definite claim, and every
+mutation render its failure; a shared `ModalShell` giving both modals real dialog
+semantics; the copy pass that took engine vocabulary and repr-quoting out of operator
+strings; and the consolidation of a dozen twinned implementations.
+
+Four lessons are recorded at the top of `docs/UI_REVIEW.md` because they generalize beyond
+this pass: a fix can be worse than the bug it replaces (Cp1 turned a bad API key into
+"Couldn't connect."), a half-finished sweep is its own defect (`fields.py` fixed,
+`policy.py`'s twin not), paired findings must land together (Cp7 shipped without Cp6 and
+briefly made two surfaces disagree about the same run), and reworded copy can start lying
+about state it does not track (M1's "still selected" outliving the selection).
+
+The `.warn` banner exception in rule 45 is still open: ScanBar and the review card keep
+their own banner rather than `.notice-warn`, to be merged when the review UI is next
+touched.
+
 ## Immediate next steps
 
 1. **The live send** — wire `_send_for_real` + the exclusion-verify + the Plex refresh
