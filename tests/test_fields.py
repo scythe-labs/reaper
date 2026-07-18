@@ -56,7 +56,7 @@ class TestTheLaneAsymmetry:
         condemning on it would make the recency signal meaningless."""
         condition = Condition(field="watchers_all_time", op=Op.LTE, value=1)
 
-        with pytest.raises(ValueError, match="cannot be used to condemn"):
+        with pytest.raises(ValueError, match="cannot be used to remove things"):
             condition.validate_for(Lane.CONDEMN)
 
     def test_the_same_field_is_fine_as_a_protection(self) -> None:
@@ -82,14 +82,14 @@ class TestTheLaneAsymmetry:
         assert condemn < protect
 
     def test_a_ruleset_validates_its_lane_on_construction(self) -> None:
-        with pytest.raises(ValueError, match="cannot be used to condemn"):
+        with pytest.raises(ValueError, match="cannot be used to remove things"):
             RuleSet(
                 lane=Lane.CONDEMN,
                 conditions=(Condition(field="whitelisted", op=Op.EQ, value=True),),
             )
 
     def test_an_unsupported_operator_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="does not support"):
+        with pytest.raises(ValueError, match="cannot be compared with"):
             Condition(field="days_unwatched", op=Op.CONTAINS, value="x").validate_for(Lane.CONDEMN)
 
 

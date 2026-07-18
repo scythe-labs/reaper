@@ -158,6 +158,37 @@ def _ordinal_suffix(number: int) -> str:
     return {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
 
 
+#: How a lane reads to the person who chose it. The enum's own values ("condemn",
+#: "protect") are engine words and must never reach a saved-policy error, which is
+#: rendered verbatim in the policy editor. `policy.py` phrases the same refusal the
+#: same way; the two have to agree or one page shows two vocabularies.
+_LANE_USE: dict[Lane, str] = {
+    Lane.CONDEMN: "remove things",
+    Lane.PROTECT: "keep things",
+}
+_LANE_HOME: dict[Lane, str] = {
+    Lane.CONDEMN: "a removal rule",
+    Lane.PROTECT: "a protection",
+}
+
+#: The operator keys spelled the way the rule sentences already spell them, so a
+#: rejection and the rule it was rejected from speak the same language.
+_OP_NAME: dict[Op, str] = {
+    Op.GTE: "at or above",
+    Op.LTE: "at or below",
+    Op.EQ: "is",
+    Op.IN: "is one of",
+    Op.CONTAINS: "contains",
+}
+
+
+def _join_or(parts: list[str]) -> str:
+    """Join as `"a", "b" or "c"`: a list a person reads, not a comma-joined dump."""
+    if len(parts) <= 1:
+        return parts[0] if parts else ""
+    return f"{', '.join(parts[:-1])} or {parts[-1]}"
+
+
 @dataclass(frozen=True, slots=True)
 class FieldSpec:
     """One thing a user may write a condition about."""
@@ -341,7 +372,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="whitelisted",
-        label="Whitelisted",
+        label="On your keep list",
         help_text=(
             'Tagged "reaper-keep" in Sonarr or Radarr, or in your Plex "Never Reap" collection.'
         ),
@@ -471,14 +502,15 @@ class Condition:
     def validate_for(self, lane: Lane) -> None:
         spec = self.spec()
         if lane not in spec.lanes:
+            allowed = _join_or([_LANE_HOME[x] for x in spec.lanes])
             raise ValueError(
-                f'"{spec.label}" cannot be used to {lane.value}. '
-                f"It is available in: {', '.join(x.value for x in spec.lanes)}."
+                f'"{spec.label}" cannot be used to {_LANE_USE[lane]}. It only works as {allowed}.'
             )
         if self.op not in spec.ops:
+            allowed = _join_or([f'"{_OP_NAME[o]}"' for o in spec.ops])
             raise ValueError(
-                f'"{spec.label}" does not support {self.op.value}. '
-                f"Allowed: {', '.join(o.value for o in spec.ops)}."
+                f'"{spec.label}" cannot be compared with "{_OP_NAME[self.op]}". '
+                f"It works with {allowed}."
             )
         self._validate_value_type(spec)
 
