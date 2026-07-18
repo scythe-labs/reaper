@@ -20,6 +20,11 @@ refreshes Plex. Python 3.13 / FastAPI backend + React 19 / Vite frontend, one co
   importantly, *which assumptions turned out wrong*. Update it as work proceeds. Record
   findings (including negative results) in `docs/LEARNINGS.md` / `docs/SIGNALS.md`.
 - **Pre-release: migrations stay at one Alembic baseline** and the dev DB is disposable.
+- **Operator copy is read at a glance, never twice.** A phrase over a sentence, a sentence
+  over two; lead with the outcome and leave the explanation to help text bound to the
+  control. These surfaces are *scanned* while deciding what to delete, so long copy does
+  not get read at all. Rule 21 governs the vocabulary, this one the length — after writing
+  an operator string, cut it once more.
 - **Mock up UI/UX before touching code.** When the work is about UI or UX, present a
   rendered mockup first (it must be a self-contained HTML artifact that faithfully
   represents reapers look and feel) and iterate on *that* until it's approved — only then
@@ -203,7 +208,9 @@ the file* and *failing closed*. Read them before touching the safety, auth, or c
     it, reword it. This applies to notices, tooltips, empty states, and error text alike.
     **No em dashes in operator-facing copy** (frontend strings and backend `detail`/message
     strings alike): reword with a period, comma, or colon. Middots as separators
-    ("70/100 · 20% of the score") and arrows ("Policy → Deletion") are fine.
+    ("70/100 · 20% of the score") and arrows ("Policy → Deletion") are fine. Length is
+    governed by the golden rule above: read at a glance, never twice. A string that is
+    plain but long still fails.
 
 ## Blockers from the second review pass
 
