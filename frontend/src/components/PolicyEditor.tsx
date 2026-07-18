@@ -507,7 +507,10 @@ function SignalRow({
           ) : (
             <>
               <strong>{signal.weight}</strong>
-              <span className="muted">/100 · {share}% of the score</span>
+              {/* No "/100" beside the share: the slider already shows the range, and a
+                  weight of 70 written as "70/100" next to "58% of the score" reads as two
+                  answers to the same question. The share is the one that is true. */}
+              <span className="muted"> · {share}% of the score</span>
             </>
           )}
         </span>
@@ -772,9 +775,12 @@ function SuggestInput({
  *  from/to pair and the rule scales up between them, like the built-in signals. */
 function RemoveRulesEditor({
   condemn,
+  totalWeight,
   onCondemn,
 }: {
   condemn: CustomCondemn[];
+  /** The engine's whole denominator: the built-in weights plus these rules' own. */
+  totalWeight: number;
   onCondemn: (r: CustomCondemn[]) => void;
 }) {
   const { data: condemnVocab } = useQuery({
@@ -854,6 +860,14 @@ function RemoveRulesEditor({
               <span className="rules-rule">{describeCondemn(r, condemnAll)}</span>
               <span className="rules-weight-remove">
                 {r.kind === "graded" ? `up to +${r.weight}` : `+${r.weight} to the score`}
+                {/* The same readout the built-in signals carry, over the same denominator:
+                    a rule shares the score with them, so its share is the honest number. */}
+                {r.weight > 0 && totalWeight > 0 && (
+                  <span className="muted">
+                    {" "}
+                    · {Math.round((r.weight / totalWeight) * 100)}% of the score
+                  </span>
+                )}
               </span>
               <button className="ghost sm" onClick={() => onCondemn(condemn.filter((_, j) => j !== i))}>
                 Remove
@@ -1450,7 +1464,13 @@ export function PolicyEditor({
   const update = (patch: Partial<PolicyBody>) => setDraft({ ...draft, ...patch });
   const updatePace = (patch: Partial<ProfileSettings>) =>
     setPace(pace === null ? null : { ...pace, ...patch });
-  const totalWeight = draft.signals.reduce((sum, s) => sum + s.weight, 0);
+  // The engine's denominator, not just the built-in one: score() sums the weights of the
+  // built-in signals AND the owner's own rules into a single fixed total (engine/signals.py).
+  // Dividing by the built-ins alone would overstate every built-in signal's share and leave
+  // the owner's rules looking like they cost the score nothing.
+  const totalWeight =
+    draft.signals.reduce((sum, s) => sum + s.weight, 0) +
+    draft.custom_condemn.reduce((sum, c) => sum + c.weight, 0);
   // Only a 422 is the server refusing the POLICY ("you can't save this as-is"). Anything
   // else (a timeout, a 500) means the CHECK itself failed, which must not be dressed up
   // as a policy error nor lock Save: the server re-validates on save regardless.
@@ -1677,6 +1697,7 @@ export function PolicyEditor({
 
         <RemoveRulesEditor
           condemn={draft.custom_condemn}
+          totalWeight={totalWeight}
           onCondemn={(custom_condemn) => update({ custom_condemn })}
         />
         <WarnBlock warnings={warningsFor((f) => f === "custom_condemn")} />
