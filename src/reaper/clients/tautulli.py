@@ -224,7 +224,10 @@ class TautulliClient(BaseClient):
         params = {"apikey": self._api_key, "cmd": "pms_image_proxy", **query}
         try:
             response = await self._send("GET", "/api/v2", params=params)
-        except IntegrationError:
+        except IntegrationError as exc:
+            # Logged, not swallowed silently: a placeholder in the queue is otherwise
+            # indistinguishable from an item that simply has no art.
+            log.warning("artwork.fetch_failed", error=str(exc))
             return None
         content = response.content
         ctype = response.headers.get("content-type", "image/jpeg")
@@ -233,6 +236,7 @@ class TautulliClient(BaseClient):
         # (script-bearing) through to be relayed same-origin.
         media_type = ctype.split(";", 1)[0].strip().lower()
         if not content or media_type not in ALLOWED_IMAGE_TYPES:
+            log.warning("artwork.not_an_image", media_type=media_type, bytes=len(content))
             return None
         return content, media_type
 

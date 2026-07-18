@@ -308,8 +308,14 @@ function Backdrop({ posterUrl }: { posterUrl: string | null }) {
 }
 
 /** A poster thumbnail, with a themed fallback when there is no image (or it fails). */
-function Poster({ url, alt }: { url: string | null; alt: string }) {
+export function Poster({ url, alt }: { url: string | null; alt: string }) {
   const [broken, setBroken] = useState(false);
+
+  // Reset on a new url, exactly as Backdrop does. Without this the flag latches: one
+  // failed image (a dropped session, a slow Plex) leaves the placeholder in place for
+  // every later item this row is reused for, so the art never comes back until remount.
+  useEffect(() => setBroken(false), [url]);
+
   if (!url || broken) {
     return (
       <div className="poster poster-empty" aria-hidden="true">
