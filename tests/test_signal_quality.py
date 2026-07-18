@@ -10,6 +10,8 @@ See docs/SIGNALS.md and docs/LEARNINGS.md.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from pydantic import ValidationError
 
@@ -25,7 +27,7 @@ from reaper.engine.gates import (
 )
 from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, GateSetting
-from reaper.engine.signals import SignalId
+from reaper.engine.signals import SignalConfig, SignalId, evaluate_signal
 
 
 def _facts(days_dormant: float | None) -> Facts:
@@ -52,6 +54,56 @@ def _facts(days_dormant: float | None) -> Facts:
 
 
 GATE = MinDormancyGate(GateConfig(GateId.MIN_DORMANCY, threshold=1095))
+
+SEASON_SIGNAL = SignalConfig(SignalId.SEASON_RANK, weight=15, saturate_at=5)
+
+
+def _ranked(rank: int | None) -> Facts:
+    """A show's season, at a given place counting back from the newest one on disk."""
+    season = (
+        Known(value=rank, source="sonarr")
+        if rank is not None
+        else Unknown(reason="Sonarr unreachable", source="sonarr")
+    )
+    return replace(_facts(900), season_rank=season)
+
+
+class TestTheSeasonRankSignalNamesTheSeasonItMeans:
+    """Rank 1 is the most recent season *with files on disk*
+    (``clients.sonarr_stats.rank_seasons``). The signal used to describe every ranked
+    season as "an older season", so the newest season a show has was shown to the owner
+    as an old one, in the same breath as the pressure being charged against it."""
+
+    def test_rank_one_is_the_newest_season(self) -> None:
+        result = evaluate_signal(SEASON_SIGNAL, _ranked(1))
+
+        assert result.detail == "the newest season on disk"
+        assert "older" not in result.detail
+
+    def test_the_rest_of_the_ramp_counts_back_in_order(self) -> None:
+        assert (
+            evaluate_signal(SEASON_SIGNAL, _ranked(2)).detail == "the second-newest season on disk"
+        )
+        assert (
+            evaluate_signal(SEASON_SIGNAL, _ranked(3)).detail == "the third-newest season on disk"
+        )
+        assert evaluate_signal(SEASON_SIGNAL, _ranked(8)).detail == "the 8th-newest season on disk"
+
+    def test_the_newest_season_still_carries_the_pressure_it_always_did(self) -> None:
+        """The wording changed, not a number. The rank still ramps as it did, which is
+        exactly why the wording had to stop contradicting it."""
+        newest = evaluate_signal(SEASON_SIGNAL, _ranked(1))
+        oldest = evaluate_signal(SEASON_SIGNAL, _ranked(8))
+
+        assert newest.pressure < oldest.pressure
+        assert 0.0 <= newest.pressure <= newest.weight
+
+    def test_an_unreadable_rank_claims_nothing(self) -> None:
+        result = evaluate_signal(SEASON_SIGNAL, _ranked(None))
+
+        assert result.detail == "could not tell which season this is"
+        assert result.evaluated is False
+        assert result.pressure == 0.0
 
 
 class TestTheMinDormancyGate:

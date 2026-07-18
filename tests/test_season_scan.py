@@ -859,6 +859,9 @@ class TestGatherEndToEnd:
         assert pruned.imdb_id == "tt7777"
         assert pruned.content_rating == "TV-PG"
         assert pruned.runtime_minutes == 50
+        # The show's ended-ness is a show-level fact too: one reading of the series,
+        # stamped onto every season row so the card can state it without a second fetch.
+        assert pruned.show_status == "ended"
         assert pruned.ratings_json is not None
         stored = json.loads(pruned.ratings_json)
         assert stored["imdb"] == 71

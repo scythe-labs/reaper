@@ -385,6 +385,17 @@ class Candidate(Base):
     """Sonarr's titleSlug for the show, the coordinate its web routes key on. The show's
     value is stamped on every season row. Display/link only."""
 
+    show_status: Mapped[str | None] = mapped_column(String(12), default=None)
+    """Whether the show is finished, as one of "ended" / "continuing" / "unknown". The
+    show's value is stamped on every season row. Null means the question does not apply
+    (a movie), which is why this is a string and not a nullable bool: a bool has room for
+    two answers and this field must carry four states. "unknown" is its own value because
+    Sonarr reporting no status at all must never render as a definite "still going" --
+    the UI draws it in the "we could not check" treatment. Note "continuing" is only the
+    stored key; the UI label is "Still going", since a show that has not ended may also
+    be one that has not started. Display only, never a verdict input (the custom-rule
+    field reads the frozen Facts, not this column)."""
+
     video_resolution: Mapped[str | None] = mapped_column(String(10), default=None)
     """Canonical resolution of the file at scan time ("2160", "1080", ..., "sd"), from
     Plex's videoResolution first, else parsed from the *arr quality name. Movies only in

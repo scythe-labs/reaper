@@ -669,6 +669,7 @@ def _candidate_out(
         chip=_chip(r.explanation_json, r.verdict, r.score),
         season_number=_season_number(r.media_key),
         group_seasons=group_seasons,
+        show_status=r.show_status,
     )
 
 
@@ -867,6 +868,11 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
             reason=lead.reason,
             chip=lead.chip,
             links=await _deep_links(session, lead_row),
+            # A show-level fact, so any season carrying it answers for the whole show:
+            # one reading of the series is stamped onto every one of its seasons in the
+            # same scan. Skipping the rows that carry nothing keeps a snapshot taken
+            # before this field existed from blanking a group whose other rows have it.
+            show_status=next((c.show_status for c in seasons if c.show_status), None),
             seasons=seasons,
         )
 

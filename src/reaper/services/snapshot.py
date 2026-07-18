@@ -630,6 +630,7 @@ async def scan(
                 video_resolution=item.video_resolution,
                 content_rating=item.content_rating,
                 runtime_minutes=item.runtime_minutes,
+                show_status=None,  # a movie is not a series, so the question does not apply
                 # The same dataset entry build_facts froze into the scoring signal, so
                 # the ratings row can never disagree with the signal text beside it.
                 ratings_json=build_ratings_json(
@@ -687,6 +688,7 @@ async def scan(
                 content_rating=judgement.content_rating,
                 runtime_minutes=judgement.runtime_minutes,
                 ratings_json=judgement.ratings_json,
+                show_status=judgement.show_status,
             ),
             matched_by=judgement.matched_by,
             match_detail=judgement.match_detail,
@@ -736,6 +738,9 @@ class Display:
     content_rating: str | None = None
     runtime_minutes: int | None = None
     ratings_json: str | None = None
+    # "ended" / "continuing" / "unknown" for a season row, None for a movie. Built once,
+    # by season_scan.show_status_key.
+    show_status: str | None = None
 
 
 #: The "no display fields" default, as a singleton so it is not constructed per call.
@@ -843,6 +848,7 @@ def _judge_item(
             content_rating=display.content_rating,
             runtime_minutes=display.runtime_minutes,
             ratings_json=display.ratings_json,
+            show_status=display.show_status,
             verdict=verdict,
             score=score_value,
             coverage_bp=coverage_bp,
@@ -930,7 +936,9 @@ def _explain(
     """
     return json.dumps(
         {
-            "score": round(item_score.value, 1),
+            # The same whole number stored on the row and compared by decide_verdict, so
+            # the panel and the decision can never show two different scores.
+            "score": round(item_score.value),
             # The condemnation subtotal before any keep discount -- so the panel can show
             # "condemnation 67, keep -15, final 52" the way the operator expects from Radarr.
             "base_score": round(item_score.base_value, 1),
@@ -958,8 +966,16 @@ def _explain(
                     "weight": r.weight,
                     "detail": r.detail,
                     "evaluated": r.evaluated,
+                    # What the zero means. Four situations all land on a contribution of
+                    # 0 and are otherwise identical on the wire; only the engine branch
+                    # that produced the result can tell them apart. See SignalState.
+                    "state": r.state.value,
                 }
+                # A weight of 0 is a turned-off rule: out of the denominator, worth no
+                # points, and nothing an owner needs to read. Its detail is engine
+                # shorthand ("disabled"), so it is dropped here rather than rendered.
                 for r in item_score.results
+                if r.weight > 0
             ],
             "keeps": [
                 {

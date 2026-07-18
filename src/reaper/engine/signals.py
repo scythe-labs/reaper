@@ -165,6 +165,34 @@ class KeepResult:
     so missing data pushes toward keeping the file."""
 
 
+class SignalState(enum.StrEnum):
+    """What this row actually says, for a reader who only sees the number.
+
+    Four states, because four genuinely different situations all end at zero pressure
+    and are otherwise indistinguishable once the result is serialised:
+
+    * ``ADDS`` -- it pushed toward removing (the only state with pressure above zero).
+    * ``ARGUES_KEEP`` -- we read a real value and it argues for keeping: a rating above
+      the floor, enough watchers, watched recently.
+    * ``NOT_APPLICABLE`` -- it simply does not apply here. A yes/no rule that did not
+      match, a field with nothing recorded, or a rule turned off. Not an argument for
+      keeping: nothing about this item was found to be worth keeping.
+    * ``UNREADABLE`` -- we could not look. The ONLY state that lowers coverage, and the
+      one the UI must keep visually distinct: "we could not look" is not "we looked and
+      it was fine".
+
+    ``ARGUES_KEEP`` and ``NOT_APPLICABLE`` are kept apart deliberately. Folding them
+    together would let an item with nothing in its favour read as if something argued
+    for keeping it, which overstates the case for keeping in one direction and hides a
+    thin evidence base in the other.
+    """
+
+    ADDS = "adds"
+    ARGUES_KEEP = "argues_keep"
+    NOT_APPLICABLE = "not_applicable"
+    UNREADABLE = "unreadable"
+
+
 @dataclass(frozen=True, slots=True)
 class SignalResult:
     signal: SignalId | str
@@ -176,6 +204,11 @@ class SignalResult:
     evaluated: bool
     """False when the input was Unknown. The weight still counts toward the
     denominator, so an unevaluated signal drags the score down, never up."""
+    state: SignalState
+    """Deliberately has no default: only the branch that produced this result knows
+    whether a zero means "argues for keeping", "does not apply", or "could not look",
+    and that knowledge is gone by the time anything downstream sees the result. A new
+    construction site must choose."""
 
 
 def _ramp(value: float, floor: float, saturate: float) -> float:
@@ -196,7 +229,9 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
     as "in the last <period>"; it never changes a number, only how one reads.
     """
     if not config.enabled:
-        return SignalResult(config.signal, 0.0, 0, "disabled", evaluated=True)
+        return SignalResult(
+            config.signal, 0.0, 0, "disabled", evaluated=True, state=SignalState.NOT_APPLICABLE
+        )
 
     raw: float | None
     detail: str
@@ -215,8 +250,11 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
             detail = f"{raw:.1f} GB on disk" if raw is not None else "could not read the file size"
         case SignalId.SEASON_RANK:
             raw = _numeric(facts.season_rank)
+            # Rank 1 is the NEWEST season with files, not the oldest. Calling it an
+            # older season while charging it deletion pressure told the owner the
+            # opposite of what the ranking means.
             detail = (
-                f"an older season: number {raw:.0f} counting back from the newest"
+                f"the {fields.describe_season_rank(raw)} on disk"
                 if raw is not None
                 else "could not tell which season this is"
             )
@@ -243,7 +281,9 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
     if raw is None:
         # Unknown contributes ZERO pressure -- the floor. Its weight still counts
         # in the denominator, so an outage can only make the score lower.
-        return SignalResult(config.signal, 0.0, config.weight, detail, evaluated=False)
+        return SignalResult(
+            config.signal, 0.0, config.weight, detail, evaluated=False, state=SignalState.UNREADABLE
+        )
 
     fraction = _ramp(raw, float(config.floor), float(config.saturate_at))
     return SignalResult(
@@ -252,6 +292,10 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
         weight=config.weight,
         detail=detail,
         evaluated=True,
+        # A built-in signal always reads a real measurement here, so a zero means the
+        # value sits below the floor -- watched recently, rated well, watched by enough
+        # people. That is an argument for keeping, not an inapplicable rule.
+        state=SignalState.ADDS if fraction > 0 else SignalState.ARGUES_KEEP,
     )
 
 
@@ -263,7 +307,9 @@ def evaluate_custom(config: CustomSignalConfig, facts: Facts) -> SignalResult:
     so a custom rule can only ever push the score DOWN on missing data.
     """
     if not config.enabled:
-        return SignalResult(config.name, 0.0, 0, "disabled", evaluated=True)
+        return SignalResult(
+            config.name, 0.0, 0, "disabled", evaluated=True, state=SignalState.NOT_APPLICABLE
+        )
 
     spec = fields.BY_KEY.get(config.field)
     label = spec.label if spec is not None else config.field
@@ -277,7 +323,14 @@ def evaluate_custom(config: CustomSignalConfig, facts: Facts) -> SignalResult:
             # does, or a graded rule on a field one media type never carries would
             # silently push every one of its items below the coverage floor.
             return SignalResult(
-                config.name, 0.0, config.weight, f"{label}: none recorded", evaluated=True
+                config.name,
+                0.0,
+                config.weight,
+                f"{label}: none recorded",
+                evaluated=True,
+                # We looked and there is genuinely nothing recorded. Nothing about the
+                # item argues for keeping it; the rule just has nothing to work with.
+                state=SignalState.NOT_APPLICABLE,
             )
         raw = (
             float(observation.value)
@@ -288,7 +341,12 @@ def evaluate_custom(config: CustomSignalConfig, facts: Facts) -> SignalResult:
             # Unknown (we could not look): zero pressure, weight retained, and NOT
             # evaluated -- coverage honestly reflects the unchecked input.
             return SignalResult(
-                config.name, 0.0, config.weight, f"could not read {label.lower()}", evaluated=False
+                config.name,
+                0.0,
+                config.weight,
+                f"could not read {label.lower()}",
+                evaluated=False,
+                state=SignalState.UNREADABLE,
             )
         fraction = _ramp(raw, float(config.floor), float(config.saturate_at))
         return SignalResult(
@@ -297,17 +355,42 @@ def evaluate_custom(config: CustomSignalConfig, facts: Facts) -> SignalResult:
             config.weight,
             f"{label}: {raw:.0f}",
             evaluated=True,
+            # A real number below the ramp's floor: measured, and it argues for keeping.
+            state=SignalState.ADDS if fraction > 0 else SignalState.ARGUES_KEEP,
         )
 
     # boolean
     if config.condition is None:  # pragma: no cover -- the policy always sets one
-        return SignalResult(config.name, 0.0, config.weight, "misconfigured rule", evaluated=False)
+        return SignalResult(
+            config.name,
+            0.0,
+            config.weight,
+            "misconfigured rule",
+            evaluated=False,
+            state=SignalState.UNREADABLE,
+        )
     result = fields.evaluate(config.condition, facts)
     if result.blocked:
         # Unknown input: could not check, so it cannot add pressure. Weight retained.
-        return SignalResult(config.name, 0.0, config.weight, result.detail, evaluated=False)
+        return SignalResult(
+            config.name,
+            0.0,
+            config.weight,
+            result.detail,
+            evaluated=False,
+            state=SignalState.UNREADABLE,
+        )
     pressure = float(config.weight) if result.matched else 0.0
-    return SignalResult(config.name, pressure, config.weight, result.detail, evaluated=True)
+    return SignalResult(
+        config.name,
+        pressure,
+        config.weight,
+        result.detail,
+        evaluated=True,
+        # A yes/no rule that did not match does not argue for keeping. It just does not
+        # describe this item, and its detail is phrased as the plain fact.
+        state=SignalState.ADDS if result.matched else SignalState.NOT_APPLICABLE,
+    )
 
 
 def evaluate_keep(config: KeepConfig, facts: Facts) -> KeepResult:

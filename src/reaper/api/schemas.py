@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from reaper.engine.fields import FieldType, Lane, Op
 from reaper.engine.gates import GateId
 from reaper.engine.policy import CustomCondemnSpec, GradedKeepSpec, RatingRuleSpec
-from reaper.engine.signals import SignalId
+from reaper.engine.signals import SignalId, SignalState
 
 
 class SignalContribution(BaseModel):
@@ -28,6 +28,15 @@ class SignalContribution(BaseModel):
     evaluated: bool
     """False means the input was Unknown. Its weight still counts in the denominator,
     so an unevaluated signal drags the score DOWN, never up."""
+
+    state: SignalState | None = None
+    """What a zero actually means: it pushed toward removing, it argued for keeping, it
+    did not apply, or it could not be read. See ``engine.signals.SignalState``.
+
+    Optional because snapshots taken before this field existed carry rows without it.
+    The UI's fallback for such a row is ``not_applicable``, never ``argues_keep``:
+    claiming an old row argued for keeping, when nothing recorded whether it did, would
+    overstate the case for keeping the file."""
 
 
 class GateOutcomeOut(BaseModel):
@@ -223,6 +232,12 @@ class CandidateOut(BaseModel):
     group_seasons: list[GroupSeasonMarkOut] | None = None
     """The whole show's per-season verdict marks (every lane, whole snapshot), for the
     show card's season strip. Set on rows that belong to a group; None for movies."""
+    show_status: str | None = None
+    """Whether the show is finished: ``"ended"``, ``"continuing"`` or ``"unknown"``. None
+    for a movie, where the question does not apply. Three states, not a bool, so "the
+    server did not say" can never be drawn as a definite answer -- ``"unknown"`` renders
+    in the "we could not check" treatment. ``"continuing"`` is labelled "Still going",
+    because that arm also covers a show that has not started airing yet."""
 
 
 class CandidateDetail(CandidateOut):
@@ -252,6 +267,12 @@ class GroupOut(BaseModel):
     """The show-level status line and chip: those of its highest-scoring season, the
     same member the collapsed card leads with."""
     links: LinksOut = Field(default_factory=LinksOut)
+    show_status: str | None = None
+    """Whether the show is finished, for the show card: ``"ended"``, ``"continuing"`` or
+    ``"unknown"``. Taken from the season rows, which is safe because this is a show-level
+    fact: one observation of the series is stamped onto every season of it in the same
+    scan, so the rows of one group cannot disagree. None only if the group somehow holds
+    no row carrying it (a pre-rescan snapshot), and the card then shows nothing."""
     seasons: list[CandidateOut] = Field(default_factory=list)
     """Every season, sorted by season number (unnumbered rows last)."""
 

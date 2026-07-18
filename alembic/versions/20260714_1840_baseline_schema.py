@@ -177,6 +177,7 @@ def upgrade() -> None:
     sa.Column('tmdb_id', sa.Integer(), nullable=True),
     sa.Column('imdb_id', sa.String(length=20), nullable=True),
     sa.Column('title_slug', sa.String(length=200), nullable=True),
+    sa.Column('show_status', sa.String(length=12), nullable=True),
     sa.Column('video_resolution', sa.String(length=10), nullable=True),
     sa.Column('content_rating', sa.String(length=20), nullable=True),
     sa.Column('runtime_minutes', sa.Integer(), nullable=True),

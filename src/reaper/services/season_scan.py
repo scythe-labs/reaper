@@ -151,6 +151,10 @@ class SeasonJudgement:
     content_rating: str | None = None
     runtime_minutes: int | None = None
     ratings_json: str | None = None
+    # Whether the show is finished ("ended" / "continuing" / "unknown"), from the same
+    # observation the custom-rule field reads. See show_status_key for why "unknown" is
+    # a value of its own.
+    show_status: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,6 +286,36 @@ def series_ended(series: Mapping[str, Any]) -> Observation[bool]:
     ended = bool(series.get("ended", False))
     running = status == "continuing" or (status not in ("ended", "deleted") and not ended)
     return Known(value=not running, source="sonarr")
+
+
+def show_status_key(ended: Observation[bool]) -> str | None:
+    """The ended-ness observation, as the key stored on the candidate row.
+
+    The single place the three-state fact becomes a wire value, so the queue, the panel
+    and any future reader cannot drift apart on what "no status" looks like.
+
+    ``Absent`` and ``Unknown`` deliberately map to different things, and collapsing them
+    would be a lie in one direction or the other:
+
+    * ``Absent`` -> ``None``. Nobody stamped a value because the question does not apply
+      to this row (a movie is not a series). The UI shows nothing at all.
+    * ``Unknown`` -> ``"unknown"``. This *is* a show and we could not read its status.
+      That is a real thing to tell the owner, and it renders as "we could not check",
+      never as a claim either way.
+
+    ``Known(False)`` stores ``"continuing"``, but the operator-facing label is "Still
+    going": the arm also covers a show that has not started yet, and "Continuing" would
+    claim more than Sonarr said.
+    """
+    match ended:
+        case Known(value=True):
+            return "ended"
+        case Known():
+            return "continuing"
+        case Unknown():
+            return "unknown"
+        case Absent():
+            return None
 
 
 def series_genres(series: Mapping[str, Any]) -> Observation[str]:
@@ -1076,6 +1110,7 @@ def _judge_series(
                 content_rating=item.show_content_rating,
                 runtime_minutes=item.show_runtime_minutes,
                 ratings_json=show_ratings_json,
+                show_status=show_status_key(show_ended_obs),
             )
         )
     return judgements

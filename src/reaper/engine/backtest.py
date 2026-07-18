@@ -384,6 +384,20 @@ def facts_as_of(
         # Not applicable outside the requester rule: with no requester, "others" is
         # everyone, and the gate would protect anything ever played.
         others_watching=Absent(source="backtest"),
+        # The custom-rule fields, spelled out rather than left to their defaults: every
+        # builder names every field, so adding one cannot silently change scores here.
+        # The historical reconstruction carries none of them -- the dataset is the movie
+        # index plus watch history, with no *arr payload to rebuild genres, quality or a
+        # release date from. ``Absent`` is the fail-safe reading: a boolean rule does not
+        # match, and a graded one adds no pressure while keeping its weight in the
+        # denominator.
+        requested=Absent(source="backtest"),
+        genres=Absent(source="backtest"),
+        release_age_days=Absent(source="backtest"),
+        quality=Absent(source="backtest"),
+        # Movies only, so there is no series status to rebuild -- the same reading the
+        # live movie path gives it, and the ``season_rank`` precedent above.
+        show_ended=Absent(source="backtest"),
         # No multi-source ratings in the historical reconstruction: the dataset carries a
         # single IMDb value (imdb_rating_tenths above), not Radarr's/Plex's rating objects.
         # Empty means the multi-source keep gate simply does not fire here -- it only ever
