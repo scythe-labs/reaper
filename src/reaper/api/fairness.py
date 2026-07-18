@@ -49,7 +49,7 @@ async def get_fairness(request: Request) -> FairnessReportOut:
     if seerr_row is None or tautulli_row is None:
         raise HTTPException(
             400,
-            "The fairness view needs a Seerr and a Tautulli instance -- Seerr for who "
+            "The fairness view needs a Seerr and a Tautulli instance: Seerr for who "
             "requested what, Tautulli for who watched it. Configure them in Settings.",
         )
 

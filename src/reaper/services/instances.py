@@ -19,8 +19,10 @@ Two rules run through everything below:
 
 from __future__ import annotations
 
+import ssl
 from dataclasses import dataclass
 
+import httpx
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +37,15 @@ from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind
 
 log = structlog.get_logger(__name__)
+
+#: What each service is called in operator-facing copy: the name on its own web UI, not
+#: the internal enum value.
+_KIND_LABEL: dict[InstanceKind, str] = {
+    InstanceKind.SONARR: "Sonarr",
+    InstanceKind.RADARR: "Radarr",
+    InstanceKind.TAUTULLI: "Tautulli",
+    InstanceKind.SEERR: "Seerr",
+}
 
 
 class InstanceError(RuntimeError):
@@ -125,7 +136,9 @@ async def create_instance(
         select(Instance).where(Instance.kind == kind, Instance.name == name)
     )
     if clash is not None:
-        raise InstanceConflictError(f"A {kind.value} instance named {name!r} already exists.")
+        raise InstanceConflictError(
+            f'A {_KIND_LABEL.get(kind, "service")} connection named "{name}" already exists.'
+        )
 
     row = Instance(
         kind=kind,
@@ -172,7 +185,8 @@ async def update_instance(
             )
             if clash is not None:
                 raise InstanceConflictError(
-                    f"A {row.kind.value} instance named {new_name!r} already exists."
+                    f"A {_KIND_LABEL.get(row.kind, 'service')} connection named "
+                    f'"{new_name}" already exists.'
                 )
         row.name = new_name
     if base_url is not None and base_url.strip():
@@ -202,6 +216,96 @@ async def delete_instance(session: AsyncSession, instance_id: int) -> bool:
 # ---------------------------------------------------------------------------
 # Connection test -- read-only, and honest about failure
 # ---------------------------------------------------------------------------
+
+#: Shown when nothing in the chain below recognises the failure. Never a bare class name:
+#: "ConnectError: All connection attempts failed" is the first thing a new operator sees
+#: if a URL is wrong, and it teaches them nothing about what to change.
+_GENERIC_FAILURE = "Couldn't connect. The full reason is in Reaper's log."
+
+
+def _causes(exc: BaseException) -> list[BaseException]:
+    """``exc`` and everything it was raised from, outermost first.
+
+    The client layer maps transport failures to :class:`IntegrationError` with
+    ``raise ... from exc``, so the original httpx (and, under it, the ssl) exception is
+    still reachable. Keying the operator message on those *types* beats sniffing the
+    text of a message that upstream is free to reword.
+    """
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
+def _explain_failure(kind: InstanceKind, exc: BaseException) -> str:
+    """One plain sentence an operator can act on, for the families we can recognise.
+
+    Everything else falls through to :data:`_GENERIC_FAILURE`; the raw exception is
+    logged by the caller either way, so nothing is lost, it just is not put in front of
+    someone who is only trying to get a URL and a key right.
+    """
+    chain = _causes(exc)
+    label = _KIND_LABEL.get(kind, "The server")
+
+    # Certificate problems first: they surface as a ConnectError, so the transport
+    # branch below would otherwise swallow the one detail that names the fix.
+    if any(isinstance(e, ssl.SSLError) for e in chain):
+        return (
+            "The server's certificate couldn't be verified. If it is a self-signed "
+            "certificate on a server you run yourself, turn off the certificate check."
+        )
+
+    status = exc.status if isinstance(exc, IntegrationError) else None
+    if status is not None:
+        if status in (401, 403):
+            return f"{label} refused the API key. Copy it again from its own settings."
+        if status == 404:
+            return (
+                f"{label} answered, but there is nothing at this address. Check for a "
+                "missing or extra path at the end of the URL."
+            )
+        if status == 429:
+            return f"{label} asked Reaper to slow down. Wait a moment and test again."
+        if 300 <= status < 400:
+            return (
+                "The server sent Reaper somewhere else, and Reaper won't send your API "
+                "key to a different address. Check the URL and anything proxying it."
+            )
+        if status >= 500:
+            return f"{label} reported a problem of its own (HTTP {status}). Check its log."
+        return f"{label} refused the request (HTTP {status})."
+
+    if any(isinstance(e, httpx.TimeoutException) for e in chain):
+        if any(isinstance(e, httpx.ConnectTimeout | httpx.PoolTimeout) for e in chain):
+            return "Couldn't open a connection to the server in time."
+        return "The server didn't answer in time."
+    if any(isinstance(e, httpx.UnsupportedProtocol | httpx.InvalidURL) for e in chain):
+        return "That isn't an address Reaper can use. Start it with http:// or https://."
+    if any(isinstance(e, httpx.ConnectError | httpx.ProxyError) for e in chain):
+        return (
+            "Couldn't reach the server at this address. Check the URL and port, and that "
+            "the service is running."
+        )
+    if any(isinstance(e, httpx.TransportError) for e in chain):
+        return "The connection to the server broke before it answered."
+    if any(isinstance(e, ValueError) for e in chain):
+        # A body that would not parse: usually a login page or a proxy error page.
+        return f"The address answered, but not with data from {label}. Check the URL."
+    if isinstance(exc, IntegrationError):
+        # The server answered and reported a problem of its own, with no HTTP status to
+        # go on. This is the commonest Tautulli misconfiguration: it answers a bad API
+        # key with a normal HTTP 200 whose body says the request failed. It also covers
+        # an answer in a shape Reaper could not use, and a URL that redirects in a loop.
+        # The raw text stays in the log; the key and the URL are what an operator can act
+        # on.
+        return (
+            f"{label} answered, but turned the request down. Check the API key first, then the URL."
+        )
+    return _GENERIC_FAILURE
 
 
 def _client(kind: InstanceKind, base_url: str, api_key: str, *, verify: bool = True) -> BaseClient:
@@ -233,7 +337,8 @@ async def test_connection(
     try:
         client = _client(kind, base_url, api_key, verify=verify)
     except Exception as exc:  # a malformed URL, say
-        return TestResult(ok=False, detail=str(exc))
+        log.warning("instance.test_failed", kind=kind.value, stage="build", error=str(exc))
+        return TestResult(ok=False, detail=_explain_failure(kind, exc))
 
     try:
         async with client:
@@ -249,10 +354,16 @@ async def test_connection(
             status = await client.status()  # type: ignore[attr-defined]
             version = str(status.get("version") or "") or None
             return TestResult(ok=True, detail="Connected to Seerr.", version=version)
-    except IntegrationError as exc:
-        return TestResult(ok=False, detail=str(exc))
-    except Exception as exc:  # network/TLS/timeout -- report, don't crash the request
-        return TestResult(ok=False, detail=f"{type(exc).__name__}: {exc}")
+    except Exception as exc:  # network/TLS/timeout/HTTP -- report, don't crash the request
+        # The raw exception stays here, in the log, where a diagnosis needs it. What the
+        # operator is shown is the plain-language translation.
+        log.warning(
+            "instance.test_failed",
+            kind=kind.value,
+            stage="request",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        return TestResult(ok=False, detail=_explain_failure(kind, exc))
 
 
 async def test_saved_instance(

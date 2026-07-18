@@ -779,8 +779,9 @@ class Executor:
                 # a plan whose first, smallest, safest delete does not behave as predicted
                 # is a plan we do not understand.
                 raise ExecutionError(
-                    f"The canary ({delete.candidate.title!r}) did not complete as expected: "
-                    f"{outcome.detail}. Halting before touching anything else."
+                    f'The first item, the test item ("{delete.candidate.title}"), did not '
+                    f"finish the way Reaper expected: {outcome.detail}. Stopping now, "
+                    "before anything else is touched."
                 )
             # A later item failing is recorded and survivable: one stubborn item is not a
             # reason to abandon the rest, and the canary already proved the mechanism works.
@@ -1025,7 +1026,7 @@ class Executor:
         try:
             ref = MediaRef.parse(candidate.media_key)
         except Exception as exc:  # a key that parsed at plan time should still parse now
-            return self._fail(delete, f"could not route {candidate.media_key!r}: {exc}")
+            return self._fail(delete, f'could not route "{candidate.media_key}": {exc}')
 
         try:
             if ref.kind == "radarr":
@@ -1048,7 +1049,8 @@ class Executor:
             return self._fail(delete, str(exc))
 
         return self._fail(
-            delete, f"no live delete path for {candidate.media_key!r} ({candidate.media_type})"
+            delete,
+            f'no live delete path for "{candidate.media_key}" ({candidate.media_type})',
         )
 
     async def _send_movie(self, delete: _Delete, ref: MediaRef, *, is_canary: bool) -> StepOutcome:

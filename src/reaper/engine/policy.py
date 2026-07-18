@@ -200,12 +200,12 @@ class GradedCondemnSpec(Frozen):
             )
         spec = BY_KEY.get(self.field)
         if spec is None:
-            raise ValueError(f"Unknown field {self.field!r}.")
+            raise ValueError(f'Unknown field "{self.field}".')
         if Lane.CONDEMN not in spec.lanes:
-            raise ValueError(f"{spec.label!r} cannot be used to remove things.")
+            raise ValueError(f'"{spec.label}" cannot be used to remove things.')
         if Op.GTE not in spec.ops:
             raise ValueError(
-                f"{spec.label!r} is not a number, so it cannot be graded. Use a yes/no rule."
+                f'"{spec.label}" is not a number, so it cannot be graded. Use a yes/no rule.'
             )
         return self
 
@@ -241,10 +241,10 @@ class GradedKeepSpec(Frozen):
             )
         spec = BY_KEY.get(self.field)
         if spec is None:
-            raise ValueError(f"Unknown field {self.field!r}.")
+            raise ValueError(f'Unknown field "{self.field}".')
         if Op.GTE not in spec.ops:
             raise ValueError(
-                f"{spec.label!r} is not a number, so it cannot be graded. Use a protection instead."
+                f'"{spec.label}" is not a number, so it cannot be graded. Use a protection instead.'
             )
         return self
 
@@ -783,7 +783,7 @@ def inspect(
                 severity="warn",
                 message=(
                     f"Keeping the last {body.keep_last_seasons} seasons protects every season of "
-                    "most shows, so TV pruning is effectively off -- most series have fewer "
+                    "most shows, so TV pruning is effectively off: most series have fewer "
                     "seasons than this."
                 ),
             )

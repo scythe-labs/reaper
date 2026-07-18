@@ -104,8 +104,8 @@ REGISTRY: tuple[FieldSpec, ...] = (
         key="days_unwatched",
         label="Days since anyone watched it",
         help_text=(
-            "Counted from the last play -- or, if it has never been played, from "
-            "whichever is later: when it was added, or the start of your watch "
+            "Counted from the last play. If it has never been played, it is counted "
+            "from whichever is later: when it was added, or the start of your watch "
             "history. Never from 1970."
         ),
         type=FieldType.DAYS,
@@ -130,9 +130,9 @@ REGISTRY: tuple[FieldSpec, ...] = (
         help_text=(
             "How many different people have watched this within your popularity "
             "window. Windowed on purpose: on a long-lived server almost everything "
-            "has been watched by *someone*, eventually, so an all-time count protects "
+            "has been watched by someone, eventually, so an all-time count protects "
             "nearly the whole library and the rule stops meaning anything. Only a "
-            "fraction of those items still have watchers in the last year -- and that "
+            "fraction of those items still have watchers in the last year, and that "
             "is the number that tells you the title is still alive."
         ),
         type=FieldType.COUNT,
@@ -145,8 +145,9 @@ REGISTRY: tuple[FieldSpec, ...] = (
         key="watchers_all_time",
         label="Distinct watchers (ever)",
         help_text=(
-            "Everyone who has ever watched this. Available as a PROTECTION only -- "
-            "using it to condemn would make the recency signal meaningless."
+            "Everyone who has ever watched this. It can only be used to keep a title, "
+            "never to remove one. Using it to remove things would make recent viewing "
+            "count for nothing."
         ),
         type=FieldType.COUNT,
         unit_suffix="people",
@@ -162,8 +163,8 @@ REGISTRY: tuple[FieldSpec, ...] = (
         label="IMDb rating",
         help_text=(
             "Always pair this with a vote floor. An 8.3 drawn from a few hundred votes "
-            "is noise, not quality -- every library holds a few of them, and a bare "
-            "rating floor would preserve every one, forever."
+            "is noise, not quality. Every library holds a few of them, and a rating "
+            "floor on its own would keep every one of them, forever."
         ),
         type=FieldType.RATING_TENTHS,
         unit_suffix="/10",
@@ -189,10 +190,10 @@ REGISTRY: tuple[FieldSpec, ...] = (
         key="season_rank",
         label="Season rank (1 = newest)",
         help_text=(
-            "Counted over seasons that actually hold files, specials excluded. "
-            '"Keep the last 2 seasons" is season_rank <= 2 -- no boolean cleverness '
-            "required. Never derived from Sonarr's episodeCount, which is its download "
-            "intent, not what is on disk."
+            "Counted over seasons that actually hold files, specials excluded. Keeping "
+            "the last 2 seasons means a rank of 2 or less. The rank is counted from "
+            "the files that are actually on disk, never from what Sonarr planned to "
+            "download."
         ),
         type=FieldType.COUNT,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
@@ -202,7 +203,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
     FieldSpec(
         key="on_curated_list",
         label="On a protected list",
-        help_text="e.g. the IMDb Top 250, or any list you subscribe to.",
+        help_text="Right now the only list Reaper syncs is the IMDb Top 250.",
         type=FieldType.TEXT,
         lanes=(Lane.PROTECT,),
         ops=TEXT_OPS,
@@ -213,7 +214,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         key="whitelisted",
         label="Whitelisted",
         help_text=(
-            "Tagged 'reaper-keep' in Sonarr/Radarr, or in your Plex \"Never Reap\" collection."
+            'Tagged "reaper-keep" in Sonarr or Radarr, or in your Plex "Never Reap" collection.'
         ),
         type=FieldType.BOOL,
         lanes=(Lane.PROTECT,),
@@ -234,8 +235,8 @@ REGISTRY: tuple[FieldSpec, ...] = (
         label="Requested by a user",
         help_text=(
             "Whether someone asked for this through your requests app. If Reaper cannot "
-            "tell -- the requests app is unreachable, or the title has no id to match on "
-            "-- this is left unknown and never counts toward removal."
+            "tell, because the requests app is unreachable or this title could not be "
+            "matched to a request, this is left unknown and never counts toward removal."
         ),
         type=FieldType.BOOL,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
@@ -247,7 +248,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         label="Genre",
         help_text=(
             'The genres recorded for this title. Use "contains" to match one genre '
-            "within a title that has several (e.g. contains Reality)."
+            "within a title that has several (for example, contains Reality)."
         ),
         type=FieldType.TEXT,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
@@ -260,7 +261,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         label="Age since release",
         help_text=(
             "How long ago the title was released. Pairs well with how long it has gone "
-            "unwatched -- old and untouched is a stronger case than either alone."
+            "unwatched: old and untouched is a stronger case than either alone."
         ),
         type=FieldType.DAYS,
         unit_suffix="days",
@@ -272,8 +273,9 @@ REGISTRY: tuple[FieldSpec, ...] = (
         key="quality",
         label="File quality",
         help_text=(
-            "The quality of the file on disk, as your library names it (e.g. Bluray-1080p, "
-            'SDTV). Use "contains" to match a resolution -- contains 2160p for 4K.'
+            "The quality of the file on disk, as your library names it (for example "
+            'Bluray-1080p, SDTV). Use "contains" to match a resolution: contains 2160p '
+            "for 4K."
         ),
         type=FieldType.TEXT,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
@@ -324,18 +326,18 @@ class Condition:
         try:
             return BY_KEY[self.field]
         except KeyError:
-            raise ValueError(f"Unknown field {self.field!r}.") from None
+            raise ValueError(f'Unknown field "{self.field}".') from None
 
     def validate_for(self, lane: Lane) -> None:
         spec = self.spec()
         if lane not in spec.lanes:
             raise ValueError(
-                f"{spec.label!r} cannot be used to {lane.value}. "
+                f'"{spec.label}" cannot be used to {lane.value}. '
                 f"It is available in: {', '.join(x.value for x in spec.lanes)}."
             )
         if self.op not in spec.ops:
             raise ValueError(
-                f"{spec.label!r} does not support {self.op.value}. "
+                f'"{spec.label}" does not support {self.op.value}. '
                 f"Allowed: {', '.join(o.value for o in spec.ops)}."
             )
         self._validate_value_type(spec)
@@ -354,14 +356,14 @@ class Condition:
         value = self.value
         if spec.type is FieldType.BOOL:
             if not isinstance(value, bool):
-                raise ValueError(f"{spec.label!r} expects true or false, got {value!r}.")
+                raise ValueError(f'"{spec.label}" expects true or false, got {value}.')
         elif spec.type is FieldType.TEXT:
             if not isinstance(value, str):
-                raise ValueError(f"{spec.label!r} expects text, got {value!r}.")
+                raise ValueError(f'"{spec.label}" expects text, got {value}.')
         # Numeric field types (days, bytes, count, rating tenths). bool is an int
         # subclass in Python, so it must be rejected explicitly.
         elif isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError(f"{spec.label!r} expects a whole number, got {value!r}.")
+            raise ValueError(f'"{spec.label}" expects a whole number, got {value}.')
 
 
 @dataclass(frozen=True, slots=True)
@@ -464,7 +466,7 @@ def _num(value: object) -> float:
         return float(value)
     if isinstance(value, int | float):
         return float(value)
-    raise ValueError(f"{value!r} is not numeric.")
+    raise ValueError(f'"{value}" is not a number.')
 
 
 def _render(spec: FieldSpec, value: object) -> str:

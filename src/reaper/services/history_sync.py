@@ -315,8 +315,8 @@ async def _check_regression(engine: AsyncEngine, client: TautulliClient) -> None
         raise HistoryRegressionError(
             f"Tautulli's history shrank from {previous_total:,} rows to {current_total:,}. "
             "Someone has reset, pruned or restored its database. Reaper will not judge "
-            "anything as unwatched until this is explained -- the mirror we already hold "
-            "is preserved, so nothing is lost by stopping here."
+            "anything as unwatched until this is explained. The mirror Reaper already "
+            "holds is preserved, so nothing is lost by stopping here."
         )
 
     await _store_tautulli_total(engine, current_total)

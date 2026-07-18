@@ -327,7 +327,11 @@ class RatingFloorGate:
         # NOT protecting -- the safe direction for a keep, which can only ever spare a file.
         protects = bool(cleared) if self.match == "any" else (not missed and bool(self.rules))
         if protects:
-            return GateResult(self.id, PROTECT, detail="well rated: " + "; ".join(cleared) + ".")
+            # No trailing period: a fired protection reads as a lowercase fragment in the
+            # "Protections that fired" list, alongside "someone is watching it right now"
+            # and "on your keep list, never reaped". The ABSTAIN details below are full
+            # sentences by the same convention, so they keep theirs.
+            return GateResult(self.id, PROTECT, detail="well rated: " + "; ".join(cleared))
         if cleared:
             return GateResult(
                 self.id,

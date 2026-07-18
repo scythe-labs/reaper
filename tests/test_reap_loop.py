@@ -871,7 +871,8 @@ class TestMovieLiveSend:
 
         assert report.state is RunState.ABORTED
         assert report.deleted_items == 0
-        assert report.aborted_reason is not None and "canary" in report.aborted_reason.lower()
+        assert report.aborted_reason is not None
+        assert "test item" in report.aborted_reason.lower()
 
     async def test_a_movie_without_a_tmdb_id_is_refused_before_the_delete(
         self, session: AsyncSession

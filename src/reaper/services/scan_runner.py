@@ -124,7 +124,7 @@ def build_gates(policy: PolicyBody) -> list[Gate]:
         gate_type = GATE_TYPES.get(setting.gate)
         if gate_type is None:
             raise ScanConfigError(
-                f"Policy enables the {setting.gate.value!r} protection, but Reaper has no "
+                f'Policy enables the "{setting.gate.value}" protection, but Reaper has no '
                 "implementation for it. Refusing to scan rather than silently skipping a "
                 "protection you asked for."
             )

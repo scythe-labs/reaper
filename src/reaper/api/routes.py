@@ -483,8 +483,9 @@ def _dormant_for(explanation_json: str) -> str | None:
 
 
 #: The exact detail the scan injects for a hand-spare (services/snapshot.py) -- it wears
-#: the whitelist gate id, so the chip tells it apart by this string.
-_SPARE_DETAIL = "You spared this by hand."
+#: the whitelist gate id, so the chip tells it apart by this string. Worded as a lowercase
+#: fragment with no trailing period, like every other fired protection in the list.
+_SPARE_DETAIL = "you spared this by hand"
 
 #: Parsers over our own gates' closed detail vocabularies (engine/gates.py,
 #: services/season_pruning.py) -- the WhyPanel's CHECK_COPY/CAUSE_COPY precedent.
@@ -1124,9 +1125,7 @@ def _replay_simulation(
         # decide_verdict, which honours it only past the cautious cases.
         merged_extra = list(extra)
         if override == "spare":
-            merged_extra.insert(
-                0, GateResult(GateId.WHITELISTED, PROTECT, detail="You spared this by hand.")
-            )
+            merged_extra.insert(0, GateResult(GateId.WHITELISTED, PROTECT, detail=_SPARE_DETAIL))
         evaluation = Evaluation(results=[*merged_extra, *evaluate_all(gates, facts).results])
         item_score = score_facts(
             signals, facts, custom_condemn=custom, keeps=keeps, window_days=window

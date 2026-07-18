@@ -64,7 +64,7 @@ class TestKeptChipWording:
         ("gate", "detail", "phrase"),
         [
             ("whitelisted", "on your keep list, never reaped", "on your keep list"),
-            ("whitelisted", "You spared this by hand.", "you spared it"),
+            ("whitelisted", "you spared this by hand", "you spared it"),
             ("streaming_now", "someone is watching it right now", "playing right now"),
             (
                 "rating_floor",

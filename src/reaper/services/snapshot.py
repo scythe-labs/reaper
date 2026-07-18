@@ -741,6 +741,13 @@ class Display:
 #: The "no display fields" default, as a singleton so it is not constructed per call.
 _NO_DISPLAY = Display()
 
+#: What a hand spare reads as in the why-panel's "Protections that fired" list. A lowercase
+#: fragment with no trailing period, matching every gate protection ("someone is watching it
+#: right now", "on your keep list, never reaped"). The review chip in api/routes.py matches
+#: this exact string to tell a hand spare apart from a real keep-list entry, so the two must
+#: stay in step: see ``_SPARE_DETAIL`` there.
+_HAND_SPARE_DETAIL = "you spared this by hand"
+
 
 def _judge_item(
     session: AsyncSession,
@@ -788,9 +795,7 @@ def _judge_item(
     # CONDEMN unless a hard safety gate still stands.
     merged_extra = list(extra_results)
     if override == "spare":
-        merged_extra.insert(
-            0, GateResult(GateId.WHITELISTED, PROTECT, detail="You spared this by hand.")
-        )
+        merged_extra.insert(0, GateResult(GateId.WHITELISTED, PROTECT, detail=_HAND_SPARE_DETAIL))
     evaluation = Evaluation(results=[*merged_extra, *evaluate_all(gates, facts).results])
     item_score = score(
         signals,

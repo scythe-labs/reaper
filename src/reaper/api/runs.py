@@ -266,8 +266,10 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
         if payload.confirmation_phrase.strip() != expected:
             raise HTTPException(
                 409,
-                f"That confirmation does not match this plan. Expected {expected!r}. The "
-                "plan may have changed since the page loaded -- reload, review, and confirm "
+                # Plain interpolation, not repr: the operator sees the phrase exactly as it
+                # must be typed, with no engineer-style quoting around it.
+                f"That confirmation does not match this plan. Expected: {expected}. The "
+                "plan may have changed since the page loaded. Reload, review, and confirm "
                 "again.",
             )
         profile_settings = await active_profile_settings(session)

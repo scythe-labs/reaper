@@ -150,7 +150,7 @@ async def reachable_connection(
     # now may simply be restarting. The caller (poll_link) must not consume the PIN over
     # this, so the browser can re-poll the still-valid PIN once the server is back.
     raise PlexLinkRetryableError(
-        f"Found your server ({resource.name!r}) but could not reach it on any of its "
+        f'Found your server ("{resource.name}") but could not reach it on any of its '
         f"{len(resource.connections)} advertised addresses. Reaper has to talk to the "
         "server directly; check that it is running and reachable from this host."
     )
@@ -222,13 +222,13 @@ def _select_owned(owned: list[PlexResource], choice: str) -> PlexResource:
     if len(by_name) > 1:
         ids = ", ".join(r.client_identifier for r in by_name)
         raise PlexLinkError(
-            f"This account owns more than one server named {choice!r}. Pick by machine "
+            f'This account owns more than one server named "{choice}". Pick by machine '
             f"identifier instead: {ids}."
         )
     if not by_name:
-        names = ", ".join(repr(r.name) for r in owned)
+        names = ", ".join(f'"{r.name}"' for r in owned)
         raise PlexLinkError(
-            f"No server this account owns matches {choice!r}. It owns: {names}. "
+            f'No server this account owns matches "{choice}". It owns: {names}. '
             "Start the sign-in again and pick one of those."
         )
     return by_name[0]
@@ -260,7 +260,7 @@ async def complete_link(
     """
     if not owned:
         raise PlexLinkError(
-            f"Signed in as {account.username!r}, but that account does not own a Plex "
+            f'Signed in as "{account.username}", but that account does not own a Plex '
             "server. Reaper must be linked by the server owner: it is going to be "
             "given permission to delete media."
         )

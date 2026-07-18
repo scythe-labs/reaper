@@ -79,17 +79,17 @@ class MediaRef:
         """
         parts = media_key.split(":")
         if len(parts) not in (3, 4) or parts[0] not in ("radarr", "sonarr"):
-            raise PlanError(f"Cannot route media_key {media_key!r} to an instance.")
+            raise PlanError(f'Cannot route media_key "{media_key}" to an instance.')
         try:
             season = int(parts[3]) if len(parts) == 4 else None
             ref = cls(kind=parts[0], instance_id=int(parts[1]), arr_id=int(parts[2]), season=season)
         except ValueError as exc:
-            raise PlanError(f"Malformed media_key {media_key!r}: {exc}") from exc
+            raise PlanError(f'Malformed media_key "{media_key}": {exc}') from exc
 
         if ref.season is not None and ref.kind != "sonarr":
             # Only TV has seasons; a four-part radarr key is a mis-built id, and routing
             # it anywhere is worse than refusing it.
-            raise PlanError(f"A season media_key must be sonarr, got {media_key!r}.")
+            raise PlanError(f'A season media_key must be sonarr, got "{media_key}".')
         return ref
 
 

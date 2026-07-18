@@ -78,7 +78,8 @@ def _kind(value: str) -> InstanceKind:
         return InstanceKind(value)
     except ValueError as exc:
         raise HTTPException(
-            422, f"{value!r} is not a service Reaper knows. Use sonarr, radarr, tautulli or seerr."
+            422,
+            f'"{value}" is not a service Reaper knows. Use sonarr, radarr, tautulli or seerr.',
         ) from exc
 
 
@@ -927,10 +928,10 @@ async def run_job(request: Request, job_id: str) -> dict[str, str]:
     of them can delete anything.
     """
     if job_id not in _RUNNABLE_JOBS:
-        raise HTTPException(404, f"No runnable job named {job_id!r}.")
+        raise HTTPException(404, f'No runnable job named "{job_id}".')
     job = request.app.state.scheduler.get_job(job_id)
     if job is None:
-        raise HTTPException(404, f"Job {job_id!r} is not scheduled.")
+        raise HTTPException(404, f'The "{job_id}" job is not scheduled.')
     job.modify(next_run_time=utcnow())
     log.info("jobs.run_now", job=job_id)
     return {"status": "started", "job": job_id}
@@ -1206,7 +1207,7 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
                 except ValueError:
                     raise HTTPException(
                         422,
-                        f"{cleaned_entry!r} is not an address or a range. Use entries "
+                        f'"{cleaned_entry}" is not an address or a range. Use entries '
                         "like 172.16.0.1 or 172.16.0.0/12.",
                     ) from None
 
