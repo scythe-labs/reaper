@@ -754,6 +754,171 @@ class TestByteIdenticalTwinListings:
 
 
 # ---------------------------------------------------------------------------
+# The folder corroborator -- the only thing a show has once the leaf ties.
+# ---------------------------------------------------------------------------
+
+
+class TestTheFolderTellsTwoListingsApart:
+    """One title kept in two libraries (an HD one and a 4K one) is listed twice in Plex
+    under one tvdb id, with an identical leaf folder. Only the segment above the leaf
+    differs, and comparing trailing segments survives the mount-root difference.
+    """
+
+    @staticmethod
+    def _two_sections() -> PlexIndex:
+        return PlexIndex.build(
+            [
+                _item(
+                    300,
+                    title="Example Show",
+                    tvdb=2001,
+                    basename="example show",
+                    files=(PlexFile("example show", None, "/media/tv/Example Show"),),
+                ),
+                _item(
+                    400,
+                    title="Example Show",
+                    tvdb=2001,
+                    basename="example show",
+                    files=(PlexFile("example show", None, "/media/tv-4k/Example Show"),),
+                ),
+            ]
+        )
+
+    def test_the_parent_folder_binds_the_right_copy(self) -> None:
+        res = resolve_show(
+            ids=ExternalIds.of(tvdb=2001),
+            title="Example Show",
+            year=None,
+            file_basename="/tv-4k/Example Show",
+            file_path="/tv-4k/Example Show",
+            index=self._two_sections(),
+        )
+        assert res.rating_key == 400
+        assert res.matched_by is MatchedBy.ID_AND_BASENAME
+        assert "folder" in res.detail
+
+    def test_the_other_instance_binds_the_other_copy(self) -> None:
+        res = resolve_show(
+            ids=ExternalIds.of(tvdb=2001),
+            title="Example Show",
+            year=None,
+            file_basename="/tv/Example Show",
+            file_path="/tv/Example Show",
+            index=self._two_sections(),
+        )
+        assert res.rating_key == 300
+
+    def test_identical_paths_still_abstain(self) -> None:
+        """Two listings of the very same folder tie at every depth, and a tie is not
+        evidence for either. Fail closed, exactly as before this corroborator existed."""
+        index = PlexIndex.build(
+            [
+                _item(
+                    300,
+                    title="Example Show",
+                    tvdb=2001,
+                    basename="example show",
+                    files=(PlexFile("example show", None, "/media/tv/Example Show"),),
+                ),
+                _item(
+                    400,
+                    title="Example Show",
+                    tvdb=2001,
+                    basename="example show",
+                    files=(PlexFile("example show", None, "/media/tv/Example Show"),),
+                ),
+            ]
+        )
+        res = resolve_show(
+            ids=ExternalIds.of(tvdb=2001),
+            title="Example Show",
+            year=None,
+            file_basename="/tv/Example Show",
+            file_path="/tv/Example Show",
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+
+    def test_a_listing_with_no_path_cannot_win_but_can_still_force_an_abstain(self) -> None:
+        """ "Could not look" is never "looked and it was different": an unreadable path
+        scores zero, so it never wins -- but it also never clears the way for the other."""
+        index = PlexIndex.build(
+            [
+                _item(
+                    300,
+                    title="Example Show",
+                    tvdb=2001,
+                    basename="example show",
+                    files=(PlexFile("example show", None, None),),
+                ),
+                _item(
+                    400,
+                    title="Example Show",
+                    tvdb=2001,
+                    basename="example show",
+                    files=(PlexFile("example show", None, None),),
+                ),
+            ]
+        )
+        res = resolve_show(
+            ids=ExternalIds.of(tvdb=2001),
+            title="Example Show",
+            year=None,
+            file_basename="/tv-4k/Example Show",
+            file_path="/tv-4k/Example Show",
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+
+    def test_a_matching_leaf_alone_is_never_enough(self) -> None:
+        """Depth 1 is the leaf both sides already matched on, so it is no new
+        corroboration: an *arr path with no folder above the leaf cannot break the tie."""
+        res = resolve_show(
+            ids=ExternalIds.of(tvdb=2001),
+            title="Example Show",
+            year=None,
+            file_basename="Example Show",
+            file_path="Example Show",
+            index=self._two_sections(),
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+
+    def test_a_movie_still_prefers_its_exact_size(self) -> None:
+        """The folder is tried first, but where it cannot narrow, size still decides --
+        the movie path keeps every corroborator it had."""
+        index = PlexIndex.build(
+            [
+                _item(
+                    100,
+                    tmdb=1001,
+                    basename="example.mkv",
+                    files=(PlexFile("example.mkv", 111, "/media/movies/Example/example.mkv"),),
+                ),
+                _item(
+                    200,
+                    tmdb=1001,
+                    basename="example.mkv",
+                    files=(PlexFile("example.mkv", 222, "/media/movies/Example/example.mkv"),),
+                ),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=None,
+            file_basename="example.mkv",
+            file_size=222,
+            file_path="/movies/Example/example.mkv",
+            index=index,
+        )
+        assert res.rating_key == 200
+
+
+# ---------------------------------------------------------------------------
 # The contradiction veto -- corroborate-or-silent, never contradict.
 # ---------------------------------------------------------------------------
 

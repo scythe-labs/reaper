@@ -835,6 +835,10 @@ async def gather(
             title=str(series.get("title") or ""),
             year=_as_year(series.get("year")),
             file_basename=identity.to_basename(series.get("path")),
+            # The full series folder, not just its leaf: a show has no file size, so when
+            # one title is listed in two sections the folder above the leaf is all that
+            # can tell the copies apart.
+            file_path=str(series["path"]) if series.get("path") else None,
             index=tv_index,
         )
         item.show_rating_key = resolution.rating_key

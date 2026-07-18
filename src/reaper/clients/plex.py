@@ -110,12 +110,15 @@ def _parse_sweep_element(el: Element) -> PlexItem:
             raw_res = media.get("videoResolution")
             video_resolution = str(raw_res) if raw_res else None
         for part in media.findall("Part"):
-            leaf = to_basename(part.get("file"))
+            path = part.get("file")
+            leaf = to_basename(path)
             if leaf is None:
                 continue
             raw_size = part.get("size")
             size = int(raw_size) if raw_size and raw_size.isdigit() else None
-            files.append(PlexFile(basename=leaf, size=size if size and size > 0 else None))
+            files.append(
+                PlexFile(basename=leaf, size=size if size and size > 0 else None, path=path)
+            )
 
     raw_year = el.get("year")
     raw_added = el.get("addedAt")
@@ -580,12 +583,18 @@ class PlexClient:
                         item = replace(item, ratings=item.ratings + tuple(extra))
 
                     paths = [loc.get("path") for loc in el.findall("Location") if loc.get("path")]
-                    leaves = [leaf for leaf in (to_basename(p) for p in paths) if leaf]
+                    # The leaf feeds the global by_basename map; the FULL path rides along
+                    # on each PlexFile because a show folder has no size, so the segments
+                    # above the leaf are the only thing that can separate the same title
+                    # listed in two sections (identity._narrow_by_path_depth).
+                    located = [(to_basename(p), p) for p in paths]
+                    leaves = [(leaf, p) for leaf, p in located if leaf]
                     if leaves:
                         item = replace(
                             item,
-                            file_basename=leaves[0],
-                            files=item.files or tuple(PlexFile(basename=leaf) for leaf in leaves),
+                            file_basename=leaves[0][0],
+                            files=item.files
+                            or tuple(PlexFile(basename=leaf, path=p) for leaf, p in leaves),
                         )
                     out[int(rk)] = item
             return out

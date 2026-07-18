@@ -1150,6 +1150,20 @@ def _movie_file_basename(movie: Mapping[str, Any]) -> str | None:
     return identity.to_basename(movie_file.get("relativePath") or movie_file.get("path"))
 
 
+def _movie_file_path(movie: Mapping[str, Any]) -> str | None:
+    """The movie file's full path, for the folder corroborator.
+
+    Always the absolute ``path`` (never ``relativePath``, which is the bare file name and
+    carries no folder to compare). Only its trailing segments are ever read, so the
+    mount-root difference against Plex does not matter.
+    """
+    movie_file = movie.get("movieFile")
+    if not isinstance(movie_file, dict):
+        return None
+    path = movie_file.get("path")
+    return str(path) if path else None
+
+
 def _movie_file_size(movie: Mapping[str, Any]) -> int | None:
     """The exact byte count Radarr records for the movie's file, or ``None``.
 
@@ -1224,6 +1238,7 @@ def _raw_items(
             year=int(movie["year"]) if movie.get("year") else None,
             file_basename=_movie_file_basename(movie),
             file_size=_movie_file_size(movie),
+            file_path=_movie_file_path(movie),
             index=plex_index,
         )
         matched = resolution.plex_item

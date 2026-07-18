@@ -29,8 +29,13 @@ regional titles). The ladder, top to bottom:
    copies (split HD/4K sections, a curated section re-listing a title); the *arr item's
    own file name may then pick the copy -- compared only among that id's candidates, with
    every candidate's file names known. A name matching exactly one candidate binds it. A
-   name matching *several* gets one more corroborator, the exact byte size the *arr
-   records for its file: a size singling out one candidate binds it, and several
+   name matching *several* gets a second corroborator, the folder the copy sits in:
+   trailing path segments are compared (never whole paths -- the mount roots differ), and
+   a candidate strictly deeper than every other binds. That is what separates one title
+   kept in both an HD and a 4K library, whose leaf folder is identical in both and whose
+   parent is not; a show has no size, so it is the only corroborator a show ever gets.
+   A name still matching *several* gets the last corroborator, the exact byte size the
+   *arr records for its file: a size singling out one candidate binds it, and several
    candidates carrying that name at exactly that size are byte-identical twins -- one
    file listed more than once (a curated section re-listing the very file) -- bound as a
    **group** under one canonical key, with every listing's rating key kept so watch reads
@@ -239,6 +244,36 @@ def parse_guids(guids: Iterable[str], legacy_guid: str | None = None) -> Externa
 # ---------------------------------------------------------------------------
 
 
+def to_segments(path: str | None) -> tuple[str, ...]:
+    """A path split into its lowercased, non-empty segments, outermost first.
+
+    The companion to :func:`to_basename`, and normalized the same way (either separator,
+    lowercased) so the two sides of a comparison are reduced identically. Returns an empty
+    tuple for a missing path, which never matches and never mismatches.
+    """
+    if not path:
+        return ()
+    return tuple(
+        seg for seg in (s.strip().lower() for s in re.split(r"[\\/]", path.strip())) if seg
+    )
+
+
+def _shared_suffix_depth(left: Sequence[str], right: Sequence[str]) -> int:
+    """How many trailing segments two paths have in common.
+
+    Compared from the leaf backwards because the *mount roots differ*: the *arr says
+    ``/tv/Show``, Plex says ``/media/tv/Show`` (the very reason :func:`to_basename` exists).
+    The leaf is depth 1; a second shared segment -- the library root the copy lives under --
+    is what separates an HD listing from a 4K one when both name the folder identically.
+    """
+    depth = 0
+    for a, b in zip(reversed(left), reversed(right), strict=False):
+        if a != b:
+            break
+        depth += 1
+    return depth
+
+
 @dataclass(frozen=True, slots=True)
 class PlexFile:
     """One file (movie) or folder (show) behind a Plex listing.
@@ -246,10 +281,17 @@ class PlexFile:
     ``basename`` is the location's leaf; ``size`` is the exact byte count Plex reports
     for the file, or ``None`` where there is none to report (show folders) or Plex did
     not say. An unknown size never matches and never mismatches -- it abstains.
+
+    ``path`` is the location's *full* path as Plex reports it, kept because a show folder
+    has no size and its leaf alone cannot separate the same title listed in two sections
+    (an HD library and a 4K one name the folder identically). Only the trailing segments
+    are ever compared, and only among one id's own candidates -- see
+    :func:`_shared_suffix_depth`. ``None`` where Plex did not report a path.
     """
 
     basename: str
     size: int | None = None
+    path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -414,8 +456,49 @@ def title_year_match(title: str | None, year: int | None, index: PlexIndex) -> i
     return matched[0] if len(matched) == 1 else None
 
 
+def _narrow_by_path_depth(
+    matched: Sequence[int], basename: str, file_path: str | None, index: PlexIndex
+) -> int | None:
+    """The one listing whose folder sits deepest under the *arr's own path, or ``None``.
+
+    Every listing in ``matched`` already holds a file with this leaf name, so the leaf is
+    spent as a discriminator and only the segments *above* it can still speak. A listing
+    wins only if its deepest shared suffix is strictly greater than every other listing's:
+    a tie means the paths agree exactly as far as they agree, and agreeing equally well is
+    not evidence for either. Depth 1 is the leaf both sides already matched on, so it is
+    no new corroboration and never wins.
+
+    ``None`` means "could not narrow", never "no match" -- the caller falls through to the
+    size corroborator and, failing that, abstains. Unknown is never "different".
+    """
+    arr_segments = to_segments(file_path)
+    if len(arr_segments) < 2:
+        return None
+
+    depths: dict[int, int] = {}
+    for rk in matched:
+        best = 0
+        for file in index.by_rating_key[rk].files:
+            if to_basename(file.basename) != basename or file.path is None:
+                continue
+            best = max(best, _shared_suffix_depth(arr_segments, to_segments(file.path)))
+        # A listing whose path we could not read scores 0 and so cannot win, but it also
+        # cannot be ruled out: it stays in the running and can still force the tie that
+        # abstains. "Could not look" is never "looked and it was different".
+        depths[rk] = best
+
+    ranked = sorted(depths.values(), reverse=True)
+    if ranked[0] < 2 or ranked[0] == ranked[1]:
+        return None
+    return max(depths, key=lambda rk: depths[rk])
+
+
 def _narrow_among_id_hits(
-    hits: Sequence[int], basename: str | None, file_size: int | None, index: PlexIndex
+    hits: Sequence[int],
+    basename: str | None,
+    file_size: int | None,
+    index: PlexIndex,
+    file_path: str | None = None,
 ) -> tuple[tuple[int, ...], str]:
     """The Tier-1 candidates provably holding this *arr item's file, or why none could be.
 
@@ -428,7 +511,16 @@ def _narrow_among_id_hits(
     whose files we could not see might be the very file this item manages, so "could not
     look" abstains rather than counting as "looked and it was different".
 
-    A name matching SEVERAL candidates gets one more corroborator: the exact byte size
+    A name matching SEVERAL candidates gets one more corroborator before size: the folder
+    the copy lives *under*. Comparing whole paths would be wrong -- the mount roots differ
+    (:func:`to_basename` exists for that reason) -- so only trailing segments are compared,
+    and a candidate wins only by being *strictly* deeper than every other. That is what
+    separates a title an operator keeps in both an HD library and a 4K one: the leaf folder
+    is identical in both, the segment above it is not. A show has no size to fall back on,
+    so without this corroborator two same-leaf listings under one id could never be told
+    apart (recorded in docs/LEARNINGS.md).
+
+    A name still matching SEVERAL candidates gets the last corroborator: the exact byte size
     the *arr records for its file. A size singling out one candidate binds it. Several
     candidates carrying that name at exactly that size are byte-identical twins -- one
     file listed more than once in Plex (verified live: a curated section re-lists the
@@ -463,8 +555,14 @@ def _narrow_among_id_hits(
     if not matched:
         return (), "this item's file name matches none of them"
 
-    # Several listings hold a file with this very name; the one corroborator left is size.
+    # Several listings hold a file with this very name. Before size, try the folder each
+    # copy lives under: deepest shared trailing path wins, and only by a strict margin.
     count = len(matched)
+    narrowed_by_path = _narrow_by_path_depth(matched, basename, file_path, index)
+    if narrowed_by_path is not None:
+        return (narrowed_by_path,), f"file name {basename!r} and the folder it sits in"
+
+    # The last corroborator is size.
     if file_size is None:
         return (), (
             f"this item's file name matches {count} of them, "
@@ -517,6 +615,7 @@ def resolve(
     year: int | None,
     file_basename: str | None,
     file_size: int | None = None,
+    file_path: str | None = None,
     index: PlexIndex,
     id_priority: Sequence[str],
 ) -> Resolution:
@@ -527,7 +626,10 @@ def resolve(
     :func:`resolve_movie` / :func:`resolve_show` so they cannot pass the wrong order.
     ``file_size`` is the exact byte count the *arr records for its file (movies only;
     a show is bound by its folder, which has no size) and is consulted only when the file
-    name alone cannot narrow an ambiguous id.
+    name alone cannot narrow an ambiguous id. ``file_path`` is that file or folder's full
+    path on the *arr side, consulted in the same place and only for its trailing segments.
+    Both are corroborators *inside* an id's own answer set; neither is ever a lookup into
+    the wider library.
     """
     basename = to_basename(file_basename)
 
@@ -576,7 +678,7 @@ def resolve(
             # prove that several listings are the same file, bound together (see
             # _narrow_among_id_hits). The wider library is never consulted to break the
             # tie, and any residual ambiguity abstains.
-            narrowed, text = _narrow_among_id_hits(hits, basename, file_size, index)
+            narrowed, text = _narrow_among_id_hits(hits, basename, file_size, index, file_path)
             if not narrowed:
                 return Resolution.abstain(
                     f"Kept: {kind.upper()} id {value} names {len(hits)} Plex items "
@@ -661,12 +763,14 @@ def resolve_movie(
     year: int | None,
     file_basename: str | None,
     file_size: int | None = None,
+    file_path: str | None = None,
     index: PlexIndex,
 ) -> Resolution:
     """Bind a movie: id priority tmdb then imdb.
 
     ``file_size`` is Radarr's exact byte count for the movie's file, consulted only when
-    several Plex listings carry the same file name under one shared id.
+    several Plex listings carry the same file name under one shared id; ``file_path`` is
+    that file's full path, consulted in the same place.
     """
     return resolve(
         ids=ids,
@@ -674,6 +778,7 @@ def resolve_movie(
         year=year,
         file_basename=file_basename,
         file_size=file_size,
+        file_path=file_path,
         index=index,
         id_priority=_MOVIE_ID_PRIORITY,
     )
@@ -685,12 +790,16 @@ def resolve_show(
     title: str | None,
     year: int | None,
     file_basename: str | None,
+    file_path: str | None = None,
     index: PlexIndex,
 ) -> Resolution:
     """Bind a show: id priority tvdb (Sonarr's primary key).
 
     No ``file_size``: a show is bound by its folder, and a folder has no one size -- so
-    two same-name folder listings under one id always abstain, never merge.
+    two same-name folder listings under one id can never be told apart by size, and never
+    merge. ``file_path`` is the folder's full path, and is the *only* corroborator a show
+    has once the leaf ties: an operator keeping one title in both an HD and a 4K library
+    gets two listings whose leaf folder is identical and whose parent is not.
     """
     return resolve(
         ids=ids,
@@ -698,6 +807,7 @@ def resolve_show(
         year=year,
         file_basename=file_basename,
         file_size=None,
+        file_path=file_path,
         index=index,
         id_priority=_SHOW_ID_PRIORITY,
     )
