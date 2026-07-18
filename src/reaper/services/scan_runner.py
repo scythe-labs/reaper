@@ -504,7 +504,8 @@ async def _run_scan_locked(
         )
 
         async with session_factory() as policy_session:
-            movie_policy, tv_policy = await profiles.active_policies(policy_session)
+            active_movie, active_tv = await profiles.active_policies(policy_session)
+            movie_policy, tv_policy = active_movie.body, active_tv.body
             # The grace window is a profile setting, read here so the scan can restart
             # the grace clock for an item that left the condemned set and returned (see
             # snapshot._record_first_flagged); a longer gap than this means a genuine
@@ -520,6 +521,18 @@ async def _run_scan_locked(
         # which degrades the snapshot for each (loud, viewable, un-executable) exactly as an
         # in-gather source failure does. None of them may silently pass through.
         pre_scan_degradations: list[str] = []
+
+        # A stored policy that no longer validated was repaired to load it (profiles
+        # .ActivePolicy.repaired). The rescale cannot move a score, so scanning on it is
+        # safe -- but it is NOT the policy the operator saved, and a run must never
+        # execute against one nobody approved. Degrade, so the scan still produces a
+        # viewable snapshot and the fix is one visit to the policy page.
+        for label, active in (("movie", active_movie), ("tv", active_tv)):
+            if active.repaired:
+                pre_scan_degradations.append(
+                    f"your {label} policy needs saving again before anything can be removed: "
+                    "open the policy page, check the points, and save"
+                )
 
         # Pull watch history into the local mirror BEFORE scoring reads it. Incremental
         # after the first time, but on a fresh install it is what populates the table at

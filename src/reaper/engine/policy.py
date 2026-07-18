@@ -35,22 +35,30 @@ protective number has a floor (``min_votes >= 1``, ``grace_days >= 7``).
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
-from typing import Annotated, ClassVar, Literal, Self
+from typing import Annotated, Any, ClassVar, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from reaper.engine.fields import BY_KEY, Condition, Lane, Op
 from reaper.engine.gates import GateId, RatingRule
 from reaper.engine.signals import MAX_SCORE, CustomSignalConfig, KeepConfig, SignalId
 from reaper.ratings import RatingSource, is_percentage_source, source_label
 
-SCHEMA_VERSION: Literal[2] = 2
-SCORER_VERSION: Literal[2] = 2
+SCHEMA_VERSION = 2
+SCORER_VERSION = 2
 """Bumped when the SCORER changes meaning, not when the schema gains a field.
 Both are inside the policy hash: an item scored under a different scorer was not
-approved under this one."""
+approved under this one.
+
+Deliberately plain ``int`` and not ``Literal``. Pinning the field to a single literal
+means the *next* bump makes every stored body fail ``model_validate_json``, and the one
+caller that reads them (``services.profiles.active_policy``) has no fallback -- so the
+bump would take out the scan path and the policy editor together, including the page an
+operator would use to fix it. Bodies from a NEWER Reaper are still refused, below: those
+we genuinely cannot interpret."""
 
 
 class Frozen(BaseModel):
@@ -292,8 +300,8 @@ class PolicyBody(Frozen):
     so that tightening a cap does not void every pending approval.
     """
 
-    schema_version: Literal[2] = SCHEMA_VERSION
-    scorer_version: Literal[2] = SCORER_VERSION
+    schema_version: int = Field(default=SCHEMA_VERSION, ge=1, le=SCHEMA_VERSION)
+    scorer_version: int = Field(default=SCORER_VERSION, ge=1, le=SCORER_VERSION)
 
     media_type: Literal["movie", "tv"] = "movie"
 
@@ -386,15 +394,42 @@ class PolicyBody(Frozen):
     """Whether a title needs to clear ANY rating bar (the usual case) or ALL of them."""
 
     @model_validator(mode="after")
-    def _at_least_one_signal(self) -> Self:
-        if not any(s.weight > 0 for s in self.signals) and not any(
-            c.weight > 0 for c in self.custom_condemn
-        ):
+    def _weights_total_one_hundred(self) -> Self:
+        """Every removal weight, built-in and operator-authored, sums to exactly 100.
+
+        This is what makes a weight mean points. ``signals.score`` normalizes by the sum
+        of enabled weights, so a weight is a *share* of a running total: at a total of
+        140 a rule written as 20 delivers about 14, and adding a second rule shrinks the
+        first. Pin the total at ``MAX_SCORE`` and ``100 * P / D`` collapses to ``P``, so
+        the number an operator types is the number the score moves by, and it matches the
+        keep lane, whose discounts were always literal points.
+
+        Equality, not ``<=``. Under-allocating renormalizes just as badly in the other
+        direction: at 75 the lane is stretched, every label goes back to lying, and one
+        outage touching both lanes can net *upward* because keeps stay absolute while the
+        condemn side is attenuated.
+
+        The arithmetic is unchanged, and both shipped defaults already total exactly 100,
+        so this moves no score. It closes one real hole as a side effect: setting a signal
+        to 0 used to drop it from the denominator and inflate every remaining signal (see
+        ``SignalConfig.weight``). Now its points must go somewhere, so the denominator
+        cannot move at all.
+        """
+        total = sum(s.weight for s in self.signals) + sum(c.weight for c in self.custom_condemn)
+        if total != MAX_SCORE:
+            over = total - MAX_SCORE
+            fix = f"Take {over} away" if over > 0 else f"Give out the other {-over}"
             raise ValueError(
-                "Every signal has weight 0, so every item would score 0 and nothing "
-                "would ever be a candidate. This is almost certainly not what you meant."
+                f"Your rules add up to {total} points. {fix} before saving. "
+                f"Removal points always total {MAX_SCORE}, so each one is worth "
+                "the same wherever you spend it."
             )
         return self
+
+    # An `_at_least_one_signal` validator lived here, refusing an all-zero policy. A total
+    # of exactly 100 cannot be reached with every weight at 0, so it became unreachable
+    # the moment the rule above landed, and unreachable safety code is deleted rather than
+    # kept for reassurance. If the total is ever relaxed, restore it in the same change.
 
     @model_validator(mode="after")
     def _no_duplicates(self) -> Self:
@@ -629,6 +664,45 @@ class PolicyWarning(Frozen):
     severity: Literal["warn", "danger"]
 
 
+def rebalance(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """A stored policy body rescaled so its removal weights total exactly 100.
+
+    For bodies written before ``PolicyBody._weights_total_one_hundred`` existed, which
+    were free to total anything. Those cannot be loaded any more, and falling back to the
+    shipped default would silently throw away an operator's tuning and show them numbers
+    they never chose.
+
+    Rescaling is the right migration because it is **score-preserving**: the score is
+    ``100 * Σpressure / Σweight`` already, so dividing every weight by the same factor
+    cannot move it. The only movement is integer rounding, and largest-remainder keeps
+    that under a point.
+
+    Returns ``None`` when the body is unreadable for any *other* reason, so the caller can
+    tell "needs rebalancing" from "genuinely broken" and never present a repaired body it
+    does not understand.
+    """
+    try:
+        body = copy.deepcopy(raw)
+        parts: list[dict[str, Any]] = [
+            *(body.get("signals") or []),
+            *(body.get("custom_condemn") or []),
+        ]
+        total = sum(int(p["weight"]) for p in parts)
+        if total <= 0:
+            return None
+        exact = [int(p["weight"]) * MAX_SCORE / total for p in parts]
+        floors = [int(x) for x in exact]
+        order = sorted(range(len(parts)), key=lambda i: exact[i] - floors[i], reverse=True)
+        for i in order[: MAX_SCORE - sum(floors)]:
+            floors[i] += 1
+        for part, weight in zip(parts, floors, strict=True):
+            part["weight"] = weight
+        PolicyBody.model_validate(body)  # only hand back something that actually loads
+    except (KeyError, TypeError, ValueError, ValidationError):
+        return None
+    return body
+
+
 def inspect(
     body: PolicyBody,
     settings: ProfileSettings,
@@ -776,38 +850,11 @@ def inspect(
                 )
             )
 
-    # A custom rule does not sit on top of the score: its weight JOINS the same fixed
-    # denominator as the built-in signals (``signals.score``), so the score is measured
-    # against a bigger total the moment a rule is added. A rule therefore buys a point of
-    # score per point of weight only while the enabled weights total 100 or less; past
-    # that, every point of weight is worth less than a point, and the gap is exactly what
-    # an owner reading "+20 against a threshold of 70" misreads.
-    #
-    # That total is the threshold, rather than a taste call about "a large share": it is
-    # the precise point at which the number on the rule stops matching the points it adds,
-    # and below it there is nothing misleading to say. It stays quiet by construction --
-    # one message however many rules exist, none at all for a policy whose weights still
-    # sum to 100 or less, and none for a policy with no rules of its own.
-    custom_rules = [c for c in body.custom_condemn if c.weight > 0]
-    total_weight = sum(s.weight for s in body.signals) + sum(c.weight for c in custom_rules)
-    if custom_rules and total_weight > MAX_SCORE:
-        heaviest = max(custom_rules, key=lambda c: c.weight)
-        # Floor division: where the worth falls between two whole points, say the smaller
-        # one, so the message never oversells what a rule can do.
-        worth = MAX_SCORE * heaviest.weight // total_weight
-        warnings.append(
-            PolicyWarning(
-                field="custom_condemn",
-                severity="warn",
-                # Lead with the number they got wrong, in one line. The mechanism (rules
-                # share one total) is the second line, and only because it explains why
-                # adding another rule will not help either.
-                message=(
-                    f'"{heaviest.name}" adds about {worth} points, not {heaviest.weight}. '
-                    "Every rule shares one total, so each new rule is worth less."
-                ),
-            )
-        )
+    # There was a dilution warning here, telling an owner that a rule written as 20 was
+    # really adding about 14. `PolicyBody._weights_total_one_hundred` makes that state
+    # unrepresentable: a body whose weights do not total exactly 100 no longer validates,
+    # so a weight and the points it adds can never disagree. A warning for a condition
+    # that cannot occur is worse than no warning, so it is gone rather than reworded.
 
     if body.media_type == "tv" and body.keep_last_seasons >= 10:
         warnings.append(

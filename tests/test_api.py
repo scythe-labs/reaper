@@ -30,7 +30,9 @@ from reaper.db.models import (
     PlexServer,
     Snapshot,
 )
+from reaper.db.models import Policy as PolicyModel
 from reaper.engine.policy import (
+    DEFAULT_MOVIE_POLICY,
     DEFAULT_TV_POLICY,
     GateSetting,
     PolicyBody,
@@ -47,7 +49,8 @@ DEFAULT_GATES = [
     {"gate": "rating_floor", "threshold": 75, "secondary": 1000},
     {"gate": "server_popularity", "threshold": 3},
 ]
-DEFAULT_SIGNALS = [{"signal": "unwatched", "weight": 70, "saturate_at": 1825, "floor": 365}]
+#: One signal carrying the whole 100-point budget (PolicyBody._weights_total_one_hundred).
+DEFAULT_SIGNALS = [{"signal": "unwatched", "weight": 100, "saturate_at": 1825, "floor": 365}]
 
 
 def _policy(condemn_at: int = 70, **overrides: object) -> dict[str, object]:
@@ -846,7 +849,14 @@ class TestTheSimulatorRefusesToGuess:
     def test_changing_a_signal_weight_refuses_to_report_numbers(self, client: TestClient) -> None:
         result = self._simulate(
             client,
-            _policy(signals=[{"signal": "unwatched", "weight": 40, "saturate_at": 1825}]),
+            _policy(
+                signals=[
+                    # A reallocation, not a reduction: the total stays 100, but the
+                    # scoring mix moved, so the stored scores no longer apply.
+                    {"signal": "unwatched", "weight": 60, "saturate_at": 1825},
+                    {"signal": "few_watchers", "weight": 40, "saturate_at": 3},
+                ]
+            ),
         )
 
         assert result["exact"] is False
@@ -863,7 +873,14 @@ class TestTheSimulatorRefusesToGuess:
         answer."""
         result = self._simulate(
             client,
-            _policy(signals=[{"signal": "unwatched", "weight": 40, "saturate_at": 1825}]),
+            _policy(
+                signals=[
+                    # A reallocation, not a reduction: the total stays 100, but the
+                    # scoring mix moved, so the stored scores no longer apply.
+                    {"signal": "unwatched", "weight": 60, "saturate_at": 1825},
+                    {"signal": "few_watchers", "weight": 40, "saturate_at": 3},
+                ]
+            ),
         )
 
         assert "scan" in str(result["stale_reason"]).lower()
@@ -925,6 +942,68 @@ class TestPolicyPersistence:
         assert body["name"] == "default"
         assert len(body["policy_hash"]) == 64
         assert body["body"]["gates"]
+
+    def test_a_stored_policy_that_no_longer_validates_still_opens_the_editor(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """The editor is the one page an operator cannot afford to lose.
+
+        ``active_policy`` re-parses stored JSON through ``PolicyBody``, so any validator
+        added after a row was written turns GET /api/policy into a 500 and locks them out
+        of the very screen that fixes it. Simulated here by writing a body straight to the
+        table with weights that do not total 100, which the budget rule refuses.
+        """
+        stored = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+        stored["signals"] = [{"signal": "unwatched", "weight": 42, "saturate_at": 1825, "floor": 0}]
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        with Session(sa_create_engine(settings.sync_database_url)) as session:
+            session.add(
+                PolicyModel(
+                    name="stale",
+                    media_type="movie",
+                    body_json=json.dumps(stored),
+                    policy_hash="0" * 64,
+                    created_at=utcnow(),
+                )
+            )
+            session.commit()
+
+        response = client.get("/api/policy")
+
+        assert response.status_code == 200
+        out = response.json()
+        # Their own policy, rescaled -- not the shipped default, which would silently
+        # replace tuning they chose with numbers they never picked.
+        assert out["name"] == "stale"
+        assert sum(s["weight"] for s in out["body"]["signals"]) == 100
+        # ...and handed over as an unsaved draft, so nothing is written until they look.
+        assert out["needs_save"] is True
+        assert out["fell_back"] is False
+
+    def test_a_stored_policy_we_cannot_repair_falls_back_and_says_so(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """Rescaling only fixes the budget. Anything else unreadable opens on the default,
+        which must announce itself: a silent default reads as "this is what you configured"
+        and is the one way this fallback could cause a deletion nobody chose."""
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        with Session(sa_create_engine(settings.sync_database_url)) as session:
+            session.add(
+                PolicyModel(
+                    name="broken",
+                    media_type="movie",
+                    body_json=json.dumps({"condemn_at": "not a number"}),
+                    policy_hash="0" * 64,
+                    created_at=utcnow(),
+                )
+            )
+            session.commit()
+
+        out = client.get("/api/policy").json()
+
+        assert out["name"] == "default"
+        assert out["fell_back"] is True
+        assert out["needs_save"] is False
 
     def test_a_saved_policy_is_what_loads_next(self, client: TestClient) -> None:
         client.post("/api/policy", json=_policy(condemn_at=55, name="mine"))

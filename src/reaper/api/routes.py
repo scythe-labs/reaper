@@ -964,10 +964,19 @@ async def _requests_app_configured(session: AsyncSession) -> bool:
     return row is not None
 
 
-def _policy_out(body: PolicyBody, name: str, *, requests_app_configured: bool) -> PolicyOut:
+def _policy_out(
+    body: PolicyBody,
+    name: str,
+    *,
+    requests_app_configured: bool,
+    needs_save: bool = False,
+    fell_back: bool = False,
+) -> PolicyOut:
     return PolicyOut(
         policy_hash=body.policy_hash(),
         name=name,
+        needs_save=needs_save,
+        fell_back=fell_back,
         body=PolicyIn(
             name=name,
             media_type=body.media_type,
@@ -1008,6 +1017,10 @@ def _policy_out(body: PolicyBody, name: str, *, requests_app_configured: bool) -
             keep_rating_match=body.keep_rating_match,
         ),
         warnings=[
+            # Only draft warnings here. The two LOAD-time recoveries (rescaled /
+            # fell_back) are separate fields, not warnings: the editor renders warnings
+            # from re-validating the DRAFT, so anything attached to the GET response
+            # never reaches the page at all. That was a real silent drop.
             PolicyWarningOut(field=w.field, message=w.message, severity=w.severity)
             for w in inspect(
                 body, ProfileSettings(), requests_app_configured=requests_app_configured
@@ -1023,11 +1036,35 @@ def _candidate_media_type(policy_media_type: str) -> str:
 
 @router.get("/policy")
 async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
-    """Load the active policy for a media type, so the editor opens on what is in force."""
+    """Load the active policy for a media type, so the editor opens on what is in force.
+
+    A stored body that no longer validates must never raise here. ``active_policy``
+    re-parses stored JSON through ``PolicyBody``, so any rule tightened after that row was
+    written turns this route into a 500 and locks the operator out of the one page that
+    fixes it. Two recoveries, in order:
+
+    1. **Rescale.** A body written before removal weights had to total 100 is repaired by
+       ``policy.rebalance``, which is score-preserving. It comes back as an *unsaved
+       draft*: the operator's own tuning, in the new units, with nothing written until
+       they look at it and press Save. Their approvals stay valid until they do.
+    2. **Fall back.** Anything we cannot repair opens on the shipped default, saying so,
+       so nobody mistakes it for what is in force.
+    """
     async with _sessions(request)() as session:
-        body, name = await active_policy(session, media_type)
+        active = await active_policy(session, media_type)
+        body, name = active.body, active.name
+        # The two recoveries read very differently to an operator -- "your policy, in new
+        # units" versus "your policy is gone" -- so they are separate flags, never inferred
+        # from the name (an operator's own policy is often called "default").
+        needs_save, fell_back = active.rescaled, active.fell_back
         has_requests_app = await _requests_app_configured(session)
-    return _policy_out(body, name, requests_app_configured=has_requests_app)
+    return _policy_out(
+        body,
+        name,
+        requests_app_configured=has_requests_app,
+        needs_save=needs_save,
+        fell_back=fell_back,
+    )
 
 
 @router.post("/policy")
@@ -1226,7 +1263,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
             raise HTTPException(404, "No scan has run yet, so there is nothing to simulate.")
 
         other_type = "movie" if body.media_type == "tv" else "tv"
-        other, _ = await active_policy(session, other_type)
+        other = (await active_policy(session, other_type)).body
 
         def _combined(pick: Callable[[PolicyBody], str]) -> str:
             movie_h, tv_h = (

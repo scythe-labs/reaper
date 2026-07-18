@@ -20,7 +20,6 @@ from reaper.engine.policy import (
     GradedCondemnSpec,
     GradedKeepSpec,
     PolicyBody,
-    PolicyWarning,
     ProfileSettings,
     SignalSetting,
     inspect,
@@ -56,12 +55,23 @@ def _facts(**overrides: object) -> Facts:
 
 
 def _policy(**over: object) -> PolicyBody:
+    """A policy whose removal weights total exactly 100, whatever rules the test adds.
+
+    The built-in signal absorbs whatever the custom rules do not spend, because that is
+    what the budget rule (``PolicyBody._weights_total_one_hundred``) requires and what
+    the editor will make an operator do by hand. Tests that care about the split pass
+    ``signals`` explicitly.
+    """
+    rules: tuple[object, ...] = over.get("custom_condemn", ()) or ()  # type: ignore[assignment]
+    spent = sum(getattr(r, "weight", 0) for r in rules)
     base: dict[str, object] = {
         "media_type": "movie",
         "condemn_at": 70,
         "gates": (),
         "signals": (
-            SignalSetting(signal=SignalId.UNWATCHED, weight=70, saturate_at=1825, floor=365),
+            SignalSetting(
+                signal=SignalId.UNWATCHED, weight=100 - spent, saturate_at=1825, floor=365
+            ),
         ),
     }
     return PolicyBody(**{**base, **over})  # type: ignore[arg-type]
@@ -167,17 +177,19 @@ class TestPolicyValidation:
                 )
             )
 
-    def test_a_policy_with_only_a_custom_condemn_weight_is_valid(self) -> None:
-        # Every built-in signal at weight 0, but a custom rule carries weight -> still a scorer.
+    def test_a_policy_scored_entirely_by_your_own_rules_is_valid(self) -> None:
+        """Every built-in signal at 0 and one rule holding the whole budget. Allowed, and
+        deliberately loud: spending all 100 points on one rule is the only way to make a
+        rule condemn on its own, and it costs every built-in signal to do it."""
         policy = _policy(
             signals=(
                 SignalSetting(signal=SignalId.UNWATCHED, weight=0, saturate_at=1825, floor=365),
             ),
             custom_condemn=(
-                BooleanCondemnSpec(name="r", field="genre", op=Op.CONTAINS, value="x", weight=25),
+                BooleanCondemnSpec(name="r", field="genre", op=Op.CONTAINS, value="x", weight=100),
             ),
         )
-        assert policy.custom_condemn[0].weight == 25
+        assert policy.custom_condemn[0].weight == 100
 
     def test_custom_signal_configs_translate_both_flavors(self) -> None:
         policy = _policy(
@@ -202,116 +214,10 @@ class TestPolicyValidation:
         assert any(w.field == "custom_condemn" and w.severity == "danger" for w in warnings)
 
 
-class TestARuleIsWorthLessThanItsNumber:
-    """A custom rule joins the same fixed denominator as the built-in signals, so its
-    weight is not points added on top: it raises the total the score is measured against.
-    An owner reading "+40 against a threshold of 70" reads it as far more than it is, and
-    nothing else in the policy says so."""
-
-    #: The one phrase the warning is identified by, so a reworded message fails loudly here
-    #: rather than silently matching some other warning about the same field.
-    LEAD = "shares one total"
-
-    def _flagged(self, policy: PolicyBody) -> list[PolicyWarning]:
-        return [
-            w
-            for w in inspect(policy, ProfileSettings())
-            if w.field == "custom_condemn" and self.LEAD in w.message
-        ]
-
-    def test_the_stated_worth_is_the_one_the_scorer_produces(self) -> None:
-        policy = _policy(
-            custom_condemn=(
-                BooleanCondemnSpec(
-                    name="reality", field="genre", op=Op.CONTAINS, value="reality", weight=40
-                ),
-            )
-        )
-
-        flagged = self._flagged(policy)
-
-        assert len(flagged) == 1
-        warning = flagged[0]
-        assert warning.severity == "warn"
-        # Not a transcribed number: score an item where this rule is the only thing firing
-        # and check the message quotes what the real scorer gives it.
-        scored = score(
-            [SignalConfig(signal=SignalId.UNWATCHED, weight=70, saturate_at=1825, floor=365)],
-            _facts(
-                genres=Known("reality", "radarr"),
-                days_observed_unwatched=Known(0.0, "tautulli"),
-            ),
-            custom_condemn=[_boolean(name="reality", weight=40)],
-        )
-        assert f"about {int(scored.value)} points" in warning.message
-        assert int(scored.value) < 40  # the whole point: less than the number on the rule
-        assert "not 40" in warning.message
-
-    def test_it_is_silent_while_the_weights_still_total_100(self) -> None:
-        """At or under 100, a point of weight is still worth a point of score, so there
-        is nothing misleading to report and saying it anyway would be noise."""
-        policy = _policy(
-            custom_condemn=(
-                BooleanCondemnSpec(name="r", field="genre", op=Op.CONTAINS, value="x", weight=30),
-            )
-        )
-
-        assert self._flagged(policy) == []
-
-    def test_a_policy_with_no_rules_of_its_own_says_nothing(self) -> None:
-        assert self._flagged(_policy()) == []
-
-    def test_many_rules_still_earn_exactly_one_message(self) -> None:
-        """One message however many rules, naming the heaviest, so the section cannot
-        fill up with a line per rule."""
-        policy = _policy(
-            custom_condemn=(
-                BooleanCondemnSpec(
-                    name="a small one", field="genre", op=Op.CONTAINS, value="x", weight=10
-                ),
-                BooleanCondemnSpec(
-                    name="a big one", field="genre", op=Op.CONTAINS, value="y", weight=45
-                ),
-            )
-        )
-
-        flagged = self._flagged(policy)
-
-        assert len(flagged) == 1
-        warning = flagged[0]
-        assert "a big one" in warning.message
-        assert "a small one" not in warning.message
-
-    def test_a_rule_switched_off_neither_counts_nor_is_named(self) -> None:
-        """Weight 0 leaves the denominator alone, so it changes nothing and cannot be
-        the rule the message points at."""
-        policy = _policy(
-            custom_condemn=(
-                BooleanCondemnSpec(name="off", field="genre", op=Op.CONTAINS, value="x", weight=0),
-                BooleanCondemnSpec(name="on", field="genre", op=Op.CONTAINS, value="y", weight=40),
-            )
-        )
-
-        flagged = self._flagged(policy)
-
-        assert len(flagged) == 1
-        warning = flagged[0]
-        assert '"on"' in warning.message
-        # 70 + 40, not 70 + 40 + 0: a disabled rule is out of the denominator entirely.
-        assert f"about {100 * 40 // 110} points" in warning.message
-
-    def test_the_message_stays_in_plain_language(self) -> None:
-        policy = _policy(
-            custom_condemn=(
-                BooleanCondemnSpec(name="r", field="genre", op=Op.CONTAINS, value="x", weight=40),
-            )
-        )
-
-        message = self._flagged(policy)[0].message
-
-        assert "--" not in message and "—" not in message
-        for jargon in ("denominator", "weight", "normali", "coverage"):
-            assert jargon not in message.lower()
+# TestARuleIsWorthLessThanItsNumber lived here. It pinned the dilution warning: a rule
+# written as 40 really adding about 22. `PolicyBody._weights_total_one_hundred` makes
+# that unrepresentable, so both the warning and its tests are gone rather than reworded.
+# What replaces them is test_policy.py's test_weights_that_do_not_total_one_hundred_are_refused.
 
 
 def _keep(**over: object) -> KeepConfig:

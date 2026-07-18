@@ -8,20 +8,24 @@ themselves at random, or (far worse) silently survive an edit the human never sa
 
 from __future__ import annotations
 
+import itertools
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
-from reaper.engine.gates import GateId
+from reaper.engine.gates import Facts, GateId
 from reaper.engine.policy import (
     DEFAULT_MOVIE_POLICY,
+    DEFAULT_TV_POLICY,
     GateSetting,
     PolicyBody,
     ProfileSettings,
     RatingRuleSpec,
     SignalSetting,
     inspect,
+    rebalance,
 )
 from reaper.engine.signals import SignalId
 from reaper.ratings import RatingSource
@@ -32,9 +36,19 @@ def _policy(**overrides: object) -> PolicyBody:
         "media_type": "movie",
         "condemn_at": 70,
         "gates": (GateSetting(gate=GateId.WHITELISTED),),
-        "signals": (SignalSetting(signal=SignalId.UNWATCHED, weight=50, saturate_at=730),),
+        # Removal weights total exactly 100 (PolicyBody._weights_total_one_hundred), so a
+        # single-signal policy carries the whole budget.
+        "signals": (SignalSetting(signal=SignalId.UNWATCHED, weight=100, saturate_at=730),),
     }
     return PolicyBody(**{**base, **overrides})  # type: ignore[arg-type]
+
+
+def _split(unwatched: int, few_watchers: int) -> tuple[SignalSetting, ...]:
+    """Two signals sharing the 100-point budget, for tests that vary a weight."""
+    return (
+        SignalSetting(signal=SignalId.UNWATCHED, weight=unwatched, saturate_at=730),
+        SignalSetting(signal=SignalId.FEW_WATCHERS, weight=few_watchers, saturate_at=3),
+    )
 
 
 class TestPopularityWindow:
@@ -75,8 +89,10 @@ class TestTheHash:
         assert _policy(condemn_at=70).policy_hash() != _policy(condemn_at=60).policy_hash()
 
     def test_changing_a_weight_changes_the_hash(self) -> None:
-        a = _policy(signals=(SignalSetting(signal=SignalId.UNWATCHED, weight=50, saturate_at=730),))
-        b = _policy(signals=(SignalSetting(signal=SignalId.UNWATCHED, weight=40, saturate_at=730),))
+        """Points move BETWEEN signals rather than in and out of thin air: the total is
+        pinned at 100, so a weight edit is always a reallocation."""
+        a = _policy(signals=_split(60, 40))
+        b = _policy(signals=_split(70, 30))
         assert a.policy_hash() != b.policy_hash()
 
     def test_disabling_a_gate_changes_the_hash(self) -> None:
@@ -120,8 +136,8 @@ class TestEvidenceHash:
     facts replay reproduces exactly, and changes for edits that alter what the scan gathers."""
 
     def test_a_weight_edit_keeps_the_evidence_hash(self) -> None:
-        a = _policy(signals=(SignalSetting(signal=SignalId.UNWATCHED, weight=50, saturate_at=730),))
-        b = _policy(signals=(SignalSetting(signal=SignalId.UNWATCHED, weight=80, saturate_at=730),))
+        a = _policy(signals=_split(50, 50))
+        b = _policy(signals=_split(80, 20))
         assert a.scoring_hash() != b.scoring_hash()  # scoring behaviour moved
         assert a.evidence_hash() == b.evidence_hash()  # ...but the evidence is the same -> replay
 
@@ -201,8 +217,25 @@ class TestFloorsThatCannotBeZero:
             _policy(condemn_at=0)
 
     def test_an_all_zero_weight_policy_is_refused(self) -> None:
-        with pytest.raises(ValidationError, match="every item would score 0"):
+        """Nothing would ever score above 0, so nothing would ever be a candidate.
+        Caught by the budget rule now: 0 is not 100."""
+        with pytest.raises(ValidationError, match="add up to 0 points"):
             _policy(signals=(SignalSetting(signal=SignalId.UNWATCHED, weight=0, saturate_at=730),))
+
+    def test_weights_that_do_not_total_one_hundred_are_refused(self) -> None:
+        """The rule that makes a weight mean points. Both directions fail: under-allocating
+        stretches the lane exactly as over-allocating shrinks it."""
+        with pytest.raises(ValidationError, match="Take 20 away"):
+            _policy(signals=_split(70, 50))
+        with pytest.raises(ValidationError, match="Give out the other 30"):
+            _policy(signals=_split(50, 20))
+
+    def test_both_shipped_defaults_already_balance(self) -> None:
+        """The reason this change moves no score: the policies operators start on are
+        already at exactly 100, so pinning the total is a relabeling, not a migration."""
+        for body in (DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY):
+            total = sum(s.weight for s in body.signals) + sum(c.weight for c in body.custom_condemn)
+            assert total == 100
 
     def test_a_duplicate_gate_is_refused(self) -> None:
         """Otherwise the second silently wins and the UI shows the first."""
@@ -398,3 +431,73 @@ class TestRequestedOnlyScopeWithoutSeerr:
         assert not [
             w for w in inspect(self._tv(), ProfileSettings()) if w.field == "keep_last_scope"
         ]
+
+
+class TestRebalancingAnOldPolicy:
+    """Policies written before removal weights had to total 100 are rescaled rather than
+    discarded. The rescale is only safe because it cannot move a score."""
+
+    def test_rescaling_preserves_every_score(self) -> None:
+        """The claim the migration rests on. ``score`` is ``100 * ΣP / Σw`` already, so
+        dividing every weight by the same factor cancels out. Checked against the real
+        scorer over a spread of evidence rather than argued from the formula."""
+        from reaper.engine.observation import Absent, Known
+        from reaper.engine.signals import SignalConfig, score
+
+        over_budget = {
+            "media_type": "tv",
+            "condemn_at": 70,
+            "gates": [],
+            "signals": [
+                {"signal": "unwatched", "weight": 80, "saturate_at": 1825, "floor": 365},
+                {"signal": "few_watchers", "weight": 75, "saturate_at": 3, "floor": 0},
+                {"signal": "season_rank", "weight": 60, "saturate_at": 6, "floor": 0},
+                {"signal": "low_rating", "weight": 25, "saturate_at": 60, "floor": 0},
+            ],
+        }
+        repaired = rebalance(over_budget)
+        assert repaired is not None
+        assert sum(s["weight"] for s in repaired["signals"]) == 100
+
+        def configs(body: dict) -> list[SignalConfig]:
+            return [
+                SignalConfig(
+                    signal=SignalId(s["signal"]),
+                    weight=s["weight"],
+                    saturate_at=s["saturate_at"],
+                    floor=s["floor"],
+                )
+                for s in body["signals"]
+            ]
+
+        for days, watchers, rank, rating in itertools.product(
+            (0.0, 400.0, 1200.0, 5000.0), (0, 1, 4), (1, 3, 8), (10, 55, 90)
+        ):
+            facts = Facts(
+                title="x",
+                days_observed_unwatched=Known(value=days, source="t"),
+                distinct_watchers=Known(value=watchers, source="t"),
+                distinct_watchers_all_time=Known(value=watchers, source="t"),
+                size_bytes=Known(value=8_000_000_000, source="r"),
+                imdb_rating_tenths=Known(value=rating, source="i"),
+                imdb_votes=Known(value=50_000, source="i"),
+                season_rank=Known(value=rank, source="s"),
+                is_streaming_now=Known(value=False, source="t"),
+                is_managed=Known(value=True, source="r"),
+                in_curated_list=Absent(source="l"),
+                is_whitelisted=Known(value=False, source="l"),
+                others_watching=Known(value=0, source="t"),
+            )
+            before = score(configs(over_budget), facts).value
+            after = score(configs(repaired), facts).value
+
+            # Integer weights cannot divide exactly, so allow the rounding error and no
+            # more. A full point of drift would move items across a threshold.
+            assert abs(before - after) < 1.0, f"{before} -> {after} at {days}/{watchers}"
+
+    def test_a_body_broken_for_any_other_reason_is_not_repaired(self) -> None:
+        """Rescaling fixes the budget and nothing else. Returning a 'repaired' body we do
+        not understand would put invented values in front of an operator as their own."""
+        assert rebalance({"signals": [{"signal": "unwatched", "weight": 0}]}) is None
+        assert rebalance({"condemn_at": "not a number"}) is None
+        assert rebalance({}) is None

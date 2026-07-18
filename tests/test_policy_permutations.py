@@ -88,6 +88,56 @@ def mutated(policy: PolicyBody, **changes) -> PolicyBody:
     return PolicyBody.model_validate(body)
 
 
+def balanced(signals: list[dict]) -> list[dict]:
+    """Drawn weights rescaled to total exactly 100, keeping their relative shape.
+
+    The generators below draw each weight independently, which no longer validates: the
+    budget rule requires the total to be exactly ``MAX_SCORE``. Rescaling rather than
+    re-drawing keeps the property tests sweeping the same *shape* of policy (one dominant
+    signal, four even ones, a signal switched off) instead of narrowing them to whatever
+    happens to sum to 100 by luck.
+
+    Largest-remainder allocation, so the parts sum exactly and no weight is lost to
+    rounding. A signal drawn at 0 stays 0: switching one off is a real policy, and the
+    sweep should keep covering it.
+    """
+    total = sum(s["weight"] for s in signals)
+    if total == 0:
+        signals[0]["weight"] = 100
+        return signals
+    exact = [s["weight"] * 100 / total for s in signals]
+    floors = [int(x) for x in exact]
+    remainder = 100 - sum(floors)
+    # Hand the leftover points to the largest fractional parts, biggest first.
+    order = sorted(range(len(signals)), key=lambda i: exact[i] - floors[i], reverse=True)
+    for i in order[:remainder]:
+        floors[i] += 1
+    for s, w in zip(signals, floors, strict=True):
+        s["weight"] = w
+    return signals
+
+
+def with_rule(policy: PolicyBody, rule: dict) -> PolicyBody:
+    """``policy`` plus one custom rule, funded from the heaviest built-in signal.
+
+    Removal weights total exactly 100 (``PolicyBody._weights_total_one_hundred``), so a
+    rule cannot be bolted on: its points have to come from somewhere. This is the same
+    trade the policy editor makes an operator make by hand, so tests that add a rule go
+    through it rather than round a policy no operator could save.
+    """
+    body = policy.model_dump(mode="json")
+    cost = int(rule.get("weight") or 0)
+    if cost:
+        funder = max(body["signals"], key=lambda s: s["weight"])
+        if funder["weight"] < cost:
+            raise AssertionError(
+                f"no built-in signal can fund a rule of {cost}; heaviest is {funder['weight']}"
+            )
+        funder["weight"] -= cost
+    body["custom_condemn"] = [rule]
+    return PolicyBody.model_validate(body)
+
+
 # ---------------------------------------------------------------------------
 # The pinned baseline: engine drift shows up as a diff here
 # ---------------------------------------------------------------------------
@@ -352,13 +402,13 @@ class TestCustomCondemnRules:
                         "value": value,
                         "weight": 50,
                     }
-                    armed = mutated(policy, custom_condemn=[rule])
+                    armed = with_rule(policy, rule)
                     gates = build_gates(armed)
                     for v in pool:
                         _verdict, score, coverage_bp, _, _ = judge(v, armed, gates)
                         assert 0 <= score <= 100
                         assert 0 <= coverage_bp <= 10000
-                    disarmed = mutated(policy, custom_condemn=[{**rule, "weight": 0}])
+                    disarmed = with_rule(policy, {**rule, "weight": 0})
                     gates0 = build_gates(disarmed)
                     for v in pool[:20]:
                         assert judge(v, disarmed, gates0)[:3] == baseline[v["id"]], (
@@ -378,18 +428,16 @@ class TestCustomCondemnRules:
             pool = (MOVIES if media_type == "movie" else SEASONS)[:60]
             policy = default_policy(media_type)
             for floor, saturate in ((0, 1), (364, 365), (0, 10**9)):
-                armed = mutated(
+                armed = with_rule(
                     policy,
-                    custom_condemn=[
-                        {
-                            "kind": "graded",
-                            "name": "graded-under-test",
-                            "field": key,
-                            "weight": 60,
-                            "floor": floor,
-                            "saturate_at": saturate,
-                        }
-                    ],
+                    {
+                        "kind": "graded",
+                        "name": "graded-under-test",
+                        "field": key,
+                        "weight": 60,
+                        "floor": floor,
+                        "saturate_at": saturate,
+                    },
                 )
                 gates = build_gates(armed)
                 for v in pool:
@@ -402,18 +450,16 @@ class TestCustomCondemnRules:
     ) -> None:
         """Absent is evidence, not blindness: a graded rule on ``season_rank`` must not
         drag every MOVIE under the coverage floor (movies genuinely have no season)."""
-        armed = mutated(
+        armed = with_rule(
             DEFAULT_MOVIE_POLICY,
-            custom_condemn=[
-                {
-                    "kind": "graded",
-                    "name": "rank-rule",
-                    "field": "season_rank",
-                    "weight": 40,
-                    "floor": 0,
-                    "saturate_at": 10,
-                }
-            ],
+            {
+                "kind": "graded",
+                "name": "rank-rule",
+                "field": "season_rank",
+                "weight": 40,
+                "floor": 0,
+                "saturate_at": 10,
+            },
         )
         gates = build_gates(armed)
         for v in MOVIES[:60]:
@@ -427,18 +473,16 @@ class TestCustomCondemnRules:
         named like a built-in would lose its "Your rule" tag and collide in the panel."""
         for name in (s.value for s in SignalId):
             with pytest.raises(ValueError, match="built-in signal"):
-                mutated(
+                with_rule(
                     DEFAULT_MOVIE_POLICY,
-                    custom_condemn=[
-                        {
-                            "kind": "boolean",
-                            "name": name,
-                            "field": "genre",
-                            "op": "contains",
-                            "value": "Genre01",
-                            "weight": 10,
-                        }
-                    ],
+                    {
+                        "kind": "boolean",
+                        "name": name,
+                        "field": "genre",
+                        "op": "contains",
+                        "value": "Genre01",
+                        "weight": 10,
+                    },
                 )
 
 
@@ -496,8 +540,7 @@ class TestUnknownDegradation:
         signals = [
             {**s.model_dump(mode="json"), "weight": rng.randint(0, 100)} for s in policy.signals
         ]
-        if not any(s["weight"] for s in signals):
-            signals[0]["weight"] = 50
+        signals = balanced(signals)
         return mutated(
             policy,
             gates=gates,
@@ -768,10 +811,14 @@ class TestPolicyHash:
             "flag_keep_conflicts": not policy.flag_keep_conflicts,
             "keep_tags": ["another-tag"],
             "keep_tags_match": "all",
-            "signals": [
-                {**s.model_dump(mode="json"), "weight": (s.weight + 7) % 101 or 1}
-                for s in policy.signals
-            ],
+            # A reallocation, not a bump: the total is pinned at 100, so the only weight
+            # edit an operator can make is moving points between signals.
+            "signals": balanced(
+                [
+                    {**s.model_dump(mode="json"), "weight": (s.weight + 7) % 101 or 1}
+                    for s in policy.signals
+                ]
+            ),
         }
         for field_name, value in flips.items():
             changed = mutated(policy, **{field_name: value})
@@ -905,8 +952,7 @@ def legal_policies(draw: st.DrawFn) -> PolicyBody:
                 "floor": draw(st.integers(0, saturate - 1)),
             }
         )
-    if not any(s["weight"] for s in signals):
-        signals[0]["weight"] = 1
+    signals = balanced(signals)
     return PolicyBody.model_validate(
         {
             **base.model_dump(mode="json"),

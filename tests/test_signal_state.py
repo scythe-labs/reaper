@@ -128,7 +128,9 @@ def _policy() -> PolicyBody:
         media_type="movie",
         condemn_at=70,
         gates=(),
-        signals=(SignalSetting(signal=SignalId.UNWATCHED, weight=70, saturate_at=1825, floor=365),),
+        signals=(
+            SignalSetting(signal=SignalId.UNWATCHED, weight=100, saturate_at=1825, floor=365),
+        ),
     )
 
 

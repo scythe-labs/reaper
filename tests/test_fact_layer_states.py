@@ -15,11 +15,13 @@ the answer was none" from "we never got to ask".
 
 from __future__ import annotations
 
+import pathlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from reaper.engine.observation import Absent, Known, Unknown
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.services import lists
 from reaper.services.snapshot import RawItem, ScanContext, _reported_size, build_facts
 
@@ -131,3 +133,78 @@ class TestWatchCountsFromAStaleMirrorAreNotZero:
         from reaper.services import snapshot
 
         assert timedelta(hours=48) == snapshot.MIRROR_STALE_AFTER
+
+
+class TestAPolicyVersionBumpCannotBrickTheEditor:
+    """``schema_version``/``scorer_version`` are read back through
+    ``PolicyBody.model_validate_json`` on both the scan path and ``GET /api/policy``,
+    and that call site has no fallback. Pinned to a single ``Literal``, the next bump
+    would fail every stored body at once, taking out the policy editor along with the
+    scan: the operator could not even open the page to fix it."""
+
+    def test_a_body_written_by_an_older_reaper_still_loads(self) -> None:
+        from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody
+
+        older = DEFAULT_MOVIE_POLICY.model_dump()
+        older["schema_version"] = 1
+        older["scorer_version"] = 1
+
+        assert PolicyBody.model_validate(older).schema_version == 1
+
+    def test_a_body_written_by_a_newer_reaper_is_refused(self) -> None:
+        """The other direction stays closed. A body from a future Reaper may mean things
+        this build cannot interpret, and guessing at a policy is guessing at deletions."""
+        import pydantic
+
+        from reaper.engine.policy import DEFAULT_MOVIE_POLICY, SCHEMA_VERSION, PolicyBody
+
+        newer = DEFAULT_MOVIE_POLICY.model_dump()
+        newer["schema_version"] = SCHEMA_VERSION + 1
+
+        with pytest.raises(pydantic.ValidationError):
+            PolicyBody.model_validate(newer)
+
+
+class TestARepairedPolicyCannotExecute:
+    """A rescaled policy is safe to SCAN on and unsafe to DELETE on, and those are
+    different questions.
+
+    The rescale cannot move a score, so the numbers a scan produces are right. But the
+    body it ran was never saved by anyone: it is Reaper's repair of a stored row, and an
+    approval names a policy hash. Executing against one nobody chose is the substitution
+    the journal exists to prevent, so the scan degrades and the snapshot is not
+    executable until the operator opens the editor and saves.
+    """
+
+    def test_the_repaired_flag_is_carried_not_swallowed(self) -> None:
+        """``active_policy`` repairs rather than raising, and every caller can still tell
+        that it did. A repair that looked identical to a clean load would put the scan on
+        an unapproved policy silently, which is the whole risk."""
+        from reaper.services.profiles import ActivePolicy
+
+        assert ActivePolicy(DEFAULT_MOVIE_POLICY, "mine").repaired is False
+        assert ActivePolicy(DEFAULT_MOVIE_POLICY, "mine", rescaled=True).repaired is True
+        assert ActivePolicy(DEFAULT_MOVIE_POLICY, "default", fell_back=True).repaired is True
+
+    def test_the_two_recoveries_are_flags_and_not_read_off_the_name(self) -> None:
+        """Regression. These were briefly told apart by ``name != "default"``, which looks
+        reasonable and is wrong: an operator's own policy is very often *called* "default",
+        so their rescaled policy was reported as unreadable and the editor stopped offering
+        to save it. The name carries no such meaning; only the flags do."""
+        from reaper.services.profiles import ActivePolicy
+
+        theirs = ActivePolicy(DEFAULT_MOVIE_POLICY, "default", rescaled=True)
+
+        assert theirs.rescaled is True
+        assert theirs.fell_back is False
+
+    def test_the_scan_degrades_on_a_repaired_policy(self) -> None:
+        """Pinned as source, because the wiring is a single `if` in a long function and
+        losing it would be invisible: scans would keep working, and would quietly become
+        executable against a policy the operator never saved."""
+        source = pathlib.Path("src/reaper/services/scan_runner.py").read_text()
+
+        assert "if active.repaired:" in source, (
+            "scan_runner must degrade the snapshot when a policy had to be repaired"
+        )
+        assert "needs saving again before anything can be removed" in source

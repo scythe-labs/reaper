@@ -483,6 +483,23 @@ class PolicyOut(BaseModel):
     policy_hash: str
     name: str
     body: PolicyIn
+
+    needs_save: bool = False
+    """This body was rescaled on the way out and is NOT what is stored.
+
+    Set when a policy written before removal weights had to total 100 was rescaled to fit
+    (``policy.rebalance``). Their own tuning, in new units. The editor opens on it dirty,
+    so the operator reviews and saves it rather than discovering it changed underneath
+    them. Nothing is written until they do, so approvals stay valid meanwhile."""
+
+    fell_back: bool = False
+    """The stored body could not be repaired, so this is the SHIPPED DEFAULT.
+
+    Louder than ``needs_save``: these are numbers the operator never chose.
+
+    Both flags are fields rather than ``warnings`` entries on purpose. The editor builds
+    its warning list by re-validating the *draft*, so anything attached to this response
+    is never read -- a load-time warning put there is silently dropped."""
     warnings: list[PolicyWarningOut]
     """Things that are legal but probably not what you meant. A validator cannot tell
     an IMDb floor of 96 (meaning 9.6) from a Rotten Tomatoes 96 typed into the wrong

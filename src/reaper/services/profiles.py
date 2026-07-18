@@ -19,6 +19,11 @@ and this is where that decision is stored and read.
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
+
+import structlog
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,7 +35,10 @@ from reaper.engine.policy import (
     DEFAULT_TV_POLICY,
     PolicyBody,
     ProfileSettings,
+    rebalance,
 )
+
+log = structlog.get_logger(__name__)
 
 DEFAULT_PROFILE_NAME = "default"
 
@@ -68,7 +76,39 @@ async def active_policy_row(session: AsyncSession, media_type: str) -> PolicyMod
     ).scalar_one_or_none()
 
 
-async def active_policy(session: AsyncSession, media_type: str = "movie") -> tuple[PolicyBody, str]:
+@dataclass(frozen=True, slots=True)
+class ActivePolicy:
+    body: PolicyBody
+    name: str
+
+    rescaled: bool = False
+    """This is the operator's own body, rescaled to load (``policy.rebalance``).
+
+    Their tuning survived; only the units moved, and the rescale cannot change a score.
+    The editor opens on it as an unsaved draft so they review and re-save it themselves.
+    """
+
+    fell_back: bool = False
+    """The stored body could not be repaired, so this is the SHIPPED DEFAULT.
+
+    Their tuning did not survive. Louder than ``rescaled`` in the UI, because the numbers
+    on screen are ones they never chose.
+    """
+
+    @property
+    def repaired(self) -> bool:
+        """Either recovery: what is in hand is not what is stored.
+
+        The scan reads this one. Both cases mean the run would execute against a policy
+        nobody saved, which is the substitution the journal exists to prevent -- so both
+        degrade the snapshot, however the body was arrived at. Do NOT infer this from the
+        name: an operator's own policy is frequently *called* "default", so the name
+        cannot tell the two recoveries apart (it silently did not, once).
+        """
+        return self.rescaled or self.fell_back
+
+
+async def active_policy(session: AsyncSession, media_type: str = "movie") -> ActivePolicy:
     """The policy Reaper is currently working to, for one media type.
 
     Movies and TV are tuned separately -- keep-last-N seasons and the season-rank signal only
@@ -79,19 +119,32 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> tup
     Policy rows are **immutable and append-only** -- editing writes a new row rather than
     mutating the old one, because snapshots, approvals and audit entries point at these
     rows by hash and must stay interpretable years later.
+
+    **This must not raise on a stored body that no longer validates.** It is read from the
+    editor, the simulator and the scan, so a validator added after a row was written would
+    otherwise take out all three at once, including the page that fixes it. A body whose
+    removal weights predate the 100-point budget is rescaled (score-preserving) and flagged
+    ``repaired``; anything else unreadable falls back to the shipped default, also flagged.
     """
     row = await active_policy_row(session, media_type)
+    default = DEFAULT_TV_POLICY if media_type == "tv" else DEFAULT_MOVIE_POLICY
 
     if row is None:
-        return (DEFAULT_TV_POLICY if media_type == "tv" else DEFAULT_MOVIE_POLICY), "default"
-    return PolicyBody.model_validate_json(row.body_json), row.name
+        return ActivePolicy(default, "default")
+    try:
+        return ActivePolicy(PolicyBody.model_validate_json(row.body_json), row.name)
+    except ValidationError:
+        repaired = rebalance(json.loads(row.body_json))
+        if repaired is not None:
+            log.info("policy.rebalanced", media_type=media_type, name=row.name)
+            return ActivePolicy(PolicyBody.model_validate(repaired), row.name, rescaled=True)
+        log.warning("policy.unreadable", media_type=media_type, name=row.name)
+        return ActivePolicy(default, "default", fell_back=True)
 
 
-async def active_policies(session: AsyncSession) -> tuple[PolicyBody, PolicyBody]:
+async def active_policies(session: AsyncSession) -> tuple[ActivePolicy, ActivePolicy]:
     """The (movie, tv) policies in force, in that fixed order -- the pair a scan runs to."""
-    movie, _ = await active_policy(session, "movie")
-    tv, _ = await active_policy(session, "tv")
-    return movie, tv
+    return (await active_policy(session, "movie"), await active_policy(session, "tv"))
 
 
 async def _ensure_active_policy_row(session: AsyncSession) -> int:

@@ -31,7 +31,7 @@ from reaper.db.models import FirstFlagged
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
 from reaper.engine.observation import Known
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
-from reaper.services import app_settings, history_sync, lists, season_scan
+from reaper.services import app_settings, history_sync, lists, profiles, season_scan
 from reaper.services.scan_runner import _allowed_sections, build_gates
 from reaper.services.snapshot import Progress, RadarrSource, _release_age_days, candidates, scan
 
@@ -595,7 +595,10 @@ class TestRunScanHistorySync:
             return ([], [], _CmTautulli(), None, None)
 
         async def fake_policies(session: Any) -> Any:
-            return (DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY)
+            return (
+                profiles.ActivePolicy(DEFAULT_MOVIE_POLICY, "default"),
+                profiles.ActivePolicy(DEFAULT_TV_POLICY, "default"),
+            )
 
         async def fake_profile(session: Any) -> Any:
             return ProfileSettings()
@@ -681,7 +684,10 @@ class TestOneScanAtATime:
             return ([], [], _CmTautulli(), None, None)
 
         async def fake_policies(session: Any) -> Any:
-            return (DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY)
+            return (
+                profiles.ActivePolicy(DEFAULT_MOVIE_POLICY, "default"),
+                profiles.ActivePolicy(DEFAULT_TV_POLICY, "default"),
+            )
 
         async def fake_profile(session: Any) -> Any:
             return ProfileSettings()
@@ -920,7 +926,10 @@ class TestKeepHistoryCoverage:
             return SimpleNamespace(rows=0)
 
         async def fake_policies(session: Any) -> Any:
-            return (DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY)
+            return (
+                profiles.ActivePolicy(DEFAULT_MOVIE_POLICY, "default"),
+                profiles.ActivePolicy(DEFAULT_TV_POLICY, "default"),
+            )
 
         async def fake_profile(session: Any) -> Any:
             return ProfileSettings()
