@@ -34,6 +34,18 @@ Because the denominator includes unknown weights, an item we know little about
 scores low automatically -- it is fail-safe by arithmetic rather than by a rule
 somebody has to remember. ``coverage`` reports how much of the weight we actually
 managed to evaluate, and a coverage floor abstains below it.
+
+That gives a second, implicit floor, and it is load-bearing::
+
+    base <= MAX_SCORE * coverage
+
+Every unevaluated signal contributes pressure ``0`` while keeping its weight in the
+denominator, so the score cannot exceed the share of evidence we could read. The
+consequence is that **``condemn_at`` is itself a coverage floor**: an item cannot
+reach a threshold of 70 without at least 70% of the policy's weight being readable,
+whatever ``coverage_floor_bp`` says. Any change that lets a rule add points *outside*
+the denominator deletes that floor silently. Pinned by
+``tests/test_engine_invariants.TestLosingEvidenceCannotCondemn``.
 """
 
 from __future__ import annotations
@@ -86,8 +98,17 @@ class SignalConfig:
 
     signal: SignalId
     weight: int = 0
-    """0 disables the signal entirely -- and, crucially, removes it from the
-    denominator too, so disabling a signal does not silently inflate every score."""
+    """0 disables the signal entirely, removing it from the denominator as well as the
+    numerator.
+
+    Note what that does NOT mean. Turning a signal off *raises* every remaining score
+    whenever the signal being removed was pulling its weight down: dropping weight ``w``
+    carrying pressure ``p`` moves the score from ``100P/D`` to ``100(P-p)/(D-w)``, which
+    rises whenever ``p/w < P/D``. The signals that satisfy that are exactly the ones
+    arguing to keep -- a well-rated title, one people still watch -- so switching off an
+    inconvenient protection is the single most effective way to condemn more, and it
+    looks like simplification. The policy editor must never present it as free.
+    """
 
     #: The value at which this signal reaches full pressure.
     saturate_at: int = 1
