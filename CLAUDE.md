@@ -21,7 +21,7 @@ refreshes Plex. Python 3.13 / FastAPI backend + React 19 / Vite frontend, one co
   findings (including negative results) in `docs/LEARNINGS.md` / `docs/SIGNALS.md`.
 - **Pre-release: migrations stay at one Alembic baseline** and the dev DB is disposable.
 - **Mock up UI/UX before touching code.** When the work is about UI or UX, present a
-  rendered mockup first (an inline visual widget or a self-contained HTML artifact) and
+  rendered mockup first (it must be a self-contained HTML artifact) and
   iterate on *that* until it's approved — only then edit frontend code. Iterating on a
   picture is far faster and cheaper than iterating on a diff.
 - **Commit only when asked**; end commit messages with the `Co-Authored-By` trailer.
@@ -68,8 +68,12 @@ common CI break.** When a change is observable in the app, *drive it end-to-end*
 - `src/reaper/clients/` — the **only** place HTTP lives. `GuardedTransport` (and its
   `GuardedSession` twin for plexapi) refuses any mutating request unless deletion is armed
   on the host **and** the executor declared the intent to the journal first.
-- `src/reaper/engine/` — `gates` (hard, fail-closed protections), `signals` (soft weighted),
-  `score` (baseline-50, fixed denominator), and the explainable "why" record.
+- `src/reaper/engine/` — `gates` (hard, fail-closed protections), `signals` (soft weighted
+  pressure, and the `score()` function: **unsigned** pressure over a fixed denominator, so
+  missing or keep-arguing evidence can only ever *lower* the score — never a signed score
+  off a neutral baseline, which inverts under failure; see the "Why unsigned" note at the
+  top of `signals.py`), `verdict.decide_verdict` (the one condemn/abstain/protect
+  decision), and the explainable "why" record.
 - `src/reaper/services/` — `snapshot` (gather → freeze → hash → score), `planner` (build the
   journalled plan), `executor` (the real send + interlocks), plus grace, leaving_soon,
   scan_runner, whitelist, etc.
