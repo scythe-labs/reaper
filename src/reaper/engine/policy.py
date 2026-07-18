@@ -43,7 +43,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from reaper.engine.fields import BY_KEY, Condition, Lane, Op
 from reaper.engine.gates import GateId, RatingRule
-from reaper.engine.signals import CustomSignalConfig, KeepConfig, SignalId
+from reaper.engine.signals import MAX_SCORE, CustomSignalConfig, KeepConfig, SignalId
 from reaper.ratings import RatingSource, is_percentage_source, source_label
 
 SCHEMA_VERSION: Literal[2] = 2
@@ -775,6 +775,39 @@ def inspect(
                     ),
                 )
             )
+
+    # A custom rule does not sit on top of the score: its weight JOINS the same fixed
+    # denominator as the built-in signals (``signals.score``), so the score is measured
+    # against a bigger total the moment a rule is added. A rule therefore buys a point of
+    # score per point of weight only while the enabled weights total 100 or less; past
+    # that, every point of weight is worth less than a point, and the gap is exactly what
+    # an owner reading "+20 against a threshold of 70" misreads.
+    #
+    # That total is the threshold, rather than a taste call about "a large share": it is
+    # the precise point at which the number on the rule stops matching the points it adds,
+    # and below it there is nothing misleading to say. It stays quiet by construction --
+    # one message however many rules exist, none at all for a policy whose weights still
+    # sum to 100 or less, and none for a policy with no rules of its own.
+    custom_rules = [c for c in body.custom_condemn if c.weight > 0]
+    total_weight = sum(s.weight for s in body.signals) + sum(c.weight for c in custom_rules)
+    if custom_rules and total_weight > MAX_SCORE:
+        heaviest = max(custom_rules, key=lambda c: c.weight)
+        # Floor division: where the worth falls between two whole points, say the smaller
+        # one, so the message never oversells what a rule can do.
+        worth = MAX_SCORE * heaviest.weight // total_weight
+        warnings.append(
+            PolicyWarning(
+                field="custom_condemn",
+                severity="warn",
+                # Lead with the number they got wrong, in one line. The mechanism (rules
+                # share one total) is the second line, and only because it explains why
+                # adding another rule will not help either.
+                message=(
+                    f'"{heaviest.name}" adds about {worth} points, not {heaviest.weight}. '
+                    "Every rule shares one total, so each new rule is worth less."
+                ),
+            )
+        )
 
     if body.media_type == "tv" and body.keep_last_seasons >= 10:
         warnings.append(

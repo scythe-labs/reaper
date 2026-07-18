@@ -9,6 +9,8 @@ written condemn rule deletes 4 TB.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from reaper.engine.fields import (
@@ -270,6 +272,186 @@ class TestTextMatchingIsForgiving:
         facts = _facts(genres=Known(value="Horror, Comedy", source="sonarr"))
         cond = Condition(field="genre", op=Op.IN, value="Anime, Documentary")
         assert evaluate(cond, facts).matched is False
+
+
+class TestAnExplanationSaysWhatItFound:
+    """The why-panel quotes these sentences under "Kept by your rule:" and "Your rule
+    didn't match:", so both readings have to be true English, and neither may leak the
+    operator key ("gte", "eq") or a raw fact ("True") at the owner.
+
+    The rule throughout: a match names what matched, a miss names what the rule wanted.
+    """
+
+    def test_a_boolean_states_the_fact_not_the_comparison(self) -> None:
+        ended = _facts(show_ended=Known(value=True, source="sonarr"))
+        going = _facts(show_ended=Known(value=False, source="sonarr"))
+        cond = Condition(field="show_ended", op=Op.EQ, value=True)
+
+        assert evaluate(cond, ended).detail == "The show has ended"
+        # The miss must not read as though the show HAD ended. It says the opposite,
+        # which is what we actually know.
+        assert evaluate(cond, going).detail == "The show is still going"
+
+    def test_a_boolean_reads_the_same_from_either_direction(self) -> None:
+        """``eq false`` that matched and ``eq true`` that missed are the same world."""
+        going = _facts(show_ended=Known(value=False, source="sonarr"))
+        asked_true = evaluate(Condition(field="show_ended", op=Op.EQ, value=True), going)
+        asked_false = evaluate(Condition(field="show_ended", op=Op.EQ, value=False), going)
+
+        assert asked_true.matched is False
+        assert asked_false.matched is True
+        assert asked_true.detail == asked_false.detail == "The show is still going"
+
+    def test_a_boolean_uses_the_words_the_owner_uses(self) -> None:
+        cond = Condition(field="whitelisted", op=Op.EQ, value=True)
+        assert evaluate(cond, _facts()).detail == "Not on your keep list"
+        kept = _facts(is_whitelisted=Known(value=True, source="plex"))
+        assert evaluate(cond, kept).detail == "On your keep list"
+
+    def test_a_days_field_is_spelled_the_way_the_signals_spell_it(self) -> None:
+        """One panel showing "900 days" beside "2 years, 5 months" reads as two
+        different measurements of two different things."""
+        facts = _facts(days_observed_unwatched=Known(value=900.0, source="tautulli"))
+        detail = evaluate(Condition(field="days_unwatched", op=Op.GTE, value=730), facts).detail
+
+        assert detail == "Not watched in 2 years, 5 months, past your 2 years"
+        assert "900" not in detail
+
+    def test_a_size_leads_with_the_size(self) -> None:
+        cond = Condition(field="size_bytes", op=Op.GTE, value=1_000_000_000)
+        assert evaluate(cond, _facts()).detail == "8.0 GB on disk, over your 1.0 GB"
+
+    def test_a_rating_below_its_bar_says_so_plainly(self) -> None:
+        cond = Condition(field="imdb_rating", op=Op.GTE, value=75)
+        assert evaluate(cond, _facts()).detail == "IMDb 7.3, under your 7.5"
+
+    def test_large_counts_carry_thousands_separators(self) -> None:
+        facts = _facts(imdb_votes=Known(value=2366, source="imdb"))
+        detail = evaluate(Condition(field="imdb_votes", op=Op.GTE, value=5000), facts).detail
+
+        assert detail == "2,366 votes on IMDb, under your 5,000"
+
+    def test_a_count_of_one_is_not_pluralised(self) -> None:
+        facts = _facts(distinct_watchers=Known(value=1, source="tautulli"))
+        detail = evaluate(Condition(field="recent_watchers", op=Op.GTE, value=3), facts).detail
+
+        assert detail == "1 person watched it recently, under your 3"
+
+    def test_a_count_lands_on_its_bar_often_enough_to_say_at_or(self) -> None:
+        """A size or a rating never sits exactly on its number; a watcher count does it
+        constantly, and "over your 2" with exactly 2 watchers is simply false."""
+        facts = _facts(distinct_watchers=Known(value=2, source="tautulli"))
+        detail = evaluate(Condition(field="recent_watchers", op=Op.GTE, value=2), facts).detail
+
+        assert detail == "2 people watched it recently, at or over your 2"
+
+    def test_season_rank_one_is_the_newest_season_never_an_older_one(self) -> None:
+        """Rank 1 is the most recent season with files. The explanation may not call it
+        an old season while the rule uses it to remove the season."""
+        facts = _facts(season_rank=Known(value=1, source="sonarr"))
+        detail = evaluate(Condition(field="season_rank", op=Op.LTE, value=2), facts).detail
+
+        assert detail == "The newest season, within the 2 you keep"
+
+    def test_a_deeper_season_counts_back_in_order(self) -> None:
+        for rank, expected in ((2, "second-newest"), (3, "third-newest"), (7, "7th-newest")):
+            facts = _facts(season_rank=Known(value=rank, source="sonarr"))
+            detail = evaluate(Condition(field="season_rank", op=Op.LTE, value=2), facts).detail
+            assert detail.startswith(f"The {expected} season, ")
+
+    def test_a_gte_season_rule_does_not_claim_the_number_is_what_you_keep(self) -> None:
+        """ "Remove rank 3 and older" keeps two seasons, not three. Phrasing the bar as
+        "the 3 you keep" would misstate the owner's own rule by one season."""
+        facts = _facts(season_rank=Known(value=5, source="sonarr"))
+        detail = evaluate(Condition(field="season_rank", op=Op.GTE, value=3), facts).detail
+
+        assert detail == "The 5th-newest season, at or past the 3 you set"
+        assert "you keep" not in detail
+
+    def test_a_list_valued_field_names_what_matched(self) -> None:
+        """Not the whole fact on one side and the needle on the other: the owner should
+        not have to intersect two lists by eye."""
+        facts = _facts(genres=Known(value="Reality, Comedy", source="sonarr"))
+
+        matched_eq = evaluate(Condition(field="genre", op=Op.EQ, value="Reality"), facts)
+        matched_in = evaluate(Condition(field="genre", op=Op.IN, value="anime, comedy"), facts)
+
+        assert matched_eq.detail == "Genre includes Reality"
+        # Spelled the way the library spells it, not the way the comparison folded it.
+        assert matched_in.detail == "Genre includes Comedy"
+
+    def test_a_list_valued_miss_names_what_the_rule_wanted(self) -> None:
+        facts = _facts(genres=Known(value="Reality, Comedy", source="sonarr"))
+
+        missed_eq = evaluate(Condition(field="genre", op=Op.EQ, value="Anime"), facts)
+        missed_in = evaluate(Condition(field="genre", op=Op.IN, value="Anime, Documentary"), facts)
+
+        assert missed_eq.detail == "Genre does not include Anime"
+        assert missed_in.detail == "Genre is none of Anime, Documentary"
+
+    def test_a_single_valued_text_field_says_what_it_is(self) -> None:
+        facts = _facts(quality=Known(value="Bluray-1080p", source="radarr"))
+
+        assert (
+            evaluate(Condition(field="quality", op=Op.CONTAINS, value="2160p"), facts).detail
+            == "File quality does not contain 2160p"
+        )
+        assert (
+            evaluate(Condition(field="quality", op=Op.CONTAINS, value="1080p"), facts).detail
+            == "File quality contains 1080p"
+        )
+        assert (
+            evaluate(Condition(field="quality", op=Op.EQ, value="SDTV"), facts).detail
+            == "File quality is Bluray-1080p, not SDTV"
+        )
+        assert (
+            evaluate(Condition(field="quality", op=Op.IN, value="SDTV, HDTV"), facts).detail
+            == "File quality is Bluray-1080p, not one of SDTV, HDTV"
+        )
+
+    def test_no_explanation_leaks_an_operator_key_or_a_raw_bool(self) -> None:
+        """The whole matrix, both readings. This is the regression that mattered: the
+        old builder interpolated ``condition.op.value`` straight into the sentence."""
+        facts = _facts(
+            days_observed_unwatched=Known(value=900.0, source="tautulli"),
+            distinct_watchers=Known(value=2, source="tautulli"),
+            season_rank=Known(value=4, source="sonarr"),
+            genres=Known(value="Reality, Comedy", source="sonarr"),
+            quality=Known(value="Bluray-1080p", source="radarr"),
+            in_curated_list=Known(value="A List", source="lists"),
+            show_ended=Known(value=True, source="sonarr"),
+            release_age_days=Known(value=1500.0, source="radarr"),
+            requested=Known(value=False, source="seerr"),
+        )
+        targets: dict[str, int | str | bool] = {
+            "days": 730,
+            "bytes": 1_000_000_000,
+            "count": 2,
+            "rating_tenths": 75,
+            "bool": True,
+            "text": "Reality",
+        }
+        seen = 0
+        for spec in BY_KEY.values():
+            for op in spec.ops:
+                result = evaluate(Condition(field=spec.key, op=op, value=targets[spec.type]), facts)
+                detail = result.detail
+                seen += 1
+
+                assert detail, f"{spec.key}/{op} explained nothing"
+                # A sentence, so it never opens lower-case. Leading with a number
+                # ("8.0 GB on disk") is the point, not an exception.
+                assert not detail[0].islower(), f"{spec.key}/{op}: {detail}"
+                assert "--" not in detail and "—" not in detail, f"{spec.key}/{op}: {detail}"
+                assert "{" not in detail, f"{spec.key}/{op}: {detail}"
+                assert "|" not in detail, f"{spec.key}/{op}: {detail}"
+                # "in" and "contains" are ordinary English in the new copy ("Not
+                # watched in 3 years"); the keys that could only be machine vocabulary
+                # are not. The old shape -- "Label: value op target" -- is checked whole.
+                for jargon in (" gte ", " lte ", " eq ", "True", "False"):
+                    assert jargon not in detail, f"{spec.key}/{op} leaked {jargon!r}: {detail}"
+                assert not re.search(r": \S+ (gte|lte|eq|in|contains) ", detail), detail
+        assert seen > 20  # every field, every operator it accepts
 
 
 class TestValueTypesAreValidatedAtTheBoundary:

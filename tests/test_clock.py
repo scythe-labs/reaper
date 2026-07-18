@@ -15,8 +15,9 @@ class TestHumanizeDays:
     @pytest.mark.parametrize(
         ("days", "expected"),
         [
-            (0, "today"),
-            (0.4, "today"),
+            # A length, never a date: every caller reads "not watched in <this>".
+            (0, "less than a day"),
+            (0.4, "less than a day"),
             (1, "1 day"),
             (5, "5 days"),
             (30, "1 month"),

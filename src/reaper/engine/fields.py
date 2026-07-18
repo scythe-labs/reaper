@@ -27,10 +27,12 @@ return a protect-only field, so a condemn rule referencing one is not merely rej
 from __future__ import annotations
 
 import enum
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from reaper.clock import humanize_days
 from reaper.engine.gates import ABSTAIN, PROTECT, Facts, GateId, GateResult
 from reaper.engine.observation import Known, Observation, Unknown
 
@@ -69,6 +71,94 @@ TEXT_OPS = (Op.EQ, Op.IN, Op.CONTAINS)
 
 
 @dataclass(frozen=True, slots=True)
+class BarPhrases:
+    """How a rule's own number reads beside the value it was compared against.
+
+    Four phrases, not two, because the operators bracket their number differently:
+    ``gte`` fires *at* its number and ``lte`` stops *at* its number, so in each pair
+    only one side may claim "over" or "under" outright. Getting that wrong tells an
+    owner their file was over a bar it in fact sat exactly on.
+    """
+
+    gte_met: str
+    """value >= the number. Each phrase takes the number as ``{}``."""
+    gte_missed: str
+    """value < the number, strictly."""
+    lte_met: str
+    """value <= the number."""
+    lte_missed: str
+    """value > the number, strictly."""
+
+
+_DEFAULT_BARS = BarPhrases(
+    gte_met="at or over your {}",
+    gte_missed="under your {}",
+    lte_met="at or under your {}",
+    lte_missed="over your {}",
+)
+"""Exact on both sides, which is what a count needs: watcher and vote counts land
+*on* their number often, so only the strict side may say "over" or "under" flatly."""
+
+_BARS: dict[FieldType, BarPhrases] = {
+    # A span of time is "past" or "within" a window, never over or under it.
+    FieldType.DAYS: BarPhrases(
+        gte_met="past your {}",
+        gte_missed="within your {}",
+        lte_met="within your {}",
+        lte_missed="past your {}",
+    ),
+    # A size and a rating are continuous: landing exactly on the number does not
+    # happen the way a whole count does, so the plainer word is the honest one.
+    FieldType.BYTES: BarPhrases(
+        gte_met="over your {}",
+        gte_missed="under your {}",
+        lte_met="within your {}",
+        lte_missed="over your {}",
+    ),
+    FieldType.RATING_TENTHS: BarPhrases(
+        gte_met="over your {}",
+        gte_missed="under your {}",
+        lte_met="at or under your {}",
+        lte_missed="over your {}",
+    ),
+}
+
+_SEASON_BARS = BarPhrases(
+    # "keep the last N" is an lte rule, so there the number really is the count kept.
+    # A gte rule sets where removal starts instead, and saying "you keep" of it would
+    # misstate the owner's own rule by one season.
+    gte_met="at or past the {} you set",
+    gte_missed="newer than the {} you set",
+    lte_met="within the {} you keep",
+    lte_missed="past the {} you keep",
+)
+
+
+def describe_season_rank(rank: float) -> str:
+    """A season's place, counting back from the newest season that has files.
+
+    Rank 1 is the *most recent* season with files on disk (see
+    ``clients.sonarr_stats.rank_seasons``), so it is the newest season and must never
+    be described as an old one. Callers supply the article and any suffix: "The newest
+    season" in a rule explanation, "the newest season on disk" in a signal.
+    """
+    place = int(rank)
+    if place <= 1:
+        return "newest season"
+    if place == 2:
+        return "second-newest season"
+    if place == 3:
+        return "third-newest season"
+    return f"{place}{_ordinal_suffix(place)}-newest season"
+
+
+def _ordinal_suffix(number: int) -> str:
+    if 11 <= number % 100 <= 13:
+        return "th"
+    return {1: "st", 2: "nd", 3: "rd"}.get(number % 10, "th")
+
+
+@dataclass(frozen=True, slots=True)
 class FieldSpec:
     """One thing a user may write a condition about."""
 
@@ -90,6 +180,35 @@ class FieldSpec:
     """The fact is a comma-joined list ("Horror, Comedy"), not one value. ``eq`` and
     ``in`` evaluate per element -- a multi-genre title could otherwise never equal any
     single genre, and a protection the owner wrote would silently never fire."""
+
+    # ---- How this field explains itself -----------------------------------
+    # A label is a form caption ("Whitelisted"), and a caption is not a sentence. The
+    # why-panel has to say what Reaper found in words the owner would use, so each
+    # field carries its own phrasing rather than having the explanation glue the label
+    # to a raw operator key.
+
+    subject: str = ""
+    """What a text explanation calls this field. Defaults to ``label``; set it where
+    the caption will not take a verb ("On a protected list includes ...")."""
+
+    true_phrase: str = ""
+    false_phrase: str = ""
+    """The two things a boolean field can report. Both are written as statements of
+    the fact, because a rule that missed and a rule that matched on the opposite value
+    describe the same world, and only one wording keeps a miss from reading as though
+    the opposite were true."""
+
+    value_phrase: str = ""
+    """A numeric field's value in a sentence, with ``{}`` where the number goes
+    ("{} on disk"). ``person|people`` picks its side from the number itself."""
+
+    value_render: Callable[[float], str] | None = None
+    """Set where the number is not the thing to show. Season rank shows a place in an
+    order ("the newest season"), and printing the rank instead is how a panel ends up
+    calling the newest season an old one."""
+
+    bars: BarPhrases | None = None
+    """Overrides the phrasing of the rule's own number. Defaults by field type."""
 
     def allows(self, lane: Lane, op: Op) -> bool:
         return lane in self.lanes and op in self.ops
@@ -113,6 +232,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
         read=lambda f: f.days_observed_unwatched,
+        value_phrase="Not watched in {}",
     ),
     FieldSpec(
         key="size_bytes",
@@ -123,6 +243,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
         read=lambda f: f.size_bytes,
+        value_phrase="{} on disk",
     ),
     FieldSpec(
         key="recent_watchers",
@@ -140,6 +261,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
         read=lambda f: f.distinct_watchers,
+        value_phrase="{} person|people watched it recently",
     ),
     FieldSpec(
         key="watchers_all_time",
@@ -157,6 +279,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         lanes=(Lane.PROTECT,),
         ops=NUMERIC_OPS,
         read=lambda f: f.distinct_watchers_all_time,
+        value_phrase="{} person|people has|have ever watched it",
     ),
     FieldSpec(
         key="imdb_rating",
@@ -171,6 +294,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
         read=lambda f: f.imdb_rating_tenths,
+        value_phrase="IMDb {}",
     ),
     FieldSpec(
         key="imdb_votes",
@@ -185,6 +309,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         lanes=(Lane.PROTECT,),
         ops=NUMERIC_OPS,
         read=lambda f: f.imdb_votes,
+        value_phrase="{} vote|votes on IMDb",
     ),
     FieldSpec(
         key="season_rank",
@@ -199,6 +324,9 @@ REGISTRY: tuple[FieldSpec, ...] = (
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
         read=lambda f: f.season_rank,
+        value_phrase="The {}",
+        value_render=describe_season_rank,
+        bars=_SEASON_BARS,
     ),
     FieldSpec(
         key="on_curated_list",
@@ -209,6 +337,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         ops=TEXT_OPS,
         multi=True,
         read=lambda f: f.in_curated_list,
+        subject="Protected list membership",
     ),
     FieldSpec(
         key="whitelisted",
@@ -220,6 +349,8 @@ REGISTRY: tuple[FieldSpec, ...] = (
         lanes=(Lane.PROTECT,),
         ops=BOOL_OPS,
         read=lambda f: f.is_whitelisted,
+        true_phrase="On your keep list",
+        false_phrase="Not on your keep list",
     ),
     FieldSpec(
         key="streaming_now",
@@ -229,6 +360,8 @@ REGISTRY: tuple[FieldSpec, ...] = (
         lanes=(Lane.PROTECT,),
         ops=BOOL_OPS,
         read=lambda f: f.is_streaming_now,
+        true_phrase="Someone is watching it right now",
+        false_phrase="Nobody is watching it right now",
     ),
     FieldSpec(
         key="requested",
@@ -242,6 +375,8 @@ REGISTRY: tuple[FieldSpec, ...] = (
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=BOOL_OPS,
         read=lambda f: f.requested,
+        true_phrase="Someone requested this",
+        false_phrase="Nobody requested this",
     ),
     FieldSpec(
         key="genre",
@@ -268,6 +403,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=NUMERIC_OPS,
         read=lambda f: f.release_age_days,
+        value_phrase="Released {} ago",
     ),
     FieldSpec(
         key="quality",
@@ -293,6 +429,10 @@ REGISTRY: tuple[FieldSpec, ...] = (
         lanes=(Lane.CONDEMN, Lane.PROTECT),
         ops=BOOL_OPS,
         read=lambda f: f.show_ended,
+        true_phrase="The show has ended",
+        # Known-false covers a show still airing and one that has not started yet, so
+        # this says the show is not finished and claims nothing more than that.
+        false_phrase="The show is still going",
     ),
 )
 
@@ -406,9 +546,7 @@ def evaluate(condition: Condition, facts: Facts) -> ConditionResult:
     target = condition.value
     try:
         matched = _compare(condition.op, value, target, multi=spec.multi)
-        detail = (
-            f"{spec.label}: {_render(spec, value)} {condition.op.value} {_render(spec, target)}"
-        )
+        detail = _explain(spec, condition.op, value, target, matched=matched)
     except ValueError as exc:
         # Belt and suspenders under validate_for's boundary check: a stored rule whose
         # value cannot be compared against this field (saved before the type check
@@ -429,7 +567,13 @@ def evaluate(condition: Condition, facts: Facts) -> ConditionResult:
 def _split_csv(text: str) -> list[str]:
     """Comma-separated elements, trimmed and casefolded -- how both sides of ``in``
     (and the multi-valued side of ``eq``) are read."""
-    return [part.strip().casefold() for part in text.split(",") if part.strip()]
+    return [part.casefold() for part in _split_raw(text)]
+
+
+def _split_raw(text: str) -> list[str]:
+    """The same split, keeping the spelling. Explanations quote a genre back the way
+    the library spells it, not the way the comparison folded it."""
+    return [part.strip() for part in text.split(",") if part.strip()]
 
 
 def _compare(op: Op, value: object, target: object, *, multi: bool = False) -> bool:
@@ -477,9 +621,123 @@ def _render(spec: FieldSpec, value: object) -> str:
         case FieldType.BYTES:
             return f"{_num(value) / 1_000_000_000:.1f} GB"
         case FieldType.DAYS:
-            return f"{_num(value):.0f} days"
+            # The same spelling the built-in signals use. One panel showing "900 days"
+            # beside "2 years, 5 months" reads as two different measurements.
+            return humanize_days(_num(value))
+        case FieldType.COUNT:
+            return f"{_num(value):,.0f}"
         case _:
             return str(value)
+
+
+# ---------------------------------------------------------------------------
+# Explaining a condition
+# ---------------------------------------------------------------------------
+#
+# Every explanation states what Reaper found first and what the rule asked for
+# second. The owner already knows what they asked for; what they opened the panel
+# for is what this title actually is. Both readings have to be true English: an
+# unmatched condition is quoted in the why-panel just as often as a matched one,
+# under "Your rule didn't match: ...".
+
+
+def _explain(
+    spec: FieldSpec, op: Op, value: object, target: int | str | bool, *, matched: bool
+) -> str:
+    match spec.type:
+        case FieldType.BOOL:
+            # The fact, never the comparison. "eq false" that matched and "eq true"
+            # that missed describe the same world, and stating the fact is the only
+            # wording where a miss cannot be read as the opposite being true.
+            return spec.true_phrase if value else spec.false_phrase
+        case FieldType.TEXT:
+            return _explain_text(spec, op, value, target, matched=matched)
+        case _:
+            return _explain_number(spec, op, value, target, matched=matched)
+
+
+def _explain_text(
+    spec: FieldSpec, op: Op, value: object, target: int | str | bool, *, matched: bool
+) -> str:
+    subject = spec.subject or spec.label
+    wanted = str(target).strip()
+    match op:
+        case Op.CONTAINS:
+            # A substring test, over the whole value even where it is a list.
+            if matched:
+                return f"{subject} contains {wanted}"
+            return f"{subject} does not contain {wanted}"
+        case Op.EQ if spec.multi:
+            # eq on a list is per element, so it is an "includes", not an "is".
+            if matched:
+                return f"{subject} includes {wanted}"
+            return f"{subject} does not include {wanted}"
+        case Op.EQ:
+            if matched:
+                return f"{subject} is {value}"
+            return f"{subject} is {value}, not {wanted}"
+        case Op.IN if spec.multi:
+            if not matched:
+                return f"{subject} is none of {_listed(wanted)}"
+            # Name what actually matched. Printing the whole list the rule offered
+            # leaves the owner to work out which part of it fired.
+            return f"{subject} includes {_shared(str(value), wanted) or _listed(wanted)}"
+        case _:
+            # Matched names what matched; missed names what the rule wanted. Repeating
+            # the whole list back on a match leaves the owner to spot which part fired,
+            # and the value is already the answer.
+            if matched:
+                return f"{subject} is {value}"
+            return f"{subject} is {value}, not one of {_listed(wanted)}"
+
+
+def _explain_number(
+    spec: FieldSpec, op: Op, value: object, target: int | str | bool, *, matched: bool
+) -> str:
+    number = _num(value)
+    shown = spec.value_render(number) if spec.value_render else _render(spec, value)
+    phrase = (
+        spec.value_phrase.format(shown)
+        if spec.value_phrase
+        else f"{spec.subject or spec.label}: {shown}"
+    )
+    phrase = _plural(phrase, number)
+
+    bars = spec.bars or _BARS.get(spec.type, _DEFAULT_BARS)
+    match op:
+        case Op.GTE:
+            bar = bars.gte_met if matched else bars.gte_missed
+        case Op.LTE:
+            bar = bars.lte_met if matched else bars.lte_missed
+        case _:  # pragma: no cover -- a numeric field accepts no other operator
+            # Nothing to say about a bar we have no phrasing for, so claim nothing.
+            return phrase
+    return f"{phrase}, {bar.format(_render(spec, target))}"
+
+
+def _listed(target: str) -> str:
+    """A rule's list, spaced evenly however the owner typed it."""
+    return ", ".join(_split_raw(target))
+
+
+def _shared(value: str, target: str) -> str:
+    """The elements a list-valued fact and a rule's list have in common, spelled the
+    way the library spells them."""
+    wanted = set(_split_csv(target))
+    return ", ".join(part for part in _split_raw(value) if part.casefold() in wanted)
+
+
+_ALTERNATIVES = re.compile(r"(\w+)\|(\w+)")
+
+
+def _plural(phrase: str, count: float) -> str:
+    """Resolve ``person|people`` alternatives in a phrase against the number in it.
+
+    Cheaper than a phrase per field, and it keeps "1 person watched it" out of the
+    "1 people" territory that makes an explanation look machine-written.
+    """
+    singular = abs(count) == 1
+    return _ALTERNATIVES.sub(lambda m: m.group(1) if singular else m.group(2), phrase)
 
 
 Mode = Literal["all"]
