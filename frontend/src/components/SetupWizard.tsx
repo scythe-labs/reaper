@@ -11,12 +11,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { api } from "../api";
+import { phaseLabel } from "./ScanBar";
 import { PlexPanel, ServicesPanel } from "./Settings";
 
+// The tick is the only thing that says whether a step is finished, so it carries the state
+// as text too: colour and a glyph alone leave a screen reader hearing the step with no
+// state at all, on the one screen a new operator cannot skip past.
 function Check({ done, children }: { done: boolean; children: React.ReactNode }) {
   return (
     <li className={`setup-check ${done ? "done" : ""}`}>
-      <span className="check-mark" aria-hidden="true">
+      <span className="check-mark" role="img" aria-label={done ? "Done" : "Not done yet"}>
         {done ? "✓" : "○"}
       </span>
       {children}
@@ -26,7 +30,7 @@ function Check({ done, children }: { done: boolean; children: React.ReactNode })
 
 export function SetupWizard({ onSkip }: { onSkip: () => void }) {
   const queryClient = useQueryClient();
-  const { data: setup } = useQuery({ queryKey: ["setup"], queryFn: api.setupStatus });
+  const { data: setup, isError } = useQuery({ queryKey: ["setup"], queryFn: api.setupStatus });
 
   // The first scan is the same background job the rest of the app uses -- start it and poll.
   const { data: scanState } = useQuery({
@@ -41,11 +45,13 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
     wasScanning.current = scanning;
   }, [scanning, queryClient]);
 
-  const scanMsg = scanState?.error
-    ? scanState.error
-    : scanning
-      ? `${scanState!.phase}${scanState!.detail ? ` · ${scanState!.detail}` : ""}`
-      : null;
+  // Progress and failure are separate channels: the phase line is status, a failed scan
+  // is an error notice that leads with the outcome, the same shape ScanBar uses. The
+  // phase itself goes through ScanBar's shared table, so this never shows a raw phase id.
+  const scanError = scanState?.error ?? null;
+  const scanMsg = scanning
+    ? `${phaseLabel(scanState!.phase)}${scanState!.detail ? ` · ${scanState!.detail}` : ""}`
+    : null;
 
   // A mutation, not a fire-and-forget async onClick: on a fresh install a failed start
   // (a service just removed, the server restarting) must say so, not silently do nothing.
@@ -54,12 +60,22 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
     onSuccess: (started) => queryClient.setQueryData(["scanStatus"], started),
   });
 
+  // Still waiting and couldn't-read are different states, and neither may trap the owner:
+  // App.tsx routes an unreadable setup status here on the promise that Skip still works.
   if (!setup) {
     return (
       <div className="setup">
         <div className="setup-head">
-          <h1>Setting things up…</h1>
+          <h1>{isError ? "Welcome to Reaper" : "Setting things up…"}</h1>
+          <button className="ghost" onClick={onSkip}>
+            Skip to the app
+          </button>
         </div>
+        {isError && (
+          <p className="notice notice-error">
+            Couldn't check the setup state. You can skip to the app and finish from Settings.
+          </p>
+        )}
       </div>
     );
   }
@@ -132,6 +148,7 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
       {firstScan.error && (
         <p className="notice notice-error">The scan didn't start: {firstScan.error.message}</p>
       )}
+      {scanError && <p className="notice notice-error">The scan hit a problem: {scanError}</p>}
       {scanMsg && <p className="muted setup-scanmsg">{scanMsg}</p>}
 
       {setup.complete && (

@@ -83,11 +83,14 @@ export function DeletionToggle() {
               toggle.mutate({ enabled: true, password });
             }}
           >
+            {/* The placeholder is a hint, not a name: it disappears the moment you type.
+                The label names the field either way. */}
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="admin password"
+              aria-label="Admin password"
               autoComplete="current-password"
               autoFocus
             />

@@ -11,12 +11,14 @@
 // Reaper's own database. GuardedTransport would refuse a mutating call even if one were tried.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Snapshot } from "../api";
 import { bytes, count, date } from "../format";
 
 //: Friendly names for the scan's internal phases, so the status line reads in English.
-const PHASE_LABELS: Record<string, string> = {
+//  Exported because the first-run wizard shows the same progress line; one table keeps
+//  the two surfaces from drifting into raw phase ids.
+export const PHASE_LABELS: Record<string, string> = {
   starting: "Starting",
   history: "Reading watch history",
   lists: "Refreshing protection lists",
@@ -26,8 +28,31 @@ const PHASE_LABELS: Record<string, string> = {
   complete: "Done",
 };
 
-function phaseLabel(phase: string): string {
+export function phaseLabel(phase: string): string {
   return PHASE_LABELS[phase] ?? phase;
+}
+
+/** What the totals did between the scan that just finished and the one before it.
+ *
+ *  A scan replaces the snapshot underneath the whole page, so the queue and the totals
+ *  change with nothing to compare them against. Null when nothing moved is deliberate:
+ *  a line saying "no change" every time would be noise. */
+function scanDelta(
+  before: { condemned: number; freeable: number },
+  after: Snapshot,
+): string | null {
+  const items = after.condemned - before.condemned;
+  const size = after.reclaimable_bytes - before.freeable;
+  if (items === 0 && size === 0) return null;
+
+  const parts: string[] = [];
+  if (items !== 0) {
+    parts.push(`${count(Math.abs(items))} ${items > 0 ? "more" : "fewer"} to remove`);
+  }
+  if (size !== 0) {
+    parts.push(`${bytes(Math.abs(size))} ${size > 0 ? "more" : "less"} to free`);
+  }
+  return `Compared with the scan before: ${parts.join(", ")}.`;
 }
 
 export function ScanBar({ snapshot }: { snapshot: Snapshot | undefined }) {
@@ -43,10 +68,32 @@ export function ScanBar({ snapshot }: { snapshot: Snapshot | undefined }) {
   const scanning = status?.running ?? false;
   const wasScanning = useRef(false);
 
+  // The totals from the scan before this one, kept across the swap so the new numbers
+  // have something to be read against. Cleared when the next scan starts.
+  const [before, setBefore] = useState<{
+    id: number;
+    condemned: number;
+    freeable: number;
+  } | null>(null);
+
   // When a scan finishes, refresh everything that hangs off the snapshot (the queue, the
   // reap plan, the freshness line). The transition running -> not-running is the signal.
+  // The old snapshot is read out of the cache *before* the invalidation replaces it.
   useEffect(() => {
-    if (wasScanning.current && !scanning) void queryClient.invalidateQueries();
+    if (wasScanning.current && !scanning) {
+      const previous = queryClient.getQueryData<Snapshot>(["snapshot"]);
+      setBefore(
+        previous
+          ? {
+              id: previous.id,
+              condemned: previous.condemned,
+              freeable: previous.reclaimable_bytes,
+            }
+          : null,
+      );
+      void queryClient.invalidateQueries();
+    }
+    if (!wasScanning.current && scanning) setBefore(null);
     wasScanning.current = scanning;
   }, [scanning, queryClient]);
 
@@ -63,6 +110,11 @@ export function ScanBar({ snapshot }: { snapshot: Snapshot | undefined }) {
   // report total=0, then jumped as the denominator changed meaning between phases.)
   const pct = status ? status.percent : null;
 
+  // Only against a *different* snapshot: the first scan ever has nothing to compare to,
+  // and a scan that wrote no new snapshot must not report a change of zero.
+  const delta =
+    before && snapshot && snapshot.id !== before.id ? scanDelta(before, snapshot) : null;
+
   return (
     <section className="scanbar">
       <div className="scanbar-main">
@@ -77,10 +129,12 @@ export function ScanBar({ snapshot }: { snapshot: Snapshot | undefined }) {
         {snapshot && !scanning && (
           <p className="muted">
             Last scan {date(snapshot.created_at)} &middot; {count(snapshot.item_count)} items
-            &middot; <strong>{count(snapshot.condemned)}</strong> would be deleted, freeing{" "}
+            &middot; <strong>{count(snapshot.condemned)}</strong> would be removed, freeing{" "}
             <strong>{bytes(snapshot.reclaimable_bytes)}</strong>
           </p>
         )}
+
+        {delta && !scanning && <p className="muted">{delta}</p>}
 
         {!snapshot && !scanning && (
           <p className="muted">No scan has run yet. A scan only reads. It cannot delete.</p>

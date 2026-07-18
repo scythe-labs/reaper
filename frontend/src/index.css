@@ -24,6 +24,10 @@
   --border-strong: #d3d6df;
   --text: #16181d;
   --muted: #666b78;
+  /* Decorative only -- chevrons, the search glyph, the empty-poster mark, a disabled
+   * number, an unticked setup step. It clears no WCAG AA text ratio on any surface in
+   * either theme (light is 2.4-2.6:1, dark 3.2-3.9:1), so anything a person actually
+   * reads uses --muted, which clears 4.5:1 everywhere. Never put text on --faint. */
   --faint: #9aa0ad;
 
   /* Semantic verdict language. */
@@ -58,17 +62,35 @@
   --imdb: #f5c518;
   --imdb-ink: #241d02;
 
+  /* The service brand marks the Settings kind badges wear, one fill/ink pair each on the
+     --plex precedent. Radarr keeps its own gold rather than borrowing --imdb: a service
+     badge must not read as a rating chip. Every ink clears WCAG AA on its own fill at the
+     badge's small bold size (radarr 9.85:1, sonarr 6.31:1, seerr 6.46:1); Tautulli has no
+     pair of its own because it is Plex gold, so it reuses --plex / --plex-ink (7.66:1). */
+  --radarr: #ffc230;
+  --radarr-ink: #2b2103;
+  --sonarr: #3a9bdb;
+  --sonarr-ink: #041018;
+  --seerr: #8f95f7;
+  --seerr-ink: #14153f;
+
+  /* The dim behind a modal or a sheet. Deliberately theme-independent -- an overlay's job
+     is to push the page back, and it does that the same way on a light page as a dark one
+     -- so no forced-theme block below restates it. */
+  --scrim: rgba(8, 9, 12, 0.55);
+
   --radius-sm: 7px;
   --radius: 11px;
   --radius-lg: 18px;
 
   /* Form control standard. Every text / number / select box shares this chrome, so the
      app reads as one surface (see .set-control, .rule-control, .field-sm, .condition-add,
-     .qty, .caps-grid): padding 0.42rem 0.6rem; border 1px solid var(--border-strong);
-     border-radius var(--radius-sm); background var(--bg); color var(--text); font: inherit;
-     and on :focus, outline 2px solid var(--accent) with outline-offset 1px. Width is the
-     only thing that varies by context -- compact numbers 5rem, unit selects ~5.25rem, wide
-     text fields 15-22rem -- but the chrome above never does. Reuse it; don't fork it. */
+     .search-input, .log-search, .pw-form, .local-form, .qty, .caps-grid): padding
+     0.42rem 0.6rem; border 1px solid var(--border-strong); border-radius var(--radius-sm);
+     background var(--bg); color var(--text); font: inherit; and on :focus, outline 2px
+     solid var(--accent) with outline-offset 1px. Width is the only thing that varies by
+     context -- compact numbers 5rem, unit selects ~5.25rem, wide text fields 15-22rem --
+     but the chrome above never does. Reuse it; don't fork it. */
 
   --shadow-sm: 0 1px 2px rgba(16, 18, 27, 0.06), 0 1px 3px rgba(16, 18, 27, 0.05);
   --shadow-md: 0 2px 6px rgba(16, 18, 27, 0.07), 0 8px 24px rgba(16, 18, 27, 0.07);
@@ -115,6 +137,13 @@
 
     --imdb: #f5c518;
     --imdb-ink: #241d02;
+
+    --radarr: #ffc230;
+    --radarr-ink: #2b2103;
+    --sonarr: #3a9bdb;
+    --sonarr-ink: #041018;
+    --seerr: #8f95f7;
+    --seerr-ink: #14153f;
 
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.35);
@@ -164,6 +193,13 @@
   --imdb: #f5c518;
   --imdb-ink: #241d02;
 
+  --radarr: #ffc230;
+  --radarr-ink: #2b2103;
+  --sonarr: #3a9bdb;
+  --sonarr-ink: #041018;
+  --seerr: #8f95f7;
+  --seerr-ink: #14153f;
+
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.35);
   --shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.55), 0 4px 12px rgba(0, 0, 0, 0.4);
@@ -205,6 +241,13 @@
 
   --imdb: #f5c518;
   --imdb-ink: #241d02;
+
+  --radarr: #ffc230;
+  --radarr-ink: #2b2103;
+  --sonarr: #3a9bdb;
+  --sonarr-ink: #041018;
+  --seerr: #8f95f7;
+  --seerr-ink: #14153f;
 
   --shadow-sm: 0 1px 2px rgba(16, 18, 27, 0.06), 0 1px 3px rgba(16, 18, 27, 0.05);
   --shadow-md: 0 2px 6px rgba(16, 18, 27, 0.07), 0 8px 24px rgba(16, 18, 27, 0.07);
@@ -276,6 +319,13 @@ a:hover {
   font-size: 0.86rem;
   margin: 0.15rem 0 0.75rem;
   max-width: 62ch;
+}
+
+/* Every <table> in the app sits in one of these. A table's columns cannot shrink below
+ * their content, so a wide one scrolls itself here rather than dragging the whole page
+ * sideways on a phone. */
+.table-scroll {
+  overflow-x: auto;
 }
 
 .app {
@@ -735,7 +785,7 @@ button.link:hover:not(:disabled) {
   margin: 1.5rem 0 0;
   padding-top: 1rem;
   border-top: 1px solid var(--border);
-  color: var(--faint);
+  color: var(--muted);
   font-size: 0.76rem;
   line-height: 1.5;
 }
@@ -808,7 +858,7 @@ button.link:hover:not(:disabled) {
   position: fixed;
   inset: 0;
   z-index: 40;
-  background: rgba(8, 9, 12, 0.5);
+  background: var(--scrim);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.25s var(--ease);
@@ -830,6 +880,11 @@ button.link:hover:not(:disabled) {
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   box-shadow: var(--shadow-lg);
   padding: 0.9rem 1.6rem 1.8rem;
+  /* Same bound as .modal, and dvh for the same reason: the sheet is anchored to the bottom
+     of the scrim, so on a short viewport (a landscape phone, or once an error notice
+     renders) the username field grows straight off the top with nothing to scroll. */
+  max-height: 85dvh;
+  overflow-y: auto;
 }
 .sheet.open {
   transform: translate(-50%, 0);
@@ -854,22 +909,20 @@ button.link:hover:not(:disabled) {
   text-align: left;
   margin-bottom: 0.9rem;
 }
+/* The one control chrome (see the standard at the top of the file); only the full-bleed
+   width is this sheet's own. */
 .local-form input {
   width: 100%;
-  padding: 0.55rem 0.7rem;
+  padding: 0.42rem 0.6rem;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
   font: inherit;
-  transition:
-    border-color 0.15s var(--ease),
-    box-shadow 0.15s var(--ease);
 }
 .local-form input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ring);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .sheet-actions {
   display: flex;
@@ -948,6 +1001,23 @@ main.split {
     width: 100%;
     justify-content: center;
     margin: 0.4rem 0 0;
+  }
+}
+
+/* Narrower than this the five section tabs are wider than the row they sit in (~400px of
+   tabs in a ~335px track on a 375px phone), and a centred, non-wrapping flex row
+   pushes the leading tab off the left edge where nothing can scroll to it. Same answer as
+   .bulk-bar: one line, scrolled sideways, never a ragged second row. 560px is the narrowest
+   width on the file's 1100/900/640/560 grid and the only one the overflow actually reaches;
+   at 640px the tabs still fit, so a scroller there would be chrome for nothing. */
+@media (max-width: 560px) {
+  .views {
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+  /* Without this the tabs shrink to fit and their labels wrap instead of scrolling. */
+  .views .tab {
+    flex: none;
   }
 }
 
@@ -1174,7 +1244,7 @@ tbody tr.selected {
 .title-ext {
   margin-left: 0.3rem;
   vertical-align: 2px;
-  color: var(--faint);
+  color: var(--muted);
 }
 .title-link:hover .title-ext {
   color: var(--accent);
@@ -1322,13 +1392,17 @@ a.rating-chip:hover {
    is the fix for "the side card does not work on mobile": before, it was pushed off the
    bottom of a single column where it could not be seen.
 
-   This block must live *after* the base `.why` rule above: a media query adds no
-   specificity, so source order breaks the tie -- placed before it, `position: sticky` won
-   and the sheet silently never applied. */
+   This block must match `main.split .why` from the 1100px block, not the bare `.why`:
+   below 900px BOTH blocks apply, and a media query adds no specificity, so the bare
+   selector (0-1-0) lost every shared property to the right-hand-sheet rules (0-2-1) and
+   the full-screen sheet silently never applied. Equal specificity plus later source order
+   is what wins here, so keep this block below that one. `width: auto` is the one property
+   the 1100px block sets that `inset: 0` alone cannot undo. */
 @media (max-width: 900px) {
-  .why {
+  main.split .why {
     position: fixed;
     inset: 0;
+    width: auto;
     z-index: 50;
     max-height: 100dvh;
     border: none;
@@ -1686,7 +1760,11 @@ a.rating-chip:hover {
   flex-wrap: wrap;
   margin-top: 0.8rem;
 }
-@media (max-width: 700px) {
+/* 640px, on the file's 1100/900/640/560 grid. The column this table sits in is already
+   single-column below 900px, so the extra width the old one-off 700px query bought was
+   never the thing that made the row fit; at 640 the source name takes its own line just
+   as it did, and the app keeps one set of breakpoints. */
+@media (max-width: 640px) {
   /* Narrow columns: the source name takes its own line and the controls keep aligning. */
   .bar-table {
     grid-template-columns: 1fr auto;
@@ -1727,27 +1805,37 @@ a.rating-chip:hover {
 }
 .condition-add select,
 .condition-add input {
-  padding: 0.4rem 0.55rem;
+  padding: 0.42rem 0.6rem;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  background: var(--bg);
   color: var(--text);
   font: inherit;
   font-size: 0.85rem;
+}
+.condition-add :is(select, input):focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .condition-add input {
   width: 7rem;
 }
 
 /* Custom-rules editor: a Radarr-style table where each rule declares its EFFECT, colour-coded
-   in the same verdict language as the review queue (remove = red, keep = green). */
-.rules-card {
+   in the same verdict language as the review queue (remove = red, keep = green).
+
+   THE settings-bearing card, wherever one appears on the policy tab: the custom-rules
+   editor and the TV season-protection group (.season-card) are one definition, so the
+   two can never drift apart. */
+.rules-card,
+.season-card {
   border: 1px solid var(--border-strong);
-  border-radius: 12px;
+  border-radius: var(--radius);
   padding: 1rem 1.25rem 1.25rem;
   margin-top: 1.25rem;
 }
-.rules-card > h3 {
+.rules-card > h3,
+.season-card > h3 {
   margin-top: 0;
 }
 /* A protection that carries settings is a card whose header IS the protection's switch
@@ -1895,6 +1983,14 @@ a.rating-chip:hover {
 .policy-section {
   scroll-margin-top: 3.4rem;
 }
+/* On a phone the rail wraps to two lines, roughly doubling its height, and 3.4rem would
+   park the heading underneath it -- on the rail's own clicks and on a jump in from another
+   page. */
+@media (max-width: 640px) {
+  .policy-section {
+    scroll-margin-top: 6rem;
+  }
+}
 .policy-divider {
   height: 1px;
   background: var(--border);
@@ -1904,7 +2000,7 @@ a.rating-chip:hover {
 /* The intent band: the whole policy in one sentence, and three starting points. */
 .intent-band {
   border: 1px solid var(--border-strong);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--surface);
   padding: 0.9rem 1rem;
   margin: 0.2rem 0 1.5rem;
@@ -1930,17 +2026,8 @@ a.rating-chip:hover {
 .pace-approval {
   margin: 0 0 1.1rem;
 }
-/* A bordered card grouping the TV season-protection controls, matching the mockup. */
-/* Same card as .rules-card, so every settings-bearing block on the tab matches. */
-.season-card {
-  border: 1px solid var(--border-strong);
-  border-radius: 12px;
-  padding: 1rem 1.25rem 1.25rem;
-  margin-top: 1.25rem;
-}
-.season-card > h3 {
-  margin-top: 0;
-}
+/* The bordered card grouping the TV season-protection controls is .rules-card's twin, and
+   is declared with it above so the two settings-bearing cards stay one thing. */
 .inline-weight {
   display: inline-flex;
   align-items: center;
@@ -2000,6 +2087,13 @@ a.rating-chip:hover {
   padding: 0.2rem;
   outline: none;
 }
+/* The free-type box has no border of its own, so the ring goes on the box that does --
+   the same composite-control pattern as .qty:focus-within. Without it, taking the input
+   with the keyboard would show nothing at all. */
+.tag-chips:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 .tag-match {
   display: flex;
   align-items: center;
@@ -2008,20 +2102,6 @@ a.rating-chip:hover {
   font-size: 0.85rem;
 }
 
-.gate-list,
-.signal-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-.gate-list li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.35rem 0;
-  border-bottom: 1px solid var(--border);
-}
 .toggle {
   display: flex;
   align-items: center;
@@ -2033,33 +2113,6 @@ a.rating-chip:hover {
    control-to-control rhythm. */
 .toggle + .toggle {
   margin-top: 0.9rem;
-}
-.gate-name,
-.signal-name {
-  text-transform: capitalize;
-}
-.gate-threshold {
-  width: 5.5rem;
-  padding: 0.2rem 0.4rem;
-  border: 1px solid var(--border-strong);
-  border-radius: 5px;
-  background: var(--bg);
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-
-.signal-list li {
-  display: grid;
-  grid-template-columns: 10rem 1fr 2.5rem;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.3rem 0;
-  font-size: 0.88rem;
-}
-.signal-weight {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
 }
 
 .hash {
@@ -2098,7 +2151,7 @@ a.rating-chip:hover {
 .savebar-hash {
   flex-basis: 100%;
   font-size: 0.75rem;
-  color: var(--faint);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 .savebar .notice {
@@ -2336,6 +2389,9 @@ a.rating-chip:hover {
   background: var(--surface-2);
   padding: 0.1rem 0.35rem;
   border-radius: 4px;
+  /* An API path and a JSON body have no spaces to break on, so without this the Request
+     cell keeps its full width even inside .table-scroll. */
+  overflow-wrap: anywhere;
 }
 .step-body {
   margin-left: 0.4rem;
@@ -2397,6 +2453,9 @@ details.grace summary {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* The title opens that item's reasoning, so it is a button, which would otherwise
+     centre its label in the grid cell. */
+  text-align: left;
 }
 .grace-remaining {
   text-align: right;
@@ -2511,26 +2570,8 @@ tbody tr.spared-row .title-cell {
   font-size: 0.8rem;
   color: var(--muted);
 }
-/* Compact numeric caps follow the same control standard as the rest of the app
-   (--radius-sm, the settings-form padding, an inherited font, the accent focus ring).
-   A fixed 5rem width -- matching .rule-control -- keeps every box the same size
-   instead of stretching to fill its grid cell. */
-.caps-grid input[type="number"] {
-  width: 5rem;
-  padding: 0.42rem 0.6rem;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-  font-variant-numeric: tabular-nums;
-}
-.caps-grid input[type="number"]:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-/* The number + unit boxes line up with the bare number and with each other: one width
-   for every number, one for every unit (so GB, TB, weeks and months all read the same). */
+/* Every cap in this grid is a .qty box, so they line up with each other: one width for
+   every number, one for every unit (so GB, TB, weeks and months all read the same). */
 .caps-grid .qty input[type="number"] {
   flex: none;
   width: 5rem;
@@ -2555,6 +2596,17 @@ tbody tr.spared-row .title-cell {
 }
 .run-history li {
   padding: 0.2rem 0;
+}
+/* The plan currently shown above wears the app's active-item look (the raised surface of
+   .tab.active), so the list says which row you are already reading. The negative margin
+   cancels the added padding, so marking a row never shifts its neighbours. */
+.run-history li.open {
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+  margin: 0 -0.5rem;
 }
 
 /* ==========================================================================
@@ -2581,19 +2633,19 @@ tbody tr.spared-row .title-cell {
   color: var(--faint);
   pointer-events: none;
 }
+/* The one control chrome; only the left padding is this box's own, to clear the glyph. */
 .search-input {
   width: 100%;
-  padding: 0.5rem 0.7rem 0.5rem 2rem;
+  padding: 0.42rem 0.6rem 0.42rem 2rem;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  background: var(--bg);
   color: var(--text);
   font: inherit;
 }
 .search-input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ring);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 /* .segmented (container) and .seg (pill) are defined alongside .views/.tabs and .tab near
@@ -2704,6 +2756,34 @@ tbody tr.spared-row .title-cell {
     top: 0.7rem;
     right: 0.7rem;
   }
+  /* An expanded season row folds the same way the card above it does. Its four tracks plus
+     the list's indent leave the title about 25px on a 375px phone, which wraps season names
+     one letter per line and ellipsizes the chip to nothing. Two rows instead: the score down
+     the left, the name across the top, size and buttons underneath. Every selector here
+     carries the .card prefix for the same reason .card .poster does: the base rules are
+     declared later in the file and would win a specificity tie. */
+  .card .season-list,
+  .card .season-list-note {
+    padding-left: 1.2rem;
+  }
+  .card .season-row {
+    grid-template-columns: 2.6rem minmax(0, 1fr) auto;
+    row-gap: 0.35rem;
+  }
+  .card .season-row > .score {
+    grid-area: 1 / 1 / 3 / 2;
+  }
+  .card .season-row > .season-title {
+    grid-area: 1 / 2 / 2 / 4;
+  }
+  .card .season-row > .season-size {
+    grid-area: 2 / 2 / 3 / 3;
+  }
+  /* The override buttons, or the empty cell an other-tab row puts there instead. */
+  .card .season-row > :last-child {
+    grid-area: 2 / 3 / 3 / 4;
+    justify-self: end;
+  }
 }
 
 .card {
@@ -2809,7 +2889,7 @@ tbody tr.spared-row .title-cell {
   color: var(--text);
 }
 .card-year {
-  color: var(--faint);
+  color: var(--muted);
   font-weight: 500;
 }
 .card-meta {
@@ -3289,7 +3369,7 @@ button.sm {
   margin: 1rem auto 0;
   padding: 0.6rem 0.9rem;
   max-width: min(880px, 100%);
-  border-radius: 12px;
+  border-radius: var(--radius);
   background: var(--surface);
   border: 1px solid var(--border-strong);
   box-shadow: var(--shadow-lg);
@@ -3404,6 +3484,8 @@ button.sm {
   margin: 0 -0.5rem;
   border-radius: 6px;
   border-bottom: 1px solid var(--border);
+  /* Reserved for the other-tab marker below, so a row never shifts when it gains one. */
+  border-left: 2px solid transparent;
 }
 .season-row.clickable {
   cursor: pointer;
@@ -3439,9 +3521,15 @@ button.sm {
 }
 
 /* A season from another tab, listed so the whole show reads at once: visible and
-   clickable for its reasoning, acted on from its own tab. */
+   clickable for its reasoning, acted on from its own tab.
+
+   It is marked with a rule down its edge rather than a fade, because every part of this
+   row is text. Fading the row took the words with it -- the --muted size line composited
+   to 2.44:1 on a light surface at 0.6 and still only 3.50:1 at 0.8 -- and fading only the
+   badges is no better: the score pill starts at 4.94:1, so even 0.9 drops it to 4.25:1.
+   The edge rule carries the same "not this tab's row" meaning at no cost to any of them. */
 .season-row.season-other {
-  opacity: 0.6;
+  border-left-color: var(--border-strong);
 }
 .season-size {
   color: var(--muted);
@@ -3610,10 +3698,12 @@ button.danger:hover:not(:disabled) {
   background: var(--surface-2);
   color: var(--muted);
 }
-.kind-radarr { background: #f5c518; color: #241a02; }
-.kind-sonarr { background: #3a9bdb; color: #041018; }
-.kind-tautulli { background: #e5a00d; color: #241a02; }
-.kind-seerr { background: #6366f1; color: #fff; }
+/* Brand marks, from the token pairs beside --plex. Tautulli is Plex gold, so it wears the
+   Plex pair rather than a copy of it. */
+.kind-radarr { background: var(--radarr); color: var(--radarr-ink); }
+.kind-sonarr { background: var(--sonarr); color: var(--sonarr-ink); }
+.kind-tautulli { background: var(--plex); color: var(--plex-ink); }
+.kind-seerr { background: var(--seerr); color: var(--seerr-ink); }
 
 .test-badge {
   font-size: 0.8rem;
@@ -3696,18 +3786,17 @@ button.danger:hover:not(:disabled) {
 }
 .field-sm input,
 .field-sm select {
-  padding: 0.45rem 0.55rem;
+  padding: 0.42rem 0.6rem;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  background: var(--bg);
   color: var(--text);
   font: inherit;
 }
 .field-sm input:focus,
 .field-sm select:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ring);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .add-actions {
   display: flex;
@@ -3737,41 +3826,8 @@ button.danger:hover:not(:disabled) {
   flex: none;
 }
 
-/* schedule */
-.preset-list {
-  display: flex;
-  gap: 0.5rem;
-  flex-wrap: wrap;
-  margin: 0.5rem 0;
-}
-.preset {
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  padding: 0.5rem 0.85rem;
-  font-size: 0.88rem;
-  background: var(--surface);
-}
-.preset.active {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-  font-weight: 600;
-}
-.cron-custom {
-  display: flex;
-  gap: 0.5rem;
-  margin: 0.5rem 0;
-  max-width: 420px;
-}
-.cron-custom input {
-  flex: 1;
-  padding: 0.45rem 0.6rem;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-}
+/* schedule: the picker and the hand-written line are a select and a text box in the
+   standard .set-row grammar, so they need no styling of their own. */
 .job-list {
   list-style: none;
   padding: 0;
@@ -3826,6 +3882,12 @@ button.danger:hover:not(:disabled) {
   flex-wrap: wrap;
 }
 .safety-row .help { margin-top: 0.2rem; max-width: 46ch; }
+/* The row is a space-between flex line, so a failure notice would otherwise be squeezed in
+   beside the form it belongs to. Give it the full width, under the control. */
+.safety-row .notice {
+  flex-basis: 100%;
+  margin: 0.25rem 0 0;
+}
 
 /* ==========================================================================
    The settings standard: switches and rows
@@ -3953,6 +4015,10 @@ button.danger:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  /* Inert while the row has room, and the difference between a readable label and one
+     word per line when it hasn't: the API-key row alone carries a 15rem input plus three
+     buttons, which is wider than the control column gets on a tablet in portrait. */
+  flex-wrap: wrap;
 }
 .set-row.dimmed .set-label,
 .set-row.dimmed .help {
@@ -3969,7 +4035,7 @@ button.danger:hover:not(:disabled) {
 .set-row .set-control select {
   padding: 0.42rem 0.6rem;
   border: 1px solid var(--border-strong);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--text);
   font-size: 0.88rem;
@@ -3997,7 +4063,6 @@ button.danger:hover:not(:disabled) {
     grid-column: 1;
     grid-row: 3;
     justify-self: start;
-    flex-wrap: wrap;
   }
   .set-row .set-control input,
   .set-row .set-control select {
@@ -4094,7 +4159,7 @@ button.danger:hover:not(:disabled) {
   padding: 0.42rem 0.9rem;
   font-size: 0.88rem;
   font-weight: 550;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
   background: var(--surface);
   color: var(--text);
@@ -4127,39 +4192,24 @@ button.danger:hover:not(:disabled) {
   flex-wrap: wrap;
   margin-bottom: 0.7rem;
 }
+/* The toolbar's two switches sit side by side, so the stacked-toggle rhythm from
+   .toggle + .toggle (which exists for toggles in a column) must not apply here. */
+.logbar .toggle + .toggle {
+  margin-top: 0;
+}
 .log-search {
   flex: 1 1 18rem;
   min-width: 12rem;
-  padding: 0.45rem 0.7rem;
+  padding: 0.42rem 0.6rem;
   font-size: 0.9rem;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
-  background: var(--surface);
+  background: var(--bg);
   color: var(--text);
 }
-.log-live {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  white-space: nowrap;
-}
-.log-wrap-btn {
-  white-space: nowrap;
-}
-.log-wrap-btn.on {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.live-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--faint);
-  flex: none;
-}
-.log-live.on .live-dot {
-  background: var(--protect);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--protect) 18%, transparent);
+.log-search:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .log-count {
   margin-left: auto;
@@ -4197,7 +4247,7 @@ button.danger:hover:not(:disabled) {
   white-space: nowrap;
 }
 .log-t {
-  color: var(--faint);
+  color: var(--muted);
   flex: none;
   font-variant-numeric: tabular-nums;
 }
@@ -4209,7 +4259,7 @@ button.danger:hover:not(:disabled) {
   letter-spacing: 0.04em;
 }
 .log-lv.debug {
-  color: var(--faint);
+  color: var(--muted);
 }
 .log-lv.info {
   color: var(--accent);
@@ -4291,7 +4341,7 @@ button.danger:hover:not(:disabled) {
   color: var(--text);
 }
 .setup-check em {
-  color: var(--faint);
+  color: var(--muted);
   font-style: normal;
   font-size: 0.82rem;
 }
@@ -4307,9 +4357,13 @@ button.danger:hover:not(:disabled) {
   color: var(--faint);
   flex: none;
 }
+/* The tick's ink is the matching -soft token, never white: on the lighter green --protect
+   takes in dark mode, white lands at 1.95:1 and the tick all but vanishes on the very
+   first screen an owner sees. --protect-soft clears AA in both themes (4.66:1 light,
+   8.32:1 dark), and matches what .chip-hand-spare and .strip-ov-spare already do. */
 .setup-check.done .check-mark {
   background: var(--protect);
-  color: #fff;
+  color: var(--protect-soft);
 }
 .setup .panel {
   margin: 1.5rem 0;
@@ -4365,15 +4419,14 @@ button.danger:hover:not(:disabled) {
   padding: 0.42rem 0.6rem;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--surface);
+  background: var(--bg);
   color: var(--text);
   font: inherit;
   min-width: 12rem;
 }
 .pw-form input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ring);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 /* THE quantity control: one bordered box holding the number and its unit, whether the
@@ -4436,7 +4489,7 @@ button.danger:hover:not(:disabled) {
   font-size: 0.85rem;
 }
 
-/* --- The reap confirmation sheet: the one modal in the app that deletes ------------------ */
+/* --- Modals: the shared shell (ModalShell.tsx), then the reap sheet ---------------------- */
 .modal-scrim {
   position: fixed;
   inset: 0;
@@ -4445,7 +4498,7 @@ button.danger:hover:not(:disabled) {
   align-items: center;
   justify-content: center;
   padding: 1.2rem;
-  background: rgba(8, 9, 12, 0.55);
+  background: var(--scrim);
   backdrop-filter: blur(2px);
 }
 .modal {
@@ -4461,13 +4514,15 @@ button.danger:hover:not(:disabled) {
   box-shadow: var(--shadow-lg);
   padding: 1.3rem 1.5rem 1.5rem;
 }
-.reap-confirm-head {
+/* Every modal's header row, drawn once by the shell. The reap sheet's own styling lives
+   under its own classes below. */
+.modal-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
 }
-.reap-confirm-head h2 {
+.modal-head h2 {
   margin: 0;
   font-size: 1.15rem;
 }

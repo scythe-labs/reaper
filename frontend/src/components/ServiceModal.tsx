@@ -12,6 +12,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, type Instance, type InstanceTest } from "../api";
+import { ModalShell } from "./ModalShell";
 import { Switch } from "./Switch";
 
 export const KINDS: { value: string; label: string; hint: string; port: string }[] = [
@@ -190,131 +191,129 @@ export function ServiceModal({
     name.trim() !== "" && host.trim() !== "" && (editing || apiKey.trim() !== "");
 
   return (
-    <div className="modal-scrim" onClick={onClose}>
-      <div className="modal service-modal" onClick={(e) => e.stopPropagation()}>
-        <header className="reap-confirm-head">
-          <h2>
-            <span className={`kind-badge kind-${kind}`}>{kindLabel(kind)}</span>{" "}
-            {editing ? `Edit ${instance.name}` : `Add a ${kindLabel(kind)}`}
-          </h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">
-            ✕
-          </button>
-        </header>
-        <form
-          className="service-form"
-          onSubmit={(e) => {
-            e.preventDefault();
-            setError(null);
-            save.mutate();
-          }}
-        >
+    <ModalShell
+      title={
+        <>
+          <span className={`kind-badge kind-${kind}`}>{kindLabel(kind)}</span>{" "}
+          {editing ? `Edit ${instance.name}` : `Add a ${kindLabel(kind)}`}
+        </>
+      }
+      onClose={onClose}
+      className="service-modal"
+    >
+      <form
+        className="service-form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setError(null);
+          save.mutate();
+        }}
+      >
+        <label className="field-sm">
+          <span className="field-label">Name</span>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={kind === "tautulli" || kind === "seerr" ? "Main" : "HD"}
+          />
+        </label>
+        <div className="host-row">
           <label className="field-sm">
-            <span className="field-label">Name</span>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder={kind === "tautulli" || kind === "seerr" ? "Main" : "HD"}
-            />
-          </label>
-          <div className="host-row">
-            <label className="field-sm">
-              <span className="field-label">Hostname or IP</span>
-              <span className="url-join">
-                <span className="url-scheme">{ssl ? "https://" : "http://"}</span>
-                <input
-                  value={host}
-                  onChange={(e) => onHostChange(e.target.value)}
-                  placeholder="192.168.1.10"
-                />
-              </span>
-            </label>
-            <label className="field-sm">
-              <span className="field-label">Port</span>
+            <span className="field-label">Hostname or IP</span>
+            <span className="url-join">
+              <span className="url-scheme">{ssl ? "https://" : "http://"}</span>
               <input
-                value={port}
-                inputMode="numeric"
-                onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, "").slice(0, 5))}
-                placeholder={ssl ? "443" : "80"}
+                value={host}
+                onChange={(e) => onHostChange(e.target.value)}
+                placeholder="192.168.1.10"
               />
-            </label>
-          </div>
+            </span>
+          </label>
           <label className="field-sm">
-            <span className="field-label">URL base</span>
+            <span className="field-label">Port</span>
             <input
-              value={urlBase}
-              onChange={(e) => setUrlBase(e.target.value)}
-              placeholder="only if it lives under a path, like /sonarr"
+              value={port}
+              inputMode="numeric"
+              onChange={(e) => setPort(e.target.value.replace(/[^0-9]/g, "").slice(0, 5))}
+              placeholder={ssl ? "443" : "80"}
             />
           </label>
-          <label className="toggle">
-            <Switch checked={ssl} onChange={setSsl} />
-            <span>Use SSL</span>
-          </label>
-          {ssl && (
-            <>
-              <label className="toggle">
-                <Switch checked={verifyCert} onChange={setVerifyCert} />
-                <span>Check the server's certificate</span>
-              </label>
-              {!verifyCert && (
-                <p className="notice notice-warn">
-                  Reaper will accept this server's certificate without checking who issued
-                  it. Only use this for a server you run yourself, like one with a
-                  self-signed certificate.
-                </p>
-              )}
-            </>
-          )}
-          <label className="field-sm">
-            <span className="field-label">{editing ? "New API key" : "API key"}</span>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={
-                editing ? "leave blank to keep the current key" : "from the service's settings"
-              }
-              autoComplete="off"
-            />
-          </label>
-          {editing && (
+        </div>
+        <label className="field-sm">
+          <span className="field-label">URL base</span>
+          <input
+            value={urlBase}
+            onChange={(e) => setUrlBase(e.target.value)}
+            placeholder="only if it lives under a path, like /sonarr"
+          />
+        </label>
+        <label className="toggle">
+          <Switch checked={ssl} onChange={setSsl} />
+          <span>Use SSL</span>
+        </label>
+        {ssl && (
+          <>
             <label className="toggle">
-              <Switch checked={enabled} onChange={setEnabled} />
-              <span>Enabled</span>
+              <Switch checked={verifyCert} onChange={setVerifyCert} />
+              <span>Check the server's certificate</span>
             </label>
-          )}
-          {meta && <p className="help">{meta.hint}</p>}
-          {error && <p className="notice notice-error">{error}</p>}
-          {test && (
-            <div className="instance-status">
-              <TestBadge result={test} />
-            </div>
-          )}
-          <div className="add-actions">
-            {!editing && (
-              <button
-                type="button"
-                className="ghost"
-                disabled={!canTest}
-                onClick={() => {
-                  setError(null);
-                  testConn.mutate();
-                }}
-              >
-                {testConn.isPending ? "Testing…" : "Test connection"}
-              </button>
+            {!verifyCert && (
+              <p className="notice notice-warn">
+                Reaper will accept this server's certificate without checking who issued
+                it. Only use this for a server you run yourself, like one with a
+                self-signed certificate.
+              </p>
             )}
-            <span className="flex-spacer" />
-            <button type="button" className="ghost" onClick={onClose}>
-              Cancel
-            </button>
-            <button type="submit" className="primary" disabled={!ready || save.isPending}>
-              {save.isPending ? (editing ? "Saving…" : "Adding…") : editing ? "Save" : "Add service"}
-            </button>
+          </>
+        )}
+        <label className="field-sm">
+          <span className="field-label">{editing ? "New API key" : "API key"}</span>
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={
+              editing ? "leave blank to keep the current key" : "from the service's settings"
+            }
+            autoComplete="off"
+          />
+        </label>
+        {editing && (
+          <label className="toggle">
+            <Switch checked={enabled} onChange={setEnabled} />
+            <span>Enabled</span>
+          </label>
+        )}
+        {meta && <p className="help">{meta.hint}</p>}
+        {error && <p className="notice notice-error">{error}</p>}
+        {test && (
+          <div className="instance-status">
+            <TestBadge result={test} />
           </div>
-        </form>
-      </div>
-    </div>
+        )}
+        <div className="add-actions">
+          {!editing && (
+            <button
+              type="button"
+              className="ghost"
+              disabled={!canTest}
+              onClick={() => {
+                setError(null);
+                testConn.mutate();
+              }}
+            >
+              {testConn.isPending ? "Testing…" : "Test connection"}
+            </button>
+          )}
+          <span className="flex-spacer" />
+          <button type="button" className="ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="primary" disabled={!ready || save.isPending}>
+            {save.isPending ? (editing ? "Saving…" : "Adding…") : editing ? "Save" : "Add service"}
+          </button>
+        </div>
+      </form>
+    </ModalShell>
   );
 }

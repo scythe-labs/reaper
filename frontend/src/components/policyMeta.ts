@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// Plain-English identities for every protection and signal, so the editor reads like a
+// person wrote it instead of exposing the engine's field names. `unit` picks the control:
+// a duration gets a value+unit picker, a rating a 0–10 box, a count a plain number.
+//
+// These live in their own module because both the policy editor and the simulator column
+// beside it name protections, and neither should have to import the other to do it.
+
+export type GateMeta = { label: string; help: string; unit?: "days" | "people" };
+
+export const GATE_META: Record<string, GateMeta> = {
+  min_dormancy: {
+    label: "Give every title time to be rewatched",
+    help: "Nothing is removed until it has gone at least this long without a single play. Under about three years, people still circle back to a title surprisingly often.",
+    unit: "days",
+  },
+  server_popularity: {
+    label: "Keep what your users actually watch",
+    help: "If at least this many different people have played it recently, it stays, whatever it scored.",
+    unit: "people",
+  },
+  rating_floor: {
+    label: "Keep well-rated titles",
+    help: "A title well rated on any source you trust is kept.",
+  },
+  others_watching: {
+    label: "Protect what other people watch",
+    help: "If someone other than the requester has played it, keep it. Removing it would punish them for a request that wasn't theirs.",
+    unit: "people",
+  },
+  streaming_now: {
+    label: "Never touch something playing right now",
+    help: "Re-checked in the seconds before any removal, not just at scan time.",
+  },
+  whitelisted: {
+    label: "Spare titles you've tagged",
+    help: "A title carrying one of these tags in Sonarr/Radarr is kept, whatever it scores. (A ‘Never Reap’ Plex collection is honoured too.)",
+  },
+  curated_list: {
+    label: "Honour protected lists",
+    help: "Right now this is the IMDb Top 250. Anything on it is kept.",
+  },
+  data_horizon: {
+    label: "Don't judge what predates your history",
+    help: "Tautulli can't see plays from before it was installed, so anything older than your history is left alone rather than assumed unwatched.",
+  },
+  unmanaged: {
+    label: "Only touch what Sonarr or Radarr manages",
+    help: "If no *arr owns the file, Reaper has no safe way to remove it.",
+  },
+};
+
+export const SIGNAL_META: Record<string, { label: string; help: string }> = {
+  unwatched: {
+    label: "How long it's gone unwatched",
+    help: "The longer since anyone played it, the stronger the reason to remove it. The biggest single signal.",
+  },
+  few_watchers: {
+    label: "How few people watch it",
+    help: "Fewer recent watchers means more pressure to remove it.",
+  },
+  season_rank: {
+    label: "How old a season is",
+    help: "Older seasons of a show carry more pressure than the newest one. The season floor below still wins.",
+  },
+  low_rating: {
+    label: "How low it's rated",
+    help: "A poorly-rated title carries a little more pressure.",
+  },
+  size: {
+    label: "How big it is on disk",
+    help: "Off by default. Big files are usually big because they're popular, so size makes a poor reason to delete. It only ranks titles the score has already chosen.",
+  },
+};
+
+export function titleCase(id: string): string {
+  return id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}

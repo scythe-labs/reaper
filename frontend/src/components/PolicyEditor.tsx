@@ -25,7 +25,7 @@
 //   3. the deletion switch (its own password-gated call).
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   api,
   ApiError,
@@ -40,88 +40,15 @@ import {
   type RatingRule,
   type RatingSource,
   type SignalSetting,
-  type Simulation,
   type VocabField,
 } from "../api";
 import { bytes, count } from "../format";
 import { DeletionToggle } from "./DeletionToggle";
+import { GATE_META, SIGNAL_META, titleCase } from "./policyMeta";
+import { Outcome, StaleNotice } from "./PolicySimulator";
 import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
 import { Switch } from "./Switch";
-
-// Plain-English identities for every protection and signal, so the editor reads like a
-// person wrote it instead of exposing the engine's field names. `unit` picks the control:
-// a duration gets a value+unit picker, a rating a 0–10 box, a count a plain number.
-type GateMeta = { label: string; help: string; unit?: "days" | "people" };
-
-const GATE_META: Record<string, GateMeta> = {
-  min_dormancy: {
-    label: "Give every title time to be rewatched",
-    help: "Nothing is removed until it has gone at least this long without a single play. Under about three years, people still circle back to a title surprisingly often.",
-    unit: "days",
-  },
-  server_popularity: {
-    label: "Keep what your users actually watch",
-    help: "If at least this many different people have played it recently, it stays, whatever it scored.",
-    unit: "people",
-  },
-  rating_floor: {
-    label: "Keep well-rated titles",
-    help: "A title well rated on any source you trust is kept.",
-  },
-  others_watching: {
-    label: "Protect what other people watch",
-    help: "If someone other than the requester has played it, keep it. Removing it would punish them for a request that wasn't theirs.",
-    unit: "people",
-  },
-  streaming_now: {
-    label: "Never touch something playing right now",
-    help: "Re-checked in the seconds before any removal, not just at scan time.",
-  },
-  whitelisted: {
-    label: "Spare titles you've tagged",
-    help: "A title carrying one of these tags in Sonarr/Radarr is kept, whatever it scores. (A ‘Never Reap’ Plex collection is honoured too.)",
-  },
-  curated_list: {
-    label: "Honour protected lists",
-    help: "The IMDb Top 250, and any other list you mark as protected.",
-  },
-  data_horizon: {
-    label: "Don't judge what predates your history",
-    help: "Tautulli can't see plays from before it was installed, so anything older than your history is left alone rather than assumed unwatched.",
-  },
-  unmanaged: {
-    label: "Only touch what Sonarr or Radarr manages",
-    help: "If no *arr owns the file, Reaper has no safe way to remove it.",
-  },
-};
-
-const SIGNAL_META: Record<string, { label: string; help: string }> = {
-  unwatched: {
-    label: "How long it's gone unwatched",
-    help: "The longer since anyone played it, the stronger the reason to remove it. The biggest single signal.",
-  },
-  few_watchers: {
-    label: "How few people watch it",
-    help: "Fewer recent watchers means more pressure to remove it.",
-  },
-  season_rank: {
-    label: "How old a season is",
-    help: "Older seasons of a show carry more pressure than the newest one. The season floor below still wins.",
-  },
-  low_rating: {
-    label: "How low it's rated",
-    help: "A poorly-rated title carries a little more pressure.",
-  },
-  size: {
-    label: "How big it is on disk",
-    help: "Off by default. Big files are usually big because they're popular, so size makes a poor reason to delete. It only ranks titles the score has already chosen.",
-  },
-};
-
-function titleCase(id: string): string {
-  return id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
 
 // ---------------------------------------------------------------------------
 // Presets: three starting points that stage (never save) the threshold and the
@@ -314,6 +241,7 @@ function GateRow({ gate, onChange }: { gate: GateSetting; onChange: (g: GateSett
             value={gate.threshold}
             units={TIME_UNITS}
             min={365}
+            ariaLabel={`${meta.label} threshold`}
             onChange={(v) => onChange({ ...gate, threshold: v })}
           />
         </div>
@@ -733,15 +661,28 @@ function SuggestInput({
   });
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(-1);
+  // The listbox and its options need stable ids so the input can point at the option the
+  // arrow keys are on; without them, arrowing moves the highlight and announces nothing.
+  const listboxId = useId();
+  const optionId = (i: number) => `${listboxId}-option-${i}`;
 
   if (!isText) {
-    return (
+    // A number that has a unit wears it in the box, not in a placeholder that vanishes the
+    // moment you type. Fields with no unit (a rank, a count) stay a plain box.
+    return field.unit_suffix ? (
+      <FixedQuantity
+        value={value}
+        suffix={field.unit_suffix}
+        step={field.type === "rating_tenths" ? 0.1 : 1}
+        ariaLabel={`${field.label} value`}
+        onChange={(v) => onChange(String(v))}
+      />
+    ) : (
       <input
         type="number"
-        step={field.type === "rating_tenths" ? "0.1" : undefined}
         value={value}
+        aria-label={`${field.label} value`}
         onChange={(e) => onChange(e.target.value)}
-        placeholder={field.unit_suffix || "value"}
       />
     );
   }
@@ -764,6 +705,9 @@ function SuggestInput({
         role="combobox"
         aria-expanded={show}
         aria-autocomplete="list"
+        aria-controls={show ? listboxId : undefined}
+        aria-activedescendant={show && highlight >= 0 ? optionId(highlight) : undefined}
+        aria-label={`${field.label} value`}
         value={value}
         placeholder={field.unit_suffix || "value"}
         onChange={(e) => {
@@ -799,10 +743,11 @@ function SuggestInput({
         }}
       />
       {show && (
-        <ul className="suggest-pop" role="listbox">
+        <ul className="suggest-pop" role="listbox" id={listboxId}>
           {matches.map((v, i) => (
             <li
               key={v}
+              id={optionId(i)}
               role="option"
               aria-selected={i === highlight}
               className={i === highlight ? "suggest-opt active" : "suggest-opt"}
@@ -919,7 +864,7 @@ function RemoveRulesEditor({
       )}
 
       <div className="condition-add">
-        <select value={rField} onChange={(e) => setRField(e.target.value)}>
+        <select value={rField} aria-label="Field" onChange={(e) => setRField(e.target.value)}>
           <option value="">when…</option>
           {condemnFields.map((f) => (
             <option key={f.key} value={f.key}>
@@ -929,7 +874,7 @@ function RemoveRulesEditor({
         </select>
         {field && (
           <>
-            <select value={rOp} onChange={(e) => setROp(e.target.value)}>
+            <select value={rOp} aria-label="Comparison" onChange={(e) => setROp(e.target.value)}>
               {field.ops.map((o) => (
                 <option key={o} value={o}>
                   {OP_LABELS[o] ?? o}
@@ -941,31 +886,53 @@ function RemoveRulesEditor({
               <span className="ramp-bounds">
                 <span className="muted">from</span>
                 {field.type === "days" ? (
-                  <QuantityInput value={rFrom} units={TIME_UNITS} onChange={setRFrom} />
+                  <QuantityInput
+                    value={rFrom}
+                    units={TIME_UNITS}
+                    ariaLabel="Starts counting at"
+                    onChange={setRFrom}
+                  />
                 ) : field.type === "bytes" ? (
-                  <QuantityInput value={rFrom} units={SIZE_UNITS} onChange={setRFrom} />
+                  <QuantityInput
+                    value={rFrom}
+                    units={SIZE_UNITS}
+                    ariaLabel="Starts counting at"
+                    onChange={setRFrom}
+                  />
                 ) : (
                   <input
                     type="number"
                     value={rFrom}
+                    aria-label="Starts counting at"
                     onChange={(e) => setRFrom(Number(e.target.value) || 0)}
                   />
                 )}
                 <span className="muted">to</span>
                 {field.type === "days" ? (
-                  <QuantityInput value={rTo} units={TIME_UNITS} onChange={setRTo} />
+                  <QuantityInput
+                    value={rTo}
+                    units={TIME_UNITS}
+                    ariaLabel="Full effect at"
+                    onChange={setRTo}
+                  />
                 ) : field.type === "bytes" ? (
-                  <QuantityInput value={rTo} units={SIZE_UNITS} onChange={setRTo} />
+                  <QuantityInput
+                    value={rTo}
+                    units={SIZE_UNITS}
+                    ariaLabel="Full effect at"
+                    onChange={setRTo}
+                  />
                 ) : (
                   <input
                     type="number"
                     value={rTo}
+                    aria-label="Full effect at"
                     onChange={(e) => setRTo(Number(e.target.value) || 1)}
                   />
                 )}
               </span>
             ) : field.type === "bool" ? (
-              <select value={rValue} onChange={(e) => setRValue(e.target.value)}>
+              <select value={rValue} aria-label="Value" onChange={(e) => setRValue(e.target.value)}>
                 <option value="true">yes</option>
                 <option value="false">no</option>
               </select>
@@ -1125,26 +1092,19 @@ function KeepRulesEditor({
       )}
 
       <div className="rules-add">
-        <div className="segmented" role="group" aria-label="Rule strength">
-          <button
-            type="button"
-            className={strength === "hard" ? "seg active" : "seg"}
-            onClick={() => setStrength("hard")}
-          >
-            Keeps it outright
-          </button>
-          <button
-            type="button"
-            className={strength === "lean" ? "seg active" : "seg"}
-            onClick={() => setStrength("lean")}
-          >
-            Leans toward keeping
-          </button>
-        </div>
+        <Segmented
+          value={strength}
+          onChange={setStrength}
+          label="Rule strength"
+          options={[
+            ["hard", "Keeps it outright"],
+            ["lean", "Leans toward keeping"],
+          ]}
+        />
 
         {strength === "hard" ? (
           <div className="condition-add">
-            <select value={hField} onChange={(e) => setHField(e.target.value)}>
+            <select value={hField} aria-label="Field" onChange={(e) => setHField(e.target.value)}>
               <option value="">Keep it when…</option>
               {hardFields.map((f) => (
                 <option key={f.key} value={f.key}>
@@ -1154,7 +1114,7 @@ function KeepRulesEditor({
             </select>
             {hardField && (
               <>
-                <select value={hOp} onChange={(e) => setHOp(e.target.value)}>
+                <select value={hOp} aria-label="Comparison" onChange={(e) => setHOp(e.target.value)}>
                   {hardField.ops.map((o) => (
                     <option key={o} value={o}>
                       {OP_LABELS[o] ?? o}
@@ -1162,7 +1122,11 @@ function KeepRulesEditor({
                   ))}
                 </select>
                 {hardField.type === "bool" ? (
-                  <select value={hValue} onChange={(e) => setHValue(e.target.value)}>
+                  <select
+                    value={hValue}
+                    aria-label="Value"
+                    onChange={(e) => setHValue(e.target.value)}
+                  >
                     <option value="true">yes</option>
                     <option value="false">no</option>
                   </select>
@@ -1182,7 +1146,7 @@ function KeepRulesEditor({
           </div>
         ) : (
           <div className="condition-add">
-            <select value={lField} onChange={(e) => setLField(e.target.value)}>
+            <select value={lField} aria-label="Field" onChange={(e) => setLField(e.target.value)}>
               <option value="">when…</option>
               {leanFields.map((f) => (
                 <option key={f.key} value={f.key}>
@@ -1194,18 +1158,29 @@ function KeepRulesEditor({
               <>
                 <select
                   value={lDir}
+                  aria-label="Which way it leans"
                   onChange={(e) => setLDir(e.target.value as "high_keeps" | "low_keeps")}
                 >
                   <option value="high_keeps">the more, the safer</option>
                   <option value="low_keeps">the less, the safer</option>
                 </select>
-                <input
-                  type="number"
-                  step={leanField.type === "rating_tenths" ? "0.1" : undefined}
-                  value={lAt}
-                  onChange={(e) => setLAt(e.target.value)}
-                  placeholder={`full effect at ${leanField.unit_suffix || "value"}`}
-                />
+                <span className="muted">full effect at</span>
+                {leanField.unit_suffix ? (
+                  <FixedQuantity
+                    value={lAt}
+                    suffix={leanField.unit_suffix}
+                    step={leanField.type === "rating_tenths" ? 0.1 : 1}
+                    ariaLabel="Full effect at"
+                    onChange={(v) => setLAt(String(v))}
+                  />
+                ) : (
+                  <input
+                    type="number"
+                    value={lAt}
+                    aria-label="Full effect at"
+                    onChange={(e) => setLAt(e.target.value)}
+                  />
+                )}
                 <label className="inline-weight">
                   up to −
                   <input
@@ -1254,210 +1229,6 @@ function SeasonAdvisory({ keepLast }: { keepLast: number }) {
 }
 
 // ---------------------------------------------------------------------------
-// The simulator column.
-// ---------------------------------------------------------------------------
-
-/** The histogram, with the threshold drawn across it.
- *
- *  This is what makes a threshold a decision rather than a guess: you place it against
- *  the actual shape of the library, and you can see how many items sit just the wrong
- *  side of it. */
-function Histogram({ buckets, threshold }: { buckets: number[]; threshold: number }) {
-  const peak = Math.max(...buckets, 1);
-
-  return (
-    <div className="histogram" aria-hidden>
-      {buckets.map((n, i) => {
-        const low = i * 10;
-        const condemned = low + 10 > threshold;
-        return (
-          <div className="hist-col" key={low} title={`${low}–${low + 9}: ${count(n)} items`}>
-            <div
-              className={condemned ? "hist-bar hist-condemn" : "hist-bar"}
-              style={{ height: `${(n / peak) * 100}%` }}
-            />
-            <span className="hist-label">{low}</span>
-          </div>
-        );
-      })}
-      <div className="hist-thresh" style={{ left: `${threshold}%` }}>
-        <b>{threshold}</b>
-      </div>
-    </div>
-  );
-}
-
-/** The "needs a scan" state. Informational, not an error: you didn't do anything wrong,
- *  the numbers just can't be re-derived from the old scan. So it's neutral, short, and gives
- *  you the one button that fixes it. A start that fails says so right here, or the button
- *  would appear to do nothing. */
-function StaleNotice({
-  scanning,
-  followupQueued,
-  starting,
-  startError,
-  onScan,
-  percent,
-  detail,
-}: {
-  scanning: boolean;
-  /** A scan was already running when the rescan was requested, so a second one starts
-   *  right after it. The copy must say so: the bar the owner is watching belongs to a
-   *  scan that does NOT include their changes yet. */
-  followupQueued: boolean;
-  starting: boolean;
-  startError: string | null;
-  onScan: () => void;
-  percent: number;
-  detail: string;
-}) {
-  return (
-    <div className="sim sim-info">
-      <h3>{scanning ? "Rescanning to apply your changes" : "Needs a fresh scan"}</h3>
-      {scanning ? (
-        <>
-          <p>
-            {followupQueued
-              ? "A scan was already running, so your changes go into a second scan that starts right after it. You can leave this page; the numbers here refresh when everything finishes."
-              : "Scoring your library under the new policy. You can leave this page; it keeps running, and the numbers here refresh when it finishes."}
-          </p>
-          <p className="muted">
-            {detail || "Working"} · {percent}%
-          </p>
-          <div className="bar">
-            <div className="bar-fill" style={{ width: `${percent}%` }} />
-          </div>
-        </>
-      ) : (
-        <>
-          <p>
-            You changed how the scan reads your library (a watch window, a keep tag, or a season
-            rule), so the last scan's evidence no longer fits this policy. Scan to apply it.
-          </p>
-          <button className="primary sm" onClick={onScan} disabled={starting}>
-            {starting ? "Starting…" : "Scan now"}
-          </button>
-        </>
-      )}
-      {startError && (
-        <p className="notice notice-error">The scan didn't start: {startError}</p>
-      )}
-    </div>
-  );
-}
-
-function Outcome({
-  simulation,
-  threshold,
-  pace,
-}: {
-  simulation: Simulation;
-  threshold: number;
-  pace: ProfileSettings | null;
-}) {
-  // The saved policy's count is derivable: what this draft flags, minus what only this
-  // draft flags, plus what only the saved one flags.
-  const savedFlags =
-    simulation.condemned - simulation.newly_condemned + simulation.no_longer_condemned;
-  const moreExamples = simulation.newly_condemned - simulation.examples_newly_condemned.length;
-
-  return (
-    <div className="sim">
-      <div className="sim-headline">
-        <div>
-          <span className="sim-number">{count(simulation.condemned)}</span>
-          <span className="sim-unit">items would be deleted</span>
-        </div>
-        <div>
-          <span className="sim-number">{bytes(simulation.reclaimable_bytes)}</span>
-          <span className="sim-unit">reclaimed</span>
-        </div>
-      </div>
-
-      <p className="sim-compare">
-        Your saved policy flags <strong>{count(savedFlags)}</strong>. This draft flags{" "}
-        <strong>{count(simulation.condemned)}</strong>.
-      </p>
-
-      <Histogram buckets={simulation.histogram} threshold={threshold} />
-      <p className="help">
-        Everyone's score, 0 to 100. The line is your threshold. Red bars are past it.
-      </p>
-
-      {simulation.examples_newly_condemned.length > 0 && (
-        <>
-          <h3>New on the list</h3>
-          <ul className="sim-examples">
-            {simulation.examples_newly_condemned.map((e) => (
-              <li key={`${e.title}-${e.year ?? ""}`}>
-                <span>
-                  {e.title}
-                  {e.year !== null && <span className="muted"> ({e.year})</span>}
-                </span>
-                <span className="sim-example-score">{e.score}</span>
-              </li>
-            ))}
-            {moreExamples > 0 && (
-              <li className="muted">
-                …and {count(moreExamples)} more that your saved policy left alone
-              </li>
-            )}
-          </ul>
-        </>
-      )}
-
-      {simulation.protected_by.length > 0 && (
-        <>
-          <h3>Why titles were spared</h3>
-          <dl className="sim-delta">
-            {simulation.protected_by.map((g) => (
-              <div key={g.gate}>
-                <dt>{GATE_META[g.gate]?.label ?? titleCase(g.gate)}</dt>
-                <dd>{count(g.count)}</dd>
-              </div>
-            ))}
-          </dl>
-        </>
-      )}
-
-      <dl className="sim-delta">
-        <div>
-          <dt>Newly condemned</dt>
-          <dd className={simulation.newly_condemned > 0 ? "danger" : ""}>
-            +{count(simulation.newly_condemned)}
-          </dd>
-        </div>
-        <div>
-          <dt>No longer condemned</dt>
-          <dd>−{count(simulation.no_longer_condemned)}</dd>
-        </div>
-        <div>
-          <dt>Spared by a protection</dt>
-          <dd>{count(simulation.protected)}</dd>
-        </div>
-        <div>
-          <dt>Not judged</dt>
-          <dd>{count(simulation.abstained)}</dd>
-        </div>
-      </dl>
-
-      {pace && (
-        <p className="help">
-          Your pace: at most {count(pace.max_items_per_run)} titles /{" "}
-          {bytes(pace.max_bytes_per_run)} per run, and nothing is removed until it has waited out
-          the {pace.grace_days}-day grace period.
-        </p>
-      )}
-
-      <p className="blurb">
-        The delta is the number that matters before saving: not the total, but what changes
-        relative to the list you have already reviewed.
-      </p>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // The workspace.
 // ---------------------------------------------------------------------------
 
@@ -1481,7 +1252,7 @@ export function PolicyEditor({
   // Movies and TV are tuned separately -- keep-last-N seasons and season rank only make
   // sense for TV -- so this toggle picks which policy you are editing.
   const [mediaType, setMediaType] = useState<"movie" | "tv">("movie");
-  const { data: saved } = useQuery({
+  const { data: saved, isError: policyFailed } = useQuery({
     queryKey: ["policy", mediaType],
     queryFn: () => api.policy(mediaType),
   });
@@ -1499,7 +1270,10 @@ export function PolicyEditor({
   // Pace and limits: a SEPARATE draft with a separate save. Un-hashed on the server, so
   // changing a cap never voids a pending approval -- and deliberately media-type
   // independent, so the Movies/TV toggle never re-seeds it.
-  const { data: savedPace } = useQuery({ queryKey: ["profile"], queryFn: api.profile });
+  const { data: savedPace, isError: paceFailed } = useQuery({
+    queryKey: ["profile"],
+    queryFn: api.profile,
+  });
   const [pace, setPace] = useState<ProfileSettings | null>(null);
   // Caps staged by a preset clicked before the profile query resolved. Held here and
   // folded in the moment the profile arrives, so "staged, not saved" is true for BOTH
@@ -1664,7 +1438,14 @@ export function PolicyEditor({
     setActiveSection(focus.section);
   }, [focus, sectionRefs, draft]);
 
-  if (!draft) return <p className="muted">Loading…</p>;
+  // The draft only ever seeds from a successful read, so a failed one would otherwise
+  // leave the whole workspace saying "Loading…" for good. Say what happened instead.
+  if (!draft) {
+    if (policyFailed) {
+      return <p className="notice notice-error">Couldn't load these settings. Reload to try again.</p>;
+    }
+    return <p className="muted">Loading…</p>;
+  }
 
   const update = (patch: Partial<PolicyBody>) => setDraft({ ...draft, ...patch });
   const updatePace = (patch: Partial<ProfileSettings>) =>
@@ -1726,20 +1507,16 @@ export function PolicyEditor({
       <div className="editor-controls">
         <div className="policy-head">
           <h2>Policy</h2>
-          <div className="segmented" role="group" aria-label="Which policy">
-            <button
-              className={mediaType === "movie" ? "seg active" : "seg"}
-              onClick={() => switchMediaType("movie")}
-            >
-              Movies
-            </button>
-            <button
-              className={mediaType === "tv" ? "seg active" : "seg"}
-              onClick={() => switchMediaType("tv")}
-            >
-              TV
-            </button>
-          </div>
+          {/* switchMediaType holds the two-step confirm when the draft has unsaved edits. */}
+          <Segmented
+            value={mediaType}
+            onChange={switchMediaType}
+            label="Which policy"
+            options={[
+              ["movie", "Movies"],
+              ["tv", "TV"],
+            ]}
+          />
         </div>
         {pendingSwitch !== null && (
           <div className="notice notice-warn">
@@ -1771,6 +1548,9 @@ export function PolicyEditor({
             <button
               key={s.id}
               className={activeSection === s.id ? "settings-tab active" : "settings-tab"}
+              // The section being read is stated, not just coloured, the same as the
+              // masthead and the settings rail.
+              aria-current={activeSection === s.id ? "page" : undefined}
               onClick={() => {
                 // Instant, not smooth: smooth scrolling silently no-ops in some
                 // environments, and a jump that always lands beats an animation that
@@ -1812,18 +1592,17 @@ export function PolicyEditor({
           </p>
           <div className="intent-row">
             <span className="muted intent-label">Starting point</span>
-            <div className="segmented" role="group" aria-label="Preset">
-              {PRESETS.map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  className={preset === p.id ? "seg active" : "seg"}
-                  onClick={() => applyPreset(p)}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
+            {/* Hand-tuned drafts match no preset, so "custom" matches no option and no
+                pill reads as active -- the same honesty the badge has always had. */}
+            <Segmented
+              value={preset ?? "custom"}
+              onChange={(id) => {
+                const p = PRESETS.find((x) => x.id === id);
+                if (p) applyPreset(p);
+              }}
+              label="Starting point"
+              options={PRESETS.map((p) => [p.id, p.label] as const)}
+            />
           </div>
           <p className="help">{presetHelp}</p>
           {staged !== null && (
@@ -2178,7 +1957,13 @@ export function PolicyEditor({
         </p>
 
         {pace === null ? (
-          <p className="muted">Loading…</p>
+          paceFailed ? (
+            <p className="notice notice-error">
+              Couldn't load these settings. Reload to try again.
+            </p>
+          ) : (
+            <p className="muted">Loading…</p>
+          )
         ) : (
           <>
             <label className="toggle pace-approval">
@@ -2192,11 +1977,13 @@ export function PolicyEditor({
             <div className="caps-grid">
               <label>
                 <span>Most titles per run</span>
-                <input
-                  type="number"
-                  min={1}
+                <FixedQuantity
                   value={pace.max_items_per_run}
-                  onChange={(e) => updatePace({ max_items_per_run: Number(e.target.value) || 1 })}
+                  suffix="titles"
+                  min={1}
+                  width="narrow"
+                  ariaLabel="Most titles per run"
+                  onChange={(v) => updatePace({ max_items_per_run: v || 1 })}
                 />
                 <span className="help">The most titles a single run will delete.</span>
               </label>
@@ -2211,11 +1998,13 @@ export function PolicyEditor({
               </label>
               <label>
                 <span>Most titles per month</span>
-                <input
-                  type="number"
-                  min={1}
+                <FixedQuantity
                   value={pace.max_items_per_30d}
-                  onChange={(e) => updatePace({ max_items_per_30d: Number(e.target.value) || 1 })}
+                  suffix="titles"
+                  min={1}
+                  width="narrow"
+                  ariaLabel="Most titles per month"
+                  onChange={(v) => updatePace({ max_items_per_30d: v || 1 })}
                 />
                 <span className="help">A rolling limit over the last 30 days.</span>
               </label>

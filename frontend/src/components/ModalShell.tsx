@@ -1,0 +1,124 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// The one modal. Every modal in the app is this shell: the scrim, the panel, and a
+// header with its close button, plus everything a modal owes a keyboard user, written
+// once so no modal can ship without it.
+//
+// Two things it owns that the hand-built copies never had:
+//   1. Dialog semantics: role="dialog", aria-modal, and a name taken from the heading,
+//      so a screen reader announces what just opened instead of a bare group of controls.
+//   2. Focus. Focus moves into the panel on open, Tab stays inside it (the page behind
+//      the scrim is not reachable while it is up), and focus returns to whatever opened
+//      the modal on close. Tab is kept in by a small trap rather than `inert` on the app
+//      root, because these modals render inline in the React tree, not through a portal:
+//      marking the root inert would mark the modal inert with it.
+//
+// Closing is routed through one `canClose` guard, so a modal that must stay open (the
+// reap sheet while a real reap is in flight) refuses the scrim, the ✕ and Escape by
+// stating that once.
+
+import { useEffect, useId, useRef, type ReactNode } from "react";
+
+/** Everything a browser will put in the Tab order, in document order. */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
+  'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+export function ModalShell({
+  title,
+  onClose,
+  canClose = true,
+  className,
+  children,
+}: {
+  /** The heading. It also becomes the dialog's accessible name. */
+  title: ReactNode;
+  onClose: () => void;
+  /** False while the modal must stay open: the scrim, Escape and the ✕ all refuse. */
+  canClose?: boolean;
+  /** Extra class on the panel, for per-modal layout. */
+  className?: string;
+  children: ReactNode;
+}) {
+  const headingId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  const canCloseRef = useRef(canClose);
+
+  // Kept in refs so the Escape listener below can be registered once and still read the
+  // current guard: callers pass a fresh onClose on every render.
+  useEffect(() => {
+    closeRef.current = onClose;
+    canCloseRef.current = canClose;
+  });
+
+  // Focus in on open, and back to whatever opened us on close. The panel itself takes
+  // the initial focus (tabIndex -1) so the reading starts at the dialog's name rather
+  // than partway down its controls.
+  useEffect(() => {
+    const invoker = document.activeElement;
+    panelRef.current?.focus();
+    return () => {
+      if (invoker instanceof HTMLElement && invoker.isConnected) invoker.focus();
+    };
+  }, []);
+
+  // Escape closes, through the same guard as the scrim and the ✕.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && canCloseRef.current) closeRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Tab containment: wrap from the last control back to the first and vice versa, so the
+  // still-rendered page behind the scrim never takes focus.
+  const trapTab = (e: React.KeyboardEvent) => {
+    if (e.key !== "Tab") return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE));
+    const first = items[0];
+    const last = items[items.length - 1];
+    if (!first || !last) {
+      e.preventDefault(); // nothing to focus: keep the page behind the scrim out of reach
+      return;
+    }
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || active === panel)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
+
+  const close = () => {
+    if (canClose) onClose();
+  };
+
+  return (
+    <div className="modal-scrim" onClick={close}>
+      <div
+        ref={panelRef}
+        className={className ? `modal ${className}` : "modal"}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={headingId}
+        tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={trapTab}
+      >
+        <header className="modal-head">
+          <h2 id={headingId}>{title}</h2>
+          <button className="icon-btn" onClick={close} disabled={!canClose} aria-label="Close">
+            ✕
+          </button>
+        </header>
+        {children}
+      </div>
+    </div>
+  );
+}

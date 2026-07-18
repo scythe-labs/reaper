@@ -11,7 +11,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, type AuthContext, type PlexServerChoice } from "../api";
+import { api, ApiError, type AuthContext, type PlexPoll } from "../api";
+import { ServerPickList, usePlexPinPoll } from "./PlexPin";
 
 function Mark() {
   // A stylized scythe: a handle sweeping down-left, a curved blade across the top.
@@ -39,60 +40,42 @@ function PlexGlyph() {
   );
 }
 
-/** The Plex sign-in button and its wait-for-approval state machine.
+/** The Plex sign-in button and its wait-for-approval state.
  *
  *  We ask the backend for a PIN, open the plex.tv auth page in a popup, and then
  *  poll the backend until the user approves it there. The browser never sees a
  *  Plex token -- the backend polls plex.tv and does the ownership check; we only
- *  learn "ok" or "why not". */
+ *  learn "ok" or "why not". The polling itself is the shared flow in PlexPin.tsx,
+ *  which the Settings link panel drives too. */
 function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void }) {
   const [phase, setPhase] = useState<"idle" | "waiting" | "choose" | "error">("idle");
   const [error, setError] = useState("");
   const [authUrl, setAuthUrl] = useState("");
-  const [servers, setServers] = useState<PlexServerChoice[]>([]);
   const popup = useRef<Window | null>(null);
-  const timer = useRef<number | undefined>(undefined);
-  const pinRef = useRef<number | null>(null);
 
-  const stop = () => {
-    if (timer.current) window.clearInterval(timer.current);
-    timer.current = undefined;
-  };
-  useEffect(() => stop, []);
-
-  /** Poll until a final answer. On first-run setup, an account owning several servers
-   *  answers "choose_server": the sign-in stays valid while we show the picker, and a
-   *  later poll carries the pick. */
-  const poll = (pinId: number, machineId?: string) => {
-    const deadline = Date.now() + 5 * 60 * 1000;
-    timer.current = window.setInterval(async () => {
-      if (Date.now() > deadline) {
-        stop();
-        popup.current?.close();
-        setPhase("error");
-        setError("Plex sign-in timed out. Please try again.");
-        return;
-      }
-      try {
-        const result = await api.plexPoll(pinId, machineId);
-        if (result.status === "ok") {
-          stop();
-          popup.current?.close();
-          onAuthed();
-        } else if (result.status === "choose_server") {
-          stop();
-          popup.current?.close();
-          setServers(result.servers ?? []);
-          setPhase("choose");
-        }
-      } catch (e) {
-        stop();
-        popup.current?.close();
-        setPhase("error");
-        setError(e instanceof ApiError ? e.message : "Plex sign-in failed.");
-      }
-    }, 2500);
-  };
+  const pin = usePlexPinPoll<PlexPoll>({
+    poll: (pinId, machineId) => api.plexPoll(pinId, machineId),
+    onOk: () => {
+      popup.current?.close();
+      onAuthed();
+    },
+    // On first-run setup, an account owning several servers answers "choose_server": the
+    // sign-in stays valid while the picker is up, and the pick carries the answer.
+    onChooseServer: () => {
+      popup.current?.close();
+      setPhase("choose");
+    },
+    onTimedOut: () => {
+      popup.current?.close();
+      setPhase("error");
+      setError("Plex sign-in timed out. Please try again.");
+    },
+    onFailed: (failure) => {
+      popup.current?.close();
+      setPhase("error");
+      setError(failure);
+    },
+  });
 
   const start = async () => {
     setPhase("waiting");
@@ -100,39 +83,16 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
     try {
       const { pin_id, auth_url } = await api.plexStart();
       setAuthUrl(auth_url);
-      pinRef.current = pin_id;
       popup.current = window.open(auth_url, "reaper-plex-auth", "width=620,height=760");
-      poll(pin_id);
+      pin.begin(pin_id);
     } catch (e) {
       setPhase("error");
       setError(e instanceof ApiError ? e.message : "Could not reach Plex to start sign-in.");
     }
   };
 
-  /** The user picked a server. One immediate poll usually finishes the job; a
-   *  "pending" answer (plex.tv asking us to slow down) falls back to polling. */
-  const pick = async (machineId: string) => {
-    const pinId = pinRef.current;
-    if (pinId == null) return;
-    setPhase("waiting");
-    try {
-      const result = await api.plexPoll(pinId, machineId);
-      if (result.status === "ok") {
-        onAuthed();
-      } else if (result.status === "choose_server") {
-        setServers(result.servers ?? []);
-        setPhase("choose");
-      } else {
-        poll(pinId, machineId);
-      }
-    } catch (e) {
-      setPhase("error");
-      setError(e instanceof ApiError ? e.message : "Plex sign-in failed.");
-    }
-  };
-
   const cancel = () => {
-    stop();
+    pin.cancel();
     popup.current?.close();
     setPhase("idle");
   };
@@ -165,18 +125,14 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
           This account owns more than one Plex server. Reaper will only ever scan and
           prune the one you pick. You can change it later in Settings.
         </p>
-        {servers.map((s) => (
-          <button
-            key={s.machine_identifier}
-            className="server-pick-row"
-            onClick={() => void pick(s.machine_identifier)}
-          >
-            {s.name}
-          </button>
-        ))}
-        <button className="link" onClick={cancel}>
-          Cancel
-        </button>
+        <ServerPickList
+          servers={pin.servers ?? []}
+          onPick={(machineId) => {
+            setPhase("waiting");
+            void pin.pick(machineId);
+          }}
+          onCancel={cancel}
+        />
       </div>
     );
   }
@@ -208,6 +164,8 @@ function LocalSheet({
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const usernameRef = useRef<HTMLInputElement | null>(null);
+  const invoker = useRef<HTMLElement | null>(null);
 
   // Close on Escape while the sheet is open.
   useEffect(() => {
@@ -216,6 +174,19 @@ function LocalSheet({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
+
+  // The sheet stays mounted and slides in, so opening it has to move focus by hand:
+  // autoFocus only fires at mount, and at mount this is closed. Closing hands focus back
+  // to whatever opened it, so the keyboard does not land back at the top of the page.
+  useEffect(() => {
+    if (open) {
+      invoker.current = document.activeElement as HTMLElement | null;
+      usernameRef.current?.focus();
+    } else {
+      invoker.current?.focus();
+      invoker.current = null;
+    }
+  }, [open]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -235,8 +206,13 @@ function LocalSheet({
 
   return (
     <div className={open ? "sheet-scrim open" : "sheet-scrim"} onClick={onClose}>
+      {/* Closed, the sheet is only translated off-screen, so without `inert` its fields
+          and buttons stay in the tab order invisibly and it announces itself as an open
+          dialog. `inert` takes them all out at once and leaves the slide animation
+          untouched. */}
       <div
         className={open ? "sheet open" : "sheet"}
+        inert={!open}
         role="dialog"
         aria-modal="true"
         aria-label="Local account sign-in"
@@ -260,7 +236,7 @@ function LocalSheet({
             <label className="field">
               <span className="field-label">Username</span>
               <input
-                autoFocus={open}
+                ref={usernameRef}
                 autoComplete="username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}

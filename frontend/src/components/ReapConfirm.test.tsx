@@ -94,6 +94,28 @@ describe("the execute gate", () => {
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 
+  it("says it is still checking while the safety read is in flight", async () => {
+    apiMock.safety.mockImplementation(() => new Promise(() => {})); // never settles
+    renderSheet();
+
+    await screen.findByText(/Dry run passed/);
+    expect(await screen.findByText(/Checking whether deletion is on/)).toBeInTheDocument();
+    expect(screen.queryByText(/Deletion is/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Reap 1 items$/ })).toBeDisabled();
+  });
+
+  it("says it couldn't look when the safety read fails, never that deletion is off", async () => {
+    apiMock.safety.mockRejectedValue(new Error("safety read failed"));
+    renderSheet();
+
+    await screen.findByText(/Dry run passed/);
+    expect(await screen.findByText(/couldn't confirm whether deletion is on/)).toBeInTheDocument();
+    expect(screen.queryByText(/Deletion is/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Reap 1 items$/ })).toBeDisabled();
+  });
+
   it("an aborted dry run never unlocks execution", async () => {
     apiMock.dryRun.mockResolvedValue(
       report({ state: "aborted", aborted_reason: "over the cap" }),
@@ -131,6 +153,44 @@ describe("the execute gate", () => {
     finish(report({ dry_run: false }));
     await user.click(await screen.findByRole("button", { name: "Done" }));
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("cannot be dismissed with Escape while the reap is in flight", async () => {
+    let finish: (r: RunReport) => void = () => {};
+    apiMock.executeRun.mockImplementation(
+      () => new Promise<RunReport>((resolve) => (finish = resolve)),
+    );
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    renderSheet(onClose);
+
+    await screen.findByText(/Dry run passed/);
+    await user.type(screen.getByRole("textbox"), run.confirmation_phrase);
+    await user.click(screen.getByRole("button", { name: /^Reap 1 items$/ }));
+
+    await screen.findByRole("button", { name: /Reaping/ });
+    await user.keyboard("{Escape}");
+    expect(onClose).not.toHaveBeenCalled();
+
+    finish(report({ dry_run: false }));
+    await screen.findByText(/reclaimed/);
+  });
+
+  it("closes on Escape while no reap is in flight", async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    renderSheet(onClose);
+
+    await screen.findByText(/Dry run passed/);
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("is a dialog that says what it is", async () => {
+    renderSheet();
+
+    const dialog = await screen.findByRole("dialog", { name: /Reap 1 items/ });
+    expect(dialog).toHaveAttribute("aria-modal", "true");
   });
 
   it("shows the per-item checklist after a real reap", async () => {
