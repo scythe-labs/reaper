@@ -582,6 +582,8 @@ class LeavingSoonOut(BaseModel):
 
 class GraceItemOut(BaseModel):
     media_key: str
+    candidate_id: int
+    """The snapshot row behind this countdown, so its reasoning can be opened from here."""
     title: str
     size_bytes: int
     grace_ends_at: str

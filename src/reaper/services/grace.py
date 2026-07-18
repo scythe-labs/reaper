@@ -34,6 +34,8 @@ from reaper.services.condemned import effective_condemned
 @dataclass(frozen=True)
 class GraceItem:
     media_key: str
+    candidate_id: int
+    """The snapshot row this countdown is about, so the UI can open its reasoning."""
     plex_rating_key: int | None
     title: str
     media_type: str
@@ -107,6 +109,7 @@ async def grace_report(
         remaining = max(0, (ends - now).days)
         item = GraceItem(
             media_key=candidate.media_key,
+            candidate_id=candidate.id,
             plex_rating_key=candidate.plex_rating_key,
             title=candidate.title,
             media_type=candidate.media_type,

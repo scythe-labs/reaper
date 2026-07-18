@@ -205,6 +205,7 @@ NOW = utcnow()
 def _item(rating_key: int, *, title: str = "Film") -> GraceItem:
     return GraceItem(
         media_key=f"radarr:1:{rating_key}",
+        candidate_id=rating_key,
         plex_rating_key=rating_key,
         title=title,
         media_type="movie",

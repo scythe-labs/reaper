@@ -21,6 +21,7 @@ router = APIRouter(prefix="/api")
 def _item_out(item: grace.GraceItem) -> GraceItemOut:
     return GraceItemOut(
         media_key=item.media_key,
+        candidate_id=item.candidate_id,
         title=item.title,
         size_bytes=item.size_bytes,
         grace_ends_at=item.grace_ends_at.isoformat(),
