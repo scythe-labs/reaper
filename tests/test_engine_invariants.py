@@ -16,6 +16,7 @@ from dataclasses import replace
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from reaper.engine import fields
 from reaper.engine.gates import (
     ABSTAIN,
     PROTECT,
@@ -33,7 +34,16 @@ from reaper.engine.gates import (
     evaluate_all,
 )
 from reaper.engine.observation import Absent, Known, Observation, Unknown
-from reaper.engine.signals import SignalConfig, SignalId, score
+from reaper.engine.signals import (
+    MAX_SCORE,
+    CustomSignalConfig,
+    KeepConfig,
+    Score,
+    SignalConfig,
+    SignalId,
+    evaluate_keep,
+    score,
+)
 from reaper.ratings import Rating, RatingSource
 
 _IMDB_BAR = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=1000)
@@ -364,3 +374,188 @@ class TestExplainability:
         details = " | ".join(r.detail for r in evaluation.checked_and_did_not_fire)
         assert "Nobody here watched it" in details  # server-popularity, 0 watchers
         assert "below the 7.5 you keep" in details  # rating floor
+
+
+# --- the scoring-model invariants -------------------------------------------
+#
+# The four above cover the gate lane. These cover the score lane, and specifically
+# the two places the design argument is load-bearing but was never asserted: the
+# KEEP lane (which the older property test omits entirely) and the relationship
+# between the score and coverage (which is what makes condemn_at a second, implicit
+# coverage floor).
+
+#: A policy exercising all three lanes at once. The older property test passes only
+#: built-in signals, so no keep has ever been under a property test.
+_CUSTOM_CONDEMN = [
+    CustomSignalConfig(
+        name="Big files",
+        weight=10,
+        kind="graded",
+        field="size_bytes",
+        floor=0,
+        saturate_at=50_000_000_000,
+    ),
+    CustomSignalConfig(
+        name="Ended",
+        weight=10,
+        kind="boolean",
+        field="show_ended",
+        condition=fields.Condition(field="show_ended", op=fields.Op.EQ, value=True),
+    ),
+]
+
+#: ``field`` here is the rule-authorable KEY (``fields.BY_KEY``), not the ``Facts``
+#: attribute name. They differ, and a key that does not resolve makes ``evaluate_keep``
+#: take its unreadable branch on every item, which would pass these tests vacuously.
+_KEEPS = [
+    KeepConfig(name="Well rated", max_discount=25, field="imdb_rating", floor=50, saturate_at=80),
+    KeepConfig(
+        name="People still watch it",
+        max_discount=15,
+        field="watchers_all_time",
+        floor=0,
+        saturate_at=5,
+    ),
+]
+
+#: Every ``Observation`` field on ``Facts`` that the score lane can read.
+_OBSERVED_FIELDS = (
+    "days_observed_unwatched",
+    "distinct_watchers",
+    "distinct_watchers_all_time",
+    "size_bytes",
+    "imdb_rating_tenths",
+    "imdb_votes",
+    "season_rank",
+    "requested",
+    "release_age_days",
+    "quality",
+    "show_ended",
+)
+
+
+def _full_score(item: Facts) -> Score:
+    return score(ALL_SIGNALS, item, custom_condemn=_CUSTOM_CONDEMN, keeps=_KEEPS)
+
+
+class TestLosingEvidenceCannotCondemn:
+    """The whole safety argument, over all three lanes at once.
+
+    ``test_an_unknown_input_never_increases_the_score`` above predates the keep lane
+    and the custom-rule lane: it passes neither, and substitutes only ``Unknown``.
+    Those two omissions are exactly where the arithmetic can invert, so these repeat
+    the property with all three lanes wired and with ``Absent`` substituted too.
+    """
+
+    @given(item=facts())
+    @settings(max_examples=500)
+    def test_an_unreadable_input_never_raises_the_score_in_any_lane(self, item: Facts) -> None:
+        """THE property, restated over all three lanes.
+
+        The older ``test_an_unknown_input_never_increases_the_score`` passes only
+        built-in signals, so neither the custom-rule lane nor the keep lane has ever
+        been under a property test. The keep lane is the one that can invert, because
+        it is the only lane that subtracts.
+        """
+        baseline = _full_score(item).value
+
+        for field_name in _OBSERVED_FIELDS:
+            degraded = _full_score(
+                replace(item, **{field_name: Unknown(reason="outage", source="test")})
+            ).value
+
+            assert degraded <= baseline + 1e-9, (
+                f"making {field_name} Unknown INCREASED the score: {baseline} -> {degraded}"
+            )
+
+    def test_an_absent_keep_field_withdraws_its_keep_and_that_is_deliberate(self) -> None:
+        """``Absent`` on a keep field RAISES the score, on purpose. Read this before
+        touching the fact builders.
+
+        ``Unknown`` and ``Absent`` are opposite instructions to the keep lane
+        (``signals.evaluate_keep``): "could not check" keeps fully, "checked, there is
+        genuinely none" keeps not at all. The second is right. A title with no IMDb
+        rating is not well rated, it is unrated, and a "keep well-rated titles" rule
+        that also kept every unrated title would protect the whole library.
+
+        The consequence is that ``Absent`` is a *privileged* state: recording one
+        withdraws protection. So a fact builder may only ever emit ``Absent`` when it
+        genuinely looked. A builder that cannot tell "no rating" from "no id to look
+        it up with" silently un-protects the second case, with coverage still reading
+        100% and nothing degrading the snapshot. That is what
+        ``tests/test_fact_layer_states.py`` exists to prevent, and this test is here
+        so that anyone who "fixes" the asymmetry finds the reason first.
+        """
+        rated = replace(_rating_facts(()), imdb_rating_tenths=Known(value=80, source="imdb"))
+        unrated = replace(rated, imdb_rating_tenths=Absent(source="imdb"))
+        unreadable = replace(
+            rated, imdb_rating_tenths=Unknown(reason="dataset down", source="imdb")
+        )
+
+        assert _full_score(unrated).value > _full_score(rated).value
+        assert _full_score(unreadable).value <= _full_score(rated).value
+
+    @given(item=facts())
+    @settings(max_examples=500)
+    def test_the_score_can_never_exceed_what_we_could_read(self, item: Facts) -> None:
+        """``base <= 100 * coverage``, the invariant nobody wrote down.
+
+        Every unevaluated signal contributes pressure 0 while keeping its weight in
+        the denominator, and every evaluated one contributes at most its weight. So
+        the score is bounded by the share of evidence we actually read.
+
+        The consequence is load-bearing and easy to delete by accident: ``condemn_at``
+        is ITSELF a coverage floor. An item cannot reach a condemn threshold of 70
+        without at least 70% of the policy's weight being readable, whatever
+        ``coverage_floor_bp`` is set to. Any change that lets a rule add points
+        outside the denominator removes that second floor silently.
+        """
+        result = _full_score(item)
+
+        assert result.base_value <= MAX_SCORE * result.coverage + 1e-9
+
+    @given(item=facts())
+    @settings(max_examples=500)
+    def test_coverage_cannot_rise_when_evidence_is_lost(self, item: Facts) -> None:
+        """Coverage measures what we could read, so it can only fall as we read less.
+
+        Stated separately from the score because a model can hold the score bound
+        while inflating coverage, and coverage is what the abstain floor consults.
+        """
+        baseline = _full_score(item).coverage
+
+        for field_name in _OBSERVED_FIELDS:
+            degraded = _full_score(
+                replace(item, **{field_name: Unknown(reason="outage", source="test")})
+            ).coverage
+
+            assert degraded <= baseline + 1e-9, (
+                f"losing {field_name} RAISED coverage: {baseline} -> {degraded}"
+            )
+
+    @given(value=st.integers(0, 100))
+    def test_an_unreadable_keep_keeps_fully(self, value: int) -> None:
+        """A keep we could not evaluate takes its MAXIMUM discount.
+
+        The mirror of the condemn lane's "Unknown contributes zero": on both sides,
+        the unreadable case resolves toward keeping the file. Only the keep lane is
+        asserted here because only the condemn lane was asserted before.
+        """
+        keep = _KEEPS[0]
+        readable = replace(_rating_facts(()), imdb_rating_tenths=Known(value=value, source="imdb"))
+        unreadable = replace(
+            readable, imdb_rating_tenths=Unknown(reason="dataset down", source="imdb")
+        )
+
+        assert evaluate_keep(keep, unreadable).discount == float(keep.max_discount)
+        assert evaluate_keep(keep, unreadable).discount >= evaluate_keep(keep, readable).discount
+
+    @given(item=facts())
+    @settings(max_examples=200)
+    def test_the_score_stays_in_bounds(self, item: Facts) -> None:
+        """0-100 and 0-1, whatever the evidence. Every consumer assumes both."""
+        result = _full_score(item)
+
+        assert 0.0 <= result.value <= MAX_SCORE
+        assert 0.0 <= result.coverage <= 1.0
+        assert 0.0 <= result.base_value <= MAX_SCORE
