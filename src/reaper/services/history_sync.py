@@ -341,6 +341,17 @@ async def horizon(engine: AsyncEngine) -> datetime | None:
     return (await _state(engine)).earliest
 
 
+async def latest(engine: AsyncEngine) -> datetime | None:
+    """The newest event in the local mirror, or ``None`` when there is nothing at all.
+
+    The freshness question, where :func:`horizon` is the reach question. Watch stats are
+    read from this mirror and not live, so a Tautulli ingest that stalled does not raise
+    and does not look any different from a genuinely quiet library: every item's dormancy
+    keeps growing while its watcher counts stay frozen. Only this can tell the two apart.
+    """
+    return (await _state(engine)).latest
+
+
 async def days_since_horizon(engine: AsyncEngine) -> float | None:
     earliest = await horizon(engine)
     if earliest is None:

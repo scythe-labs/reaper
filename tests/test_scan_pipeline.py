@@ -172,8 +172,8 @@ async def cache_engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
     await eng.dispose()
 
 
-async def _seed_play(engine: AsyncEngine, *, row_id: int, rating_key: int) -> None:
-    """One long-ago play: it anchors the data horizon ~2000 days back."""
+async def _seed_play_only_long_ago(engine: AsyncEngine, *, row_id: int, rating_key: int) -> None:
+    """The long-ago play with NO recent activity: a mirror that stopped moving."""
     async with engine.begin() as conn:
         await conn.execute(
             text(
@@ -185,6 +185,41 @@ async def _seed_play(engine: AsyncEngine, *, row_id: int, rating_key: int) -> No
                 "row_id": row_id,
                 "rating_key": rating_key,
                 "watched_at": int(LONG_AGO.timestamp()),
+            },
+        )
+
+
+async def _seed_play(engine: AsyncEngine, *, row_id: int, rating_key: int) -> None:
+    """One long-ago play: it anchors the data horizon ~2000 days back.
+
+    Plus a recent play on an unrelated item, because a mirror whose NEWEST event is
+    2000 days old is a stalled ingest, and the scan degrades on that
+    (``snapshot.MIRROR_STALE_AFTER``). A real server's history is server-wide: it keeps
+    receiving events even while the items under test sit untouched. The marker uses a
+    rating key no candidate here carries, so no item's watcher counts move.
+    """
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO watch_event (row_id, rating_key, user_id, watched_at, "
+                " watched_status, percent_complete, media_type) "
+                "VALUES (:row_id, :rating_key, 1, :watched_at, 1, 100, 'movie')"
+            ),
+            {
+                "row_id": row_id,
+                "rating_key": rating_key,
+                "watched_at": int(LONG_AGO.timestamp()),
+            },
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO watch_event (row_id, rating_key, user_id, watched_at, "
+                " watched_status, percent_complete, media_type) "
+                "VALUES (:row_id, 8675309, 1, :watched_at, 1, 100, 'movie')"
+            ),
+            {
+                "row_id": row_id + 1_000_000,
+                "watched_at": int((NOW - timedelta(hours=1)).timestamp()),
             },
         )
 
@@ -464,6 +499,59 @@ class TestScanPipelineEndToEnd:
         assert "radarr 'uhd' unreachable" in (snapshot.degraded_reason or "")
         rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
         assert set(rows) == {"radarr:1:1", "radarr:1:2", "radarr:1:3"}
+
+
+class TestAStaleMirrorDegradesTheSnapshot:
+    """A sync that *succeeds* against a Tautulli that stopped recording is invisible.
+
+    ``test_a_failed_history_sync_degrades_the_snapshot`` below covers the loud case,
+    where the sync raises. This is the quiet one: the sync returns fine, the mirror is
+    simply not moving. Nothing raises, watcher counts stay frozen at their last value,
+    and dormancy climbs for every item on the server at the rate of the outage. Without
+    a freshness check the scan cannot tell that from a library nobody is watching.
+    """
+
+    async def _scan_with(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> Any:  # the Snapshot row
+        await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
+        return await scan(
+            cache_engine,
+            session,
+            radarrs=[
+                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+            ],
+            sonarrs=[],
+            tautulli=_FakeTautulli(  # type: ignore[arg-type]
+                movies=_movie_spine(), shows=_show_spine(), children=_show_children()
+            ),
+            movie_policy=DEFAULT_MOVIE_POLICY,
+            movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+        )
+
+    async def test_a_mirror_whose_newest_event_is_old_degrades(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """Only the long-ago play, so `latest` is 2000 days back: a stalled ingest."""
+        await _seed_play_only_long_ago(cache_engine, row_id=1, rating_key=99)
+
+        snapshot = await self._scan_with(session, cache_engine)
+
+        assert snapshot.degraded is True
+        assert "watch history has not updated recently" in (snapshot.degraded_reason or "")
+
+    async def test_a_mirror_still_receiving_events_does_not_degrade(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The same 2000-day-old play, plus a recent event elsewhere on the server.
+        The items under test are just as dormant; the ingest is alive. That must scan."""
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+
+        snapshot = await self._scan_with(session, cache_engine)
+
+        assert snapshot.degraded is False, snapshot.degraded_reason
 
 
 class TestRunScanHistorySync:

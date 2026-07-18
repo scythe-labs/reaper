@@ -268,6 +268,9 @@ def _facts(**over: Any) -> Any:
         "activity_degraded": False,
         "whitelisted": False,
         "curated": [],
+        # The show carried an IMDb id, so a missing rating means "looked up, unrated".
+        # Override to False for the other case: no id, so we never asked.
+        "rating_looked_up": True,
     }
     base.update(over)
     return season_scan.build_season_facts(**base)
@@ -309,11 +312,20 @@ class TestBuildSeasonFacts:
         facts = _facts(plex_rating_key=700, activity_degraded=True)
         assert isinstance(facts.is_streaming_now, Unknown)
 
-    def test_a_season_has_no_imdb_rating(self) -> None:
-        """There is no free per-season IMDb rating; Sonarr's ratings are flat TVDB. The
-        rating is Absent, which the scorer treats as fail-safe (drags the score down)."""
+    def test_a_season_of_a_show_we_looked_up_and_found_unrated_is_absent(self) -> None:
+        """There is no free per-season IMDb rating; Sonarr's ratings are flat TVDB. A
+        show we could look up and did not find is Absent: unrated, so a rating keep
+        does not hold it."""
         facts = _facts()
         assert isinstance(facts.imdb_rating_tenths, Absent)
+
+    def test_a_season_of_a_show_with_no_imdb_id_is_unknown(self) -> None:
+        """Neither Sonarr nor Plex gave us an id, so no lookup happened. Absent here
+        would claim we checked, and would withdraw every rating-based keep from a show
+        purely because Sonarr lacks an id for it. See tests/test_fact_layer_states.py."""
+        facts = _facts(rating_looked_up=False)
+        assert isinstance(facts.imdb_rating_tenths, Unknown)
+        assert isinstance(facts.imdb_votes, Unknown)
 
     def test_a_season_is_always_managed(self) -> None:
         facts = _facts()

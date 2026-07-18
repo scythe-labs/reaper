@@ -68,7 +68,12 @@ from reaper.services import (
     season_scan,
     whitelist,
 )
-from reaper.services.display_meta import build_ratings_json, dataset_entry, normalize_resolution
+from reaper.services.display_meta import (
+    build_ratings_json,
+    dataset_entry,
+    dataset_lookup,
+    normalize_resolution,
+)
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
 
 log = structlog.get_logger(__name__)
@@ -111,7 +116,15 @@ class RawItem:
     media_key: str
     title: str
     media_type: str
-    size_bytes: int
+    size_bytes: int | None
+    """Bytes on disk, or ``None`` when the *arr reported a file but no size for it.
+
+    ``None`` is not zero. A partial payload (``hasFile`` true, ``sizeOnDisk`` missing)
+    carried as ``0`` becomes an affirmative measurement: it reads as maximum pressure on
+    a size signal, and it silently withdraws any "keep large files" rule. See
+    ``tests/test_fact_layer_states.py``.
+    """
+
     imdb_id: str | None
     tmdb_id: int | None
     plex_rating_key: int | None
@@ -206,16 +219,23 @@ def build_facts(
     # Radarr's imdbId first, then the Plex-matched imdb id as a fallback (Radarr may lack
     # it, or carry one the IMDb dataset doesn't have). The shared helper is also what the
     # display ratings row reads, so the signal and the row can never show different numbers.
-    entry = dataset_entry(imdb, item.imdb_id, item.plex_imdb_id)
+    entry, looked_up = dataset_lookup(imdb, item.imdb_id, item.plex_imdb_id)
     if entry is not None:
         rating = Known(value=int(entry.average_rating * 10), source="imdb")
         votes = Known(value=int(entry.num_votes), source="imdb")
-    else:
+    elif looked_up:
         # Absent, not Unknown: we looked and this title genuinely has no IMDb rating.
         # (A *degraded* dataset is different, and is caught upstream -- it degrades the
         # whole snapshot rather than silently unprotecting every film.)
         rating = Absent(source="imdb")
         votes = Absent(source="imdb")
+    else:
+        # We never got to ask: no imdbId from Radarr and no Plex match to borrow one from.
+        # Absent here would tell the keep lane "this title has no IMDb rating", withdrawing
+        # every rating-based keep while coverage still read 100%. See dataset_lookup.
+        no_id = Unknown(reason="no IMDb id to look up", source="imdb")
+        rating = no_id
+        votes = no_id
 
     # The multi-source keep gate reads this. The IMDb dataset value goes first (it carries
     # the authoritative vote count the score already uses), then Radarr's ratings object
@@ -277,7 +297,11 @@ def build_facts(
         days_observed_unwatched=dormancy,
         distinct_watchers=recent,
         distinct_watchers_all_time=all_time,
-        size_bytes=Known(value=item.size_bytes, source="radarr"),
+        size_bytes=(
+            Known(value=item.size_bytes, source="radarr")
+            if item.size_bytes is not None
+            else Unknown(reason="the file's size was not reported", source="radarr")
+        ),
         imdb_rating_tenths=rating,
         imdb_votes=votes,
         season_rank=Absent(source="radarr"),  # movies have no season
@@ -378,6 +402,17 @@ async def scan(
         # a scan with no watch history at all -- which can judge nothing safely -- looked
         # non-degraded and executable. Fail closed instead.
         context.degrade("no watch history at all: nothing can be judged")
+    else:
+        # An empty mirror is caught above; a STALE one is invisible without this. Watch
+        # stats come from the local mirror, not a live call, so a stopped ingest raises
+        # nothing: watcher counts stay frozen at their last value while dormancy keeps
+        # climbing, and every item drifts toward condemnation at the rate of the outage.
+        newest = await history_sync.latest(engine)
+        if newest is None or utcnow() - newest > MIRROR_STALE_AFTER:
+            context.degrade(
+                "watch history has not updated recently, so nothing can be judged on how "
+                "long it has gone unwatched"
+            )
 
     # Failures the caller detected BEFORE the gather (an unreachable Plex, a protection list
     # that failed to sync with an empty keep-list) degrade this snapshot the same loud,
@@ -608,7 +643,14 @@ async def scan(
             plex_rating_key=item.plex_rating_key,
             title=item.title,
             media_type=item.media_type,
-            size_bytes=item.size_bytes,
+            # The scoring lane reads the honest Observation off `facts`; this is the
+            # display and reclaim-accounting column, which is a plain int. An unreadable
+            # size stores 0, which UNDER-counts the byte cap -- but it cannot reach a
+            # delete: the executor compares the stored size against the live one and
+            # skips anything that grew past its allowance (`executor._grew_materially`),
+            # and 0 against any real size is unbounded growth. The second layer catches
+            # it, so this stays an int; do not "fix" it by inventing a size here.
+            size_bytes=item.size_bytes or 0,
             facts=facts,
             gates=movie_gates,
             signals=movie_signals,
@@ -1164,6 +1206,19 @@ def _movie_file_path(movie: Mapping[str, Any]) -> str | None:
     return str(path) if path else None
 
 
+def _reported_size(movie: Mapping[str, Any]) -> int | None:
+    """Radarr's ``sizeOnDisk`` for a movie it says it holds, or ``None``.
+
+    ``sizeOnDisk`` covers the movie's folder (file plus extras), which is the number the
+    reclaim estimate and the byte cap want. Distinct from :func:`_movie_file_size`, which
+    reads ``movieFile.size`` for file-to-file identity comparison.
+
+    Missing or zero is ``None``, never ``0``: see ``RawItem.size_bytes``.
+    """
+    size = movie.get("sizeOnDisk")
+    return int(size) if isinstance(size, int | float) and size > 0 else None
+
+
 def _movie_file_size(movie: Mapping[str, Any]) -> int | None:
     """The exact byte count Radarr records for the movie's file, or ``None``.
 
@@ -1249,7 +1304,10 @@ def _raw_items(
                 media_key=f"radarr:{instance_id}:{movie['id']}",
                 title=str(movie.get("title") or ""),
                 media_type="movie",
-                size_bytes=int(movie.get("sizeOnDisk") or 0),
+                # `or 0` here would turn a partial payload into a 0-byte file. Radarr
+                # says it holds a file (has_file below), so a missing size means we
+                # could not read it, not that there is nothing to read.
+                size_bytes=_reported_size(movie),
                 imdb_id=movie.get("imdbId") or None,
                 tmdb_id=tmdb_id,
                 # added_at comes from the matched Plex item (Tautulli spine), preserving the
@@ -1510,6 +1568,14 @@ async def sync_protection_lists(
     # lists for a scan that is already dead.
     await gather_reaped(*runs)
     return synced
+
+
+#: How stale the local watch mirror may get before the snapshot degrades. Matches
+#: WHITELIST_STALE_AFTER's reasoning and its bound: one missed nightly ingest is a blip,
+#: two is a pattern, and past that the dormancy every score leans on is being measured
+#: against a frozen mirror. Set tighter than this and a paused Tautulli blocks every scan;
+#: looser, and items drift toward condemnation for as long as the outage lasts.
+MIRROR_STALE_AFTER = timedelta(hours=48)
 
 
 #: How long a failed whitelist may coast on its stored membership before the snapshot

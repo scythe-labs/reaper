@@ -70,7 +70,7 @@ from reaper.engine.gates import Facts, GateId, GateResult
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.ratings import Rating, RatingSource, merge_by_source
 from reaper.services import library_index, lists, requested_by
-from reaper.services.display_meta import build_ratings_json
+from reaper.services.display_meta import build_ratings_json, dataset_lookup
 from reaper.services.imdb_dataset import DatasetDegradedError, ImdbRating, ImdbRatings
 from reaper.services.season_pruning import (
     SPECIALS_SEASON,
@@ -83,6 +83,16 @@ log = structlog.get_logger(__name__)
 
 #: Fail-safe default for the optional custom-rule fact observations (see gates._UNSET).
 _UNSET_OBS: Absent = Absent(source="unset")
+
+
+def _rating_obs(value: float | None, looked_up: bool) -> Observation[int]:
+    """One IMDb figure as a three-state observation. See build_season_facts."""
+    if value is not None:
+        return Known(value=int(value), source="imdb")
+    if looked_up:
+        return Absent(source="imdb")
+    return Unknown(reason="no IMDb id to look up", source="imdb")
+
 
 #: How many shows to resolve against Tautulli / Sonarr at once. The single biggest cost in
 #: a TV scan is one Tautulli ``get_children_metadata`` plus one Sonarr ``episodes`` call per
@@ -370,6 +380,11 @@ def build_season_facts(
     whitelisted: bool,
     curated: list[lists.Membership],
     imdb_rating: ImdbRating | None = None,
+    # Whether the show carried an IMDb id to look a rating up with. `imdb_rating=None`
+    # alone cannot tell "this show is unrated" from "we never asked", and those are
+    # opposite instructions to the keep lane. Defaults to the fail-closed reading: a
+    # caller that does not say keeps fully.
+    rating_looked_up: bool = False,
     plex_ratings: tuple[Rating, ...] = (),
     requested: Observation[bool] = _UNSET_OBS,
     show_ended: Observation[bool] = _UNSET_OBS,
@@ -454,18 +469,17 @@ def build_season_facts(
         # Sonarr's own ratings are flat TVDB, but the IMDb dataset we already ingest carries
         # a rating for the *series* (keyed by its imdbId). We apply the show's rating to each
         # of its seasons -- a season has no distinct IMDb title -- so a well-rated show's
-        # seasons get the same rating-floor protection a well-rated film does. Absent (no
-        # imdbId, or the show is unrated) drags the score DOWN via the denominator, fail-safe.
-        imdb_rating_tenths=(
-            Known(value=int(imdb_rating.average_rating * 10), source="imdb")
-            if imdb_rating is not None
-            else Absent(source="imdb")
+        # seasons get the same rating-floor protection a well-rated film does.
+        #
+        # The two no-rating cases are NOT the same and must not collapse. Unrated is
+        # `Absent`, which withdraws a rating keep, correctly. No id to look one up with is
+        # `Unknown`, which keeps fully: recording it as `Absent` would claim we checked.
+        # The movie path draws the same line (snapshot.build_facts, display_meta
+        # .dataset_lookup); see tests/test_fact_layer_states.py.
+        imdb_rating_tenths=_rating_obs(
+            imdb_rating.average_rating * 10 if imdb_rating else None, rating_looked_up
         ),
-        imdb_votes=(
-            Known(value=int(imdb_rating.num_votes), source="imdb")
-            if imdb_rating is not None
-            else Absent(source="imdb")
-        ),
+        imdb_votes=_rating_obs(imdb_rating.num_votes if imdb_rating else None, rating_looked_up),
         season_rank=(
             Known(value=rank, source="sonarr")
             if rank is not None
@@ -986,8 +1000,10 @@ def _judge_series(
     # The show's IMDb rating (if any), shared by every season -- see build_season_facts.
     # Prefer Sonarr's imdbId; fall back to the Plex-matched imdb id when Sonarr's is
     # missing or does not resolve (reality/recent shows TVDB has no IMDb mapping for).
-    show_rating = ratings.get(str(series.get("imdbId") or "")) or ratings.get(
-        item.plex_imdb_id or ""
+    # The bool is whether we had any id to ask with: a show with neither a Sonarr imdbId
+    # nor a Plex-matched one was never looked up, and must not be recorded as unrated.
+    show_rating, show_rating_looked_up = dataset_lookup(
+        ratings, str(series.get("imdbId") or "") or None, item.plex_imdb_id
     )
 
     # Show-level display fields, shared by every season row of this series.
@@ -1080,6 +1096,7 @@ def _judge_series(
             whitelisted=bool(whitelists) or media_key in whitelisted,
             curated=curated,
             imdb_rating=show_rating,
+            rating_looked_up=show_rating_looked_up,
             plex_ratings=item.show_plex_ratings,
             requested=requested_obs,
             show_ended=show_ended_obs,

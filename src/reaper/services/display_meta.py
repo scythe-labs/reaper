@@ -70,19 +70,38 @@ def normalize_resolution(plex_value: str | None, quality_name: str | None) -> st
     return None
 
 
-def dataset_entry(imdb: dict[str, ImdbRating], *imdb_ids: str | None) -> ImdbRating | None:
-    """The IMDb dataset row for the first id that resolves, or ``None``.
+def dataset_lookup(
+    imdb: dict[str, ImdbRating], *imdb_ids: str | None
+) -> tuple[ImdbRating | None, bool]:
+    """The IMDb dataset row for the first id that resolves, and whether we could look.
 
-    The single lookup shared by ``build_facts`` (which freezes it into the scoring
-    signal) and ``build_ratings_json`` (which freezes it into the display row), so
-    the two can never drift apart.
+    The second element is the one that matters to the scoring path, because "no rating"
+    and "no way to ask for a rating" are opposite instructions to the keep lane. A title
+    we looked up and did not find is ``Absent``, which withdraws every rating-based keep,
+    correctly: it is unrated, not well rated. A title we could never look up (Radarr has
+    no ``imdbId`` and Plex has no match) is ``Unknown``, which keeps fully.
+
+    Collapsing the two is a silent un-protection: coverage still reads 100% and nothing
+    degrades the snapshot, so nothing anywhere reports that the item was never checked.
+    See ``tests/test_fact_layer_states.py``.
     """
     for imdb_id in imdb_ids:
         if imdb_id:
             entry = imdb.get(imdb_id)
             if entry is not None:
-                return entry
-    return None
+                return entry, True
+    return None, any(bool(imdb_id) for imdb_id in imdb_ids)
+
+
+def dataset_entry(imdb: dict[str, ImdbRating], *imdb_ids: str | None) -> ImdbRating | None:
+    """The IMDb dataset row for the first id that resolves, or ``None``.
+
+    The display half of :func:`dataset_lookup`, which shares its lookup with
+    ``build_facts`` so the scoring signal and the displayed ratings row can never drift
+    apart. Display has no use for the "could we look" half: a row with nothing to show
+    shows nothing either way.
+    """
+    return dataset_lookup(imdb, *imdb_ids)[0]
 
 
 def build_ratings_json(
