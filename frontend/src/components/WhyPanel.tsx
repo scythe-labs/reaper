@@ -758,12 +758,16 @@ export function WhyPanel({
         </button>
       </header>
 
-      <KeptNotice match={explanation.match} />
-
       <MetaLine item={item} />
       <RatingsRow ratings={item.ratings} links={item.links} />
 
       {item.summary && <Synopsis text={item.summary} />}
+
+      {/* After the summary, not before it: the block above is what the item IS
+          (certification, ratings, synopsis) and reads as one unit, so splitting it with a
+          notice buries the identity. Here the notice sits directly above the verdict it
+          explains. Movies and seasons share this panel, so both orders move together. */}
+      <KeptNotice match={explanation.match} />
 
       <Verdict item={item} />
 
