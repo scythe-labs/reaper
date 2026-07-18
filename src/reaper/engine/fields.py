@@ -278,7 +278,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="recent_watchers",
-        label="Distinct watchers (recently)",
+        label="People who watched it recently",
         help_text=(
             "How many different people have watched this within your popularity "
             "window. Windowed on purpose: on a long-lived server almost everything "
@@ -296,7 +296,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="watchers_all_time",
-        label="Distinct watchers (ever)",
+        label="People who have ever watched it",
         help_text=(
             "Everyone who has ever watched this. It can only be used to keep a title, "
             "never to remove one. Using it to remove things would make recent viewing "
@@ -344,12 +344,11 @@ REGISTRY: tuple[FieldSpec, ...] = (
     ),
     FieldSpec(
         key="season_rank",
-        label="Season rank (1 = newest)",
+        label="How far back the season is",
         help_text=(
-            "Counted over seasons that actually hold files, specials excluded. Keeping "
-            "the last 2 seasons means a rank of 2 or less. The rank is counted from "
-            "the files that are actually on disk, never from what Sonarr planned to "
-            "download."
+            "The newest season on disk is 1, the one before it 2, and so on. Keeping the "
+            "last 2 seasons means 2 or less. Counted over seasons that actually hold "
+            "files, specials excluded, never from what Sonarr planned to download."
         ),
         type=FieldType.COUNT,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
