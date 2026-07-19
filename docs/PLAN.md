@@ -1928,6 +1928,160 @@ Known and deliberately not changed: `humanize_days(729)` reads "1 year, 12 month
 12 months up to a year would make 364 days read as "1 year", which overstates dormancy, and
 rule 31 says derived condemn-lane values round toward keeping. Left alone pending a decision.
 
+## Weights became points, and the fact layer stopped inventing answers
+
+Started as an operator question — "why can't my custom rules move the score?" — and the
+answer turned out to be a unit that was never stated, sitting on top of three defects in
+the layer underneath.
+
+### The unit
+
+A condemn `weight` and a keep `max_discount` were the same integer meaning different
+things. `score()` normalizes by the sum of enabled weights, so a condemn weight is a
+**share of a running total**: adding a second rule silently shrinks the first. A keep's
+discount was always **literal points** off the finished score. Same visual grammar in the
+editor, different unit, and nothing said so. A real tuned TV policy was found summing to 240,
+so a rule written as 20 delivered 8. The drift is what real tuning produces, not an edge case.
+
+Removal weights now total exactly `MAX_SCORE`, enforced in `PolicyBody`. At a total of 100
+the normalization `100·P/D` collapses to `P`, so the number typed is the number the score
+moves by, and it matches the keep lane. **The arithmetic is unchanged.** Both shipped
+defaults already summed to 100, and a proportional rescale is score-preserving by
+construction — verified on a real library: every movie re-scored with zero change; every season
+seasons with a worst change under a point from integer rounding, four of which crossed the
+threshold, all four toward sparing.
+
+Equality, not `<=`. Under-allocating stretches the lane exactly as over-allocating shrinks
+it, and one outage touching both lanes can net *upward* because keeps stay absolute while
+the condemn side is attenuated. So the editor blocks Save in both directions.
+
+Side effect worth naming: setting a signal to 0 used to drop it from the denominator and
+**raise** every remaining score, which bites hardest on the signals arguing to keep. Under
+a pinned total its points must go somewhere, so the denominator cannot move. The old
+dilution warning is deleted rather than reworded (its state is now unrepresentable), and
+`_at_least_one_signal` went with it as unreachable code.
+
+Stored policies written before the rule are **rescaled, not discarded** — the operator's
+own tuning in new units, handed to the editor as an unsaved draft, with nothing written and
+no approval voided until they look. A scan on a rescaled policy **degrades the snapshot**:
+the rescale cannot move a score, but the body was never saved by anyone, and an approval
+names a policy hash.
+
+### The invariant nobody had written down
+
+```
+base <= MAX_SCORE * coverage
+```
+
+Every unevaluated signal contributes zero pressure while keeping its weight in the
+denominator, so a score cannot exceed the share of evidence that could be read. **`condemn_at`
+is therefore itself a coverage floor**: an item cannot reach 70 without 70% of the policy's
+weight being readable, whatever `coverage_floor_bp` says. This killed three of six
+scoring-model proposals that would have let rules add points outside the denominator. Now
+stated in `signals.py` and pinned by property test.
+
+### The fact layer
+
+`Absent` is a **privileged** state: it means "we looked, there is genuinely none", and the
+keep lane acts on it by withdrawing protection. That is correct (an unrated title is not a
+well-rated one), which is exactly why a builder must never manufacture one. Three did:
+
+- **A rating we never asked for.** `dataset_entry` returned `None` both when the dataset had
+  no row and when there was no id to look one up with. Recorded as `Absent`, a title whose
+  *arr has no imdbId and which Plex could not match lost every rating-based keep, with
+  coverage still reading 100% and nothing degrading. Split into `dataset_lookup`. Measured on
+  a real library: of the items carrying `Absent` ratings, **~86% were this bug** rather than
+  genuinely unrated.
+- **A size we could not read.** `int(x or 0)` on both the Radarr and Sonarr paths turned a
+  partial payload into an affirmative zero: maximum pressure on a size signal, and any "keep
+  large files" rule silently stops holding the item. `has_content` already read the file
+  *count* rather than the size, which is what let "it holds files" survive an unknown size.
+- **A mirror that stopped moving.** Watch stats come from the local cache, not a live call,
+  so a stalled ingest raises nothing and looks identical to a quiet library while every
+  item's dormancy climbs. `horizon()` answers the opposite question, so `latest()` was added
+  and the snapshot degrades past `MIRROR_STALE_AFTER` (48h, matching the whitelist bound).
+
+And one on the delete path, found by auditing the above rather than by the above: **zero was
+a confirmed measurement to the executor and an unreadable one to the parsers.** The same
+partial payload produces both halves, so a stored 0 against a live 0 was no growth at all,
+the "couldn't confirm its size" branch did not fire (`0 is not None`), and real files were
+deleted with both numbers fabricated. Symmetric on movies and seasons. An **empty** live
+file list passed the same way, marking a step verified having proven nothing while consuming
+the canary, since the plan is ordered smallest-first.
+
+### The fixture was rebuilding facts by parsing operator copy
+
+`policy_lab_extract.py` never read `facts_json`. It reconstructed every fact from
+`explanation_json` and the gate details — a second implementation of the fact layer, drifted
+from the first in two ways at once. It carried its own copy of the Absent/Unknown collapse,
+so the fixture **could not contain an Unknown rating** however many scans it read. And it
+recovered season rank by regexing a signal's detail string for "number N counting back" — a
+sentence reworded this same week, which silently deleted 210 known ranks from the sweep with
+nothing failing.
+
+It reads the frozen facts now. Regenerated: ratings gained the state they never had, season
+rank came back, and dormancy's seven Unknowns turned out to be reconstruction artifacts. The
+baseline moved, and that is the fixture becoming accurate rather than the engine moving —
+proven by re-judging all 440 *old* vectors with the current engine to the *old* baseline,
+zero mismatches.
+
+**Standing lesson: a generator that rebuilds facts by parsing operator-facing prose breaks
+silently on a copy edit.** It happened twice in one week. Nothing enforces this yet.
+
+### Known defects, not fixed
+
+Found by a fan-out audit after the size work. Labelled by what an operator would care
+about, not by where they live.
+
+**Can change what gets deleted**
+
+1. **The canary lands on the item Reaper knows least about.** `planner.py` orders
+   smallest-first so ordinal 0 is "the least costly possible mistake" (its words). A
+   fabricated `0` sorts to the front, so the run's one real proof that deletion works is
+   spent on the item whose size was never read. The comment and the behaviour disagree.
+2. **`watched_status` coerced to 0** (`history_sync.py`). The sequential guard filters
+   `watched_status = 1`, so an unstamped row drops out. **Direction depends on the case and
+   the trace is unfinished**: if *every* row for a season lacks it the season is absent
+   entirely and the guard falls back to season-level protection (safe, and the comment
+   beside it says so); if only *some* rows lack it, the user's progress is understated and a
+   later season may go unprotected. Finish the trace before deciding severity.
+
+**Says something untrue**
+
+3. **The queue renders "0 B" for a season that plainly holds files.** A visible false
+   statement on a surface scanned while deciding what to delete.
+4. **`gates.py` claims an unset field "cannot change any verdict."** False since the keep
+   lane existed: `Absent` withdraws a graded keep, which is the whole finding above. Rule 7
+   — the comment was true when written and is not now.
+
+**Latent**
+
+5. **A season missing from the watcher map reads as zero watchers** (`season_pruning.py`),
+   suppressing a keep-conflict warning. Both sides of the comparison default to 0 and an
+   unmatched season usually abstains on coverage anyway, so it rarely flips an outcome. It
+   is a warning, not a protection.
+
+### Still open
+
+- **The ceiling the operator originally hit is still there.** A rule is capped at the points
+  given to it, and the score is still bounded by what actually fired. What changed is that
+  the cap is a number they set and can read. If the real demand is "one rule that condemns
+  on its own", nothing here delivers it — only an operator-authored condemn veto would, and
+  `ConditionSpec` is protect-only by construction. Not recommended.
+- **A second size source is already fetched and unused.** Radarr's `movieFile.size` is an
+  exact per-file byte count in the same payload, currently used only for identity matching.
+  Sonarr has no per-episode size without an extra request (`includeEpisodeFile=true` appears
+  nowhere), but `episodeFileCount > 0` beside a zero `sizeOnDisk` is already the
+  self-contradiction that marks the Unknown case. Wiring the Radarr fallback would make the
+  unreadable size rare rather than merely safe.
+- **`Candidate.size_bytes` still stores 0 for an unreadable size**, which under-counts the
+  byte cap and the reclaim figure. It cannot reach a delete (see the executor fix above), but
+  it is caught by an interlock built for another purpose. Widening the column to nullable
+  touches the planner, executor, API and every frontend size call site.
+- **The lab cannot cover the fact builders.** It starts from frozen facts, which is one
+  layer downstream of everything the fact-layer work changed. `tests/test_fact_layer_states.py`
+  is the only coverage there.
+
 ## Immediate next steps
 
 1. **The live send** — wire `_send_for_real` + the exclusion-verify + the Plex refresh
