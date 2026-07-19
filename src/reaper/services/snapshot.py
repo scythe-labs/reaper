@@ -702,14 +702,16 @@ async def scan(
             title=item.title,
             media_type=item.media_type,
             # The scoring lane reads the honest Observation off `facts`; this is the
-            # display and reclaim-accounting column, which is a plain int. An unreadable
-            # size stores 0, and 0 here means "the size was never confirmed", not "an
-            # empty file": no file worth deleting is genuinely 0 bytes. The growth check
-            # cannot police that number (`_grew_materially(0, live)` is just a 256 MiB
-            # allowance), so `executor.size_confirmed` refuses it outright -- the item is
-            # kept, and left out of the caps and the byte total the operator confirms.
+            # display and reclaim-accounting column. None means Radarr reported a file it
+            # holds without a size, and it stays None: no file worth deleting is genuinely
+            # 0 bytes, so a stored 0 would be a measurement Reaper never took.
+            #
+            # What that costs the item is deletion. `planner.build_plan` holds it back,
+            # `executor.size_confirmed` refuses it again per item, and both caps and the
+            # byte total the owner confirms leave it out. It still scores, still shows in
+            # the queue, and says "Size unknown" wherever its size would appear.
             # Do not "fix" this by inventing a size here.
-            size_bytes=item.size_bytes or 0,
+            size_bytes=item.size_bytes,
             size_source=movie_size_source,
             facts=facts,
             gates=movie_gates,
@@ -874,7 +876,7 @@ def _judge_item(
     poster_rating_key: int | None = None,
     title: str,
     media_type: str,
-    size_bytes: int,
+    size_bytes: int | None,
     size_source: str | None,
     facts: Facts,
     gates: list[Gate],

@@ -519,13 +519,15 @@ class TestScanPipelineEndToEnd:
 
 
 class TestAStoredSizeSaysWhereItCameFrom:
-    """``size_bytes`` still fabricates a ``0`` when nothing reports a size. ``size_source``
-    is the column that tells the two apart, and it has to be honest *before* anything
-    depends on it: the scan's tally counts how often a size is simply never reported, and
-    that count is what decides whether the later acquisition work is worth doing.
+    """A size nobody reported is stored as nothing, not as zero.
 
-    A source stamped on a fabricated zero would make every one of those measurements read
-    as a healthy library.
+    ``size_source`` says which measurement the size is, and is None exactly when there is
+    none. The pair is what the whole deletion lane reads: the planner holds an unmeasured
+    item back, the executor refuses it again, and the scan's tally counts how often this
+    happens at all.
+
+    A fabricated ``0`` here would read as an affirmative measurement everywhere
+    downstream, and the numbers beside the delete button would quietly run low.
     """
 
     async def test_a_movie_nobody_sized_carries_no_source(
@@ -553,10 +555,7 @@ class TestAStoredSizeSaysWhereItCameFrom:
         rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
         unsized = rows["radarr:1:1"]
         assert unsized.size_source is None
-        # Today's behaviour, stated so the change is visible when it lands: the column
-        # still holds a fabricated zero, and `executor.size_confirmed` is what keeps that
-        # zero out of a delete.
-        assert unsized.size_bytes == 0
+        assert unsized.size_bytes is None  # not 0: nothing measured it
 
         sized = rows["radarr:1:2"]
         assert sized.size_source == SizeSource.RADARR
@@ -591,7 +590,7 @@ class TestAStoredSizeSaysWhereItCameFrom:
 
         rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
         assert rows["sonarr:1:42:2"].size_source is None
-        assert rows["sonarr:1:42:2"].size_bytes == 0
+        assert rows["sonarr:1:42:2"].size_bytes is None
         assert rows["sonarr:1:42:3"].size_source == SizeSource.SONARR
         assert rows["sonarr:1:42:3"].size_bytes == 1_000_000_000
 

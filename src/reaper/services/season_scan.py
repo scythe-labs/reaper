@@ -134,11 +134,11 @@ class SeasonJudgement:
     media_key: str
     plex_rating_key: int | None
     title: str
-    size_bytes: int
+    size_bytes: int | None
     size_source: str | None
-    """Which measurement ``size_bytes`` holds, or None when nothing reported one. Already
-    honest while ``size_bytes`` is not: it is None exactly when the size was never read,
-    which is what makes the scan's tally worth counting."""
+    """Which measurement ``size_bytes`` holds, and None exactly when that is None. Read by
+    the executor to compare like with like, and counted per scan so Reaper can say how
+    often a size is simply never reported."""
 
     facts: Facts
     guard_result: GateResult
@@ -1168,15 +1168,17 @@ def _judge_series(
                 plex_rating_key=plex_key,
                 title=title,
                 # The scoring lane reads the honest Observation off `facts`; this is the
-                # display and reclaim-accounting column, which is a plain int. An
-                # unreadable size stores 0, and 0 here means "the size was never
-                # confirmed", not "an empty season": no season worth deleting is
-                # genuinely 0 bytes. The growth check cannot police that number
-                # (`_grew_materially(0, live)` is just a 256 MiB allowance), so
-                # `executor.size_confirmed` refuses it outright -- the season is kept,
-                # and left out of the caps and the byte total the operator confirms.
+                # display and reclaim-accounting column. None means Sonarr reported a
+                # season holding files without sizing it, and it stays None: no season
+                # worth deleting is genuinely 0 bytes, so a stored 0 would be a
+                # measurement Reaper never took.
+                #
+                # What that costs the season is deletion. `planner.build_plan` holds it
+                # back, `executor.size_confirmed` refuses it again per item, and both caps
+                # and the byte total the owner confirms leave it out. It still scores and
+                # still shows in the queue, saying "Size unknown".
                 # Do not "fix" this by inventing a size here.
-                size_bytes=season.size_on_disk or 0,
+                size_bytes=season.size_on_disk,
                 size_source=SizeSource.SONARR if season.size_on_disk is not None else None,
                 facts=facts,
                 guard_result=guard_result(plan, n),
