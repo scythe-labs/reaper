@@ -26,6 +26,7 @@ from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import Candidate, Snapshot
 from reaper.main import create_app
+from reaper.services.snapshot import HAND_SPARE_DETAIL
 
 from ._auth import login
 
@@ -64,7 +65,10 @@ class TestKeptChipWording:
         ("gate", "detail", "phrase"),
         [
             ("whitelisted", "on your keep list, never reaped", "on your keep list"),
-            ("whitelisted", "you spared this by hand", "you spared it"),
+            # The scan's own constant, not a copy of it: the chip tells a hand spare apart
+            # from a real keep-list entry by exact equality, so a test that retyped the
+            # string would keep passing after one side was reworded.
+            ("whitelisted", HAND_SPARE_DETAIL, "you spared it"),
             ("streaming_now", "someone is watching it right now", "playing right now"),
             (
                 "rating_floor",

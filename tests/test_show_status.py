@@ -91,9 +91,11 @@ def _explanation(score: int) -> str:
 def client(tmp_path: Path) -> Iterator[TestClient]:
     """A snapshot holding one show per status, plus a movie.
 
-    The ended show also carries a season with no status stored -- the shape a snapshot
-    taken before this field existed leaves behind -- so the show-level rollup is
-    exercised against a group that is not uniformly filled in.
+    Two of the shows carry a season with no status stored -- the shape a snapshot taken
+    before this field existed leaves behind -- so the show-level rollup is exercised
+    against groups that are not uniformly filled in. They carry it in opposite orders:
+    show 1 has the status on its first season, show 4 on its last, so an implementation
+    that reads whichever season sorts first cannot pass both.
     """
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)
@@ -106,7 +108,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
             policy_hash="a" * 64,
             scoring_hash="b" * 64,
             horizon_at=now,
-            item_count=5,
+            item_count=7,
             degraded=False,
         )
         session.add(snapshot)
@@ -135,6 +137,10 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                 season(1, 2, None),  # a row from before the field existed
                 season(2, 1, "continuing"),
                 season(3, 1, "unknown"),
+                # The mirror of show 1: the empty row sorts FIRST, so a rollup that
+                # reads the leading season blanks a status the group plainly has.
+                season(4, 1, None),
+                season(4, 2, "ended"),
                 Candidate(
                     snapshot_id=snapshot.id,
                     media_key="radarr:1:10",
@@ -221,4 +227,15 @@ class TestTheShowCardCarriesTheStatus:
         group = client.get("/api/groups/sonarr:5:1").json()
 
         assert [s["show_status"] for s in group["seasons"]] == ["ended", None]
+        assert group["show_status"] == "ended"
+
+    def test_the_status_is_found_even_when_the_empty_season_comes_first(
+        self, client: TestClient
+    ) -> None:
+        """Same shape as the test above, in the opposite order: the leading season is
+        the empty one. Reading the first season would report nothing here, so the pair
+        pins that the rollup looks at every season rather than at row order."""
+        group = client.get("/api/groups/sonarr:5:4").json()
+
+        assert [s["show_status"] for s in group["seasons"]] == [None, "ended"]
         assert group["show_status"] == "ended"

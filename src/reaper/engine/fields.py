@@ -653,12 +653,34 @@ def _render(spec: FieldSpec, value: object) -> str:
             return f"{_num(value) / 1_000_000_000:.1f} GB"
         case FieldType.DAYS:
             # The same spelling the built-in signals use. One panel showing "900 days"
-            # beside "2 years, 5 months" reads as two different measurements.
+            # beside "2 years, 5 months" reads as two different measurements. This is
+            # for a *measured* value only; a rule's own number goes through
+            # :func:`_render_bar`, which says why.
             return humanize_days(_num(value))
         case FieldType.COUNT:
             return f"{_num(value):,.0f}"
         case _:
             return str(value)
+
+
+def _render_bar(spec: FieldSpec, target: object) -> str:
+    """A rule's own number, in the units the owner typed it in.
+
+    Deliberately not :func:`_render`. Humanizing a measured day count saves the reader
+    dividing 900 by 365, but humanizing the rule's number too rounds both sides into
+    the same phrase: :func:`reaper.clock.humanize_days` keeps two units and buckets
+    months in 30-day steps, so a rule at 400 days against a title at 396 would read
+    "Not watched in 1 year, 1 month, within your 1 year, 1 month" -- a line claiming
+    the value sits under a number it prints as equal to itself, on exactly the
+    marginal titles someone checks hardest before approving a deletion.
+
+    The editor already shows this field with "days" beside the box
+    (``FieldSpec.unit_suffix``), so echoing the typed number back is what they expect.
+    """
+    if spec.type is FieldType.DAYS:
+        days = _num(target)
+        return f"{days:,.0f} day" if abs(days) == 1 else f"{days:,.0f} days"
+    return _render(spec, target)
 
 
 # ---------------------------------------------------------------------------
@@ -743,7 +765,7 @@ def _explain_number(
         case _:  # pragma: no cover -- a numeric field accepts no other operator
             # Nothing to say about a bar we have no phrasing for, so claim nothing.
             return phrase
-    return f"{phrase}, {bar.format(_render(spec, target))}"
+    return f"{phrase}, {bar.format(_render_bar(spec, target))}"
 
 
 def _listed(target: str) -> str:

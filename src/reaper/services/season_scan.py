@@ -808,13 +808,39 @@ async def gather(
             return None
         return series
 
-    # The show index and each Sonarr's series list live on different services, so they
-    # are fetched concurrently -- the same shape as the movie fan-out in snapshot.scan,
-    # with the same reap-on-failure discipline.
-    tv_index, *series_lists = await gather_reaped(
+    async def _roots_from(source: SonarrSource) -> tuple[str, ...] | None:
+        """This instance's root folder paths, or ``None`` if they could not be read.
+
+        Read once per instance, never per show. ``None`` is not ``()``: an instance that
+        reports no roots is answering, while a failed read is not, and
+        :func:`identity._narrow_among_id_hits` refuses to narrow an ambiguous id at all on
+        ``None`` -- because losing the roots also removes the folder-vs-size contradiction
+        veto, not just the folder's ability to bind.
+
+        A failure here does NOT degrade the snapshot, unlike an unreadable series list
+        above. That is a deliberate exception to rule 28, whose compensating control is the
+        refusal named above: every affected show is kept.
+        """
+        try:
+            folders = await source.client.root_folders()
+        except IntegrationError as exc:
+            log.warning("season_scan.rootfolders", instance=source.name, error=str(exc))
+            return None
+        return identity.root_folder_paths(folders)
+
+    # The show index, each Sonarr's series list and each Sonarr's root folders live on
+    # different services, so they are fetched concurrently -- the same shape as the movie
+    # fan-out in snapshot.scan, with the same reap-on-failure discipline.
+    tv_index, *per_source = await gather_reaped(
         build_tv_index(tautulli, plex, degrade=degrade, allowed_sections=allowed_sections),
         *(_series_from(source) for source in sonarrs),
+        *(_roots_from(source) for source in sonarrs),
     )
+    series_lists = per_source[: len(sonarrs)]
+    roots_by_instance: dict[int, tuple[str, ...] | None] = {
+        source.instance_id: roots
+        for source, roots in zip(sonarrs, per_source[len(sonarrs) :], strict=True)
+    }
 
     # First pass, pure and offline: decide prunable/protected per series from Sonarr's
     # own season statistics. Only shows with a prunable season are resolved against Plex.
@@ -867,10 +893,14 @@ async def gather(
             title=str(series.get("title") or ""),
             year=_as_year(series.get("year")),
             file_basename=identity.to_basename(series.get("path")),
-            # The full series folder, not just its leaf: a show has no file size, so when
-            # one title is listed in two sections the folder above the leaf is all that
-            # can tell the copies apart.
+            # The full series folder, not just its leaf. Passed for completeness and for
+            # the root check, NOT because it can narrow a show: Sonarr puts a series
+            # directly under its root, so below the root there is only the leaf both copies
+            # already matched on, and a deeper path means the reported root is wrong. Either
+            # way the folder step stands down, so two same-leaf show listings under one id
+            # abstain and are kept (identity._narrow_by_path_depth says why).
             file_path=str(series["path"]) if series.get("path") else None,
+            root_folders=roots_by_instance.get(item.source.instance_id),
             index=tv_index,
         )
         item.show_rating_key = resolution.rating_key
@@ -1133,13 +1163,13 @@ def _judge_series(
                 title=title,
                 # The scoring lane reads the honest Observation off `facts`; this is the
                 # display and reclaim-accounting column, which is a plain int. An
-                # unreadable size stores 0, which UNDER-counts the byte cap -- but it
-                # cannot reach a delete. `executor._send_season` refuses twice: it keeps
-                # the season outright if Sonarr will not report a size for every file
-                # now, and otherwise compares the stored size against the live total and
-                # skips anything that grew past its allowance (`_grew_materially`), which
-                # 0 against any real total always does. Do not "fix" this by inventing a
-                # size here.
+                # unreadable size stores 0, and 0 here means "the size was never
+                # confirmed", not "an empty season": no season worth deleting is
+                # genuinely 0 bytes. The growth check cannot police that number
+                # (`_grew_materially(0, live)` is just a 256 MiB allowance), so
+                # `executor.size_confirmed` refuses it outright -- the season is kept,
+                # and left out of the caps and the byte total the operator confirms.
+                # Do not "fix" this by inventing a size here.
                 size_bytes=season.size_on_disk or 0,
                 facts=facts,
                 guard_result=guard_result(plan, n),

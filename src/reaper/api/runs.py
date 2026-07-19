@@ -41,7 +41,7 @@ from reaper.db.models import ActionStep, Candidate, ReapRun, Snapshot
 from reaper.engine.policy import ProfileSettings
 from reaper.services import app_settings, whitelist
 from reaper.services.condemned import effective_condemned
-from reaper.services.executor import ExecutionError, Executor, RunReport
+from reaper.services.executor import ExecutionError, Executor, RunReport, size_confirmed
 from reaper.services.planner import PlanError, build_plan, confirmation_phrase
 from reaper.services.profiles import active_profile_settings, save_profile_settings
 from reaper.services.scan_runner import build_reap_gateway
@@ -90,11 +90,20 @@ async def _planned_candidates(session: AsyncSession, run: ReapRun) -> list[Candi
     override was since removed drops out the same way. Recomputed at execute time, this also
     makes a post-plan override change the expected phrase -- so the owner is asked to reload
     and re-confirm the changed reap rather than approving a count that no longer matches.
+
+    Items with no confirmed size drop out here too, exactly as they do in the executor's
+    ``_deletable``: the send paths refuse them, so counting their stored 0 bytes would
+    put a count and a byte total in front of the owner that describe a different set than
+    the one the run will act on.
     """
     steps = await _run_steps(session, run)
     decisions = await whitelist.overrides(session)
     by_key = await effective_condemned(session, run.snapshot_id, decisions)
-    return [by_key[k] for k in dict.fromkeys(s.media_key for s in steps) if k in by_key]
+    return [
+        by_key[k]
+        for k in dict.fromkeys(s.media_key for s in steps)
+        if k in by_key and size_confirmed(by_key[k])
+    ]
 
 
 async def _run_out(session: AsyncSession, run: ReapRun) -> RunOut:

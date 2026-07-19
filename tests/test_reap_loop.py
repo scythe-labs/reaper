@@ -23,6 +23,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from reaper.api.runs import _planned_candidates
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import ActiveStream, PlexError
 from reaper.clock import utcnow
@@ -785,6 +786,106 @@ class TestSizeDriftReRead:
         # Movie 1 was kept (drift); movie 2 became the canary, failed, and aborted the run.
         assert report.state is RunState.ABORTED
         assert radarr.delete_calls == [2]
+
+
+class TestAnApprovedSizeThatWasNeverConfirmed:
+    """The other half of the fabricated zero, and the half the growth check cannot cover.
+
+    When an *arr reports a file it holds without a size, the scan freezes 0 on the
+    candidate row. The growth check compares the LIVE size against that frozen number and
+    so polices only the live side: ``_grew_materially(0, live)`` is just
+    ``live > 256 MiB``, silent for every smaller file. So the approved side is refused
+    outright, everywhere it is used -- the send paths keep the file, and the caps and the
+    typed confirmation leave it out rather than counting it as nothing.
+    """
+
+    async def test_a_movie_with_no_approved_size_is_kept(self, session: AsyncSession) -> None:
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700, size=0)
+        run = await _plan(session, snapshot_id)
+        # A real, readable, ordinary-sized file: under the drift floor, so the growth check
+        # sees no growth against the frozen 0 and would have let this delete through.
+        radarr = FakeRadarr(size_on_disk=200 * 1024**2)
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert radarr.delete_calls == []  # nothing was sent
+        assert report.skipped == 1
+        assert report.state is RunState.COMPLETED  # a skip is a protection, not a failure
+        assert "never got a size" in report.outcomes[0].detail
+
+    async def test_a_season_with_no_approved_size_is_kept_before_the_unmonitor(
+        self, session: AsyncSession
+    ) -> None:
+        snapshot_id = await _snapshot_one(
+            session, media_key="sonarr:1:42:3", rating_key=800, media_type="season", size=0
+        )
+        run = await _plan(session, snapshot_id)
+        # Sonarr reports every file's size fine, so the live-side refusal never fires; only
+        # the approved side is unconfirmed, and the season totals well under the drift floor.
+        sonarr = FakeSonarr()
+
+        report = await _real(session, run, _gateway(sonarr={1: sonarr}))
+
+        assert sonarr.unmonitor_calls == []  # not even the reversible half ran
+        assert sonarr.delete_calls == []
+        assert report.skipped == 1
+        assert "never got a size" in report.outcomes[0].detail
+
+    async def test_the_item_cap_counts_only_items_with_a_confirmed_size(
+        self, session: AsyncSession
+    ) -> None:
+        """The cap counts the set that will really be acted on, not the plan's length.
+
+        Two items can be deleted; the third will be refused for its unconfirmed size, so
+        a cap of two is not exceeded and the run must not abort.
+        """
+        snapshot_id = await _snapshot_with(
+            session, [("radarr:1:1", 1 * GB), ("radarr:1:2", 1 * GB), ("radarr:1:3", 0)]
+        )
+        run = await _plan(session, snapshot_id)
+
+        settings = ProfileSettings(max_items_per_run=2, max_items_per_30d=100)
+        report = await Executor(
+            session, safety=_read_only(), settings=settings, dry_run=True
+        ).execute(run.id)
+
+        assert report.state is RunState.COMPLETED
+        assert report.aborted_reason is None
+
+    async def test_the_byte_cap_never_counts_an_unconfirmed_size_as_nothing(
+        self, session: AsyncSession
+    ) -> None:
+        """The dangerous direction: counting 0 lets a run pass a cap it does not fit.
+
+        With the unconfirmed item excluded, the run is 400 GB against a 500 GB cap and
+        completes; the item it left out is kept per item, not deleted off-budget.
+        """
+        snapshot_id = await _snapshot_with(session, [("radarr:1:1", 400 * GB), ("radarr:1:2", 0)])
+        run = await _plan(session, snapshot_id)
+
+        settings = ProfileSettings(max_bytes_per_run=500 * GB, max_bytes_per_30d=2000 * GB)
+        executor = Executor(session, safety=_read_only(), settings=settings, dry_run=True)
+        report = await executor.execute(run.id)
+
+        assert report.state is RunState.COMPLETED
+        planned = await _planned_candidates(session, run)
+        assert [c.media_key for c in planned] == ["radarr:1:1"]
+
+    async def test_the_confirmation_total_leaves_out_what_will_not_be_deleted(
+        self, session: AsyncSession
+    ) -> None:
+        """The count and the byte total the owner types describe the exact set acted on.
+
+        Counting the unconfirmed item would ask them to approve "2 ITEMS" for a run that
+        can only ever delete one.
+        """
+        snapshot_id = await _snapshot_with(session, [("radarr:1:1", 10 * GB), ("radarr:1:2", 0)])
+        run = await _plan(session, snapshot_id)
+
+        planned = await _planned_candidates(session, run)
+
+        assert [c.media_key for c in planned] == ["radarr:1:1"]
+        assert confirmation_phrase(planned) == "REAP 1 ITEMS 10 GB"
 
 
 class TestDisarmMidRun:

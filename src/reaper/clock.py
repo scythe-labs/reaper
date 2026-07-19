@@ -102,9 +102,10 @@ def humanize_days(days: float) -> str:
     years, remainder = divmod(whole, 365)
     months, day = divmod(remainder, 30)
     units = [(years, "year"), (months, "month"), (day, "day")]
+    # ``whole >= 1`` past the early return, so at least one unit is always non-zero
+    # and ``present`` is never empty. No second sub-day branch here: a dead one would
+    # be a second place to keep the wording in step with.
     present = [(n, name) for n, name in units if n]
-    if not present:
-        return "less than a day"
     return ", ".join(f"{n} {name}" if n == 1 else f"{n} {name}s" for n, name in present[:2])
 
 

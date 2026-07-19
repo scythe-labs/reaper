@@ -29,11 +29,22 @@ regional titles). The ladder, top to bottom:
    copies (split HD/4K sections, a curated section re-listing a title); the *arr item's
    own file name may then pick the copy -- compared only among that id's candidates, with
    every candidate's file names known. A name matching exactly one candidate binds it. A
-   name matching *several* gets a second corroborator, the folder the copy sits in:
-   trailing path segments are compared (never whole paths -- the mount roots differ), and
-   a candidate strictly deeper than every other binds. That is what separates one title
-   kept in both an HD and a 4K library, whose leaf folder is identical in both and whose
-   parent is not; a show has no size, so it is the only corroborator a show ever gets.
+   name matching *several* gets a second corroborator, the folder the copy sits in. The
+   *arr's own root is read from that instance's root folder list and passed in, never
+   guessed at a fixed depth, which turns its path into the item's path *relative to its
+   library*; the one candidate whose Plex path **ends with** those exact segments is the
+   copy this entry manages. That needs nothing from Plex's own root. It is deliberately not
+   a "deepest shared suffix wins" ranking: two copies whose Plex roots differ in depth would
+   be scored against each other as though the shallower one running out of path were
+   evidence against it, and that bound the wrong copy. It declines wherever its evidence is
+   not trustworthy (no root, a depth that does not match the *arr's own layout, an
+   unreadable path on any candidate; see :func:`_narrow_by_path_depth`). Where its winner's
+   size cannot be checked, or the folder and the exact size name *different* copies, the
+   caller stands it down or abstains outright -- both live in
+   :func:`_narrow_among_id_hits`. A show never gets folder evidence at all: Sonarr writes
+   ``<root>/<Show>``, so below a correct root there is only the leaf already matched. It
+   also stands aside when the size step below would merge twins, since it can only ever
+   return one listing.
    A name still matching *several* gets the last corroborator, the exact byte size the
    *arr records for its file: a size singling out one candidate binds it, and several
    candidates carrying that name at exactly that size are byte-identical twins -- one
@@ -63,7 +74,7 @@ from __future__ import annotations
 
 import enum
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -258,20 +269,127 @@ def to_segments(path: str | None) -> tuple[str, ...]:
     )
 
 
-def _shared_suffix_depth(left: Sequence[str], right: Sequence[str]) -> int:
-    """How many trailing segments two paths have in common.
+def root_folder_paths(payload: object) -> tuple[str, ...]:
+    """The usable root folder paths out of an *arr ``/rootfolder`` response body.
 
-    Compared from the leaf backwards because the *mount roots differ*: the *arr says
-    ``/tv/Show``, Plex says ``/media/tv/Show`` (the very reason :func:`to_basename` exists).
-    The leaf is depth 1; a second shared segment -- the library root the copy lives under --
-    is what separates an HD listing from a 4K one when both name the folder identically.
+    Defensive by construction: a body that is not a list, an entry that is not a mapping,
+    and an entry whose ``path`` is missing or blank are all skipped rather than raised on.
+    A malformed body therefore yields ``()``, which stands the folder corroborator down
+    (:func:`_narrow_by_path_depth` returns ``None`` with no root), and standing it down can
+    only ever produce an abstain -- never a bind, and never a deletion.
     """
-    depth = 0
-    for a, b in zip(reversed(left), reversed(right), strict=False):
-        if a != b:
-            break
-        depth += 1
-    return depth
+    if not isinstance(payload, list):
+        return ()
+    paths: list[str] = []
+    for entry in payload:
+        if not isinstance(entry, Mapping):
+            continue
+        path = entry.get("path")
+        if isinstance(path, str) and path.strip():
+            paths.append(path)
+    return tuple(paths)
+
+
+def _plex_size_of(rating_key: int, basename: str, index: PlexIndex) -> int | None:
+    """This listing's byte size for the file with this name, or ``None`` if unknowable.
+
+    ``None`` covers both "Plex reported no size" and "this listing carries the name more
+    than once" (a merged multi-edition item), because neither yields one number to compare.
+    The size branch treats exactly the same two shapes as unknown.
+    """
+    sizes = [
+        file.size
+        for file in index.by_rating_key[rating_key].files
+        if to_basename(file.basename) == basename
+    ]
+    return sizes[0] if len(sizes) == 1 else None
+
+
+def _size_contradicts(
+    rating_key: int, basename: str, file_size: int | None, index: PlexIndex
+) -> bool:
+    """Whether this listing's own byte size positively rules it out.
+
+    Only a *known* size on **both** sides can contradict, so this says yes exactly when both
+    numbers are in hand and they disagree. Could-not-look is never "different" -- that case
+    is :func:`_size_unconfirmed`, which is a different answer with a different consequence.
+    """
+    if file_size is None:
+        return False
+    size = _plex_size_of(rating_key, basename, index)
+    return size is not None and size != file_size
+
+
+def _size_unconfirmed(
+    rating_key: int, basename: str, file_size: int | None, index: PlexIndex
+) -> bool:
+    """Whether the *arr knows a size but this listing gives nothing to check it against.
+
+    Distinct from :func:`_size_contradicts`, and it must be. A contradiction means two
+    corroborators name different copies, which abstains. This means the folder named a copy
+    that cannot be size-checked at all, while some *other* candidate might match the size
+    exactly -- so the folder must not bind on its own circumstantial evidence. It stands
+    down and lets the size branch decide, which is also where a listing carrying the name
+    twice is correctly read as unknown and abstains.
+    """
+    return file_size is not None and _plex_size_of(rating_key, basename, index) is None
+
+
+def _ends_with(path_segments: Sequence[str], suffix: Sequence[str]) -> bool:
+    """Whether a Plex path ends with the *arr's library-relative path, exactly.
+
+    The whole folder corroborator, and the reason it needs nothing from Plex's own root.
+    :func:`_below_arr_root` yields the item's path *relative to its library* -- everything
+    the *arr instance knows below its own root. Any Plex listing of that same file, under
+    whatever root that section is mounted at, must end with those very segments. So this
+    is a proof of identity that never has to know where Plex's root ends.
+
+    Deliberately **not** a "deepest shared suffix wins" ranking. Ranking is unsound here:
+    two copies whose Plex roots differ in *depth* are scored against each other as if the
+    deeper match were better evidence, when the extra segment is the shallower copy's root
+    running out, not a real folder disagreeing. That comparison bound the wrong copy, and
+    it is why no fixed-depth strip is applied to either side any more.
+    """
+    if not suffix or len(suffix) > len(path_segments):
+        return False
+    return tuple(path_segments[-len(suffix) :]) == tuple(suffix)
+
+
+def _below_arr_root(file_path: str | None, arr_roots: Sequence[str]) -> tuple[str, ...] | None:
+    """The *arr path's segments strictly below its own root folder, or ``None``.
+
+    ``arr_roots`` are the root folder paths that very *arr instance reports (Radarr and
+    Sonarr both expose them at ``/rootfolder``), so the root is *known* rather than guessed
+    at a fixed depth. Radarr reports a movie at ``<root>/<Title>/<file>`` and Sonarr a
+    series at ``<root>/<Title>``, so the longest supplied root that prefixes the path is
+    reliably this item's root. Both sides are compared as normalized segments
+    (:func:`to_segments`), so a trailing slash, a doubled separator or a case difference
+    cannot make a real root miss.
+
+    ``None`` when no supplied root prefixes the path, or when none was supplied at all.
+    That is deliberate and must stay: with the root unknown there is no way to tell a real
+    folder from a leftover piece of somebody's mount point, so the corroborator has no
+    trustworthy evidence and the caller must fall through rather than strip a fixed number
+    of segments.
+    """
+    segments = to_segments(file_path)
+    if not segments:
+        return None
+    longest = 0
+    for root in arr_roots:
+        root_segments = to_segments(root)
+        depth = len(root_segments)
+        # ``depth >= len(segments)``: the path is the root itself (or shorter), so nothing
+        # sits below it and this root cannot be the answer. A shorter root may still match
+        # on a later pass; the depth check downstream is what rejects the short root's
+        # answer, not this loop.
+        if depth == 0 or depth >= len(segments):
+            continue
+        if segments[:depth] == root_segments and depth > longest:
+            longest = depth
+    if longest == 0:
+        return None
+    return segments[longest:]
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,9 +402,9 @@ class PlexFile:
 
     ``path`` is the location's *full* path as Plex reports it, kept because a show folder
     has no size and its leaf alone cannot separate the same title listed in two sections
-    (an HD library and a 4K one name the folder identically). Only the trailing segments
-    are ever compared, and only among one id's own candidates -- see
-    :func:`_shared_suffix_depth`. ``None`` where Plex did not report a path.
+    (an HD library and a 4K one name the folder identically). It is only ever tested for
+    ending with the *arr's library-relative path, and only among one id's own candidates
+    -- see :func:`_ends_with`. ``None`` where Plex did not report a path.
     """
 
     basename: str
@@ -424,9 +542,10 @@ class Resolution:
 
     @classmethod
     def abstain(cls, detail: str) -> Resolution:
-        # An abstain only ever comes from a duplicate id (that the file name and size
-        # could not narrow), a duplicate basename, or a cross-tier conflict -- every one
-        # of which is "more than one possible match", i.e. AMBIGUOUS.
+        # Every abstain is "more than one possible match", i.e. AMBIGUOUS: a duplicate id
+        # the file name and size could not narrow, a duplicate basename, a cross-tier
+        # conflict, two id kinds naming different rows, or the folder and the exact size
+        # naming different copies.
         return cls(rating_key=None, matched_by=None, detail=detail, status=MatchStatus.AMBIGUOUS)
 
     @classmethod
@@ -456,41 +575,130 @@ def title_year_match(title: str | None, year: int | None, index: PlexIndex) -> i
     return matched[0] if len(matched) == 1 else None
 
 
+def _twin_group(
+    matched: Sequence[int], basename: str, file_size: int | None, index: PlexIndex
+) -> tuple[int, ...]:
+    """The listings the size corroborator would merge: byte-identical twins, or ``()``.
+
+    Mirrors the qualifying test in the size branch of :func:`_narrow_among_id_hits`: a
+    listing qualifies when it carries this basename once, at a size Plex reported, equal to
+    the *arr's own byte count. Two or more such listings are one file listed more than once,
+    and reading only one of them under-counts watching -- the direction that condemns.
+
+    Returns the members rather than a bare "yes", because the caller has to ask whether the
+    folder corroborator's own answer is *inside* this group. It is only safe for the folder
+    step to stand aside for a group it agrees with: a folder winner from outside the group
+    is two corroborators naming different copies, which abstains.
+
+    Deliberately *not* gated on that branch's abstain checks (an unknown size on some other
+    matching listing). Those make the size branch abstain, and standing aside to reach an
+    abstain keeps the file too.
+    """
+    if file_size is None:
+        return ()
+    twins = [
+        rk
+        for rk in matched
+        if _plex_size_of(rk, basename, index) is not None
+        and _plex_size_of(rk, basename, index) == file_size
+    ]
+    return tuple(twins) if len(twins) >= 2 else ()
+
+
 def _narrow_by_path_depth(
-    matched: Sequence[int], basename: str, file_path: str | None, index: PlexIndex
+    matched: Sequence[int],
+    basename: str,
+    file_path: str | None,
+    file_size: int | None,
+    index: PlexIndex,
+    arr_roots: Sequence[str] = (),
+    arr_layout_depth: int = 2,
 ) -> int | None:
-    """The one listing whose folder sits deepest under the *arr's own path, or ``None``.
+    """The one listing that holds this *arr item's library-relative path, or ``None``.
 
     Every listing in ``matched`` already holds a file with this leaf name, so the leaf is
-    spent as a discriminator and only the segments *above* it can still speak. A listing
-    wins only if its deepest shared suffix is strictly greater than every other listing's:
-    a tie means the paths agree exactly as far as they agree, and agreeing equally well is
-    not evidence for either. Depth 1 is the leaf both sides already matched on, so it is
-    no new corroboration and never wins.
+    spent as a discriminator and only the segments *above* it can still speak.
+    :func:`_below_arr_root` turns the *arr's path into the item's path *relative to its own
+    library* (given ``arr_roots`` from that instance's ``/rootfolder``, so the root is known
+    rather than guessed). A Plex listing of that same file, under whatever root its section
+    is mounted at, must end with exactly those segments -- so :func:`_ends_with` decides it,
+    and Plex's own root never has to be known. Exactly one holder binds; several or none
+    fall through.
+
+    With no root supplied, or a path under none of the supplied roots, this returns
+    ``None``: the corroborator stands down rather than guess where the root ends.
+
+    **No ranking.** An earlier version scored candidates by deepest shared suffix and let
+    the deepest strictly win. That is unsound when two copies' Plex roots differ in *depth*:
+    the shallower copy simply runs out of path, and losing that comparison reads as evidence
+    against it when it is nothing of the kind. It bound the wrong copy. An exact suffix
+    match has no such failure mode -- a copy either carries the relative path or it does not.
+
+    **What the root requirement costs, plainly.** Measuring strictly below the root removes
+    two binds this step used to make, and both of them were wrong:
+
+    * Two instances that each map their own host directory to the same in-container root
+      (the standard single-mount layout) both report ``<root>/<Title>/<file>``. Below the
+      root that is ``(title, file)`` for both, which ties against every copy, so this
+      abstains. A movie then recovers through its exact byte size; a show has no size and
+      keeps both copies. Previously the leftover root segment broke the tie and could bind
+      the *wrong* copy, reading a stranger's watch history and added-at.
+    * A library distinction that lives in the root itself (one instance rooted at one path,
+      another at a different one, each series being just root-plus-show) leaves only the
+      show name below the root, identical in both libraries, so this abstains too. That
+      information genuinely is not in the path. Comparing the roots' own leaf names would
+      not recover it either: in the two-instance case above both instances carry the *same*
+      root leaf, so such a rule would bind both to one copy.
+
+    An abstain keeps the file, so both losses resolve the safe way.
+
+    Knows nothing about byte-identical twins: the caller arbitrates that, because only the
+    caller can ask whether this step's winner is *inside* the group the size branch would
+    merge (:func:`_twin_group`). Gating it here instead returned ``None`` before a winner
+    existed, which silently discarded a definite answer that contradicted the group.
 
     ``None`` means "could not narrow", never "no match" -- the caller falls through to the
     size corroborator and, failing that, abstains. Unknown is never "different".
     """
-    arr_segments = to_segments(file_path)
+    arr_segments = _below_arr_root(file_path, arr_roots)
+    # The *arr's own layout pins how deep this must be: Radarr writes <root>/<Title>/<file>
+    # and Sonarr <root>/<Show>, so anything else means the reported root is not this item's
+    # real root (a stale root after the operator reconfigured them -- Radarr does not move
+    # files on a root change -- a manual import into a nested folder, a container mounted
+    # above the library). The leftover mount segments would then be compared as if they
+    # were real folders, which is the whole class of bug this step keeps regenerating, so
+    # an unexpected depth stands the step down rather than guessing.
+    if arr_segments is None or len(arr_segments) != arr_layout_depth:
+        return None
     if len(arr_segments) < 2:
+        return None  # only the leaf both sides already matched on: no new evidence
+
+    # A candidate whose path Plex did not report cannot be tested, and dropping it from the
+    # holder set would silently turn a tie into a strict win for someone else -- exactly the
+    # inversion this step was rebuilt to remove. Could-not-look is never "different".
+    if any(
+        file.path is None
+        for rk in matched
+        for file in index.by_rating_key[rk].files
+        if to_basename(file.basename) == basename
+    ):
         return None
 
-    depths: dict[int, int] = {}
-    for rk in matched:
-        best = 0
-        for file in index.by_rating_key[rk].files:
-            if to_basename(file.basename) != basename or file.path is None:
-                continue
-            best = max(best, _shared_suffix_depth(arr_segments, to_segments(file.path)))
-        # A listing whose path we could not read scores 0 and so cannot win, but it also
-        # cannot be ruled out: it stays in the running and can still force the tie that
-        # abstains. "Could not look" is never "looked and it was different".
-        depths[rk] = best
-
-    ranked = sorted(depths.values(), reverse=True)
-    if ranked[0] < 2 or ranked[0] == ranked[1]:
+    holders = [
+        rk
+        for rk in matched
+        if any(
+            to_basename(file.basename) == basename
+            and file.path is not None
+            and _ends_with(to_segments(file.path), arr_segments)
+            for file in index.by_rating_key[rk].files
+        )
+    ]
+    if len(holders) != 1:
+        # Several carrying it is a genuine tie (the same relative path under two different
+        # Plex roots); none carrying it is no evidence at all. Both fall through to size.
         return None
-    return max(depths, key=lambda rk: depths[rk])
+    return holders[0]
 
 
 def _narrow_among_id_hits(
@@ -499,6 +707,8 @@ def _narrow_among_id_hits(
     file_size: int | None,
     index: PlexIndex,
     file_path: str | None = None,
+    arr_roots: Sequence[str] | None = (),
+    arr_layout_depth: int = 2,
 ) -> tuple[tuple[int, ...], str]:
     """The Tier-1 candidates provably holding this *arr item's file, or why none could be.
 
@@ -512,13 +722,34 @@ def _narrow_among_id_hits(
     look" abstains rather than counting as "looked and it was different".
 
     A name matching SEVERAL candidates gets one more corroborator before size: the folder
-    the copy lives *under*. Comparing whole paths would be wrong -- the mount roots differ
-    (:func:`to_basename` exists for that reason) -- so only trailing segments are compared,
-    and a candidate wins only by being *strictly* deeper than every other. That is what
-    separates a title an operator keeps in both an HD library and a 4K one: the leaf folder
-    is identical in both, the segment above it is not. A show has no size to fall back on,
-    so without this corroborator two same-leaf listings under one id could never be told
-    apart (recorded in docs/LEARNINGS.md).
+    the copy lives *under* (:func:`_narrow_by_path_depth`). Comparing whole paths would be
+    wrong -- the mount roots differ (:func:`to_basename` exists for that reason) -- so the
+    *arr side is cut back to what sits below **that instance's own reported root folder**
+    (``arr_roots``, from its ``/rootfolder``), which is the item's path relative to its
+    library. The one candidate whose Plex path *ends with* those exact segments is the copy
+    this entry manages (:func:`_ends_with`); that needs nothing from Plex's own root, so no
+    fixed-depth strip is applied to either side. It is not a depth ranking, and must not
+    become one: two copies whose Plex roots differ in depth would be scored against each
+    other as though the shallower one running out of path were evidence against it, which
+    bound the wrong copy.
+
+    The step declines, falling through to size, in every shape where its evidence is not
+    trustworthy: no root supplied or none prefixing the path; a below-root depth that does
+    not match the *arr's own layout (``arr_layout_depth``, so a stale or over-broad root
+    cannot pass mount segments off as folders); any candidate whose path Plex did not
+    report, since dropping it would turn a tie into a strict win for someone else; and a
+    winner whose size cannot be checked while another candidate might match it exactly
+    (:func:`_size_unconfirmed`). Where the folder names one copy and the exact byte size
+    names another, that is a positive contradiction and the whole narrowing abstains
+    (:func:`_size_contradicts`) rather than letting either overrule the other.
+
+    A show therefore never gets folder evidence: Sonarr writes ``<root>/<Show>``, so below
+    a correct root there is only the leaf both sides already matched on. Two same-leaf show
+    listings under one id are kept, not guessed between (recorded in docs/LEARNINGS.md).
+    Where the size branch below would merge byte-identical twins (:func:`_twin_group`) the
+    folder step stands aside, because it returns one listing and one listing cannot carry a
+    group -- but only when its winner is *in* that group. A winner from outside it is the
+    same contradiction as above and abstains, rather than being discarded behind the group.
 
     A name still matching SEVERAL candidates gets the last corroborator: the exact byte size
     the *arr records for its file. A size singling out one candidate binds it. Several
@@ -526,14 +757,26 @@ def _narrow_among_id_hits(
     file listed more than once in Plex (verified live: a curated section re-lists the
     very same file under its own rating key, at a different path) -- and *all* of them
     are returned, because the file's plays are split across those listings and reading
-    only one would under-count watching, which is the direction that condemns. Any
-    unknown (a missing name or size on either side, or a candidate holding two same-name
-    files) abstains: unknown is never "different", and it is never "the same" either.
+    only one would under-count watching, which is the direction that condemns. The folder
+    step above never preempts this, whatever paths the twins sit at. Any unknown (a missing
+    name or size on either side, or a candidate holding two same-name files) abstains:
+    unknown is never "different", and it is never "the same" either.
 
     Returns ``(rating_keys, text)``: on success one key (a clean single bind) or several
     (byte-identical twins) plus the corroborator wording for the bind detail; on failure
     ``()`` plus the reason phrased for the audit detail.
     """
+    if arr_roots is None:
+        # The instance's root folder list could not be read at all. That is NOT the same as
+        # "no roots reported": without it the folder step cannot run, and the folder step is
+        # the only thing that produces the folder-vs-size contradiction veto below. Falling
+        # through to size alone would let a stale Plex size bind a copy the folder would have
+        # disputed, so a read failure removes a safeguard rather than merely a bind. Refuse
+        # the whole narrowing instead, which keeps the file.
+        return (), (
+            "Reaper couldn't read the folder list from Sonarr or Radarr, "
+            "so it can't tell the copies apart"
+        )
     if basename is None:
         return (), "this item has no file name to tell the copies apart"
     matched: list[int] = []
@@ -556,11 +799,44 @@ def _narrow_among_id_hits(
         return (), "this item's file name matches none of them"
 
     # Several listings hold a file with this very name. Before size, try the folder each
-    # copy lives under: deepest shared trailing path wins, and only by a strict margin.
+    # copy lives under: the one listing whose path ends with this item's library-relative
+    # path, taken from the *arr's own reported root.
     count = len(matched)
-    narrowed_by_path = _narrow_by_path_depth(matched, basename, file_path, index)
+    disagree = (
+        f"this item's file name matches {count} of them, and the folder it sits in "
+        "and its file size point at different copies"
+    )
+    narrowed_by_path = _narrow_by_path_depth(
+        matched, basename, file_path, file_size, index, arr_roots, arr_layout_depth
+    )
+    if narrowed_by_path is not None and _size_unconfirmed(
+        narrowed_by_path, basename, file_size, index
+    ):
+        # The folder named a copy whose size cannot be checked, while another candidate may
+        # match the *arr's byte count exactly. Circumstantial evidence must not bind over
+        # evidence that has not been consulted yet, so stand down and let size decide.
+        narrowed_by_path = None
     if narrowed_by_path is not None:
-        return (narrowed_by_path,), f"file name {basename!r} and the folder it sits in"
+        if _size_contradicts(narrowed_by_path, basename, file_size, index):
+            # The folder names one copy and the exact byte size names a different one.
+            # That is a positive contradiction, and this module's rule is
+            # corroborate-or-silent, NEVER contradict (see the module docstring). It must
+            # abstain here rather than fall through: falling through would let the size
+            # branch bind the other copy on evidence the folder just disputed, and a stale
+            # Plex size (an *arr upgraded the file in place, Plex has not rescanned) makes
+            # that the wrong copy. Keeping the file is the only answer both corroborators
+            # can live with.
+            return (), disagree
+        twins = _twin_group(matched, basename, file_size, index)
+        # The size branch below would merge a twins group, and a single winner cannot carry
+        # one. Standing aside is right only when the folder AGREES with that group: if its
+        # winner is one of the twins, fall through so every listing's plays are read. A
+        # winner from OUTSIDE the group is the same contradiction as above, and deferring
+        # would silently discard a definite folder answer and bind a stranger's listings.
+        if twins and narrowed_by_path not in twins:
+            return (), disagree
+        if not twins:
+            return (narrowed_by_path,), f"file name {basename!r} and the folder it sits in"
 
     # The last corroborator is size.
     if file_size is None:
@@ -616,6 +892,8 @@ def resolve(
     file_basename: str | None,
     file_size: int | None = None,
     file_path: str | None = None,
+    root_folders: Sequence[str] | None = (),
+    arr_layout_depth: int,
     index: PlexIndex,
     id_priority: Sequence[str],
 ) -> Resolution:
@@ -627,9 +905,13 @@ def resolve(
     ``file_size`` is the exact byte count the *arr records for its file (movies only;
     a show is bound by its folder, which has no size) and is consulted only when the file
     name alone cannot narrow an ambiguous id. ``file_path`` is that file or folder's full
-    path on the *arr side, consulted in the same place and only for its trailing segments.
-    Both are corroborators *inside* an id's own answer set; neither is ever a lookup into
-    the wider library.
+    path on the *arr side, consulted in the same place and only for the trailing segments
+    strictly below the instance's own root folder. ``root_folders`` is that instance's real
+    root folder paths, read from its ``/rootfolder`` list; without them the path evidence
+    is unusable (nothing in a path says where a mount root ends) and the folder step stands
+    down, leaving size, and failing that an abstain.
+    All of these are corroborators *inside* an id's own answer set; none is ever a lookup
+    into the wider library.
     """
     basename = to_basename(file_basename)
 
@@ -678,7 +960,9 @@ def resolve(
             # prove that several listings are the same file, bound together (see
             # _narrow_among_id_hits). The wider library is never consulted to break the
             # tie, and any residual ambiguity abstains.
-            narrowed, text = _narrow_among_id_hits(hits, basename, file_size, index, file_path)
+            narrowed, text = _narrow_among_id_hits(
+                hits, basename, file_size, index, file_path, root_folders, arr_layout_depth
+            )
             if not narrowed:
                 return Resolution.abstain(
                     f"Kept: {kind.upper()} id {value} names {len(hits)} Plex items "
@@ -764,6 +1048,7 @@ def resolve_movie(
     file_basename: str | None,
     file_size: int | None = None,
     file_path: str | None = None,
+    root_folders: Sequence[str] | None = (),
     index: PlexIndex,
 ) -> Resolution:
     """Bind a movie: id priority tmdb then imdb.
@@ -771,6 +1056,12 @@ def resolve_movie(
     ``file_size`` is Radarr's exact byte count for the movie's file, consulted only when
     several Plex listings carry the same file name under one shared id; ``file_path`` is
     that file's full path, consulted in the same place.
+
+    ``root_folders`` is this Radarr instance's own root folder paths. Radarr reports a
+    movie at ``<root>/<Title>/<file>``, so the root is what tells the real folder apart
+    from the container's mount point. Supply none and the folder step stands down: a movie
+    then leans on its exact byte size, and where that cannot separate the copies either,
+    the item abstains and is kept.
     """
     return resolve(
         ids=ids,
@@ -779,6 +1070,9 @@ def resolve_movie(
         file_basename=file_basename,
         file_size=file_size,
         file_path=file_path,
+        root_folders=root_folders,
+        # Radarr writes <root>/<Title>/<file>: two segments below the root.
+        arr_layout_depth=2,
         index=index,
         id_priority=_MOVIE_ID_PRIORITY,
     )
@@ -791,15 +1085,26 @@ def resolve_show(
     year: int | None,
     file_basename: str | None,
     file_path: str | None = None,
+    root_folders: Sequence[str] | None = (),
     index: PlexIndex,
 ) -> Resolution:
     """Bind a show: id priority tvdb (Sonarr's primary key).
 
     No ``file_size``: a show is bound by its folder, and a folder has no one size -- so
     two same-name folder listings under one id can never be told apart by size, and never
-    merge. ``file_path`` is the folder's full path, and is the *only* corroborator a show
-    has once the leaf ties: an operator keeping one title in both an HD and a 4K library
-    gets two listings whose leaf folder is identical and whose parent is not.
+    merge. ``file_path`` is the folder's full path and is the *only* corroborator a show
+    has once the leaf ties; ``root_folders`` is this Sonarr instance's own root folder
+    paths, without which that path cannot be read (:func:`_below_arr_root`).
+
+    Be clear about the reach this leaves a show: **none.** Sonarr reports a series at
+    ``<root>/<Show>``, so below the root there is only the show name -- the leaf both copies
+    already matched on -- and a *deeper* path means the reported root is not this item's
+    real root, which stands the step down too (``arr_layout_depth`` is 1 here). A show
+    narrows in no layout, nested or flat. Every ambiguous show abstains and is kept,
+    including the case where the two libraries are told apart by their root paths alone:
+    that distinction is not in the part of the path we can trust, and inventing a rule from
+    the roots' own names would mis-bind two instances that mount alike. See
+    :func:`_narrow_by_path_depth`.
     """
     return resolve(
         ids=ids,
@@ -808,6 +1113,11 @@ def resolve_show(
         file_basename=file_basename,
         file_size=None,
         file_path=file_path,
+        root_folders=root_folders,
+        # Sonarr writes <root>/<Show>: one segment below the root, which is the folder leaf
+        # both sides already matched on. So the folder step has no new evidence for a show
+        # and always stands down -- see _narrow_by_path_depth.
+        arr_layout_depth=1,
         index=index,
         id_priority=_SHOW_ID_PRIORITY,
     )

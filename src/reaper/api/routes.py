@@ -83,6 +83,7 @@ from reaper.services.deep_links import build_links
 from reaper.services.display_meta import parse_ratings_json
 from reaper.services.planner import MediaRef, PlanError
 from reaper.services.profiles import active_policy, active_policy_row
+from reaper.services.snapshot import HAND_SPARE_DETAIL
 
 log = structlog.get_logger(__name__)
 
@@ -482,11 +483,6 @@ def _dormant_for(explanation_json: str) -> str | None:
     return None
 
 
-#: The exact detail the scan injects for a hand-spare (services/snapshot.py) -- it wears
-#: the whitelist gate id, so the chip tells it apart by this string. Worded as a lowercase
-#: fragment with no trailing period, like every other fired protection in the list.
-_SPARE_DETAIL = "you spared this by hand"
-
 #: Parsers over our own gates' closed detail vocabularies (engine/gates.py,
 #: services/season_pruning.py) -- the WhyPanel's CHECK_COPY/CAUSE_COPY precedent.
 #: Anything unrecognized falls back to a static phrase, never an error.
@@ -517,7 +513,7 @@ def _kept_season_phrase(detail: str) -> str:
 
 def _kept_phrase(gate: str, detail: str) -> str:
     """The green chip's phrase for the protection that fired, worn as "Kept · {phrase}"."""
-    if detail == _SPARE_DETAIL:
+    if detail == HAND_SPARE_DETAIL:
         return "you spared it"
     if gate == "whitelisted":
         return "on your keep list"
@@ -1044,9 +1040,11 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
     fixes it. Two recoveries, in order:
 
     1. **Rescale.** A body written before removal weights had to total 100 is repaired by
-       ``policy.rebalance``, which is score-preserving. It comes back as an *unsaved
-       draft*: the operator's own tuning, in the new units, with nothing written until
-       they look at it and press Save. Their approvals stay valid until they do.
+       ``policy.rebalance``, which keeps the operator's tuning. The exact rescale cannot
+       move a score, but integer rounding can, by more than a point (see that function's
+       docstring for the worked cases) -- which is precisely why it comes back as an
+       *unsaved draft*: the operator's own tuning, in the new units, with nothing written
+       until they look at it and press Save. Their approvals stay valid until they do.
     2. **Fall back.** Anything we cannot repair opens on the shipped default, saying so,
        so nobody mistakes it for what is in force.
     """
@@ -1168,7 +1166,9 @@ def _replay_simulation(
         # decide_verdict, which honours it only past the cautious cases.
         merged_extra = list(extra)
         if override == "spare":
-            merged_extra.insert(0, GateResult(GateId.WHITELISTED, PROTECT, detail=_SPARE_DETAIL))
+            merged_extra.insert(
+                0, GateResult(GateId.WHITELISTED, PROTECT, detail=HAND_SPARE_DETAIL)
+            )
         evaluation = Evaluation(results=[*merged_extra, *evaluate_all(gates, facts).results])
         item_score = score_facts(
             signals, facts, custom_condemn=custom, keeps=keeps, window_days=window

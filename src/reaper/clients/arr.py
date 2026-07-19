@@ -78,10 +78,14 @@ class ArrClient(BaseClient):
     async def root_folders(self) -> list[dict[str, Any]]:
         """Root folders, including `accessible`.
 
-        A preflight gate: if a root folder is not accessible, its media appears to
-        have vanished. Scanning then means "everything under that mount is a
-        deletion candidate", which is how an unmounted volume becomes a mass
-        deletion.
+        Two consumers, and neither is a scan-time preflight:
+
+        * `identity.root_folder_paths` takes the `path` of each, so the folder
+          corroborator can measure a path below the instance's real root instead of
+          guessing where a container mount ends. It ignores `accessible`.
+        * `executor._mount_is_up` reads `accessible` before the post-reap trash purge,
+          because an unmounted volume makes media look vanished and a purge would then
+          destroy library records.
         """
         data = await self.get_json(f"{self.prefix}/rootfolder")
         return list(data) if isinstance(data, list) else []

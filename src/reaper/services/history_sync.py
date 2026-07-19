@@ -157,19 +157,24 @@ async def _store_tautulli_total(engine: AsyncEngine, total: int) -> None:
         )
 
 
-#: Every column ``SCHEMA`` declares on ``watch_event``, in order. The shape check below
-#: compares the live table against this; keep the two together.
+#: Every column ``SCHEMA`` declares on ``watch_event``, in order, as
+#: ``(name, declared type, notnull)`` -- the first three fields ``PRAGMA table_info``
+#: returns after ``cid``. Names alone are not enough: the change that made
+#: ``watched_status`` nullable moved no name and no position, so a name-only comparison
+#: would call an upgraded install's table current and leave the old ``0.0`` rows in place.
+#: ``row_id INTEGER PRIMARY KEY`` is a rowid alias, which sqlite reports as ``notnull=0``.
+#: Keep this and ``SCHEMA`` together.
 _WATCH_EVENT_COLUMNS = (
-    "row_id",
-    "rating_key",
-    "parent_rating_key",
-    "grandparent_rating_key",
-    "user_id",
-    "watched_at",
-    "watched_status",
-    "percent_complete",
-    "media_type",
-    "media_index",
+    ("row_id", "INTEGER", 0),
+    ("rating_key", "INTEGER", 1),
+    ("parent_rating_key", "INTEGER", 0),
+    ("grandparent_rating_key", "INTEGER", 0),
+    ("user_id", "INTEGER", 1),
+    ("watched_at", "INTEGER", 1),
+    ("watched_status", "REAL", 0),
+    ("percent_complete", "INTEGER", 1),
+    ("media_type", "TEXT", 1),
+    ("media_index", "INTEGER", 0),
 )
 
 
@@ -201,7 +206,8 @@ async def ensure_schema(engine: AsyncEngine) -> None:
     """
     async with engine.begin() as conn:
         cols = (await conn.execute(text("PRAGMA table_info(watch_event)"))).all()
-        if cols and tuple(row[1] for row in cols) != _WATCH_EVENT_COLUMNS:
+        live = tuple((row[1], str(row[2]).upper(), int(row[3])) for row in cols)
+        if cols and live != _WATCH_EVENT_COLUMNS:
             log.info("history.cache.rebuilding", reason="watch_event shape is stale")
             await conn.execute(text("DROP TABLE watch_event"))
         for statement in SCHEMA.strip().split(";"):
@@ -398,12 +404,35 @@ async def horizon(engine: AsyncEngine) -> datetime | None:
 async def latest(engine: AsyncEngine) -> datetime | None:
     """The newest event in the local mirror, or ``None`` when there is nothing at all.
 
-    The freshness question, where :func:`horizon` is the reach question. Watch stats are
-    read from this mirror and not live, so a Tautulli ingest that stalled does not raise
-    and does not look any different from a genuinely quiet library: every item's dormancy
-    keeps growing while its watcher counts stay frozen. Only this can tell the two apart.
+    "Did anybody watch anything?", where :func:`horizon` is the reach question. This
+    **cannot** answer "is the ingest still running?": a stalled Tautulli ingest and a
+    genuinely quiet library produce the identical ``MAX(watched_at)``, so degrading a scan
+    on this reads a household that went away for the weekend as a broken pipeline. Ask
+    :func:`last_synced_at` for that.
     """
     return (await _state(engine)).latest
+
+
+async def last_synced_at(engine: AsyncEngine) -> datetime | None:
+    """When the ingest last ran, or ``None`` if it never has.
+
+    The liveness signal :func:`latest` is not. ``history_sync_state.synced_at`` is written
+    by :func:`_store_tautulli_total` whenever Tautulli answered and its history had not
+    shrunk, so this moves on a quiet library while ``MAX(watched_at)`` stands still. That
+    is the whole difference, and it is what the scan's staleness guard degrades on
+    (``services.snapshot``).
+
+    Precise about what it marks: ``_store_tautulli_total`` is called from
+    ``_check_regression``, which runs *before* the page walk, so this says "the source
+    answered", not "the walk finished". That is the right signal for the guard, which is
+    distinguishing a reachable source from an unreachable one.
+    """
+    await ensure_schema(engine)
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(text("SELECT synced_at FROM history_sync_state WHERE id = 1"))
+        ).first()
+    return from_epoch(row.synced_at) if row else None
 
 
 async def days_since_horizon(engine: AsyncEngine) -> float | None:

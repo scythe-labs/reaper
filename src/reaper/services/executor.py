@@ -64,6 +64,11 @@ The interlocks, in order, and why each exists:
    A file that grew beyond the allowance (``_grew_materially``) was upgraded since the
    scan -- the approval, the caps and the typed phrase all counted a smaller file -- so
    the item is skipped (kept), and so is one whose current size cannot be read at all.
+   That comparison needs two CONFIRMED numbers, and it does not police the *approved*
+   side: ``_grew_materially(0, live)`` reduces to ``live > 256 MiB``, so it stays silent
+   for anything smaller. The approved side is policed instead by ``size_confirmed``,
+   which refuses the item in both send paths before the growth check, and by
+   ``_deletable``, which keeps it out of the caps and out of the phrase the owner types.
 9. **Verify the world changed.** A movie: re-read the exclusion list and assert the tmdbId
    is present *and* the movie is gone -- Sonarr and Radarr each accept the *other's*
    exclusion parameter and return 200 while doing nothing, so the 200 is re-read, not
@@ -167,6 +172,34 @@ def _payload_size(value: object) -> int | None:
     except (TypeError, ValueError):
         return None
     return size if size > 0 else None
+
+
+#: What the operator is told when the scan never got a size for an item. Plain, and it
+#: says what happened to the file, because this is the only place the refusal surfaces.
+_NO_APPROVED_SIZE_REASON = (
+    "Reaper never got a size for this when it was scanned, so it cannot confirm this is "
+    "what you approved. Kept."
+)
+_NO_APPROVED_SIZE_CHECK = "No size was recorded for it at scan time. Kept."
+
+
+def size_confirmed(candidate: Candidate) -> bool:
+    """Did the scan actually get a size for this item?
+
+    ``Candidate.size_bytes`` is a non-null column, so an *arr that reported a file it
+    holds without a size lands as 0. Zero is an unambiguous "never confirmed" marker
+    here: a file worth deleting is never genuinely 0 bytes, and ``_payload_size`` already
+    reads a live 0 the same way. (Making the column nullable is the cleaner fix and is
+    deferred; it touches every candidate writer and reader.)
+
+    An unconfirmed size cannot be caught downstream by the growth check --
+    ``_grew_materially(0, live)`` reduces to ``live > _SIZE_DRIFT_FLOOR`` -- so it is
+    refused directly, in the two places that matter: ``_deletable`` keeps the item out of
+    the caps and out of the byte total behind the confirmation phrase (the same filter
+    runs in ``api.runs._planned_candidates``, so both numbers describe one set), and
+    ``_send_movie`` / ``_send_season`` skip it per item before anything is sent.
+    """
+    return int(candidate.size_bytes or 0) > 0
 
 
 def _season_number(obj: dict[str, Any]) -> int:
@@ -394,8 +427,17 @@ def _deletable(deletes: Sequence[_Delete], effective_keys: set[str]) -> list[_De
     still carries delete steps but is skipped per item in ``_one_delete``; counting it
     would abort a legitimate reduced run. Fails safe: an override change only ever
     removes items from the count of what THIS run sends.
+
+    An item whose approved size was never confirmed (``size_confirmed``) drops out for
+    the same reason: the send paths refuse it, so it is not part of what this run acts
+    on, and counting it as 0 bytes -- which is what its stored size says -- would let a
+    run delete materially more than the cap and the typed total the owner confirmed.
     """
-    return [d for d in deletes if d.candidate.media_key in effective_keys]
+    return [
+        d
+        for d in deletes
+        if d.candidate.media_key in effective_keys and size_confirmed(d.candidate)
+    ]
 
 
 def _check_caps(
@@ -1077,6 +1119,16 @@ class Executor:
         # Reaching here means the two live interlocks already passed for this item.
         checks = [StepCheck(_CHECK_NOT_WATCHING, True), StepCheck(_CHECK_NOT_PLAYED_SINCE, True)]
 
+        # Fail CLOSED on an approved size that was never confirmed, BEFORE the growth
+        # check below: the growth check compares against the approved number and cannot
+        # police it (``_grew_materially(0, live)`` is just ``live > 256 MiB``). See
+        # ``size_confirmed`` for why 0 means "never reported".
+        candidate = delete.candidate
+        if not size_confirmed(candidate):
+            return self._mark_skipped(
+                delete, _NO_APPROVED_SIZE_REASON, check=_NO_APPROVED_SIZE_CHECK
+            )
+
         # Read the tmdbId now, while the movie still exists, for the exclusion re-read.
         movie = await radarr.movie_by_id(ref.arr_id)
 
@@ -1085,7 +1137,6 @@ class Executor:
         # is not the file the owner approved deleting. Skipped, kept, re-reviewable at
         # its real size after the next scan. An unreadable size is drift we cannot rule
         # out, so it is kept too.
-        candidate = delete.candidate
         live_size = _payload_size(movie.get("sizeOnDisk"))
         if live_size is None:
             return self._mark_skipped(
@@ -1217,6 +1268,17 @@ class Executor:
         # landed since the scan) is not what was approved, so it is kept; so is one
         # whose file sizes cannot all be read.
         candidate = delete.candidate
+
+        # The approved side first, and fail CLOSED on it. The live-side refusal below
+        # only fires when Sonarr cannot report a size NOW; it says nothing about the
+        # frozen number, and the growth check cannot police that either
+        # (``_grew_materially(0, live)`` is just ``live > 256 MiB``). See
+        # ``size_confirmed`` for why 0 means "never reported".
+        if not size_confirmed(candidate):
+            return self._mark_skipped(
+                delete, _NO_APPROVED_SIZE_REASON, check=_NO_APPROVED_SIZE_CHECK
+            )
+
         live_sizes = [
             _payload_size(f.get("size"))
             for f in await sonarr.episode_files(ref.arr_id)

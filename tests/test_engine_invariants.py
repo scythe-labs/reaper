@@ -11,6 +11,7 @@ Hypothesis generators are deliberately biased toward the values that break thing
 
 from __future__ import annotations
 
+from dataclasses import fields as dataclass_fields
 from dataclasses import replace
 
 from hypothesis import given, settings
@@ -418,20 +419,41 @@ _KEEPS = [
     ),
 ]
 
-#: Every ``Observation`` field on ``Facts`` that the score lane can read.
-_OBSERVED_FIELDS = (
-    "days_observed_unwatched",
-    "distinct_watchers",
-    "distinct_watchers_all_time",
-    "size_bytes",
-    "imdb_rating_tenths",
-    "imdb_votes",
-    "season_rank",
-    "requested",
-    "release_age_days",
-    "quality",
-    "show_ended",
-)
+#: Facts nothing in the score lane reads, so an ``Unknown`` substituted here would
+#: exercise nothing. All three are protection facts: their ``FieldSpec``s are
+#: protect-lane only, and in every policy Reaper ships they are read by a gate
+#: (``CuratedListGate``, ``WhitelistGate``, ``StreamingNowGate``), which returns
+#: PROTECT or ABSTAIN and can never add pressure. Move one into the sweep the day a
+#: signal, custom rule or keep above references it.
+_GATE_ONLY = frozenset({"in_curated_list", "is_whitelisted", "is_streaming_now"})
+
+
+def _observed_fields() -> tuple[str, ...]:
+    """Every ``Facts`` observation an authorable field can read, in declaration order.
+
+    Derived rather than hand-listed. A ``FieldSpec`` names its fact with a ``read``
+    lambda instead of a string, so the names come back by handing every spec a probe
+    whose observations each carry their own attribute name. The hand-list this replaced
+    left ``genres`` out while the comment above it said the sweep was exhaustive, which
+    is exactly the drift rule 7 forbids: a new authorable field can no longer be added
+    without joining the sweep.
+
+    Out by construction: ``others_watching`` and ``is_managed`` have no ``FieldSpec`` at
+    all (gate-lane only, via ``OthersWatchingGate`` and ``UnmanagedGate``), so no rule
+    can name them. Out by choice: ``_GATE_ONLY``.
+    """
+    names = [f.name for f in dataclass_fields(Facts) if f.name not in ("title", "ratings")]
+    probe = Facts(title="probe", **{n: Known(value=n, source="probe") for n in names})
+    readable = {
+        obs.value for spec in fields.BY_KEY.values() if isinstance(obs := spec.read(probe), Known)
+    }
+    return tuple(n for n in names if n in readable and n not in _GATE_ONLY)
+
+
+#: Every ``Observation`` field an authorable rule can read, minus ``_GATE_ONLY``.
+#: Derived by ``_observed_fields`` (see its docstring for what is out and why); the
+#: hand-written version of this list said "exhaustive" while omitting ``genres``.
+_OBSERVED_FIELDS = _observed_fields()
 
 
 def _full_score(item: Facts) -> Score:
@@ -446,6 +468,35 @@ class TestLosingEvidenceCannotCondemn:
     Those two omissions are exactly where the arithmetic can invert, so these repeat
     the property with all three lanes wired and with ``Absent`` substituted too.
     """
+
+    def test_the_sweep_covers_every_field_a_condemn_rule_can_name(self) -> None:
+        """The sweep below is only as good as its field list.
+
+        A field an owner can put in a condemn rule can add deletion pressure, so losing
+        it has to be swept. ``genres`` was authorable and unswept while the list was
+        maintained by hand, and nothing said so. Deriving the list from the registry is
+        what this pins: add a condemn-lane field, and it joins the sweep or this fails.
+        """
+        probe = Facts(
+            title="probe",
+            **{
+                f.name: Known(value=f.name, source="probe")
+                for f in dataclass_fields(Facts)
+                if f.name not in ("title", "ratings")
+            },
+        )
+        authorable = {
+            obs.value
+            for spec in fields.BY_KEY.values()
+            if fields.Lane.CONDEMN in spec.lanes
+            and isinstance(obs := spec.read(probe), Known)
+            and obs.value not in _GATE_ONLY
+        }
+
+        assert "genres" in authorable, "the genre field stopped being condemn-authorable"
+        assert authorable <= set(_OBSERVED_FIELDS), (
+            f"condemn-authorable but never made Unknown: {authorable - set(_OBSERVED_FIELDS)}"
+        )
 
     @given(item=facts())
     @settings(max_examples=500)

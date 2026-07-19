@@ -391,7 +391,11 @@ async def scan(
     # ---- gather ------------------------------------------------------------
     emit(Progress("gathering", 0, 5, "watch history"))
 
-    horizon = await history_sync.horizon(engine)
+    # One read of the mirror for both questions below: `state` returns the row count and
+    # both ends of the window in a single pass, where `horizon`/`latest` are two wrappers
+    # over it and each re-runs the schema check inside a write transaction.
+    mirror = await history_sync.state(engine)
+    horizon = mirror.earliest
     no_history = horizon is None
     if horizon is None:
         horizon = utcnow()
@@ -407,8 +411,14 @@ async def scan(
         # stats come from the local mirror, not a live call, so a stopped ingest raises
         # nothing: watcher counts stay frozen at their last value while dormancy keeps
         # climbing, and every item drifts toward condemnation at the rate of the outage.
-        newest = await history_sync.latest(engine)
-        if newest is None or utcnow() - newest > MIRROR_STALE_AFTER:
+        #
+        # Ask when the INGEST last ran (`history_sync.last_synced_at`), never when somebody
+        # last watched something (`mirror.latest`). The two are identical for a stalled
+        # ingest and for a quiet library, so gating on the newest play tells a household
+        # that went away for a weekend that its watch history is broken, and blocks every
+        # deletion until somebody watches something.
+        synced = await history_sync.last_synced_at(engine)
+        if synced is None or utcnow() - synced > MIRROR_STALE_AFTER:
             context.degrade(
                 "watch history has not updated recently, so nothing can be judged on how "
                 "long it has gone unwatched"
@@ -505,12 +515,34 @@ async def scan(
         log.info("snapshot.radarr", instance=source.name, movies=len(movies))
         return movies
 
+    async def _roots_from(source: RadarrSource) -> tuple[str, ...] | None:
+        """This instance's root folder paths, or ``None`` if they could not be read.
+
+        Fetched once per instance, never per item. ``None`` is not ``()``: an instance that
+        reports no roots is answering, while a failed read is not, and
+        :func:`identity._narrow_among_id_hits` refuses to narrow an ambiguous id at all on
+        ``None``. That refusal exists because losing the roots does not merely cost a bind,
+        it removes the folder-vs-size contradiction veto, and without the veto a stale Plex
+        size can bind a copy the folder would have disputed.
+
+        A failure here does NOT degrade the snapshot, which is a deliberate exception to
+        rule 28: rule 28 degrades on evidence that can *condemn*, and the compensating
+        control is the refusal above, which keeps every affected file.
+        """
+        try:
+            folders = await source.client.root_folders()
+        except IntegrationError as exc:
+            log.warning("snapshot.radarr_rootfolders", instance=source.name, error=str(exc))
+            return None
+        return identity.root_folder_paths(folders)
+
     index_task = _spawn(
         build_movie_index(
             tautulli, plex, degrade=context.degrade, allowed_sections=allowed_sections
         )
     )
     movie_tasks = [_spawn(_movies_from(source)) for source in radarrs]
+    roots_tasks = [_spawn(_roots_from(source)) for source in radarrs]
 
     items: list[RawItem] = []
     season_judgements: list[season_scan.SeasonJudgement] = []
@@ -518,11 +550,14 @@ async def scan(
         # Awaited in the sequential code's order, so the first failure to surface is the
         # same one it would have raised then; the except below reaps every other task.
         plex_index = await index_task
-        for source, movie_task in zip(radarrs, movie_tasks, strict=True):
+        for source, movie_task, roots_task in zip(radarrs, movie_tasks, roots_tasks, strict=True):
             movies = await movie_task
+            roots = await roots_task
             if movies is None:
                 continue
-            items.extend(_raw_items(movies, plex_index, source.instance_id, requested))
+            items.extend(
+                _raw_items(movies, plex_index, source.instance_id, requested, root_folders=roots)
+            )
 
         emit(Progress("gathering", 4, 5, "IMDb ratings"))
         # Look up by BOTH Radarr's imdbId and the matched Plex item's imdb id, so a film
@@ -645,11 +680,12 @@ async def scan(
             media_type=item.media_type,
             # The scoring lane reads the honest Observation off `facts`; this is the
             # display and reclaim-accounting column, which is a plain int. An unreadable
-            # size stores 0, which UNDER-counts the byte cap -- but it cannot reach a
-            # delete: the executor compares the stored size against the live one and
-            # skips anything that grew past its allowance (`executor._grew_materially`),
-            # and 0 against any real size is unbounded growth. The second layer catches
-            # it, so this stays an int; do not "fix" it by inventing a size here.
+            # size stores 0, and 0 here means "the size was never confirmed", not "an
+            # empty file": no file worth deleting is genuinely 0 bytes. The growth check
+            # cannot police that number (`_grew_materially(0, live)` is just a 256 MiB
+            # allowance), so `executor.size_confirmed` refuses it outright -- the item is
+            # kept, and left out of the caps and the byte total the operator confirms.
+            # Do not "fix" this by inventing a size here.
             size_bytes=item.size_bytes or 0,
             facts=facts,
             gates=movie_gates,
@@ -790,10 +826,11 @@ _NO_DISPLAY = Display()
 
 #: What a hand spare reads as in the why-panel's "Protections that fired" list. A lowercase
 #: fragment with no trailing period, matching every gate protection ("someone is watching it
-#: right now", "on your keep list, never reaped"). The review chip in api/routes.py matches
-#: this exact string to tell a hand spare apart from a real keep-list entry, so the two must
-#: stay in step: see ``_SPARE_DETAIL`` there.
-_HAND_SPARE_DETAIL = "you spared this by hand"
+#: right now", "on your keep list, never reaped"). A hand spare wears the whitelist gate id,
+#: so the review chip (``api.routes._kept_phrase``) tells it apart from a real keep-list
+#: entry by this exact string. Every producer and that one reader import this constant;
+#: never re-type the literal.
+HAND_SPARE_DETAIL = "you spared this by hand"
 
 
 def _judge_item(
@@ -842,7 +879,7 @@ def _judge_item(
     # CONDEMN unless a hard safety gate still stands.
     merged_extra = list(extra_results)
     if override == "spare":
-        merged_extra.insert(0, GateResult(GateId.WHITELISTED, PROTECT, detail=_HAND_SPARE_DETAIL))
+        merged_extra.insert(0, GateResult(GateId.WHITELISTED, PROTECT, detail=HAND_SPARE_DETAIL))
     evaluation = Evaluation(results=[*merged_extra, *evaluate_all(gates, facts).results])
     item_score = score(
         signals,
@@ -1276,6 +1313,7 @@ def _raw_items(
     plex_index: identity.PlexIndex,
     instance_id: int,
     requested: dict[str, str] | None = None,
+    root_folders: Sequence[str] | None = (),
 ) -> list[RawItem]:
     requested = requested or {}
     items: list[RawItem] = []
@@ -1294,6 +1332,12 @@ def _raw_items(
             file_basename=_movie_file_basename(movie),
             file_size=_movie_file_size(movie),
             file_path=_movie_file_path(movie),
+            # This Radarr instance's own root folders, or None if they could not be read.
+            # Without them the folder corroborator cannot tell a real folder from the
+            # container's mount point. An empty tuple stands the folder step down; None
+            # refuses the whole id narrowing (identity._narrow_among_id_hits), because a
+            # failed read also removes the folder-vs-size contradiction veto.
+            root_folders=root_folders,
             index=plex_index,
         )
         matched = resolution.plex_item
@@ -1570,11 +1614,14 @@ async def sync_protection_lists(
     return synced
 
 
-#: How stale the local watch mirror may get before the snapshot degrades. Matches
-#: WHITELIST_STALE_AFTER's reasoning and its bound: one missed nightly ingest is a blip,
-#: two is a pattern, and past that the dormancy every score leans on is being measured
-#: against a frozen mirror. Set tighter than this and a paused Tautulli blocks every scan;
-#: looser, and items drift toward condemnation for as long as the outage lasts.
+#: How long since the last successful watch-history sync (``history_sync.last_synced_at``)
+#: before the snapshot degrades: one missed nightly ingest is a blip, two is a pattern, and
+#: past that the dormancy every score leans on is being measured against a frozen mirror.
+#: Set tighter than this and a paused Tautulli blocks every scan; looser, and items drift
+#: toward condemnation for as long as the outage lasts. Same bound as
+#: WHITELIST_STALE_AFTER and the same two-nightly-cycles logic behind it, but a different
+#: quantity: that one bounds a *failed* sync coasting on stored keep-list membership,
+#: this one bounds a sync that stopped running at all.
 MIRROR_STALE_AFTER = timedelta(hours=48)
 
 

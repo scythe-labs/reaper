@@ -555,6 +555,47 @@ class TestTheCacheIsRebuiltNotMigrated:
                 )
             )
 
+    async def test_the_not_null_shape_a_real_upgrade_carries_is_rebuilt(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The shape an actually-upgraded install has: all ten columns, in order, with the
+        old `watched_status REAL NOT NULL`. Nothing about the *names* changed, so a check
+        that compared names alone left this table in place and the next sync died on the
+        first unreported completion. The rebuild has to fire on nullability."""
+        async with cache_engine.begin() as conn:
+            await conn.execute(text("DROP TABLE watch_event"))
+            await conn.execute(
+                text(
+                    "CREATE TABLE watch_event ("
+                    " row_id INTEGER PRIMARY KEY, rating_key INTEGER NOT NULL,"
+                    " parent_rating_key INTEGER, grandparent_rating_key INTEGER,"
+                    " user_id INTEGER NOT NULL, watched_at INTEGER NOT NULL,"
+                    " watched_status REAL NOT NULL, percent_complete INTEGER NOT NULL,"
+                    " media_type TEXT NOT NULL, media_index INTEGER)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO watch_event VALUES "
+                    "(1, 10, 700, 42, 1, 1700000000, 0.0, 100, 'episode', 3)"
+                )
+            )
+
+        await history_sync.ensure_schema(cache_engine)
+
+        async with cache_engine.begin() as conn:
+            cols = (await conn.execute(text("PRAGMA table_info(watch_event)"))).all()
+            assert not any(row[1] == "watched_status" and row[3] for row in cols)
+            # The carried-over 0.0 was the ambiguous one the shape change existed to fix,
+            # so it goes with the table rather than surviving as a fake "did not finish".
+            assert (await conn.execute(text("SELECT COUNT(*) FROM watch_event"))).scalar() == 0
+            await conn.execute(
+                text(
+                    "INSERT INTO watch_event VALUES "
+                    "(2, 11, 700, 42, 1, 1700000001, NULL, 50, 'episode', 4)"
+                )
+            )
+
     async def test_a_current_table_is_left_alone(self, cache_engine: AsyncEngine) -> None:
         """Rebuilding a healthy cache would cost a full re-sync on every startup."""
         await _episode(cache_engine, season_key=720, user_id=1, episode=1)
@@ -705,6 +746,9 @@ class _FakeSonarr:
 
     async def series(self) -> list[dict[str, Any]]:
         return self._series
+
+    async def root_folders(self) -> list[dict[str, Any]]:
+        return [{"path": "/data/tv", "accessible": True}]
 
     async def episodes(self, series_id: int) -> list[dict[str, Any]]:
         return self._episodes.get(series_id, [])
@@ -1118,6 +1162,9 @@ class TestGatherEndToEnd:
 
         class _DeadSonarr:
             async def series(self) -> list[dict[str, Any]]:
+                raise IntegrationError("sonarr", "connection refused")
+
+            async def root_folders(self) -> list[dict[str, Any]]:
                 raise IntegrationError("sonarr", "connection refused")
 
         reasons, degrade = _degrade_sink()

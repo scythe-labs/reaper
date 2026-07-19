@@ -84,8 +84,10 @@ class ActivePolicy:
     rescaled: bool = False
     """This is the operator's own body, rescaled to load (``policy.rebalance``).
 
-    Their tuning survived; only the units moved, and the rescale cannot change a score.
-    The editor opens on it as an unsaved draft so they review and re-save it themselves.
+    Their tuning survived; only the units moved. The rescale is not exactly
+    score-preserving -- integer rounding can move a score a point or two, enough to cross
+    a condemn line (see ``policy.rebalance``) -- which is why this flag makes ``repaired``
+    true and the editor opens on it as an unsaved draft for them to review and re-save.
     """
 
     fell_back: bool = False
@@ -122,9 +124,12 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
 
     **This must not raise on a stored body that no longer validates.** It is read from the
     editor, the simulator and the scan, so a validator added after a row was written would
-    otherwise take out all three at once, including the page that fixes it. A body whose
-    removal weights predate the 100-point budget is rescaled (score-preserving) and flagged
-    ``repaired``; anything else unreadable falls back to the shipped default, also flagged.
+    otherwise take out all three at once, including the page that fixes it. That holds for
+    a body that is not JSON at all and one that decodes to something other than an object:
+    the decode below is guarded, and ``policy.rebalance`` returns ``None`` rather than
+    raising on any shape it cannot read. A body whose removal weights predate the
+    100-point budget is rescaled and flagged ``repaired``; anything else unreadable falls
+    back to the shipped default, also flagged.
     """
     row = await active_policy_row(session, media_type)
     default = DEFAULT_TV_POLICY if media_type == "tv" else DEFAULT_MOVIE_POLICY
@@ -134,7 +139,15 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
     try:
         return ActivePolicy(PolicyBody.model_validate_json(row.body_json), row.name)
     except ValidationError:
-        repaired = rebalance(json.loads(row.body_json))
+        # Pydantic raises ValidationError for malformed JSON too, so we land here with a
+        # body that json.loads cannot read either. Both that and a body that decodes to
+        # something other than an object (a list, a number, null) fall through to the
+        # shipped default below; neither may escape as an exception.
+        try:
+            raw = json.loads(row.body_json)
+        except ValueError:
+            raw = None
+        repaired = rebalance(raw) if isinstance(raw, dict) else None
         if repaired is not None:
             log.info("policy.rebalanced", media_type=media_type, name=row.name)
             return ActivePolicy(PolicyBody.model_validate(repaired), row.name, rescaled=True)

@@ -15,7 +15,6 @@ the answer was none" from "we never got to ask".
 
 from __future__ import annotations
 
-import pathlib
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -119,13 +118,14 @@ class TestWatchCountsFromAStaleMirrorAreNotZero:
     toward condemnation at exactly the rate the outage lasts.
     """
 
-    def test_history_sync_exposes_how_fresh_the_mirror_is(self) -> None:
-        from reaper.services import history_sync
-
-        assert hasattr(history_sync, "latest"), (
-            "history_sync.latest() is what lets the scan tell a quiet library from a "
-            "stalled ingest. horizon() answers the opposite question."
-        )
+    # The staleness behaviour itself is pinned by driving the real scan, in
+    # tests/test_scan_pipeline.py::TestAStaleMirrorDegradesTheSnapshot, and the two clocks
+    # are held apart in tests/test_history_sync.py, by
+    # TestTheIngestClockIsSeparateFromTheWatchingClock.
+    # A `hasattr` check used to sit here naming `latest()` as the signal that tells a quiet
+    # library from a stalled ingest. It was wrong on both counts: the shipped guard reads
+    # `last_synced_at`, and asserting on a name passes on a broken body and fails on a
+    # rename (the anti-pattern H-1 was raised about).
 
     def test_the_staleness_bound_is_two_nightly_cycles(self) -> None:
         """Pinned so it cannot drift silently. Tighter and a paused ingest blocks every
@@ -174,6 +174,10 @@ class TestARepairedPolicyCannotExecute:
     approval names a policy hash. Executing against one nobody chose is the substitution
     the journal exists to prevent, so the scan degrades and the snapshot is not
     executable until the operator opens the editor and saves.
+
+    These pin the flags. The behaviour they feed -- the scan degrading and the plan being
+    refused -- is driven end to end in
+    ``test_scan_pipeline.TestARepairedPolicyCannotBeReapedFrom``.
     """
 
     def test_the_repaired_flag_is_carried_not_swallowed(self) -> None:
@@ -197,14 +201,3 @@ class TestARepairedPolicyCannotExecute:
 
         assert theirs.rescaled is True
         assert theirs.fell_back is False
-
-    def test_the_scan_degrades_on_a_repaired_policy(self) -> None:
-        """Pinned as source, because the wiring is a single `if` in a long function and
-        losing it would be invisible: scans would keep working, and would quietly become
-        executable against a policy the operator never saved."""
-        source = pathlib.Path("src/reaper/services/scan_runner.py").read_text()
-
-        assert "if active.repaired:" in source, (
-            "scan_runner must degrade the snapshot when a policy had to be repaired"
-        )
-        assert "needs saving again before anything can be removed" in source

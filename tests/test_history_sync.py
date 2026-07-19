@@ -208,6 +208,95 @@ class TestOverlapNeverDropsARow:
         assert await _count(engine) == 2  # the same-day play was not missed
 
 
+class TestTheIngestClockIsSeparateFromTheWatchingClock:
+    """ "Did the ingest run" and "did anybody watch anything" are different questions, and
+    only the first one can tell a stalled sync from a library nobody touched this week."""
+
+    async def test_there_is_no_sync_time_before_the_first_sync(self, engine: AsyncEngine) -> None:
+        assert await history_sync.last_synced_at(engine) is None
+
+    async def test_a_sync_that_returned_nothing_still_moves_the_clock(
+        self, engine: AsyncEngine
+    ) -> None:
+        """Nobody watched anything, so `latest` stays empty. The ingest ran, so the sync
+        clock moves. Degrading a scan on `latest` would call this library broken."""
+        await sync(engine, FakeTautulli([]))  # type: ignore[arg-type]
+
+        assert await history_sync.latest(engine) is None
+        synced = await history_sync.last_synced_at(engine)
+        assert synced is not None
+        assert abs((utcnow() - synced).total_seconds()) < 60
+
+
+class TestAnUnreportedCompletionIsStoredAsUnknown:
+    """``sync`` is the only place a NULL ``watched_status`` is ever written, so this is
+    where the "we were not told" / "did not finish" distinction is won or lost. Tests that
+    insert NULLs with raw SQL prove the queries read one; only these prove one is produced.
+
+    Collapsing the two makes a viewer look further behind than they are, and the season
+    they are part-way through loses its mid-binge protection.
+    """
+
+    async def _status(self, engine: AsyncEngine, row_id: int) -> float | None:
+        async with engine.connect() as conn:
+            value = (
+                await conn.execute(
+                    text("SELECT watched_status FROM watch_event WHERE row_id = :id"),
+                    {"id": row_id},
+                )
+            ).scalar_one()
+        return None if value is None else float(value)
+
+    async def test_a_missing_status_is_stored_as_null(self, engine: AsyncEngine) -> None:
+        row = _row(1, days_ago=1)
+        del row["watched_status"]
+        await sync(engine, FakeTautulli([row]))  # type: ignore[arg-type]
+
+        assert await self._status(engine, 1) is None
+
+    async def test_an_empty_status_is_stored_as_null(self, engine: AsyncEngine) -> None:
+        """Tautulli sends "" rather than omitting the key on some rows."""
+        await sync(engine, FakeTautulli([dict(_row(1, days_ago=1), watched_status="")]))  # type: ignore[arg-type]
+
+        assert await self._status(engine, 1) is None
+
+    async def test_a_reported_zero_round_trips_as_zero(self, engine: AsyncEngine) -> None:
+        """The other direction: a real "started it, did not finish" must not become
+        unknown. Pinning only the NULL side would let `None` swallow both facts."""
+        await sync(engine, FakeTautulli([dict(_row(1, days_ago=1), watched_status=0)]))  # type: ignore[arg-type]
+
+        assert await self._status(engine, 1) == 0.0
+
+    async def test_the_two_are_distinguishable_after_a_sync(self, engine: AsyncEngine) -> None:
+        """Both facts in one history, told apart in storage. This is the whole point."""
+        unknown = _row(1, days_ago=1)
+        del unknown["watched_status"]
+        rows = [unknown, dict(_row(2, days_ago=2), watched_status=0)]
+
+        await sync(engine, FakeTautulli(rows))  # type: ignore[arg-type]
+
+        assert await self._status(engine, 1) is None
+        assert await self._status(engine, 2) == 0.0
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (None, None),  # key absent from Tautulli's payload
+        ("", None),  # key present but empty
+        ("not a number", None),
+        ({}, None),  # a shape that is valid JSON but not a number
+        (0, 0.0),  # genuinely started, did not finish
+        (0.0, 0.0),
+        ("0", 0.0),
+        ("0.5", 0.5),
+        (1, 1.0),  # completed
+    ],
+)
+def test_float_or_none_keeps_unknown_apart_from_zero(value: object, expected: float | None) -> None:
+    assert history_sync._float_or_none(value) == expected
+
+
 def test_overlap_is_at_least_a_day() -> None:
     # A guard on the constant: any smaller overlap risks losing a same-day play.
     assert timedelta(days=1) <= history_sync.INCREMENTAL_OVERLAP

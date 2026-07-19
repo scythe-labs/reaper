@@ -9,6 +9,7 @@ domain's invariants hold through the service.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -16,13 +17,18 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import Policy as PolicyModel
 from reaper.db.models import Profile
 from reaper.db.session import create_engine, create_session_factory
-from reaper.engine.policy import ProfileSettings
-from reaper.services.profiles import active_profile_settings, save_profile_settings
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY, ProfileSettings
+from reaper.services.profiles import (
+    active_policy,
+    active_profile_settings,
+    save_profile_settings,
+)
 
 
 @pytest.fixture
@@ -78,6 +84,90 @@ class TestSavingCreatesTheBackingPolicyRow:
         await save_profile_settings(session, ProfileSettings())
         profile = (await session.execute(select(Profile))).scalar_one()
         assert profile.enabled is False
+
+
+async def _store_policy(session: AsyncSession, body_json: str) -> None:
+    """Put a raw body straight into the table, bypassing every in-app writer.
+
+    Only an externally edited, truncated or restored row can hold something
+    ``model_dump_json`` would never produce, which is exactly the row these tests are about.
+    """
+    session.add(
+        PolicyModel(
+            policy_hash="h",
+            body_json=body_json,
+            media_type="movie",
+            name="stored",
+            created_at=utcnow(),
+        )
+    )
+    await session.flush()
+
+
+class TestACorruptPolicyBodyNeverRaises:
+    """``active_policy`` is read by the editor, the simulator and the scan alike, so an
+    unreadable stored body has to fall back -- a raise takes out the page that fixes it.
+
+    The two escapes this pins were both outside the handler: malformed JSON reaches the
+    ``ValidationError`` branch and used to blow up in ``json.loads`` there, and valid JSON
+    that is not an object used to reach ``rebalance`` and raise ``AttributeError``.
+    """
+
+    @pytest.mark.parametrize(
+        "body_json",
+        [
+            "",
+            "not json at all",
+            '{"media_type": "movie", "condemn_at": 70,',  # truncated mid-write
+            '["signals", "as", "a", "list"]',
+            "42",
+            "null",
+            '"a bare string"',
+            '{"signals": [7]}',
+            '{"signals": "text"}',
+        ],
+        ids=[
+            "empty",
+            "not-json",
+            "truncated",
+            "json-array",
+            "json-number",
+            "json-null",
+            "json-string",
+            "signal-not-an-object",
+            "signals-not-a-list",
+        ],
+    )
+    async def test_it_falls_back_to_the_shipped_default(
+        self, session: AsyncSession, body_json: str
+    ) -> None:
+        await _store_policy(session, body_json)
+
+        active = await active_policy(session, "movie")
+
+        assert active.fell_back is True
+        assert active.rescaled is False
+        assert active.repaired is True  # the scan degrades on it
+        assert active.body == DEFAULT_MOVIE_POLICY
+        assert active.name == "default"
+
+    async def test_a_body_that_only_misses_the_budget_is_still_rescaled(
+        self, session: AsyncSession
+    ) -> None:
+        """The fallback must not swallow the repairable case: a body written before removal
+        weights had to total 100 keeps the operator's own tuning."""
+        legacy = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+        for signal in legacy["signals"]:
+            signal["weight"] *= 2
+
+        await _store_policy(session, json.dumps(legacy))
+
+        active = await active_policy(session, "movie")
+
+        assert active.fell_back is False
+        assert active.rescaled is True
+        assert active.name == "stored"
+        assert sum(s.weight for s in active.body.signals) == 100
 
 
 class TestInvariantsHoldThroughTheService:

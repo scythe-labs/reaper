@@ -9,6 +9,7 @@ themselves at random, or (far worse) silently survive an edit the human never sa
 from __future__ import annotations
 
 import itertools
+from collections.abc import Sequence
 
 import pytest
 from hypothesis import given, settings
@@ -16,6 +17,7 @@ from hypothesis import strategies as st
 from pydantic import ValidationError
 
 from reaper.engine.gates import Facts, GateId
+from reaper.engine.observation import Absent, Known
 from reaper.engine.policy import (
     DEFAULT_MOVIE_POLICY,
     DEFAULT_TV_POLICY,
@@ -27,7 +29,8 @@ from reaper.engine.policy import (
     inspect,
     rebalance,
 )
-from reaper.engine.signals import SignalId
+from reaper.engine.signals import Score, SignalConfig, SignalId, score
+from reaper.engine.verdict import decide_verdict
 from reaper.ratings import RatingSource
 
 
@@ -433,67 +436,200 @@ class TestRequestedOnlyScopeWithoutSeerr:
         ]
 
 
+#: The signal shapes the rescale tests draw weights over, in a fixed order. Five of them, so
+#: the drawn COUNT varies: drift depends on how many rules share the 100 points, which one
+#: four-signal fixture cannot see. ``season_rank`` and ``size`` floor above their lowest
+#: possible value so every signal here can be driven to zero pressure as well as to full.
+_RESCALE_SHAPES: tuple[tuple[str, int, int], ...] = (
+    ("unwatched", 1825, 365),
+    ("few_watchers", 3, 0),
+    ("season_rank", 6, 1),
+    ("low_rating", 60, 0),
+    ("size", 20, 1),
+)
+
+
+def _over_budget(weights: Sequence[int]) -> dict:
+    """A legacy body: the first ``len(weights)`` signal shapes, totalling anything at all."""
+    return {
+        "media_type": "tv",
+        "condemn_at": 70,
+        "gates": [],
+        "signals": [
+            {"signal": name, "weight": w, "saturate_at": sat, "floor": floor}
+            for w, (name, sat, floor) in zip(weights, _RESCALE_SHAPES, strict=False)
+        ],
+    }
+
+
+def _signal_configs(body: dict) -> list[SignalConfig]:
+    """The same translation ``services.snapshot`` and ``api.routes`` do, so these tests
+    score through the real scorer rather than a transcription of it (rule 22)."""
+    return [
+        SignalConfig(
+            signal=SignalId(s["signal"]),
+            weight=s["weight"],
+            saturate_at=s["saturate_at"],
+            floor=s["floor"],
+        )
+        for s in body["signals"]
+    ]
+
+
+def _rounding_slack(before_body: dict, repaired: dict) -> float:
+    """The most the rounding can move a score: the total weight it handed *upward*.
+
+    ``score' - score = Σ (w'ᵢ - wᵢ·100/T)·fillᵢ`` with every ``fill`` in ``[0, 1]``, and the
+    deltas sum to zero, so the drift cannot exceed their positive half. That is reached
+    whenever the rules that gained weight are the ones carrying pressure and the rules that
+    lost it are not, which is an ordinary shape, not a contrived one.
+    """
+    weights = [s["weight"] for s in before_body["signals"]]
+    exact = [w * 100 / sum(weights) for w in weights]
+    return sum(max(0.0, s["weight"] - e) for s, e in zip(repaired["signals"], exact, strict=True))
+
+
+def _evidence(days: float, watchers: int, rank: int, rating: int, size_gb: float) -> Facts:
+    return Facts(
+        title="x",
+        days_observed_unwatched=Known(value=days, source="t"),
+        distinct_watchers=Known(value=watchers, source="t"),
+        distinct_watchers_all_time=Known(value=watchers, source="t"),
+        size_bytes=Known(value=int(size_gb * 1_000_000_000), source="r"),
+        imdb_rating_tenths=Known(value=rating, source="i"),
+        imdb_votes=Known(value=50_000, source="i"),
+        season_rank=Known(value=rank, source="s"),
+        is_streaming_now=Known(value=False, source="t"),
+        is_managed=Known(value=True, source="r"),
+        in_curated_list=Absent(source="l"),
+        is_whitelisted=Known(value=False, source="l"),
+        others_watching=Known(value=0, source="t"),
+    )
+
+
 class TestRebalancingAnOldPolicy:
     """Policies written before removal weights had to total 100 are rescaled rather than
-    discarded. The rescale is only safe because it cannot move a score."""
+    discarded. The exact rescale cannot move a score; integer rounding can, by a point or
+    two, which is why a rescaled body is flagged and reviewed instead of adopted silently.
+    These pin how far it can move and what that can do to a verdict."""
 
-    def test_rescaling_preserves_every_score(self) -> None:
-        """The claim the migration rests on. ``score`` is ``100 * ΣP / Σw`` already, so
-        dividing every weight by the same factor cancels out. Checked against the real
-        scorer over a spread of evidence rather than argued from the formula."""
-        from reaper.engine.observation import Absent, Known
-        from reaper.engine.signals import SignalConfig, score
-
-        over_budget = {
-            "media_type": "tv",
-            "condemn_at": 70,
-            "gates": [],
-            "signals": [
-                {"signal": "unwatched", "weight": 80, "saturate_at": 1825, "floor": 365},
-                {"signal": "few_watchers", "weight": 75, "saturate_at": 3, "floor": 0},
-                {"signal": "season_rank", "weight": 60, "saturate_at": 6, "floor": 0},
-                {"signal": "low_rating", "weight": 25, "saturate_at": 60, "floor": 0},
-            ],
-        }
-        repaired = rebalance(over_budget)
+    @given(
+        weights=st.lists(
+            st.integers(min_value=1, max_value=200),
+            min_size=1,
+            max_size=len(_RESCALE_SHAPES),
+        )
+    )
+    @settings(max_examples=200)
+    def test_the_rescale_spends_all_hundred_points_and_keeps_the_order(
+        self, weights: list[int]
+    ) -> None:
+        """Whatever the count, the repaired body totals exactly 100 and ranks the rules the
+        same way. Reordering an operator's priorities would be a bigger betrayal than the
+        rounding: it would say they meant something they never said."""
+        repaired = rebalance(_over_budget(weights))
         assert repaired is not None
-        assert sum(s["weight"] for s in repaired["signals"]) == 100
 
-        def configs(body: dict) -> list[SignalConfig]:
-            return [
-                SignalConfig(
-                    signal=SignalId(s["signal"]),
-                    weight=s["weight"],
-                    saturate_at=s["saturate_at"],
-                    floor=s["floor"],
-                )
-                for s in body["signals"]
-            ]
+        after = [s["weight"] for s in repaired["signals"]]
+        assert sum(after) == 100
+        for i, j in itertools.combinations(range(len(weights)), 2):
+            if weights[i] > weights[j]:
+                assert after[i] >= after[j]
 
-        for days, watchers, rank, rating in itertools.product(
-            (0.0, 400.0, 1200.0, 5000.0), (0, 1, 4), (1, 3, 8), (10, 55, 90)
-        ):
-            facts = Facts(
-                title="x",
-                days_observed_unwatched=Known(value=days, source="t"),
-                distinct_watchers=Known(value=watchers, source="t"),
-                distinct_watchers_all_time=Known(value=watchers, source="t"),
-                size_bytes=Known(value=8_000_000_000, source="r"),
-                imdb_rating_tenths=Known(value=rating, source="i"),
-                imdb_votes=Known(value=50_000, source="i"),
-                season_rank=Known(value=rank, source="s"),
-                is_streaming_now=Known(value=False, source="t"),
-                is_managed=Known(value=True, source="r"),
-                in_curated_list=Absent(source="l"),
-                is_whitelisted=Known(value=False, source="l"),
-                others_watching=Known(value=0, source="t"),
+    @given(
+        weights=st.lists(
+            st.integers(min_value=1, max_value=200),
+            min_size=1,
+            max_size=len(_RESCALE_SHAPES),
+        ),
+        condemn_at=st.integers(min_value=1, max_value=100),
+        days=st.floats(min_value=0, max_value=6000),
+        watchers=st.integers(min_value=0, max_value=6),
+        rank=st.integers(min_value=1, max_value=10),
+        rating=st.integers(min_value=0, max_value=100),
+        size_gb=st.floats(min_value=0, max_value=40),
+    )
+    @settings(max_examples=400, deadline=None)
+    def test_the_rescale_moves_no_verdict_that_was_not_already_at_the_line(
+        self,
+        weights: list[int],
+        condemn_at: int,
+        days: float,
+        watchers: int,
+        rank: int,
+        rating: int,
+        size_gb: float,
+    ) -> None:
+        """What actually matters is the decision, so this asserts on ``decide_verdict``.
+
+        The rescale can only ever change one by nudging a score across the condemn line, and
+        only from within ``_rounding_slack`` of it. That slack is not under a point: it grows
+        with the number of rules sharing the 100 points, which is why the count is drawn.
+        Coverage is held out (floor 0, every fact Known) so the score is the only thing under
+        test.
+        """
+        before_body = _over_budget(weights)
+        repaired = rebalance(before_body)
+        assert repaired is not None
+
+        facts = _evidence(days, watchers, rank, rating, size_gb)
+        before = score(_signal_configs(before_body), facts)
+        after = score(_signal_configs(repaired), facts)
+
+        def verdict(s: Score) -> str:
+            return decide_verdict(
+                protected=False,
+                blocked=False,
+                score=round(s.value),
+                coverage_bp=round(s.coverage * 10_000),
+                condemn_at=condemn_at,
+                coverage_floor_bp=0,
             )
-            before = score(configs(over_budget), facts).value
-            after = score(configs(repaired), facts).value
 
-            # Integer weights cannot divide exactly, so allow the rounding error and no
-            # more. A full point of drift would move items across a threshold.
-            assert abs(before - after) < 1.0, f"{before} -> {after} at {days}/{watchers}"
+        slack = _rounding_slack(before_body, repaired)
+        assert abs(before.value - after.value) <= slack + 1e-9
+        if verdict(before) != verdict(after):
+            # Plus the half point `round` can add on either side of the line.
+            assert abs(before.value - condemn_at) <= slack + 0.5, (
+                f"{before.value} -> {after.value} crossed {condemn_at} from outside the slack"
+            )
+
+    def test_the_rounding_can_move_a_score_a_full_point_and_flip_a_verdict(self) -> None:
+        """The counterexample to the old ``abs(before - after) < 1.0`` tolerance, kept as a
+        test so nobody restores the claim. Largest-remainder bounds each weight's error, not
+        the score's: here the two rules that gained a point are the two carrying all the
+        pressure, and the two that lost one carry none.
+
+        Nothing exotic is needed. This is why a rescaled body is flagged ``repaired``
+        (``services.profiles.ActivePolicy``), degrades the scan, and opens in the editor as
+        an unsaved draft rather than being adopted as the operator's own.
+        """
+        legacy = _over_budget([1, 1, 1, 5])
+        repaired = rebalance(legacy)
+        assert repaired is not None
+        assert [s["weight"] for s in repaired["signals"]] == [13, 13, 12, 62]
+        assert _rounding_slack(legacy, repaired) == 1.0
+
+        # Long unwatched and nobody watching: full pressure. Newest season on disk and a
+        # rating above the bar: none.
+        facts = _evidence(days=5000, watchers=0, rank=1, rating=60, size_gb=8)
+        before = score(_signal_configs(legacy), facts).value
+        after = score(_signal_configs(repaired), facts).value
+        assert before == 25.0
+        assert after == 26.0
+
+        def verdict(value: float) -> str:
+            return decide_verdict(
+                protected=False,
+                blocked=False,
+                score=round(value),
+                coverage_bp=10_000,
+                condemn_at=26,
+                coverage_floor_bp=0,
+            )
+
+        assert verdict(before) == "abstain"
+        assert verdict(after) == "condemn"
 
     def test_a_body_broken_for_any_other_reason_is_not_repaired(self) -> None:
         """Rescaling fixes the budget and nothing else. Returning a 'repaired' body we do
@@ -501,3 +637,12 @@ class TestRebalancingAnOldPolicy:
         assert rebalance({"signals": [{"signal": "unwatched", "weight": 0}]}) is None
         assert rebalance({"condemn_at": "not a number"}) is None
         assert rebalance({}) is None
+
+    @pytest.mark.parametrize("raw", [[], ["signals"], 42, "a string", None, True])
+    def test_a_body_that_is_not_an_object_returns_none_rather_than_raising(
+        self, raw: object
+    ) -> None:
+        """``services.profiles.active_policy`` must not raise on anything a hand-edited or
+        truncated row can hold, and it leans on this returning ``None``. Valid JSON that is
+        not an object used to reach ``body.get`` and raise ``AttributeError``."""
+        assert rebalance(raw) is None

@@ -664,7 +664,7 @@ class PolicyWarning(Frozen):
     severity: Literal["warn", "danger"]
 
 
-def rebalance(raw: dict[str, Any]) -> dict[str, Any] | None:
+def rebalance(raw: object) -> dict[str, Any] | None:
     """A stored policy body rescaled so its removal weights total exactly 100.
 
     For bodies written before ``PolicyBody._weights_total_one_hundred`` existed, which
@@ -672,17 +672,34 @@ def rebalance(raw: dict[str, Any]) -> dict[str, Any] | None:
     shipped default would silently throw away an operator's tuning and show them numbers
     they never chose.
 
-    Rescaling is the right migration because it is **score-preserving**: the score is
-    ``100 * Σpressure / Σweight`` already, so dividing every weight by the same factor
-    cannot move it. The only movement is integer rounding, and largest-remainder keeps
-    that under a point.
+    Rescaling is the right migration because the *exact* rescale is score-preserving: the
+    score is ``100 * Σpressure / Σweight`` already, so dividing every weight by the same
+    factor cannot move it. **Integer rounding can, by more than a point.** Largest-remainder
+    bounds each weight's own error at 1, but those errors do not cancel in the score, since
+    a rule that gained a point may be carrying pressure while one that lost a point is not:
+    ``score' - score = Σ (w'ᵢ - wᵢ·100/T)·fillᵢ``. Weights ``(1, 1, 1, 5)`` become
+    ``(13, 13, 12, 62)`` and move a score by a full point; six equal weights become
+    ``17,17,17,17,16,16`` and move one by 1.33, which is enough to cross a condemn line.
+    The drift is bounded by half the number of weighted rules, and no allocation does
+    better, because which rules will carry pressure is unknowable at rescale time (weighting
+    the remainder toward the larger weights does nothing at all in the equal-weight case).
 
-    Returns ``None`` when the body is unreadable for any *other* reason, so the caller can
-    tell "needs rebalancing" from "genuinely broken" and never present a repaired body it
-    does not understand.
+    So a rescaled body is never adopted silently. The caller flags it
+    (``services.profiles.ActivePolicy.rescaled``), which makes ``ActivePolicy.repaired``
+    true, degrades the scan, and opens the editor on it as an unsaved draft the operator
+    reviews and re-saves themselves. ``tests/test_policy.py`` pins both the bound and the
+    fact that a verdict near the line can move.
+
+    Returns ``None`` when the body is unreadable for any *other* reason -- including valid
+    JSON that is not an object at all -- so the caller can tell "needs rebalancing" from
+    "genuinely broken" and never present a repaired body it does not understand. This must
+    not raise: ``services.profiles.active_policy`` relies on it to keep the policy editor
+    reachable.
     """
     try:
-        body = copy.deepcopy(raw)
+        if not isinstance(raw, dict):
+            return None
+        body: dict[str, Any] = copy.deepcopy(raw)
         parts: list[dict[str, Any]] = [
             *(body.get("signals") or []),
             *(body.get("custom_condemn") or []),
@@ -698,7 +715,10 @@ def rebalance(raw: dict[str, Any]) -> dict[str, Any] | None:
         for part, weight in zip(parts, floors, strict=True):
             part["weight"] = weight
         PolicyBody.model_validate(body)  # only hand back something that actually loads
-    except (KeyError, TypeError, ValueError, ValidationError):
+    except (AttributeError, KeyError, TypeError, ValueError, ValidationError):
+        # AttributeError covers a body whose "signals"/"custom_condemn" entries are not
+        # objects either, so a `.get`/`["weight"]` on the wrong shape returns None here
+        # rather than escaping a function whose whole job is not to raise.
         return None
     return body
 

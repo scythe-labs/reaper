@@ -84,9 +84,15 @@ class _FakeRadarr:
     async def movies(self) -> list[dict[str, Any]]:
         return self._movies
 
+    async def root_folders(self) -> list[dict[str, Any]]:
+        return [{"path": "/data/movies", "accessible": True}]
+
 
 class _BrokenRadarr:
     async def movies(self) -> list[dict[str, Any]]:
+        raise IntegrationError("radarr", "unreachable (boom)")
+
+    async def root_folders(self) -> list[dict[str, Any]]:
         raise IntegrationError("radarr", "unreachable (boom)")
 
 
@@ -96,6 +102,9 @@ class _FakeSonarr:
 
     async def series(self) -> list[dict[str, Any]]:
         return self._series
+
+    async def root_folders(self) -> list[dict[str, Any]]:
+        return [{"path": "/data/tv", "accessible": True}]
 
     async def episodes(self, series_id: int) -> list[dict[str, Any]]:
         return [
@@ -172,31 +181,37 @@ async def cache_engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
     await eng.dispose()
 
 
-async def _seed_play_only_long_ago(engine: AsyncEngine, *, row_id: int, rating_key: int) -> None:
-    """The long-ago play with NO recent activity: a mirror that stopped moving."""
+async def _seed_sync(engine: AsyncEngine, *, ago: timedelta) -> None:
+    """Record when the watch-history ingest last ran, the way a real sync does.
+
+    This clock, not the newest play, is what the scan checks for a stalled ingest
+    (``snapshot.MIRROR_STALE_AFTER``); with no row at all the scan has no evidence the
+    ingest ever ran and degrades.
+    """
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "INSERT INTO watch_event (row_id, rating_key, user_id, watched_at, "
-                " watched_status, percent_complete, media_type) "
-                "VALUES (:row_id, :rating_key, 1, :watched_at, 1, 100, 'movie')"
+                "INSERT OR REPLACE INTO history_sync_state (id, tautulli_total, synced_at) "
+                "VALUES (1, 1, :ts)"
             ),
-            {
-                "row_id": row_id,
-                "rating_key": rating_key,
-                "watched_at": int(LONG_AGO.timestamp()),
-            },
+            {"ts": int((NOW - ago).timestamp())},
         )
 
 
-async def _seed_play(engine: AsyncEngine, *, row_id: int, rating_key: int) -> None:
+async def _seed_play(
+    engine: AsyncEngine,
+    *,
+    row_id: int,
+    rating_key: int,
+    synced_ago: timedelta = timedelta(hours=1),
+    recent_play: bool = False,
+) -> None:
     """One long-ago play: it anchors the data horizon ~2000 days back.
 
-    Plus a recent play on an unrelated item, because a mirror whose NEWEST event is
-    2000 days old is a stalled ingest, and the scan degrades on that
-    (``snapshot.MIRROR_STALE_AFTER``). A real server's history is server-wide: it keeps
-    receiving events even while the items under test sit untouched. The marker uses a
-    rating key no candidate here carries, so no item's watcher counts move.
+    Plus a successful sync ``synced_ago`` back, because a scan whose ingest has not run
+    recently degrades and can judge nothing. Pass ``recent_play=True`` to add a fresh play
+    on an unrelated item; it uses a rating key no candidate here carries, so no item's
+    watcher counts move.
     """
     async with engine.begin() as conn:
         await conn.execute(
@@ -211,17 +226,19 @@ async def _seed_play(engine: AsyncEngine, *, row_id: int, rating_key: int) -> No
                 "watched_at": int(LONG_AGO.timestamp()),
             },
         )
-        await conn.execute(
-            text(
-                "INSERT INTO watch_event (row_id, rating_key, user_id, watched_at, "
-                " watched_status, percent_complete, media_type) "
-                "VALUES (:row_id, 8675309, 1, :watched_at, 1, 100, 'movie')"
-            ),
-            {
-                "row_id": row_id + 1_000_000,
-                "watched_at": int((NOW - timedelta(hours=1)).timestamp()),
-            },
-        )
+        if recent_play:
+            await conn.execute(
+                text(
+                    "INSERT INTO watch_event (row_id, rating_key, user_id, watched_at, "
+                    " watched_status, percent_complete, media_type) "
+                    "VALUES (:row_id, 8675309, 1, :watched_at, 1, 100, 'movie')"
+                ),
+                {
+                    "row_id": row_id + 1_000_000,
+                    "watched_at": int((NOW - timedelta(hours=1)).timestamp()),
+                },
+            )
+    await _seed_sync(engine, ago=synced_ago)
 
 
 async def _seed_imdb(engine: AsyncEngine, ratings: dict[str, tuple[float, int]]) -> None:
@@ -502,13 +519,17 @@ class TestScanPipelineEndToEnd:
 
 
 class TestAStaleMirrorDegradesTheSnapshot:
-    """A sync that *succeeds* against a Tautulli that stopped recording is invisible.
+    """An ingest that quietly stopped running is invisible without a freshness check.
 
     ``test_a_failed_history_sync_degrades_the_snapshot`` below covers the loud case,
-    where the sync raises. This is the quiet one: the sync returns fine, the mirror is
-    simply not moving. Nothing raises, watcher counts stay frozen at their last value,
-    and dormancy climbs for every item on the server at the rate of the outage. Without
-    a freshness check the scan cannot tell that from a library nobody is watching.
+    where the sync raises. This is the quiet one: nothing raises, the mirror is simply
+    not being refreshed, watcher counts stay frozen at their last value, and dormancy
+    climbs for every item on the server at the rate of the outage.
+
+    The clock that decides this is *when the ingest last ran*, never *when somebody last
+    watched something*: those two are identical for a stalled ingest and for a household
+    that went away for a weekend, so reading the newest play calls a quiet library broken
+    and blocks every deletion until somebody watches something.
     """
 
     async def _scan_with(
@@ -531,22 +552,48 @@ class TestAStaleMirrorDegradesTheSnapshot:
             tv_gates=build_gates(DEFAULT_TV_POLICY),
         )
 
-    async def test_a_mirror_whose_newest_event_is_old_degrades(
+    async def test_an_ingest_that_has_not_run_recently_degrades(
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
-        """Only the long-ago play, so `latest` is 2000 days back: a stalled ingest."""
-        await _seed_play_only_long_ago(cache_engine, row_id=1, rating_key=99)
+        """Plays are still landing, but the last sync was five days ago: a stalled ingest.
+
+        The recent play is what makes this the real test: reading the newest play instead
+        of the sync clock would call this mirror healthy.
+        """
+        await _seed_play(
+            cache_engine,
+            row_id=1,
+            rating_key=99,
+            synced_ago=timedelta(days=5),
+            recent_play=True,
+        )
 
         snapshot = await self._scan_with(session, cache_engine)
 
         assert snapshot.degraded is True
         assert "watch history has not updated recently" in (snapshot.degraded_reason or "")
 
-    async def test_a_mirror_still_receiving_events_does_not_degrade(
+    async def test_a_mirror_that_never_synced_degrades(
         self, session: AsyncSession, cache_engine: AsyncEngine
     ) -> None:
-        """The same 2000-day-old play, plus a recent event elsewhere on the server.
-        The items under test are just as dormant; the ingest is alive. That must scan."""
+        """No record of the ingest ever running is no evidence it did. Fail closed."""
+        await _seed_play(cache_engine, row_id=1, rating_key=99, recent_play=True)
+        async with cache_engine.begin() as conn:
+            await conn.execute(text("DELETE FROM history_sync_state"))
+
+        snapshot = await self._scan_with(session, cache_engine)
+
+        assert snapshot.degraded is True
+        assert "watch history has not updated recently" in (snapshot.degraded_reason or "")
+
+    async def test_a_quiet_library_that_synced_recently_does_not_degrade(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """Nobody has watched anything for 2000 days, and the ingest ran an hour ago.
+
+        A single-household server, or an operator away for a long weekend, looks exactly
+        like this. It has the most to reclaim, so it must scan.
+        """
         await _seed_play(cache_engine, row_id=1, rating_key=99)
 
         snapshot = await self._scan_with(session, cache_engine)
@@ -636,6 +683,143 @@ class TestRunScanHistorySync:
         assert reasons, "a failed history sync must hand the scan a degradation reason"
         assert any("Watch history could not be refreshed" in r for r in reasons)
         assert any("nothing may be deleted" in r for r in reasons)
+
+
+class TestARepairedPolicyCannotBeReapedFrom:
+    """A policy Reaper had to repair to load it is safe to SCAN on and unsafe to DELETE on.
+
+    The rescale cannot move a score, so the numbers this scan produces are right. But the
+    body it ran was never saved by anyone: it is Reaper's repair of a stored row, and an
+    approval names a policy hash. So the scan degrades (``scan_runner._run_scan_locked``
+    appends the reason to ``pre_scan_degradations``), and ``planner.build_plan`` -- the one
+    call ``POST /api/runs`` makes before anything can be executed -- refuses a degraded
+    snapshot outright, so no run ever exists to execute.
+
+    Driven through the real ``snapshot_service.scan`` and the real planner, so the chain
+    is pinned end to end: the branch, the reason reaching ``snapshot.degraded``, and
+    degraded blocking the plan. ``tests/test_fact_layer_states.py`` pins the flags this
+    reads.
+    """
+
+    async def _run(
+        self,
+        tmp_path: Path,
+        cache_engine: AsyncEngine,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        rescaled: bool,
+    ) -> tuple[Any, async_sessionmaker[AsyncSession], AsyncEngine]:
+        from types import SimpleNamespace
+
+        from reaper.engine.policy import ProfileSettings
+        from reaper.services import scan_runner
+
+        class _ScanTautulli(_FakeTautulli):
+            """The scan's Tautulli surface plus the user list run_scan checks."""
+
+            async def users(self) -> list[dict[str, Any]]:
+                return [{"username": "user-one", "is_active": 1, "keep_history": 1}]
+
+        async def fake_sources(factory: Any, settings: Any, box: Any, **kwargs: Any) -> Any:
+            return (
+                [RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")],
+                [],
+                _ScanTautulli(movies=_movie_spine()),
+                None,
+                None,
+            )
+
+        async def ok_sync(engine: Any, tautulli: Any, **kwargs: Any) -> Any:
+            return SimpleNamespace(rows=0)
+
+        async def fake_policies(session: Any) -> Any:
+            return (
+                profiles.ActivePolicy(DEFAULT_MOVIE_POLICY, "default", rescaled=rescaled),
+                profiles.ActivePolicy(DEFAULT_TV_POLICY, "default"),
+            )
+
+        async def fake_profile(session: Any) -> Any:
+            return ProfileSettings()
+
+        async def fake_sync_lists(engine: Any, **kwargs: Any) -> dict[str, Any]:
+            return {}
+
+        async def fake_sync_degradations(engine: Any, synced: Any) -> list[str]:
+            return []
+
+        monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
+        monkeypatch.setattr(scan_runner.history_sync, "sync", ok_sync)
+        monkeypatch.setattr(scan_runner.profiles, "active_policies", fake_policies)
+        monkeypatch.setattr(scan_runner.profiles, "active_profile_settings", fake_profile)
+        monkeypatch.setattr(scan_runner.snapshot_service, "sync_protection_lists", fake_sync_lists)
+        monkeypatch.setattr(
+            scan_runner.snapshot_service, "protection_sync_degradations", fake_sync_degradations
+        )
+
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+        await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000)})
+
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = create_engine(settings)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
+        snapshot = await scan_runner.run_scan(
+            settings=settings,
+            session_factory=factory,
+            cache_engine=cache_engine,
+            box=None,  # type: ignore[arg-type]  # build_sources is stubbed; never read
+        )
+        return snapshot, factory, engine
+
+    async def test_a_repaired_policy_degrades_the_scan_and_blocks_the_plan(
+        self, tmp_path: Path, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from reaper.services.planner import PlanError, build_plan
+
+        snapshot, factory, engine = await self._run(
+            tmp_path, cache_engine, monkeypatch, rescaled=True
+        )
+        try:
+            assert snapshot.degraded is True
+            reason = snapshot.degraded_reason or ""
+            assert "movie policy needs saving again" in reason, reason
+
+            async with factory() as s:
+                with pytest.raises(PlanError, match="degraded"):
+                    await build_plan(
+                        s,
+                        snapshot_id=snapshot.id,
+                        policy_hash=snapshot.policy_hash,
+                        approved_by="test",
+                    )
+        finally:
+            await engine.dispose()
+
+    async def test_the_same_scan_on_a_saved_policy_can_be_planned(
+        self, tmp_path: Path, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The control. Identical evidence, identical condemned item; only the repair flag
+        differs. Without this the test above would still pass if planning were broken for
+        some unrelated reason."""
+        from reaper.services.planner import build_plan
+
+        snapshot, factory, engine = await self._run(
+            tmp_path, cache_engine, monkeypatch, rescaled=False
+        )
+        try:
+            assert snapshot.degraded is False, snapshot.degraded_reason
+
+            async with factory() as s:
+                run = await build_plan(
+                    s,
+                    snapshot_id=snapshot.id,
+                    policy_hash=snapshot.policy_hash,
+                    approved_by="test",
+                )
+                assert run.id is not None
+        finally:
+            await engine.dispose()
 
 
 class TestReleaseAgeRoundsTowardKeeping:

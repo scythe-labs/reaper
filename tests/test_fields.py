@@ -13,6 +13,7 @@ import re
 
 import pytest
 
+from reaper.clock import humanize_days
 from reaper.engine.fields import (
     BY_KEY,
     Condition,
@@ -314,8 +315,46 @@ class TestAnExplanationSaysWhatItFound:
         facts = _facts(days_observed_unwatched=Known(value=900.0, source="tautulli"))
         detail = evaluate(Condition(field="days_unwatched", op=Op.GTE, value=730), facts).detail
 
-        assert detail == "Not watched in 2 years, 5 months, past your 2 years"
+        assert detail == "Not watched in 2 years, 5 months, past your 730 days"
         assert "900" not in detail
+
+    def test_a_days_rule_echoes_the_number_the_owner_typed(self) -> None:
+        """The measured span is humanized; the rule's own number is not. Rounding both
+        sides makes a marginal title read as sitting under a number equal to itself."""
+        facts = _facts(days_observed_unwatched=Known(value=396.0, source="tautulli"))
+        detail = evaluate(Condition(field="days_unwatched", op=Op.GTE, value=400), facts).detail
+
+        assert detail == "Not watched in 1 year, 1 month, within your 400 days"
+
+    def test_a_release_age_rule_echoes_the_number_the_owner_typed(self) -> None:
+        facts = _facts(release_age_days=Known(value=396.0, source="radarr"))
+        detail = evaluate(Condition(field="release_age", op=Op.GTE, value=400), facts).detail
+
+        assert detail == "Released 1 year, 1 month ago, within your 400 days"
+
+    def test_a_days_value_and_its_bar_never_print_as_the_same_number(self) -> None:
+        """Every day count from 395 to 424 humanizes to one phrase. If the bar is
+        humanized too, the line asserts the value is on one side of itself."""
+        for field in ("days_unwatched", "release_age"):
+            for days in (395.0, 400.0, 410.0, 424.0):
+                for bar in (396, 400, 420):
+                    if days == bar:
+                        continue
+                    facts = _facts(
+                        days_observed_unwatched=Known(value=days, source="tautulli"),
+                        release_age_days=Known(value=days, source="radarr"),
+                    )
+                    detail = evaluate(Condition(field=field, op=Op.GTE, value=bar), facts).detail
+                    value_phrase, _, bar_phrase = detail.rpartition(", ")
+                    assert bar_phrase.endswith(f"your {bar:,.0f} days")
+                    assert humanize_days(days) not in bar_phrase
+                    assert humanize_days(days) in value_phrase
+
+    def test_a_one_day_bar_is_not_pluralised(self) -> None:
+        facts = _facts(days_observed_unwatched=Known(value=5.0, source="tautulli"))
+        detail = evaluate(Condition(field="days_unwatched", op=Op.GTE, value=1), facts).detail
+
+        assert detail == "Not watched in 5 days, past your 1 day"
 
     def test_a_size_leads_with_the_size(self) -> None:
         cond = Condition(field="size_bytes", op=Op.GTE, value=1_000_000_000)

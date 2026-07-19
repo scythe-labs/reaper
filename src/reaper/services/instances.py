@@ -241,12 +241,50 @@ def _causes(exc: BaseException) -> list[BaseException]:
     return chain
 
 
+#: OpenSSL verify codes where "the certificate signs for itself, or for an authority this
+#: machine doesn't know" is the whole story: self-signed, or an issuer that cannot be
+#: reached. Only these are safe to answer with "turn off the certificate check" -- an
+#: expired certificate, a name that doesn't match, or something intercepting the
+#: connection are all real failures that turning the check off would hide.
+_SELF_SIGNED_VERIFY_CODES = frozenset(
+    {
+        2,  # unable to get issuer certificate
+        18,  # self-signed certificate
+        19,  # self-signed certificate in the chain
+        20,  # unable to get local issuer certificate
+        21,  # unable to verify the first certificate
+    }
+)
+
+
+def _self_signed(chain: list[BaseException]) -> bool:
+    """True only for the unknown-authority family, which the operator can safely wave off.
+
+    Anything else -- an expired certificate, a certificate for a different address, a
+    handshake failure, or a missing ``verify_code`` -- is treated as not-self-signed, so
+    the advice to skip verification is never offered for a failure it would paper over.
+    The API key travels on this connection.
+    """
+    return any(
+        isinstance(e, ssl.SSLCertVerificationError)
+        and getattr(e, "verify_code", None) in _SELF_SIGNED_VERIFY_CODES
+        for e in chain
+    )
+
+
 def _explain_failure(kind: InstanceKind, exc: BaseException) -> str:
     """One plain sentence an operator can act on, for the families we can recognise.
 
     Everything else falls through to :data:`_GENERIC_FAILURE`; the raw exception is
     logged by the caller either way, so nothing is lost, it just is not put in front of
     someone who is only trying to get a URL and a key right.
+
+    **Branch order is load-bearing** and is pinned by ``tests/test_instances.py``:
+    certificate failures must be read before the transport families (they arrive wrapped
+    in a ``ConnectError``) and before the ``ValueError`` body branch
+    (``ssl.SSLCertVerificationError`` is itself a ``ValueError``), and the
+    ``IntegrationError``-without-a-status branch must come last of all, because every
+    transport failure is also wrapped in one.
     """
     chain = _causes(exc)
     label = _KIND_LABEL.get(kind, "The server")
@@ -254,9 +292,15 @@ def _explain_failure(kind: InstanceKind, exc: BaseException) -> str:
     # Certificate problems first: they surface as a ConnectError, so the transport
     # branch below would otherwise swallow the one detail that names the fix.
     if any(isinstance(e, ssl.SSLError) for e in chain):
+        if _self_signed(chain):
+            return (
+                "The server's certificate is signed by an authority this machine doesn't "
+                "know. Only turn off the certificate check if this is your own server on "
+                "your own network: your API key travels on this connection."
+            )
         return (
-            "The server's certificate couldn't be verified. If it is a self-signed "
-            "certificate on a server you run yourself, turn off the certificate check."
+            "The server's certificate was rejected. It may have expired, or be for a "
+            "different address, or something may be sitting between Reaper and the server."
         )
 
     status = exc.status if isinstance(exc, IntegrationError) else None

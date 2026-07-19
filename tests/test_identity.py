@@ -20,6 +20,7 @@ from reaper.engine.identity import (
     parse_guids,
     resolve_movie,
     resolve_show,
+    root_folder_paths,
     title_year_match,
     to_basename,
 )
@@ -507,6 +508,158 @@ class TestByteIdenticalTwinListings:
             ]
         )
 
+    def _relisted_library_with_paths(self) -> PlexIndex:
+        # The same one-file-listed-twice shape, with the paths the live check found: the
+        # curated re-list sits in another folder entirely, so the folder corroborator
+        # would happily pick the main listing alone if it were allowed to run.
+        return PlexIndex.build(
+            [
+                _item(
+                    100,
+                    year=2020,
+                    tmdb=1001,
+                    added=datetime(2015, 1, 1, tzinfo=UTC),
+                    files=(
+                        PlexFile("example (2020).mkv", 7_000, "/data/movies/Example/example.mkv"),
+                    ),
+                ),
+                _item(
+                    200,
+                    year=2020,
+                    tmdb=1001,
+                    added=datetime(2021, 6, 1, tzinfo=UTC),
+                    files=(
+                        PlexFile(
+                            "example (2020).mkv", 7_000, "/data/curated/Example (2020)/example.mkv"
+                        ),
+                    ),
+                ),
+            ]
+        )
+
+    def test_divergent_paths_never_break_the_twin_group_up(self) -> None:
+        """The two listings of one file sit in different folders, and the *arr's path is
+        deeper under one of them. The folder corroborator must stand aside: it returns a
+        single listing, and binding one twin alone hides every play made through the
+        other, which under-counts watching and condemns a file people watch."""
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=2020,
+            file_basename="example (2020).mkv",
+            file_size=7_000,
+            file_path="/movies/Example/example.mkv",
+            index=self._relisted_library_with_paths(),
+        )
+        assert res.status is MatchStatus.MATCHED
+        assert res.matched_by is MatchedBy.MERGED_LISTINGS
+        assert res.rating_key == 100
+        assert res.merged_rating_keys == (100, 200)
+
+    def test_twins_merge_even_when_the_root_makes_the_folder_evidence_readable(self) -> None:
+        """The ordering check in its strongest form. Roots ARE supplied and the folder
+        evidence genuinely singles out one twin, so the folder step could bind one listing
+        alone if it ran first. _would_merge_as_twins runs before it and stands it down, so
+        the group forms and every play through either listing is still counted."""
+        index = PlexIndex.build(
+            [
+                _item(
+                    100,
+                    tmdb=1001,
+                    added=datetime(2015, 1, 1, tzinfo=UTC),
+                    files=(PlexFile("example.mkv", 7_000, "/data/movies/Example/example.mkv"),),
+                ),
+                _item(
+                    200,
+                    tmdb=1001,
+                    added=datetime(2021, 6, 1, tzinfo=UTC),
+                    files=(PlexFile("example.mkv", 7_000, "/data/curated/Other/example.mkv"),),
+                ),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=None,
+            file_basename="example.mkv",
+            file_size=7_000,
+            file_path="/srv/movies/Example/example.mkv",
+            root_folders=("/srv/movies",),
+            index=index,
+        )
+        assert res.matched_by is MatchedBy.MERGED_LISTINGS
+        assert res.rating_key == 100
+        assert res.merged_rating_keys == (100, 200)
+
+    def test_a_twin_group_survives_even_when_a_third_copy_is_a_different_size(self) -> None:
+        """Two twins plus one listing at another size: the folder step still stands aside,
+        so the group forms and the odd copy stays out of it."""
+        index = PlexIndex.build(
+            [
+                _item(
+                    100,
+                    tmdb=1001,
+                    files=(PlexFile("example.mkv", 7_000, "/data/movies/Example/example.mkv"),),
+                ),
+                _item(
+                    200,
+                    tmdb=1001,
+                    files=(PlexFile("example.mkv", 7_000, "/data/curated/Other/example.mkv"),),
+                ),
+                _item(
+                    300,
+                    tmdb=1001,
+                    files=(PlexFile("example.mkv", 5_000, "/data/movies-4k/Example/example.mkv"),),
+                ),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=None,
+            file_basename="example.mkv",
+            file_size=7_000,
+            file_path="/movies/Example/example.mkv",
+            index=index,
+        )
+        assert res.matched_by is MatchedBy.MERGED_LISTINGS
+        assert res.merged_rating_keys == (100, 200)
+
+    def test_an_unknown_size_beside_a_twin_pair_abstains_rather_than_binding_one(self) -> None:
+        """Two twins plus a third matching listing whose size Plex never reported. The
+        folder step still stands aside, so this abstains instead of binding one twin and
+        hiding the other's plays. Both ways of resolving it keep the file."""
+        index = PlexIndex.build(
+            [
+                _item(
+                    100,
+                    tmdb=1001,
+                    files=(PlexFile("example.mkv", 7_000, "/data/movies/Example/example.mkv"),),
+                ),
+                _item(
+                    200,
+                    tmdb=1001,
+                    files=(PlexFile("example.mkv", 7_000, "/data/curated/Other/example.mkv"),),
+                ),
+                _item(
+                    300,
+                    tmdb=1001,
+                    files=(PlexFile("example.mkv", None, "/data/movies-4k/Example/example.mkv"),),
+                ),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=None,
+            file_basename="example.mkv",
+            file_size=7_000,
+            file_path="/movies/Example/example.mkv",
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+
     def test_twin_listings_bind_as_a_merged_group(self) -> None:
         res = resolve_movie(
             ids=ExternalIds.of(tmdb=1001),
@@ -759,9 +912,326 @@ class TestByteIdenticalTwinListings:
 
 
 class TestTheFolderTellsTwoListingsApart:
-    """One title kept in two libraries (an HD one and a 4K one) is listed twice in Plex
-    under one tvdb id, with an identical leaf folder. Only the segment above the leaf
-    differs, and comparing trailing segments survives the mount-root difference.
+    """One title kept in two libraries is listed twice in Plex under one id, with an
+    identical leaf name. A folder ABOVE the leaf can still tell the copies apart, but only
+    where it sits strictly below the *arr instance's own root folder, which the instance
+    reports and the resolver is handed.
+
+    The *arr root is never inferred from the path's shape: a container root may be one
+    segment or three, so a fixed strip leaves root pieces to be compared as if they were
+    real folders. With no root supplied the corroborator stands down entirely.
+
+    **Movies only, and that is not an oversight.** Radarr writes ``<root>/<Title>/<file>``,
+    so a real title folder sits above the leaf. Sonarr writes ``<root>/<Show>``: below a
+    correct root there is only the show folder, which IS the leaf both sides already
+    matched on, so there is no new evidence and the step stands down for every show. See
+    TestAShowNeverGetsFolderEvidence, which pins that.
+    """
+
+    #: Radarr's own layout: the title folder is what sits below the root.
+    _ARR_ROOTS = ("/data/movies",)
+
+    @staticmethod
+    def _two_sections() -> PlexIndex:
+        return PlexIndex.build(
+            [
+                _item(
+                    300,
+                    title="Example Movie",
+                    tmdb=2001,
+                    files=(PlexFile("film.mkv", 7_000, "/media/movies/Example Movie/film.mkv"),),
+                ),
+                _item(
+                    400,
+                    title="Example Movie",
+                    tmdb=2001,
+                    files=(PlexFile("film.mkv", 70_000, "/media/movies-4k/Other Folder/film.mkv"),),
+                ),
+            ]
+        )
+
+    def test_a_real_folder_below_the_root_binds_the_right_copy(self) -> None:
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=2001),
+            title="Example Movie",
+            year=None,
+            file_basename="film.mkv",
+            file_size=7_000,
+            file_path="/data/movies/Example Movie/film.mkv",
+            root_folders=self._ARR_ROOTS,
+            index=self._two_sections(),
+        )
+        assert res.rating_key == 300
+        assert res.matched_by is MatchedBy.ID_AND_BASENAME
+        assert "folder" in res.detail
+
+    def test_the_other_instance_binds_the_other_copy(self) -> None:
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=2001),
+            title="Example Movie",
+            year=None,
+            file_basename="film.mkv",
+            file_size=70_000,
+            file_path="/data/movies/Other Folder/film.mkv",
+            root_folders=self._ARR_ROOTS,
+            index=self._two_sections(),
+        )
+        assert res.rating_key == 400
+
+    def test_the_longest_matching_root_is_the_one_used(self) -> None:
+        """An instance may report nested roots. The longest one that prefixes the path is
+        this item's root, so only what sits below THAT is evidence. Choosing the shorter
+        root would leave an extra segment to be counted as a folder, and would also make
+        the path too deep for Radarr's layout, which stands the step down."""
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=2001),
+            title="Example Movie",
+            year=None,
+            file_basename="film.mkv",
+            file_size=7_000,
+            file_path="/data/movies/Example Movie/film.mkv",
+            root_folders=("/data", "/data/movies"),
+            index=self._two_sections(),
+        )
+        assert res.rating_key == 300
+
+    def test_a_trailing_slash_or_case_difference_in_a_root_still_matches(self) -> None:
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=2001),
+            title="Example Movie",
+            year=None,
+            file_basename="film.mkv",
+            file_size=7_000,
+            file_path="/data/movies/Example Movie/film.mkv",
+            root_folders=("/Data/Movies/",),
+            index=self._two_sections(),
+        )
+        assert res.rating_key == 300
+
+    def test_no_roots_supplied_stands_the_corroborator_down(self) -> None:
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=2001),
+            title="Example Movie",
+            year=None,
+            file_basename="film.mkv",
+            file_size=None,
+            file_path="/data/movies/Example Movie/film.mkv",
+            index=self._two_sections(),
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+
+    def test_a_path_under_none_of_the_supplied_roots_stands_it_down(self) -> None:
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=2001),
+            title="Example Movie",
+            year=None,
+            file_basename="film.mkv",
+            file_size=None,
+            file_path="/somewhere/else/Example Movie/film.mkv",
+            root_folders=self._ARR_ROOTS,
+            index=self._two_sections(),
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+
+    def test_a_root_broader_than_the_items_real_parent_stands_it_down(self) -> None:
+        """The reported root is an ancestor, not this item's real root (a stale root after
+        the operator reconfigured them, or a manual import into a nested folder). The
+        leftover mount segments would be compared as if they were real folders, so the
+        depth no longer matches Radarr's layout and the step declines rather than guess."""
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=2001),
+            title="Example Movie",
+            year=None,
+            file_basename="film.mkv",
+            file_size=None,
+            file_path="/data/movies/Example Movie/film.mkv",
+            root_folders=("/data",),
+            index=self._two_sections(),
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+
+    def test_an_unreadable_path_on_any_candidate_stands_it_down(self) -> None:
+        """Could-not-look is never "different". Dropping the unreadable candidate would
+        turn a tie into a strict win for the other copy."""
+        index = PlexIndex.build(
+            [
+                _item(
+                    300,
+                    title="Example Movie",
+                    tmdb=2001,
+                    files=(PlexFile("film.mkv", 7_000, "/media/movies/Example Movie/film.mkv"),),
+                ),
+                _item(400, title="Example Movie", tmdb=2001, files=(PlexFile("film.mkv", None),)),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=2001),
+            title="Example Movie",
+            year=None,
+            file_basename="film.mkv",
+            file_size=None,
+            file_path="/data/movies/Example Movie/film.mkv",
+            root_folders=self._ARR_ROOTS,
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+
+
+class TestTheFolderNeverBindsOnUncheckableEvidence:
+    """The folder is circumstantial and the byte count is exact, so the folder must never
+    bind a copy whose size cannot be checked while another candidate might match it."""
+
+    def test_a_listing_holding_the_name_twice_is_not_bound_on_its_folder(self) -> None:
+        """A merged multi-edition Plex item carries the name more than once, so it yields
+        no single number to compare. The folder points at it; another copy matches the
+        *arr's byte count exactly. Binding the folder's pick would ignore that."""
+        index = PlexIndex.build(
+            [
+                _item(
+                    21,
+                    tmdb=4001,
+                    files=(
+                        PlexFile("film.mkv", 111, "/media/movies/Title/film.mkv"),
+                        PlexFile("film.mkv", 222, "/media/movies/Title Two/film.mkv"),
+                    ),
+                ),
+                _item(
+                    22,
+                    tmdb=4001,
+                    files=(PlexFile("film.mkv", 500, "/media/movies-4k/Other/film.mkv"),),
+                ),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=4001),
+            title="Example Movie",
+            year=None,
+            file_basename="film.mkv",
+            file_size=500,
+            file_path="/data/movies/Title/film.mkv",
+            root_folders=("/data/movies",),
+            index=index,
+        )
+        assert res.rating_key != 21, "bound a copy whose size could not be checked"
+        assert res.status is MatchStatus.AMBIGUOUS
+
+    def test_the_folder_and_the_size_naming_different_copies_abstains(self) -> None:
+        """A positive contradiction between two corroborators. Neither overrules the
+        other: the file is kept."""
+        index = PlexIndex.build(
+            [
+                _item(
+                    100,
+                    tmdb=4002,
+                    files=(PlexFile("film.mkv", 7_000, "/media/movies/Title/film.mkv"),),
+                ),
+                _item(
+                    200,
+                    tmdb=4002,
+                    files=(PlexFile("film.mkv", 70_000, "/media/movies-4k/Other/film.mkv"),),
+                ),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=4002),
+            title="Example Movie",
+            year=None,
+            file_basename="film.mkv",
+            file_size=70_000,
+            file_path="/data/movies/Title/film.mkv",
+            root_folders=("/data/movies",),
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+        assert "point at different copies" in res.detail
+
+
+class TestARootFolderPayloadIsReadDefensively:
+    """The roots arrive as an *arr ``/rootfolder`` body. A malformed one must yield no
+    roots (which only stands the corroborator down), never raise out of a scan."""
+
+    def test_a_well_formed_body_yields_its_paths(self) -> None:
+        assert root_folder_paths(
+            [{"path": "/data/movies", "accessible": True}, {"path": "/data/movies-4k"}]
+        ) == ("/data/movies", "/data/movies-4k")
+
+    def test_a_body_that_is_not_a_list_yields_nothing(self) -> None:
+        assert root_folder_paths({"error": "not found"}) == ()
+        assert root_folder_paths(None) == ()
+
+    def test_entries_without_a_usable_path_are_skipped(self) -> None:
+        assert root_folder_paths(["/data/movies", {"id": 1}, {"path": ""}, {"path": 7}]) == ()
+
+
+class TestRootFoldersThatCouldNotBeRead:
+    """``None`` roots mean the ``/rootfolder`` read failed; ``()`` means the instance
+    answered and reported none. They must not behave the same.
+
+    Losing the roots does not merely cost a bind: the folder step is the only thing that
+    produces the folder-vs-size contradiction veto, so without it a stale Plex size can
+    bind a copy the folder would have disputed. A failed read therefore refuses the whole
+    narrowing rather than falling through to size alone.
+    """
+
+    @staticmethod
+    def _stale_size_index() -> PlexIndex:
+        # rk 100 is the copy this Radarr manages; its file was upgraded in place and Plex
+        # still reports the old byte count. rk 200 happens to carry the new count.
+        return PlexIndex.build(
+            [
+                _item(
+                    100,
+                    tmdb=5001,
+                    files=(PlexFile("film.mkv", 111, "/media/movies/Title/film.mkv"),),
+                ),
+                _item(
+                    200,
+                    tmdb=5001,
+                    files=(PlexFile("film.mkv", 900, "/media/movies-4k/Other/film.mkv"),),
+                ),
+            ]
+        )
+
+    def _resolve(self, roots: tuple[str, ...] | None) -> object:
+        return resolve_movie(
+            ids=ExternalIds.of(tmdb=5001),
+            title="Example Movie",
+            year=None,
+            file_basename="film.mkv",
+            file_size=900,
+            file_path="/data/movies/Title/film.mkv",
+            root_folders=roots,
+            index=self._stale_size_index(),
+        )
+
+    def test_roots_in_hand_catch_the_disagreement_and_keep_the_file(self) -> None:
+        res = self._resolve(("/data/movies",))
+        assert res.rating_key is None  # type: ignore[attr-defined]
+        assert "point at different copies" in res.detail  # type: ignore[attr-defined]
+
+    def test_a_failed_read_refuses_to_narrow_rather_than_binding_on_size_alone(self) -> None:
+        res = self._resolve(None)
+        assert res.rating_key != 200, "bound the copy the folder would have disputed"  # type: ignore[attr-defined]
+        assert res.rating_key is None  # type: ignore[attr-defined]
+        assert res.status is MatchStatus.AMBIGUOUS  # type: ignore[attr-defined]
+        assert "couldn't read the folder list" in res.detail  # type: ignore[attr-defined]
+
+
+class TestAShowNeverGetsFolderEvidence:
+    """Sonarr writes ``<root>/<Show>``. Below a correct root that is one segment -- the
+    show folder, which is the very leaf both sides already matched on -- so the folder
+    corroborator has nothing new to say about a show and always stands down.
+
+    This is worth pinning because the step's reach for shows used to be co-extensive with
+    its failure mode: it could only fire when the path was DEEPER than Sonarr's layout,
+    which means the reported root was wrong, and it then bound on leftover mount segments.
+    A show with two listings under one id has no size to fall back on either, so it
+    abstains, and an abstain keeps the file.
     """
 
     @staticmethod
@@ -785,137 +1255,233 @@ class TestTheFolderTellsTwoListingsApart:
             ]
         )
 
-    def test_the_parent_folder_binds_the_right_copy(self) -> None:
+    def test_a_correct_sonarr_root_leaves_no_evidence_and_abstains(self) -> None:
         res = resolve_show(
             ids=ExternalIds.of(tvdb=2001),
             title="Example Show",
             year=None,
-            file_basename="/tv-4k/Example Show",
-            file_path="/tv-4k/Example Show",
-            index=self._two_sections(),
-        )
-        assert res.rating_key == 400
-        assert res.matched_by is MatchedBy.ID_AND_BASENAME
-        assert "folder" in res.detail
-
-    def test_the_other_instance_binds_the_other_copy(self) -> None:
-        res = resolve_show(
-            ids=ExternalIds.of(tvdb=2001),
-            title="Example Show",
-            year=None,
-            file_basename="/tv/Example Show",
-            file_path="/tv/Example Show",
-            index=self._two_sections(),
-        )
-        assert res.rating_key == 300
-
-    def test_identical_paths_still_abstain(self) -> None:
-        """Two listings of the very same folder tie at every depth, and a tie is not
-        evidence for either. Fail closed, exactly as before this corroborator existed."""
-        index = PlexIndex.build(
-            [
-                _item(
-                    300,
-                    title="Example Show",
-                    tvdb=2001,
-                    basename="example show",
-                    files=(PlexFile("example show", None, "/media/tv/Example Show"),),
-                ),
-                _item(
-                    400,
-                    title="Example Show",
-                    tvdb=2001,
-                    basename="example show",
-                    files=(PlexFile("example show", None, "/media/tv/Example Show"),),
-                ),
-            ]
-        )
-        res = resolve_show(
-            ids=ExternalIds.of(tvdb=2001),
-            title="Example Show",
-            year=None,
-            file_basename="/tv/Example Show",
-            file_path="/tv/Example Show",
-            index=index,
-        )
-        assert res.rating_key is None
-        assert res.status is MatchStatus.AMBIGUOUS
-
-    def test_a_listing_with_no_path_cannot_win_but_can_still_force_an_abstain(self) -> None:
-        """ "Could not look" is never "looked and it was different": an unreadable path
-        scores zero, so it never wins -- but it also never clears the way for the other."""
-        index = PlexIndex.build(
-            [
-                _item(
-                    300,
-                    title="Example Show",
-                    tvdb=2001,
-                    basename="example show",
-                    files=(PlexFile("example show", None, None),),
-                ),
-                _item(
-                    400,
-                    title="Example Show",
-                    tvdb=2001,
-                    basename="example show",
-                    files=(PlexFile("example show", None, None),),
-                ),
-            ]
-        )
-        res = resolve_show(
-            ids=ExternalIds.of(tvdb=2001),
-            title="Example Show",
-            year=None,
-            file_basename="/tv-4k/Example Show",
-            file_path="/tv-4k/Example Show",
-            index=index,
-        )
-        assert res.rating_key is None
-        assert res.status is MatchStatus.AMBIGUOUS
-
-    def test_a_matching_leaf_alone_is_never_enough(self) -> None:
-        """Depth 1 is the leaf both sides already matched on, so it is no new
-        corroboration: an *arr path with no folder above the leaf cannot break the tie."""
-        res = resolve_show(
-            ids=ExternalIds.of(tvdb=2001),
-            title="Example Show",
-            year=None,
-            file_basename="Example Show",
-            file_path="Example Show",
+            file_basename="/data/tv/Example Show",
+            file_path="/data/tv/Example Show",
+            root_folders=("/data/tv",),
             index=self._two_sections(),
         )
         assert res.rating_key is None
         assert res.status is MatchStatus.AMBIGUOUS
 
-    def test_a_movie_still_prefers_its_exact_size(self) -> None:
-        """The folder is tried first, but where it cannot narrow, size still decides --
-        the movie path keeps every corroborator it had."""
-        index = PlexIndex.build(
+    def test_a_root_that_makes_the_path_too_deep_still_abstains(self) -> None:
+        """The reported root is an ancestor of the real one, so ``tv`` is left in the
+        path. That segment names one Plex library's folder, and before the layout guard it
+        bound the wrong copy with no size to recover with."""
+        res = resolve_show(
+            ids=ExternalIds.of(tvdb=2001),
+            title="Example Show",
+            year=None,
+            file_basename="/data/tv/Example Show",
+            file_path="/data/tv/Example Show",
+            root_folders=("/data",),
+            index=self._two_sections(),
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+
+
+class TestTwoInstancesSharingAMultiSegmentRoot:
+    """The same two-instance layout, with the root the standard single-mount guide gives:
+    each container maps its own host directory to a TWO-segment in-container root, so both
+    instances report the identical path under it.
+
+    This is the case a fixed one-segment strip could not survive. It left the second root
+    segment in place, that segment happened to name one library's folder, and the strict
+    margin fired on it -- binding the 4K entry to the HD listing and reading the HD copy's
+    watch history and added-at. The exact byte size that separates the two was never even
+    reached. Measured strictly below the reported root, both copies tie and the folder step
+    stands aside, which is what lets size do its job.
+    """
+
+    _ARR_ROOTS = ("/data/movies",)
+    _ARR_PATH = "/data/movies/Title/file.mkv"
+
+    @staticmethod
+    def _hd_and_4k_movies() -> PlexIndex:
+        return PlexIndex.build(
             [
                 _item(
                     100,
                     tmdb=1001,
-                    basename="example.mkv",
-                    files=(PlexFile("example.mkv", 111, "/media/movies/Example/example.mkv"),),
+                    files=(PlexFile("file.mkv", 7_000, "/srv/media/movies/Title/file.mkv"),),
                 ),
                 _item(
                     200,
                     tmdb=1001,
-                    basename="example.mkv",
-                    files=(PlexFile("example.mkv", 222, "/media/movies/Example/example.mkv"),),
+                    files=(PlexFile("file.mkv", 70_000, "/srv/media/movies-4k/Title/file.mkv"),),
                 ),
             ]
         )
+
+    def test_the_4k_instance_is_not_bound_to_the_hd_listing(self) -> None:
         res = resolve_movie(
             ids=ExternalIds.of(tmdb=1001),
             title="Example Movie",
             year=None,
-            file_basename="example.mkv",
-            file_size=222,
-            file_path="/movies/Example/example.mkv",
+            file_basename="file.mkv",
+            file_size=70_000,
+            file_path=self._ARR_PATH,
+            root_folders=self._ARR_ROOTS,
+            index=self._hd_and_4k_movies(),
+        )
+        assert res.rating_key != 100, "bound to the other library's copy"
+        assert res.rating_key == 200
+        assert "exact file size" in res.detail
+
+    def test_the_hd_instance_binds_its_own_copy_by_size(self) -> None:
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=None,
+            file_basename="file.mkv",
+            file_size=7_000,
+            file_path=self._ARR_PATH,
+            root_folders=self._ARR_ROOTS,
+            index=self._hd_and_4k_movies(),
+        )
+        assert res.rating_key == 100
+
+    def test_the_show_half_has_no_size_to_recover_with_and_abstains(self) -> None:
+        """The same layout on the TV side. A show has no byte size, so once the folder
+        step stands aside there is nothing left. Both copies are kept, which is the honest
+        answer: which library this series belongs to is not written anywhere below the
+        root."""
+        index = PlexIndex.build(
+            [
+                _item(
+                    300,
+                    title="Example Show",
+                    tvdb=2001,
+                    files=(PlexFile("title", None, "/srv/media/tv/Title"),),
+                ),
+                _item(
+                    400,
+                    title="Example Show",
+                    tvdb=2001,
+                    files=(PlexFile("title", None, "/srv/media/tv-4k/Title"),),
+                ),
+            ]
+        )
+        res = resolve_show(
+            ids=ExternalIds.of(tvdb=2001),
+            title="Example Show",
+            year=None,
+            file_basename="/data/tv/Title",
+            file_path="/data/tv/Title",
+            root_folders=("/data/tv",),
             index=index,
         )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+
+
+class TestTheFolderStepNeverOutranksTheExactSize:
+    """Two Plex copies whose own library roots sit at DIFFERENT depths.
+
+    The folder step used to rank candidates by deepest shared suffix and let the deepest
+    strictly win. That is unsound here: the shallower copy simply runs out of path, and
+    losing the comparison reads as evidence against it when it is nothing of the kind. An
+    exact suffix match on the item's library-relative path has no such failure mode, and
+    where the folder still points somewhere the exact byte size contradicts, the folder
+    yields. Radarr's byte count is exact; a folder name is circumstantial.
+
+    Both shapes below bound the WRONG copy before this change, reading a stranger's watch
+    history and added-at onto a file somebody watches.
+    """
+
+    @staticmethod
+    def _two_plex_roots_of_different_depth() -> PlexIndex:
+        return PlexIndex.build(
+            [
+                _item(
+                    100, tmdb=1101, files=(PlexFile("f.mkv", 7_000, "/srv/media/movies/T/f.mkv"),)
+                ),
+                _item(200, tmdb=1101, files=(PlexFile("f.mkv", 70_000, "/movies/T/f.mkv"),)),
+            ]
+        )
+
+    def test_a_shallower_plex_root_does_not_lose_on_depth_alone(self) -> None:
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1101),
+            title="Example Movie",
+            year=None,
+            file_basename="f.mkv",
+            file_size=70_000,
+            file_path="/data/movies/T/f.mkv",
+            root_folders=("/data",),
+            index=self._two_plex_roots_of_different_depth(),
+        )
+        assert res.rating_key == 200, "the copy whose exact byte size matches"
+        assert "exact file size" in res.detail
+
+    def test_the_folder_yields_to_a_contradicting_exact_size(self) -> None:
+        """The reported root is broader than the item's real parent, so a leftover root
+        segment names a real folder in one library and the folder step points at it. The
+        byte size says otherwise, and the byte size is the one that is exact."""
+        index = PlexIndex.build(
+            [
+                _item(
+                    100,
+                    tmdb=1102,
+                    files=(PlexFile("file.mkv", 7_000, "/srv/media/movies/Title/file.mkv"),),
+                ),
+                _item(
+                    200,
+                    tmdb=1102,
+                    files=(PlexFile("file.mkv", 70_000, "/srv/media/movies-4k/Title/file.mkv"),),
+                ),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1102),
+            title="Example Movie",
+            year=None,
+            file_basename="file.mkv",
+            file_size=70_000,
+            file_path="/data/movies/Title/file.mkv",
+            root_folders=("/data",),
+            index=index,
+        )
+        assert res.rating_key != 100, "bound to the other library's copy"
         assert res.rating_key == 200
+        assert "exact file size" in res.detail
+
+    def test_an_unknown_arr_size_never_contradicts(self) -> None:
+        """Could-not-look is never "different": with no *arr size there is nothing for the
+        folder to disagree with, so the folder still decides."""
+        index = PlexIndex.build(
+            [
+                _item(
+                    300,
+                    title="Example Movie",
+                    tmdb=2101,
+                    files=(PlexFile("film.mkv", 7_000, "/media/movies/Example Movie/film.mkv"),),
+                ),
+                _item(
+                    400,
+                    title="Example Movie",
+                    tmdb=2101,
+                    files=(PlexFile("film.mkv", 70_000, "/media/movies-4k/Other Folder/film.mkv"),),
+                ),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=2101),
+            title="Example Movie",
+            year=None,
+            file_basename="film.mkv",
+            file_size=None,
+            file_path="/data/movies/Example Movie/film.mkv",
+            root_folders=("/data/movies",),
+            index=index,
+        )
+        assert res.rating_key == 300
+        assert "folder it sits in" in res.detail
 
 
 # ---------------------------------------------------------------------------
