@@ -247,7 +247,14 @@ suggestions. They extend the rules above; where one sharpens an earlier rule (22
 28. **Failure of any evidence source degrades the snapshot.** Any `except` around a source
     read in the scan pipeline must append to `pre_scan_degradations` (or call
     `context.degrade`); a bare `log.warning` on a source failure is a review-blocker.
-    Watch history is a source.
+    Watch history is a source. **Sanctioned exception:** a *per-item* missing size does
+    not degrade. Degradation is snapshot-global and a degraded snapshot is un-plannable
+    outright, so one movie Radarr will not size would block the operator's entire run --
+    the wrong blast radius. The compensating control is narrower and stronger: that item
+    alone is held back from every plan (`planner.build_plan`) and refused again at send
+    (`executor.size_confirmed`), and the operator is told the count and which items. The
+    exception covers the item's own size only; a source that fails to *respond* still
+    degrades.
 29. **Every identity or membership lookup passes every id the item carries.** When calling
     `membership_index.lookup` or any cross-system join, pass imdb+tmdb+tvdb together;
     adding a new id kind to storage requires grepping and updating every lookup call site

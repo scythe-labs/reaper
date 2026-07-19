@@ -2221,9 +2221,23 @@ left, each because the correct fix is wider than the finding and wants its own c
    taking a size away after approval voids the run on its own, which is why the executor's
    per-item test needs a deliberately re-approved plan to reach at all.
 
-   Still open: Stage 3c (the unmeasured allowance, a new policy control, stopped for a
-   mockup first), Stage 4 (the operator's real-data pass), and Stages 5 to 7, which are
-   gated on what Stage 4's tally shows.
+   Stage 3c also landed: `ProfileSettings.max_unmeasured_per_run` (0 by default, capped at
+   25) lets an operator reap a bounded number of unmeasured items anyway. A count and not a
+   switch, because the byte caps cannot bound that population at all. It never relaxes the
+   test-item rule, they still count against the item caps, they never ride a show-level
+   "Reap now", and a plan over the allowance aborts rather than trimming. The typed phrase
+   gains `+ N UNSIZED` so the GB figure stays exact for what it covers.
+
+   **The browser pass earned its cost.** Driving a seeded snapshot end to end found three
+   things the 1689 tests did not: the queue header rendered a bare sum (a local variable
+   shadowed the formatter), that header needed its own wording rather than the shared
+   middot form (which put "would be freed" after a count of items that would not be), and
+   policy warnings were inspected against a stand-in `ProfileSettings()` rather than the
+   operator's own. That last one was pre-existing and made EVERY settings-based warning
+   unreachable, including the danger about running without approval.
+
+   Still open: Stage 4 (the operator's real-data pass) and Stages 5 to 7, which are gated
+   on what Stage 4's tally shows.
 2. **The refused-reap clause is a frontend map keyed on strings the server emits**
    (B-11, agent rule 12). Two modules holding the same literal is exactly what that rule
    forbids. The clean shape is for the server to send the refusal reason on the candidate

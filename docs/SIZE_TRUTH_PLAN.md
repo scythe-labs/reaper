@@ -1,19 +1,27 @@
 # Size truth: making an unreadable size stop being a number
 
-Status: **Stages 1, 2, 3 and 3b landed 2026-07-19.** Written 2026-07-19 for execution by
+Status: **Stages 1, 2, 3, 3b and 3c landed 2026-07-19.** Written 2026-07-19 for execution by
 another agent session; §1 and the Stage 1/2 boundary have since been corrected against the
 shipped code (see the notes marked **Corrected**).
 
-**Stopped deliberately before Stage 3c** (the unmeasured allowance), which introduces a new
-policy control and so wants a rendered mockup approved before any frontend code, per
+Stage 3c was mocked as an HTML artifact and approved before any frontend code, per
 `CLAUDE.md`'s golden rule. Stage 4 is the operator's own pass against real data, and
 Stages 5 to 7 are gated on what its tally shows.
+
+**Driven end to end in a browser** against a seeded snapshot mixing measured and
+unmeasured items. Three defects surfaced there that no test caught, all now fixed: the
+review queue header rendered a bare sum because a local variable shadowed the formatter;
+that header also needed its own wording, since the shared middot form put "would be freed"
+after a count of items that would NOT be freed; and policy warnings were being inspected
+against a stand-in `ProfileSettings()` rather than the operator's own, which had made every
+settings-based warning unreachable — including the pre-existing danger about running
+without approval. Record this: the browser pass earns its cost.
 
 **Note for whoever runs the app next:** the schema changed, and a `data/reaper.db` created
 before these commits has neither `size_source` nor `held_back_unknown_size` and still holds
 `size_bytes` NOT NULL. Pre-release the dev DB is disposable, so the fix is to delete it and
-`alembic upgrade head` from empty. That loses the linked instances and settings in it, so
-it is the operator's call, not something a session should do for them.
+`alembic upgrade head` from empty, carrying the `app_user` rows across if the admin account
+matters.
 
 This plan removes the last place Reaper invents a number on the deletion path. It is the
 "correct fix, no workarounds" version of the size problem, superseding the display-only
@@ -628,7 +636,7 @@ meet a silently smaller plan.
 
 *Observable:* the operator can see **which** items were held back and why, not just how many.
 
-### Stage 3c — the unmeasured allowance
+### Stage 3c — the unmeasured allowance — **DONE**
 
 All of §4.6: the `ProfileSettings` field, the validator, the abort-not-truncate check, the
 canary-last ordering, the phrase suffix, the `PolicyWarning`, and the `FixedQuantity` control
