@@ -1463,6 +1463,7 @@ export function PolicyEditor({
     (f) => f === "custom_condemn",
     (f) => f === "graded_keeps",
     (f) => f === "require_approval",
+    (f) => f === "max_unmeasured_per_run",
   ];
   const unanchoredWarnings = allWarnings.filter((w) => !anchors.some((p) => p(w.field)));
 

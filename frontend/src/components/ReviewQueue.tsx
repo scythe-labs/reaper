@@ -1246,7 +1246,11 @@ export function ReviewQueue({
     [pages],
   );
   const totalItems = pages?.pages[0]?.total ?? 0;
-  const totalBytes = pages?.pages[0]?.totalBytes ?? 0;
+  // Named apart from the `totalBytes` formatter, which this used to shadow -- which is
+  // how the header kept rendering a bare sum while every other total had learned to say
+  // what it could not include.
+  const totalSize = pages?.pages[0]?.totalBytes ?? 0;
+  const totalUnknownSize = pages?.pages[0]?.unknownSize ?? 0;
 
   // Reveal another render-page as the sentinel scrolls into view.
   useEffect(() => {
@@ -1706,11 +1710,22 @@ export function ReviewQueue({
 
       {data && data.length > 0 && (
         <>
+          {/* The unknown count sits AFTER "would be freed", not inside the total: those
+              items are precisely the ones that would not be freed, so folding them into
+              the same phrase says the opposite of what is true. */}
           <p className="queue-total">
             <strong>{count(totalItems)}</strong> {totalItems === 1 ? "item" : "items"}
             {" · "}
-            <strong>{bytes(totalBytes)}</strong>
+            <strong>{bytes(totalSize)}</strong>
             {verdict === "condemn" && " would be freed"}
+            {totalUnknownSize > 0 && (
+              <>
+                {" · "}
+                <strong>
+                  {count(totalUnknownSize)} {totalUnknownSize === 1 ? "size" : "sizes"} unknown
+                </strong>
+              </>
+            )}
           </p>
           <div className={`card-list ${selectMode ? "card-list-selecting has-bulk-bar" : ""}`}>
             {shownGroups.map((group) => {

@@ -82,7 +82,7 @@ from reaper.services.condemned import reap_is_effective, reap_override_verdict
 from reaper.services.deep_links import build_links
 from reaper.services.display_meta import parse_ratings_json
 from reaper.services.planner import MediaRef, PlanError
-from reaper.services.profiles import active_policy, active_policy_row
+from reaper.services.profiles import active_policy, active_policy_row, active_profile_settings
 from reaper.services.snapshot import HAND_SPARE_DETAIL
 
 log = structlog.get_logger(__name__)
@@ -1001,6 +1001,7 @@ def _policy_out(
     name: str,
     *,
     requests_app_configured: bool,
+    settings: ProfileSettings,
     needs_save: bool = False,
     fell_back: bool = False,
 ) -> PolicyOut:
@@ -1054,9 +1055,13 @@ def _policy_out(
             # from re-validating the DRAFT, so anything attached to the GET response
             # never reaches the page at all. That was a real silent drop.
             PolicyWarningOut(field=w.field, message=w.message, severity=w.severity)
-            for w in inspect(
-                body, ProfileSettings(), requests_app_configured=requests_app_configured
-            )
+            # The operator's SAVED settings, not the defaults. Passing ProfileSettings()
+            # here made every settings-based warning unreachable: the caps and the
+            # approval switch live on the profile, so inspecting a stand-in meant the
+            # editor could never show a warning about any of them. A settings warning
+            # therefore appears once the change is saved rather than as it is typed --
+            # the savebar writes policy and profile together, so that is one click away.
+            for w in inspect(body, settings, requests_app_configured=requests_app_configured)
         ],
     )
 
@@ -1092,10 +1097,12 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
         # from the name (an operator's own policy is often called "default").
         needs_save, fell_back = active.rescaled, active.fell_back
         has_requests_app = await _requests_app_configured(session)
+        settings = await active_profile_settings(session)
     return _policy_out(
         body,
         name,
         requests_app_configured=has_requests_app,
+        settings=settings,
         needs_save=needs_save,
         fell_back=fell_back,
     )
@@ -1121,13 +1128,16 @@ async def save_policy(request: Request, payload: PolicyIn) -> PolicyOut:
     async with _sessions(request)() as session:
         active = await active_policy_row(session, body.media_type)
         has_requests_app = await _requests_app_configured(session)
+        settings = await active_profile_settings(session)
 
         if active is not None and active.policy_hash == policy_hash:
             # Content-identical to the policy in force: nothing is written and the name
             # is NOT changed. Echo the *persisted* name, not the discarded request name,
             # so the success response matches what the next GET /api/policy will show --
             # otherwise a name-only edit looks like it stuck when it silently did not.
-            return _policy_out(body, active.name, requests_app_configured=has_requests_app)
+            return _policy_out(
+                body, active.name, requests_app_configured=has_requests_app, settings=settings
+            )
 
         session.add(
             PolicyModel(
@@ -1140,7 +1150,9 @@ async def save_policy(request: Request, payload: PolicyIn) -> PolicyOut:
         )
         await session.commit()
 
-    return _policy_out(body, payload.name, requests_app_configured=has_requests_app)
+    return _policy_out(
+        body, payload.name, requests_app_configured=has_requests_app, settings=settings
+    )
 
 
 @router.post("/policy/validate")
@@ -1159,7 +1171,13 @@ async def validate_policy(request: Request, payload: PolicyIn) -> PolicyOut:
     """
     async with _sessions(request)() as session:
         has_requests_app = await _requests_app_configured(session)
-    return _policy_out(_to_body(payload), payload.name, requests_app_configured=has_requests_app)
+        settings = await active_profile_settings(session)
+    return _policy_out(
+        _to_body(payload),
+        payload.name,
+        requests_app_configured=has_requests_app,
+        settings=settings,
+    )
 
 
 def _replay_simulation(
