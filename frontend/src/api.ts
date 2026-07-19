@@ -20,6 +20,9 @@ export interface Snapshot {
   protected: number;
   abstained: number;
   reclaimable_bytes: number;
+  /** How many condemned items have no size, and so sit outside the total above rather
+   *  than inside it as zeros. Zero for a healthy library, and hidden at zero. */
+  unknown_size_items: number;
 }
 
 /** The one short status chip a card wears, display-ready from the server. `kept`
@@ -45,8 +48,8 @@ export interface GroupSeasonMark {
    *  square in its scan color). Null when there is no reap override. */
   override_effective: boolean | null;
   /** The season's size on disk, so the card can state whole-show totals without a
-   *  second fetch. */
-  size_bytes: number;
+   *  second fetch. Null when nothing would report one, which is not zero. */
+  size_bytes: number | null;
 }
 
 export interface Candidate {
@@ -54,7 +57,9 @@ export interface Candidate {
   media_key: string;
   title: string;
   media_type: string;
-  size_bytes: number;
+  /** Null when Reaper could not measure it. Never zero: the UI says "Size unknown", and
+   *  the item is held back from any plan. */
+  size_bytes: number | null;
   verdict: Verdict;
   score: number;
   coverage_bp: number;
@@ -71,6 +76,9 @@ export interface Candidate {
   group_condemned_count: number | null;
   /** The byte total over that same set: the number the planner will act on. */
   group_condemned_bytes: number | null;
+  /** How many of the show's actable seasons have no size. They are left out of both
+   *  numbers above, because the planner will not plan them. Null for movies. */
+  group_unknown_size: number | null;
   /** Canonical file resolution ("2160", "1080", ..., "sd") for the card's quality badge.
    *  Null hides the badge (TV seasons, unmatched items, rows from older scans). */
   video_resolution: string | null;
@@ -117,7 +125,9 @@ export interface Group {
   year: number | null;
   poster_url: string | null;
   summary: string | null;
+  /** Summed over the seasons that have a size; `unknown_size_seasons` counts the rest. */
   size_bytes: number;
+  unknown_size_seasons: number;
   /** The show-level status line and chip: those of the season that most wants the
    *  owner's attention, else the highest-scoring one. */
   reason: string | null;
@@ -137,6 +147,9 @@ export interface CandidatePage {
   items: Candidate[];
   total: number;
   totalBytes: number;
+  /** How many across the whole filtered set have no size. `totalBytes` is the sum of
+   *  what is known; this is what it could not include. */
+  unknownSize: number;
   offset: number;
 }
 
@@ -411,6 +424,8 @@ export interface Simulation {
   protected: number;
   abstained: number;
   reclaimable_bytes: number;
+  /** How many of the condemned have no size, left out of the total above. Hidden at zero. */
+  unknown_size_items: number;
   newly_condemned: number;
   no_longer_condemned: number;
   histogram: number[];
@@ -445,6 +460,9 @@ export interface Run {
   item_count: number;
   total_bytes: number;
   confirmation_phrase: string;
+  /** How many condemned items this plan left out because nothing would report their
+   *  size. The plan is smaller than the queue implied, and this is what says so. */
+  held_back_unknown_size: number;
   approved_manifest_hash: string;
   approved_by: string;
   approved_at: string;
@@ -498,7 +516,8 @@ export interface GraceItem {
   /** The snapshot row behind this countdown, so its reasoning can be opened from here. */
   candidate_id: number;
   title: string;
-  size_bytes: number;
+  /** Null when nothing would report a size. The countdown still runs. */
+  size_bytes: number | null;
   grace_ends_at: string;
   days_remaining: number;
   in_grace: boolean;
@@ -510,6 +529,9 @@ export interface GraceReport {
   ready_count: number;
   total_bytes_in_grace: number;
   total_bytes_ready: number;
+  /** How many in each list have no size, and so sit outside the totals above. */
+  unknown_size_in_grace: number;
+  unknown_size_ready: number;
   in_grace: GraceItem[];
   ready: GraceItem[];
 }
@@ -859,6 +881,7 @@ export const api = {
       items,
       total: Number(response.headers.get("X-Total-Count") ?? items.length),
       totalBytes: Number(response.headers.get("X-Total-Bytes") ?? 0),
+      unknownSize: Number(response.headers.get("X-Unknown-Size-Count") ?? 0),
       offset,
     };
   },

@@ -34,6 +34,7 @@ const run = {
   state: "planned",
   item_count: 2,
   total_bytes: 1024 ** 3,
+  held_back_unknown_size: 0,
   confirmation_phrase: "REAP 2 ITEMS 1 GB",
   approved_manifest_hash: "m",
   approved_by: "owner",
@@ -52,6 +53,7 @@ const snapshot: Snapshot = {
   condemned: 2,
   protected: 3,
   abstained: 5,
+  unknown_size_items: 0,
   reclaimable_bytes: 0,
 };
 
@@ -81,6 +83,8 @@ describe("ReapPlan staleness", () => {
       ready_count: 0,
       total_bytes_in_grace: 0,
       total_bytes_ready: 0,
+      unknown_size_in_grace: 0,
+      unknown_size_ready: 0,
       in_grace: [],
       ready: [],
     });

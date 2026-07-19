@@ -44,6 +44,7 @@ function season(
     group_title: "Example Show",
     group_condemned_count: null,
     group_condemned_bytes: null,
+    group_unknown_size: null,
     video_resolution: null,
     dormant_for: null,
     reason: null,
@@ -77,7 +78,8 @@ function renderQueue(
   apiMock.candidates.mockResolvedValue({
     items,
     total: items.length,
-    totalBytes: items.reduce((sum, i) => sum + i.size_bytes, 0),
+    totalBytes: items.reduce((sum, i) => sum + (i.size_bytes ?? 0), 0),
+    unknownSize: items.reduce((n, i) => n + (i.size_bytes === null ? 1 : 0), 0),
     offset: 0,
   });
   const queryClient = new QueryClient({
@@ -171,6 +173,7 @@ describe("the all-seasons list", () => {
       poster_url: null,
       summary: null,
       size_bytes: 3 * 1024 ** 3,
+      unknown_size_seasons: 0,
       reason: null,
       chip: limboSeason.chip,
       links: {} as Group["links"],
@@ -200,10 +203,9 @@ describe("the all-seasons list", () => {
   });
 
   it("says a season's size is unknown rather than showing it as empty", async () => {
-    // A season only becomes a candidate if it holds files, so a stored 0 means Sonarr
-    // declined to report a size. "0 B" here would be a false statement sitting beside
-    // Spare and Reap.
-    const unsized = { ...season(2, 2, "condemn", 88, null), size_bytes: 0 };
+    // The server sends null when Sonarr would not report a size. "0 B" here would be a
+    // false statement sitting beside Spare and Reap.
+    const unsized = { ...season(2, 2, "condemn", 88, null), size_bytes: null };
     apiMock.group.mockResolvedValue({
       group_key: "sonarr:5:42",
       title: "Example Show",

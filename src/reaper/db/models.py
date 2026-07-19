@@ -378,18 +378,20 @@ class Candidate(Base):
 
     title: Mapped[str] = mapped_column(String(500))
     media_type: Mapped[str] = mapped_column(String(10))
-    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
-    """What deleting this item would free, in bytes. Still NOT NULL, and still fabricates
-    a ``0`` when nothing reports a size: see the comments at the two persist sites in
-    ``services.snapshot`` and ``services.season_scan``. What keeps that fabricated zero
-    out of a delete is ``executor.size_confirmed``, which refuses to send an item whose
-    size was never confirmed.
+    size_bytes: Mapped[int | None] = mapped_column(Integer, default=None)
+    """What deleting this item would free, in bytes. NULL means Reaper could not measure
+    it, which is NOT zero: no file worth deleting is genuinely empty.
 
-    ``size_source`` below is already honest about which of those zeros is real, so the
-    scan's ``scan.size_source_tally`` can count the misses before anything depends on
-    them. Making this column nullable is the next step, and it lands with the consumers
-    that must handle a NULL, not before them: widening the type is what proves the set of
-    consumers is complete."""
+    Nullable rather than a sentinel, because a sentinel is the same bug with a nicer
+    number -- every sum accepts it and quietly produces a wrong total, whereas a NULL
+    makes an unsafe call site raise. The same call the repo already made for
+    ``watch_event.watched_status``.
+
+    ``size_source`` below says which measurement this is, and is NULL exactly when this
+    is. Nothing writes a NULL yet: the two persist sites in ``services.snapshot`` and
+    ``services.season_scan`` still fabricate a ``0``, and ``executor.size_confirmed`` is
+    what keeps that zero out of a delete meanwhile. The column is widened first so every
+    consumer is proven to handle an unknown before one can be written."""
 
     size_source: Mapped[str | None] = mapped_column(String(16), default=None)
     """Which measurement ``size_bytes`` holds, as a ``SizeSource`` value. NULL means no
@@ -646,6 +648,13 @@ class ReapRun(Base):
     aborted_reason: Mapped[str | None] = mapped_column(Text, default=None)
     """Why the run stopped early. A cap is an ABORT, never a truncation: truncating makes
     what gets deleted depend on sort order, so Reaper stops the whole run instead."""
+
+    held_back_unknown_size: Mapped[int] = mapped_column(Integer, default=0)
+    """How many condemned items this plan left out because nothing would report their
+    size. Stored on the run rather than recomputed, so a finished run can still say what
+    it did not do: a plan smaller than the review queue implied has to be explainable
+    after the fact, not only before it. Zero for a healthy library, and every surface
+    suppresses it at zero."""
 
     steps: Mapped[list[ActionStep]] = relationship(
         back_populates="run", cascade="all, delete-orphan", order_by="ActionStep.id"

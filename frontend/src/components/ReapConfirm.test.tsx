@@ -28,6 +28,7 @@ const run = {
   state: "planned",
   item_count: 1,
   total_bytes: 1024 ** 3,
+  held_back_unknown_size: 0,
   confirmation_phrase: "REAP 1 ITEMS 1 GB",
   approved_manifest_hash: "m",
   approved_by: "admin",

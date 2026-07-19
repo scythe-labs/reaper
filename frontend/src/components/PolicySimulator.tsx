@@ -9,7 +9,7 @@
 // is the most important behaviour on the page.
 
 import type { ProfileSettings, Simulation } from "../api";
-import { bytes, count } from "../format";
+import { bytes, count, totalBytes } from "../format";
 import { GATE_META, titleCase } from "./policyMeta";
 
 /** The histogram, with the threshold drawn across it.
@@ -122,7 +122,9 @@ export function Outcome({
           <span className="sim-unit">items would be removed</span>
         </div>
         <div>
-          <span className="sim-number">{bytes(simulation.reclaimable_bytes)}</span>
+          <span className="sim-number">
+            {totalBytes(simulation.reclaimable_bytes, simulation.unknown_size_items)}
+          </span>
           <span className="sim-unit">reclaimed</span>
         </div>
       </div>

@@ -108,11 +108,38 @@ def manifest_hash(candidates: Sequence[Candidate]) -> str:
     recompute.
 
     Over the media_key and size of each item, sorted so the order candidates arrive in
-    cannot change the hash. Integers only, like every other hash in Reaper.
+    cannot change the hash. An item Reaper could not measure encodes as JSON ``null``,
+    which is distinct from ``0``: a size later measured therefore voids the approval, as
+    it should, because the set the owner approved is not the set they would approve now.
+    Sorted explicitly on the media_key, which is unique per snapshot, so a ``None`` size
+    is never compared against an ``int``.
+
+    This hashes the WHOLE condemned set, held-back items included. It binds the frozen
+    set's integrity, not the plan.
     """
-    payload = sorted((c.media_key, int(c.size_bytes)) for c in candidates)
+    payload = sorted(((c.media_key, c.size_bytes) for c in candidates), key=lambda p: p[0])
     canonical = json.dumps(payload, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+
+def measured_bytes(candidates: Sequence[Candidate]) -> int:
+    """Total bytes over a set that must already be fully measured.
+
+    Raises rather than coercing. This is only ever called on the plannable set, which
+    ``build_plan`` has already stripped of unmeasured items and which
+    ``api.runs._planned_candidates`` re-derives with the same filter before recomputing
+    the phrase. A NULL arriving here means one of those two filters regressed, and the
+    safe answer to "the number in front of the owner may be wrong" is to refuse, never to
+    substitute a zero. A zero under-states, an under-stated total under-states a byte cap,
+    and a cap that does not fire deletes more than the owner allowed.
+    """
+    unmeasured = sorted(c.media_key for c in candidates if c.size_bytes is None)
+    if unmeasured:
+        raise PlanError(
+            "Reaper couldn't measure the size of these items, so it can't total them: "
+            f"{unmeasured}."
+        )
+    return sum(c.size_bytes for c in candidates if c.size_bytes is not None)
 
 
 def confirmation_phrase(candidates: Sequence[Candidate]) -> str:
@@ -120,9 +147,13 @@ def confirmation_phrase(candidates: Sequence[Candidate]) -> str:
 
     Not a static "DELETE": a phrase carrying the count and the size, so muscle memory
     cannot carry someone through it and a stale plan reads as obviously different.
+
+    The GB figure is exact, and it is exact *because* items Reaper could not measure were
+    held back before the plan was built. Do not add an unknown count to this phrase: it is
+    recomputed byte-for-byte at execute time (``api.runs.execute_run``) and compared to
+    what the owner typed, so any change of shape here 409s every execute.
     """
-    total = sum(int(c.size_bytes) for c in candidates)
-    gib = total / 1024**3
+    gib = measured_bytes(candidates) / 1024**3
     return f"REAP {len(candidates)} ITEMS {gib:.0f} GB"
 
 
@@ -229,6 +260,19 @@ def _season_steps(
     return [unmonitor, verify, delete]
 
 
+def _plannable_size(candidate: Candidate) -> int:
+    """The smallest-first sort key, for the measured set only.
+
+    Never called on an unmeasured item: ``build_plan`` partitions those out first. It
+    raises rather than substituting a number if that ever stops being true, because a
+    stand-in zero would sort an unmeasured item to the front and make it the canary,
+    which is the exact defect the partition exists to remove.
+    """
+    if candidate.size_bytes is None:
+        raise PlanError(f"{candidate.media_key} has no measured size to order by.")
+    return candidate.size_bytes
+
+
 async def build_plan(
     session: AsyncSession,
     *,
@@ -267,10 +311,13 @@ async def build_plan(
             await session.execute(
                 select(Candidate)
                 .where(Candidate.snapshot_id == snapshot_id, Candidate.verdict == "condemn")
-                # Smallest first: this makes ordinal 0 -- the canary -- the least costly
-                # possible mistake, and orders the rest so an aborting cap stops at the
-                # cheapest frontier rather than a random one.
-                .order_by(Candidate.size_bytes.asc())
+                # By key, not by size. This set feeds only ``manifest_hash`` (which sorts
+                # internally) and a membership set, so the order here decides nothing --
+                # and a size sort on a nullable column is an active trap, because SQLite
+                # puts NULL FIRST on ASC. That would seat an unmeasured item at the front
+                # of the very list the canary used to be drawn from. The ordering that
+                # does matter is below, on the plannable set.
+                .order_by(Candidate.media_key)
             )
         )
         .scalars()
@@ -282,11 +329,32 @@ async def build_plan(
     # to keep), and a hand reap adds one -- when decide_verdict honours it past the
     # cautious protections (services.condemned). A decision on a whole show covers each of
     # its seasons. The executor re-derives this same set per item at execute time,
-    # catching an override changed later in the grace window. Smallest first, so the
-    # canary stays the least costly possible mistake even when a hand reap joins.
+    # catching an override changed later in the grace window.
     decisions = await whitelist.overrides(session)
     effective = await effective_condemned(session, snapshot_id, decisions)
-    plannable = sorted(effective.values(), key=lambda c: int(c.size_bytes))
+
+    # An item nobody would size is not plannable. A plan must be able to say what it would
+    # free: a bound is not a measurement, and an unmeasured item cannot be counted against
+    # a byte cap at all, so planning one means acting outside the limits the owner set.
+    #
+    # Smallest first among the rest, which is what makes ordinal 0 -- the canary -- the
+    # least costly possible mistake, and orders the remainder so an aborting cap stops at
+    # the cheapest frontier rather than a random one. The canary is why the two lists are
+    # never merged and re-sorted: an unmeasured item has no size to sort by, so it could
+    # only ever be seated by accident.
+    measured = sorted(
+        (c for c in effective.values() if c.size_bytes is not None), key=_plannable_size
+    )
+    held_back = sorted(
+        (c for c in effective.values() if c.size_bytes is None), key=lambda c: c.media_key
+    )
+    plannable = measured
+    # What this plan leaves out for want of a size. For a whole-set plan that is every
+    # held-back item; for "reap just these" it is only the ones a requested show quietly
+    # dropped from its expansion, since anything named directly is refused out loud below.
+    # The owner is told this count on the plan and confirm screens: a plan smaller than the
+    # queue implied, with no explanation, is its own kind of dishonesty.
+    omitted = held_back
 
     if only_media_keys is not None:
         # "Reap just these." Every requested key must be a condemned, non-spared item in
@@ -303,7 +371,13 @@ async def build_plan(
             raise PlanError("No items were selected to reap.")
 
         condemned_keys = {c.media_key for c in all_condemned}
-        plannable_keys = set(effective)
+        # Two sets, and the difference decides which refusal the owner reads. ``actable``
+        # is everything the overrides left reapable; the held-back keys are the subset of
+        # it with no size. A held-back key is actable, so checking only the narrower
+        # plannable set would report it as spared and send the owner to remove a spare
+        # that does not exist.
+        actable_keys = set(effective)
+        held_back_keys = {c.media_key for c in held_back}
 
         # A TV show is selectable in the review queue only at the show level, so a "reap
         # just these" request can carry a show's group_key (three-part
@@ -316,33 +390,50 @@ async def build_plan(
         # rather than turning a show-level reap into a loud "these are spared" refusal for a
         # season the owner never named directly. An explicitly-named key is carried through
         # unchanged, so naming a spared or unknown key still fails loudly below. Members
-        # come from the effective set, so a hand-reaped season rides its show's bulk reap.
+        # come from the PLANNABLE set, so a hand-reaped season rides its show's bulk reap
+        # and a held-back one is quietly left out -- exactly as a spared season is. Drawing
+        # them from the wider effective set instead would pull a held-back season into the
+        # expansion and then trip the refusal below on it, making "Reap now" fail outright
+        # on any show with one unmeasured season, over an item the owner never named.
         members_by_group: dict[str, set[str]] = {}
-        for c in effective.values():
+        for c in plannable:
             if c.group_key is not None:
                 members_by_group.setdefault(c.group_key, set()).add(c.media_key)
         expanded: set[str] = set()
         for key in requested:
             members = members_by_group.get(key)
-            if members is not None and key not in condemned_keys and key not in plannable_keys:
+            if members is not None and key not in condemned_keys and key not in actable_keys:
                 expanded |= members
             else:
                 expanded.add(key)
         requested = expanded
 
-        unknown = requested - (condemned_keys | plannable_keys)
+        unknown = requested - (condemned_keys | actable_keys)
         if unknown:
             raise PlanError(
                 "These items are not condemned in this snapshot, so they cannot be reaped: "
                 f"{sorted(unknown)}."
             )
-        spared = requested - plannable_keys
+        # Named directly, so it is refused out loud rather than dropped. A key the owner
+        # typed must never vanish from a plan in silence, even when the reason is safety.
+        named_held_back = requested & held_back_keys
+        if named_held_back:
+            raise PlanError(
+                "Reaper couldn't measure the size of these items, so it won't reap them: "
+                f"{sorted(named_held_back)}. Check them in Sonarr or Radarr, then run a "
+                "new scan."
+            )
+        spared = requested - actable_keys
         if spared:
             raise PlanError(
                 f"These items are spared, so they will not be reaped: {sorted(spared)}. "
                 "Remove the spare first if you really mean to delete them."
             )
         plannable = [c for c in plannable if c.media_key in requested]
+        # Only what a requested show dropped from its own expansion. A held-back item the
+        # owner never pointed at is not this plan's business to report.
+        named = set(only_media_keys)
+        omitted = [c for c in held_back if c.group_key is not None and c.group_key in named]
 
     if not plannable:
         raise PlanError("Nothing is condemned in this snapshot; there is no plan to build.")
@@ -365,6 +456,7 @@ async def build_plan(
         approved_manifest_hash=manifest_hash(all_condemned),
         approved_by=approved_by,
         approved_at=now,
+        held_back_unknown_size=len(omitted),
     )
     session.add(run)
     await session.flush()  # assigns run.id

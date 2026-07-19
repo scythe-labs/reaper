@@ -108,6 +108,7 @@ from reaper.db.models import (
     Candidate,
     ReapRun,
     RunState,
+    SizeSource,
     StepState,
 )
 from reaper.engine.policy import ProfileSettings
@@ -186,11 +187,10 @@ _NO_APPROVED_SIZE_CHECK = "No size was recorded for it at scan time. Kept."
 def size_confirmed(candidate: Candidate) -> bool:
     """Did the scan actually get a size for this item?
 
-    ``Candidate.size_bytes`` is a non-null column, so an *arr that reported a file it
-    holds without a size lands as 0. Zero is an unambiguous "never confirmed" marker
-    here: a file worth deleting is never genuinely 0 bytes, and ``_payload_size`` already
-    reads a live 0 the same way. (Making the column nullable is the cleaner fix and is
-    deferred; it touches every candidate writer and reader.)
+    ``Candidate.size_bytes`` is NULL when nothing would report one, which is the whole
+    answer. A stored ``0`` used to mean the same thing, and reading it that way worked
+    only for as long as every call site remembered to ask; a NULL makes the sites that
+    forget raise instead of quietly summing.
 
     An unconfirmed size cannot be caught downstream by the growth check --
     ``_grew_materially(0, live)`` reduces to ``live > _SIZE_DRIFT_FLOOR`` -- so it is
@@ -198,8 +198,12 @@ def size_confirmed(candidate: Candidate) -> bool:
     the caps and out of the byte total behind the confirmation phrase (the same filter
     runs in ``api.runs._planned_candidates``, so both numbers describe one set), and
     ``_send_movie`` / ``_send_season`` skip it per item before anything is sent.
+
+    The planner holds these items back before a plan exists at all
+    (``planner.build_plan``). This is the independent second layer, and it deliberately
+    does not trust that one: the host-side checks must hold even if the plan is wrong.
     """
-    return int(candidate.size_bytes or 0) > 0
+    return candidate.size_bytes is not None
 
 
 def _season_number(obj: dict[str, Any]) -> int:
@@ -440,6 +444,57 @@ def _deletable(deletes: Sequence[_Delete], effective_keys: set[str]) -> list[_De
     ]
 
 
+#: Which stored measurements the movie send path may compare against its live re-read.
+#: It reads Radarr's ``sizeOnDisk``, the movie FOLDER, so only a folder measurement is
+#: like-for-like. A file-only bound (``RADARR_FILE``, ``PLEX``) measures something
+#: smaller and must never be planned in the first place; if one arrives here anyway, it
+#: is kept rather than compared against a different quantity.
+_MOVIE_COMPARABLE = frozenset({SizeSource.RADARR})
+
+#: And for seasons, which delete file by file and re-read the summed episode files.
+#: ``SONARR_FILES`` is that same quantity. ``SONARR`` is the season FOLDER and is a known
+#: mismatch: the folder side is the larger number, so the comparison reads as a shrink and
+#: the growth interlock has been desensitised since it was written. It stays admissible
+#: because it is the only season measurement Reaper takes today, and removing it would
+#: keep every season. Preferring ``SONARR_FILES`` at scan time is what actually repairs
+#: the interlock, and is deliberately a separate change.
+_SEASON_COMPARABLE = frozenset({SizeSource.SONARR_FILES, SizeSource.SONARR})
+
+
+def _measures(candidate: Candidate, comparable: frozenset[SizeSource]) -> bool:
+    """Does the frozen size measure the same thing the live re-read will?
+
+    An exhaustive allow-list with a fail-closed default: a source this build does not
+    recognise, or none at all, answers False and the item is kept. The alternative is an
+    unwritten ``else`` branch that either skips every such item or, worse, compares a
+    folder against a sum of files and calls the difference growth.
+    """
+    return candidate.size_source in comparable
+
+
+def _deletable_bytes(deletable: Sequence[_Delete]) -> int:
+    """Total bytes over the exact set a run will act on.
+
+    Asserts rather than coercing. ``_deletable`` has already dropped every item whose size
+    was never confirmed, so an unknown reaching here means that filter regressed. Aborting
+    is the only safe answer: a stand-in zero under-states the total, an under-stated total
+    under-states a byte cap, and a cap that does not fire deletes more than the owner
+    allowed. Note the direction: rounding toward keeping is right on the scoring lane and
+    exactly backwards here.
+
+    This should never fire, and must not be deleted as unreachable. It is the only thing
+    standing between a future regression in the planner's filter and a cap that silently
+    stops working.
+    """
+    unknown = sorted(d.candidate.media_key for d in deletable if d.candidate.size_bytes is None)
+    if unknown:
+        raise ExecutionError(
+            "Reaper couldn't measure the size of these items, so it can't check the run "
+            f"against your limits: {unknown}. The run is aborted."
+        )
+    return sum(d.candidate.size_bytes for d in deletable if d.candidate.size_bytes is not None)
+
+
 def _check_caps(
     deletes: Sequence[_Delete], settings: ProfileSettings, effective_keys: set[str]
 ) -> None:
@@ -449,7 +504,7 @@ def _check_caps(
     aborts rather than truncates."""
     deletable = _deletable(deletes, effective_keys)
     items = len(deletable)
-    total_bytes = sum(int(d.candidate.size_bytes) for d in deletable)
+    total_bytes = _deletable_bytes(deletable)
 
     if items > settings.max_items_per_run:
         raise ExecutionError(
@@ -735,7 +790,7 @@ class Executor:
         """
         deletable = _deletable(deletes, self._effective_keys)
         items = len(deletable)
-        total_bytes = sum(int(d.candidate.size_bytes) for d in deletable)
+        total_bytes = _deletable_bytes(deletable)
         past_items, past_bytes = await self._rolling_30d_deletions()
 
         if past_items + items > self._settings.max_items_per_30d:
@@ -761,6 +816,11 @@ class Executor:
         joined back to their frozen candidate rows for sizes, whatever state their run
         ended in: a crashed or aborted run's verified deletions are still deletions, and
         leaving them out would let repeated aborts spend past the budget.
+
+        An unknown size cannot occur here, because nothing unmeasured is ever sent. If one
+        does, the cap is unenforceable and the run aborts. It must not skip the row: a
+        silently skipped past deletion makes the trailing window read light, which spends
+        past the budget in exactly the way this function exists to prevent.
         """
         cutoff = utcnow() - timedelta(days=30)
         sizes = (
@@ -784,7 +844,13 @@ class Executor:
             .scalars()
             .all()
         )
-        return len(sizes), sum(int(size) for size in sizes)
+        if any(size is None for size in sizes):
+            raise ExecutionError(
+                "Reaper couldn't measure some of what it deleted in the last 30 days, so "
+                "it can't tell whether this run fits your monthly limits. The run is "
+                "aborted."
+            )
+        return len(sizes), sum(size for size in sizes if size is not None)
 
     async def _run_deletes(
         self, deletes: Sequence[_Delete], report: RunReport, approved_at: datetime
@@ -825,7 +891,12 @@ class Executor:
 
             if outcome.state == StepState.VERIFIED:
                 report.deleted_items += 1
-                report.deleted_bytes += int(delete.candidate.size_bytes)
+                # Only a measured item can reach a delete: both send paths refuse an
+                # unconfirmed size before anything goes out. The check is for the type
+                # checker, and the reclaim figure stays exact because of the refusal
+                # upstream rather than any arithmetic here.
+                if (freed := delete.candidate.size_bytes) is not None:
+                    report.deleted_bytes += freed
             elif outcome.state == StepState.FAILED and first_real_attempt:
                 # The canary -- the first real deletion -- misbehaved. Halt the whole run:
                 # a plan whose first, smallest, safest delete does not behave as predicted
@@ -1121,10 +1192,12 @@ class Executor:
 
         # Fail CLOSED on an approved size that was never confirmed, BEFORE the growth
         # check below: the growth check compares against the approved number and cannot
-        # police it (``_grew_materially(0, live)`` is just ``live > 256 MiB``). See
-        # ``size_confirmed`` for why 0 means "never reported".
+        # police it (``_grew_materially(0, live)`` is just ``live > 256 MiB``). This is
+        # the same question ``size_confirmed`` asks, written inline so the size is
+        # narrowed for the rest of the function.
         candidate = delete.candidate
-        if not size_confirmed(candidate):
+        approved_size = candidate.size_bytes
+        if approved_size is None or not _measures(candidate, _MOVIE_COMPARABLE):
             return self._mark_skipped(
                 delete, _NO_APPROVED_SIZE_REASON, check=_NO_APPROVED_SIZE_CHECK
             )
@@ -1145,11 +1218,11 @@ class Executor:
                 "confirm it is still the file that was approved. Kept.",
                 check="Couldn't confirm its current size. Kept.",
             )
-        if _grew_materially(int(candidate.size_bytes), live_size):
+        if _grew_materially(approved_size, live_size):
             return self._mark_skipped(
                 delete,
                 f"the file is bigger now ({_gb(live_size)}) than when it was approved "
-                f"({_gb(int(candidate.size_bytes))}), so it was likely upgraded since the "
+                f"({_gb(approved_size)}), so it was likely upgraded since the "
                 "scan. Kept. Run a new scan to review it at its current size.",
                 check="It grew since you approved it. Kept.",
             )
@@ -1272,9 +1345,10 @@ class Executor:
         # The approved side first, and fail CLOSED on it. The live-side refusal below
         # only fires when Sonarr cannot report a size NOW; it says nothing about the
         # frozen number, and the growth check cannot police that either
-        # (``_grew_materially(0, live)`` is just ``live > 256 MiB``). See
-        # ``size_confirmed`` for why 0 means "never reported".
-        if not size_confirmed(candidate):
+        # (``_grew_materially(0, live)`` is just ``live > 256 MiB``). Same question as
+        # ``size_confirmed``, written inline so the size is narrowed below.
+        approved_size = candidate.size_bytes
+        if approved_size is None or not _measures(candidate, _SEASON_COMPARABLE):
             return self._mark_skipped(
                 delete, _NO_APPROVED_SIZE_REASON, check=_NO_APPROVED_SIZE_CHECK
             )
@@ -1296,11 +1370,11 @@ class Executor:
                 check="Couldn't confirm its current size. Kept.",
             )
         live_total = sum(size for size in live_sizes if size is not None)
-        if _grew_materially(int(candidate.size_bytes), live_total):
+        if _grew_materially(approved_size, live_total):
             return self._mark_skipped(
                 delete,
                 f"this season is bigger now ({_gb(live_total)}) than when it was approved "
-                f"({_gb(int(candidate.size_bytes))}), so its files likely changed since "
+                f"({_gb(approved_size)}), so its files likely changed since "
                 "the scan. Kept. Run a new scan to review it at its current size.",
                 check="It grew since you approved it. Kept.",
             )

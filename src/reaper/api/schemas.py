@@ -170,9 +170,10 @@ class GroupSeasonMarkOut(BaseModel):
     """For a ``"reap"`` override: whether the engine honours it (True paints the square
     solid red), or refuses it for a safety stop or an unchecked protection (False keeps
     the square in its scan color). None when there is no reap override."""
-    size_bytes: int = 0
+    size_bytes: int | None = None
     """The season's size on disk, so the card can state whole-show totals without a
-    second fetch."""
+    second fetch. None when nothing would report one, which is not zero: the strip still
+    shows the square, and the show's totals leave it out and say so."""
 
 
 class CandidateOut(BaseModel):
@@ -180,7 +181,11 @@ class CandidateOut(BaseModel):
     media_key: str
     title: str
     media_type: str
-    size_bytes: int
+    size_bytes: int | None
+    """What deleting this would free. None when Reaper could not measure it, which is
+    never zero: the UI says "Size unknown" rather than showing an empty item, and the
+    item is held back from any plan."""
+
     verdict: str
     score: int
     coverage_bp: int
@@ -201,6 +206,10 @@ class CandidateOut(BaseModel):
     group_condemned_bytes: int | None = None
     """The byte total over that same set. The show card must show the number the planner
     will act on, never a partial page sum."""
+    group_unknown_size: int | None = None
+    """How many of the show's actable seasons have no size. They are excluded from both
+    numbers above, because the planner will not plan them, so the card can say what it is
+    leaving out rather than appearing to shrink. None for movies, and hidden at zero."""
     video_resolution: str | None = None
     """Canonical file resolution ("2160", "1080", ..., "sd") for the card's quality
     badge. None hides the badge (TV seasons, unmatched items, pre-rescan rows)."""
@@ -261,7 +270,14 @@ class GroupOut(BaseModel):
     poster_url: str | None = None
     summary: str | None = None
     size_bytes: int
-    """Total on disk across every season row in the snapshot."""
+    """Total on disk across every season row in the snapshot. Stays a definite ``int``
+    rather than going nullable: two signals for one fact would force every reader to
+    handle a null AND a count. It sums the seasons that have a size, and
+    ``unknown_size_seasons`` says how many it could not."""
+
+    unknown_size_seasons: int = 0
+    """How many season rows have no size, and are therefore left out of the total above.
+    Hidden at zero."""
     reason: str | None = None
     chip: ChipOut | None = None
     """The show-level status line and chip: those of its highest-scoring season, the
@@ -294,6 +310,11 @@ class SnapshotOut(BaseModel):
     protected: int = 0
     abstained: int = 0
     reclaimable_bytes: int = 0
+    unknown_size_items: int = 0
+    """How many condemned items have no size. ``reclaimable_bytes`` is the total of what
+    IS known, and this is carried beside it rather than folded in as zeros: a sum with an
+    unmeasured item in it is quietly low, whereas a total plus a count is honest. Hidden
+    at zero, so a healthy library shows nothing new."""
 
 
 class ProfileSettingsIO(BaseModel):
@@ -343,6 +364,11 @@ class RunOut(BaseModel):
     confirmation_phrase: str
     """The content-bound typed confirmation, e.g. "REAP 7 ITEMS 214 GB". Derived from the
     exact set this run would delete, so a stale plan reads as obviously different."""
+
+    held_back_unknown_size: int = 0
+    """How many condemned items this plan left out because nothing would report their
+    size. Zero for a healthy library, and every surface hides it at zero, so an operator
+    whose sources all answer never sees a new number anywhere."""
 
     approved_manifest_hash: str
     approved_by: str
@@ -547,6 +573,9 @@ class SimulationOut(BaseModel):
     protected: int
     abstained: int
     reclaimable_bytes: int
+    unknown_size_items: int = 0
+    """How many of the condemned have no size, and so are left out of the total above
+    rather than folded in as zeros. Hidden at zero."""
 
     newly_condemned: int
     """Items this policy would condemn that the current one does not. The number the
@@ -623,7 +652,10 @@ class GraceItemOut(BaseModel):
     candidate_id: int
     """The snapshot row behind this countdown, so its reasoning can be opened from here."""
     title: str
-    size_bytes: int
+    size_bytes: int | None
+    """None when nothing would report a size. The countdown still runs and the item still
+    appears; it just cannot be totalled, and it will not be reaped."""
+
     grace_ends_at: str
     days_remaining: int
     in_grace: bool
@@ -635,6 +667,11 @@ class GraceReportOut(BaseModel):
     ready_count: int
     total_bytes_in_grace: int
     total_bytes_ready: int
+    unknown_size_in_grace: int = 0
+    """How many in each list have no size, and so sit outside the totals above rather
+    than inside them as zeros. Hidden at zero."""
+
+    unknown_size_ready: int = 0
     in_grace: list[GraceItemOut]
     ready: list[GraceItemOut]
 

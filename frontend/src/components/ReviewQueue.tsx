@@ -38,7 +38,7 @@ import {
   type SortOrder,
   type Verdict,
 } from "../api";
-import { bytes, count, itemBytes } from "../format";
+import { bytes, count, itemBytes, totalBytes } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { ReapConfirm } from "./ReapConfirm";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
@@ -1011,8 +1011,13 @@ function ShowCard({
   // rollup the server does for the show panel.
   const showStatus = group.items.find((s) => s.show_status)?.show_status ?? null;
   const totalSeasons = marks?.length ?? group.items.length;
-  const wholeShowBytes = marks?.reduce((sum, m) => sum + m.size_bytes, 0) ?? null;
-  const fetchedSize = group.items.reduce((sum, s) => sum + s.size_bytes, 0);
+  // Sums over what is known, with the unmeasured counted separately. A `?? 0` in either
+  // reduce would restore exactly the silent under-count this replaced: the total would
+  // read low and nothing would say why.
+  const wholeShowBytes = marks?.reduce((sum, m) => sum + (m.size_bytes ?? 0), 0) ?? null;
+  const wholeShowUnknown = marks?.reduce((n, m) => n + (m.size_bytes === null ? 1 : 0), 0) ?? 0;
+  const fetchedSize = group.items.reduce((sum, s) => sum + (s.size_bytes ?? 0), 0);
+  const fetchedUnknown = group.items.reduce((n, s) => n + (s.size_bytes === null ? 1 : 0), 0);
   // On the "Condemned" tab the byte figure must state what "Reap now" will actually
   // plan: the server's whole-snapshot totals (every condemned season minus hand-spares),
   // never a sum over the fetched pages, which on a long sorted list can hold only some
@@ -1020,6 +1025,7 @@ function ShowCard({
   const isReapTab = isCondemned(first);
   const condemnedCount = first.group_condemned_count ?? group.items.length;
   const condemnedBytes = first.group_condemned_bytes ?? fetchedSize;
+  const condemnedUnknown = first.group_unknown_size ?? fetchedUnknown;
   // What the whole show agrees on. A show-level override makes every season inherit it, so
   // this is the show's decision in the common case; a per-season override reads as mixed.
   const showOverride = groupOverride(group.items);
@@ -1068,8 +1074,8 @@ function ShowCard({
             <SeasonExpander count={totalSeasons} open={open} onToggle={() => setOpen((v) => !v)} />
             <span>
               {isReapTab
-                ? `${condemnedCount} of ${totalSeasons} would be removed · ${bytes(condemnedBytes)}`
-                : bytes(wholeShowBytes ?? fetchedSize)}
+                ? `${condemnedCount} of ${totalSeasons} would be removed · ${totalBytes(condemnedBytes, condemnedUnknown)}`
+                : totalBytes(wholeShowBytes ?? fetchedSize, wholeShowBytes === null ? fetchedUnknown : wholeShowUnknown)}
             </span>
             {/* Ended, or a status we couldn't read. A show that is still going wears
                 nothing here: the quiet row is the common case. */}

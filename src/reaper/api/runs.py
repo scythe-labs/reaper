@@ -42,7 +42,7 @@ from reaper.engine.policy import ProfileSettings
 from reaper.services import app_settings, whitelist
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import ExecutionError, Executor, RunReport, size_confirmed
-from reaper.services.planner import PlanError, build_plan, confirmation_phrase
+from reaper.services.planner import PlanError, build_plan, confirmation_phrase, measured_bytes
 from reaper.services.profiles import active_profile_settings, save_profile_settings
 from reaper.services.scan_runner import build_reap_gateway
 
@@ -116,8 +116,12 @@ async def _run_out(session: AsyncSession, run: ReapRun) -> RunOut:
         policy_hash=run.policy_hash,
         state=run.state.value,
         item_count=len(planned),
-        total_bytes=sum(int(c.size_bytes) for c in planned),
+        # The same set the phrase is derived from, and fully measured by construction:
+        # `_planned_candidates` drops anything whose size was never confirmed, so the
+        # total beside the button describes exactly what the run will act on.
+        total_bytes=measured_bytes(planned),
         confirmation_phrase=confirmation_phrase(planned) if planned else "REAP 0 ITEMS 0 GB",
+        held_back_unknown_size=run.held_back_unknown_size,
         approved_manifest_hash=run.approved_manifest_hash,
         approved_by=run.approved_by,
         approved_at=run.approved_at.isoformat(),

@@ -45,6 +45,8 @@ async def get_grace(request: Request) -> GraceReportOut:
         ready_count=len(report.ready),
         total_bytes_in_grace=report.total_bytes_in_grace,
         total_bytes_ready=report.total_bytes_ready,
+        unknown_size_in_grace=report.unknown_size_in_grace,
+        unknown_size_ready=report.unknown_size_ready,
         in_grace=[_item_out(i) for i in report.in_grace[:100]],
         ready=[_item_out(i) for i in report.ready[:100]],
     )

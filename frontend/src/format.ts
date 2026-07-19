@@ -19,17 +19,24 @@ export function bytes(value: number): string {
 
 /** One item's size on disk, for the surfaces the operator scans while deciding.
  *
- *  A candidate always holds files: the movie scan skips anything without one
- *  (`services.snapshot`, `hasFile`) and the season scan skips anything without one
- *  (`services.season_scan`, `SeasonStats.has_content`). So a stored `0` on a single
- *  item is never an empty item -- it is a size Sonarr or Radarr declined to report,
- *  carried as `0` in the display column while the scoring lane reads the honest
- *  Observation. Rendering it as "0 B" puts a false statement beside a delete control.
+ *  `null` means nothing would report a size, and the server says so directly now rather
+ *  than sending a `0` for the client to guess about. A real `0` therefore renders as
+ *  "0 B" again, honestly.
  *
- *  Totals stay on `bytes`: a sum can be genuinely zero, and one unreadable item in a
- *  sum makes the total low, not unknown. */
-export function itemBytes(value: number): string {
-  return value > 0 ? bytes(value) : "Size unknown";
+ *  Totals use `totalBytes` below, which carries the unknown count beside the sum. */
+export function itemBytes(value: number | null): string {
+  return value === null ? "Size unknown" : bytes(value);
+}
+
+/** A total, plus how many items it could not include.
+ *
+ *  A sum with an unmeasured item in it is quietly low, and "low" is the dangerous
+ *  direction beside a delete control. So the sum covers what is known and the count
+ *  rides alongside it, suppressed entirely at zero: an operator whose sources all
+ *  answer sees exactly what they saw before. */
+export function totalBytes(known: number, unknown: number): string {
+  if (unknown === 0) return bytes(known);
+  return `${bytes(known)} · ${count(unknown)} ${unknown === 1 ? "size" : "sizes"} unknown`;
 }
 
 export function count(value: number): string {

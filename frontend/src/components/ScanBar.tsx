@@ -13,7 +13,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { api, type Snapshot } from "../api";
-import { bytes, count, date } from "../format";
+import { bytes, count, date, totalBytes } from "../format";
 
 //: Friendly names for the scan's internal phases, so the status line reads in English.
 //  Exported because the first-run wizard shows the same progress line; one table keeps
@@ -130,7 +130,7 @@ export function ScanBar({ snapshot }: { snapshot: Snapshot | undefined }) {
           <p className="muted">
             Last scan {date(snapshot.created_at)} &middot; {count(snapshot.item_count)} items
             &middot; <strong>{count(snapshot.condemned)}</strong> would be removed, freeing{" "}
-            <strong>{bytes(snapshot.reclaimable_bytes)}</strong>
+            <strong>{totalBytes(snapshot.reclaimable_bytes, snapshot.unknown_size_items)}</strong>
           </p>
         )}
 

@@ -126,13 +126,17 @@ async def _snapshot_out(session: AsyncSession, snapshot: Snapshot) -> SnapshotOu
             )
         ).all()
     }
-    reclaimable = (
+    # SUM silently skips NULL rows and COALESCE cannot tell that from a genuine zero, so
+    # the count of unmeasured rows is taken in the SAME query over the SAME conditions.
+    # Without it this number would go from honestly incomplete to silently wrong.
+    reclaimable, unknown_size = (
         await session.execute(
-            select(func.coalesce(func.sum(Candidate.size_bytes), 0)).where(
-                Candidate.snapshot_id == snapshot.id, Candidate.verdict == "condemn"
-            )
+            select(
+                func.coalesce(func.sum(Candidate.size_bytes), 0),
+                func.count().filter(Candidate.size_bytes.is_(None)),
+            ).where(Candidate.snapshot_id == snapshot.id, Candidate.verdict == "condemn")
         )
-    ).scalar_one()
+    ).one()
 
     return SnapshotOut(
         id=snapshot.id,
@@ -146,6 +150,7 @@ async def _snapshot_out(session: AsyncSession, snapshot: Snapshot) -> SnapshotOu
         protected=int(counts.get("protect", 0)),
         abstained=int(counts.get("abstain", 0)),
         reclaimable_bytes=int(reclaimable),
+        unknown_size_items=int(unknown_size),
     )
 
 
@@ -274,15 +279,21 @@ async def list_candidates(
             ]
             conditions.append(Candidate.media_key.in_(wanted))
 
+        # The byte total is a SUM, which skips NULL rows without saying so, and COALESCE
+        # cannot tell that from a real zero. So the unmeasured count is taken in the same
+        # query under the same conditions, and the header carries it beside the total.
         totals = (
             await session.execute(
-                select(func.count(), func.coalesce(func.sum(Candidate.size_bytes), 0)).where(
-                    *conditions
-                )
+                select(
+                    func.count(),
+                    func.coalesce(func.sum(Candidate.size_bytes), 0),
+                    func.count().filter(Candidate.size_bytes.is_(None)),
+                ).where(*conditions)
             )
         ).one()
         response.headers["X-Total-Count"] = str(int(totals[0]))
         response.headers["X-Total-Bytes"] = str(int(totals[1]))
+        response.headers["X-Unknown-Size-Count"] = str(int(totals[2]))
 
         direction = asc if order == "asc" else desc
         sort_columns = {
@@ -292,12 +303,19 @@ async def list_candidates(
             "title": func.lower(func.coalesce(Candidate.group_title, Candidate.title)),
         }
         primary = direction(sort_columns.get(sort, Candidate.score))
+        # Sorting BY size puts the unmeasured items last in both directions. SQLite orders
+        # NULL first on ASC, so "smallest first" would otherwise open the list with every
+        # item Reaper could not measure -- the ones it has the least to say about. Written
+        # as an explicit is-null key rather than nullslast(), which not every backend
+        # renders the same way. Only when size is the chosen key: on a title or year sort
+        # the owner asked for alphabetical or chronological, not for a size grouping.
+        sort_keys = [primary] if sort != "size" else [Candidate.size_bytes.is_(None), primary]
         # A score/size tiebreak after the chosen key keeps ordering deterministic -- so a
         # show's seasons stay adjacent and paging never splits or shuffles the list.
         stmt = (
             select(Candidate)
             .where(*conditions)
-            .order_by(primary, Candidate.score.desc(), Candidate.size_bytes.desc())
+            .order_by(*sort_keys, Candidate.score.desc(), Candidate.size_bytes.desc())
             # limit/offset are validated at the boundary (Query ge/le above), so a
             # negative limit -- which SQLite reads as "no limit" -- can never reach here.
             .limit(limit)
@@ -335,22 +353,40 @@ async def list_candidates(
         ]
 
 
+def _add_member(total: tuple[int, int, int], size_bytes: int | None) -> tuple[int, int, int]:
+    """Fold one actable season into a show's (count, bytes, unknown) rollup.
+
+    A season with no size raises the unknown count and nothing else. It is deliberately
+    NOT counted as an item, because the planner will not plan it: the count beside "Reap
+    now" has to be the number of steps the server would emit.
+    """
+    count, total_bytes, unknown = total
+    if size_bytes is None:
+        return (count, total_bytes, unknown + 1)
+    return (count + 1, total_bytes + size_bytes, unknown)
+
+
 async def _group_rollups(
     session: AsyncSession,
     snapshot_id: int,
     group_keys: set[str],
     decisions: dict[str, str],
-) -> tuple[dict[str, tuple[int, int]], dict[str, list[GroupSeasonMarkOut]]]:
+) -> tuple[dict[str, tuple[int, int, int]], dict[str, list[GroupSeasonMarkOut]]]:
     """Two per-show rollups from one sweep of each group's member rows.
 
-    **Totals** -- what "Reap now" on each show group would actually plan: (count, bytes)
-    over its ACTABLE member seasons across the WHOLE snapshot: condemned minus
-    hand-spares, plus hand-reaped seasons whose reap the engine honours
+    **Totals** -- what "Reap now" on each show group would actually plan:
+    (count, bytes, unknown) over its ACTABLE member seasons across the WHOLE snapshot:
+    condemned minus hand-spares, plus hand-reaped seasons whose reap the engine honours
     (services.condemned). The show card's numbers must match the planner's expansion --
     ``build_plan`` expands a group key over the same effective set -- so the number
     beside a destructive button is derived from the set the server will act on
     (rule 30). Never derived from the fetched page, which on a long sorted list can
     hold only some of a show's seasons (B-13).
+
+    The COUNT is filtered too, not only the bytes. A season with no size is held back by
+    the planner, so counting it here would put "Reap now (8 items)" beside a plan that
+    emits six. It is reported separately as ``unknown`` so the card can say what it is
+    leaving out instead of quietly shrinking.
 
     **Marks** -- the show card's season strip: every member's (season, verdict,
     override, and whether a hand reap actually takes) across all lanes, sorted by
@@ -360,12 +396,12 @@ async def _group_rollups(
     """
     if not group_keys:
         return {}, {}
-    totals: dict[str, tuple[int, int]] = dict.fromkeys(group_keys, (0, 0))
+    totals: dict[str, tuple[int, int, int]] = dict.fromkeys(group_keys, (0, 0, 0))
     marks: dict[str, list[GroupSeasonMarkOut]] = {key: [] for key in group_keys}
     # Hand-reaped members whose row is not scan-condemned: whether the reap takes needs
     # the frozen explanation, fetched in one targeted pass below rather than dragging
     # every member's JSON through the rollup query. media_key -> (mark, group, bytes).
-    pending: dict[str, tuple[GroupSeasonMarkOut, str, int]] = {}
+    pending: dict[str, tuple[GroupSeasonMarkOut, str, int | None]] = {}
     keys = sorted(group_keys)
     for start in range(0, len(keys), 500):
         chunk = keys[start : start + 500]
@@ -391,14 +427,13 @@ async def _group_rollups(
                 verdict=str(verdict),
                 override=override,
                 override_effective=(True if override == "reap" and verdict == "condemn" else None),
-                size_bytes=int(size_bytes),
+                size_bytes=size_bytes,
             )
             marks[group_key].append(mark)
             if override == "reap" and verdict != "condemn":
-                pending[media_key] = (mark, group_key, int(size_bytes))
+                pending[media_key] = (mark, group_key, size_bytes)
             if verdict == "condemn" and override != "spare":
-                count, total_bytes = totals[group_key]
-                totals[group_key] = (count + 1, total_bytes + int(size_bytes))
+                totals[group_key] = _add_member(totals[group_key], size_bytes)
 
     pending_keys = sorted(pending)
     for start in range(0, len(pending_keys), 500):
@@ -415,8 +450,7 @@ async def _group_rollups(
             effective = reap_override_verdict(explanation_json, score=int(score)) == "condemn"
             mark.override_effective = effective
             if effective:
-                count, total_bytes = totals[group_key]
-                totals[group_key] = (count + 1, total_bytes + size_bytes)
+                totals[group_key] = _add_member(totals[group_key], size_bytes)
 
     for members_marks in marks.values():
         members_marks.sort(
@@ -624,7 +658,7 @@ def _candidate_out(
     flagged_at: datetime | None = None,
     override: str | None = None,
     *,
-    group_condemned: tuple[int, int] | None = None,
+    group_condemned: tuple[int, int, int] | None = None,
     group_seasons: list[GroupSeasonMarkOut] | None = None,
 ) -> CandidateOut:
     return CandidateOut(
@@ -652,6 +686,7 @@ def _candidate_out(
         group_title=r.group_title,
         group_condemned_count=group_condemned[0] if group_condemned is not None else None,
         group_condemned_bytes=group_condemned[1] if group_condemned is not None else None,
+        group_unknown_size=group_condemned[2] if group_condemned is not None else None,
         video_resolution=r.video_resolution,
         dormant_for=_dormant_for(r.explanation_json),
         reason=_primary_reason(r.explanation_json, r.verdict),
@@ -860,7 +895,8 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
             year=min((c.year for c in seasons if c.year), default=None),
             poster_url=lead.poster_url,
             summary=next((r.summary for r in rows if r.summary), None),
-            size_bytes=sum(c.size_bytes for c in seasons),
+            size_bytes=sum(c.size_bytes for c in seasons if c.size_bytes is not None),
+            unknown_size_seasons=sum(1 for c in seasons if c.size_bytes is None),
             reason=lead.reason,
             chip=lead.chip,
             links=await _deep_links(session, lead_row),
@@ -1152,6 +1188,7 @@ def _replay_simulation(
     histogram = [0] * 10
     condemned = protected = abstained = 0
     reclaimable = 0
+    unknown_size = 0
     newly = gone = 0
     # (row, re-decided score) -- the NEW score, since a weight edit moves it, not the stored one.
     newly_rows: list[tuple[Candidate, int]] = []
@@ -1192,7 +1229,10 @@ def _replay_simulation(
         was_condemned = row.verdict == "condemn"
         if verdict == "condemn":
             condemned += 1
-            reclaimable += row.size_bytes
+            if row.size_bytes is None:
+                unknown_size += 1
+            else:
+                reclaimable += row.size_bytes
             if not was_condemned:
                 newly += 1
                 newly_rows.append((row, score_value))
@@ -1211,6 +1251,7 @@ def _replay_simulation(
         protected=protected,
         abstained=abstained,
         reclaimable_bytes=reclaimable,
+        unknown_size_items=unknown_size,
         newly_condemned=newly,
         no_longer_condemned=gone,
         histogram=histogram,
@@ -1320,6 +1361,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
     histogram = [0] * 10
     condemned = protected = abstained = 0
     reclaimable = 0
+    unknown_size = 0
     newly = gone = 0
     newly_rows: list[Candidate] = []
     spared_by: Counter[str] = Counter()
@@ -1341,7 +1383,10 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
                 spared_by.update(["whitelisted"])
             elif reap_is_effective(row):
                 condemned += 1
-                reclaimable += row.size_bytes
+                if row.size_bytes is None:
+                    unknown_size += 1
+                else:
+                    reclaimable += row.size_bytes
             elif row.verdict == "protect":
                 protected += 1
                 spared_by.update(_fired_gates(row.explanation_json))
@@ -1378,7 +1423,10 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
 
         if now_condemned:
             condemned += 1
-            reclaimable += row.size_bytes
+            if row.size_bytes is None:
+                unknown_size += 1
+            else:
+                reclaimable += row.size_bytes
             if not was_condemned:
                 newly += 1
                 newly_rows.append(row)
@@ -1398,6 +1446,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         protected=protected,
         abstained=abstained,
         reclaimable_bytes=reclaimable,
+        unknown_size_items=unknown_size,
         newly_condemned=newly,
         no_longer_condemned=gone,
         histogram=histogram,

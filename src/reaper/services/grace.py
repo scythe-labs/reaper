@@ -42,7 +42,10 @@ class GraceItem:
     """"movie" or "season". Carried so movie-scoped features (the Leaving Soon label,
     which lives in the movie library) can exclude non-movie items rather than write a
     season's rating key into a movie section."""
-    size_bytes: int
+    size_bytes: int | None
+    """None when nothing would report a size. Not zero: the countdown still runs, and the
+    item still shows in the list, but it cannot be totalled and it cannot be reaped."""
+
     first_flagged_at: datetime
     grace_ends_at: datetime
     days_remaining: int
@@ -61,6 +64,13 @@ class GraceReport:
     owner knows what would go, not so anything goes automatically."""
     total_bytes_in_grace: int
     total_bytes_ready: int
+    unknown_size_in_grace: int = 0
+    """How many of the above could not be measured. The totals are sums of what IS known,
+    with this count carried beside them rather than folded in as zeros. One unmeasured
+    item in a sum makes the total quietly low; a total plus a count says the same thing
+    honestly, and both surfaces hide the count at zero."""
+
+    unknown_size_ready: int = 0
 
 
 async def grace_report(
@@ -113,7 +123,7 @@ async def grace_report(
             plex_rating_key=candidate.plex_rating_key,
             title=candidate.title,
             media_type=candidate.media_type,
-            size_bytes=int(candidate.size_bytes),
+            size_bytes=candidate.size_bytes,
             first_flagged_at=started,
             grace_ends_at=ends,
             days_remaining=remaining,
@@ -122,11 +132,16 @@ async def grace_report(
         (in_grace if item.in_grace else ready).append(item)
 
     in_grace.sort(key=lambda i: i.grace_ends_at)  # soonest to clear first
-    ready.sort(key=lambda i: i.size_bytes, reverse=True)  # biggest reclaim first
+    # Biggest reclaim first, with the unmeasured ones last rather than treated as 0 bytes
+    # and buried at the bottom by accident. They sit together at the end, where a reader
+    # scanning for the big wins is done looking.
+    ready.sort(key=lambda i: (i.size_bytes is None, -(i.size_bytes or 0)))
     return GraceReport(
         grace_days=grace_days,
         in_grace=in_grace,
         ready=ready,
-        total_bytes_in_grace=sum(i.size_bytes for i in in_grace),
-        total_bytes_ready=sum(i.size_bytes for i in ready),
+        total_bytes_in_grace=sum(i.size_bytes for i in in_grace if i.size_bytes is not None),
+        total_bytes_ready=sum(i.size_bytes for i in ready if i.size_bytes is not None),
+        unknown_size_in_grace=sum(1 for i in in_grace if i.size_bytes is None),
+        unknown_size_ready=sum(1 for i in ready if i.size_bytes is None),
     )

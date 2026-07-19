@@ -12,7 +12,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type GraceItem, type LeavingSoonResult } from "../api";
-import { bytes, count, itemBytes } from "../format";
+import { count, itemBytes, totalBytes } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 
 function ItemRow({
@@ -136,7 +136,10 @@ export function GracePanel({
       <summary>
         Grace &amp; countdown ·{" "}
         <strong>{count(data.in_grace_count)}</strong>
-        <span className="muted"> in grace ({bytes(data.total_bytes_in_grace)})</span>
+        <span className="muted">
+          {" "}
+          in grace ({totalBytes(data.total_bytes_in_grace, data.unknown_size_in_grace)})
+        </span>
         {data.in_grace_count > 0 && soonest !== undefined && (
           <span className="muted">, soonest clears in {soonest}d</span>
         )}
@@ -144,7 +147,10 @@ export function GracePanel({
           <>
             {" · "}
             <strong className="grace-ready">{count(data.ready_count)}</strong>
-            <span className="muted"> ready ({bytes(data.total_bytes_ready)})</span>
+            <span className="muted">
+              {" "}
+              ready ({totalBytes(data.total_bytes_ready, data.unknown_size_ready)})
+            </span>
           </>
         )}
       </summary>

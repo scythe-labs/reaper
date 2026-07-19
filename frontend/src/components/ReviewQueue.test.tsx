@@ -46,6 +46,7 @@ function movie(n: number, extra: Partial<Candidate> = {}): Candidate {
     group_title: null,
     group_condemned_count: null,
     group_condemned_bytes: null,
+    group_unknown_size: null,
     video_resolution: null,
     dormant_for: null,
     reason: null,
@@ -65,7 +66,8 @@ function page(items: Candidate[], total = items.length, offset = 0) {
   return {
     items,
     total,
-    totalBytes: items.reduce((sum, i) => sum + i.size_bytes, 0),
+    totalBytes: items.reduce((sum, i) => sum + (i.size_bytes ?? 0), 0),
+    unknownSize: items.reduce((n, i) => n + (i.size_bytes === null ? 1 : 0), 0),
     offset,
   };
 }

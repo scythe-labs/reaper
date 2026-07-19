@@ -29,9 +29,19 @@ from reaper.clients.plex import ActiveStream, PlexError
 from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings
 from reaper.db.base import Base
-from reaper.db.models import ActionStep, Candidate, ReapRun, RunState, Snapshot, StepState
+from reaper.db.models import (
+    ActionStep,
+    Candidate,
+    ReapRun,
+    RunState,
+    SizeSource,
+    Snapshot,
+    StepState,
+)
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import ProfileSettings
+from reaper.services import whitelist
+from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
     ExecutionError,
     Executor,
@@ -63,8 +73,10 @@ async def session(tmp_path: Path) -> AsyncIterator[AsyncSession]:
     await engine.dispose()
 
 
-async def _snapshot_with(session: AsyncSession, condemned: list[tuple[str, int]]) -> int:
-    """A snapshot plus a set of condemned movie candidates: (media_key, size_bytes)."""
+async def _snapshot_with(session: AsyncSession, condemned: list[tuple[str, int | None]]) -> int:
+    """A snapshot plus a set of condemned movie candidates: (media_key, size_bytes).
+
+    A ``None`` size is an item nothing would measure, which is not the same as a zero."""
     now = utcnow()
     snapshot = Snapshot(
         created_at=now,
@@ -84,6 +96,7 @@ async def _snapshot_with(session: AsyncSession, condemned: list[tuple[str, int]]
                 title=f"Movie {i}",
                 media_type="movie",
                 size_bytes=size,
+                size_source=SizeSource.RADARR if size is not None else None,
                 verdict="condemn",
                 score=90,
                 coverage_bp=10_000,
@@ -789,21 +802,51 @@ class TestSizeDriftReRead:
 
 
 class TestAnApprovedSizeThatWasNeverConfirmed:
-    """The other half of the fabricated zero, and the half the growth check cannot cover.
+    """An item nothing would size is not deletable, and two independent layers say so.
 
-    When an *arr reports a file it holds without a size, the scan freezes 0 on the
-    candidate row. The growth check compares the LIVE size against that frozen number and
-    so polices only the live side: ``_grew_materially(0, live)`` is just
-    ``live > 256 MiB``, silent for every smaller file. So the approved side is refused
-    outright, everywhere it is used -- the send paths keep the file, and the caps and the
-    typed confirmation leave it out rather than counting it as nothing.
+    The growth check cannot police the approved side: it compares the LIVE size against
+    the frozen number, so ``_grew_materially(None-as-0, live)`` would reduce to
+    ``live > 256 MiB`` and stay silent for every smaller file. So the refusal happens
+    earlier and twice over. The **planner** never puts such an item in a plan, which is
+    what keeps the caps and the typed confirmation exact by construction. The **executor**
+    refuses it again per item, and deliberately does not trust the plan to have done its
+    job.
     """
 
-    async def test_a_movie_with_no_approved_size_is_kept(self, session: AsyncSession) -> None:
-        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700, size=0)
+    async def test_the_planner_holds_it_back_and_says_how_many(self, session: AsyncSession) -> None:
+        snapshot_id = await _snapshot_with(session, [("radarr:1:1", 10 * GB), ("radarr:1:2", None)])
         run = await _plan(session, snapshot_id)
+
+        steps = await _steps(session, run.id)
+        assert [s.media_key for s in steps] == ["radarr:1:1"]
+        assert run.held_back_unknown_size == 1
+
+    async def test_a_named_item_is_refused_out_loud_never_dropped(
+        self, session: AsyncSession
+    ) -> None:
+        """Silently planning fewer items than asked is the one thing a "reap just these"
+        must never do, whatever the reason."""
+        snapshot_id = await _snapshot_with(session, [("radarr:1:1", 10 * GB), ("radarr:1:2", None)])
+
+        with pytest.raises(PlanError, match="couldn't measure"):
+            await build_plan(
+                session,
+                snapshot_id=snapshot_id,
+                policy_hash="p" * 64,
+                approved_by="admin",
+                only_media_keys={"radarr:1:2"},
+            )
+
+    async def test_a_movie_with_no_approved_size_is_kept(self, session: AsyncSession) -> None:
+        """The executor's own layer, tested by planning a measured item and then taking
+        its size away: the plan is wrong, and the host-side check has to hold anyway."""
+        snapshot_id = await _snapshot_one(
+            session, media_key="radarr:1:1", rating_key=700, size=1 * GB
+        )
+        run = await _plan(session, snapshot_id)
+        await _unmeasure(session, "radarr:1:1", run)
         # A real, readable, ordinary-sized file: under the drift floor, so the growth check
-        # sees no growth against the frozen 0 and would have let this delete through.
+        # would have seen no growth and let this delete through.
         radarr = FakeRadarr(size_on_disk=200 * 1024**2)
 
         report = await _real(session, run, _gateway(radarr={1: radarr}))
@@ -817,9 +860,10 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
         self, session: AsyncSession
     ) -> None:
         snapshot_id = await _snapshot_one(
-            session, media_key="sonarr:1:42:3", rating_key=800, media_type="season", size=0
+            session, media_key="sonarr:1:42:3", rating_key=800, media_type="season", size=1 * GB
         )
         run = await _plan(session, snapshot_id)
+        await _unmeasure(session, "sonarr:1:42:3", run)
         # Sonarr reports every file's size fine, so the live-side refusal never fires; only
         # the approved side is unconfirmed, and the season totals well under the drift floor.
         sonarr = FakeSonarr()
@@ -831,16 +875,40 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
         assert report.skipped == 1
         assert "never got a size" in report.outcomes[0].detail
 
+    async def test_a_size_measured_against_a_different_thing_is_kept(
+        self, session: AsyncSession
+    ) -> None:
+        """A size alone is not enough: it has to measure what the live re-read measures.
+
+        A movie sized from its file rather than its folder is a lower bound, so comparing
+        it against the folder would read a normal folder as growth. Reaper keeps the file
+        rather than comparing two different quantities.
+        """
+        snapshot_id = await _snapshot_one(
+            session, media_key="radarr:1:1", rating_key=700, size=1 * GB
+        )
+        run = await _plan(session, snapshot_id)
+        candidate = (
+            await session.execute(select(Candidate).where(Candidate.media_key == "radarr:1:1"))
+        ).scalar_one()
+        candidate.size_source = SizeSource.RADARR_FILE
+        await session.flush()
+
+        report = await _real(session, run, _gateway(radarr={1: (radarr := FakeRadarr())}))
+
+        assert radarr.delete_calls == []
+        assert report.skipped == 1
+
     async def test_the_item_cap_counts_only_items_with_a_confirmed_size(
         self, session: AsyncSession
     ) -> None:
         """The cap counts the set that will really be acted on, not the plan's length.
 
-        Two items can be deleted; the third will be refused for its unconfirmed size, so
-        a cap of two is not exceeded and the run must not abort.
+        Two items can be deleted; the third is never planned, so a cap of two is not
+        exceeded and the run must not abort.
         """
         snapshot_id = await _snapshot_with(
-            session, [("radarr:1:1", 1 * GB), ("radarr:1:2", 1 * GB), ("radarr:1:3", 0)]
+            session, [("radarr:1:1", 1 * GB), ("radarr:1:2", 1 * GB), ("radarr:1:3", None)]
         )
         run = await _plan(session, snapshot_id)
 
@@ -857,10 +925,12 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
     ) -> None:
         """The dangerous direction: counting 0 lets a run pass a cap it does not fit.
 
-        With the unconfirmed item excluded, the run is 400 GB against a 500 GB cap and
-        completes; the item it left out is kept per item, not deleted off-budget.
+        With the unmeasured item left out, the run is 400 GB against a 500 GB cap and
+        completes; the item it left out is kept, not deleted off-budget.
         """
-        snapshot_id = await _snapshot_with(session, [("radarr:1:1", 400 * GB), ("radarr:1:2", 0)])
+        snapshot_id = await _snapshot_with(
+            session, [("radarr:1:1", 400 * GB), ("radarr:1:2", None)]
+        )
         run = await _plan(session, snapshot_id)
 
         settings = ProfileSettings(max_bytes_per_run=500 * GB, max_bytes_per_30d=2000 * GB)
@@ -876,16 +946,47 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
     ) -> None:
         """The count and the byte total the owner types describe the exact set acted on.
 
-        Counting the unconfirmed item would ask them to approve "2 ITEMS" for a run that
+        Counting the unmeasured item would ask them to approve "2 ITEMS" for a run that
         can only ever delete one.
         """
-        snapshot_id = await _snapshot_with(session, [("radarr:1:1", 10 * GB), ("radarr:1:2", 0)])
+        snapshot_id = await _snapshot_with(session, [("radarr:1:1", 10 * GB), ("radarr:1:2", None)])
         run = await _plan(session, snapshot_id)
 
         planned = await _planned_candidates(session, run)
 
         assert [c.media_key for c in planned] == ["radarr:1:1"]
         assert confirmation_phrase(planned) == "REAP 1 ITEMS 10 GB"
+
+    def test_an_unmeasured_size_hashes_differently_from_a_zero(self) -> None:
+        """The manifest binds what the owner approved, so the two must not collide.
+
+        If an unknown encoded as ``0``, a size later measured as 0 would leave the hash
+        unchanged and the stale approval would still execute. Encoded as JSON ``null`` it
+        is a different set, which voids the approval, which is correct: the owner approved
+        a set containing an item nobody could size, and it is no longer that set.
+        """
+        unmeasured = manifest_hash([_fake_candidate("radarr:1:1", None)])
+        zero = manifest_hash([_fake_candidate("radarr:1:1", 0)])
+
+        assert unmeasured != zero
+
+    def test_the_hash_does_not_depend_on_the_order_it_is_given(self) -> None:
+        """Sorting is on the media_key alone, which is unique per snapshot, so a None size
+        is never compared against an int. Sorting on the whole tuple would raise."""
+        a = _fake_candidate("radarr:1:1", None)
+        b = _fake_candidate("radarr:1:2", 5)
+
+        assert manifest_hash([a, b]) == manifest_hash([b, a])
+
+    async def test_the_phrase_is_unchanged_for_an_all_measured_plan(
+        self, session: AsyncSession
+    ) -> None:
+        """Regression. Both ``_run_out`` and the execute route recompute this phrase and
+        compare it byte for byte, so any change of shape 409s every execute."""
+        snapshot_id = await _snapshot_with(session, [("radarr:1:1", 1 * GB)])
+        run = await _plan(session, snapshot_id)
+
+        assert confirmation_phrase(await _planned_candidates(session, run)) == "REAP 1 ITEMS 1 GB"
 
 
 class TestDisarmMidRun:
@@ -1609,12 +1710,13 @@ class TestPlexCleanup:
 # ---------------------------------------------------------------------------
 
 
-def _fake_candidate(media_key: str, size: int) -> Candidate:
+def _fake_candidate(media_key: str, size: int | None) -> Candidate:
     return Candidate(
         media_key=media_key,
         title="x",
         media_type="movie",
         size_bytes=size,
+        size_source=SizeSource.RADARR if size is not None else None,
         verdict="condemn",
         score=90,
         coverage_bp=10_000,
@@ -1635,6 +1737,45 @@ async def _steps(session: AsyncSession, run_id: int) -> list[ActionStep]:
 
 
 # -- real-send helpers ------------------------------------------------------
+
+
+async def _unmeasure(session: AsyncSession, media_key: str, run: ReapRun) -> None:
+    """Stage a plan the planner would never have produced: one holding an unmeasured item.
+
+    The planner holds these back, so this is the only way to reach the executor's own
+    per-item refusal, which exists precisely because the host-side layer must not depend
+    on the plan being right.
+
+    Re-stamping the manifest hash is part of the staging, not a workaround. Taking a size
+    away legitimately voids the approval -- the hash binds the frozen set, and a resize is
+    a different set -- so without this the run aborts on THAT check and never reaches the
+    one under test. Re-approving says "assume the plan was built this way from the start".
+    """
+    candidate = (
+        await session.execute(select(Candidate).where(Candidate.media_key == media_key))
+    ).scalar_one()
+    candidate.size_bytes = None
+    candidate.size_source = None
+    await session.flush()
+
+    condemned = await effective_condemned(
+        session, run.snapshot_id, await whitelist.overrides(session)
+    )
+    run.approved_manifest_hash = manifest_hash(
+        sorted(condemned.values(), key=lambda c: c.media_key)
+    )
+    await session.flush()
+
+
+def _source_for(media_type: str) -> SizeSource:
+    """What a real scan would have stamped on this row.
+
+    Every fixture needs one. The executor compares the frozen size against a live re-read
+    and refuses to compare two different quantities, so a candidate with a size but no
+    recorded source is kept, exactly as an unmeasured one is. Leaving it off would make a
+    fixture look like it was reaped when the run had actually declined to touch it.
+    """
+    return SizeSource.SONARR if media_type == "season" else SizeSource.RADARR
 
 
 async def _snapshot_one(
@@ -1685,6 +1826,7 @@ async def _snapshot_many(
                 title=f"Worthless {i}",
                 media_type=media_type,
                 size_bytes=size,
+                size_source=_source_for(media_type),
                 plex_rating_key=rating_key,
                 verdict="condemn",
                 score=90,

@@ -175,6 +175,16 @@ export function ReapPlan({
               {count(run.item_count)} items · {bytes(run.total_bytes)} · smallest first, and the
               first item is a test: if it doesn't go exactly as planned, the run stops.
             </span>
+            {/* The plan is smaller than the queue implied, and this is where the owner
+                finds out. Silence here reads as "that was everything". */}
+            {run.held_back_unknown_size > 0 && (
+              <p className="notice notice-warn">
+                {count(run.held_back_unknown_size)}{" "}
+                {run.held_back_unknown_size === 1 ? "item is" : "items are"} held back. Reaper
+                couldn't measure {run.held_back_unknown_size === 1 ? "its" : "their"} size, so it
+                won't delete {run.held_back_unknown_size === 1 ? "it" : "them"}.
+              </p>
+            )}
             {staleRun && (
               <p className="notice notice-warn">
                 This plan came from an older scan, so it can list titles you have since

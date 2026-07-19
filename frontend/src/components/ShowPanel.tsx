@@ -9,7 +9,7 @@
 // hands off to that season's complete reasoning.
 
 import type { Candidate, Group } from "../api";
-import { bytes, itemBytes } from "../format";
+import { itemBytes, totalBytes } from "../format";
 import { ShowStatusChip } from "./ReviewQueue";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
 import { JumpPill, Synopsis, WhyHero } from "./WhyPanel";
@@ -70,7 +70,8 @@ export function ShowPanel({
             )}
           </h2>
           <p className="muted why-sub">
-            TV show &middot; {seasonLabel} &middot; {bytes(group.size_bytes)}
+            TV show &middot; {seasonLabel} &middot;{" "}
+            {totalBytes(group.size_bytes, group.unknown_size_seasons)}
             {/* Named here as well as on the card: the card is where you notice a show has
                 ended, this is where you came to find out. A panel that dropped the status
                 the card just showed would read as a contradiction. */}

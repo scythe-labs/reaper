@@ -32,6 +32,7 @@ const snapshot: Snapshot = {
   condemned: 3,
   protected: 4,
   abstained: 5,
+  unknown_size_items: 0,
   reclaimable_bytes: 0,
 };
 

@@ -167,7 +167,7 @@ def upgrade() -> None:
     sa.Column('poster_rating_key', sa.Integer(), nullable=True),
     sa.Column('title', sa.String(length=500), nullable=False),
     sa.Column('media_type', sa.String(length=10), nullable=False),
-    sa.Column('size_bytes', sa.Integer(), nullable=False),
+    sa.Column('size_bytes', sa.Integer(), nullable=True),
     sa.Column('size_source', sa.String(length=16), nullable=True),
     sa.Column('year', sa.Integer(), nullable=True),
     sa.Column('summary', sa.Text(), nullable=True),
@@ -222,6 +222,7 @@ def upgrade() -> None:
     sa.Column('started_at', sa.Integer(), nullable=True),
     sa.Column('finished_at', sa.Integer(), nullable=True),
     sa.Column('aborted_reason', sa.Text(), nullable=True),
+    sa.Column('held_back_unknown_size', sa.Integer(), nullable=False),
     sa.ForeignKeyConstraint(['snapshot_id'], ['snapshot.id'], name=op.f('fk_reap_run_snapshot_id_snapshot'), ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_reap_run'))
     )
