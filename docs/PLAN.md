@@ -2040,10 +2040,14 @@ guard reads a completed episode as `watched_status = 1`, so an unreported comple
 `sequential_protections` then protected the season they had finished instead of the one
 they were about to start. `SEQUENTIAL_LOOKAHEAD` is 0, so nothing cushioned it. Proven
 against the real function, not argued: correct position protects S3, understated protects
-S2 only, fully-unknown protects both. The column is nullable now (guarded one-time rebuild
-of the cache table, which is where the honest answer has to live), a genuine `0.0` still
-means "did not finish", and a pair whose unknown episodes sit above its known ones drops
-to the season-level fallback. The blast radius on existing data is **unmeasurable by
+S2 only, fully-unknown protects both. The column is nullable now, a genuine `0.0` still means "did
+not finish", and a pair whose unknown episodes sit above its known ones drops to the
+season-level fallback. The cache table is **rebuilt, not migrated** -- `ensure_schema`
+compares the live columns against `SCHEMA` and drops the table when they differ, which is
+what the baseline revision already said cache tables do. It costs one full re-sync (an
+empty table makes the next sync a full one automatically) and it is the right trade twice
+over: a migration is code that runs once against a shape nobody has locally, and the rows
+it would have carried over are the untrustworthy ones. The blast radius on existing data is **unmeasurable by
 construction**: the distinction was destroyed at write time, so the ~12% of rows sitting at
 exactly `0.0` cannot be separated into reported and invented. The nightly sweep re-fetches
 them truthfully.

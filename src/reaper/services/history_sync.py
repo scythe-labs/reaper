@@ -157,44 +157,56 @@ async def _store_tautulli_total(engine: AsyncEngine, total: int) -> None:
         )
 
 
+#: Every column ``SCHEMA`` declares on ``watch_event``, in order. The shape check below
+#: compares the live table against this; keep the two together.
+_WATCH_EVENT_COLUMNS = (
+    "row_id",
+    "rating_key",
+    "parent_rating_key",
+    "grandparent_rating_key",
+    "user_id",
+    "watched_at",
+    "watched_status",
+    "percent_complete",
+    "media_type",
+    "media_index",
+)
+
+
 async def ensure_schema(engine: AsyncEngine) -> None:
-    """Create the ``watch_event`` table if it is not there yet.
+    """Create ``watch_event`` if it is not there, and REBUILD it if its shape is stale.
 
     Called by ``sync`` and before every read. The cache database is rebuildable and can
     be deleted at any time -- so on a fresh install, or after someone clears the cache,
     reading it must find an empty table rather than crash with ``no such table``. A
     missing table should read as "no history yet" (which degrades the snapshot loudly),
     never as an opaque SQL error a hundred frames deep in the scan.
+
+    **Cache tables are never migrated.** The Alembic baseline says so explicitly: they
+    live here, are created by raw DDL, and are rebuildable by definition. So a table
+    whose columns no longer match ``SCHEMA`` is dropped and recreated empty rather than
+    patched into shape. Three reasons, and the last is the one that matters:
+
+    * There is nothing to preserve. ``sync`` refetches from Tautulli, and an empty table
+      makes the next sync a FULL one automatically, so the cache heals itself.
+    * A migration is code that runs once, on a path no test exercises twice, against a
+      shape nobody has locally. Pre-release that is pure risk for no gain.
+    * Carried-over rows are exactly the untrustworthy ones. When ``watched_status``
+      became nullable, every existing ``0.0`` was already ambiguous -- reported, or
+      invented by the old ``or 0`` coercion, with no way to tell. Preserving them would
+      have kept the bad data the shape change existed to fix.
+
+    The cost is one full re-sync, and a scan in between degrades loudly rather than
+    judging on a thin mirror. That is the right direction to fail.
     """
     async with engine.begin() as conn:
+        cols = (await conn.execute(text("PRAGMA table_info(watch_event)"))).all()
+        if cols and tuple(row[1] for row in cols) != _WATCH_EVENT_COLUMNS:
+            log.info("history.cache.rebuilding", reason="watch_event shape is stale")
+            await conn.execute(text("DROP TABLE watch_event"))
         for statement in SCHEMA.strip().split(";"):
             if statement.strip():
                 await conn.execute(text(statement))
-        # CREATE TABLE IF NOT EXISTS never alters an existing table, so add media_index
-        # explicitly on installs whose watch_event predates it. Idempotent -- guarded by the
-        # column check, and the nightly full sweep backfills the values within a day.
-        cols = (await conn.execute(text("PRAGMA table_info(watch_event)"))).all()
-        if "media_index" not in {row[1] for row in cols}:
-            await conn.execute(text("ALTER TABLE watch_event ADD COLUMN media_index INTEGER"))
-
-        # watched_status was NOT NULL, so a status Tautulli did not send was stored as 0.0
-        # and became indistinguishable from "started it, did not finish". SQLite cannot
-        # drop a NOT NULL in place, so rebuild once. Existing 0.0 rows stay 0.0 -- they
-        # cannot be told apart now, and the nightly full sweep re-fetches them truthfully.
-        if any(row[1] == "watched_status" and row[3] for row in cols):
-            log.info("history.schema.relaxing_watched_status")
-            await conn.execute(text("ALTER TABLE watch_event RENAME TO watch_event_old"))
-            for statement in SCHEMA.strip().split(";"):
-                if statement.strip():
-                    await conn.execute(text(statement))
-            await conn.execute(
-                text(
-                    "INSERT INTO watch_event SELECT row_id, rating_key, parent_rating_key, "
-                    " grandparent_rating_key, user_id, watched_at, watched_status, "
-                    " percent_complete, media_type, media_index FROM watch_event_old"
-                )
-            )
-            await conn.execute(text("DROP TABLE watch_event_old"))
 
 
 async def _state(engine: AsyncEngine) -> HistoryState:

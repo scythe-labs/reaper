@@ -509,6 +509,61 @@ async def _episode(
         )
 
 
+class TestTheCacheIsRebuiltNotMigrated:
+    """Cache tables are never migrated -- the Alembic baseline says so, and they are
+    rebuildable by definition. A stale shape is dropped and recreated, not patched."""
+
+    async def test_a_stale_table_is_rebuilt_and_the_new_shape_holds_unknowns(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The old table had `watched_status REAL NOT NULL`, which is what made "Tautulli
+        did not say" indistinguishable from "did not finish". After the rebuild the column
+        accepts NULL, and the emptied table makes the next sync a full one (history_sync
+        goes incremental only when `before.rows` is non-zero), so the cache heals itself."""
+        async with cache_engine.begin() as conn:
+            await conn.execute(text("DROP TABLE watch_event"))
+            await conn.execute(
+                text(
+                    "CREATE TABLE watch_event ("
+                    " row_id INTEGER PRIMARY KEY, rating_key INTEGER NOT NULL,"
+                    " parent_rating_key INTEGER, grandparent_rating_key INTEGER,"
+                    " user_id INTEGER NOT NULL, watched_at INTEGER NOT NULL,"
+                    " watched_status REAL NOT NULL, percent_complete INTEGER NOT NULL,"
+                    " media_type TEXT NOT NULL)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO watch_event VALUES "
+                    "(1, 10, 700, 42, 1, 1700000000, 1.0, 100, 'episode')"
+                )
+            )
+
+        await history_sync.ensure_schema(cache_engine)
+
+        async with cache_engine.begin() as conn:
+            cols = (await conn.execute(text("PRAGMA table_info(watch_event)"))).all()
+            assert {row[1] for row in cols} >= {"media_index", "watched_status"}
+            assert not any(row[1] == "watched_status" and row[3] for row in cols)
+            # Emptied, so the next sync is a full one rather than an incremental gap.
+            assert (await conn.execute(text("SELECT COUNT(*) FROM watch_event"))).scalar() == 0
+            # The whole point: an unreported completion is now storable as such.
+            await conn.execute(
+                text(
+                    "INSERT INTO watch_event VALUES "
+                    "(2, 11, 700, 42, 1, 1700000001, NULL, 50, 'episode', 4)"
+                )
+            )
+
+    async def test_a_current_table_is_left_alone(self, cache_engine: AsyncEngine) -> None:
+        """Rebuilding a healthy cache would cost a full re-sync on every startup."""
+        await _episode(cache_engine, season_key=720, user_id=1, episode=1)
+        for _ in range(3):
+            await history_sync.ensure_schema(cache_engine)
+        async with cache_engine.begin() as conn:
+            assert (await conn.execute(text("SELECT COUNT(*) FROM watch_event"))).scalar() == 1
+
+
 class TestSeasonWatchStats:
     async def test_plays_aggregate_by_season(self, cache_engine: AsyncEngine) -> None:
         await _episode(cache_engine, season_key=701, user_id=1)
