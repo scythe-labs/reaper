@@ -2298,6 +2298,26 @@ left, each because the correct fix is wider than the finding and wants its own c
   errors, almost all "missing py.typed marker" noise. A PEP-561 `py.typed` marker plus a
   handful of real fixes would let the suite be strict too.
 
+## A TV show wrongly "on the IMDb Top 250" — cross-media-type id join (found live 2026-07-19, fixed)
+
+A second instance showed TV shows protected as "on the IMDb Top 250", a movie-only list.
+Nothing was written upstream — the Top 250 is read-only from Radarr's public mirror. The
+bug was in our join: `MembershipIndex` matched a library item to a list row on the bare id,
+and **TMDb numbers movies and shows in separate id spaces**, so a show whose TMDb id equalled
+a Top 250 film's inherited that film's protection. Safe direction (a false *keep*), but the
+why-panel stated a reason that was not true.
+
+- **Fix:** the join key is `(media_type, id)`. `media_type` was already stored on every row;
+  the in-memory index just dropped it. Threaded through `MembershipIndex.lookup` /
+  `memberships()` (now required) and both call sites (`snapshot` movie = "movie",
+  `season_scan` show = "tv"). Regression test reproduces the exact collision. See
+  `LEARNINGS.md` → "TMDb ids are namespaced by media type".
+- **While there:** removed `RadarrImportList` and `RadarrClient.import_list_movies()` — a
+  fourth "provider" that was defined but never wired into any sync (rule 38). The three live
+  sources are unchanged: IMDb Top 250, the `reaper-keep` *arr tag, and the Plex "Never Reap"
+  collection. Import lists that apply a tag still protect via the tag reader, so no capability
+  is lost.
+
 ## Deferred — watching a deletion run happen (detached execute + re-fetchable status)
 
 Came out of a "would the web interface benefit from websockets?" review. Short answer to

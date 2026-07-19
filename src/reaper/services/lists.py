@@ -6,9 +6,9 @@ tags, collections or their own database -- none of them ingest a *curated list* 
 protection source. "Never reap anything in the IMDb Top 250" is a rule you cannot
 write in any of them.
 
-Four providers, in ascending order of how much configuration they cost you:
+Three providers, in ascending order of how much configuration they cost you:
 
-**Plex collection** -- zero configuration, and the best of the four. You curate a
+**Plex collection** -- zero configuration, and the best of the three. You curate a
 "Never Reap" collection in the Plex app you already use daily; it is editable from
 your phone; there is no new screen to learn. Reaper just reads it.
 
@@ -20,10 +20,6 @@ your phone; there is no new screen to learn. Reaper just reads it.
 non-commercial datasets do *not* contain the ranking -- it uses an unpublished
 weighted formula. Do not try to derive it, and do not scrape it. This mirror is the
 right answer.)
-
-***arr import lists** -- free lunch. If you already subscribe to a "Top Movies" import
-list in Radarr, ``GET /api/v3/importlist/movie`` tells us which items came from it, and
-membership becomes a protection with no new API key and no new configuration at all.
 
 ## Rank, where a source actually has one
 
@@ -92,7 +88,7 @@ class ListKind(enum.StrEnum):
     """The owner said so directly -- an *arr tag, or a Plex collection they curate."""
 
     CURATED = "curated"
-    """Somebody else's list -- the IMDb Top 250, an import list."""
+    """Somebody else's list -- the IMDb Top 250."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,32 +353,6 @@ class PlexCollection:
         return items
 
 
-@dataclass(frozen=True, slots=True)
-class RadarrImportList:
-    """Movies the owner's own Radarr import lists brought in.
-
-    The free lunch. If they already subscribe to a "Top Movies" import list, membership
-    becomes a protection with no new API key and no new configuration.
-    """
-
-    client: RadarrClient
-    slug: str = "radarr-import-lists"
-    display_name: str = "Radarr import lists"
-
-    async def fetch(self) -> list[ListItem]:
-        movies = await self.client.import_list_movies()
-        return [
-            ListItem(
-                media_type="movie",
-                imdb_id=m.get("imdbId") or None,
-                tmdb_id=m.get("tmdbId") or None,
-                title=str(m.get("title") or ""),
-            )
-            for m in movies
-            if m.get("isExisting")  # already in the library, so it is ours to protect
-        ]
-
-
 # ---------------------------------------------------------------------------
 # Storage
 # ---------------------------------------------------------------------------
@@ -582,23 +552,35 @@ class MembershipIndex:
     one of its ids still counts once, and two distinct rows of the same list still count
     twice -- so the two paths cannot disagree about what protects an item. Entries carry
     their load order so results are deterministic.
+
+    Every entry also carries its row's ``media_type`` and a lookup only matches rows of
+    the *same* type. TMDb numbers movies and shows in separate id spaces (movie #1399 and
+    show #1399 are unrelated titles), so without this a show whose TMDb id coincides with
+    a Top 250 film would be reported "on the IMDb Top 250" -- a keep the owner never
+    asked for and a why-panel that lies. IMDb ids are globally unique, but the filter is
+    applied to every id kind so the join key is always (media_type, id).
     """
 
-    _by_imdb: Mapping[str, tuple[tuple[int, Membership], ...]]
-    _by_tmdb: Mapping[int, tuple[tuple[int, Membership], ...]]
-    _by_tvdb: Mapping[int, tuple[tuple[int, Membership], ...]]
+    _by_imdb: Mapping[str, tuple[tuple[int, str, Membership], ...]]
+    _by_tmdb: Mapping[int, tuple[tuple[int, str, Membership], ...]]
+    _by_tvdb: Mapping[int, tuple[tuple[int, str, Membership], ...]]
 
     def lookup(
         self,
         *,
+        media_type: str,
         imdb_id: str | None = None,
         tmdb_id: int | None = None,
         tvdb_id: int | None = None,
     ) -> list[Membership]:
-        """Which protected lists contain this item? Same answer as :func:`memberships`."""
+        """Which protected lists contain this item? Same answer as :func:`memberships`.
+
+        ``media_type`` ("movie" | "tv") is the item's own type; only rows of that type
+        can match, so a movie id space and a show id space never cross.
+        """
         if not (imdb_id or tmdb_id or tvdb_id):
             return []
-        entries: list[tuple[int, Membership]] = []
+        entries: list[tuple[int, str, Membership]] = []
         if imdb_id is not None:
             entries += self._by_imdb.get(imdb_id, ())
         if tmdb_id is not None:
@@ -607,7 +589,9 @@ class MembershipIndex:
             entries += self._by_tvdb.get(tvdb_id, ())
         seen: set[int] = set()
         out: list[Membership] = []
-        for seq, membership in sorted(entries, key=lambda entry: entry[0]):
+        for seq, row_media_type, membership in sorted(entries, key=lambda entry: entry[0]):
+            if row_media_type != media_type:
+                continue
             if seq not in seen:
                 seen.add(seq)
                 out.append(membership)
@@ -621,7 +605,7 @@ async def load_membership_index(engine: AsyncEngine) -> MembershipIndex:
         rows = (
             await conn.execute(
                 text(
-                    "SELECT i.imdb_id, i.tmdb_id, i.tvdb_id, "
+                    "SELECT i.imdb_id, i.tmdb_id, i.tvdb_id, i.media_type, "
                     "       l.slug, l.display_name, l.mode, l.kind, i.rank "
                     "FROM protection_list_item i "
                     "JOIN protection_list l ON l.slug = i.slug "
@@ -630,9 +614,9 @@ async def load_membership_index(engine: AsyncEngine) -> MembershipIndex:
             )
         ).all()
 
-    by_imdb: dict[str, list[tuple[int, Membership]]] = {}
-    by_tmdb: dict[int, list[tuple[int, Membership]]] = {}
-    by_tvdb: dict[int, list[tuple[int, Membership]]] = {}
+    by_imdb: dict[str, list[tuple[int, str, Membership]]] = {}
+    by_tmdb: dict[int, list[tuple[int, str, Membership]]] = {}
+    by_tvdb: dict[int, list[tuple[int, str, Membership]]] = {}
     for seq, row in enumerate(rows):
         membership = Membership(
             slug=str(row.slug),
@@ -641,12 +625,13 @@ async def load_membership_index(engine: AsyncEngine) -> MembershipIndex:
             kind=ListKind(row.kind),
             rank=int(row.rank) if row.rank is not None else None,
         )
+        media_type = str(row.media_type)
         if row.imdb_id:
-            by_imdb.setdefault(str(row.imdb_id), []).append((seq, membership))
+            by_imdb.setdefault(str(row.imdb_id), []).append((seq, media_type, membership))
         if row.tmdb_id is not None:
-            by_tmdb.setdefault(int(row.tmdb_id), []).append((seq, membership))
+            by_tmdb.setdefault(int(row.tmdb_id), []).append((seq, media_type, membership))
         if row.tvdb_id is not None:
-            by_tvdb.setdefault(int(row.tvdb_id), []).append((seq, membership))
+            by_tvdb.setdefault(int(row.tvdb_id), []).append((seq, media_type, membership))
 
     return MembershipIndex(
         _by_imdb={k: tuple(v) for k, v in by_imdb.items()},
@@ -658,15 +643,18 @@ async def load_membership_index(engine: AsyncEngine) -> MembershipIndex:
 async def memberships(
     engine: AsyncEngine,
     *,
+    media_type: str,
     imdb_id: str | None = None,
     tmdb_id: int | None = None,
     tvdb_id: int | None = None,
 ) -> list[Membership]:
     """Which protected lists contain this item?
 
-    Matched on any external id we hold. A film on the Top 250 is protected whether we
-    know it by IMDb id or TMDb id -- requiring both would silently drop the ones where
-    only one is present.
+    Matched on any external id we hold, within the item's own ``media_type``. A film on
+    the Top 250 is protected whether we know it by IMDb id or TMDb id -- requiring both
+    would silently drop the ones where only one is present -- but a show is never matched
+    against a movie row, so a show whose TMDb id (a separate id space) coincides with a
+    Top 250 film is not falsely protected.
 
     Implemented AS a one-item view over :func:`load_membership_index`, so there is
     exactly one place that decides what protects an item -- a second hand-written query
@@ -675,7 +663,7 @@ async def memberships(
     loading the (small) list tables per call is fine.
     """
     index = await load_membership_index(engine)
-    return index.lookup(imdb_id=imdb_id, tmdb_id=tmdb_id, tvdb_id=tvdb_id)
+    return index.lookup(media_type=media_type, imdb_id=imdb_id, tmdb_id=tmdb_id, tvdb_id=tvdb_id)
 
 
 async def configured(engine: AsyncEngine) -> Sequence[dict[str, object]]:

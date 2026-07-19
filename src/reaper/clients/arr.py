@@ -219,14 +219,3 @@ class RadarrClient(ArrClient):
             f"{self.prefix}/movie/{movie_id}",
             params={"deleteFiles": delete_files, self.exclusion_param: add_exclusion},
         )
-
-    async def import_list_movies(self) -> list[dict[str, Any]]:
-        """Movies from the owner's own configured import lists.
-
-        A free protection source: if they already subscribe to an "IMDb Top 250"
-        import list, membership becomes a keep-rule with no new API key and no new
-        configuration. Each item carries `lists` (which list matched) and
-        `isExisting` (already in the library).
-        """
-        data = await self.get_json(f"{self.prefix}/importlist/movie")
-        return list(data) if isinstance(data, list) else []

@@ -291,6 +291,27 @@ instances (alongside imdb/tmdb/metacritic/rottenTomatoes at their known ~86-100%
 coverages). Sonarr still exposes only the flat TVDB pair, so Trakt on TV would need
 another source; the why-panel simply hides the chip there.
 
+### TMDb ids are namespaced by media type, so a bare-id join crosses movies and shows (found on a live instance 2026-07-19)
+
+A second instance showed **TV shows reported "on the IMDb Top 250"** — a list Reaper
+syncs as movies only. The Top 250 was never wrong and nothing was written upstream (the
+mirror is read-only). The bug was ours: `MembershipIndex` joined a library item to a list
+row on the **bare id value**, and **TMDb numbers movies and shows in separate id spaces** —
+movie #1399 and show #1399 are unrelated titles. So a show whose TMDb id coincided with a
+Top 250 film matched the film's row and inherited its protection.
+
+- IMDb ids do **not** have this problem (globally unique across movies and TV); TVDb
+  cannot (Top 250 rows carry none). **TMDb is the only crossing id**, and it crosses often
+  because both id spaces are dense low integers.
+- The direction was *safe* — a false PROTECT keeps a file rather than deleting one — but
+  the why-panel was stating a reason that was not true, which is the one thing the panel
+  exists to never do.
+- Fix: the join key is `(media_type, id)`, not `id`. A movie only matches movie rows, a
+  show only matches show rows. `media_type` was already stored on every row (even in the
+  primary key); it was simply dropped when the in-memory index was built. Rule 6 in one
+  line: disambiguate a cross-system join by a *stable* key, and an id is only stable
+  *within its own namespace*.
+
 ### A show folder has no size, so a leaf-only match cannot separate two libraries (measured 2026-07-18)
 
 The negative result that drove the folder corroborator in `engine/identity.py`.

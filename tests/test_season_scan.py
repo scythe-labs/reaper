@@ -1069,7 +1069,9 @@ class TestGatherEndToEnd:
             kind=lists.ListKind.WHITELIST,
             rank=None,
         )
-        index = lists.MembershipIndex(_by_imdb={}, _by_tmdb={}, _by_tvdb={5150: ((0, keep_row),)})
+        index = lists.MembershipIndex(
+            _by_imdb={}, _by_tmdb={}, _by_tvdb={5150: ((0, "tv", keep_row),)}
+        )
         _reasons, degrade = _degrade_sink()
 
         judgements = await season_scan.gather(

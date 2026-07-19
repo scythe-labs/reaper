@@ -51,7 +51,7 @@ class TestTheTop250IsPopulatedForAScan:
         synced = await sync_protection_lists(engine, include_top_250=True)
 
         assert synced["imdb-top-250"] == 250
-        found = await memberships(engine, imdb_id="tt0000005")
+        found = await memberships(engine, media_type="movie", imdb_id="tt0000005")
         assert len(found) == 1  # a scan would now see this film as protected
 
     @respx.mock
@@ -155,5 +155,5 @@ class TestEachInstanceKeepsItsOwnKeepList:
         assert synced["sonarr-1-keeptags-any"] == 1
         assert synced["sonarr-2-keeptags-any"] == 1
         # And BOTH instances' keep-tagged titles are protected at the same time.
-        assert await memberships(engine, tvdb_id=10)
-        assert await memberships(engine, tvdb_id=20)
+        assert await memberships(engine, media_type="tv", tvdb_id=10)
+        assert await memberships(engine, media_type="tv", tvdb_id=20)

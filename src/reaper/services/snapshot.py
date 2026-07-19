@@ -262,7 +262,9 @@ def build_facts(
     # Whitelist and curated are DIFFERENT reasons to keep a file, and collapsing them
     # would tell the owner "whitelisted" about a film they never touched. The why-panel
     # must be able to say which.
-    memberships = membership_index.lookup(imdb_id=item.imdb_id, tmdb_id=item.tmdb_id)
+    memberships = membership_index.lookup(
+        media_type="movie", imdb_id=item.imdb_id, tmdb_id=item.tmdb_id
+    )
     hard = [m for m in memberships if m.mode is lists.ListMode.HARD]
 
     whitelists = [m for m in hard if m.is_whitelist]

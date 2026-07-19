@@ -1115,7 +1115,7 @@ def _judge_series(
     # common, and a keep tag or "Never Reap" row stored under its tvdb or tmdb id must
     # still protect it. Matching on one id kind alone fails open on the deletion path.
     curated_by_series = membership_index.lookup(
-        imdb_id=show_imdb_id, tmdb_id=show_tmdb_id, tvdb_id=tvdb_id
+        media_type="tv", imdb_id=show_imdb_id, tmdb_id=show_tmdb_id, tvdb_id=tvdb_id
     )
     hard = [m for m in curated_by_series if m.mode is lists.ListMode.HARD]
     whitelists = [m for m in hard if m.is_whitelist]

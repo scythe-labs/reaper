@@ -567,7 +567,8 @@ section 6.
 - [x] **Cp8 [high]** `frontend/src/components/PolicyEditor.tsx:87` · The "Honour protected
   lists" help promises "any other list you mark as protected", but no marking affordance
   exists anywhere: the only curated list synced as a protection is the IMDb Top 250 (the
-  RadarrImportList provider is defined but never wired into any sync). Rule 25: copy may
+  RadarrImportList provider was defined but never wired into any sync, and has since been
+  removed). Rule 25: copy may
   only name wired mechanisms. **Fix:** describe only the wired source: "Right now this is
   the IMDb Top 250. Anything on it is kept."
 

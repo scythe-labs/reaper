@@ -101,7 +101,7 @@ class TestAVanishedContainerNeverWipesTheList:
             await sync(engine, stale, kind=ListKind.WHITELIST)
 
         index = await load_membership_index(engine)
-        assert index.lookup(tvdb_id=10)  # the stored membership survived the wipe
+        assert index.lookup(media_type="tv", tvdb_id=10)  # the stored membership survived the wipe
 
     async def test_a_missing_tag_with_nothing_stored_is_an_empty_first_sync(
         self, engine: AsyncEngine
@@ -199,7 +199,7 @@ class TestImdbTop250:
         respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=_top250_payload()))
         await sync(engine, ImdbTop250())
 
-        found = await memberships(engine, imdb_id="tt0000000")
+        found = await memberships(engine, media_type="movie", imdb_id="tt0000000")
 
         assert len(found) == 1
         assert found[0].rank is None
@@ -230,7 +230,7 @@ class TestImdbTop250:
             await sync(engine, ImdbTop250())
 
         # Still protected.
-        assert await memberships(engine, imdb_id="tt0000001")
+        assert await memberships(engine, media_type="movie", imdb_id="tt0000001")
 
     @respx.mock
     async def test_the_error_is_recorded_for_the_settings_screen(self, engine: AsyncEngine) -> None:
@@ -258,18 +258,42 @@ class TestMatching:
         respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=_top250_payload()))
         await sync(engine, ImdbTop250())
 
-        assert await memberships(engine, tmdb_id=1005)
+        assert await memberships(engine, media_type="movie", tmdb_id=1005)
 
     @respx.mock
     async def test_an_unmatched_item_is_not_protected(self, engine: AsyncEngine) -> None:
         respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=_top250_payload()))
         await sync(engine, ImdbTop250())
 
-        assert await memberships(engine, imdb_id="tt9999999") == []
+        assert await memberships(engine, media_type="movie", imdb_id="tt9999999") == []
 
     async def test_an_item_with_no_ids_at_all_is_not_protected(self, engine: AsyncEngine) -> None:
         """And does not blow up. An item Plex has not matched has no ids."""
-        assert await memberships(engine) == []
+        assert await memberships(engine, media_type="movie") == []
+
+
+class TestAShowIsNeverMatchedAgainstAMovieList:
+    """TMDb numbers movies and shows in SEPARATE id spaces: movie #1005 and show #1005
+    are unrelated titles. The join key is therefore (media_type, id), not id alone. Without
+    that, a show whose TMDb id happens to equal a Top 250 film's is reported "on the IMDb
+    Top 250", kept for a reason its owner never gave, and the why-panel says something false.
+    A live instance showed exactly this on TV shows."""
+
+    @respx.mock
+    async def test_a_show_sharing_a_top250_films_tmdb_id_is_not_protected(
+        self, engine: AsyncEngine
+    ) -> None:
+        respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=_top250_payload()))
+        await sync(engine, ImdbTop250())
+
+        # Film 5 is stored as a MOVIE with TMDb id 1005.
+        assert await memberships(engine, media_type="movie", tmdb_id=1005)  # the film is on it
+        assert await memberships(engine, media_type="tv", tmdb_id=1005) == []  # a show is not
+
+        # And the in-memory index the scan actually uses agrees with the query.
+        index = await load_membership_index(engine)
+        assert index.lookup(media_type="movie", tmdb_id=1005)
+        assert index.lookup(media_type="tv", tmdb_id=1005) == []
 
 
 class TestMembershipIndexParity:
@@ -297,13 +321,14 @@ class TestMembershipIndexParity:
 
         index = await load_membership_index(engine)
         probes: list[dict[str, object]] = [
-            {"imdb_id": "tt0000005"},  # on both lists
-            {"imdb_id": "tt0000001"},  # top-250 only
-            {"tmdb_id": 1005},  # matched through the other id
-            {"imdb_id": "tt0000005", "tmdb_id": 1005},  # one row, reachable both ways
-            {"tvdb_id": 777},  # tv, whitelist only
-            {"imdb_id": "tt9999999"},  # on nothing
-            {},  # no ids at all
+            {"media_type": "movie", "imdb_id": "tt0000005"},  # on both lists
+            {"media_type": "movie", "imdb_id": "tt0000001"},  # top-250 only
+            {"media_type": "movie", "tmdb_id": 1005},  # matched through the other id
+            {"media_type": "movie", "imdb_id": "tt0000005", "tmdb_id": 1005},  # one row, both ways
+            {"media_type": "tv", "tvdb_id": 777},  # tv, whitelist only
+            {"media_type": "tv", "tmdb_id": 1005},  # a show colliding with a film: no match
+            {"media_type": "movie", "imdb_id": "tt9999999"},  # on nothing
+            {"media_type": "movie"},  # no ids at all
         ]
         for probe in probes:
             expected = await memberships(engine, **probe)  # type: ignore[arg-type]
@@ -320,8 +345,8 @@ class TestMembershipIndexParity:
 
         index = await load_membership_index(engine)
 
-        assert index.lookup(imdb_id="tt0000001") == []
-        assert await memberships(engine, imdb_id="tt0000001") == []
+        assert index.lookup(media_type="movie", imdb_id="tt0000001") == []
+        assert await memberships(engine, media_type="movie", imdb_id="tt0000001") == []
 
 
 class _StaticProvider:
