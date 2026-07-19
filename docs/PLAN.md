@@ -2197,13 +2197,33 @@ left, each because the correct fix is wider than the finding and wants its own c
    is now kept by `executor.size_confirmed` and excluded from the caps and the typed
    confirmation total, so a `0` can no longer be deleted against or under-count a cap.
    But `0` is still a sentinel for Unknown, which rule 4 calls a blocker. The honest fix
-   is a nullable column, and it reaches 17 backend and 8 frontend files. **In progress:
-   `docs/SIZE_TRUTH_PLAN.md` Stage 1 landed 2026-07-19** — `Candidate.size_source`
-   (`db/models.SizeSource`) now records which rung of the ladder actually measured an item,
-   and is NULL exactly when nothing did, so the column is honest while `size_bytes` is not
-   yet. The scan emits `scan.size_source_tally` once per run, which is the first
-   measurement Reaper has ever taken of how often a size is simply never reported. The
-   nullability flip is Stage 2.
+   is a nullable column, and it reaches 17 backend and 8 frontend files. **Closed
+   2026-07-19** by `docs/SIZE_TRUTH_PLAN.md` Stages 1, 2, 3 and 3b:
+
+   - `Candidate.size_source` (`db/models.SizeSource`) records which measurement the size
+     is, so the executor compares like with like instead of a folder against a sum of
+     files, and the scan emits `scan.size_source_tally` — the first measurement Reaper has
+     ever taken of how often a size is simply never reported.
+   - `Candidate.size_bytes` is nullable and the scan no longer fabricates a zero.
+   - Three independent layers refuse an unmeasured item: `planner.build_plan` holds it
+     back, `executor.size_confirmed` refuses it again per item, and `manifest_hash`
+     encodes an unknown as JSON `null` so a size later measured voids the approval.
+   - The operator is told: a count on the plan and confirm screens, "Held back: size
+     unknown" on the card, the reason in the why-panel, and totals that read
+     "4.2 TiB · 3 sizes unknown" rather than quietly summing low. Every count is hidden at
+     zero.
+
+   **Two findings worth keeping.** The plan's Stage 1/2 split could not work as written:
+   widening the column's type turns mypy red at 22 consumer sites at once, whether or not
+   a null is ever written, so the flip had to land with its consumers — where mypy's error
+   list becomes the exhaustive checklist rather than something to silence with a coercion
+   at each site. And the manifest hash turned out to be a third layer nobody had counted:
+   taking a size away after approval voids the run on its own, which is why the executor's
+   per-item test needs a deliberately re-approved plan to reach at all.
+
+   Still open: Stage 3c (the unmeasured allowance, a new policy control, stopped for a
+   mockup first), Stage 4 (the operator's real-data pass), and Stages 5 to 7, which are
+   gated on what Stage 4's tally shows.
 2. **The refused-reap clause is a frontend map keyed on strings the server emits**
    (B-11, agent rule 12). Two modules holding the same literal is exactly what that rule
    forbids. The clean shape is for the server to send the refusal reason on the candidate

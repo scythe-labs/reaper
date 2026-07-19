@@ -1,8 +1,19 @@
 # Size truth: making an unreadable size stop being a number
 
-Status: **Stage 1 landed 2026-07-19.** Written 2026-07-19 for execution by another agent
-session; §1 and the Stage 1/2 boundary have since been corrected against the shipped code
-(see the notes marked **Corrected**). Stages 2 onward are unstarted.
+Status: **Stages 1, 2, 3 and 3b landed 2026-07-19.** Written 2026-07-19 for execution by
+another agent session; §1 and the Stage 1/2 boundary have since been corrected against the
+shipped code (see the notes marked **Corrected**).
+
+**Stopped deliberately before Stage 3c** (the unmeasured allowance), which introduces a new
+policy control and so wants a rendered mockup approved before any frontend code, per
+`CLAUDE.md`'s golden rule. Stage 4 is the operator's own pass against real data, and
+Stages 5 to 7 are gated on what its tally shows.
+
+**Note for whoever runs the app next:** the schema changed, and a `data/reaper.db` created
+before these commits has neither `size_source` nor `held_back_unknown_size` and still holds
+`size_bytes` NOT NULL. Pre-release the dev DB is disposable, so the fix is to delete it and
+`alembic upgrade head` from empty. That loses the linked instances and settings in it, so
+it is the operator's call, not something a session should do for them.
 
 This plan removes the last place Reaper invents a number on the deletion path. It is the
 "correct fix, no workarounds" version of the size problem, superseding the display-only
