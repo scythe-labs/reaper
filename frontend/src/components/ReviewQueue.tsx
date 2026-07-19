@@ -38,7 +38,7 @@ import {
   type SortOrder,
   type Verdict,
 } from "../api";
-import { bytes, count } from "../format";
+import { bytes, count, itemBytes } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { ReapConfirm } from "./ReapConfirm";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
@@ -860,7 +860,7 @@ function SeasonList({
                 <StatusChip chip={season.chip} />
               )}
             </span>
-            <span className="season-size num">{bytes(season.size_bytes)}</span>
+            <span className="season-size num">{itemBytes(season.size_bytes)}</span>
             {inLane ? (
               <OverrideControls
                 override={season.override}
@@ -941,7 +941,7 @@ function MovieCard({
             never fights a chip for space and the year stays glued to the title. */}
         <div className="card-meta">
           <span className="chip chip-movie">Movie</span>
-          <span>{bytes(item.size_bytes)}</span>
+          <span>{itemBytes(item.size_bytes)}</span>
           <ResolutionBadge value={item.video_resolution} />
           <RequestedChip who={item.requested_by} />
         </div>

@@ -17,6 +17,21 @@ export function bytes(value: number): string {
   return `${scaled.toFixed(digits)} ${units[exponent]}`;
 }
 
+/** One item's size on disk, for the surfaces the operator scans while deciding.
+ *
+ *  A candidate always holds files: the movie scan skips anything without one
+ *  (`services.snapshot`, `hasFile`) and the season scan skips anything without one
+ *  (`services.season_scan`, `SeasonStats.has_content`). So a stored `0` on a single
+ *  item is never an empty item -- it is a size Sonarr or Radarr declined to report,
+ *  carried as `0` in the display column while the scoring lane reads the honest
+ *  Observation. Rendering it as "0 B" puts a false statement beside a delete control.
+ *
+ *  Totals stay on `bytes`: a sum can be genuinely zero, and one unreadable item in a
+ *  sum makes the total low, not unknown. */
+export function itemBytes(value: number): string {
+  return value > 0 ? bytes(value) : "Size unknown";
+}
+
 export function count(value: number): string {
   return value.toLocaleString();
 }

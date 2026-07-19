@@ -198,4 +198,32 @@ describe("the all-seasons list", () => {
     expect(rows).toHaveLength(3);
     expect(screen.getAllByRole("button", { name: /^Spare$/ })).toHaveLength(2);
   });
+
+  it("says a season's size is unknown rather than showing it as empty", async () => {
+    // A season only becomes a candidate if it holds files, so a stored 0 means Sonarr
+    // declined to report a size. "0 B" here would be a false statement sitting beside
+    // Spare and Reap.
+    const unsized = { ...season(2, 2, "condemn", 88, null), size_bytes: 0 };
+    apiMock.group.mockResolvedValue({
+      group_key: "sonarr:5:42",
+      title: "Example Show",
+      year: 2012,
+      poster_url: null,
+      summary: null,
+      size_bytes: 1024 ** 3,
+      reason: null,
+      chip: limboSeason.chip,
+      links: {} as Group["links"],
+      show_status: null,
+      seasons: [unsized, limboSeason],
+    } as Group);
+    renderQueue();
+    await expandSeasons();
+
+    const list = screen.getByRole("list");
+    expect(await within(list).findByText("Size unknown")).toBeInTheDocument();
+    expect(within(list).queryByText("0 B")).not.toBeInTheDocument();
+    // The season that did report one still reads as a size.
+    expect(within(list).getByText("1.0 GiB")).toBeInTheDocument();
+  });
 });

@@ -9,7 +9,7 @@
 // hands off to that season's complete reasoning.
 
 import type { Candidate, Group } from "../api";
-import { bytes } from "../format";
+import { bytes, itemBytes } from "../format";
 import { ShowStatusChip } from "./ReviewQueue";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
 import { JumpPill, Synopsis, WhyHero } from "./WhyPanel";
@@ -110,7 +110,7 @@ export function ShowPanel({
                       : season.title}
                 </span>
                 <SeasonPill season={season} />
-                <span className="panel-season-size num">{bytes(season.size_bytes)}</span>
+                <span className="panel-season-size num">{itemBytes(season.size_bytes)}</span>
               </button>
             </li>
           ))}

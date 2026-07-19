@@ -12,7 +12,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type GraceItem, type LeavingSoonResult } from "../api";
-import { bytes, count } from "../format";
+import { bytes, count, itemBytes } from "../format";
 
 function ItemRow({
   item,
@@ -36,7 +36,7 @@ function ItemRow({
       >
         {item.title}
       </button>
-      <span className="grace-size muted">{bytes(item.size_bytes)}</span>
+      <span className="grace-size muted">{itemBytes(item.size_bytes)}</span>
       <span className="grace-remaining">
         {item.in_grace ? `${item.days_remaining}d left` : "ready"}
       </span>

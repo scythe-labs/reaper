@@ -3,7 +3,7 @@
 // conventions are pinned: binary units with the unit named honestly (GiB, not GB),
 // one decimal below 100, none above, and nothing negative ever rendered.
 import { describe, expect, it } from "vitest";
-import { bytes, count, coverage } from "./format";
+import { bytes, count, coverage, itemBytes } from "./format";
 
 describe("bytes", () => {
   it("renders binary units with honest labels", () => {
@@ -24,6 +24,20 @@ describe("bytes", () => {
 
   it("caps at the largest unit instead of inventing one", () => {
     expect(bytes(1024 ** 6)).toBe("1024 PiB");
+  });
+});
+
+describe("itemBytes", () => {
+  it("says a size is unknown rather than claiming the item is empty", () => {
+    // Every candidate holds files -- both scan paths skip anything that does not -- so a
+    // stored 0 means the *arr declined to report a size. "0 B" beside a delete control
+    // would be a false statement about the file the operator is deciding on.
+    expect(itemBytes(0)).toBe("Size unknown");
+  });
+
+  it("formats a real size exactly as bytes does", () => {
+    expect(itemBytes(5.9 * 1024 ** 3)).toBe(bytes(5.9 * 1024 ** 3));
+    expect(itemBytes(1024)).toBe("1.0 KiB");
   });
 });
 

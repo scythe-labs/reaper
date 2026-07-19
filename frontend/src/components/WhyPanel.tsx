@@ -28,7 +28,7 @@ import {
   type SignalContribution,
   type SignalState,
 } from "../api";
-import { bytes, coverage, since } from "../format";
+import { coverage, itemBytes, since } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { OverrideControls, ShowStatusChip } from "./ReviewQueue";
 
@@ -743,7 +743,7 @@ export function WhyPanel({
             )}
           </h2>
           <p className="muted why-sub">
-            {bytes(item.size_bytes)} &middot; {mediaLabel}
+            {itemBytes(item.size_bytes)} &middot; {mediaLabel}
             {/* All three states here: the panel is where you came to find out. The card
                 stays quiet about a show that is still going. */}
             <ShowStatusChip status={item.show_status} />

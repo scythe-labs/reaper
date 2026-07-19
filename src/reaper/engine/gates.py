@@ -41,9 +41,15 @@ PROTECT: GateOutcome = "PROTECT"
 ABSTAIN: GateOutcome = "ABSTAIN"
 
 #: Fail-safe default for the custom-rule fact fields below. A shared, immutable ``Absent``
-#: singleton: ``Absent`` never matches a condemn comparison and never protects, so a Facts
-#: builder that does not set one of these fields cannot change any verdict. The live scan
-#: builders set them explicitly.
+#: singleton: ``Absent`` never matches a condemn comparison and never protects, so an
+#: omitted field cannot make a rule condemn or a gate fire.
+#:
+#: It is **not** inert on the keep lane, and the comment here used to claim it was. A
+#: graded keep reads ``Absent`` as "we looked, there is genuinely none" and grants no
+#: discount, where ``Unknown`` grants the full one (``signals.evaluate_keep``). So an
+#: omitted field leaves the score where an honest failure would have lowered it. That is
+#: why the live scan builders set every one of these explicitly, and why anything that
+#: could not be read is ``Unknown`` and never this.
 _UNSET: Absent = Absent(source="unset")
 
 
@@ -162,8 +168,8 @@ class Facts:
     # --- fields authorable in custom rules (the weighting feature) --------------------
     # Given fail-safe defaults so the non-production Facts builders (backtest
     # reconstruction, calibration, test fixtures) need not enumerate them; the live scan
-    # builders set them explicitly. ``Absent`` is fail-closed on every lane -- it never
-    # matches a condemn comparison and never protects.
+    # builders set them explicitly, which they must -- ``Absent`` is fail-closed on the
+    # condemn and gate lanes but not on the keep lane. See ``_UNSET``.
     requested: Observation[bool] = _UNSET
     """Was this title asked for via Seerr? Three-state: ``Unknown`` when Seerr is
     absent/partial or the item has no id to join on -- never coerced to ``False``, which

@@ -2058,13 +2058,24 @@ them truthfully.
    smallest-first so ordinal 0 is "the least costly possible mistake" (its words). A
    fabricated `0` sorts to the front, so the run's one real proof that deletion works is
    spent on the item whose size was never read. The comment and the behaviour disagree.
-**Says something untrue**
+**Says something untrue** — both fixed, dev @ this commit.
 
-2. **The queue renders "0 B" for a season that plainly holds files.** A visible false
-   statement on a surface scanned while deciding what to delete.
-3. **`gates.py` claims an unset field "cannot change any verdict."** False since the keep
-   lane existed: `Absent` withdraws a graded keep, which is the whole finding above. Rule 7
-   — the comment was true when written and is not now.
+2. ~~**The queue renders "0 B" for a season that plainly holds files.**~~ Fixed. The
+   argument that makes the fix safe is that a candidate always holds files: the movie scan
+   skips anything without one (`hasFile`) and the season scan skips anything without one
+   (`SeasonStats.has_content`). So a stored `0` on a single item is never an empty item, it
+   is a size the *arr declined to report, and `format.itemBytes` renders it "Size unknown".
+   Five per-item call sites moved to it (review queue movie card and season row, show panel
+   season row, grace list, why panel). **Totals stay on `bytes`**: a sum can be genuinely
+   zero, and one unreadable item makes a total low rather than unknown — the show panel's
+   whole-show figure and the reclaim totals are still understated by exactly this, which is
+   the nullable-column thread below, not this one.
+3. ~~**`gates.py` claims an unset field "cannot change any verdict."**~~ Fixed as a comment,
+   not a behaviour change: `_UNSET` now says `Absent` is inert on the condemn and gate lanes
+   and *not* on the keep lane, cites `signals.evaluate_keep`, and says why the live builders
+   must set every field explicitly. The behaviour was already pinned
+   (`tests/test_engine_invariants.py`, `tests/test_custom_condemn.py`); only the prose was
+   stale. Rule 7 — the comment was true when written and is not now.
 
 **Latent**
 
