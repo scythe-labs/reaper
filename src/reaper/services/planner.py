@@ -350,24 +350,25 @@ async def build_plan(
     )
     # The allowance (``ProfileSettings.max_unmeasured_per_run``) lets an owner who has a
     # handful of items their *arr will not size reap them anyway. Zero by default, and
-    # whatever it is set to, the unmeasured tail always sorts LAST: ordinal 0 is a measured
-    # item under every configuration, because the test item's whole purpose is a first
-    # mistake whose cost is known in advance.
+    # whatever it is set to, the unmeasured tail always sorts LAST.
     #
     # Written as concatenation rather than a combined sort deliberately. The invariant is
     # "no unmeasured item precedes a measured one", and it should be visible in the code
     # rather than emerge from sort stability or from a key that treats None as a number.
-    if max_unmeasured > 0:
-        plannable = measured + held_back
-        admitted, omitted = held_back, []
-    else:
-        plannable = measured
-        admitted, omitted = [], held_back
-    # What this plan leaves out for want of a size. For a whole-set plan that is every
-    # held-back item; for "reap just these" it is only the ones a requested show quietly
-    # dropped from its expansion, since anything named directly is refused out loud below.
-    # The owner is told this count on the plan and confirm screens: a plan smaller than the
-    # queue implied, with no explanation, is its own kind of dishonesty.
+    #
+    # Sorting last is necessary but NOT sufficient for the canary rule: with nothing
+    # measured to sort ahead of it, the tail becomes the whole plan and ordinal 0 is an
+    # item of unknown cost. So a plan with no measured item at all is refused outright.
+    # The test item exists to make the first mistake one whose cost was known in advance;
+    # a run that cannot offer such an item has no canary, only a first casualty.
+    if max_unmeasured > 0 and held_back and not measured:
+        raise PlanError(
+            "Reaper couldn't measure any of these items, so it has nothing safe to test "
+            "the run on. The first thing a run deletes has to be something whose size it "
+            "knows. Check these in Sonarr or Radarr, then run a new scan."
+        )
+
+    plannable = measured + held_back if max_unmeasured > 0 else measured
 
     if only_media_keys is not None:
         # "Reap just these." Every requested key must be a condemned, non-spared item in
@@ -415,6 +416,15 @@ async def build_plan(
         for c in measured:
             if c.group_key is not None:
                 members_by_group.setdefault(c.group_key, set()).add(c.media_key)
+        # Shows whose only reapable seasons are ones nothing would size. They have no
+        # entry above (that map holds measured members only), so without this they would
+        # fall through as an unrecognised key and be refused as "not condemned in this
+        # snapshot" -- true of the key, and completely misleading about the show.
+        unmeasured_groups: dict[str, set[str]] = {}
+        for c in held_back:
+            if c.group_key is not None and c.group_key not in members_by_group:
+                unmeasured_groups.setdefault(c.group_key, set()).add(c.media_key)
+
         expanded: set[str] = set()
         for key in requested:
             members = members_by_group.get(key)
@@ -423,6 +433,14 @@ async def build_plan(
             else:
                 expanded.add(key)
         requested = expanded
+
+        all_unmeasured = requested & set(unmeasured_groups)
+        if all_unmeasured:
+            raise PlanError(
+                "Reaper couldn't measure any of the seasons it would remove from "
+                f"{sorted(all_unmeasured)}, so there is nothing here it can reap. Check "
+                "them in Sonarr, then run a new scan."
+            )
 
         unknown = requested - (condemned_keys | actable_keys)
         if unknown:
@@ -447,9 +465,20 @@ async def build_plan(
                 "Remove the spare first if you really mean to delete them."
             )
         plannable = [c for c in plannable if c.media_key in requested]
-        admitted = [c for c in admitted if c.media_key in requested]
-        # Only what a requested show dropped from its own expansion. A held-back item the
-        # owner never pointed at is not this plan's business to report.
+
+    # Derived from what actually ended up in the plan, rather than decided up front by the
+    # allowance. Deciding it up front made ``omitted`` empty whenever the allowance was
+    # open, which silenced the very notice the allowance most needed: a show-level reap
+    # still leaves its unmeasured seasons out of the expansion (they may only enter a plan
+    # deliberately), so turning the allowance ON used to make the plan LESS honest than
+    # leaving it off. Anything held back that did not make the plan is omitted, whatever
+    # the setting says.
+    planned_keys = {c.media_key for c in plannable}
+    admitted = [c for c in held_back if c.media_key in planned_keys]
+    omitted = [c for c in held_back if c.media_key not in planned_keys]
+    if only_media_keys is not None:
+        # Narrowed to what a requested show dropped from its own expansion: a held-back
+        # item the owner never pointed at is not this plan's business to report.
         named = set(only_media_keys)
         omitted = [c for c in omitted if c.group_key is not None and c.group_key in named]
 

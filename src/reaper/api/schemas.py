@@ -415,6 +415,10 @@ class RunReportOut(BaseModel):
     deleted_bytes: int = 0
     """Bytes reclaimed by a real run. 0 for a dry run."""
 
+    deleted_unmeasured: int = 0
+    """How many of the deleted items had no size, so are absent from ``deleted_bytes``.
+    Above zero only when the operator allowed unmeasured items. Hidden at zero."""
+
     skipped: int
     outcomes: list[RunOutcomeOut]
     """Per item: what happened, with a plain-English checklist of the steps performed and

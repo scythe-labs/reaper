@@ -8,6 +8,32 @@ Stage 3c was mocked as an HTML artifact and approved before any frontend code, p
 `CLAUDE.md`'s golden rule. Stage 4 is the operator's own pass against real data, and
 Stages 5 to 7 are gated on what its tally shows.
 
+**An adversarial review pass ran over the whole change set** (six lenses, every finding
+put to an independent refuter). It confirmed one CRITICAL defect the gates and the browser
+both missed, and it is the most useful thing in this document for a later session:
+
+> **Using the allowance once bricked every run for the next thirty days.**
+> `_rolling_30d_deletions` raised if any past verified delete joined back to a NULL size.
+> That was correct until §4.6 made such deletions happen by design — and the candidate row
+> keeps its NULL forever, so from the first allowed deletion every later run, dry runs
+> included, aborted with no way out. The docstring asserting it "cannot occur here" was
+> written before the allowance existed and became a rule 7/24 violation in the same commit.
+> The resolution: an unmeasured past deletion counts as an ITEM (it spends the monthly item
+> budget, which is the only thing bounding that population) and contributes no bytes.
+> Aborting is the wrong fail-closed; skipping the row is the dangerous one.
+
+Three more the same pass confirmed: the canary rule held only *relatively* (unmeasured
+items sorted last, but with nothing measured the tail was the whole plan, so ordinal 0 had
+unknown cost — a plan with no measured item is now refused outright); the executor read the
+allowance as a boolean, so lowering 25 to 1 was silently ignored; and `omitted` was decided
+up front, which made `held_back_unknown_size` always 0 with the allowance on — so turning
+the setting ON made the plan *less* honest than leaving it off, exactly inverting §4.7.
+
+**Lesson for the staging.** Every one of these lives at the seam between §4.6 (the
+allowance) and a §4.3 rule written before it. When a later stage relaxes an invariant an
+earlier stage established, re-read every docstring that asserts the invariant — they are
+where the bugs are, not merely where the prose is stale.
+
 **Driven end to end in a browser** against a seeded snapshot mixing measured and
 unmeasured items. Three defects surfaced there that no test caught, all now fixed: the
 review queue header rendered a bare sum because a local variable shadowed the formatter;

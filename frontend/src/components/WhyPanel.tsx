@@ -30,7 +30,7 @@ import {
 } from "../api";
 import { coverage, itemBytes, since } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
-import { OverrideControls, ShowStatusChip } from "./ReviewQueue";
+import { OverrideControls, ShowStatusChip, useHoldsBackUnmeasured } from "./ReviewQueue";
 
 /** The built-in signal ids. Anything else in `explanation.signals[].id` is a custom
  *  rule's own name, and its row wears the "Your rule" tag. */
@@ -685,6 +685,7 @@ export function WhyPanel({
   // The panel is where the deciding happens, so Spare and Reap live here too, through the
   // shared hook the cards use so both refresh the same caches.
   const { setOverride, clearOverride } = useOverrideMutations();
+  const holdsBack = useHoldsBackUnmeasured();
 
   const mediaLabel = item.media_type === "season" ? "TV season" : item.media_type;
 
@@ -833,9 +834,11 @@ export function WhyPanel({
       <LeftForYou outcomes={explanation.protections_unknown} />
 
       {/* This is the panel that answers "what happens to this one", so it has to say the
-          thing that overrides every reason above it: no plan will include it. The plain
-          reason only, never which source was asked or when. */}
-      {item.size_bytes === null && (
+          thing that overrides every reason above it: no plan will include it. Gated on the
+          allowance, because above zero that sentence would be false -- the item IS
+          reapable then, and promising otherwise here is worse than saying nothing. The
+          plain reason only, never which source was asked or when. */}
+      {item.size_bytes === null && holdsBack && (
         <p className="notice notice-warn">
           Held back: size unknown. Sonarr and Radarr had none, so Reaper can't tell what
           removing this would free, and won't remove it.

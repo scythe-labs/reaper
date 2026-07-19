@@ -518,21 +518,35 @@ function isCondemned(item: Candidate): boolean {
  *  paragraph stands down WHENEVER the pill is present -- two status lines is noise whatever
  *  the reason says; the full sentences live in the panel. Sanctuary and Limbo wear their
  *  single short chip. */
+/** Whether an item with no size is actually being kept out of plans right now.
+ *
+ *  Only true while the allowance is off, which is its default. Above zero these items
+ *  are reapable, and a card still promising "held back" would be telling the owner the
+ *  opposite of what the plan will do. One shared query key, so this costs one request no
+ *  matter how many cards ask. Unknown or failed reads answer TRUE: claiming an item is
+ *  kept is the safe thing to be wrong about here, since the size cell already says the
+ *  size is unknown either way. */
+export function useHoldsBackUnmeasured(): boolean {
+  const { data } = useQuery({ queryKey: ["profile"], queryFn: api.profile });
+  return (data?.max_unmeasured_per_run ?? 0) === 0;
+}
+
 function CardStatusLine({
   condemned,
   dormantFor,
   reason,
   chip,
-  heldBack = false,
+  unmeasured = false,
 }: {
   condemned: boolean;
   dormantFor: string | null;
   reason: string | null;
   chip: Chip | null;
-  /** No size, so no plan will include it. Said on the card because this is where the
-   *  owner is already looking, and a count on the plan screen cannot name the item. */
-  heldBack?: boolean;
+  /** No size. Said on the card because this is where the owner is already looking, and a
+   *  count on the plan screen cannot name the item. */
+  unmeasured?: boolean;
 }) {
+  const heldBack = useHoldsBackUnmeasured() && unmeasured;
   if (!condemned) return <StatusChip chip={chip} />;
   return (
     <>
@@ -964,7 +978,7 @@ function MovieCard({
           dormantFor={item.dormant_for}
           reason={item.reason}
           chip={item.chip}
-          heldBack={item.size_bytes === null}
+          unmeasured={item.size_bytes === null}
         />
       </div>
       <div className="card-side">
@@ -1097,7 +1111,7 @@ function ShowCard({
             // A show is held back only when EVERY actable season is: one measured season
             // still gives "Reap now" something to do, and the count beside it already
             // says how many it is leaving out.
-            heldBack={isReapTab && condemnedCount === 0 && condemnedUnknown > 0}
+            unmeasured={isReapTab && condemnedCount === 0 && condemnedUnknown > 0}
           />
         </div>
         <div className="card-side">

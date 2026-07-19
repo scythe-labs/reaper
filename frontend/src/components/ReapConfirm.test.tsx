@@ -44,6 +44,7 @@ function report(overrides: Partial<RunReport> = {}): RunReport {
     aborted_reason: null,
     would_delete_items: 1,
     deleted_bytes: 0,
+    deleted_unmeasured: 0,
     skipped: 0,
     outcomes: [],
     ...overrides,

@@ -181,7 +181,12 @@ export function ReapConfirm({
               {souls(report.would_delete_items)} reclaimed
             </strong>
             <span className="muted">
+              {/* The count above covers every item; this covers only the ones with a
+                  size. When they differ, say so, rather than letting the byte figure
+                  read as the whole story. */}
               {bytes(report.deleted_bytes)} freed
+              {report.deleted_unmeasured > 0 &&
+                ` · ${count(report.deleted_unmeasured)} of unknown size`}
               {report.skipped > 0 && ` · ${count(report.skipped)} spared at the last moment`}
             </span>
           </div>

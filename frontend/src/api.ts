@@ -490,6 +490,9 @@ export interface RunReport {
   aborted_reason: string | null;
   would_delete_items: number;
   deleted_bytes: number;
+  /** How many deleted items had no size, so are absent from `deleted_bytes`. Above zero
+   *  only when the operator allowed unmeasured items. Hidden at zero. */
+  deleted_unmeasured: number;
   skipped: number;
   outcomes: RunOutcome[];
 }

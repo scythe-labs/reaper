@@ -388,10 +388,11 @@ class Candidate(Base):
     ``watch_event.watched_status``.
 
     ``size_source`` below says which measurement this is, and is NULL exactly when this
-    is. Nothing writes a NULL yet: the two persist sites in ``services.snapshot`` and
-    ``services.season_scan`` still fabricate a ``0``, and ``executor.size_confirmed`` is
-    what keeps that zero out of a delete meanwhile. The column is widened first so every
-    consumer is proven to handle an unknown before one can be written."""
+    is. Both scan paths write a NULL when nothing reports a size. What keeps such an item
+    out of a delete is ``planner.build_plan``, which holds it back, and
+    ``executor.size_confirmed``, which refuses it again per item -- unless the operator has
+    raised ``ProfileSettings.max_unmeasured_per_run``, which admits a bounded number of
+    them deliberately."""
 
     size_source: Mapped[str | None] = mapped_column(String(16), default=None)
     """Which measurement ``size_bytes`` holds, as a ``SizeSource`` value. NULL means no

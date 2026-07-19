@@ -2236,6 +2236,22 @@ left, each because the correct fix is wider than the finding and wants its own c
    operator's own. That last one was pre-existing and made EVERY settings-based warning
    unreachable, including the danger about running without approval.
 
+   **An adversarial review pass then found a critical defect neither the gates nor the
+   browser caught, and it is worth remembering how.** Using the allowance once bricked
+   every run for thirty days: the rolling 30-day cap raised on any past verified deletion
+   whose candidate row had a NULL size, which was correct until the allowance made such
+   deletions happen by design. The row keeps its NULL forever, so from the first allowed
+   deletion every later run, dry runs included, aborted with no way out. Three more from
+   the same pass: the canary rule held only relatively (with nothing measured, the
+   unmeasured tail *was* the plan, so ordinal 0 had unknown cost); the executor read the
+   allowance as a boolean, so lowering 25 to 1 was ignored; and the held-back count was
+   always 0 with the allowance on, making the setting *reduce* what the operator was told.
+
+   Every one sat at the seam between the allowance and a rule written before it existed.
+   The generalisable lesson: **when a stage relaxes an invariant an earlier stage
+   established, the docstrings asserting that invariant are where the bugs are, not merely
+   where the prose is stale.** Four are now pinned by regression tests, each teeth-checked.
+
    Still open: Stage 4 (the operator's real-data pass) and Stages 5 to 7, which are gated
    on what Stage 4's tally shows.
 2. **The refused-reap clause is a frontend map keyed on strings the server emits**

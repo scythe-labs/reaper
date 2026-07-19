@@ -1128,8 +1128,10 @@ class TestTheUnmeasuredAllowance:
         """The allowance is re-read at execute time, so an operator who changes their mind
         between approving and executing gets the safe direction. Raising it after approval
         can add nothing, because those items were never planned."""
-        snapshot_id = await _snapshot_one(
-            session, media_key="radarr:1:1", rating_key=700, size=None
+        # The measured item is the plan's test item, and is deleted normally. Only the
+        # unmeasured one is at issue here.
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", None, 701), ("radarr:1:2", 1 * GB, 702)]
         )
         run = await build_plan(
             session,
@@ -1143,8 +1145,10 @@ class TestTheUnmeasuredAllowance:
         # Approved under an allowance of 1; executed under 0.
         report = await _real(session, run, _gateway(radarr={1: radarr}))
 
-        assert radarr.delete_calls == []
+        # The measured item went; the unmeasured one was kept by the lowered allowance.
+        assert radarr.delete_calls == [2]
         assert report.skipped == 1
+        assert report.deleted_unmeasured == 0
 
     async def test_an_unmeasured_season_still_never_rides_a_show_level_click(
         self, session: AsyncSession
@@ -1169,6 +1173,186 @@ class TestTheUnmeasuredAllowance:
 
         planned = {s.media_key for s in await _steps(session, run.id)}
         assert planned == {"sonarr:1:42:1"}
+
+
+class TestUsingTheAllowanceDoesNotBrickTheNextThirtyDays:
+    """The rolling 30-day window reads past VERIFIED deletions back off their frozen
+    candidate rows. An allowed unmeasured item leaves a row whose size is NULL forever,
+    so from the moment one is deleted the window contains one -- on every later run.
+
+    Aborting on that would make one use of the allowance disable reaping entirely for a
+    month, dry runs included, with no way out. Skipping the row would be the other
+    failure: the window would read light and spend past the monthly budget. It counts as
+    an item and contributes no bytes, which is the only reading that is neither.
+    """
+
+    async def test_a_past_unmeasured_deletion_does_not_abort_later_runs(
+        self, session: AsyncSession
+    ) -> None:
+        # A measured item rides along: a plan of only unmeasured items has no safe test
+        # item and is refused outright.
+        past = await _snapshot_many(
+            session, [("radarr:1:1", None, 701), ("radarr:1:2", 1 * GB, 702)]
+        )
+        first = await build_plan(
+            session,
+            snapshot_id=past,
+            policy_hash="p" * 64,
+            approved_by="admin",
+            max_unmeasured=1,
+        )
+        allowing = ProfileSettings(max_items_per_run=10, max_unmeasured_per_run=1)
+        done = await _real(session, first, _gateway(radarr={1: FakeRadarr()}), settings=allowing)
+        assert done.deleted_items == 2  # both went, the unmeasured one included
+        assert done.deleted_unmeasured == 1  # and is named as absent from the byte total
+        assert done.deleted_bytes == 1 * GB
+
+        # A completely ordinary second run, of a measured item, under the same settings.
+        later = await _snapshot_with(session, [("radarr:1:9", 1 * GB)])
+        second = await build_plan(
+            session,
+            snapshot_id=later,
+            policy_hash="p" * 64,
+            approved_by="admin",
+            max_unmeasured=1,
+        )
+        report = await Executor(
+            session, safety=_read_only(), settings=allowing, dry_run=True
+        ).execute(second.id)
+
+        assert report.state is RunState.COMPLETED, report.aborted_reason
+
+    async def test_the_past_unmeasured_item_still_counts_against_the_monthly_item_cap(
+        self, session: AsyncSession
+    ) -> None:
+        """It was deleted, so it spends the monthly item budget. That budget is the only
+        thing bounding this population, since it contributed no bytes to spend."""
+        past = await _snapshot_many(
+            session, [("radarr:1:1", None, 701), ("radarr:1:2", 1 * GB, 702)]
+        )
+        first = await build_plan(
+            session,
+            snapshot_id=past,
+            policy_hash="p" * 64,
+            approved_by="admin",
+            max_unmeasured=1,
+        )
+        allowing = ProfileSettings(max_items_per_run=10, max_unmeasured_per_run=1)
+        await _real(session, first, _gateway(radarr={1: FakeRadarr()}), settings=allowing)
+
+        later = await _snapshot_with(session, [("radarr:1:9", 1 * GB)])
+        second = await build_plan(
+            session, snapshot_id=later, policy_hash="p" * 64, approved_by="admin"
+        )
+        # Two already spent this month, and a cap of two.
+        capped = ProfileSettings(max_items_per_run=2, max_items_per_30d=2, max_unmeasured_per_run=1)
+        report = await Executor(
+            session, safety=_read_only(), settings=capped, dry_run=True
+        ).execute(second.id)
+
+        assert report.state is RunState.ABORTED
+        assert "already" in (report.aborted_reason or "")
+
+
+class TestTheAllowanceIsACountNotASwitch:
+    """The executor must enforce the NUMBER, not merely whether it is above zero.
+
+    The whole reason this setting is safe to keep out of the policy hash is that both
+    directions of a change resolve toward keeping. That only holds if a tightening is
+    actually honoured at execute time -- otherwise lowering 25 to 1 is silently ignored on
+    the one population no byte cap can bound.
+    """
+
+    async def test_lowering_it_to_a_smaller_non_zero_value_is_enforced(
+        self, session: AsyncSession
+    ) -> None:
+        snapshot_id = await _snapshot_with(
+            session,
+            [("radarr:1:1", 1 * GB), ("radarr:1:2", None), ("radarr:1:3", None)],
+        )
+        run = await build_plan(
+            session,
+            snapshot_id=snapshot_id,
+            policy_hash="p" * 64,
+            approved_by="admin",
+            max_unmeasured=2,
+        )
+
+        # Approved under 2, executed under 1. Not zero, so the old boolean read admitted
+        # both; the count must refuse the run instead.
+        tightened = ProfileSettings(max_items_per_run=10, max_unmeasured_per_run=1)
+        report = await Executor(
+            session, safety=_read_only(), settings=tightened, dry_run=True
+        ).execute(run.id)
+
+        assert report.state is RunState.ABORTED
+        assert "over your limit" in (report.aborted_reason or "")
+
+
+class TestTheCanaryRuleHoldsWhenNothingIsMeasured:
+    """Sorting the unmeasured tail last is necessary but not sufficient. With nothing
+    measured to sort ahead of it, the tail IS the plan and ordinal 0 has unknown cost."""
+
+    async def test_a_plan_of_only_unmeasured_items_is_refused(self, session: AsyncSession) -> None:
+        snapshot_id = await _snapshot_with(session, [("radarr:1:1", None), ("radarr:1:2", None)])
+
+        with pytest.raises(PlanError, match="nothing safe to test"):
+            await build_plan(
+                session,
+                snapshot_id=snapshot_id,
+                policy_hash="p" * 64,
+                approved_by="admin",
+                max_unmeasured=5,
+            )
+
+
+class TestTheHeldBackNoticeSurvivesTheAllowance:
+    """Turning the allowance ON must not make the plan LESS honest than leaving it off."""
+
+    async def test_a_show_reap_still_reports_the_seasons_it_dropped(
+        self, session: AsyncSession
+    ) -> None:
+        """An unmeasured season never rides a show-level click, whatever the allowance.
+        That is deliberate -- but it means the click plans fewer seasons than the queue
+        showed, so the count that explains it must survive too."""
+        snapshot_id = await _snapshot_many(
+            session,
+            [("sonarr:1:42:1", 1 * GB, 801), ("sonarr:1:42:2", None, 802)],
+            media_type="season",
+            group_key="sonarr:1:42",
+        )
+        run = await build_plan(
+            session,
+            snapshot_id=snapshot_id,
+            policy_hash="p" * 64,
+            approved_by="admin",
+            only_media_keys={"sonarr:1:42"},
+            max_unmeasured=5,
+        )
+
+        assert {s.media_key for s in await _steps(session, run.id)} == {"sonarr:1:42:1"}
+        assert run.held_back_unknown_size == 1
+
+    async def test_a_show_with_no_measurable_season_says_which_show(
+        self, session: AsyncSession
+    ) -> None:
+        """Not "these items are not condemned in this snapshot", which is true of the key
+        and completely misleading about the show."""
+        snapshot_id = await _snapshot_many(
+            session,
+            [("sonarr:1:42:1", None, 801)],
+            media_type="season",
+            group_key="sonarr:1:42",
+        )
+
+        with pytest.raises(PlanError, match="couldn't measure any of the seasons"):
+            await build_plan(
+                session,
+                snapshot_id=snapshot_id,
+                policy_hash="p" * 64,
+                approved_by="admin",
+                only_media_keys={"sonarr:1:42"},
+            )
 
 
 class TestDisarmMidRun:
@@ -2040,13 +2224,14 @@ async def _real(
     gateway: ReapGateway,
     *,
     armed_recheck: Any = _armed_forever,
+    settings: ProfileSettings | None = None,
 ) -> RunReport:
     """Execute a run for real (armed) against the given gateway of fakes. Zero poll delay so
     the exclusion-verification retry does not slow the suite."""
     executor = Executor(
         session,
         safety=_armed(),
-        settings=ProfileSettings(),
+        settings=settings or ProfileSettings(),
         dry_run=False,
         gateway=gateway,
         armed_recheck=armed_recheck,

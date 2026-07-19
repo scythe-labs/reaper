@@ -361,6 +361,13 @@ class RunReport:
     outcomes: list[StepOutcome] = field(default_factory=list)
     deleted_items: int = 0
     deleted_bytes: int = 0
+    deleted_unmeasured: int = 0
+    """How many of ``deleted_items`` had no size, so contributed nothing to
+    ``deleted_bytes``. Only ever above zero when the operator raised
+    ``ProfileSettings.max_unmeasured_per_run``. Carried so the report can say why its two
+    numbers describe different sets, rather than letting the byte figure read as the whole
+    story."""
+
     skipped: int = 0
     aborted_reason: str | None = None
 
@@ -520,6 +527,18 @@ def _check_caps(
     deletable = _deletable(deletes, effective_keys, allow_unmeasured=allow_unmeasured)
     items = len(deletable)
     total_bytes = _deletable_bytes(deletable, allow_unmeasured=allow_unmeasured)
+
+    # The allowance is a COUNT, and this is where the host enforces it as one. The planner
+    # checks it too, at plan time, but the settings can move between approving a plan and
+    # running it -- and lowering a limit that is only ever read as "above zero or not"
+    # would be silently ignored on the one population no byte cap can bound.
+    unmeasured = sum(1 for d in deletable if d.candidate.size_bytes is None)
+    if unmeasured > settings.max_unmeasured_per_run:
+        raise ExecutionError(
+            f"This run would delete {unmeasured} items Reaper couldn't measure, over your "
+            f"limit of {settings.max_unmeasured_per_run} per run. The run is aborted, not "
+            "trimmed: which of them gets deleted must never come down to sort order."
+        )
 
     if items > settings.max_items_per_run:
         raise ExecutionError(
@@ -833,10 +852,17 @@ class Executor:
         ended in: a crashed or aborted run's verified deletions are still deletions, and
         leaving them out would let repeated aborts spend past the budget.
 
-        An unknown size cannot occur here, because nothing unmeasured is ever sent. If one
-        does, the cap is unenforceable and the run aborts. It must not skip the row: a
-        silently skipped past deletion makes the trailing window read light, which spends
-        past the budget in exactly the way this function exists to prevent.
+        An unmeasured past deletion is a normal outcome once the operator's allowance is
+        above zero, and it is permanent: the candidate row keeps its NULL forever, so
+        every later run sees it again. It therefore counts as an ITEM -- it was deleted,
+        and the rolling item cap is what bounds that population -- and contributes no
+        bytes, because there are none to contribute.
+
+        Aborting on it instead would be the wrong kind of fail-closed: one use of the
+        allowance would make every subsequent run, dry runs included, refuse for thirty
+        days with no way out. Skipping the ROW would be the dangerous kind, since the
+        trailing window would read light and spend past the budget. Counting the item and
+        omitting its bytes is the only reading that is neither.
         """
         cutoff = utcnow() - timedelta(days=30)
         sizes = (
@@ -860,12 +886,12 @@ class Executor:
             .scalars()
             .all()
         )
-        if any(size is None for size in sizes):
-            raise ExecutionError(
-                "Reaper couldn't measure some of what it deleted in the last 30 days, so "
-                "it can't tell whether this run fits your monthly limits. The run is "
-                "aborted."
-            )
+        unmeasured = sum(1 for size in sizes if size is None)
+        if unmeasured:
+            # Not an alarm on its own -- the allowance produces these deliberately -- but
+            # the monthly BYTE budget is knowingly incomplete while they are in the window,
+            # so it is recorded rather than passed over in silence.
+            log.info("executor.rolling_window_unmeasured", items=unmeasured, window_days=30)
         return len(sizes), sum(size for size in sizes if size is not None)
 
     async def _run_deletes(
@@ -907,12 +933,15 @@ class Executor:
 
             if outcome.state == StepState.VERIFIED:
                 report.deleted_items += 1
-                # Only a measured item can reach a delete: both send paths refuse an
-                # unconfirmed size before anything goes out. The check is for the type
-                # checker, and the reclaim figure stays exact because of the refusal
-                # upstream rather than any arithmetic here.
+                # An item the allowance admitted is deleted with no size to add, so the
+                # reclaim figure covers what was measured and the count beside it covers
+                # everything. They describe different sets by necessity, and the report
+                # carries the difference rather than letting the byte figure imply it is
+                # the whole story.
                 if (freed := delete.candidate.size_bytes) is not None:
                     report.deleted_bytes += freed
+                else:
+                    report.deleted_unmeasured += 1
             elif outcome.state == StepState.FAILED and first_real_attempt:
                 # The canary -- the first real deletion -- misbehaved. Halt the whole run:
                 # a plan whose first, smallest, safest delete does not behave as predicted

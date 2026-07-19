@@ -37,12 +37,18 @@ export function phaseLabel(phase: string): string {
  *  A scan replaces the snapshot underneath the whole page, so the queue and the totals
  *  change with nothing to compare them against. Null when nothing moved is deliberate:
  *  a line saying "no change" every time would be noise. */
+/** Scan-to-scan movement. Both byte figures cover only the items that had a size, and
+ *  the two scans can have different unmeasured populations -- an item measured last time
+ *  and not this time leaves the total on its own, which reads as progress that did not
+ *  happen. So when either scan is carrying unknowns the difference is qualified rather
+ *  than dropped: a line the operator is used to must never quietly change meaning. */
 function scanDelta(
-  before: { condemned: number; freeable: number },
+  before: { condemned: number; freeable: number; unknownSize: number },
   after: Snapshot,
 ): string | null {
   const items = after.condemned - before.condemned;
   const size = after.reclaimable_bytes - before.freeable;
+  const unknowns = Math.max(before.unknownSize, after.unknown_size_items);
   if (items === 0 && size === 0) return null;
 
   const parts: string[] = [];
@@ -50,7 +56,9 @@ function scanDelta(
     parts.push(`${count(Math.abs(items))} ${items > 0 ? "more" : "fewer"} to remove`);
   }
   if (size !== 0) {
-    parts.push(`${bytes(Math.abs(size))} ${size > 0 ? "more" : "less"} to free`);
+    const qualifier =
+      unknowns > 0 ? ` · ${count(unknowns)} ${unknowns === 1 ? "size" : "sizes"} unknown` : "";
+    parts.push(`${bytes(Math.abs(size))} ${size > 0 ? "more" : "less"} to free${qualifier}`);
   }
   return `Compared with the scan before: ${parts.join(", ")}.`;
 }
@@ -74,6 +82,7 @@ export function ScanBar({ snapshot }: { snapshot: Snapshot | undefined }) {
     id: number;
     condemned: number;
     freeable: number;
+    unknownSize: number;
   } | null>(null);
 
   // When a scan finishes, refresh everything that hangs off the snapshot (the queue, the
@@ -88,6 +97,7 @@ export function ScanBar({ snapshot }: { snapshot: Snapshot | undefined }) {
               id: previous.id,
               condemned: previous.condemned,
               freeable: previous.reclaimable_bytes,
+              unknownSize: previous.unknown_size_items,
             }
           : null,
       );

@@ -333,6 +333,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
         state=report.state.value,
         deleted_items=report.deleted_items,
         deleted_bytes=report.deleted_bytes,
+        deleted_unmeasured=report.deleted_unmeasured,
         skipped=report.skipped,
     )
     return _report_out(report)
@@ -346,6 +347,7 @@ def _report_out(report: RunReport) -> RunReportOut:
         aborted_reason=report.aborted_reason,
         would_delete_items=report.deleted_items,
         deleted_bytes=report.deleted_bytes,
+        deleted_unmeasured=report.deleted_unmeasured,
         skipped=report.skipped,
         outcomes=[
             RunOutcomeOut(
