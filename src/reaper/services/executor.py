@@ -420,7 +420,9 @@ async def _condemned(session: AsyncSession, snapshot_id: int) -> dict[str, Candi
     return {c.media_key: c for c in rows}
 
 
-def _deletable(deletes: Sequence[_Delete], effective_keys: set[str]) -> list[_Delete]:
+def _deletable(
+    deletes: Sequence[_Delete], effective_keys: set[str], *, allow_unmeasured: bool = False
+) -> list[_Delete]:
     """The exact set a run will act on: the items in the effective condemned set.
 
     ``effective_keys`` is the membership of ``services.condemned.effective_condemned``,
@@ -436,11 +438,19 @@ def _deletable(deletes: Sequence[_Delete], effective_keys: set[str]) -> list[_De
     the same reason: the send paths refuse it, so it is not part of what this run acts
     on, and counting it as 0 bytes -- which is what its stored size says -- would let a
     run delete materially more than the cap and the typed total the owner confirmed.
+
+    ``allow_unmeasured`` is the operator's allowance
+    (``ProfileSettings.max_unmeasured_per_run``) above zero. Those items ARE acted on, so
+    they belong in this set: they count against the item caps, and they are excluded from
+    the byte sums by ``_deletable_bytes`` rather than by being missing here. Letting them
+    contribute a zero to a byte cap instead would be the original bug restored by the
+    back door.
     """
     return [
         d
         for d in deletes
-        if d.candidate.media_key in effective_keys and size_confirmed(d.candidate)
+        if d.candidate.media_key in effective_keys
+        and (allow_unmeasured or size_confirmed(d.candidate))
     ]
 
 
@@ -472,7 +482,7 @@ def _measures(candidate: Candidate, comparable: frozenset[SizeSource]) -> bool:
     return candidate.size_source in comparable
 
 
-def _deletable_bytes(deletable: Sequence[_Delete]) -> int:
+def _deletable_bytes(deletable: Sequence[_Delete], *, allow_unmeasured: bool = False) -> int:
     """Total bytes over the exact set a run will act on.
 
     Asserts rather than coercing. ``_deletable`` has already dropped every item whose size
@@ -485,9 +495,13 @@ def _deletable_bytes(deletable: Sequence[_Delete]) -> int:
     This should never fire, and must not be deleted as unreachable. It is the only thing
     standing between a future regression in the planner's filter and a cap that silently
     stops working.
+
+    With the operator's allowance open, an unmeasured item is a legitimate member of the
+    set, so it is simply left OUT of the byte total. It is not counted as zero: the item
+    caps bound it instead, which is the whole reason the allowance is a count.
     """
     unknown = sorted(d.candidate.media_key for d in deletable if d.candidate.size_bytes is None)
-    if unknown:
+    if unknown and not allow_unmeasured:
         raise ExecutionError(
             "Reaper couldn't measure the size of these items, so it can't check the run "
             f"against your limits: {unknown}. The run is aborted."
@@ -502,9 +516,10 @@ def _check_caps(
     fits: truncating would make *what* gets deleted depend on sort order. The rolling
     30-day caps are enforced separately, by ``Executor._check_rolling_caps``, which also
     aborts rather than truncates."""
-    deletable = _deletable(deletes, effective_keys)
+    allow_unmeasured = settings.max_unmeasured_per_run > 0
+    deletable = _deletable(deletes, effective_keys, allow_unmeasured=allow_unmeasured)
     items = len(deletable)
-    total_bytes = _deletable_bytes(deletable)
+    total_bytes = _deletable_bytes(deletable, allow_unmeasured=allow_unmeasured)
 
     if items > settings.max_items_per_run:
         raise ExecutionError(
@@ -788,9 +803,10 @@ class Executor:
         Checked in dry run too, so the simulation proves the same refusal a real run
         would hit.
         """
-        deletable = _deletable(deletes, self._effective_keys)
+        allow_unmeasured = self._settings.max_unmeasured_per_run > 0
+        deletable = _deletable(deletes, self._effective_keys, allow_unmeasured=allow_unmeasured)
         items = len(deletable)
-        total_bytes = _deletable_bytes(deletable)
+        total_bytes = _deletable_bytes(deletable, allow_unmeasured=allow_unmeasured)
         past_items, past_bytes = await self._rolling_30d_deletions()
 
         if past_items + items > self._settings.max_items_per_30d:
@@ -1197,10 +1213,7 @@ class Executor:
         # narrowed for the rest of the function.
         candidate = delete.candidate
         approved_size = candidate.size_bytes
-        if approved_size is None or not _measures(candidate, _MOVIE_COMPARABLE):
-            # A real alarm, not routine noise: the planner should have held this back, so
-            # this firing means the two layers disagree and the first one is wrong.
-            log.warning("executor.skipped_unmeasured", media_key=candidate.media_key)
+        if not self._may_send_unmeasured(candidate, _MOVIE_COMPARABLE):
             return self._mark_skipped(
                 delete, _NO_APPROVED_SIZE_REASON, check=_NO_APPROVED_SIZE_CHECK
             )
@@ -1214,14 +1227,22 @@ class Executor:
         # its real size after the next scan. An unreadable size is drift we cannot rule
         # out, so it is kept too.
         live_size = _payload_size(movie.get("sizeOnDisk"))
-        if live_size is None:
+        # An item the allowance admitted has no frozen size to compare against, so the
+        # growth interlock simply cannot run for it. That is exactly the protection the
+        # owner traded away by raising the limit, and it is why the limit is a count: the
+        # byte caps cannot bound this item either.
+        if live_size is None and approved_size is not None:
             return self._mark_skipped(
                 delete,
                 "Radarr did not report this movie's current size, so Reaper cannot "
                 "confirm it is still the file that was approved. Kept.",
                 check="Couldn't confirm its current size. Kept.",
             )
-        if _grew_materially(approved_size, live_size):
+        if (
+            approved_size is not None
+            and live_size is not None
+            and _grew_materially(approved_size, live_size)
+        ):
             return self._mark_skipped(
                 delete,
                 f"the file is bigger now ({_gb(live_size)}) than when it was approved "
@@ -1351,10 +1372,7 @@ class Executor:
         # (``_grew_materially(0, live)`` is just ``live > 256 MiB``). Same question as
         # ``size_confirmed``, written inline so the size is narrowed below.
         approved_size = candidate.size_bytes
-        if approved_size is None or not _measures(candidate, _SEASON_COMPARABLE):
-            # A real alarm, not routine noise: the planner should have held this back, so
-            # this firing means the two layers disagree and the first one is wrong.
-            log.warning("executor.skipped_unmeasured", media_key=candidate.media_key)
+        if not self._may_send_unmeasured(candidate, _SEASON_COMPARABLE):
             return self._mark_skipped(
                 delete, _NO_APPROVED_SIZE_REASON, check=_NO_APPROVED_SIZE_CHECK
             )
@@ -1368,7 +1386,10 @@ class Executor:
         # growth check below and marks the step verified having proven nothing -- and
         # since the plan is ordered smallest-first, a zero-size season is exactly what
         # the canary lands on. Rule 1: an omitted answer is not an explicit empty one.
-        if not live_sizes or any(size is None for size in live_sizes):
+        # An item the allowance admitted has no frozen size to compare against, so the
+        # growth interlock cannot run for it at all. The empty-list guard still applies:
+        # a season with no files is not a season worth sending a delete for.
+        if not live_sizes or (approved_size is not None and any(s is None for s in live_sizes)):
             return self._mark_skipped(
                 delete,
                 "Sonarr did not report a size for every file in this season, so Reaper "
@@ -1376,7 +1397,7 @@ class Executor:
                 check="Couldn't confirm its current size. Kept.",
             )
         live_total = sum(size for size in live_sizes if size is not None)
-        if _grew_materially(approved_size, live_total):
+        if approved_size is not None and _grew_materially(approved_size, live_total):
             return self._mark_skipped(
                 delete,
                 f"this season is bigger now ({_gb(live_total)}) than when it was approved "
@@ -1678,6 +1699,34 @@ class Executor:
             title=delete.candidate.title,
             checks=checks if checks is not None else [StepCheck(reason, False)],
         )
+
+    def _may_send_unmeasured(self, candidate: Candidate, comparable: frozenset[SizeSource]) -> bool:
+        """May this item be sent at all, on the evidence of its frozen size?
+
+        Three answers, and only one of them is yes-with-a-comparison:
+
+        * a size that measures the same thing the live re-read will -> send, and the
+          growth interlock runs normally;
+        * no size at all, with the operator's allowance open -> send, with the growth
+          interlock unavailable. That is the protection they traded away deliberately, and
+          it is why the allowance is a count: the byte caps cannot bound this item either;
+        * anything else -> keep. No size and no allowance, or a size that measures a
+          different quantity (a file where the live read is a folder), which would make a
+          normal folder read as growth.
+
+        Read from settings HERE, at execute time, not from the plan. An operator who
+        lowers the allowance to 0 between approval and execute gets those items kept;
+        raising it after approval can add nothing, because they were never planned. Both
+        directions resolve toward keeping the file, which is what makes a late read safe.
+        """
+        if candidate.size_bytes is not None:
+            return _measures(candidate, comparable)
+        if self._settings.max_unmeasured_per_run > 0:
+            return True
+        # A real alarm, not routine noise: the planner should have held this back, so this
+        # firing means the two layers disagree and the first one is wrong.
+        log.warning("executor.skipped_unmeasured", media_key=candidate.media_key)
+        return False
 
     def _mark_skipped(self, delete: _Delete, reason: str, check: str | None = None) -> StepOutcome:
         """Spare the whole item. In a REAL run, mark every one of its steps SKIPPED (not

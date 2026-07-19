@@ -79,6 +79,7 @@ const pace: ProfileSettings = {
   max_bytes_per_30d: 2_000_000_000_000,
   grace_days: 14,
   require_approval: true,
+  max_unmeasured_per_run: 0,
 };
 
 function renderEditor(policy: Partial<Policy> & { body: PolicyBody }) {

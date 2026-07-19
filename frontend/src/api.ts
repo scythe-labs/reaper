@@ -501,6 +501,9 @@ export interface ProfileSettings {
   max_bytes_per_30d: number;
   grace_days: number;
   require_approval: boolean;
+  /** How many items with no size one run may delete. 0, the default, means never: the GB
+   *  caps cannot bound them, so this count is the only bound there is. */
+  max_unmeasured_per_run: number;
 }
 
 export interface WhitelistEntry {

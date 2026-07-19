@@ -331,6 +331,9 @@ class ProfileSettingsIO(BaseModel):
     max_bytes_per_30d: int = Field(ge=1)
     grace_days: int = Field(ge=7)
     require_approval: bool = True
+    max_unmeasured_per_run: int = Field(default=0, ge=0, le=25)
+    """How many items with no size one run may delete. The GB caps cannot bound them, so
+    this count is the only bound there is. Defaults to 0: never."""
 
 
 class ActionStepOut(BaseModel):

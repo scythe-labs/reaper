@@ -57,6 +57,7 @@ from reaper.services.planner import (
     confirmation_phrase,
     manifest_hash,
 )
+from reaper.services.profiles import save_profile_settings
 
 GB = 1024**3
 
@@ -989,6 +990,187 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
         assert confirmation_phrase(await _planned_candidates(session, run)) == "REAP 1 ITEMS 1 GB"
 
 
+class TestTheUnmeasuredAllowance:
+    """``max_unmeasured_per_run`` above zero lets a bounded number of unmeasured items be
+    reaped. Everything it does NOT relax is what these pin.
+
+    It exists because "never" is the wrong answer for an operator with a handful of items
+    their *arr will not size. It is a count and not a switch because an unmeasured item
+    contributes nothing to either byte cap, so the byte caps cannot bound this population
+    at all: the count is the only bound there is.
+    """
+
+    async def test_the_test_item_is_never_an_unmeasured_one(self, session: AsyncSession) -> None:
+        """The single most important check here. The canary's whole purpose is a first
+        mistake whose cost is known in advance, so an unmeasured canary is the original
+        defect wearing a setting. No configuration may reintroduce it.
+
+        The unmeasured item is the SMALLEST thing in the plan by any naive reading -- it
+        has no size at all -- so a combined sort, or a key treating None as 0, seats it at
+        ordinal 0. That is exactly the accident this asserts against.
+        """
+        snapshot_id = await _snapshot_with(
+            session, [("radarr:1:1", None), ("radarr:1:2", 5 * GB), ("radarr:1:3", 1 * GB)]
+        )
+        run = await build_plan(
+            session,
+            snapshot_id=snapshot_id,
+            policy_hash="p" * 64,
+            approved_by="admin",
+            max_unmeasured=3,
+        )
+
+        ordered = [s.media_key for s in await _steps(session, run.id)]
+        # Smallest measured first, and the unmeasured one last however small it looks.
+        assert ordered == ["radarr:1:3", "radarr:1:2", "radarr:1:1"]
+
+    async def test_over_the_allowance_aborts_rather_than_trimming(
+        self, session: AsyncSession
+    ) -> None:
+        """Planning the first N would let sort order pick which unmeasured file dies,
+        which is the accident the whole design removes. Same abort-not-truncate
+        discipline the byte caps keep."""
+        snapshot_id = await _snapshot_with(
+            session, [("radarr:1:1", None), ("radarr:1:2", None), ("radarr:1:3", 1 * GB)]
+        )
+
+        with pytest.raises(PlanError, match="over your limit"):
+            await build_plan(
+                session,
+                snapshot_id=snapshot_id,
+                policy_hash="p" * 64,
+                approved_by="admin",
+                max_unmeasured=1,
+            )
+
+    async def test_the_phrase_names_what_the_gb_figure_does_not_cover(
+        self, session: AsyncSession
+    ) -> None:
+        """The GB figure stays exact for the items it describes, so the owner has to type
+        an acknowledgement that the run holds things it does not.
+
+        Saved to the profile, not merely passed to ``build_plan``: the review surface
+        reads the allowance live, so if only one of the two knew about it the phrase shown
+        and the phrase recomputed at execute time would differ, and every execute would
+        409.
+        """
+        await save_profile_settings(
+            session, ProfileSettings(max_items_per_run=10, max_unmeasured_per_run=2)
+        )
+        snapshot_id = await _snapshot_with(session, [("radarr:1:1", None), ("radarr:1:2", 10 * GB)])
+        run = await build_plan(
+            session,
+            snapshot_id=snapshot_id,
+            policy_hash="p" * 64,
+            approved_by="admin",
+            max_unmeasured=2,
+        )
+
+        planned = await _planned_candidates(session, run)
+        assert confirmation_phrase(planned) == "REAP 2 ITEMS 10 GB + 1 UNSIZED"
+
+    async def test_they_count_against_the_item_cap(self, session: AsyncSession) -> None:
+        """Only the BYTE caps cannot bound them. The item caps must, or the population is
+        unbounded and the setting means nothing."""
+        snapshot_id = await _snapshot_with(
+            session, [("radarr:1:1", None), ("radarr:1:2", None), ("radarr:1:3", 1 * GB)]
+        )
+        run = await build_plan(
+            session,
+            snapshot_id=snapshot_id,
+            policy_hash="p" * 64,
+            approved_by="admin",
+            max_unmeasured=2,
+        )
+
+        settings = ProfileSettings(
+            max_items_per_run=2, max_items_per_30d=100, max_unmeasured_per_run=2
+        )
+        report = await Executor(
+            session, safety=_read_only(), settings=settings, dry_run=True
+        ).execute(run.id)
+
+        assert report.state is RunState.ABORTED
+        assert "3 items" in (report.aborted_reason or "")
+
+    async def test_they_never_contribute_zero_to_a_byte_cap(self, session: AsyncSession) -> None:
+        """The tempting shortcut once they can be planned is to let them count as 0 bytes
+        so the arithmetic keeps working. That is the original bug by the back door: the
+        byte total must describe only what was actually measured."""
+        snapshot_id = await _snapshot_with(
+            session, [("radarr:1:1", None), ("radarr:1:2", 400 * GB)]
+        )
+        run = await build_plan(
+            session,
+            snapshot_id=snapshot_id,
+            policy_hash="p" * 64,
+            approved_by="admin",
+            max_unmeasured=1,
+        )
+
+        settings = ProfileSettings(
+            max_bytes_per_run=500 * GB,
+            max_bytes_per_30d=2000 * GB,
+            max_items_per_run=10,
+            max_unmeasured_per_run=1,
+        )
+        report = await Executor(
+            session, safety=_read_only(), settings=settings, dry_run=True
+        ).execute(run.id)
+
+        # 400 GB of measured content fits under 500. The unmeasured item is bounded by
+        # count, not by pretending it is empty.
+        assert report.state is RunState.COMPLETED
+
+    async def test_lowering_it_after_approval_keeps_those_items(
+        self, session: AsyncSession
+    ) -> None:
+        """The allowance is re-read at execute time, so an operator who changes their mind
+        between approving and executing gets the safe direction. Raising it after approval
+        can add nothing, because those items were never planned."""
+        snapshot_id = await _snapshot_one(
+            session, media_key="radarr:1:1", rating_key=700, size=None
+        )
+        run = await build_plan(
+            session,
+            snapshot_id=snapshot_id,
+            policy_hash="p" * 64,
+            approved_by="admin",
+            max_unmeasured=1,
+        )
+
+        radarr = FakeRadarr()
+        # Approved under an allowance of 1; executed under 0.
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert radarr.delete_calls == []
+        assert report.skipped == 1
+
+    async def test_an_unmeasured_season_still_never_rides_a_show_level_click(
+        self, session: AsyncSession
+    ) -> None:
+        """ "Reap now" on a show expands to its measured seasons only, whatever the
+        allowance says. An unmeasured season enters a plan through a deliberate whole-set
+        or by-name reap, never by riding a button that was not aimed at it."""
+        snapshot_id = await _snapshot_many(
+            session,
+            [("sonarr:1:42:1", 1 * GB, 801), ("sonarr:1:42:2", None, 802)],
+            media_type="season",
+            group_key="sonarr:1:42",
+        )
+        run = await build_plan(
+            session,
+            snapshot_id=snapshot_id,
+            policy_hash="p" * 64,
+            approved_by="admin",
+            only_media_keys={"sonarr:1:42"},
+            max_unmeasured=5,
+        )
+
+        planned = {s.media_key for s in await _steps(session, run.id)}
+        assert planned == {"sonarr:1:42:1"}
+
+
 class TestDisarmMidRun:
     """Turning deletion off mid-run stops the run before its next item. Files already
     verified deleted stay deleted; nothing further is sent."""
@@ -1783,7 +1965,7 @@ async def _snapshot_one(
     *,
     media_key: str,
     rating_key: int | None,
-    size: int = 1 * GB,
+    size: int | None = 1 * GB,
     media_type: str = "movie",
     merged_keys: tuple[int, ...] = (),
 ) -> int:
@@ -1803,10 +1985,11 @@ async def _snapshot_one(
 
 async def _snapshot_many(
     session: AsyncSession,
-    items: list[tuple[str, int, int | None]],
+    items: list[tuple[str, int | None, int | None]],
     *,
     media_type: str = "movie",
     explanation: str = "{}",
+    group_key: str | None = None,
 ) -> int:
     now = utcnow()
     snapshot = Snapshot(
@@ -1826,8 +2009,9 @@ async def _snapshot_many(
                 title=f"Worthless {i}",
                 media_type=media_type,
                 size_bytes=size,
-                size_source=_source_for(media_type),
+                size_source=_source_for(media_type) if size is not None else None,
                 plex_rating_key=rating_key,
+                group_key=group_key,
                 verdict="condemn",
                 score=90,
                 coverage_bp=10_000,

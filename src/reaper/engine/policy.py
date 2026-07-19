@@ -623,6 +623,14 @@ class ProfileSettings(Frozen):
     Kept *out* of the hash on purpose. Tightening a cap or lengthening the grace
     period is always safe, and voiding every pending approval because the owner
     reduced a limit would train them to stop reading the diff.
+
+    ``max_unmeasured_per_run`` is out of the hash too, but NOT for that reason, and the
+    difference matters: it is the one field here that *loosens* what may be deleted, so
+    "tightening is always safe" does not cover it. It is safe to leave out because of
+    when it is read. It is consumed at plan construction, so raising it cannot add items
+    to a plan already approved; and the executor re-reads it at execute time, so lowering
+    it to 0 after approval causes those items to be kept. Both directions resolve toward
+    keeping the file, which is why the timing makes the hash unnecessary here.
     """
 
     #: Four caps, not two. The rolling BYTE cap is what makes a 4 TB incident
@@ -644,6 +652,19 @@ class ProfileSettings(Frozen):
     yet (nothing can create a grant today), so until it ships this is a plain setting --
     and ``inspect`` flags any profile that has it off as a danger."""
 
+    max_unmeasured_per_run: int = Field(default=0, ge=0, le=25)
+    """How many items with no size a single run may delete. ``0``, the default, means
+    never: an item Reaper cannot measure is held back (``planner.build_plan``).
+
+    A count rather than an on/off switch, because an unmeasured item contributes nothing
+    to either byte cap -- there is nothing honest to add -- so the byte caps cannot bound
+    this population at all. The count IS the bound, which is also why the ceiling is low.
+
+    Whatever it is set to, three things do not move: an unmeasured item never sorts first,
+    so the run's test item is always one whose cost is known; they still count against the
+    item caps; and a plan wanting more than the allowance aborts rather than truncating,
+    because truncating would let sort order pick which unmeasured file dies."""
+
     @model_validator(mode="after")
     def _run_cap_within_rolling_cap(self) -> Self:
         if self.max_items_per_run > self.max_items_per_30d:
@@ -653,6 +674,12 @@ class ProfileSettings(Frozen):
             )
         if self.max_bytes_per_run > self.max_bytes_per_30d:
             raise ValueError("A single run may delete more bytes than the entire 30-day budget.")
+        if self.max_unmeasured_per_run > self.max_items_per_run:
+            raise ValueError(
+                f"A run may delete {self.max_unmeasured_per_run} items with an unknown "
+                f"size but only {self.max_items_per_run} items in total. Lower the first "
+                "number, or raise the second."
+            )
         return self
 
 
@@ -852,6 +879,21 @@ def inspect(
                 field="require_approval",
                 severity="danger",
                 message="This profile deletes without a human looking at the list first.",
+            )
+        )
+
+    if settings.max_unmeasured_per_run > 0:
+        # Legal, and probably not what most operators mean: exactly what this detector is
+        # for. The GB caps genuinely cannot cover these items, so saying so is not a
+        # scare, it is the one fact that makes the setting understandable.
+        warnings.append(
+            PolicyWarning(
+                field="max_unmeasured_per_run",
+                severity="warn",
+                message=(
+                    f"Reaper will delete up to {settings.max_unmeasured_per_run} items it "
+                    "can't measure. The GB caps won't cover them."
+                ),
             )
         )
 

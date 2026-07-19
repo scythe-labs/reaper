@@ -122,24 +122,16 @@ def manifest_hash(candidates: Sequence[Candidate]) -> str:
     return hashlib.sha256(canonical.encode("ascii")).hexdigest()
 
 
-def measured_bytes(candidates: Sequence[Candidate]) -> int:
-    """Total bytes over a set that must already be fully measured.
+def plan_bytes(candidates: Sequence[Candidate]) -> tuple[int, int]:
+    """A plan's size, as (bytes over what was measured, how many were not).
 
-    Raises rather than coercing. This is only ever called on the plannable set, which
-    ``build_plan`` has already stripped of unmeasured items and which
-    ``api.runs._planned_candidates`` re-derives with the same filter before recomputing
-    the phrase. A NULL arriving here means one of those two filters regressed, and the
-    safe answer to "the number in front of the owner may be wrong" is to refuse, never to
-    substitute a zero. A zero under-states, an under-stated total under-states a byte cap,
-    and a cap that does not fire deletes more than the owner allowed.
+    Two numbers rather than one, and never a sum with an unknown folded into it as a zero.
+    A zero under-states, an under-stated total under-states a byte cap, and a cap that does
+    not fire deletes more than the owner allowed. Note the direction: rounding toward
+    keeping is right on the scoring lane and exactly backwards here.
     """
-    unmeasured = sorted(c.media_key for c in candidates if c.size_bytes is None)
-    if unmeasured:
-        raise PlanError(
-            "Reaper couldn't measure the size of these items, so it can't total them: "
-            f"{unmeasured}."
-        )
-    return sum(c.size_bytes for c in candidates if c.size_bytes is not None)
+    measured = [c.size_bytes for c in candidates if c.size_bytes is not None]
+    return sum(measured), len(candidates) - len(measured)
 
 
 def confirmation_phrase(candidates: Sequence[Candidate]) -> str:
@@ -148,13 +140,20 @@ def confirmation_phrase(candidates: Sequence[Candidate]) -> str:
     Not a static "DELETE": a phrase carrying the count and the size, so muscle memory
     cannot carry someone through it and a stale plan reads as obviously different.
 
-    The GB figure is exact, and it is exact *because* items Reaper could not measure were
-    held back before the plan was built. Do not add an unknown count to this phrase: it is
-    recomputed byte-for-byte at execute time (``api.runs.execute_run``) and compared to
-    what the owner typed, so any change of shape here 409s every execute.
+    The GB figure covers the items that have a size, and it is never asked to absorb the
+    ones that do not. When the allowance (``ProfileSettings.max_unmeasured_per_run``) has
+    admitted any, the phrase gains a ``+ N UNSIZED`` suffix, so the owner types an
+    acknowledgement that the run holds things the GB figure does not describe. With the
+    allowance at its default the suffix never appears and the phrase is byte-identical to
+    what it has always been.
+
+    This string is recomputed at execute time (``api.runs.execute_run``) and compared to
+    what was typed, so any change of wording here 409s every execute.
     """
-    gib = measured_bytes(candidates) / 1024**3
-    return f"REAP {len(candidates)} ITEMS {gib:.0f} GB"
+    total, unsized = plan_bytes(candidates)
+    gib = total / 1024**3
+    phrase = f"REAP {len(candidates)} ITEMS {gib:.0f} GB"
+    return f"{phrase} + {unsized} UNSIZED" if unsized else phrase
 
 
 def _movie_steps(
@@ -280,6 +279,7 @@ async def build_plan(
     policy_hash: str,
     approved_by: str,
     only_media_keys: set[str] | None = None,
+    max_unmeasured: int = 0,
 ) -> ReapRun:
     """Build a run from the condemned candidates of a snapshot. Journal it. Send nothing.
 
@@ -348,13 +348,26 @@ async def build_plan(
     held_back = sorted(
         (c for c in effective.values() if c.size_bytes is None), key=lambda c: c.media_key
     )
-    plannable = measured
+    # The allowance (``ProfileSettings.max_unmeasured_per_run``) lets an owner who has a
+    # handful of items their *arr will not size reap them anyway. Zero by default, and
+    # whatever it is set to, the unmeasured tail always sorts LAST: ordinal 0 is a measured
+    # item under every configuration, because the test item's whole purpose is a first
+    # mistake whose cost is known in advance.
+    #
+    # Written as concatenation rather than a combined sort deliberately. The invariant is
+    # "no unmeasured item precedes a measured one", and it should be visible in the code
+    # rather than emerge from sort stability or from a key that treats None as a number.
+    if max_unmeasured > 0:
+        plannable = measured + held_back
+        admitted, omitted = held_back, []
+    else:
+        plannable = measured
+        admitted, omitted = [], held_back
     # What this plan leaves out for want of a size. For a whole-set plan that is every
     # held-back item; for "reap just these" it is only the ones a requested show quietly
     # dropped from its expansion, since anything named directly is refused out loud below.
     # The owner is told this count on the plan and confirm screens: a plan smaller than the
     # queue implied, with no explanation, is its own kind of dishonesty.
-    omitted = held_back
 
     if only_media_keys is not None:
         # "Reap just these." Every requested key must be a condemned, non-spared item in
@@ -390,13 +403,16 @@ async def build_plan(
         # rather than turning a show-level reap into a loud "these are spared" refusal for a
         # season the owner never named directly. An explicitly-named key is carried through
         # unchanged, so naming a spared or unknown key still fails loudly below. Members
-        # come from the PLANNABLE set, so a hand-reaped season rides its show's bulk reap
-        # and a held-back one is quietly left out -- exactly as a spared season is. Drawing
-        # them from the wider effective set instead would pull a held-back season into the
-        # expansion and then trip the refusal below on it, making "Reap now" fail outright
-        # on any show with one unmeasured season, over an item the owner never named.
+        # come from the MEASURED set, so a hand-reaped season rides its show's bulk reap
+        # and an unmeasured one is quietly left out -- exactly as a spared season is.
+        # Drawing them from the wider effective set instead would pull an unmeasured season
+        # into the expansion and then trip the refusal below on it, making "Reap now" fail
+        # outright on any show with one unmeasured season, over an item the owner never
+        # named. Measured rather than plannable even when the allowance is open: an
+        # unmeasured season enters a plan through a deliberate whole-set or by-name reap,
+        # never by riding a show-level click that was not aimed at it.
         members_by_group: dict[str, set[str]] = {}
-        for c in plannable:
+        for c in measured:
             if c.group_key is not None:
                 members_by_group.setdefault(c.group_key, set()).add(c.media_key)
         expanded: set[str] = set()
@@ -416,7 +432,8 @@ async def build_plan(
             )
         # Named directly, so it is refused out loud rather than dropped. A key the owner
         # typed must never vanish from a plan in silence, even when the reason is safety.
-        named_held_back = requested & held_back_keys
+        # With the allowance open these items are plannable, so there is nothing to refuse.
+        named_held_back = requested & held_back_keys if max_unmeasured == 0 else set()
         if named_held_back:
             raise PlanError(
                 "Reaper couldn't measure the size of these items, so it won't reap them: "
@@ -430,10 +447,25 @@ async def build_plan(
                 "Remove the spare first if you really mean to delete them."
             )
         plannable = [c for c in plannable if c.media_key in requested]
+        admitted = [c for c in admitted if c.media_key in requested]
         # Only what a requested show dropped from its own expansion. A held-back item the
         # owner never pointed at is not this plan's business to report.
         named = set(only_media_keys)
-        omitted = [c for c in held_back if c.group_key is not None and c.group_key in named]
+        omitted = [c for c in omitted if c.group_key is not None and c.group_key in named]
+
+    # Abort, never truncate. Planning the first N would let sort order decide WHICH
+    # unmeasured file dies, which is the accident this whole design removes -- and it is
+    # the same abort-not-truncate discipline the byte caps already keep.
+    if len(admitted) > max_unmeasured:
+        raise PlanError(
+            f"This plan holds {len(admitted)} items Reaper couldn't measure, over your "
+            f"limit of {max_unmeasured} per run. The plan is refused rather than trimmed: "
+            "which of them gets deleted must not come down to the order they were listed "
+            "in. Raise the limit, or reap fewer items at once."
+        )
+
+    if admitted:
+        log.info("planner.unmeasured_allowed", count=len(admitted), allowance=max_unmeasured)
 
     if omitted:
         log.info(

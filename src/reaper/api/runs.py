@@ -42,7 +42,7 @@ from reaper.engine.policy import ProfileSettings
 from reaper.services import app_settings, whitelist
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import ExecutionError, Executor, RunReport, size_confirmed
-from reaper.services.planner import PlanError, build_plan, confirmation_phrase, measured_bytes
+from reaper.services.planner import PlanError, build_plan, confirmation_phrase, plan_bytes
 from reaper.services.profiles import active_profile_settings, save_profile_settings
 from reaper.services.scan_runner import build_reap_gateway
 
@@ -91,18 +91,23 @@ async def _planned_candidates(session: AsyncSession, run: ReapRun) -> list[Candi
     makes a post-plan override change the expected phrase -- so the owner is asked to reload
     and re-confirm the changed reap rather than approving a count that no longer matches.
 
-    Items with no confirmed size drop out here too, exactly as they do in the executor's
-    ``_deletable``: the send paths refuse them, so counting their stored 0 bytes would
-    put a count and a byte total in front of the owner that describe a different set than
-    the one the run will act on.
+    Items with no measured size drop out here too, exactly as they do in the executor's
+    ``_deletable``, and for the same reason: the send paths refuse them, so counting them
+    would put a count in front of the owner describing a different set than the one the
+    run will act on. Unless the operator's allowance is open, in which case they ARE acted
+    on and belong in the count -- read live below, so both surfaces agree.
     """
     steps = await _run_steps(session, run)
     decisions = await whitelist.overrides(session)
     by_key = await effective_condemned(session, run.snapshot_id, decisions)
+    # The allowance is read here, at the moment the numbers are produced, so the count
+    # and total in front of the owner describe the set the executor will act on under the
+    # settings in force NOW -- not the ones in force when the plan was built.
+    allow_unmeasured = (await active_profile_settings(session)).max_unmeasured_per_run > 0
     return [
         by_key[k]
         for k in dict.fromkeys(s.media_key for s in steps)
-        if k in by_key and size_confirmed(by_key[k])
+        if k in by_key and (allow_unmeasured or size_confirmed(by_key[k]))
     ]
 
 
@@ -116,10 +121,11 @@ async def _run_out(session: AsyncSession, run: ReapRun) -> RunOut:
         policy_hash=run.policy_hash,
         state=run.state.value,
         item_count=len(planned),
-        # The same set the phrase is derived from, and fully measured by construction:
-        # `_planned_candidates` drops anything whose size was never confirmed, so the
-        # total beside the button describes exactly what the run will act on.
-        total_bytes=measured_bytes(planned),
+        # The same set the phrase is derived from. The total covers the items that have
+        # a size and never absorbs the ones that do not; when the allowance has admitted
+        # any, the phrase says so with its own suffix rather than letting this number
+        # quietly run low.
+        total_bytes=plan_bytes(planned)[0],
         confirmation_phrase=confirmation_phrase(planned) if planned else "REAP 0 ITEMS 0 GB",
         held_back_unknown_size=run.held_back_unknown_size,
         approved_manifest_hash=run.approved_manifest_hash,
@@ -172,6 +178,7 @@ async def create_run(request: Request, payload: CreateRunIn | None = None) -> Ru
                 policy_hash=snapshot.policy_hash,
                 approved_by="api",
                 only_media_keys=only,
+                max_unmeasured=(await active_profile_settings(session)).max_unmeasured_per_run,
             )
         except PlanError as exc:
             raise HTTPException(422, str(exc)) from exc
@@ -362,6 +369,7 @@ def _settings_out(settings: ProfileSettings) -> ProfileSettingsIO:
         max_bytes_per_30d=settings.max_bytes_per_30d,
         grace_days=settings.grace_days,
         require_approval=settings.require_approval,
+        max_unmeasured_per_run=settings.max_unmeasured_per_run,
     )
 
 
@@ -389,6 +397,7 @@ async def update_profile(request: Request, payload: ProfileSettingsIO) -> Profil
             max_bytes_per_30d=payload.max_bytes_per_30d,
             grace_days=payload.grace_days,
             require_approval=payload.require_approval,
+            max_unmeasured_per_run=payload.max_unmeasured_per_run,
         )
     except ValidationError as exc:
         raise HTTPException(

@@ -2198,7 +2198,23 @@ export function PolicyEditor({
                   Reaper can remove it.
                 </span>
               </label>
+              <label>
+                <span>Items with an unknown size</span>
+                <FixedQuantity
+                  value={pace.max_unmeasured_per_run}
+                  suffix="per run"
+                  min={0}
+                  width="narrow"
+                  ariaLabel="Items with an unknown size"
+                  onChange={(v) => updatePace({ max_unmeasured_per_run: v })}
+                />
+                <span className="help">
+                  Reaper keeps these by default. It can't measure them, so the GB caps won't
+                  limit them. Set 0 to always keep them.
+                </span>
+              </label>
             </div>
+            <WarnBlock warnings={warningsFor((f) => f === "max_unmeasured_per_run")} />
             <p className="help">
               A run over a cap stops itself and removes nothing. It never quietly deletes just
               the part that fits.
