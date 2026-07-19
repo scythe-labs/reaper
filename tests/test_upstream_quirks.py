@@ -99,6 +99,45 @@ class TestEpisodeCountIsNotWhatItLooksLike:
         assert season.has_content is True
         assert season.size_on_disk == 40_000_000_000
 
+    def test_files_on_disk_with_no_reported_size_is_unknown_not_empty(self) -> None:
+        """The partial-payload case, and the one that decides a keep.
+
+        Sonarr says 22 files are on disk but reports no size for them. As ``0`` that
+        becomes an affirmative measurement: maximum pressure on a size signal, and any
+        "keep large files" rule silently stops holding the season. It must read as "we
+        could not tell", while ``has_content`` still says the files are there -- the two
+        questions are answered by different fields for exactly this reason.
+        """
+        season = parse_season_stats(
+            {
+                "seasonNumber": 3,
+                "monitored": False,
+                "statistics": {
+                    "episodeCount": 0,
+                    "totalEpisodeCount": 22,
+                    "episodeFileCount": 22,  # the files are there...
+                    "sizeOnDisk": 0,  # ...but their size was not reported
+                },
+            }
+        )
+        assert season is not None
+        assert season.has_content is True
+        assert season.size_on_disk is None
+
+    def test_a_genuinely_empty_season_also_reads_as_no_size(self) -> None:
+        """Nothing on disk and no size. Same None, and harmless: `has_content` is False,
+        so the season is never a deletion candidate in the first place."""
+        season = parse_season_stats(
+            {
+                "seasonNumber": 4,
+                "monitored": True,
+                "statistics": {"episodeCount": 0, "totalEpisodeCount": 0, "episodeFileCount": 0},
+            }
+        )
+        assert season is not None
+        assert season.has_content is False
+        assert season.size_on_disk is None
+
     def test_incomplete_season_is_detected(self) -> None:
         """A long-running show mid-download: Sonarr wants more than it has."""
         season = parse_season_stats(

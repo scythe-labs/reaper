@@ -46,7 +46,7 @@ def _season(
     n: int,
     *,
     files: int = 5,
-    size: int = GB,
+    size: int | None = GB,
     total: int = 10,
     wanted: int = 0,
     monitored: bool = False,
@@ -334,6 +334,13 @@ class TestBuildSeasonFacts:
     def test_size_comes_from_sonarr(self) -> None:
         facts = _facts(season=_season(3, size=8 * GB))
         assert isinstance(facts.size_bytes, Known) and facts.size_bytes.value == 8 * GB
+
+    def test_a_season_whose_size_sonarr_did_not_report_is_unknown(self) -> None:
+        """The mirror of the movie case. As Known(0) it reads as a real measurement:
+        maximum pressure on a size signal, and any "keep large files" rule silently
+        stops holding the season. See tests/test_fact_layer_states.py."""
+        facts = _facts(season=_season(3, size=None))
+        assert isinstance(facts.size_bytes, Unknown)
 
     def test_dormancy_is_measured_from_the_seasons_own_arrival(self) -> None:
         """A season backfilled into an old show arrived recently. Dormancy must count from

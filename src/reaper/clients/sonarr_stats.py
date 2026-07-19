@@ -43,7 +43,19 @@ class SeasonStats:
 
     # On disk. The only fields safe to reason about for deletion.
     episode_file_count: int
-    size_on_disk: int
+
+    size_on_disk: int | None
+    """Bytes the season occupies, or ``None`` when Sonarr reported files but no size.
+
+    ``None`` is not zero. A season with ``episode_file_count > 0`` and no ``sizeOnDisk``
+    is a partial statistics payload, not an empty season -- and carried as ``0`` it
+    becomes an affirmative measurement: it reads as maximum pressure on a size signal
+    and silently withdraws any "keep large files" rule. ``has_content`` deliberately
+    reads the file COUNT, not this, so "does it hold files" survives an unreadable size.
+
+    The movie path draws the same line (``services.snapshot._reported_size``); see
+    ``tests/test_fact_layer_states.py``.
+    """
 
     # How long the season is, including unaired episodes. Safe for ranking.
     total_episode_count: int
@@ -72,6 +84,11 @@ class SeasonStats:
         return self.wanted_episode_count > self.episode_file_count
 
 
+def _reported_size(raw: Any) -> int | None:
+    """A size Sonarr actually reported, or ``None``. Zero and missing are both ``None``."""
+    return int(raw) if isinstance(raw, int | float) and raw > 0 else None
+
+
 def parse_season_stats(season: dict[str, Any]) -> SeasonStats | None:
     """Read one entry of a Sonarr series' ``seasons`` array."""
     stats = season.get("statistics")
@@ -82,7 +99,8 @@ def parse_season_stats(season: dict[str, Any]) -> SeasonStats | None:
         season_number=int(season.get("seasonNumber", 0)),
         monitored=bool(season.get("monitored", False)),
         episode_file_count=int(stats.get("episodeFileCount") or 0),
-        size_on_disk=int(stats.get("sizeOnDisk") or 0),
+        # `or 0` here would turn a partial payload into an empty season. See size_on_disk.
+        size_on_disk=_reported_size(stats.get("sizeOnDisk")),
         total_episode_count=int(stats.get("totalEpisodeCount") or 0),
         wanted_episode_count=int(stats.get("episodeCount") or 0),
     )

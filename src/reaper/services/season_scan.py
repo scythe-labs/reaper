@@ -465,7 +465,11 @@ def build_season_facts(
         days_observed_unwatched=dormancy,
         distinct_watchers=recent,
         distinct_watchers_all_time=all_time,
-        size_bytes=Known(value=season.size_on_disk, source="sonarr"),
+        size_bytes=(
+            Known(value=season.size_on_disk, source="sonarr")
+            if season.size_on_disk is not None
+            else Unknown(reason="the season's size was not reported", source="sonarr")
+        ),
         # Sonarr's own ratings are flat TVDB, but the IMDb dataset we already ingest carries
         # a rating for the *series* (keyed by its imdbId). We apply the show's rating to each
         # of its seasons -- a season has no distinct IMDb title -- so a well-rated show's
@@ -1113,7 +1117,16 @@ def _judge_series(
                 media_key=media_key,
                 plex_rating_key=plex_key,
                 title=title,
-                size_bytes=season.size_on_disk,
+                # The scoring lane reads the honest Observation off `facts`; this is the
+                # display and reclaim-accounting column, which is a plain int. An
+                # unreadable size stores 0, which UNDER-counts the byte cap -- but it
+                # cannot reach a delete. `executor._send_season` refuses twice: it keeps
+                # the season outright if Sonarr will not report a size for every file
+                # now, and otherwise compares the stored size against the live total and
+                # skips anything that grew past its allowance (`_grew_materially`), which
+                # 0 against any real total always does. Do not "fix" this by inventing a
+                # size here.
+                size_bytes=season.size_on_disk or 0,
                 facts=facts,
                 guard_result=guard_result(plan, n),
                 year=show_year,
