@@ -27,7 +27,7 @@ from reaper.clients.base import IntegrationError
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import FirstFlagged
+from reaper.db.models import FirstFlagged, SizeSource
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
 from reaper.engine.observation import Known
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
@@ -516,6 +516,84 @@ class TestScanPipelineEndToEnd:
         assert "radarr 'uhd' unreachable" in (snapshot.degraded_reason or "")
         rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
         assert set(rows) == {"radarr:1:1", "radarr:1:2", "radarr:1:3"}
+
+
+class TestAStoredSizeSaysWhereItCameFrom:
+    """``size_bytes`` still fabricates a ``0`` when nothing reports a size. ``size_source``
+    is the column that tells the two apart, and it has to be honest *before* anything
+    depends on it: the scan's tally counts how often a size is simply never reported, and
+    that count is what decides whether the later acquisition work is worth doing.
+
+    A source stamped on a fabricated zero would make every one of those measurements read
+    as a healthy library.
+    """
+
+    async def test_a_movie_nobody_sized_carries_no_source(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+        payloads = _movie_payloads()
+        # hasFile true, no sizeOnDisk: a partial payload, which is the whole case.
+        del payloads[0]["sizeOnDisk"]
+
+        snapshot = await scan(
+            cache_engine,
+            session,
+            radarrs=[
+                RadarrSource(client=_FakeRadarr(payloads), instance_id=1, name="hd")  # type: ignore[arg-type]
+            ],
+            tautulli=_FakeTautulli(movies=_movie_spine()),  # type: ignore[arg-type]
+            movie_policy=DEFAULT_MOVIE_POLICY,
+            movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+        )
+        await session.commit()
+
+        rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
+        unsized = rows["radarr:1:1"]
+        assert unsized.size_source is None
+        # Today's behaviour, stated so the change is visible when it lands: the column
+        # still holds a fabricated zero, and `executor.size_confirmed` is what keeps that
+        # zero out of a delete.
+        assert unsized.size_bytes == 0
+
+        sized = rows["radarr:1:2"]
+        assert sized.size_source == SizeSource.RADARR
+        assert sized.size_bytes == 4_000_000_000
+
+    async def test_a_season_sonarr_would_not_size_carries_no_source(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        await _seed_imdb(cache_engine, {"tt0000042": (5.0, 5000)})
+        series = _series_payloads()
+        # Season 2 is one of the prunable middle seasons, so it reaches the judge.
+        for season in series[0]["seasons"]:
+            if season["seasonNumber"] == 2:
+                del season["statistics"]["sizeOnDisk"]
+
+        snapshot = await scan(
+            cache_engine,
+            session,
+            radarrs=[],
+            sonarrs=[
+                season_scan.SonarrSource(client=_FakeSonarr(series), instance_id=1, name="tv")
+            ],
+            tautulli=_FakeTautulli(  # type: ignore[arg-type]
+                movies=[], shows=_show_spine(), children=_show_children()
+            ),
+            movie_policy=DEFAULT_MOVIE_POLICY,
+            movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+        )
+        await session.commit()
+
+        rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
+        assert rows["sonarr:1:42:2"].size_source is None
+        assert rows["sonarr:1:42:2"].size_bytes == 0
+        assert rows["sonarr:1:42:3"].size_source == SizeSource.SONARR
+        assert rows["sonarr:1:42:3"].size_bytes == 1_000_000_000
 
 
 class TestAStaleMirrorDegradesTheSnapshot:

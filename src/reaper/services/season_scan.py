@@ -63,6 +63,7 @@ from reaper.clients.plex import PlexClient
 from reaper.clients.sonarr_stats import SeasonStats, parse_season_stats, rank_seasons
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
+from reaper.db.models import SizeSource
 from reaper.engine import identity
 from reaper.engine.gates import ABSTAIN as GATE_ABSTAIN
 from reaper.engine.gates import PROTECT as GATE_PROTECT
@@ -134,6 +135,11 @@ class SeasonJudgement:
     plex_rating_key: int | None
     title: str
     size_bytes: int
+    size_source: str | None
+    """Which measurement ``size_bytes`` holds, or None when nothing reported one. Already
+    honest while ``size_bytes`` is not: it is None exactly when the size was never read,
+    which is what makes the scan's tally worth counting."""
+
     facts: Facts
     guard_result: GateResult
     # Display fields, carried onto the candidate. A season's poster/blurb/year are the
@@ -1171,6 +1177,7 @@ def _judge_series(
                 # and left out of the caps and the byte total the operator confirms.
                 # Do not "fix" this by inventing a size here.
                 size_bytes=season.size_on_disk or 0,
+                size_source=SizeSource.SONARR if season.size_on_disk is not None else None,
                 facts=facts,
                 guard_result=guard_result(plan, n),
                 year=show_year,

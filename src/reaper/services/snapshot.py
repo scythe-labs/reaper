@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections import Counter
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -45,7 +46,7 @@ from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
-from reaper.db.models import Candidate, FirstFlagged, Snapshot
+from reaper.db.models import Candidate, FirstFlagged, SizeSource, Snapshot
 from reaper.engine import facts_codec, identity
 from reaper.engine.gates import PROTECT, Evaluation, Facts, Gate, GateId, GateResult, evaluate_all
 from reaper.engine.observation import Absent, Known, Observation, Unknown
@@ -345,6 +346,22 @@ class RadarrSource:
 #: lives in ``season_scan`` -- it is a large, self-contained read path -- but a Sonarr
 #: instance is a scan source exactly as a Radarr one is.
 SonarrSource = season_scan.SonarrSource
+
+
+#: The size-tally bucket for an item no source would size. Not a ``SizeSource`` value,
+#: because it is the absence of one -- kept distinct so the log line reads as counts of
+#: rungs plus a miss count, rather than inventing a rung that means "none".
+_UNMEASURED = "unmeasured"
+
+
+def _size_bucket(source: str | None) -> str:
+    """Which tally bucket one item falls in: the rung that fired, or the miss bucket.
+
+    Returns a plain ``str`` rather than the enum member, so the log line reads
+    ``{'radarr': 900, 'unmeasured': 3}`` instead of a row of enum reprs. This exists to
+    be read by an operator pasting a log into an issue.
+    """
+    return str(source) if source else _UNMEASURED
 
 
 async def scan(
@@ -651,6 +668,10 @@ async def scan(
     total = len(items) + len(season_judgements)
 
     condemned_keys: list[str] = []
+    # Which rung of the size ladder actually fired, counted across the whole scan. This
+    # answers a question nothing in Reaper has ever measured: how often is a size simply
+    # not reported? Counts only, never a title or a path.
+    size_sources: Counter[str] = Counter()
 
     for index, item in enumerate(items):
         if index % 100 == 0:
@@ -671,6 +692,8 @@ async def scan(
             whitelisted=tag_only_whitelist,
             request_index=request_index,
         )
+        movie_size_source = SizeSource.RADARR if item.size_bytes is not None else None
+        size_sources[_size_bucket(movie_size_source)] += 1
         verdict = _judge_item(
             session,
             snapshot_id=snapshot.id,
@@ -687,6 +710,7 @@ async def scan(
             # kept, and left out of the caps and the byte total the operator confirms.
             # Do not "fix" this by inventing a size here.
             size_bytes=item.size_bytes or 0,
+            size_source=movie_size_source,
             facts=facts,
             gates=movie_gates,
             signals=movie_signals,
@@ -734,6 +758,7 @@ async def scan(
         if offset % 100 == 0:
             emit(Progress("scoring", len(items) + offset, total, judgement.title))
             await asyncio.sleep(0)  # keep the event loop live; see the movie loop above
+        size_sources[_size_bucket(judgement.size_source)] += 1
         verdict = _judge_item(
             session,
             snapshot_id=snapshot.id,
@@ -744,6 +769,7 @@ async def scan(
             title=judgement.title,
             media_type="season",
             size_bytes=judgement.size_bytes,
+            size_source=judgement.size_source,
             facts=judgement.facts,
             gates=tv_gates,
             signals=tv_signals,
@@ -785,6 +811,12 @@ async def scan(
     await session.flush()
     emit(Progress("done", total, total, f"{condemned} candidates"))
 
+    log.info(
+        "scan.size_source_tally",
+        snapshot=snapshot.id,
+        total=total,
+        sources=dict(sorted(size_sources.items())),
+    )
     log.info(
         "snapshot.built",
         snapshot=snapshot.id,
@@ -843,6 +875,7 @@ def _judge_item(
     title: str,
     media_type: str,
     size_bytes: int,
+    size_source: str | None,
     facts: Facts,
     gates: list[Gate],
     signals: list[SignalConfig],
@@ -906,6 +939,7 @@ def _judge_item(
             title=title,
             media_type=media_type,
             size_bytes=size_bytes,
+            size_source=size_source,
             year=display.year,
             summary=display.summary,
             poster_url=display.poster_url,

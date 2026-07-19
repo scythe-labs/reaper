@@ -1,6 +1,8 @@
 # Size truth: making an unreadable size stop being a number
 
-Status: **planned, not started.** Written 2026-07-19 for execution by another agent session.
+Status: **Stage 1 landed 2026-07-19.** Written 2026-07-19 for execution by another agent
+session; §1 and the Stage 1/2 boundary have since been corrected against the shipped code
+(see the notes marked **Corrected**). Stages 2 onward are unstarted.
 
 This plan removes the last place Reaper invents a number on the deletion path. It is the
 "correct fix, no workarounds" version of the size problem, superseding the display-only
@@ -22,28 +24,43 @@ stores `0` at exactly two lines:
 So a stored `0` means both "genuinely zero" and "nobody would tell us". The scoring lane is
 already honest about this: `Facts.size_bytes` is an `Observation[int]`
 (`src/reaper/engine/gates.py:153`) and an `Unknown` correctly lowers the score and coverage.
-The dishonesty is confined to the display and accounting column, and it is load-bearing in
-four places that decide what gets deleted:
+The dishonesty is confined to the display and accounting column.
 
-1. **The canary.** The planner orders smallest-first so ordinal 0 is "the least costly
-   possible mistake" (`planner.py:18-20`, `:270-272`). A fabricated `0` sorts to the front,
-   so the run's one real proof that deletion works is spent on the item whose size was never
-   read. The comment and the behaviour disagree.
-2. **Both byte caps.** `_check_caps` (`executor.py:410`) and `_check_rolling_caps`
-   (`executor.py:696`) sum the stored value. A fabricated `0` contributes nothing, so a run
-   can pass a cap it should have failed. Under-counting a cap means the cap does not fire,
-   which deletes **more**.
-3. **The typed confirmation phrase.** `confirmation_phrase` (`planner.py:116-124`) sums the
-   same column into `REAP {n} ITEMS {gib:.0f} GB`. The number the operator types is low.
-4. **The growth interlock.** `_grew_materially(0, live)` treats the fabricated zero as a
-   measurement. With `_SIZE_DRIFT_FLOOR = 256 * 1024**2` (`executor.py:134`), the check does
-   **not** trip for any live total at or under 256 MiB, so a real file can be deleted on the
-   strength of two invented numbers.
+> **Corrected 2026-07-19.** This section originally listed four live defects on the
+> deletion path. Three of them were closed by review finding B-5 (`executor.size_confirmed`)
+> before this plan's first stage began. What follows now separates what is *fixed* from what
+> is still open, because a plan that describes a defect no longer present sends a later
+> session hunting for it.
 
-Point 4 matters for a second reason: the comments at `snapshot.py:645-653` and
-`season_scan.py:1134-1143` both assert that a stored `0` "cannot reach a delete" because the
-growth check always catches it. **That claim is false below the drift floor.** Both comments
-must be rewritten in the same commit that changes the behaviour (rule 7, rule 24).
+**Closed by `executor.size_confirmed` (`executor.py:186`).** It reads a stored `0` as "never
+confirmed" and refuses the item in two independent places: `_deletable` keeps it out of both
+byte caps and out of the byte total behind the confirmation phrase, and `_send_movie` /
+`_send_season` skip it per item before the growth check runs. So:
+
+- **Both byte caps** are exact. An unconfirmed item is excluded, not counted as zero.
+- **The typed confirmation phrase** is exact, and `api.runs._planned_candidates` applies the
+  same filter, so the number shown and the number acted on describe one set (rule 30).
+- **The growth interlock** is never reached with a fabricated baseline. This mattered because
+  `_grew_materially(0, live)` reduces to `live > _SIZE_DRIFT_FLOOR`, so with
+  `_SIZE_DRIFT_FLOOR = 256 * 1024**2` it does **not** trip for any live total at or under
+  256 MiB. The check still has that hole; nothing with an unconfirmed size now reaches it.
+
+The comments at both persist sites were rewritten in the same change and now cite
+`size_confirmed` rather than claiming the growth check catches everything.
+
+**Still open, and what this plan is for:**
+
+1. **The canary.** The planner still orders smallest-first (`planner.py:18-20`, `:270-272`)
+   over rows including fabricated zeros, so ordinal 0 can be an item whose size was never
+   read. The executor then skips it, so no unmeasured file is deleted, but the run's stated
+   test item is not the item actually attempted, and the docstring's "least costly possible
+   mistake" is still aspirational. The planner refusal (§4.2) is what makes it true.
+2. **Everything downstream of the column is a workaround, not a fix.** `size_confirmed`
+   works by reading `0` as a sentinel, which is precisely the design §3 rejects: it holds
+   only because every call site remembers to ask. A NULL makes the unsafe call sites raise
+   instead of quietly summing. Its own docstring says so and defers to this plan.
+3. **The operator is told nothing.** An item is silently dropped from the plan with no count,
+   no per-item reason, and no way to find out which (§4.7).
 
 ---
 
@@ -193,8 +210,14 @@ Precedent for a nullable string whose NULL means "could not check": `Candidate.s
 delete this file, regenerate, and upgrade from empty"
 (`alembic/versions/20260714_1840_baseline_schema.py:1-19`), reinforced by `CLAUDE.md` and
 `docs/PLAN.md:583-584`. No new revision file. `tests/test_migrations.py:34-38` (one head) stays
-green. **Do both column changes in ONE regeneration** — do not regenerate the baseline twice
-for one logical schema change.
+green.
+
+**Corrected:** this originally said to do both column changes in ONE regeneration. They
+belong to different stages (see Stage 1's note), so the baseline is regenerated twice, once
+per column. Regenerating a rewritten-in-place baseline from a disposable DB is free; shipping
+a stage with red gates is not. Stage 1's change was made by hand-editing the baseline and
+proving it with `alembic upgrade head` then `alembic check` against a **fresh throwaway DB**
+(`REAPER_DATA_DIR` pointed at a temp dir), which reported no drift.
 
 Two traps:
 
@@ -521,23 +544,50 @@ Each stage must leave every gate green: `uv run ruff check .`, `ruff format --ch
 `mypy src/reaper`, `pytest`, `alembic upgrade head` + `alembic check` (fresh DB),
 `npm --prefix frontend run lint`, `test`, `build`. Docker builds in CI only.
 
-### Stage 1 — schema and provenance, emitting nothing new
+### Stage 1 — provenance and the tally, emitting nothing new — **DONE**
 
-Add both column changes in **one** baseline regeneration: `size_bytes` nullable and
-`size_source` as a `StrEnum`. Persist sites keep writing today's value (still `or 0`) and now
-set `size_source`. Add the per-scan structured tally of which rung fired
-(`snapshot.size_source` / `season_scan.size_source` counts) — it costs nothing, and it is the
-only way to answer how often each fallback actually recovers a size **before** Stages 5 and 6
-are sized. Record as ratios only, never fingerprints.
+> **Corrected during execution.** This stage was written to flip `size_bytes` to nullable
+> *and* add `size_source` in one baseline regeneration. That does not work: widening the
+> column's type turns mypy red at **22 consumer sites immediately**, whether or not a NULL
+> is ever written, so the stage cannot leave the gates green on its own. The three ways out
+> were (a) add `or 0` at all 22 sites, which is trap 9's back door — unreachable today, but
+> Stage 2 must then find and delete every one, and a single miss is a silent under-count on
+> a byte cap; (b) merge Stages 1 and 2, losing the small reviewable commit; (c) **move the
+> nullability flip into Stage 2, where its consumers are.** (c) was taken.
+>
+> It preserves this plan's actual intent — consumers learn NULL before one is emitted — and
+> it turns mypy's error list into the exhaustive consumer checklist for Stage 2 rather than
+> noise to silence. The instruction traded away is "both column changes in one regeneration",
+> which existed to avoid churn; the baseline is rewritten in place from a disposable DB, so
+> regenerating twice costs nothing.
 
-*Observable:* nothing. No NULL is written yet.
+What landed: `size_source` as a `StrEnum` (`db/models.SizeSource`) with a nullable
+`String(16)` column, carried through `SeasonJudgement` and `_judge_item` to the two persist
+sites. `size_bytes` is unchanged and still writes `or 0`. **`size_source` is already honest
+while `size_bytes` is not**: it is NULL exactly when no source reported a size, which is what
+makes the tally worth counting.
 
-### Stage 2 — teach every consumer to handle NULL, while nothing emits one
+The tally is `scan.size_source_tally`, emitted once per scan with `sources={rung: count}`
+plus an `unmeasured` bucket. Counts only, never a title or a path. This is the measurement
+Stage 4 reads and the only way to size Stages 5 and 6 before writing them.
+
+Pinned by `TestAStoredSizeSaysWhereItCameFrom` (`tests/test_scan_pipeline.py`), teeth-checked
+by stamping the source unconditionally: both tests go red.
+
+*Observable:* nothing. No NULL is written, and nothing on the wire changed.
+
+### Stage 2 — flip the column and teach every consumer, while nothing emits a NULL
+
+**Starts by flipping `size_bytes` to `Mapped[int | None]`** and regenerating the baseline a
+second time. Mypy then names every consumer that must change; work the list to empty rather
+than reaching for a coercion at any of them.
 
 Planner partition + the `:273` sort replacement + group-expansion fix + `manifest_hash` null
 encoding + the explicit-selection refusal. Executor defensive skips + comparator selection +
-cap assertions. API schemas, aggregates, counts, headers, sorts. TS types, `format.ts`,
-components. Tests construct NULL rows directly to exercise these paths.
+cap assertions. Retire `size_confirmed`'s `0`-as-sentinel reading in favour of the NULL check
+in the same change (its docstring already defers to this plan). API schemas, aggregates,
+counts, headers, sorts. TS types, `format.ts`, components. Tests construct NULL rows directly
+to exercise these paths.
 
 This is the large commit. It is safe to be large **because it emits no NULLs**: every new path
 is exercised by constructed fixtures, and no scan can produce one yet.

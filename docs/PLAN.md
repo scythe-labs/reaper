@@ -2197,7 +2197,13 @@ left, each because the correct fix is wider than the finding and wants its own c
    is now kept by `executor.size_confirmed` and excluded from the caps and the typed
    confirmation total, so a `0` can no longer be deleted against or under-count a cap.
    But `0` is still a sentinel for Unknown, which rule 4 calls a blocker. The honest fix
-   is a nullable column, and it reaches 17 backend and 8 frontend files.
+   is a nullable column, and it reaches 17 backend and 8 frontend files. **In progress:
+   `docs/SIZE_TRUTH_PLAN.md` Stage 1 landed 2026-07-19** — `Candidate.size_source`
+   (`db/models.SizeSource`) now records which rung of the ladder actually measured an item,
+   and is NULL exactly when nothing did, so the column is honest while `size_bytes` is not
+   yet. The scan emits `scan.size_source_tally` once per run, which is the first
+   measurement Reaper has ever taken of how often a size is simply never reported. The
+   nullability flip is Stage 2.
 2. **The refused-reap clause is a frontend map keyed on strings the server emits**
    (B-11, agent rule 12). Two modules holding the same literal is exactly what that rule
    forbids. The clean shape is for the server to send the refusal reason on the candidate

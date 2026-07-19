@@ -320,6 +320,37 @@ class Snapshot(Base):
     degraded_reason: Mapped[str | None] = mapped_column(Text, default=None)
 
 
+class SizeSource(enum.StrEnum):
+    """Which measurement ``Candidate.size_bytes`` holds.
+
+    Load-bearing, not decoration. The ladder mixes two different quantities -- a folder
+    and the files inside it -- and the executor's growth interlock compares the frozen
+    size against a live re-read. Without provenance it cannot pick the live counterpart
+    that matches, so it would compare a folder against a sum of files and read a real
+    growth as a shrink. See ``executor._grew_materially``.
+
+    Never exposed on the wire: the UI says "Size unknown", never a source key.
+    """
+
+    SONARR_FILES = "sonarr-files"
+    """Summed episode files for one season. The exact quantity a season delete frees,
+    because a season is removed file by file."""
+
+    SONARR = "sonarr"
+    """A season folder, from Sonarr's season statistics. A close proxy for the files."""
+
+    RADARR = "radarr"
+    """A movie folder, which is what a movie delete removes."""
+
+    RADARR_FILE = "radarr-file"
+    """The movie file alone. A LOWER BOUND on the folder, so display only: it can never
+    make an item plannable. A bound that under-counts a byte cap stops the cap firing,
+    which deletes more than the operator allowed."""
+
+    PLEX = "plex"
+    """The matched Plex listing's file. A lower bound, exactly as ``RADARR_FILE``."""
+
+
 class Candidate(Base):
     """One item's verdict under one snapshot."""
 
@@ -348,6 +379,25 @@ class Candidate(Base):
     title: Mapped[str] = mapped_column(String(500))
     media_type: Mapped[str] = mapped_column(String(10))
     size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    """What deleting this item would free, in bytes. Still NOT NULL, and still fabricates
+    a ``0`` when nothing reports a size: see the comments at the two persist sites in
+    ``services.snapshot`` and ``services.season_scan``. What keeps that fabricated zero
+    out of a delete is ``executor.size_confirmed``, which refuses to send an item whose
+    size was never confirmed.
+
+    ``size_source`` below is already honest about which of those zeros is real, so the
+    scan's ``scan.size_source_tally`` can count the misses before anything depends on
+    them. Making this column nullable is the next step, and it lands with the consumers
+    that must handle a NULL, not before them: widening the type is what proves the set of
+    consumers is complete."""
+
+    size_source: Mapped[str | None] = mapped_column(String(16), default=None)
+    """Which measurement ``size_bytes`` holds, as a ``SizeSource`` value. NULL means no
+    source reported one. Kept as a string column rather than a native enum for the same
+    reason as every other enum here: SQLite has none, and a stored value this build does
+    not recognise must be handled by the reader, not rejected by the driver.
+
+    Read by the executor to compare like with like; never sent to the browser."""
 
     # --- display fields, captured at scan time from data already in hand -----------
     # These come off the *arr payload (and Seerr) during the scan, so the review queue

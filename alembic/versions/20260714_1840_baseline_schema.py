@@ -168,6 +168,7 @@ def upgrade() -> None:
     sa.Column('title', sa.String(length=500), nullable=False),
     sa.Column('media_type', sa.String(length=10), nullable=False),
     sa.Column('size_bytes', sa.Integer(), nullable=False),
+    sa.Column('size_source', sa.String(length=16), nullable=True),
     sa.Column('year', sa.Integer(), nullable=True),
     sa.Column('summary', sa.Text(), nullable=True),
     sa.Column('poster_url', sa.String(length=1000), nullable=True),
