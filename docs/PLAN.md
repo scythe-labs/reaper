@@ -1600,6 +1600,69 @@ the mount roots differ. A listing binds only by being *strictly* deeper than eve
 a tie, an unreadable path, or a leaf-only match still abstains. Verified end to end against
 the live library: ambiguous 6 → 0, matched 972 → 978, unmatched unchanged at 112.
 
+**Narrowed 2026-07-19 by code review B-2, so those numbers no longer hold.** The comparison
+may not consume either side's mount root: two *arr instances mapped to the same container
+path made the *arr's own root name look like evidence, and it bound the wrong copy.
+
+**Narrowed again the same day, because stripping a fixed one segment is not removing a
+root.** Adversarial verification broke the first attempt in the layout the popular
+single-mount guides recommend, where each container maps its host directory to a
+*two*-segment root: one segment came off, the second stayed, it happened to name one
+library's folder, and the 4K entry bound the HD listing without the exact byte size ever
+being consulted. Path length cannot say where a root ends — a container root may be one
+segment or three.
+
+**What the corroborator now is.** Each *arr instance's real root folders are fetched once
+per scan (`ArrClient.root_folders`, parsed by `identity.root_folder_paths`) and passed to
+`resolve_movie` / `resolve_show`. The longest reported root that prefixes an item's path is
+that item's root, and only what sits strictly below it is compared
+(`identity._below_arr_root`). With no root reported, or a path under none of them, the step
+**stands down** — never a fixed strip.
+
+**Narrowed a third time, and this one changed the shape of the answer.** Keeping the
+one-segment strip on the *Plex* side was itself a wrong bind, and a regression against the
+committed baseline: the strip is not uniform, so a candidate whose path the match fully
+consumes loses depth while a deeper rival does not, turning a tie (abstain, keep) into a
+strict win for the wrong copy. Ranking by depth is unsound whenever two copies' Plex roots
+differ in depth. So there is no ranking and no strip on either side: the *arr's below-root
+segments are the item's path *relative to its library*, and the one candidate whose Plex
+path **ends with** those exact segments is the copy (`identity._ends_with`). Plex's root
+never has to be known. Three guards, each from a reproduced wrong bind: the below-root
+depth must match the *arr's own layout (`arr_layout_depth`), so a stale or over-broad root
+cannot pass mount segments off as folders; an unreadable path on any candidate stands the
+step down; and a winner whose size cannot be checked stands it down, since another
+candidate may match the byte count exactly. Folder and exact size naming *different* copies
+is a positive contradiction and **abstains** (`identity._size_contradicts`).
+
+**A fourth pass, on the arbitration rather than the paths.** Adversarial verification found
+two more wrong binds, both in how the folder step's answer was *used*. First, the
+byte-identical-twins gate ran before a folder winner existed, so whenever any twin pair was
+present the folder's answer was discarded unexamined and the contradiction veto became
+unreachable: a folder answer naming a copy outside the twin group bound the group anyway.
+The gate now runs after, and stands aside only when the folder's winner is *inside* the
+group; a winner from outside is the same contradiction and abstains. Second, a failed
+`/rootfolder` read returned an empty tuple, which is indistinguishable from an instance that
+reports no roots. That is not a harmless loss of a bind: the folder step is the only thing
+that produces the contradiction veto, so without it a stale Plex size binds the copy the
+folder would have disputed. A failed read now yields `None`, which refuses the whole id
+narrowing (`identity._narrow_among_id_hits`) and keeps the file. It still does not degrade
+the snapshot, and that exception to rule 28 now names the refusal as its compensating
+control rather than claiming the loss is free.
+
+**What that costs, plainly.** Two instances mapped alike now tie and abstain; a movie
+recovers by exact byte size, a show does not and is kept. Sonarr puts a series directly
+under its root, so below the root a show has only the leaf both copies already matched on:
+a show never gets folder evidence at all. That was the sharpest finding of the third pass.
+The step's entire reach for shows had been paths *deeper* than Sonarr's layout, which only
+happens when the reported root is wrong, so the feature's reach was co-extensive with its
+failure mode and it failed toward a bind. A distinction living in the
+root paths themselves is unrecoverable, and reading the roots' leaf names would not
+recover it (both instances in the two-instance case report the same root leaf, so that
+rule would bind both to one copy). Every loss is an abstain, which keeps the file. A failed
+root-folder fetch does not degrade the snapshot: it can only stand the corroborator down,
+and that can only cost a bind. The ratios above must be re-measured before they are
+restated anywhere.
+
 **The unrelated bug the same report surfaced.** Posters were reported missing everywhere.
 The backend was healthy (every `/api/poster/*` returned 200 when driven), but
 `ReviewQueue.Poster` held a `broken` flag with **no reset on `url`** while its sibling
@@ -2123,6 +2186,49 @@ them truthfully.
    a decision: it is a benign, reversible mutation currently gated as strictly as a delete.
 3. **Plex settings UI** — `reaper-admin link-plex` works from the CLI; the web setup
    wizard still needs the same flow. (Plex is not linked in the dev DB.)
+
+### Carried forward from the third review pass (dev @ `aa0417d`, closed 2026-07-19)
+
+All 40 findings in `docs/CODE_REVIEW.md` are implemented. Five things were deliberately
+left, each because the correct fix is wider than the finding and wants its own change:
+
+1. **`Candidate.size_bytes` is still a non-null int, and the writers still say `or 0`**
+   (B-5, agent rule 4). The safety hole is closed: an item whose size was never confirmed
+   is now kept by `executor.size_confirmed` and excluded from the caps and the typed
+   confirmation total, so a `0` can no longer be deleted against or under-count a cap.
+   But `0` is still a sentinel for Unknown, which rule 4 calls a blocker. The honest fix
+   is a nullable column, and it reaches 17 backend and 8 frontend files.
+2. **The refused-reap clause is a frontend map keyed on strings the server emits**
+   (B-11, agent rule 12). Two modules holding the same literal is exactly what that rule
+   forbids. The clean shape is for the server to send the refusal reason on the candidate
+   payload, computed where `reap_override_verdict` already decides.
+3. **`BOOL_OPS = (Op.EQ,)` renders a comparison box with one option that cannot be
+   changed** (`fields.py:69`), in both the remove-rule and hard-keep forms. Either widen
+   the tuple or have the editor render a single-op field as static text.
+4. ~~**The folder corroborator runs before size and can contradict it.**~~ **Closed.**
+   Found while fixing B-1/B-2, not raised by either. Two changes closed it: the step no
+   longer *ranks* candidates by shared-suffix depth (which let a Plex copy whose own root
+   is shallower lose on depth alone, binding the wrong copy) but tests for an exact suffix
+   match on the item's library-relative path; and where it still points at a listing whose
+   known byte size disagrees with the *arr's, it yields to the size
+   (`identity._size_contradicts`), because the byte count is exact and a folder name is
+   circumstantial. This is the module's own corroborate-or-silent rule, applied between
+   corroborators rather than only between tiers.
+5. **A stale Plex size can make the exact-size corroborator bind the wrong copy.** Found
+   by the third adversarial pass on B-2, not raised by the review. An *arr upgrades a file
+   in place and Plex has not rescanned, so Plex still reports the old size for the true
+   copy while a copy in another library happens to carry the *arr's new size. The size
+   branch then binds the stranger. This is not the folder step (it correctly ties and
+   stands down); it is the size corroborator trusting a number Plex may not have
+   refreshed. The old depth-ranking happened to bind correctly on one such input, by luck
+   rather than by reasoning, and reinstating ranking would bring back the wrong binds it
+   caused. Worth its own look: a Plex size older than the *arr's own file mtime is
+   arguably unknown rather than known.
+6. **The live folder-corroborator measurement must be re-run.** B-2's three narrowings
+   (below each mount root, then strictly below the *arr's own reported root folder) mean
+   the recorded "ambiguous 6 → 0" no longer holds, and the expected direction is now
+   *more* abstains, not fewer. See the note in that section above and in
+   `docs/LEARNINGS.md`.
 
 ### Open questions / decisions to make
 

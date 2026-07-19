@@ -324,6 +324,86 @@ that needs it. And on any split library, the segment **above** the leaf is the o
 that distinguishes two copies of one title — for shows it is the sole corroborator that
 exists, so a tie there still abstains and always will.
 
+**Narrowed 2026-07-19 (code review B-2). The measured win above overstates what the
+corroborator can do**, and the numbers must not be restated without re-running it. The
+comparison may no longer consume either side's **mount root**: two *arr instances that
+each map their own host directory to the same container path (the common setup, both
+reporting the same path) produce a shared-suffix win that is a coincidence between the
+*arr's root name and one library's folder name, not evidence of identity — and it bound
+the wrong copy, reading the other copy's watch history and added-at.
+
+**Narrowed again, same day: a fixed one-segment strip does not remove a root.** The first
+attempt cut exactly one leading segment off each side. Adversarial verification broke it
+in the layout the popular single-mount guides recommend, where each container maps its
+host directory to a **two**-segment root. One segment came off, the second root segment
+stayed, it happened to name one library's folder, the strict margin fired on it, and the
+4K entry bound the HD listing — the exact byte size that would have separated them never
+reached. Path length cannot say where a root ends: a container root may be one segment or
+three, and nothing in the shape distinguishes a leftover root piece from a real folder.
+
+⇒ The root is now **read from the *arr, not inferred**. Each instance's `/rootfolder`
+list is fetched once per scan and handed to `resolve_movie` / `resolve_show`; the longest
+reported root that prefixes an item's path is that item's root, and only what sits
+strictly below it is evidence (`identity._below_arr_root`). With no root reported, or a
+path under none of them, the corroborator **stands down** and returns nothing — never a
+fixed strip, which is the unsound behaviour being removed.
+
+**Narrowed a third time, same day: ranking by depth is itself the bug.** Keeping the
+one-segment strip on the *Plex* side, on the argument that Plex's root is unknown and one
+segment is a cheap guard, was wrong in a way that took a third adversarial pass to see.
+The strip is not uniform in effect: a candidate whose path is fully consumed by the match
+loses a segment of depth while a deeper rival loses none, so a **tie** (abstain, keep the
+file) becomes a strict win for the wrong copy. That was a regression against the committed
+baseline, which tied and fell through to size. More generally, "deepest shared suffix
+wins" compares two copies whose Plex roots may differ in *depth* as though the shallower
+one running out of path were evidence against it.
+
+⇒ There is no ranking and no strip on either side. The *arr's below-root segments are the
+item's path **relative to its library**, and any Plex listing of that same file must *end
+with* those exact segments (`identity._ends_with`), whatever root that section is mounted
+at — so Plex's root never has to be known. Exactly one holder binds; several or none fall
+through. Three further guards, each from a reproduced wrong bind: the below-root depth
+must match the *arr's own layout, so a stale or over-broad root cannot pass mount segments
+off as folders; any candidate whose path Plex did not report stands the step down, since
+dropping it would turn a tie into a strict win; and a winner whose size cannot be checked
+stands it down too, because another candidate may match the byte count exactly. Where the
+folder names one copy and the exact size names another, that is a positive contradiction
+and the narrowing **abstains** rather than letting either overrule the other.
+
+**A fourth pass found the remaining two, and both were arbitration, not parsing.** A
+corroborator that stands aside is not neutral, and that is the lesson worth carrying: it
+hands the decision to whatever runs next. The twins gate ran *before* the folder winner was
+computed, so any twin pair made the contradiction veto unreachable and a folder answer from
+outside the group was discarded in favour of the group. And a failed root-folder read was
+treated as "no roots", which silently removed the veto and let a stale Plex size bind the
+copy the folder would have disputed. Both now resolve the same way: the folder's answer is
+computed first and compared against the group, and an unreadable root list refuses the whole
+narrowing instead of falling through to size alone.
+
+⇒ The rule this produced, after four passes: **when a check declines, ask what decides
+instead.** Three of the four wrong binds in this sequence came from a "safe" fallback that
+was only safe if you did not follow it one step further.
+
+The cost is real, larger than the first narrowing's, and was accepted deliberately:
+
+- Two instances mapped alike now **tie** below the root and abstain. A movie recovers
+  through its exact byte size; a show has none and is kept. That is the fix.
+- Radarr puts a movie at `<root>/<Title>/<file>` and Sonarr a series at `<root>/<Show>`,
+  so below the root a show has **only the leaf both copies already matched on**. A show
+  therefore never gets folder evidence at all. This was the sharpest finding of the third
+  pass: the step's entire reach for shows had been paths *deeper* than Sonarr's layout,
+  which only happens when the reported root is wrong — so the feature's reach was
+  co-extensive with its failure mode, and it failed toward a bind. Shows now abstain,
+  which is what the negative result at the top of this section said they must do.
+- Where the two libraries are told apart by their **root paths alone**, that information
+  is not below the root and cannot be recovered. Comparing the roots' own leaf names is
+  not a fix: in the two-instance case both instances report the *same* root leaf, so such
+  a rule would bind both to one copy.
+
+Every one of those losses is an abstain, and an abstain keeps the file. A root-folder
+fetch that fails does **not** degrade the snapshot (unlike rule 28's evidence sources):
+it can only stand the corroborator down, and standing down can only ever cost a bind.
+
 ### Plex title-cases label tags
 
 Write `leaving-soon`, read back `Leaving-Soon`. So any case-sensitive comparison of

@@ -28,11 +28,10 @@ from __future__ import annotations
 
 import json
 import random
-import re
 import sqlite3
 import sys
 from collections import Counter
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -48,22 +47,6 @@ from reaper.services.scan_runner import build_gates  # noqa: E402
 OUT = REPO / "tests" / "fixtures" / "policy_lab_vectors.json"
 TARGET_PER_TYPE = 220
 TARGET_SHOWS = 100
-WINDOW_DAYS = 365
-
-UNITS = {"year": 365, "years": 365, "month": 30, "months": 30, "day": 1, "days": 1}
-
-
-def parse_humanized(text: str) -> float | None:
-    """Invert ``clock.humanize_days``, cutting the threshold phrase the gate detail
-    appends ("..., less than the 1 year Reaper waits")."""
-    text = re.split(r", (?:less than|past) ", text)[0]
-    if "today" in text:
-        return 0.0
-    total, seen = 0, False
-    for num, unit in re.findall(r"(\d+)\s+(year|years|month|months|day|days)\b", text):
-        total += int(num) * UNITS[unit]
-        seen = True
-    return float(total) if seen else None
 
 
 def round_votes(votes: int) -> int:
@@ -83,8 +66,10 @@ def obs(state: str, value: Any = None) -> dict[str, Any]:
     return {"state": state, "value": value} if state == "known" else {"state": state}
 
 
-#: ``facts_codec``'s compact keys -> the fixture's spelled-out ones.
-_STATE = {"known": "known", "absent": "absent", "unknown": "unknown"}
+#: The observation states ``facts_codec._obs_to_dict`` emits. The fixture uses the same
+#: three names, so this is not a translation: it is the allow-list that sends anything
+#: unrecognised (a future state, a corrupt row) to the caller's default.
+_STATES = frozenset({"known", "absent", "unknown"})
 
 
 def stored_obs(
@@ -108,7 +93,7 @@ def stored_obs(
     entry = frozen.get(field)
     if not isinstance(entry, dict):
         return obs(default)
-    kind = _STATE.get(str(entry.get("k")), default)
+    kind = raw if (raw := str(entry.get("k"))) in _STATES else default
     if kind != "known":
         return obs(kind)
     value = entry.get("v")
@@ -127,7 +112,6 @@ def main() -> None:
         sys.exit("no non-degraded snapshot to extract from")
     snap_id, created_at = row
     now = datetime.fromtimestamp(created_at, tz=UTC)
-    window_start = int((now - timedelta(days=WINDOW_DAYS)).timestamp())
 
     # ---- bulk watch stats ---------------------------------------------------
     movie_user_last: dict[int, dict[int, int]] = {}
@@ -136,13 +120,6 @@ def main() -> None:
         "WHERE media_type='movie' GROUP BY rating_key, user_id"
     ):
         movie_user_last.setdefault(int(k), {})[int(u)] = int(last)
-    movie_last = {
-        int(k): int(last)
-        for k, last in cdb.execute(
-            "SELECT rating_key, MAX(watched_at) FROM watch_event "
-            "WHERE media_type='movie' GROUP BY rating_key"
-        )
-    }
     season_user_last: dict[int, dict[int, int]] = {}
     for k, u, last in cdb.execute(
         "SELECT parent_rating_key, user_id, MAX(watched_at) FROM watch_event "
@@ -150,28 +127,20 @@ def main() -> None:
         "GROUP BY parent_rating_key, user_id"
     ):
         season_user_last.setdefault(int(k), {})[int(u)] = int(last)
-    season_last = {
-        int(k): int(last)
-        for k, last in cdb.execute(
-            "SELECT parent_rating_key, MAX(watched_at) FROM watch_event "
-            "WHERE media_type='episode' AND parent_rating_key IS NOT NULL "
-            "GROUP BY parent_rating_key"
-        )
-    }
 
-    def stats(keys: list[int], media_type: str) -> tuple[float | None, int, int, list[float]]:
+    def recency_days(keys: list[int], media_type: str) -> list[float]:
+        """Days since each distinct viewer last played any of ``keys``, ascending.
+
+        The only thing this script still derives from the watch mirror. Dormancy, watcher
+        counts and every other fact come from the snapshot's frozen facts (``stored_obs``).
+        """
         user_last = movie_user_last if media_type == "movie" else season_user_last
-        last_map = movie_last if media_type == "movie" else season_last
         merged: dict[int, int] = {}
         for key in keys:
             for u, last in user_last.get(key, {}).items():
                 if u not in merged or last > merged[u]:
                     merged[u] = last
-        last = max((last_map[k] for k in keys if k in last_map), default=None)
-        days = (now - datetime.fromtimestamp(last, tz=UTC)).days if last else None
-        recency = sorted(round((created_at - la) / 86400.0) for la in merged.values())
-        window = sum(1 for la in merged.values() if la >= window_start)
-        return days, window, len(merged), [float(r) for r in recency]
+        return sorted(float(round((created_at - la) / 86400.0)) for la in merged.values())
 
     # An `imdb()` helper lived here, looking ratings up in the cache to rebuild the
     # rating observation. It was the drift: the snapshot already froze that observation,
@@ -243,7 +212,7 @@ def main() -> None:
         # Watch-recency days per user, for the show-shape map. The only thing still read
         # out of the mirror rather than the frozen facts, because it is not a Fact: it
         # describes the show, not the item.
-        recency = stats(keys, media_type)[3] if keys else []
+        recency = recency_days(keys, media_type) if keys else []
 
         ever_obs = stored_obs(frozen, "distinct_watchers_all_time")
 
