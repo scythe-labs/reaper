@@ -619,11 +619,21 @@ async def season_watch_stats(
     # Episode-precise position: each user's highest COMPLETED episode per season. NULL-index
     # rows (movies, or pre-backfill TV) are excluded, so a season with only those is simply
     # absent here and the guard falls back to season-level protection for it.
+    #
+    # `max_unknown` is the highest episode whose completion Tautulli never reported. If it
+    # sits ABOVE the highest known-completed one, the viewer may be further along than the
+    # position says, and being wrong in that direction unprotects the season they are about
+    # to watch next: `sequential_protections` reads "finished season m" as ready-for-m+1 and
+    # anything less as still-on-m, and the default lookahead is 0, so there is no cushion.
+    # Those pairs are dropped below, which makes the position Unknown and fails the guard
+    # closed to season level, exactly as a season with no episode indexes at all does.
     progress = text(
-        "SELECT user_id AS u, parent_rating_key AS k, MAX(media_index) AS max_ep "
+        "SELECT user_id AS u, parent_rating_key AS k, "
+        "       MAX(CASE WHEN watched_status = 1 THEN media_index END) AS max_ep, "
+        "       MAX(CASE WHEN watched_status IS NULL THEN media_index END) AS max_unknown "
         "FROM watch_event "
         "WHERE parent_rating_key IN :keys AND media_type = 'episode' "
-        "  AND media_index IS NOT NULL AND watched_status = 1 "
+        "  AND media_index IS NOT NULL "
         "GROUP BY user_id, parent_rating_key"
     ).bindparams(bindparam("keys", expanding=True))
 
@@ -648,6 +658,10 @@ async def season_watch_stats(
                 # expiry treats that viewer as still active rather than silently stale.
                 stats.user_season_last.setdefault(user, {})[key] = from_epoch(row.last)
             for row in (await conn.execute(progress, {"keys": key_chunk})).all():
+                if row.max_ep is None:
+                    continue  # nothing completed here: position unknown, guard falls back
+                if row.max_unknown is not None and int(row.max_unknown) > int(row.max_ep):
+                    continue  # they may be further on than this; see the query note
                 stats.user_season_progress.setdefault(int(row.u), {})[int(row.k)] = int(row.max_ep)
 
     return stats

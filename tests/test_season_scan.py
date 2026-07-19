@@ -485,7 +485,9 @@ async def _episode(
     show_key: int = 42,
     days_ago: int = 1,
     episode: int | None = None,
+    status: float | None = 1.0,
 ) -> None:
+    """``status=None`` is the row Tautulli never told us the completion of."""
     when = int((utcnow() - timedelta(days=days_ago)).timestamp())
     async with engine.begin() as conn:
         await conn.execute(
@@ -493,7 +495,7 @@ async def _episode(
                 "INSERT INTO watch_event (rating_key, parent_rating_key, "
                 "grandparent_rating_key, user_id, watched_at, watched_status, "
                 "percent_complete, media_type, media_index) "
-                "VALUES (:rk, :season, :show, :uid, :ts, 1, 100, 'episode', :ep)"
+                "VALUES (:rk, :season, :show, :uid, :ts, :status, 100, 'episode', :ep)"
             ),
             {
                 "rk": season_key * 1000 + user_id + (episode or 0),
@@ -502,6 +504,7 @@ async def _episode(
                 "uid": user_id,
                 "ts": when,
                 "ep": episode,
+                "status": status,
             },
         )
 
@@ -540,6 +543,55 @@ class TestSeasonWatchStats:
         when = stats.user_season_last[1][706]
         assert when is not None
         assert when > utcnow() - timedelta(days=6)
+
+    async def test_an_unreported_completion_above_the_position_makes_it_unknown(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The fail-open this closes, at the level it actually lives.
+
+        Episodes 1-3 are recorded complete; 4-10 were played but Tautulli never said
+        whether they finished. Reading those as "not completed" puts the viewer at
+        episode 3, so `sequential_protections` calls them still-on-this-season and the
+        NEXT season -- the one they are actually about to watch -- loses its protection.
+        The default lookahead is 0, so nothing else covers it. Position must read as
+        unknown, which drops the guard to season level.
+        """
+        for ep in (1, 2, 3):
+            await _episode(cache_engine, season_key=710, user_id=1, episode=ep)
+        for ep in (4, 10):
+            await _episode(cache_engine, season_key=710, user_id=1, episode=ep, status=None)
+
+        stats = await season_scan.season_watch_stats(cache_engine, {710}, window_days=365)
+
+        assert 710 in stats.user_season_keys[1]  # they clearly watched it
+        assert stats.user_season_progress.get(1, {}).get(710) is None  # ...but where is unknown
+
+    async def test_an_unreported_completion_below_the_position_is_ignored(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The other side, so this does not become "any odd row blinds the guard".
+
+        An unreported episode 2 cannot change where a viewer who has completed episode 9
+        has got to, so the position stays exact and the guard keeps its precision.
+        """
+        for ep in (1, 9):
+            await _episode(cache_engine, season_key=711, user_id=1, episode=ep)
+        await _episode(cache_engine, season_key=711, user_id=1, episode=2, status=None)
+
+        stats = await season_scan.season_watch_stats(cache_engine, {711}, window_days=365)
+
+        assert stats.user_season_progress[1][711] == 9
+
+    async def test_a_genuine_zero_still_means_not_finished(self, cache_engine: AsyncEngine) -> None:
+        """0.0 is a real answer ("started it, did not finish") and must keep behaving as
+        one. Only a MISSING status is unknown; conflating them again in the other
+        direction would blind the guard on every partially-watched episode."""
+        await _episode(cache_engine, season_key=712, user_id=1, episode=3)
+        await _episode(cache_engine, season_key=712, user_id=1, episode=4, status=0.0)
+
+        stats = await season_scan.season_watch_stats(cache_engine, {712}, window_days=365)
+
+        assert stats.user_season_progress[1][712] == 3
 
 
 class TestProgressByUser:

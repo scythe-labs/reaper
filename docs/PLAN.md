@@ -2033,30 +2033,38 @@ silently on a copy edit.** It happened twice in one week. Nothing enforces this 
 Found by a fan-out audit after the size work. Labelled by what an operator would care
 about, not by where they live.
 
+One of the six is now closed: `watched_status` was coerced to `0` on ingest, which made
+"Tautulli did not say" indistinguishable from "started it, did not finish". The sequential
+guard reads a completed episode as `watched_status = 1`, so an unreported completion
+*above* a viewer's known position put them further back than they were, and
+`sequential_protections` then protected the season they had finished instead of the one
+they were about to start. `SEQUENTIAL_LOOKAHEAD` is 0, so nothing cushioned it. Proven
+against the real function, not argued: correct position protects S3, understated protects
+S2 only, fully-unknown protects both. The column is nullable now (guarded one-time rebuild
+of the cache table, which is where the honest answer has to live), a genuine `0.0` still
+means "did not finish", and a pair whose unknown episodes sit above its known ones drops
+to the season-level fallback. The blast radius on existing data is **unmeasurable by
+construction**: the distinction was destroyed at write time, so the ~12% of rows sitting at
+exactly `0.0` cannot be separated into reported and invented. The nightly sweep re-fetches
+them truthfully.
+
 **Can change what gets deleted**
 
 1. **The canary lands on the item Reaper knows least about.** `planner.py` orders
    smallest-first so ordinal 0 is "the least costly possible mistake" (its words). A
    fabricated `0` sorts to the front, so the run's one real proof that deletion works is
    spent on the item whose size was never read. The comment and the behaviour disagree.
-2. **`watched_status` coerced to 0** (`history_sync.py`). The sequential guard filters
-   `watched_status = 1`, so an unstamped row drops out. **Direction depends on the case and
-   the trace is unfinished**: if *every* row for a season lacks it the season is absent
-   entirely and the guard falls back to season-level protection (safe, and the comment
-   beside it says so); if only *some* rows lack it, the user's progress is understated and a
-   later season may go unprotected. Finish the trace before deciding severity.
-
 **Says something untrue**
 
-3. **The queue renders "0 B" for a season that plainly holds files.** A visible false
+2. **The queue renders "0 B" for a season that plainly holds files.** A visible false
    statement on a surface scanned while deciding what to delete.
-4. **`gates.py` claims an unset field "cannot change any verdict."** False since the keep
+3. **`gates.py` claims an unset field "cannot change any verdict."** False since the keep
    lane existed: `Absent` withdraws a graded keep, which is the whole finding above. Rule 7
    — the comment was true when written and is not now.
 
 **Latent**
 
-5. **A season missing from the watcher map reads as zero watchers** (`season_pruning.py`),
+4. **A season missing from the watcher map reads as zero watchers** (`season_pruning.py`),
    suppressing a keep-conflict warning. Both sides of the comparison default to 0 and an
    unmatched season usually abstains on coverage anyway, so it rarely flips an outcome. It
    is a warning, not a protection.

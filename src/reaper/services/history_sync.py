@@ -111,7 +111,12 @@ CREATE TABLE IF NOT EXISTS watch_event (
     grandparent_rating_key INTEGER,
     user_id                INTEGER NOT NULL,
     watched_at             INTEGER NOT NULL,
-    watched_status         REAL    NOT NULL,
+    -- How much of the item was played, 0.0 to 1.0. NULL means Tautulli did not say,
+    -- which is NOT the same as 0.0 ("started it, did not finish"): the sequential guard
+    -- reads a completed episode as watched_status = 1, so an unrecorded status that was
+    -- silently stored as 0.0 makes a viewer look further behind than they are, and the
+    -- season they are about to watch loses its protection. See _progress_for_user.
+    watched_status         REAL,
     percent_complete       INTEGER NOT NULL,
     media_type             TEXT    NOT NULL,
     -- The episode number (Tautulli media_index) for TV rows, NULL for movies and for rows
@@ -171,6 +176,25 @@ async def ensure_schema(engine: AsyncEngine) -> None:
         cols = (await conn.execute(text("PRAGMA table_info(watch_event)"))).all()
         if "media_index" not in {row[1] for row in cols}:
             await conn.execute(text("ALTER TABLE watch_event ADD COLUMN media_index INTEGER"))
+
+        # watched_status was NOT NULL, so a status Tautulli did not send was stored as 0.0
+        # and became indistinguishable from "started it, did not finish". SQLite cannot
+        # drop a NOT NULL in place, so rebuild once. Existing 0.0 rows stay 0.0 -- they
+        # cannot be told apart now, and the nightly full sweep re-fetches them truthfully.
+        if any(row[1] == "watched_status" and row[3] for row in cols):
+            log.info("history.schema.relaxing_watched_status")
+            await conn.execute(text("ALTER TABLE watch_event RENAME TO watch_event_old"))
+            for statement in SCHEMA.strip().split(";"):
+                if statement.strip():
+                    await conn.execute(text(statement))
+            await conn.execute(
+                text(
+                    "INSERT INTO watch_event SELECT row_id, rating_key, parent_rating_key, "
+                    " grandparent_rating_key, user_id, watched_at, watched_status, "
+                    " percent_complete, media_type, media_index FROM watch_event_old"
+                )
+            )
+            await conn.execute(text("DROP TABLE watch_event_old"))
 
 
 async def _state(engine: AsyncEngine) -> HistoryState:
@@ -254,7 +278,10 @@ async def sync(
                     "grandparent_rating_key": _int_or_none(row.get("grandparent_rating_key")),
                     "user_id": int(user_id),
                     "watched_at": int(watched_at.timestamp()),
-                    "watched_status": float(row.get("watched_status") or 0),
+                    # NULL, not 0.0, when Tautulli omitted it. `or 0` collapsed "not
+                    # watched" and "we were not told" into the same number, and once
+                    # written the two are indistinguishable forever. See the column note.
+                    "watched_status": _float_or_none(row.get("watched_status")),
                     "percent_complete": int(row.get("percent_complete") or 0),
                     "media_type": str(row.get("media_type") or "unknown"),
                     # Episode number for TV rows; None for movies. Fail-safe: a NULL here
@@ -322,6 +349,21 @@ async def _check_regression(engine: AsyncEngine, client: TautulliClient) -> None
     await _store_tautulli_total(engine, current_total)
     if previous_total is None:
         log.info("history.regression_baseline", tautulli_total=current_total)
+
+
+def _float_or_none(value: object) -> float | None:
+    """A completion fraction Tautulli actually sent, or ``None``.
+
+    Deliberately NOT ``float(value or 0)``: a genuine 0.0 ("started it, did not finish")
+    and a missing field are different facts, and the sequential guard acts on the
+    difference. Once collapsed they cannot be separated again.
+    """
+    if not isinstance(value, int | float | str) or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _int_or_none(value: object) -> int | None:
