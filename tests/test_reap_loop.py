@@ -645,6 +645,24 @@ class TestSizeDriftReRead:
         assert radarr.delete_calls == []
         assert report.skipped == 1
 
+    async def test_a_movie_radarr_reports_as_zero_bytes_is_kept(
+        self, session: AsyncSession
+    ) -> None:
+        """Zero is a partial payload, not a measurement, and the two sides must agree.
+
+        The scan-side parser already reads a missing sizeOnDisk as unreadable, so the
+        stored size is 0. If the executor accepted a live 0 as confirmed, zero against
+        zero would be no growth and the file would be deleted on two invented numbers.
+        Symmetric with the season case below."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700, size=0)
+        run = await _plan(session, snapshot_id)
+        radarr = FakeRadarr(size_on_disk=0)
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert radarr.delete_calls == []
+        assert report.skipped == 1
+
     async def test_growth_within_the_allowance_still_deletes(self, session: AsyncSession) -> None:
         snapshot_id = await _snapshot_one(
             session, media_key="radarr:1:1", rating_key=700, size=10 * GB
@@ -696,6 +714,54 @@ class TestSizeDriftReRead:
         report = await _real(session, run, _gateway(sonarr={1: sonarr}))
 
         assert sonarr.unmonitor_calls == []
+        assert report.skipped == 1
+
+    async def test_a_season_whose_files_all_report_zero_bytes_is_kept(
+        self, session: AsyncSession
+    ) -> None:
+        """The hole a fabricated zero opens straight through the size interlock.
+
+        The same partial payload that makes a season's stored size 0 at scan time makes
+        its live file sizes 0 at delete time. Zero against zero is no growth at all, so
+        the interlock passed and real files were deleted with BOTH numbers invented.
+        `_payload_size` now reads 0 as unreadable, exactly as the scan-side parsers do.
+        """
+        snapshot_id = await _snapshot_one(
+            session, media_key="sonarr:1:42:3", rating_key=800, media_type="season", size=0
+        )
+        run = await _plan(session, snapshot_id)
+        sonarr = FakeSonarr(
+            files=[
+                {"id": 101, "seasonNumber": 3, "size": 0},
+                {"id": 102, "seasonNumber": 3, "size": 0},
+            ]
+        )
+
+        report = await _real(session, run, _gateway(sonarr={1: sonarr}))
+
+        assert sonarr.unmonitor_calls == []
+        assert sonarr.delete_calls == []
+        assert report.skipped == 1
+
+    async def test_a_season_sonarr_reports_no_files_for_is_kept(
+        self, session: AsyncSession
+    ) -> None:
+        """An empty answer is not a confirmation.
+
+        `sum([])` is 0, which sails through the growth check and marks the step verified
+        having proven nothing -- while consuming the canary, because the plan is ordered
+        smallest-first and a zero-size season sorts to the front. Rule 1.
+        """
+        snapshot_id = await _snapshot_one(
+            session, media_key="sonarr:1:42:3", rating_key=800, media_type="season", size=0
+        )
+        run = await _plan(session, snapshot_id)
+        sonarr = FakeSonarr(files=[{"id": 900, "seasonNumber": 4, "size": 50 * 1024**2}])
+
+        report = await _real(session, run, _gateway(sonarr={1: sonarr}))
+
+        assert sonarr.unmonitor_calls == []
+        assert sonarr.delete_calls == []
         assert report.skipped == 1
 
     async def test_a_drift_skip_does_not_consume_the_canary(self, session: AsyncSession) -> None:

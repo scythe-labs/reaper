@@ -149,14 +149,24 @@ def _grew_materially(approved_bytes: int, live_bytes: int) -> bool:
 def _payload_size(value: object) -> int | None:
     """A byte size read back from a live *arr payload, or None when unreadable.
 
-    None (missing field, junk type, negative) means the size cannot be confirmed, and
-    the caller treats that as drift it cannot rule out: the item is kept.
+    None (missing field, junk type, negative, **zero**) means the size cannot be
+    confirmed, and the caller treats that as drift it cannot rule out: the item is kept.
+
+    Zero counts as unreadable, and that is the whole point. The scan-side parsers already
+    treat it that way (``snapshot._reported_size``, ``sonarr_stats._reported_size``),
+    because an *arr that reports a file it holds with no size is sending a partial
+    payload, not describing an empty file. This function used to disagree -- it accepted
+    0 as a measurement -- and the disagreement was a hole straight through the size
+    interlock: a stored 0 (the same partial payload, frozen at scan time) against a live
+    0 is no growth at all, so the check passed and real files were deleted with both
+    numbers fabricated. A genuinely 0-byte file is pathological and reclaims nothing, so
+    keeping it costs the owner nothing either.
     """
     try:
         size = int(value)  # type: ignore[call-overload]
     except (TypeError, ValueError):
         return None
-    return size if size >= 0 else None
+    return size if size > 0 else None
 
 
 def _season_number(obj: dict[str, Any]) -> int:
@@ -1212,7 +1222,11 @@ class Executor:
             for f in await sonarr.episode_files(ref.arr_id)
             if _season_number(f) == ref.season
         ]
-        if any(size is None for size in live_sizes):
+        # An EMPTY list is not a confirmation. `sum([])` is 0, which sails through the
+        # growth check below and marks the step verified having proven nothing -- and
+        # since the plan is ordered smallest-first, a zero-size season is exactly what
+        # the canary lands on. Rule 1: an omitted answer is not an explicit empty one.
+        if not live_sizes or any(size is None for size in live_sizes):
             return self._mark_skipped(
                 delete,
                 "Sonarr did not report a size for every file in this season, so Reaper "
