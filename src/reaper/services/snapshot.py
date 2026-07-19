@@ -694,6 +694,15 @@ async def scan(
         )
         movie_size_source = SizeSource.RADARR if item.size_bytes is not None else None
         size_sources[_size_bucket(movie_size_source)] += 1
+        if movie_size_source is None:
+            # Per item, because a count alone cannot be chased down. The media_key is an
+            # internal coordinate, never a title or a path.
+            log.info(
+                "scan.size_unmeasured",
+                media_key=item.media_key,
+                media_type=item.media_type,
+                reason="radarr reported no sizeOnDisk",
+            )
         verdict = _judge_item(
             session,
             snapshot_id=snapshot.id,
@@ -761,6 +770,13 @@ async def scan(
             emit(Progress("scoring", len(items) + offset, total, judgement.title))
             await asyncio.sleep(0)  # keep the event loop live; see the movie loop above
         size_sources[_size_bucket(judgement.size_source)] += 1
+        if judgement.size_source is None:
+            log.info(
+                "scan.size_unmeasured",
+                media_key=judgement.media_key,
+                media_type="season",
+                reason="sonarr reported no size for the season",
+            )
         verdict = _judge_item(
             session,
             snapshot_id=snapshot.id,

@@ -523,17 +523,22 @@ function CardStatusLine({
   dormantFor,
   reason,
   chip,
+  heldBack = false,
 }: {
   condemned: boolean;
   dormantFor: string | null;
   reason: string | null;
   chip: Chip | null;
+  /** No size, so no plan will include it. Said on the card because this is where the
+   *  owner is already looking, and a count on the plan screen cannot name the item. */
+  heldBack?: boolean;
 }) {
   if (!condemned) return <StatusChip chip={chip} />;
   return (
     <>
       <DormantPill dormantFor={dormantFor} />
-      {reason && !dormantFor && <p className="card-reason">{reason}</p>}
+      {heldBack && <p className="card-reason">Held back: size unknown</p>}
+      {reason && !dormantFor && !heldBack && <p className="card-reason">{reason}</p>}
     </>
   );
 }
@@ -959,6 +964,7 @@ function MovieCard({
           dormantFor={item.dormant_for}
           reason={item.reason}
           chip={item.chip}
+          heldBack={item.size_bytes === null}
         />
       </div>
       <div className="card-side">
@@ -1088,6 +1094,10 @@ function ShowCard({
             dormantFor={group.dormantFor}
             reason={group.reason}
             chip={first.chip}
+            // A show is held back only when EVERY actable season is: one measured season
+            // still gives "Reap now" something to do, and the count beside it already
+            // says how many it is leaving out.
+            heldBack={isReapTab && condemnedCount === 0 && condemnedUnknown > 0}
           />
         </div>
         <div className="card-side">

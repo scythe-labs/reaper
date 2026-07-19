@@ -1198,6 +1198,9 @@ class Executor:
         candidate = delete.candidate
         approved_size = candidate.size_bytes
         if approved_size is None or not _measures(candidate, _MOVIE_COMPARABLE):
+            # A real alarm, not routine noise: the planner should have held this back, so
+            # this firing means the two layers disagree and the first one is wrong.
+            log.warning("executor.skipped_unmeasured", media_key=candidate.media_key)
             return self._mark_skipped(
                 delete, _NO_APPROVED_SIZE_REASON, check=_NO_APPROVED_SIZE_CHECK
             )
@@ -1349,6 +1352,9 @@ class Executor:
         # ``size_confirmed``, written inline so the size is narrowed below.
         approved_size = candidate.size_bytes
         if approved_size is None or not _measures(candidate, _SEASON_COMPARABLE):
+            # A real alarm, not routine noise: the planner should have held this back, so
+            # this firing means the two layers disagree and the first one is wrong.
+            log.warning("executor.skipped_unmeasured", media_key=candidate.media_key)
             return self._mark_skipped(
                 delete, _NO_APPROVED_SIZE_REASON, check=_NO_APPROVED_SIZE_CHECK
             )

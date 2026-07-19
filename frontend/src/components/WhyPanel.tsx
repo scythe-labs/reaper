@@ -832,6 +832,16 @@ export function WhyPanel({
 
       <LeftForYou outcomes={explanation.protections_unknown} />
 
+      {/* This is the panel that answers "what happens to this one", so it has to say the
+          thing that overrides every reason above it: no plan will include it. The plain
+          reason only, never which source was asked or when. */}
+      {item.size_bytes === null && (
+        <p className="notice notice-warn">
+          Held back: size unknown. Sonarr and Radarr had none, so Reaper can't tell what
+          removing this would free, and won't remove it.
+        </p>
+      )}
+
       {/* Decide without leaving the reasoning. Sticky, so the buttons stay in reach at
           the end of a long explanation. */}
       <div className="why-actions">

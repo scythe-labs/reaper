@@ -299,4 +299,26 @@ describe("the dormancy span", () => {
     renderQueue();
     expect(await screen.findByText(/Not watched in less than a day/)).toBeInTheDocument();
   });
+
+  it("says on the card when an item will not be reaped for want of a size", async () => {
+    // No plan will include it, which outranks every other reason the card could show:
+    // an owner reading "Not watched in 5 years" would reasonably expect it to go.
+    apiMock.candidates.mockResolvedValue(
+      page([movie(1, { size_bytes: null, dormant_for: "5 years" })]),
+    );
+    renderQueue();
+
+    expect(await screen.findByText("Held back: size unknown")).toBeInTheDocument();
+    expect(screen.getByText("Size unknown")).toBeInTheDocument();
+  });
+
+  it("shows the ordinary reason when the size is known", async () => {
+    // The hold-back line must not become permanent furniture: it appears only for the
+    // items it is about.
+    apiMock.candidates.mockResolvedValue(page([movie(1, { dormant_for: "less than a day" })]));
+    renderQueue();
+
+    await screen.findByText(/Not watched in less than a day/);
+    expect(screen.queryByText("Held back: size unknown")).not.toBeInTheDocument();
+  });
 });

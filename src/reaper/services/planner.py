@@ -435,6 +435,13 @@ async def build_plan(
         named = set(only_media_keys)
         omitted = [c for c in held_back if c.group_key is not None and c.group_key in named]
 
+    if omitted:
+        log.info(
+            "planner.held_back_unmeasured",
+            count=len(omitted),
+            media_keys=[c.media_key for c in omitted],
+        )
+
     if not plannable:
         raise PlanError("Nothing is condemned in this snapshot; there is no plan to build.")
 
