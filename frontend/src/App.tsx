@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { api, type AuthUser, type Snapshot, type Verdict } from "./api";
+import { api, ApiError, type AuthUser, type Snapshot, type Verdict } from "./api";
 import { Fairness } from "./components/Fairness";
 import { Login } from "./components/Login";
 import { PolicyEditor, type PolicySectionId } from "./components/PolicyEditor";
@@ -93,22 +93,43 @@ function SafetyBanner({ onGoToDeletion }: { onGoToDeletion: () => void }) {
 
 /** A slim freshness line on the Review screen: when the queue was last built, and a loud
  *  note if that scan came back incomplete (the scan control itself now lives in Settings →
- *  Jobs). Without this, the queue gives no sense of how stale it might be. */
-function ScanFreshness({
+ *  Jobs). Without this, the queue gives no sense of how stale it might be.
+ *
+ *  Missing data is not the same as "no scan exists". `/api/snapshots/latest` answers 404
+ *  only for the genuine first-boot case; every other failure also arrives with no data, and
+ *  reading that as "no scan has run yet" turns a dropped request into a confident claim and
+ *  silently drops the incomplete-scan warning, the one staleness signal on this screen.
+ *  Exported for its own test; the app renders it only from Dashboard. */
+export function ScanFreshness({
   snapshot,
+  isPending,
+  error,
   onGoToJobs,
 }: {
   snapshot: Snapshot | undefined;
+  isPending: boolean;
+  error: unknown;
   onGoToJobs: () => void;
 }) {
+  if (isPending) {
+    return <p className="scan-freshness muted">Checking the last scan…</p>;
+  }
   if (!snapshot) {
+    if (error instanceof ApiError && error.status === 404) {
+      return (
+        <p className="scan-freshness muted">
+          No scan has run yet.{" "}
+          <button className="link" onClick={onGoToJobs}>
+            Run one from Settings → Jobs
+          </button>{" "}
+          to fill the queue.
+        </p>
+      );
+    }
     return (
-      <p className="scan-freshness muted">
-        No scan has run yet.{" "}
-        <button className="link" onClick={onGoToJobs}>
-          Run one from Settings → Jobs
-        </button>{" "}
-        to fill the queue.
+      <p className="notice notice-error scan-freshness">
+        Couldn't read the last scan, so Reaper can't say how old this queue is. Reload the
+        page to try again.
       </p>
     );
   }
@@ -132,34 +153,11 @@ function ScanFreshness({
  *  role="menu", which promises arrow-key navigation between menu items that was never
  *  implemented, on a panel whose first child is a heading rather than an item. The honest
  *  simpler role is the one whose keyboard contract this actually keeps. */
-function UserMenu({ user }: { user: AuthUser }) {
+export function UserMenu({ user }: { user: AuthUser }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    window.addEventListener("mousedown", onClick);
-    return () => window.removeEventListener("mousedown", onClick);
-  }, [open]);
-
-  // Clicking away closed it; tabbing away did not, which left the panel hanging open over
-  // a page the keyboard had already moved on from.
-  const onBlur = (e: React.FocusEvent<HTMLDivElement>) => {
-    if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false);
-  };
-  // Escape closes and hands focus back to the chip, so the keyboard is where it started.
-  const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key !== "Escape" || !open) return;
-    setOpen(false);
-    triggerRef.current?.focus();
-  };
-
-  const initial = user.username.slice(0, 1).toUpperCase();
 
   // A mutation, not a fire-and-forget async onClick: a sign-out that fails must say so.
   // The session would still be live, and a swallowed error leaves the menu open with the
@@ -171,12 +169,49 @@ function UserMenu({ user }: { user: AuthUser }) {
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["me"] }),
   });
 
+  // While the sign-out is running or has failed, the panel stays put. Disabling the focused
+  // Sign out button moves focus off it, which some browsers report as focus leaving the
+  // whole menu -- closing the panel would then throw away the only place the failure is
+  // ever shown, and it would come back stale the next time the menu opened.
+  const keepOpen = signOut.isPending || signOut.isError;
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      if (keepOpen) return;
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener("mousedown", onClick);
+    return () => window.removeEventListener("mousedown", onClick);
+  }, [open, keepOpen]);
+
+  // Clicking away closed it; tabbing away did not, which left the panel hanging open over
+  // a page the keyboard had already moved on from.
+  const onBlur = (e: React.FocusEvent<HTMLDivElement>) => {
+    if (keepOpen) return;
+    if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false);
+  };
+  // Escape closes and hands focus back to the chip, so the keyboard is where it started.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== "Escape" || !open) return;
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  // Opening starts clean: a failure from a previous attempt is history, not news.
+  const toggle = () => {
+    if (!open) signOut.reset();
+    setOpen((v) => !v);
+  };
+
+  const initial = user.username.slice(0, 1).toUpperCase();
+
   return (
     <div className="user-menu" ref={ref} onBlur={onBlur} onKeyDown={onKeyDown}>
       <button
         className="user-chip"
         ref={triggerRef}
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
         aria-expanded={open}
       >
         {user.thumb_url ? (
@@ -282,11 +317,16 @@ function Dashboard({ user }: { user: AuthUser }) {
   const selectedId = selected?.kind === "item" ? selected.id : null;
   const selectedGroupKey = selected?.kind === "group" ? selected.key : null;
 
-  const { data: snapshot } = useQuery({
+  const {
+    data: snapshot,
+    isPending: snapshotPending,
+    error: snapshotError,
+  } = useQuery({
     queryKey: ["snapshot"],
     queryFn: api.latestSnapshot,
     // A 404 means no scan has run. That is a normal first-boot state, not an error, and
-    // retrying it on a loop would be noise.
+    // retrying it on a loop would be noise. Every *other* failure is a real error, which is
+    // why ScanFreshness is handed the error itself rather than just the missing data.
     retry: false,
   });
 
@@ -389,7 +429,12 @@ function Dashboard({ user }: { user: AuthUser }) {
 
       <SafetyBanner onGoToDeletion={() => goToPolicySection("deletion")} />
       {view === "review" && (
-        <ScanFreshness snapshot={snapshot} onGoToJobs={() => goToSettingsPanel("jobs")} />
+        <ScanFreshness
+          snapshot={snapshot}
+          isPending={snapshotPending}
+          error={snapshotError}
+          onGoToJobs={() => goToSettingsPanel("jobs")}
+        />
       )}
 
       <main className={selected !== null && view === "review" ? "split" : ""}>

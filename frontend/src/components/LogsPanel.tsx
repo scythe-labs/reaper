@@ -124,8 +124,10 @@ export function LogsPanel() {
           onChange={(e) => setMinLevel(e.target.value)}
           aria-label="Only show this level and up"
         >
+          {/* No "Debug and up": debug is the lowest level there is, so it would keep
+              every line, which is what "All levels" already does. Each option names a
+              floor that filters something out. */}
           <option value="all">All levels</option>
-          <option value="DEBUG">Debug and up</option>
           <option value="INFO">Info and up</option>
           <option value="WARNING">Warnings and up</option>
           <option value="ERROR">Errors only</option>
@@ -187,8 +189,22 @@ export function LogsPanel() {
           )}
         </div>
       )}
+      {/* "Follow new lines" is the only thing scheduling another fetch, so with it off
+          nothing is retrying and saying so would be a lie. In that state the operator gets
+          the same Try again button the empty-log branch above offers. */}
       {logs.isError && lines.length > 0 && (
-        <p className="notice notice-error">Live updates hit an error. Retrying…</p>
+        <p className="notice notice-error">
+          {live ? (
+            "Couldn't load new lines. Reaper is trying again."
+          ) : (
+            <>
+              Couldn't load new lines, and updates are paused.{" "}
+              <button className="ghost sm" onClick={() => void logs.refetch()}>
+                Try again
+              </button>
+            </>
+          )}
+        </p>
       )}
 
       <div className="set-group log-level-group">

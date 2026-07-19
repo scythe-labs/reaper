@@ -53,8 +53,9 @@ import { Switch } from "./Switch";
 // ---------------------------------------------------------------------------
 // Presets: three starting points that stage (never save) the threshold and the
 // pace. Weights are RESET to the shipped mix on apply -- a preset is a known
-// place to start from, not a tweak -- and the badge only claims a preset while
-// the draft actually matches it.
+// place to start from, not a tweak -- and the operator's own removal rules are
+// rescaled alongside it (rescaleToBudget) so the lane still totals 100. The
+// badge only claims a preset while the draft actually matches it.
 // ---------------------------------------------------------------------------
 
 type PresetId = "cautious" | "balanced" | "aggressive";
@@ -111,6 +112,38 @@ const PRESETS: { id: PresetId; label: string; help: string; condemn_at: number; 
     },
   },
 ];
+
+/** The removal budget every policy must total, matching the server
+ *  (PolicyBody._weights_total_one_hundred). */
+const REMOVAL_POINTS = 100;
+
+/** A set of removal weights rescaled so they total exactly REMOVAL_POINTS, using the same
+ *  largest-remainder arithmetic the server uses to repair a stored policy
+ *  (engine/policy.rebalance). Score-preserving: the score is already
+ *  100 * (pressure / total weight), so scaling every weight by one factor cannot move it,
+ *  and largest-remainder keeps the rounding under a point.
+ *
+ *  A preset needs this because the shipped mix alone is already the whole budget, so
+ *  without it any rule of the operator's own put the draft over budget and blocked Save
+ *  for the pace draft too.
+ *
+ *  Returns the weights unchanged when there is nothing to scale (no weight at all), which
+ *  the budget readout then reports as under budget, as before.
+ */
+function rescaleToBudget(weights: number[]): number[] {
+  const total = weights.reduce((sum, w) => sum + w, 0);
+  if (total <= 0) return weights;
+  const exact = weights.map((w) => (w * REMOVAL_POINTS) / total);
+  const floors = exact.map((x) => Math.floor(x));
+  const spare = REMOVAL_POINTS - floors.reduce((sum, f) => sum + f, 0);
+  // Largest fractional remainder first; ties keep their original order, as the server's
+  // stable sort does.
+  const order = floors
+    .map((_, i) => i)
+    .sort((a, b) => exact[b]! - floors[b]! - (exact[a]! - floors[a]!));
+  for (const i of order.slice(0, spare)) floors[i]! += 1;
+  return floors;
+}
 
 /** Which preset the draft currently IS, or null for "Custom". Honest by construction:
  *  a preset badge is only shown while the threshold matches it AND the weights are the
@@ -482,9 +515,6 @@ function RatingFloorRow({
   );
 }
 
-/** One signal: a plain-English label, its help, a slider, and a *quantified* readout -- the
- *  raw weight and the share of the score it currently accounts for, because "a lot" told you
- *  nothing you could act on. */
 /** The 100-point removal budget, in the savebar. The whole reason weights can be labelled
  *  as points: the server refuses any policy whose removal weights do not total exactly 100
  *  (PolicyBody._weights_total_one_hundred), so the number on a rule IS what it adds.
@@ -516,7 +546,7 @@ function PointsBudget({ builtIn, yours }: { builtIn: number; yours: number }) {
         </span>
         {left === 0 ? (
           <span className="muted">
-            {draftRuleCount(builtIn, yours)}
+            {pointsSplit(builtIn, yours)}
           </span>
         ) : (
           <span className={left < 0 ? "budget-over-text" : "muted"}>
@@ -535,11 +565,17 @@ function PointsBudget({ builtIn, yours }: { builtIn: number; yours: number }) {
   );
 }
 
-/** "4 built-in signals · 1 of your rules", or just the built-ins when there are no rules. */
-function draftRuleCount(builtIn: number, yours: number): string {
+/** How the 100 points are split: "70 built in · 30 yours", or "all on built-in signals"
+ *  when the operator has written no removal rules. Both arguments are point totals, not
+ *  rule counts, so the two numbers always add up to the total shown beside them. */
+function pointsSplit(builtIn: number, yours: number): string {
   return yours > 0 ? `${builtIn} built in · ${yours} yours` : "all on built-in signals";
 }
 
+/** One signal: a plain-English label, its help, a slider, and the flat points it can add.
+ *  Removal weights total exactly 100, so the weight IS the number of points, and the row
+ *  reads "up to N points" because a signal only pays its full number at the far end of
+ *  its range. */
 function SignalRow({
   signal,
   onChange,
@@ -997,10 +1033,16 @@ function RemoveRulesEditor({
                 )}
               </span>
             ) : field.type === "bool" ? (
-              <select value={rValue} aria-label="Value" onChange={(e) => setRValue(e.target.value)}>
-                <option value="true">yes</option>
-                <option value="false">no</option>
-              </select>
+              // Two visible options, so both stay readable at a glance (Segmented.tsx).
+              <Segmented
+                value={rValue === "false" ? "false" : "true"}
+                onChange={setRValue}
+                label="Value"
+                options={[
+                  ["true", "yes"],
+                  ["false", "no"],
+                ]}
+              />
             ) : (
               <SuggestInput field={field} value={rValue} onChange={setRValue} />
             )}
@@ -1151,7 +1193,9 @@ function KeepRulesEditor({
                   {f?.label ?? k.field}: the {k.direction === "low_keeps" ? "less" : "more"}, the
                   safer (full effect at {rampValue(f, k.saturate_at)})
                 </span>
-                <span className="rules-weight-keep">lowers the score, up to −{k.max_discount}</span>
+                <span className="rules-weight-keep">
+                  lowers the score, up to −{k.max_discount} points
+                </span>
                 <button className="ghost sm" onClick={() => onKeeps(keeps.filter((_, j) => j !== i))}>
                   Remove
                 </button>
@@ -1192,14 +1236,16 @@ function KeepRulesEditor({
                   ))}
                 </select>
                 {hardField.type === "bool" ? (
-                  <select
-                    value={hValue}
-                    aria-label="Value"
-                    onChange={(e) => setHValue(e.target.value)}
-                  >
-                    <option value="true">yes</option>
-                    <option value="false">no</option>
-                  </select>
+                  // Two visible options, so both stay readable at a glance (Segmented.tsx).
+                  <Segmented
+                    value={hValue === "false" ? "false" : "true"}
+                    onChange={setHValue}
+                    label="Value"
+                    options={[
+                      ["true", "yes"],
+                      ["false", "no"],
+                    ]}
+                  />
                 ) : (
                   <SuggestInput field={hardField} value={hValue} onChange={setHValue} />
                 )}
@@ -1226,14 +1272,17 @@ function KeepRulesEditor({
             </select>
             {leanField && (
               <>
-                <select
+                {/* Both directions stay on screen: a dropdown let the default save
+                    without the operator ever seeing there was a choice. */}
+                <Segmented
                   value={lDir}
-                  aria-label="Which way it leans"
-                  onChange={(e) => setLDir(e.target.value as "high_keeps" | "low_keeps")}
-                >
-                  <option value="high_keeps">the more, the safer</option>
-                  <option value="low_keeps">the less, the safer</option>
-                </select>
+                  onChange={setLDir}
+                  label="Which way it leans"
+                  options={[
+                    ["high_keeps", "the more, the safer"],
+                    ["low_keeps", "the less, the safer"],
+                  ]}
+                />
                 <span className="muted">full effect at</span>
                 {leanField.unit_suffix ? (
                   <FixedQuantity
@@ -1251,14 +1300,18 @@ function KeepRulesEditor({
                     onChange={(e) => setLAt(e.target.value)}
                   />
                 )}
+                {/* One control standard: a number with a fixed unit is a FixedQuantity,
+                    never a bare number box beside loose text. */}
                 <label className="inline-weight">
-                  up to −
-                  <input
-                    type="number"
+                  up to
+                  <FixedQuantity
+                    value={lPoints}
+                    onChange={setLPoints}
+                    suffix="points off"
                     min={1}
                     max={100}
-                    value={lPoints}
-                    onChange={(e) => setLPoints(Number(e.target.value))}
+                    width="narrow"
+                    ariaLabel="Points this rule takes off"
                   />
                 </label>
                 <button className="ghost sm" onClick={addLean} disabled={lAt === ""}>
@@ -1465,15 +1518,20 @@ export function PolicyEditor({
     },
   });
 
-  // `needs_save` forces dirty: the server handed back a REPAIRED body (an old policy
-  // rescaled to the 100-point budget), so what is on screen is not what is stored and the
-  // savebar has to say so. Discard cannot clear it either, which is right -- there is no
-  // stored body to go back to that this build can load.
+  // BOTH load-time recoveries force dirty, because in either case what is on screen is not
+  // what is stored and the savebar has to offer the Save that replaces it. The two are
+  // mutually exclusive server-side (services/profiles.py active_policy): `needs_save` is an
+  // old policy rescaled to the 100-point budget, `fell_back` is a body that could not be
+  // read at all, so this shows the shipped default instead. Missing the second one left the
+  // only way out of the fallback behind a gate that never opened. Discard cannot clear
+  // either, which is right: there is no stored body to go back to that this build can load.
   const dirty = useMemo(
     () =>
       draft !== null &&
       saved !== undefined &&
-      (Boolean(saved.needs_save) || JSON.stringify(draft) !== JSON.stringify(saved.body)),
+      (Boolean(saved.needs_save) ||
+        Boolean(saved.fell_back) ||
+        JSON.stringify(draft) !== JSON.stringify(saved.body)),
     [draft, saved],
   );
 
@@ -1537,7 +1595,6 @@ export function PolicyEditor({
   // The budget the server enforces (PolicyBody._weights_total_one_hundred). Checked here
   // too so Save is blocked before the round trip, and so the gap is a number the operator
   // can see moving rather than an error they discover on submit.
-  const REMOVAL_POINTS = 100;
   const pointsLeft = REMOVAL_POINTS - totalWeight;
   // Only a 422 is the server refusing the POLICY ("you can't save this as-is"). Anything
   // else (a timeout, a 500) means the CHECK itself failed, which must not be dressed up
@@ -1566,9 +1623,21 @@ export function PolicyEditor({
 
   const applyPreset = (p: (typeof PRESETS)[number]) => {
     const mix = DEFAULT_WEIGHTS[mediaType];
+    // The whole removal lane, not just the built-ins: the shipped mix is already the full
+    // 100 points, so leaving the operator's own rules beside it put every preset over
+    // budget and disabled Save for the pace draft too. Rescaling both together keeps the
+    // preset's shape and the operator's rules, and the score itself does not move.
+    const scaled = rescaleToBudget([
+      ...draft.signals.map((s) => mix[s.signal] ?? 0),
+      ...draft.custom_condemn.map((c) => c.weight),
+    ]);
     update({
       condemn_at: p.condemn_at,
-      signals: draft.signals.map((s) => ({ ...s, weight: mix[s.signal] ?? 0 })),
+      signals: draft.signals.map((s, i) => ({ ...s, weight: scaled[i] ?? 0 })),
+      custom_condemn: draft.custom_condemn.map((c, i) => ({
+        ...c,
+        weight: scaled[draft.signals.length + i] ?? c.weight,
+      })),
     });
     // The pace draft may not exist yet (the profile query can still be loading). Buffer
     // the caps so they land when it does; staging only the policy half while the banner
@@ -1606,6 +1675,15 @@ export function PolicyEditor({
             ]}
           />
         </div>
+        {/* A recovery notice renders on the load it explains, so it hangs off the response
+            flag alone and no dirty gate, disclosure or savebar can hide it. */}
+        {saved?.fell_back && (
+          <div className="notice notice-error">
+            Your saved policy couldn't be read, so this shows the starting one instead.
+            Nothing has changed on your server. Check the values below, then save to
+            replace it.
+          </div>
+        )}
         {pendingSwitch !== null && (
           <div className="notice notice-warn">
             You have unsaved {kind} policy changes. Switching to{" "}
@@ -1692,7 +1770,10 @@ export function PolicyEditor({
               options={PRESETS.map((p) => [p.id, p.label] as const)}
             />
           </div>
-          <p className="help">{presetHelp}</p>
+          <p className="help">
+            {presetHelp} Picking one resets the built-in points and rescales your own rules
+            to fit 100. Your scores stay where they are.
+          </p>
           {staged !== null && (
             <p className="help">
               <strong>Staged, not saved.</strong> Review the changes below, then Save changes in
@@ -2155,17 +2236,12 @@ export function PolicyEditor({
                 : dirty
                   ? `Saves only your ${kind} policy. The ${otherKind} one is untouched. It applies on the next scan, which starts by itself after saving.`
                   : "Pace applies immediately. Changing a limit never affects a run you've already approved."}
-              {/* The load-time recoveries. Rendered here, beside Save, because they are
-                  about what you are about to write -- and from the response FLAGS, not
-                  the warning list, which is built by re-validating the draft and so can
-                  never carry anything about how the policy loaded. */}
-              {saved?.fell_back && (
-                <span className="notice notice-error budget-notice">
-                  Your saved policy couldn't be read, so this shows the starting one
-                  instead. Nothing has changed on your server. Check the values below,
-                  then save to replace it.
-                </span>
-              )}
+              {/* The rescale recovery. Rendered here, beside Save, because it is about
+                  what you are about to write -- and from the response FLAGS, not the
+                  warning list, which is built by re-validating the draft and so can never
+                  carry anything about how the policy loaded. The louder `fell_back`
+                  recovery renders at the top of the page instead, unconditionally, so no
+                  gate can hide it. */}
               {saved?.needs_save && !saved.fell_back && (
                 <span className="notice notice-warn budget-notice">
                   Your points have been spread to add up to 100. Nothing has changed on

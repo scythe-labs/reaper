@@ -38,6 +38,10 @@ export function PlexPanel() {
   const data = plex.data;
   const linked = data?.linked ?? false;
   const [linking, setLinking] = useState(false);
+  // The plex.tv approval page opens in a new tab, but the click's popup permission is
+  // already spent by the time the PIN comes back, so browsers often block it. Keep the
+  // URL so the wait can offer it as a plain link, the way the login screen does.
+  const [authUrl, setAuthUrl] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   // Failures get their own state so they render as an error, not as grey status text
   // that reads like "Linked to ...". Info stays in `message`.
@@ -99,8 +103,10 @@ export function PlexPanel() {
       setMessage(`Linked to ${poll.server?.name ?? "your server"}.`);
       done();
     },
+    // A sign-in that never completed is a failure, not status: it goes to `plexError`
+    // so it renders as an error, not in the grey slot "Linked to ..." uses.
     onTimedOut: () => {
-      setMessage("Plex sign-in timed out. Please try again.");
+      setPlexError("Plex sign-in timed out. Try again.");
       done();
     },
     onFailed: (failure) => {
@@ -112,15 +118,23 @@ export function PlexPanel() {
   const startLink = async () => {
     setMessage(null);
     setPlexError(null);
+    setAuthUrl("");
     setLinking(true);
     try {
       const start = await api.plexLinkStart();
+      setAuthUrl(start.auth_url);
       window.open(start.auth_url, "_blank", "noopener");
       pin.begin(start.pin_id);
     } catch (e) {
       setPlexError(e instanceof Error ? e.message : String(e));
       setLinking(false);
     }
+  };
+
+  const cancelLink = () => {
+    pin.cancel();
+    setLinking(false);
+    setAuthUrl("");
   };
 
   const cancelChoice = () => {
@@ -193,7 +207,10 @@ export function PlexPanel() {
   const connections = currentServer?.connections ?? [];
   const savedUri = data?.connection_uri ?? "";
   const savedIsDiscovered = connections.some((c) => c.uri === savedUri);
-  const connectionValue = manualOpen || !savedIsDiscovered ? MANUAL_CONNECTION : savedUri;
+  // A typed-in address keeps its own option value, so "Manual address…" is always a
+  // different choice than the one already selected. Sharing one value meant picking it
+  // fired no change event, and the editor could never be reopened.
+  const connectionValue = manualOpen ? MANUAL_CONNECTION : savedUri;
 
   const openManual = () => {
     // Seed the manual fields from wherever Reaper is pointed right now.
@@ -347,9 +364,31 @@ export function PlexPanel() {
                 token by hand.
               </p>
               <div className="set-control">
-                <button className="btn-plex" onClick={startLink} disabled={linking}>
-                  {linking ? "Waiting for Plex…" : "Link with Plex"}
-                </button>
+                {linking ? (
+                  // The same wait the login screen shows, worded the same: a fallback link
+                  // for a blocked popup, and a way out that stops the polling.
+                  <div className="plex-waiting">
+                    <span className="spinner" aria-hidden="true" />
+                    <div>
+                      <strong>Waiting for Plex…</strong>
+                      <p className="muted">
+                        Approve the sign-in in the Plex window.{" "}
+                        {authUrl !== "" && (
+                          <a href={authUrl} target="_blank" rel="noreferrer">
+                            Didn’t open?
+                          </a>
+                        )}
+                      </p>
+                    </div>
+                    <button className="link" onClick={cancelLink}>
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button className="btn-plex" onClick={startLink}>
+                    Link with Plex
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -429,12 +468,10 @@ export function PlexPanel() {
                       {connectionLabel(c)}
                     </option>
                   ))}
-                  {!savedIsDiscovered && !manualOpen && (
-                    <option value={MANUAL_CONNECTION}>Manual · {savedUri}</option>
+                  {!savedIsDiscovered && savedUri !== "" && (
+                    <option value={savedUri}>Manual · {savedUri}</option>
                   )}
-                  {(manualOpen || savedIsDiscovered) && (
-                    <option value={MANUAL_CONNECTION}>Manual address…</option>
-                  )}
+                  <option value={MANUAL_CONNECTION}>Manual address…</option>
                 </select>
               </div>
             </div>
@@ -493,6 +530,11 @@ export function PlexPanel() {
                 }}
               />
             </div>
+            {!verifyCert && (
+              <p className="notice notice-warn">
+                Reaper will accept this server's certificate without checking who issued it.
+              </p>
+            )}
           </div>
 
           <div className="set-row">
@@ -526,12 +568,6 @@ export function PlexPanel() {
           </div>
         </div>
 
-        {!verifyCert && (
-          <p className="notice notice-warn">
-            Reaper will accept this server's certificate without checking who issued it. Only
-            use this for a server you run yourself, like one with a self-signed certificate.
-          </p>
-        )}
         {connError && <p className="notice notice-error">{connError}</p>}
         {webUrlError && <p className="notice notice-error">{webUrlError}</p>}
         {plexError && <p className="notice notice-error">{plexError}</p>}

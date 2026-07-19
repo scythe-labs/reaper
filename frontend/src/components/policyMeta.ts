@@ -47,7 +47,7 @@ export const GATE_META: Record<string, GateMeta> = {
   },
   unmanaged: {
     label: "Only touch what Sonarr or Radarr manages",
-    help: "If no *arr owns the file, Reaper has no safe way to remove it.",
+    help: "If Sonarr or Radarr doesn't own the file, Reaper has no safe way to remove it.",
   },
 };
 

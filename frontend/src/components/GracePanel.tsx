@@ -13,6 +13,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type GraceItem, type LeavingSoonResult } from "../api";
 import { bytes, count, itemBytes } from "../format";
+import { useOverrideMutations } from "../useOverrideMutations";
 
 function ItemRow({
   item,
@@ -93,6 +94,7 @@ export function GracePanel({
   onOpenReasons: (candidateId: number) => void;
 }) {
   const queryClient = useQueryClient();
+  const { refresh } = useOverrideMutations();
   const { data, isPending, isError } = useQuery({ queryKey: ["grace"], queryFn: api.grace });
 
   // Which of the three bar states to show: off (with the way to turn it on), or the
@@ -105,12 +107,9 @@ export function GracePanel({
 
   const cancel = useMutation({
     mutationFn: (mediaKey: string) => api.spare(mediaKey),
-    onSuccess: () => {
-      // Sparing removes the item from grace and protects it in the queue and the plan.
-      void queryClient.invalidateQueries({ queryKey: ["grace"] });
-      void queryClient.invalidateQueries({ queryKey: ["whitelist"] });
-      void queryClient.invalidateQueries({ queryKey: ["candidates"] });
-    },
+    // Sparing here is the same decision the review queue makes, so it refreshes the same
+    // caches: useOverrideMutations' refresh() owns that list (grace included).
+    onSuccess: refresh,
   });
 
   const mark = useMutation({

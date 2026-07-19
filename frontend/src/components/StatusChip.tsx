@@ -26,11 +26,28 @@ export function CondemnedChip() {
   return <span className="status-chip status-pressure">Would be removed</span>;
 }
 
-/** The reason text behind a kept row's chip ("Kept · playing right now" -> "playing
- *  right now"), for the refused-reap chip's honest wording. */
+/** The refused-reap chip's clause: why the item is still being kept, in lowercase, ready
+ *  to sit after "Reap requested · kept for now:".
+ *
+ *  A reap is refused in two different lanes, and their chips read nothing alike. A
+ *  protection that fired says "Kept · playing right now", so dropping the prefix leaves a
+ *  clause that already fits. A reap refused because a protection could not be checked
+ *  carries that lane's own chip instead, capitalised and sometimes with a middot of its
+ *  own, so each of those is mapped to a clause here rather than pasted in mid-sentence.
+ *  Both lanes come from `decide_verdict`'s reap branch (blocked, or a safety stop). */
+const BLOCKED_WHY: Record<string, string> = {
+  "Couldn't be found in Plex": "it couldn't be found in Plex",
+  "Looks like two different things in Plex": "it looks like two different things in Plex",
+  "Needs a look · watched more than a season your rule keeps":
+    "watched more than a season your rule keeps",
+  "Needs a look · left for you to decide": "a check on it couldn't be settled",
+  "Some checks couldn't run": "some checks couldn't run",
+};
+
 export function chipWhy(chip: Chip | null): string | null {
   if (!chip) return null;
-  return chip.text.replace(/^Kept · /, "");
+  if (chip.text.startsWith("Kept · ")) return chip.text.slice("Kept · ".length);
+  return BLOCKED_WHY[chip.text] ?? null;
 }
 
 /** Which class family an override chip is drawn in. Cards use the `.chip` family that
@@ -53,9 +70,12 @@ const OVERRIDE_CLASSES: Record<ChipFamily, { spare: string; refused: string; rea
 };
 
 /** The chip an item shows once the owner has overridden it by hand. Solid fills are the
- *  owner's decisions; outlined chips are Reaper's. A reap takes effect immediately --
- *  counts, grace countdown, the next plan -- unless the engine refuses it (someone is
- *  watching right now, or the file isn't managed), which reads amber and says why. */
+ *  owner's decisions; outlined chips are Reaper's. A reap takes effect on the server the
+ *  moment it is saved, and the views that show it (the queue and its counts, the show
+ *  panel, the why panel, the grace countdown) refresh together through
+ *  `useOverrideMutations`' refresh(). The engine still refuses a reap it must not honour
+ *  (someone is watching right now, the file isn't managed, or a protection could not be
+ *  checked); that reads amber and says why, via `chipWhy` above. */
 export function OverrideChip({
   override,
   effective,
@@ -75,7 +95,7 @@ export function OverrideChip({
   if (effective === false) {
     return (
       <span className={classes.refused}>
-        Reap requested · kept for now: {keptWhy ?? "a safety stop applies"}
+        Reap requested · kept for now: {keptWhy ?? "Reaper couldn't confirm it's safe to remove"}
       </span>
     );
   }

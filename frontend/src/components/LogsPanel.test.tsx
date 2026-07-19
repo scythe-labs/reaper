@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Two things the log viewer must not get wrong: it may only claim to be retrying when a
+// retry is actually scheduled ("Follow new lines" is the only thing that schedules one), and
+// every option in the level filter has to filter something different from its neighbours.
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { LogsPanel } from "./LogsPanel";
+
+const { apiMock } = vi.hoisted(() => ({
+  apiMock: { logs: vi.fn(), setLogLevel: vi.fn() },
+}));
+
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  api: apiMock,
+}));
+
+function page(seq: number) {
+  return {
+    level: "INFO",
+    last_seq: seq,
+    lines: [{ seq, ts: "2026-01-01T00:00:00+00:00", level: "INFO", text: "a line" }],
+  };
+}
+
+function renderPanel() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <LogsPanel />
+    </QueryClientProvider>,
+  );
+  return { queryClient, person: userEvent.setup() };
+}
+
+describe("LogsPanel", () => {
+  beforeEach(() => {
+    apiMock.logs.mockReset();
+    apiMock.logs.mockResolvedValue(page(1));
+  });
+
+  it("offers no level that filters exactly what the one above it does", () => {
+    renderPanel();
+    const filter = screen.getByLabelText(/only show this level and up/i);
+    const options = Array.from(filter.querySelectorAll("option")).map((o) => o.textContent);
+    expect(options).toEqual(["All levels", "Info and up", "Warnings and up", "Errors only"]);
+  });
+
+  it("offers Try again, and does not claim to be retrying, once following is off", async () => {
+    const { queryClient, person } = renderPanel();
+    expect(await screen.findByText("a line")).toBeInTheDocument();
+
+    apiMock.logs.mockRejectedValue(new Error("boom"));
+    await person.click(screen.getByRole("switch", { name: /follow new lines/i }));
+    await act(() => queryClient.refetchQueries({ queryKey: ["logs"] }));
+
+    expect(await screen.findByText(/updates are paused/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /try again/i })).toBeInTheDocument();
+    expect(screen.queryByText(/trying again/i)).not.toBeInTheDocument();
+  });
+
+  it("says it is trying again while following is on", async () => {
+    const { queryClient } = renderPanel();
+    expect(await screen.findByText("a line")).toBeInTheDocument();
+
+    apiMock.logs.mockRejectedValue(new Error("boom"));
+    await act(() => queryClient.refetchQueries({ queryKey: ["logs"] }));
+
+    expect(await screen.findByText(/reaper is trying again/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /try again/i })).not.toBeInTheDocument();
+  });
+});

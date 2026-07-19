@@ -2573,6 +2573,11 @@ a.rating-chip:hover {
   border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
 }
+/* A notice inside the summary takes its own row, so it reads as a warning about the whole
+   plan rather than as another chip beside the counts. Matches `.savebar .notice`. */
+.plan-summary .notice {
+  flex-basis: 100%;
+}
 .confirm-phrase {
   font-family: var(--mono);
   font-weight: 700;

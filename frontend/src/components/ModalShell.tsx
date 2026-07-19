@@ -16,13 +16,43 @@
 // Closing is routed through one `canClose` guard, so a modal that must stay open (the
 // reap sheet while a real reap is in flight) refuses the scrim, the ✕ and Escape by
 // stating that once.
+//
+// One exception, named here so it cannot go quiet: the login screen's local-account sheet
+// (LocalSheet in Login.tsx) keeps its own markup, because it stays mounted and slides up
+// from the bottom rather than appearing over a scrim. It is not a second implementation of
+// the contract -- it imports `trapTab` from here, so Tab containment has one definition.
 
 import { useEffect, useId, useRef, type ReactNode } from "react";
 
 /** Everything a browser will put in the Tab order, in document order. */
-const FOCUSABLE =
+export const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
   'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** Tab containment for one dialog panel: wrap from the last control back to the first and
+ *  vice versa, so the still-rendered page behind it never takes focus.
+ *
+ *  Exported because the login sheet owns its own markup (see the note at the top of this
+ *  file) and must not grow a second copy of this. Pass the panel element; a null panel is
+ *  a no-op, which is what a closed sheet wants. */
+export function trapTab(e: React.KeyboardEvent, panel: HTMLElement | null) {
+  if (e.key !== "Tab" || !panel) return;
+  const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE));
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (!first || !last) {
+    e.preventDefault(); // nothing to focus: keep the page behind the scrim out of reach
+    return;
+  }
+  const active = document.activeElement;
+  if (e.shiftKey && (active === first || active === panel)) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && active === last) {
+    e.preventDefault();
+    first.focus();
+  }
+}
 
 export function ModalShell({
   title,
@@ -72,29 +102,6 @@ export function ModalShell({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Tab containment: wrap from the last control back to the first and vice versa, so the
-  // still-rendered page behind the scrim never takes focus.
-  const trapTab = (e: React.KeyboardEvent) => {
-    if (e.key !== "Tab") return;
-    const panel = panelRef.current;
-    if (!panel) return;
-    const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE));
-    const first = items[0];
-    const last = items[items.length - 1];
-    if (!first || !last) {
-      e.preventDefault(); // nothing to focus: keep the page behind the scrim out of reach
-      return;
-    }
-    const active = document.activeElement;
-    if (e.shiftKey && (active === first || active === panel)) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && active === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
-
   const close = () => {
     if (canClose) onClose();
   };
@@ -109,7 +116,7 @@ export function ModalShell({
         aria-labelledby={headingId}
         tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
-        onKeyDown={trapTab}
+        onKeyDown={(e) => trapTab(e, panelRef.current)}
       >
         <header className="modal-head">
           <h2 id={headingId}>{title}</h2>

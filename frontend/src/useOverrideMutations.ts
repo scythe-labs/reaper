@@ -11,12 +11,14 @@ import { api, type Override } from "./api";
 export function useOverrideMutations() {
   const queryClient = useQueryClient();
 
-  // An override changes what the queue lists AND what an expanded show's all-seasons list,
-  // the show panel, and an open why-panel show, so every cache refreshes together.
+  // An override changes what the queue lists, what an expanded show's all-seasons list,
+  // the show panel and an open why-panel show, and the grace countdown (a spare drops an
+  // item out of it, a hand reap puts one in), so every cache refreshes together.
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["candidates"] });
     void queryClient.invalidateQueries({ queryKey: ["group"] });
     void queryClient.invalidateQueries({ queryKey: ["candidate"] });
+    void queryClient.invalidateQueries({ queryKey: ["grace"] });
   };
 
   const setOverride = useMutation({

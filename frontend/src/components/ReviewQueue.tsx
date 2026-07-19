@@ -377,12 +377,16 @@ function ResolutionBadge({ value }: { value: string | null }) {
   );
 }
 
-/** "5 years, 9 months" -> "5y 9m", the compact span the pill wears. */
-function compactSpan(text: string): string {
+/** "5 years, 9 months" -> "5y 9m", the compact span the pill wears.
+ *
+ *  Only a unit that follows a number is shortened. The server also sends spans with no
+ *  number in them ("less than a day"), and a bare unit rewrite would turn that one into
+ *  "less than ad". */
+export function compactSpan(text: string): string {
   return text
-    .replace(/ years?/g, "y")
-    .replace(/ months?/g, "m")
-    .replace(/ days?/g, "d")
+    .replace(/(\d+) years?/g, "$1y")
+    .replace(/(\d+) months?/g, "$1m")
+    .replace(/(\d+) days?/g, "$1d")
     .replace(/,/g, "");
 }
 
@@ -660,9 +664,14 @@ export function ShowStatusChip({
   if (status === null) return null;
   if (status === "continuing" && quiet) return null;
   const { label, about } = SHOW_STATUS_TEXT[status];
+  // role="img": a plain <span> has no role, and ARIA does not let a generic element carry
+  // a name, so an aria-label on one is dropped and a screen reader reads the bare "Ended".
+  // A role that supports naming makes the long form the announced text; `title` keeps the
+  // same sentence as the mouse tooltip.
   return (
     <span
       className={status === "unknown" ? "chip chip-unchecked" : "chip"}
+      role="img"
       title={about}
       aria-label={about}
     >

@@ -136,11 +136,19 @@ export function ReapPlan({
   // against the scan it was built from; if a newer scan has landed since, the plan's
   // list is out of date and the owner should be told before they act on it.
   // A 404 is the normal no-scan-yet state, not a failure worth retrying.
-  const { data: latestSnapshot } = useQuery({
+  const snapshot = useQuery({
     queryKey: ["snapshot"],
     queryFn: api.latestSnapshot,
     retry: false,
   });
+  const latestSnapshot = snapshot.data;
+
+  // What a superseded scan loses is the protection only the newer scan would have found: a
+  // keep tag added in Sonarr or Radarr, a rating that moved. So the warning belongs beside
+  // Execute, not in the history list below, and "we could not check" is said out loud
+  // rather than rendering nothing.
+  const staleRun = run != null && latestSnapshot != null && run.snapshot_id !== latestSnapshot.id;
+  const staleUnknown = run != null && latestSnapshot == null;
 
   return (
     <section className="reap">
@@ -167,6 +175,29 @@ export function ReapPlan({
               {count(run.item_count)} items · {bytes(run.total_bytes)} · smallest first, and the
               first item is a test: if it doesn't go exactly as planned, the run stops.
             </span>
+            {staleRun && (
+              <p className="notice notice-warn">
+                This plan came from an older scan, so it can list titles you have since
+                protected.{" "}
+                <button className="link" onClick={() => plan.mutate()} disabled={plan.isPending}>
+                  Build a new plan
+                </button>
+              </p>
+            )}
+            {staleUnknown && (
+              <p className="notice notice-warn">
+                {snapshot.isPending ? (
+                  "Checking whether this plan came from the latest scan…"
+                ) : (
+                  <>
+                    Reaper couldn't check whether this plan came from the latest scan.{" "}
+                    <button className="link" onClick={() => plan.mutate()} disabled={plan.isPending}>
+                      Build a new plan
+                    </button>
+                  </>
+                )}
+              </p>
+            )}
             <button onClick={() => dry.mutate(run.id)} disabled={dry.isPending}>
               {dry.isPending ? "Dry-running…" : "Dry run"}
             </button>
@@ -217,12 +248,9 @@ export function ReapPlan({
           <ul>
             {history.map((r) => {
               // Clicking a row swaps the plan shown above, so the row that is open says
-              // so rather than leaving the swap silent.
+              // so rather than leaving the swap silent. Whether that plan came from an
+              // older scan is said once, up beside Execute, where the fix lives.
               const open = run?.id === r.id;
-              const olderScan = latestSnapshot != null && r.snapshot_id !== latestSnapshot.id;
-              const openNote = olderScan
-                ? " · open above, built from an older scan"
-                : " · open above";
               return (
                 <li key={r.id} className={open ? "open" : undefined}>
                   <button
@@ -234,7 +262,7 @@ export function ReapPlan({
                   </button>{" "}
                   <span className="muted">
                     {date(r.approved_at)} · {r.state} · {r.confirmation_phrase}
-                    {open && openNote}
+                    {open && " · open above"}
                   </span>
                 </li>
               );

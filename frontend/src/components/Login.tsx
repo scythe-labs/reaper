@@ -12,6 +12,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, type AuthContext, type PlexPoll } from "../api";
+import { trapTab } from "./ModalShell";
 import { ServerPickList, usePlexPinPoll } from "./PlexPin";
 
 function Mark() {
@@ -148,7 +149,12 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
   );
 }
 
-/** The local-account form, in a sheet that slides up from the bottom. */
+/** The local-account form, in a sheet that slides up from the bottom.
+ *
+ *  This is the one dialog that does not go through ModalShell: it stays mounted and slides,
+ *  rather than appearing over a scrim. It borrows ModalShell's `trapTab` rather than
+ *  hand-rolling a second one, so the sheet keeps the promise its `aria-modal="true"` makes:
+ *  while it is open, Tab cannot reach the page behind it. */
 function LocalSheet({
   open,
   onClose,
@@ -165,6 +171,7 @@ function LocalSheet({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const usernameRef = useRef<HTMLInputElement | null>(null);
+  const sheetRef = useRef<HTMLDivElement | null>(null);
   const invoker = useRef<HTMLElement | null>(null);
 
   // Close on Escape while the sheet is open.
@@ -181,7 +188,10 @@ function LocalSheet({
   useEffect(() => {
     if (open) {
       invoker.current = document.activeElement as HTMLElement | null;
-      usernameRef.current?.focus();
+      // With no local account yet the sheet has no form, so focus falls to the sheet
+      // itself: it must never stay on the page the sheet has just covered.
+      if (usernameRef.current) usernameRef.current.focus();
+      else sheetRef.current?.focus();
     } else {
       invoker.current?.focus();
       invoker.current = null;
@@ -211,12 +221,15 @@ function LocalSheet({
           dialog. `inert` takes them all out at once and leaves the slide animation
           untouched. */}
       <div
+        ref={sheetRef}
         className={open ? "sheet open" : "sheet"}
         inert={!open}
         role="dialog"
         aria-modal="true"
         aria-label="Local account sign-in"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => trapTab(e, open ? sheetRef.current : null)}
       >
         <div className="sheet-grip" aria-hidden="true" />
         <h2>Local account</h2>
