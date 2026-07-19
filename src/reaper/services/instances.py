@@ -374,9 +374,12 @@ async def test_connection(
 ) -> TestResult:
     """Reach the service and report what came back. Never raises -- a failure is a result.
 
-    Each service has one cheap status endpoint. For the *arr it doubles as the version
-    probe (Reaper version-gates its API path off it); for Tautulli and Seerr it just
-    proves the URL and key are good.
+    Each service is probed with cheap reads that also exercise the key. For the *arr the
+    status endpoint doubles as the version probe (Reaper version-gates its API path off
+    it) and carries the key; Tautulli's status read carries its key too. Seerr's
+    ``/status`` is public -- it proves the URL and gives the version but would pass with a
+    wrong key -- so Seerr is probed a second time on an authenticated route, and that
+    probe is what actually confirms the key.
     """
     try:
         client = _client(kind, base_url, api_key, verify=verify)
@@ -397,6 +400,11 @@ async def test_connection(
                 return TestResult(ok=True, detail=f"Connected. Watching {name}.")
             status = await client.status()  # type: ignore[attr-defined]
             version = str(status.get("version") or "") or None
+            # /status needs no key, so it passes even with a wrong one. Probe an
+            # authenticated route too, so a rejected key fails the test here instead of
+            # going quiet and surfacing later as a scan warning with the requester signal
+            # dark. A 401/403 lands in _explain_failure's key-refused branch.
+            await client.requests(take=1)  # type: ignore[attr-defined]
             return TestResult(ok=True, detail="Connected to Seerr.", version=version)
     except Exception as exc:  # network/TLS/timeout/HTTP -- report, don't crash the request
         # The raw exception stays here, in the log, where a diagnosis needs it. What the

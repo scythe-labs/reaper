@@ -21,9 +21,11 @@ import ssl
 
 import httpx
 import pytest
+import respx
 
 from reaper.clients.base import IntegrationError
 from reaper.db.models import InstanceKind
+from reaper.services import instances as instances_service
 from reaper.services.instances import (
     _GENERIC_FAILURE,
     _causes,
@@ -266,3 +268,56 @@ def test_causes_stops_on_a_cycle() -> None:
     a.__cause__ = b
     b.__cause__ = a
     assert _causes(a) == [a, b]
+
+
+SEERR = "https://seerr.test"
+KEY_REFUSED = "Seerr refused the API key. Copy it again from its own settings."
+
+
+class TestSeerrConnectionExercisesTheKey:
+    """A green connection test must mean the key was accepted, not merely that the URL
+    resolves. Seerr's ``/status`` is public and passes with any key, so the test also
+    reads an authenticated route. These pin that it does -- so a wrong key that a live
+    instance answered ``/status`` for is caught at test time, not weeks later as a scan
+    warning with the requester signal silently dark.
+    """
+
+    @respx.mock
+    async def test_a_rejected_key_fails_even_though_status_is_public(self) -> None:
+        respx.get(f"{SEERR}/api/v1/status").mock(
+            return_value=httpx.Response(200, json={"version": "1.0.0"})
+        )
+        authed = respx.get(f"{SEERR}/api/v1/request").mock(
+            return_value=httpx.Response(403, json={"message": "forbidden"})
+        )
+        result = await instances_service.test_connection(InstanceKind.SEERR, SEERR, "wrong-key")
+        assert result.ok is False
+        assert result.detail == KEY_REFUSED
+        assert authed.called  # the public status probe alone must not decide the outcome
+
+    @respx.mock
+    async def test_a_good_key_connects_and_reports_the_version(self) -> None:
+        respx.get(f"{SEERR}/api/v1/status").mock(
+            return_value=httpx.Response(200, json={"version": "1.33.2"})
+        )
+        authed = respx.get(f"{SEERR}/api/v1/request").mock(
+            return_value=httpx.Response(
+                200, json={"pageInfo": {"results": 3}, "results": [{"id": 1}]}
+            )
+        )
+        result = await instances_service.test_connection(InstanceKind.SEERR, SEERR, "good-key")
+        assert result.ok is True
+        assert result.version == "1.33.2"
+        assert authed.called
+
+    @respx.mock
+    async def test_an_instance_with_no_requests_yet_still_connects(self) -> None:
+        """Zero requests is healthy, not a rejected key: an empty authed page passes."""
+        respx.get(f"{SEERR}/api/v1/status").mock(
+            return_value=httpx.Response(200, json={"version": "2.0.0"})
+        )
+        respx.get(f"{SEERR}/api/v1/request").mock(
+            return_value=httpx.Response(200, json={"pageInfo": {"results": 0}, "results": []})
+        )
+        result = await instances_service.test_connection(InstanceKind.SEERR, SEERR, "good-key")
+        assert result.ok is True
