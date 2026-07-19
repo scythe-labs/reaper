@@ -2058,6 +2058,13 @@ them truthfully.
    smallest-first so ordinal 0 is "the least costly possible mistake" (its words). A
    fabricated `0` sorts to the front, so the run's one real proof that deletion works is
    spent on the item whose size was never read. The comment and the behaviour disagree.
+
+   **Planned in full: `docs/SIZE_TRUTH_PLAN.md`.** The canary is one of four consequences
+   of the same root cause (a fabricated zero on the accounting column); the others are both
+   byte caps, the typed confirmation phrase, and the growth interlock, which does *not*
+   catch a stored `0` below the 256 MiB drift floor -- so the claim at `snapshot.py:645-653`
+   and `season_scan.py:1134-1143` that a fabricated zero "cannot reach a delete" is false as
+   written. That plan supersedes the two "still open" size threads below.
 **Says something untrue** — both fixed, dev @ this commit.
 
 2. ~~**The queue renders "0 B" for a season that plainly holds files.**~~ Fixed. The
@@ -2091,16 +2098,17 @@ them truthfully.
   the cap is a number they set and can read. If the real demand is "one rule that condemns
   on its own", nothing here delivers it — only an operator-authored condemn veto would, and
   `ConditionSpec` is protect-only by construction. Not recommended.
-- **A second size source is already fetched and unused.** Radarr's `movieFile.size` is an
-  exact per-file byte count in the same payload, currently used only for identity matching.
-  Sonarr has no per-episode size without an extra request (`includeEpisodeFile=true` appears
-  nowhere), but `episodeFileCount > 0` beside a zero `sizeOnDisk` is already the
-  self-contradiction that marks the Unknown case. Wiring the Radarr fallback would make the
-  unreadable size rare rather than merely safe.
-- **`Candidate.size_bytes` still stores 0 for an unreadable size**, which under-counts the
-  byte cap and the reclaim figure. It cannot reach a delete (see the executor fix above), but
-  it is caught by an interlock built for another purpose. Widening the column to nullable
-  touches the planner, executor, API and every frontend size call site.
+- **Both size threads are now planned in `docs/SIZE_TRUTH_PLAN.md`**, which corrects two
+  assumptions recorded here. (a) Radarr's `movieFile.size` is *not* a substitute for
+  `sizeOnDisk` on the accounting lane: the movie delete removes the **folder**, and
+  `movieFile.size` measures only the **file**, so it is a lower bound. A lower bound
+  under-counts a byte cap, and a cap that under-counts does not fire, which deletes *more* --
+  the opposite direction from rule 31. It is display-only. (b) Sonarr *does* have per-season
+  file sizes without a new endpoint: `episodefile?seriesId=` is already wired
+  (`clients/arr.py:107-120`) and already summed live by `executor._send_season`. Sourcing the
+  frozen size from it is a **bug fix**, not just acquisition: today the scan stores the season
+  *folder* and the executor compares it against the summed *files*, so the season growth
+  interlock has been comparing two different quantities since it was written.
 - **The lab cannot cover the fact builders.** It starts from frozen facts, which is one
   layer downstream of everything the fact-layer work changed. `tests/test_fact_layer_states.py`
   is the only coverage there.
