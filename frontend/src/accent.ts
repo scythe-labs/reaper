@@ -13,10 +13,15 @@
 // cache, so a custom accent does not flash the sky-blue default on load. This module writes
 // that cache and is the runtime applier once the saved value arrives.
 
+import { deepIconDataUri } from "./brand/deepIcon";
+
 const HEX = /^#[0-9a-fA-F]{6}$/;
 const DARK_INK = "#06202c";
 const LIGHT_INK = "#ffffff";
 export const ACCENT_STORAGE_KEY = "reaper-accent";
+/** Cache of the last favicon data URI, so index.html can pre-paint the tab icon at the saved
+ *  accent before this module runs -- the same trick the accent color itself uses. */
+export const FAVICON_STORAGE_KEY = "reaper-favicon";
 /** The built-in accent, mirrored from the backend default. The color Reset returns to. */
 export const DEFAULT_ACCENT = "#25c3ff";
 
@@ -52,9 +57,25 @@ export function applyAccent(color: string | null | undefined): void {
   const root = document.documentElement;
   root.style.setProperty("--accent", hex);
   root.style.setProperty("--accent-ink", accentInk(hex));
+  applyFavicon(hex);
   try {
     localStorage.setItem(ACCENT_STORAGE_KEY, hex);
   } catch {
     // storage unavailable (private window): the color still applies for this session.
+  }
+}
+
+/** Redraw the browser-tab favicon (the Deep icon) at the accent, and cache it so the next
+ *  load's pre-paint shows the operator's accent instead of the default sky. The dark shell is
+ *  fixed; only the platter follows the accent (see deepIcon). Chrome/Firefox/Edge honor an
+ *  SVG data-URI favicon; Safari keeps the static /favicon.svg default, which is still Deep. */
+function applyFavicon(hex: string): void {
+  const uri = deepIconDataUri(hex);
+  const link = document.getElementById("favicon");
+  if (link instanceof HTMLLinkElement) link.href = uri;
+  try {
+    localStorage.setItem(FAVICON_STORAGE_KEY, uri);
+  } catch {
+    // storage unavailable: the tab still shows the accent this session.
   }
 }

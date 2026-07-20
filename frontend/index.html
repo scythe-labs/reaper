@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>Reaper</title>
+    <link id="favicon" rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
     <script>
       // Apply the saved theme override before first paint, so a dark-choice page never
       // flashes light (or vice versa). "system" stores nothing and the device decides.
@@ -35,6 +39,18 @@
         }
       } catch (e) {
         /* storage unavailable: the stylesheet default accent stands */
+      }
+      // Apply the saved tab favicon before first paint too, so a custom accent does not flash
+      // the default sky icon. accent.ts caches the Deep icon as a data URI under this key; here
+      // we only read it back, so the icon drawing lives in exactly one place (deepIcon.ts).
+      try {
+        var reaperFavicon = localStorage.getItem("reaper-favicon");
+        if (reaperFavicon && reaperFavicon.indexOf("data:image/svg+xml,") === 0) {
+          var favLink = document.getElementById("favicon");
+          if (favLink) favLink.href = reaperFavicon;
+        }
+      } catch (e) {
+        /* storage unavailable: the static /favicon.svg default stands */
       }
     </script>
   </head>

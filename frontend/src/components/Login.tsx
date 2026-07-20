@@ -13,8 +13,8 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, type AuthContext, type PlexPoll } from "../api";
 import { trapTab } from "./ModalShell";
+import { BrandBadge } from "../brand/BrandBadge";
 import { ServerPickList, usePlexPinPoll } from "./PlexPin";
-import { ScytheGlyph } from "./ScytheGlyph";
 
 function PlexGlyph() {
   return (
@@ -287,9 +287,7 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
 
   return (
     <div className="auth-card">
-      <div className="brand-badge">
-        <ScytheGlyph className="brand-mark" />
-      </div>
+      <BrandBadge className="brand-badge" />
       <h1 className="brand-word">Recovery</h1>
       <p className="auth-tagline">Single-use admin access</p>
       <p className="auth-note">
@@ -338,9 +336,7 @@ export function Login() {
         <RecoveryCard onAuthed={onAuthed} />
       ) : (
         <div className="auth-card">
-          <div className="brand-badge">
-            <ScytheGlyph className="brand-mark" />
-          </div>
+          <BrandBadge className="brand-badge" />
           <h1 className="brand-word">Reaper</h1>
           <p className="auth-tagline">Explainable pruning for Plex</p>
           <p className="auth-note">
