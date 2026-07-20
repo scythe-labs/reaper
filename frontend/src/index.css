@@ -2821,53 +2821,302 @@ details.grace summary {
   font-size: 0.82rem;
 }
 
-/* Fairness view */
-.fairness-head h2 {
+/* ---- Scales (fairness) --------------------------------------------------- */
+/* One card per requester: the balance bar weighs granted disk that is still earning its
+   keep (green) against what nobody watched (red). The watched % is a separate behavioral
+   signal, kept on the side so the two never blur. */
+.fair-head h2 {
   margin-bottom: 0.15rem;
 }
-.played-good {
-  color: var(--protect);
-  font-weight: 600;
+
+/* Summary strip: SPACE leads (the reclaimable tile shows bytes, the count is its caption). */
+.fair-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.6rem;
+  margin: 0.2rem 0 0.9rem;
 }
-.played-low {
+.fair-stat {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 0.65rem 0.8rem;
+}
+.fair-stat-num {
+  font-size: 1.4rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.fair-stat-num.red {
   color: var(--condemn);
+}
+.fair-stat-num.amber {
+  color: var(--unknown);
+}
+.fair-stat-lbl {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-top: 0.2rem;
+}
+.fair-stat-sub {
+  font-size: 0.76rem;
+  color: var(--faint);
+  margin-top: 0.15rem;
+}
+.fair-stat-sub.red {
+  color: color-mix(in srgb, var(--condemn) 82%, var(--muted));
+}
+
+.fair-horizon {
+  font-size: 0.82rem;
+  margin: 0 0 0.9rem;
+}
+
+.fair-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+/* The requester card: the review queue's card language (surface, accent hover, accent
+   selection bar when open), purpose-built around a person instead of a title. */
+.fair-card {
+  position: relative;
+  display: flex;
+  gap: 0.9rem;
+  padding: 0.8rem 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  transition:
+    box-shadow 0.15s var(--ease),
+    border-color 0.15s var(--ease),
+    background 0.15s var(--ease);
+}
+/* Only a card with a reclaimable detail is clickable, so hover only promises the accent
+   where there is something to open. */
+.fair-card.clickable {
+  cursor: pointer;
+}
+.fair-card.clickable:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.fair-card.clickable:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.fair-card.open {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent), var(--shadow-sm);
+}
+/* Hovering the open card is additive: the accent selection bar stays and only deepens. */
+.fair-card.open.clickable:hover {
+  box-shadow: inset 3px 0 0 var(--accent), var(--shadow-md);
+}
+
+.fair-avatar {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 0.95rem;
+  font-weight: 650;
+  background: color-mix(in srgb, var(--seerr) 22%, var(--surface));
+  color: var(--seerr);
+}
+
+.fair-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.fair-row1 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.fair-name {
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.fair-sub {
+  font-size: 0.82rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.fair-sub strong {
+  color: var(--text);
   font-weight: 600;
 }
-.reclaimable-cell {
+
+.fair-balance {
+  display: flex;
+  height: 9px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.fair-balance i {
+  display: block;
+  height: 100%;
+}
+.fair-balance .used {
+  background: color-mix(in srgb, var(--protect) 72%, var(--surface));
+}
+.fair-balance .reclaim {
+  background: var(--condemn);
+}
+.fair-legend {
+  display: flex;
+  gap: 0.9rem;
+  flex-wrap: wrap;
+  font-size: 0.76rem;
+  color: var(--muted);
+}
+.fair-legend strong {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.fair-legend .bad,
+.fair-legend .bad strong {
+  color: var(--condemn);
+}
+
+.fair-detail {
+  margin-top: 0.2rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed var(--border-strong);
+}
+.fair-detail-lead {
+  color: var(--muted);
+  font-size: 0.84rem;
+  margin: 0 0 0.55rem;
+}
+
+/* The reclaimable title, carrying its verdict and size and a jump to the queue -- so the
+   number and the titles behind it live in one place, instead of a bare link that made the
+   operator go find out what state each one was in. */
+.media-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.media-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.32rem 0.6rem 0.32rem 0.32rem;
+  border: 1px solid var(--border);
+  /* A rounded rectangle, not a full pill: the chip carries a rectangular poster, and a
+     999px radius cuts across its corners so the poster pokes past the edge (and the accent
+     hover/focus ring). --radius clears the poster's own 4px corners with room to spare. */
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+/* :not(:disabled) so this outranks the global button:hover and keeps the accent. */
+.media-chip:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.media-chip.static {
+  cursor: default;
+}
+.mc-poster {
+  flex: none;
+  width: 26px;
+  height: 39px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  color: var(--faint);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.mc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 0;
+}
+.mc-title {
+  font-weight: 600;
+  font-size: 0.84rem;
+  letter-spacing: -0.01em;
+}
+.mc-state {
+  font-size: 0.72rem;
+  font-weight: 600;
   color: var(--condemn);
   font-variant-numeric: tabular-nums;
 }
-tr.fairness-detail td {
-  background: var(--surface-2);
-  padding: 0.5rem 0.75rem 0.75rem;
+.mc-go {
+  color: var(--faint);
+  margin-left: 0.1rem;
+  font-size: 0.95rem;
 }
-.unwatched-titles {
-  margin: 0.35rem 0 0;
-  padding-left: 1.1rem;
-  columns: 2;
-  font-size: 0.85rem;
+.media-chip:hover:not(:disabled) .mc-go {
+  color: var(--accent);
 }
-.unwatched-titles li {
-  margin: 0.1rem 0;
+.mc-more {
+  font-size: 0.78rem;
+  color: var(--faint);
 }
-/* A spared row still shows in the condemn list -- struck-through so it reads as
-   "this one is out" -- until the next scan moves it to Spared for real. */
-tbody tr.spared-row .title-cell {
-  color: var(--muted);
-  text-decoration: line-through;
-  text-decoration-color: var(--protect);
+
+.fair-side {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.5rem;
+  text-align: right;
+  min-width: 6.5rem;
 }
-.spared-tag {
-  margin-left: 0.4rem;
-  font-size: 0.65rem;
+.fair-watched {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+.fair-pct {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.fair-pct.good {
+  color: var(--protect);
+}
+.fair-pct.bad {
+  color: var(--condemn);
+}
+.fair-pct-lbl {
+  font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--protect);
-  border: 1px solid var(--protect);
-  border-radius: 4px;
-  padding: 0 0.25rem;
-  text-decoration: none;
-  white-space: nowrap;
+  color: var(--muted);
+  margin-top: 0.15rem;
 }
 
 .dryrun-outcomes {

@@ -642,6 +642,16 @@ export interface LogsPage {
   level: string;
 }
 
+/** A reclaimable title on a requester's row: what it is, the disk it holds, and how to open
+ *  it. Every entry is condemned by the last scan, so the verdict is implicit. Exactly one of
+ *  `item_id` / `group_key` is set: a movie or season opens its own card, a show its group. */
+export interface ReclaimableTitle {
+  title: string;
+  size_bytes: number;
+  item_id: number | null;
+  group_key: string | null;
+}
+
 export interface RequesterRow {
   name: string;
   requests_made: number;
@@ -649,14 +659,19 @@ export interface RequesterRow {
   played_by_them: number;
   reclaimable_items: number;
   reclaimable_bytes: number;
-  unwatched_titles: string[];
+  /** The heaviest reclaimable titles behind `reclaimable_items` (capped at 25 server-side);
+   *  `reclaimable_items` stays the exact count. */
+  reclaimable: ReclaimableTitle[];
 }
 
 export interface FairnessReport {
   total_requests: number;
   total_reclaimable_bytes: number;
   total_reclaimable_items: number;
-  unmatched_requests: number;
+  /** Requests the last scan has not seen, so the numbers read as most of the requests. */
+  not_in_scan: number;
+  /** True when no scan has ever run; Scales has nothing to sit on. */
+  no_snapshot: boolean;
   /** How far back the watch history reaches; older plays are invisible to this view. */
   horizon_at: string | null;
   rows: RequesterRow[];

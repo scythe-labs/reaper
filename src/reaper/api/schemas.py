@@ -700,8 +700,20 @@ class GraceReportOut(BaseModel):
     ready: list[GraceItemOut]
 
 
+class ReclaimableTitleOut(BaseModel):
+    """A reclaimable title on a requester's row: title, the disk it holds, and how to open
+    it. Every entry is condemned by the last scan, so the verdict is implicit. Exactly one
+    of ``item_id`` / ``group_key`` is set -- a movie or season opens its own card, a show
+    opens its group."""
+
+    title: str
+    size_bytes: int
+    item_id: int | None = None
+    group_key: str | None = None
+
+
 class RequesterRowOut(BaseModel):
-    """One person's row in the fairness leaderboard."""
+    """One person's row in Scales."""
 
     name: str
     requests_made: int
@@ -709,16 +721,19 @@ class RequesterRowOut(BaseModel):
     played_by_them: int
     reclaimable_items: int
     reclaimable_bytes: int
-    unwatched_titles: list[str]
+    reclaimable: list[ReclaimableTitleOut]
 
 
 class FairnessReportOut(BaseModel):
     total_requests: int
     total_reclaimable_bytes: int
     total_reclaimable_items: int
-    unmatched_requests: int
+    not_in_scan: int
+    """Requests the last scan has not seen, so the numbers read as most of the requests."""
+    no_snapshot: bool = False
+    """True when no scan has ever run; Scales has nothing to sit on."""
     horizon_at: str | None = None
-    """How far back the watch history reaches; the judging clock is clamped here."""
+    """How far back the watch history reaches; the watched figures read against it."""
     rows: list[RequesterRowOut]
 
 

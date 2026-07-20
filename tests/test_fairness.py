@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The fairness leaderboard.
+"""Scales -- the requester roll-up over the last scan.
 
-Two halves, tested apart: the pure per-person roll-up (no instance needed), and the
-watch-evidence query against a real ``watch_event`` table (movies key on rating_key, a
-show's episodes roll up to its grandparent key).
+Two halves, tested apart: the pure roll-up (``roll_up``, no instance or DB needed), which
+joins requests to the scan's candidates and lets the scan's verdict decide what is
+reclaimable; and the watch-evidence query against a real ``watch_event`` table (a movie
+keys on rating_key, a season on its parent, a show on its grandparent).
 
 Names and titles here are placeholders -- the aggregation does not care what they say.
 """
@@ -22,26 +23,27 @@ from reaper.clients.seerr import MediaRequest, Requester
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.session import create_cache_engine
-from reaper.engine.requester import RequesterPolicy, WatchEvidence
+from reaper.engine.requester import WatchEvidence
 from reaper.services import fairness, history_sync
-from reaper.services.fairness import MediaInfo, evaluate_fairness
+from reaper.services.fairness import CandidateInfo, ReclaimableTitle, roll_up
 
 GB = 1024**3
 NOW = utcnow()
-POLICY = RequesterPolicy(unwatched_days=90)
 
 
-def _request(
+def _req(
     *,
     plex_id: int | None,
     name: str,
-    rating_key: str | None,
-    days_available: float | None = 400,
+    tmdb: int | None = 1,
+    imdb: str | None = "tt1",
     request_id: int = 1,
+    media_type: str = "movie",
+    tvdb: int | None = None,
 ) -> MediaRequest:
     return MediaRequest(
         request_id=request_id,
-        media_type="movie",
+        media_type=media_type,
         is_4k=False,
         status=5,
         requested_at=NOW - timedelta(days=500),
@@ -52,234 +54,184 @@ def _request(
             display_name=name,
             email=None,
         ),
-        tmdb_id=1,
-        tvdb_id=None,
-        imdb_id="tt1",
-        plex_rating_key=rating_key,
-        arr_id=1,
-        arr_instance_id=0,
-        available_at=(NOW - timedelta(days=days_available)) if days_available is not None else None,
-    )
-
-
-def _tv_request(
-    *,
-    tvdb_id: int | None,
-    rating_key: str | None,
-    request_id: int = 1,
-    seasons: tuple[int, ...] = (),
-) -> MediaRequest:
-    return MediaRequest(
-        request_id=request_id,
-        media_type="tv",
-        is_4k=False,
-        status=5,
-        requested_at=NOW - timedelta(days=500),
-        requester=Requester(seerr_user_id=1, plex_id=1, username="a", display_name="A", email=None),
-        tmdb_id=None,
-        tvdb_id=tvdb_id,
-        imdb_id=None,
-        plex_rating_key=rating_key,
+        tmdb_id=tmdb,
+        tvdb_id=tvdb,
+        imdb_id=imdb,
+        plex_rating_key=None,  # Scales joins on external ids, never the (stale-prone) key.
         arr_id=1,
         arr_instance_id=0,
         available_at=NOW - timedelta(days=400),
-        seasons=seasons,
     )
 
 
-class _FakeRadarr:
-    """A stand-in exposing just the ``movies()`` call ``_arr_sizes`` uses."""
-
-    def __init__(self, movies: list[dict[str, object]]) -> None:
-        self._movies = movies
-
-    async def movies(self) -> list[dict[str, object]]:
-        return self._movies
-
-
-class _FakeSonarr:
-    """A stand-in exposing just the ``series()`` call ``_arr_sizes`` uses."""
-
-    def __init__(self, series: list[dict[str, object]]) -> None:
-        self._series = series
-
-    async def series(self) -> list[dict[str, object]]:
-        return self._series
-
-
-class TestArrSizes:
-    """File sizes come from the *arr -- the authority on what is on disk -- for movies and
-    TV alike (Radarr sizes movies, Sonarr sizes shows), joined to each Seerr request by its
-    external id and keyed by the same Plex rating key the watch join uses. This is what the
-    scan already does; Tautulli's file_size (which lags for movies and is zero for shows) is
-    only a fallback."""
-
-    async def test_movie_size_comes_from_radarr(self) -> None:
-        req = _request(plex_id=1, name="A", rating_key="700")  # tmdb_id=1
-        radarr = _FakeRadarr([{"tmdbId": 1, "sizeOnDisk": 9 * GB}])
-        sizes = await fairness._arr_sizes([radarr], [], [req])  # type: ignore[list-item]
-        assert sizes == {"700": 9 * GB}
-
-    async def test_show_size_comes_from_sonarr(self) -> None:
-        req = _tv_request(tvdb_id=99, rating_key="700")
-        sonarr = _FakeSonarr([{"tvdbId": 99, "statistics": {"sizeOnDisk": 12 * GB}}])
-        sizes = await fairness._arr_sizes([], [sonarr], [req])  # type: ignore[list-item]
-        assert sizes == {"700": 12 * GB}
-
-    async def test_the_larger_instance_wins_for_a_duplicated_title(self) -> None:
-        # The same film in an HD and a 4K library: the request was for one, and a
-        # "disk you asked for" view should not undercount the 4K copy.
-        req = _request(plex_id=1, name="A", rating_key="700")  # tmdb_id=1
-        hd = _FakeRadarr([{"tmdbId": 1, "sizeOnDisk": 4 * GB}])
-        uhd = _FakeRadarr([{"tmdbId": 1, "sizeOnDisk": 40 * GB}])
-        sizes = await fairness._arr_sizes([hd, uhd], [], [req])  # type: ignore[list-item]
-        assert sizes == {"700": 40 * GB}
-
-    async def test_a_season_request_is_charged_its_seasons_not_the_series(self) -> None:
-        """A request naming season 2 of a large show is charged what season 2 occupies
-        on disk, not the whole series -- Sonarr's per-season statistics carry it."""
-        req = _tv_request(tvdb_id=99, rating_key="700", seasons=(2,))
-        sonarr = _FakeSonarr(
-            [
-                {
-                    "tvdbId": 99,
-                    "statistics": {"sizeOnDisk": 50 * GB},
-                    "seasons": [
-                        {"seasonNumber": 1, "statistics": {"sizeOnDisk": 40 * GB}},
-                        {"seasonNumber": 2, "statistics": {"sizeOnDisk": 10 * GB}},
-                    ],
-                }
-            ]
-        )
-        sizes = await fairness._arr_sizes([], [sonarr], [req])  # type: ignore[list-item]
-        assert sizes == {"700": 10 * GB}
-
-    async def test_a_request_naming_no_seasons_keeps_the_series_total(self) -> None:
-        req = _tv_request(tvdb_id=99, rating_key="700")
-        sonarr = _FakeSonarr(
-            [
-                {
-                    "tvdbId": 99,
-                    "statistics": {"sizeOnDisk": 50 * GB},
-                    "seasons": [{"seasonNumber": 1, "statistics": {"sizeOnDisk": 40 * GB}}],
-                }
-            ]
-        )
-        sizes = await fairness._arr_sizes([], [sonarr], [req])  # type: ignore[list-item]
-        assert sizes == {"700": 50 * GB}
-
-    async def test_no_arr_configured_yields_no_sizes(self) -> None:
-        req = _tv_request(tvdb_id=99, rating_key="700")
-        assert await fairness._arr_sizes([], [], [req]) == {}
+def _cand(
+    *,
+    cid: int = 1,
+    verdict: str = "condemn",
+    size: int = 5 * GB,
+    tmdb: int | None = 1,
+    imdb: str | None = "tt1",
+    rating_key: int | None = 555,
+    media_type: str = "movie",
+    group_key: str | None = None,
+    group_title: str | None = None,
+    title: str = "A Film",
+) -> CandidateInfo:
+    return CandidateInfo(
+        candidate_id=cid,
+        plex_rating_key=rating_key,
+        verdict=verdict,
+        size_bytes=size,
+        title=title,
+        media_type=media_type,
+        group_key=group_key,
+        group_title=group_title,
+        tmdb_id=tmdb,
+        imdb_id=imdb,
+    )
 
 
 class TestRollUp:
-    def test_a_watched_request_counts_as_played_and_is_not_reclaimable(self) -> None:
-        reqs = [_request(plex_id=100, name="Alice", rating_key="555")]
-        evidence = {"555": WatchEvidence(plays_by_user={100: 3}, distinct_watchers=1)}
-        media = {"555": MediaInfo(title="Some Film", size_bytes=5 * GB)}
-
-        report = evaluate_fairness(reqs, evidence, media, POLICY, now=NOW)
-
+    def test_a_condemned_unwatched_request_is_reclaimable_and_links_to_its_item(self) -> None:
+        report = roll_up(
+            [_req(plex_id=100, name="Alice")],
+            [_cand(cid=7, verdict="condemn", size=8 * GB, title="Dead Weight")],
+            {},
+        )
         (row,) = report.rows
         assert row.name == "Alice"
         assert row.requests_made == 1
-        assert row.played_by_them == 1
-        assert row.reclaimable_items == 0
-        assert report.total_reclaimable_items == 0
-
-    def test_an_unwatched_aged_request_is_reclaimable(self) -> None:
-        reqs = [_request(plex_id=100, name="Alice", rating_key="555", days_available=400)]
-        media = {"555": MediaInfo(title="Dead Weight", size_bytes=8 * GB)}
-
-        report = evaluate_fairness(reqs, {}, media, POLICY, now=NOW)
-
-        (row,) = report.rows
+        assert row.played_by_them == 0
         assert row.reclaimable_items == 1
         assert row.reclaimable_bytes == 8 * GB
-        assert row.unwatched_titles == ["Dead Weight"]
+        assert row.reclaimable == [
+            ReclaimableTitle(title="Dead Weight", size_bytes=8 * GB, item_id=7, group_key=None)
+        ]
+        assert report.total_reclaimable_items == 1
         assert report.total_reclaimable_bytes == 8 * GB
 
+    def test_a_protected_title_is_never_reclaimable_even_if_the_requester_never_watched(
+        self,
+    ) -> None:
+        """The Little Fockers case: nobody on this row watched it, but the scan protects it
+        (watched too recently, on a keep list, ...). Scales must never contradict Review."""
+        report = roll_up(
+            [_req(plex_id=100, name="Alice")],
+            [_cand(verdict="protect", title="Kept By The Scan")],
+            {},
+        )
+        assert report.total_reclaimable_items == 0
+        assert report.rows[0].reclaimable_items == 0
+
+    def test_an_abstained_title_is_not_reclaimable(self) -> None:
+        """Abstain is 'kept to be safe', so it is not offered up either -- reclaimable is the
+        condemn lane alone."""
+        report = roll_up([_req(plex_id=100, name="Alice")], [_cand(verdict="abstain")], {})
+        assert report.total_reclaimable_items == 0
+
+    def test_a_watched_request_counts_as_played(self) -> None:
+        report = roll_up(
+            [_req(plex_id=100, name="Alice")],
+            [_cand(verdict="protect", rating_key=555)],
+            {"555": WatchEvidence(plays_by_user={100: 3}, distinct_watchers=1)},
+        )
+        assert report.rows[0].played_by_them == 1
+
+    def test_watched_is_keyed_on_the_candidates_rating_key_not_the_requests(self) -> None:
+        """The whole point of sitting on the scan: watches are found by the candidate's own
+        key, so a stale key on the Seerr request can no longer read a play as never-watched.
+        The requester carries no rating key at all here, and is still credited with the play."""
+        report = roll_up(
+            [_req(plex_id=100, name="Alice")],
+            [_cand(verdict="condemn", rating_key=900)],
+            {"900": WatchEvidence(plays_by_user={100: 1}, distinct_watchers=1)},
+        )
+        assert report.rows[0].played_by_them == 1
+        # Still reclaimable: the scan condemned it (watched long ago, now dormant).
+        assert report.rows[0].reclaimable_items == 1
+
     def test_a_shared_reclaimable_title_counts_once_in_the_total(self) -> None:
-        """Two people requested it, nobody watched it. It shows on both rows, but the file
-        is deleted once -- so the report total must not double-count its bytes."""
         reqs = [
-            _request(plex_id=100, name="Alice", rating_key="555", request_id=1),
-            _request(plex_id=200, name="Bob", rating_key="555", request_id=2),
+            _req(plex_id=100, name="Alice", request_id=1),
+            _req(plex_id=200, name="Bob", request_id=2),
         ]
-        media = {"555": MediaInfo(title="Nobody Watched", size_bytes=10 * GB)}
-
-        report = evaluate_fairness(reqs, {}, media, POLICY, now=NOW)
-
+        report = roll_up(reqs, [_cand(cid=9, verdict="condemn", size=10 * GB)], {})
         assert {r.name for r in report.rows} == {"Alice", "Bob"}
         assert all(r.reclaimable_bytes == 10 * GB for r in report.rows)
-        # ...but deduped in the total.
+        # ...but deduped in the total: the file is deleted once.
         assert report.total_reclaimable_items == 1
         assert report.total_reclaimable_bytes == 10 * GB
 
-    def test_a_request_watched_by_someone_else_protects_it(self) -> None:
-        """Alice never watched what she asked for, but Bob did. Not reclaimable -- deleting
-        it would punish Bob for Alice's request."""
-        reqs = [_request(plex_id=100, name="Alice", rating_key="555")]
-        evidence = {"555": WatchEvidence(plays_by_user={200: 2}, distinct_watchers=1)}
-        media = {"555": MediaInfo(title="Bob's Favorite", size_bytes=5 * GB)}
-
-        report = evaluate_fairness(reqs, evidence, media, POLICY, now=NOW)
-
-        assert report.total_reclaimable_items == 0
-        assert report.rows[0].played_by_them == 0
-
-    def test_an_unmatched_request_is_surfaced_not_condemned(self) -> None:
-        """No rating key: unjudgeable. It must be counted as such, never as reclaimable."""
-        reqs = [_request(plex_id=100, name="Alice", rating_key=None)]
-
-        report = evaluate_fairness(reqs, {}, {}, POLICY, now=NOW)
-
-        assert report.unmatched_requests == 1
-        assert report.total_reclaimable_items == 0
-
-    def test_unjudgeable_requests_are_counted_per_request(self) -> None:
-        """Two people's requests for one unjudgeable title are TWO requests the report
-        could not judge -- the caption speaks of requests, so the count must too."""
-        reqs = [
-            _request(plex_id=100, name="Alice", rating_key="555", request_id=1),
-            _request(plex_id=200, name="Bob", rating_key="555", request_id=2),
-        ]
-        # No media info for "555": the whole group is unjudgeable.
-        report = evaluate_fairness(reqs, {}, {}, POLICY, now=NOW)
-        assert report.unmatched_requests == 2
-
-    def test_a_request_with_no_availability_clock_counts_as_unjudgeable(self) -> None:
-        reqs = [_request(plex_id=100, name="Alice", rating_key="555", days_available=None)]
-        media = {"555": MediaInfo(title="No Clock", size_bytes=5 * GB)}
-        report = evaluate_fairness(reqs, {}, media, POLICY, now=NOW)
-        assert report.unmatched_requests == 1
-        assert report.total_reclaimable_items == 0
-
-    def test_the_horizon_clamps_the_availability_clock(self) -> None:
-        """Available for 400 days, but the watch mirror only reaches back 30: that is
-        'not watched in 30 days of visibility', which is under the 90-day floor -- not
-        a reclaimable title. A shallow mirror must not inflate the leaderboard."""
-        reqs = [_request(plex_id=100, name="Alice", rating_key="555", days_available=400)]
-        media = {"555": MediaInfo(title="Aged Title", size_bytes=8 * GB)}
-
-        report = evaluate_fairness(
-            reqs, {}, media, POLICY, now=NOW, horizon=NOW - timedelta(days=30)
+    def test_a_request_the_scan_has_not_seen_is_not_in_scan(self) -> None:
+        # Request points at tmdb 999; the only candidate is tmdb 1.
+        report = roll_up(
+            [_req(plex_id=100, name="Alice", tmdb=999, imdb="tt999")], [_cand(tmdb=1)], {}
         )
-
+        assert report.not_in_scan == 1
+        assert report.rows == []
         assert report.total_reclaimable_items == 0
-        assert report.horizon_at == NOW - timedelta(days=30)
+
+    def test_a_request_with_no_external_id_is_not_in_scan(self) -> None:
+        report = roll_up([_req(plex_id=100, name="Alice", tmdb=None, imdb=None)], [], {})
+        assert report.not_in_scan == 1
+
+    def test_not_in_scan_is_counted_per_request(self) -> None:
+        reqs = [
+            _req(plex_id=100, name="Alice", tmdb=999, imdb=None, request_id=1),
+            _req(plex_id=200, name="Bob", tmdb=999, imdb=None, request_id=2),
+        ]
+        report = roll_up(reqs, [], {})
+        assert report.not_in_scan == 2
+
+    def test_a_show_links_to_its_group_and_charges_its_condemned_seasons(self) -> None:
+        """A show maps to several season candidates. Reclaimable is the sum of the CONDEMNED
+        seasons' disk, and the chip opens the show (its group), not one season."""
+        req = _req(plex_id=100, name="Alice", tmdb=7, imdb=None, media_type="tv")
+        cands = [
+            _cand(
+                cid=1,
+                verdict="condemn",
+                size=3 * GB,
+                tmdb=7,
+                imdb=None,
+                rating_key=801,
+                media_type="season",
+                group_key="tv:7",
+                group_title="A Show",
+                title="Season 1",
+            ),
+            _cand(
+                cid=2,
+                verdict="protect",
+                size=4 * GB,
+                tmdb=7,
+                imdb=None,
+                rating_key=802,
+                media_type="season",
+                group_key="tv:7",
+                group_title="A Show",
+                title="Season 2",
+            ),
+        ]
+        report = roll_up([req], cands, {})
+        (row,) = report.rows
+        # Granted is the whole show; reclaimable is only the condemned season.
+        assert row.gb_granted_bytes == 7 * GB
+        assert row.reclaimable_bytes == 3 * GB
+        assert row.reclaimable == [
+            ReclaimableTitle(title="A Show", size_bytes=3 * GB, item_id=None, group_key="tv:7")
+        ]
 
     def test_rows_are_ordered_by_disk_granted(self) -> None:
         reqs = [
-            _request(plex_id=100, name="Small", rating_key="1", request_id=1),
-            _request(plex_id=200, name="Big", rating_key="2", request_id=2),
+            _req(plex_id=100, name="Small", tmdb=1, imdb=None, request_id=1),
+            _req(plex_id=200, name="Big", tmdb=2, imdb=None, request_id=2),
         ]
-        media = {
-            "1": MediaInfo(title="a", size_bytes=1 * GB),
-            "2": MediaInfo(title="b", size_bytes=50 * GB),
-        }
-        report = evaluate_fairness(reqs, {}, media, POLICY, now=NOW)
+        cands = [
+            _cand(cid=1, verdict="protect", size=1 * GB, tmdb=1, imdb=None),
+            _cand(cid=2, verdict="protect", size=50 * GB, tmdb=2, imdb=None),
+        ]
+        report = roll_up(reqs, cands, {})
         assert [r.name for r in report.rows] == ["Big", "Small"]
 
 
@@ -298,16 +250,22 @@ async def cache_engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
 
 
 async def _insert_event(
-    engine: AsyncEngine, *, rating_key: int, user_id: int, gp: int | None = None
+    engine: AsyncEngine,
+    *,
+    rating_key: int,
+    user_id: int,
+    parent: int | None = None,
+    gp: int | None = None,
 ) -> None:
     async with engine.begin() as conn:
         await conn.execute(
             text(
                 "INSERT INTO watch_event (rating_key, parent_rating_key, "
                 "grandparent_rating_key, user_id, watched_at, watched_status, "
-                "percent_complete, media_type) VALUES (:rk, NULL, :gp, :uid, 1, 1, 100, 'movie')"
+                "percent_complete, media_type) "
+                "VALUES (:rk, :pk, :gp, :uid, 1, 1, 100, 'movie')"
             ),
-            {"rk": rating_key, "gp": gp, "uid": user_id},
+            {"rk": rating_key, "pk": parent, "gp": gp, "uid": user_id},
         )
 
 
@@ -317,23 +275,30 @@ class TestEvidenceIndex:
         await _insert_event(cache_engine, rating_key=555, user_id=100)
         await _insert_event(cache_engine, rating_key=555, user_id=200)
 
-        evidence = await fairness._evidence_index(cache_engine, {"555"})
+        evidence = await fairness._evidence_index(cache_engine, {555})
 
         assert evidence["555"].plays_by(100) == 2
         assert evidence["555"].plays_by(200) == 1
         assert evidence["555"].distinct_watchers == 2
 
-    async def test_tv_plays_roll_up_to_the_grandparent(self, cache_engine: AsyncEngine) -> None:
-        """A show's episodes each carry their own rating key, but the request points at the
-        show. Plays must be found via the grandparent key or a binged series looks
-        unwatched."""
-        await _insert_event(cache_engine, rating_key=9001, user_id=100, gp=42)
-        await _insert_event(cache_engine, rating_key=9002, user_id=100, gp=42)
+    async def test_season_plays_roll_up_to_the_parent(self, cache_engine: AsyncEngine) -> None:
+        """Episode plays carry the season as their parent, so a season candidate finds them
+        via the parent key."""
+        await _insert_event(cache_engine, rating_key=9001, user_id=100, parent=770, gp=42)
+        await _insert_event(cache_engine, rating_key=9002, user_id=100, parent=770, gp=42)
 
-        evidence = await fairness._evidence_index(cache_engine, {"42"})
+        evidence = await fairness._evidence_index(cache_engine, {770})
+
+        assert evidence["770"].plays_by(100) == 2
+
+    async def test_show_plays_roll_up_to_the_grandparent(self, cache_engine: AsyncEngine) -> None:
+        await _insert_event(cache_engine, rating_key=9001, user_id=100, parent=770, gp=42)
+        await _insert_event(cache_engine, rating_key=9002, user_id=100, parent=771, gp=42)
+
+        evidence = await fairness._evidence_index(cache_engine, {42})
 
         assert evidence["42"].plays_by(100) == 2
 
     async def test_a_key_with_no_history_is_absent(self, cache_engine: AsyncEngine) -> None:
-        evidence = await fairness._evidence_index(cache_engine, {"999"})
+        evidence = await fairness._evidence_index(cache_engine, {999})
         assert "999" not in evidence

@@ -26,7 +26,7 @@ const NAV: { id: View; label: string }[] = [
   { id: "review", label: "Review" },
   { id: "policy", label: "Policy" },
   { id: "reap", label: "Reap" },
-  { id: "fairness", label: "Fairness" },
+  { id: "fairness", label: "Scales" },
   { id: "settings", label: "Settings" },
 ];
 
@@ -328,18 +328,15 @@ function Dashboard({ user }: { user: AuthUser }) {
     setView("settings");
   };
 
-  // A title named on another page (a requester's unwatched list) is looked up here rather
-  // than retyped: the queue adopts the search, the same nonce-once shape as the jumps above.
-  const [queueSearch, setQueueSearch] = useState<{ term: string; nonce: number } | null>(null);
-  const goToQueueSearch = (title: string) => {
-    setQueueSearch({ term: title, nonce: Date.now() });
-    setSelected(null);
-    setView("review");
-  };
-  // The grace countdown lists titles without saying why each one is on the clock. Opening
-  // one lands on its reasoning, which lives on the review screen beside the queue.
+  // The grace countdown and Scales list titles without saying why each one is where it is.
+  // Opening one lands on its reasoning, which lives on the review screen beside the queue --
+  // an item on its own card, a whole show on its group panel.
   const goToItemReasons = (candidateId: number) => {
     setSelected({ kind: "item", id: candidateId });
+    setView("review");
+  };
+  const goToGroupReasons = (key: string) => {
+    setSelected({ kind: "group", key });
     setView("review");
   };
 
@@ -495,7 +492,6 @@ function Dashboard({ user }: { user: AuthUser }) {
               selectedGroupKey={selectedGroupKey}
               onSelect={(id) => setSelected({ kind: "item", id })}
               onSelectGroup={(key) => setSelected({ kind: "group", key })}
-              searchFor={queueSearch}
               stepRef={stepRef}
             />
             {selectedId !== null &&
@@ -528,7 +524,7 @@ function Dashboard({ user }: { user: AuthUser }) {
             onOpenReasons={goToItemReasons}
           />
         ) : view === "fairness" ? (
-          <Fairness onOpenInQueue={goToQueueSearch} />
+          <Fairness onOpenItem={goToItemReasons} onOpenGroup={goToGroupReasons} />
         ) : (
           <Settings
             key={settingsFocus?.nonce ?? "settings"}

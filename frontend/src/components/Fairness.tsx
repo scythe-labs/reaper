@@ -1,169 +1,274 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The fairness view: where the disk went, and to whom.
+// Scales: where the disk went, and to whom.
 //
-// This is the screen you reach for when the question is not "what should I delete?" but
-// "who is my library actually for?" Per person: how many titles they asked for, how much
-// disk that granted, how much of it they ever played, and how much nobody watched.
+// The screen you reach for when the question is not "what should I delete?" but "who is my
+// library actually for?" One card per requester -- the balance bar weighs how much of the
+// disk they were granted the last scan keeps against how much it would reclaim, and the
+// watched % on the side says how much of what they asked for they used themselves.
 //
-// It deletes nothing. It is a report -- a conversation to have, not a run to fire. The
-// reclaimable column is what the requester rule would flag, shown here as information so
-// the actual removal still goes through the reviewed scan and plan.
+// It deletes nothing. It reads the last scan, so it can never disagree with Review: a title
+// is reclaimable here only when the scan condemns it, and each one opens its real card.
 
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
-import { api, type RequesterRow } from "../api";
+import { useState, type KeyboardEvent } from "react";
+import { api, type ReclaimableTitle, type RequesterRow } from "../api";
 import { bytes, count, date } from "../format";
 
-function pct(row: RequesterRow): number {
+/** Share of their OWN requests this person has watched at least once. A behavioral signal
+ *  (did the asker use what they asked for), kept apart from the disk balance below. */
+function watchedPct(row: RequesterRow): number {
   if (row.requests_made === 0) return 0;
   return Math.round((100 * row.played_by_them) / row.requests_made);
 }
 
-function Row({
+function initial(name: string): string {
+  const c = name.trim()[0];
+  return c ? c.toUpperCase() : "?";
+}
+
+/** The film-strip placeholder a title wears in the chip. */
+function PosterMark() {
+  return (
+    <span className="mc-poster" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none">
+        <path d="M4 5h16v14H4z" stroke="currentColor" strokeWidth="1.6" />
+        <path
+          d="M8 5v14M16 5v14M4 9h4M16 9h4M4 15h4M16 15h4"
+          stroke="currentColor"
+          strokeWidth="1.2"
+        />
+      </svg>
+    </span>
+  );
+}
+
+/** A reclaimable title, carrying its size and a jump to its real card. Every entry is
+ *  condemned by the last scan, so clicking it lands on the item (or show) showing that
+ *  verdict -- no tab hunting, and nothing to guess. */
+function TitleChip({
+  title,
+  onOpen,
+}: {
+  title: ReclaimableTitle;
+  onOpen: (() => void) | null;
+}) {
+  const body = (
+    <>
+      <PosterMark />
+      <span className="mc-body">
+        <span className="mc-title">{title.title}</span>
+        <span className="mc-state">Reclaimable · {bytes(title.size_bytes)}</span>
+      </span>
+    </>
+  );
+  if (!onOpen) return <span className="media-chip static">{body}</span>;
+  return (
+    <button
+      type="button"
+      className="media-chip"
+      title="Open this in the review queue"
+      // Stop the click from also toggling the card shut.
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpen();
+      }}
+    >
+      {body}
+      <span className="mc-go" aria-hidden="true">
+        ›
+      </span>
+    </button>
+  );
+}
+
+/** One requester's card. Exported so its states (reclaimable / clean / expanded) can be
+ *  tested against props without standing up the query. */
+export function PersonCard({
   row,
-  onOpenInQueue,
+  onOpenItem,
+  onOpenGroup,
 }: {
   row: RequesterRow;
-  onOpenInQueue?: ((title: string) => void) | undefined;
+  onOpenItem?: ((candidateId: number) => void) | undefined;
+  onOpenGroup?: ((key: string) => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
-  const played = pct(row);
-  const hasUnwatched = row.unwatched_titles.length > 0;
+  const watched = watchedPct(row);
+  const granted = row.gb_granted_bytes;
+  const reclaim = row.reclaimable_bytes;
+  const used = Math.max(0, granted - reclaim);
+  // Granted can be zero (no size known for anything they asked for): show a full, neutral
+  // bar rather than dividing by zero.
+  const usedPct = granted > 0 ? (100 * used) / granted : 100;
+  const reclaimPct = granted > 0 ? (100 * reclaim) / granted : 0;
+  const hasReclaim = row.reclaimable_items > 0;
+  // The list is capped server-side; the count stays exact, so name the shortfall.
+  const moreCount = row.reclaimable_items - row.reclaimable.length;
+
+  const toggle = () => {
+    if (hasReclaim) setOpen((o) => !o);
+  };
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      toggle();
+    }
+  };
+
+  const opener = (t: ReclaimableTitle): (() => void) | null => {
+    if (t.item_id != null && onOpenItem) return () => onOpenItem(t.item_id as number);
+    if (t.group_key != null && onOpenGroup) return () => onOpenGroup(t.group_key as string);
+    return null;
+  };
 
   return (
-    <>
-      <tr className={open ? "selected" : ""}>
-        <td className="title-cell">{row.name}</td>
-        <td className="num">{count(row.requests_made)}</td>
-        <td className="num">{bytes(row.gb_granted_bytes)}</td>
-        <td className="num">
-          <span className={played >= 50 ? "played-good" : "played-low"}>{played}%</span>
-        </td>
-        <td className="num">
-          {row.reclaimable_items > 0 ? (
-            <span className="reclaimable-cell">
-              {count(row.reclaimable_items)} · {bytes(row.reclaimable_bytes)}
+    <div
+      className={`fair-card${hasReclaim ? " clickable" : ""}${open ? " open" : ""}`}
+      {...(hasReclaim
+        ? { role: "button", tabIndex: 0, "aria-expanded": open, onClick: toggle, onKeyDown }
+        : {})}
+    >
+      <span className="fair-avatar" aria-hidden="true">
+        {initial(row.name)}
+      </span>
+
+      <div className="fair-body">
+        <div className="fair-row1">
+          <span className="fair-name">{row.name}</span>
+          <span className="fair-sub">
+            <strong>{count(row.requests_made)}</strong> requests ·{" "}
+            <strong>{bytes(granted)}</strong> granted
+          </span>
+        </div>
+
+        <div
+          className="fair-balance"
+          role="img"
+          aria-label={
+            hasReclaim
+              ? `${bytes(used)} kept, ${bytes(reclaim)} the scan would reclaim`
+              : `${bytes(used)} kept, nothing reclaimable`
+          }
+        >
+          <i className="used" style={{ width: `${usedPct}%` }} />
+          {reclaimPct > 0 && <i className="reclaim" style={{ width: `${reclaimPct}%` }} />}
+        </div>
+        <div className="fair-legend">
+          <span>
+            <strong>{bytes(used)}</strong> earning its keep
+          </span>
+          {hasReclaim ? (
+            <span className="bad">
+              <strong>{bytes(reclaim)}</strong> to reclaim · {count(row.reclaimable_items)}{" "}
+              {row.reclaimable_items === 1 ? "title" : "titles"}
             </span>
           ) : (
-            <span className="muted">·</span>
+            <span className="muted">nothing reclaimable</span>
           )}
-        </td>
-        <td className="why-cell">
-          {hasUnwatched && (
-            // "show"/"hide" reads fine beside its own row, but every row's button says the
-            // same thing, so the label spells out whose titles it opens.
-            <button
-              className="link"
-              aria-expanded={open}
-              aria-label={`${open ? "Hide" : "Show"} unwatched titles requested by ${row.name}`}
-              onClick={() => setOpen((o) => !o)}
-            >
-              {open ? "hide" : "show"}
-            </button>
-          )}
-        </td>
-      </tr>
-      {open && hasUnwatched && (
-        <tr className="fairness-detail">
-          <td colSpan={6}>
-            <p className="muted">
-              Requested by {row.name}, available long enough to judge, and never played by
-              anyone:
-            </p>
-            <ul className="unwatched-titles">
-              {row.unwatched_titles.map((t) => (
-                // The next question is always "show me that one", so the title is the way
-                // there. Without a jump handler it stays plain text rather than a dead link.
-                <li key={t}>
-                  {onOpenInQueue ? (
-                    <button
-                      className="link"
-                      title="Find this in the review queue"
-                      onClick={() => onOpenInQueue(t)}
-                    >
-                      {t}
-                    </button>
-                  ) : (
-                    t
-                  )}
-                </li>
+        </div>
+
+        {open && hasReclaim && (
+          <div className="fair-detail">
+            <p className="fair-detail-lead">Requested, and the last scan would remove these:</p>
+            <div className="media-row">
+              {row.reclaimable.map((t, i) => (
+                <TitleChip key={`${t.item_id ?? t.group_key}-${i}`} title={t} onOpen={opener(t)} />
               ))}
-            </ul>
-          </td>
-        </tr>
-      )}
-    </>
+              {moreCount > 0 && <span className="mc-more">+{count(moreCount)} more not shown</span>}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="fair-side">
+        <span className="fair-watched">
+          <span className={`fair-pct ${watched >= 50 ? "good" : "bad"}`}>{watched}%</span>
+          <span className="fair-pct-lbl">they watched</span>
+        </span>
+        {hasReclaim ? (
+          <span className="status-chip status-pressure">{bytes(reclaim)} to reclaim</span>
+        ) : (
+          <span className="status-chip status-kept">Nothing to reclaim</span>
+        )}
+      </div>
+    </div>
   );
 }
 
 export function Fairness({
-  onOpenInQueue,
+  onOpenItem,
+  onOpenGroup,
 }: {
-  /** Jump to the review queue with this title already searched for. */
-  onOpenInQueue?: (title: string) => void;
+  /** Open one item's card (a movie or season) on the review screen. */
+  onOpenItem?: (candidateId: number) => void;
+  /** Open a whole show's panel on the review screen. */
+  onOpenGroup?: (key: string) => void;
 }) {
   const { data, isPending, error } = useQuery({ queryKey: ["fairness"], queryFn: api.fairness });
 
   return (
-    <section className="fairness">
-      <div className="fairness-head">
-        <h2>Fairness</h2>
+    <section className="fair">
+      <div className="fair-head">
+        <h2>Scales</h2>
         <p className="blurb">
-          Who asked for what, and who actually watched it. Read-only. Nothing here deletes
-          anything; it is the picture behind the requests.
+          Who asked for what, and who actually watched it. Read only: nothing here removes
+          anything.
         </p>
       </div>
 
-      {error && (
-        <p className="notice notice-error">
-          Couldn't load the fairness report: {error.message}
-        </p>
-      )}
+      {error && <p className="notice notice-error">Couldn't load Scales: {error.message}</p>}
       {isPending && <p className="muted">Loading…</p>}
 
-      {data && (
+      {data?.no_snapshot && (
+        <p className="empty">Run a scan first. Scales reads your last library scan.</p>
+      )}
+
+      {data && !data.no_snapshot && data.rows.length === 0 && (
+        <p className="empty">No available requests are in the last scan yet.</p>
+      )}
+
+      {data && !data.no_snapshot && data.rows.length > 0 && (
         <>
-          <p className="queue-total">
-            <strong>{count(data.total_requests)}</strong> available requests across{" "}
-            <strong>{count(data.rows.length)}</strong> people ·{" "}
-            <strong>{count(data.total_reclaimable_items)}</strong> reclaimable (
-            {bytes(data.total_reclaimable_bytes)})
-            {data.unmatched_requests > 0 && (
-              <span className="muted">
-                {" "}
-                · {count(data.unmatched_requests)} could not be judged (they couldn't be
-                found in Plex)
+          <div className="fair-stats">
+            <div className="fair-stat">
+              <span className="fair-stat-num">{count(data.total_requests)}</span>
+              <span className="fair-stat-lbl">Requests</span>
+              <span className="fair-stat-sub">across {count(data.rows.length)} people</span>
+            </div>
+            <div className="fair-stat">
+              <span className="fair-stat-num red">{bytes(data.total_reclaimable_bytes)}</span>
+              <span className="fair-stat-lbl">Reclaimable</span>
+              <span className="fair-stat-sub red">
+                {count(data.total_reclaimable_items)}{" "}
+                {data.total_reclaimable_items === 1 ? "title" : "titles"} the scan would remove
               </span>
+            </div>
+            {data.not_in_scan > 0 && (
+              <div className="fair-stat">
+                <span className="fair-stat-num amber">{count(data.not_in_scan)}</span>
+                <span className="fair-stat-lbl">Not in the last scan</span>
+                <span className="fair-stat-sub">requested since, or filtered out</span>
+              </div>
             )}
-            {data.horizon_at && (
-              <span className="muted">
-                {" "}
-                · watch history reaches back to {date(data.horizon_at)}, so older plays are
-                invisible here
-              </span>
-            )}
-          </p>
-          {/* Six columns of names and numbers do not fit a phone. The wrapper keeps that
-              scroll sideways inside the table instead of pushing the whole page sideways. */}
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Requester</th>
-                  <th className="num">Requests</th>
-                  <th className="num">Granted</th>
-                  <th className="num">Played</th>
-                  <th className="num">Reclaimable</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {data.rows.map((row) => (
-                  <Row key={row.name} row={row} onOpenInQueue={onOpenInQueue} />
-                ))}
-              </tbody>
-            </table>
+          </div>
+
+          {data.horizon_at && (
+            <p className="fair-horizon muted">
+              Watch history reaches back to {date(data.horizon_at)}, so older plays are invisible
+              here.
+            </p>
+          )}
+
+          <div className="fair-list">
+            {data.rows.map((row) => (
+              <PersonCard
+                key={row.name}
+                row={row}
+                onOpenItem={onOpenItem}
+                onOpenGroup={onOpenGroup}
+              />
+            ))}
           </div>
         </>
       )}
