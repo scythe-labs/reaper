@@ -11,13 +11,7 @@
 import type { Candidate, Group } from "../api";
 import { itemBytes, totalBytes } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
-import {
-  groupOverride,
-  handFate,
-  OverrideControls,
-  showReapIsNoop,
-  ShowStatusChip,
-} from "./ReviewQueue";
+import { handFate, OverrideControls, showReapIsNoop, ShowStatusChip } from "./ReviewQueue";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
 import { JumpPill, Synopsis, WhyHero } from "./WhyPanel";
 
@@ -53,10 +47,12 @@ export function ShowPanel({
 
   // The show panel is where a whole-show call gets made, so Spare and Reap live at its bottom
   // edge too, through the same shared hook the cards and the why-panel use so every view
-  // refreshes together. The decision covers every season; groupOverride reads what the show
-  // currently agrees on.
+  // refreshes together. The decision covers every season; the control toggles the show's OWN
+  // key, so it reads the show's own decision (show_override), never an aggregate of the
+  // seasons' own marks -- clearing this key cannot clear those, so lighting it from them was a
+  // dead toggle. A season overridden on its own keeps its mark in the strip and its row.
   const { setOverride, clearOverride } = useOverrideMutations();
-  const showOverride = groupOverride(group.seasons);
+  const showOverride = group.show_override;
 
   return (
     <aside className="why">
@@ -137,16 +133,18 @@ export function ShowPanel({
           Reap still takes the seasons the scan kept; it drops only once the whole show is
           condemned (showReapIsNoop), where it would be the no-op a condemned movie's is. */}
       <div className="why-actions">
-        <OverrideControls
-          override={showOverride}
-          onSet={(decision) => setOverride.mutate({ key: group.group_key, decision })}
-          onClear={() => clearOverride.mutate(group.group_key)}
-          pending={setOverride.isPending || clearOverride.isPending}
-          hideReap={showReapIsNoop(group.seasons)}
-        />
-        {(setOverride.isError || clearOverride.isError) && (
-          <span className="error">Couldn't save that. Try again.</span>
-        )}
+        <div className="why-actions-row">
+          <OverrideControls
+            override={showOverride}
+            onSet={(decision) => setOverride.mutate({ key: group.group_key, decision })}
+            onClear={() => clearOverride.mutate(group.group_key)}
+            pending={setOverride.isPending || clearOverride.isPending}
+            hideReap={showReapIsNoop(group.seasons)}
+          />
+          {(setOverride.isError || clearOverride.isError) && (
+            <span className="error">Couldn't save that. Try again.</span>
+          )}
+        </div>
       </div>
     </aside>
   );

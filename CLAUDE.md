@@ -381,13 +381,14 @@ Safari alone. New variants are blockers, like the rules above.
       kept — so both buttons stay until *every* season is condemned. That show test is
       `showReapIsNoop` (in `components/ReviewQueue.tsx`), the one place it lives; the show card's
       whole-show control and the show panel both call it, never a fourth inline copy. **Every
-      whole-show computation runs over the whole show, every lane** — `showReapIsNoop`,
-      `groupOverride`, and `groupReapEffective` all take `group.seasons` in the panel and
-      `group_seasons` (the strip marks, held as `showSeasons`) on the card, never the tab-filtered
-      page. On the Condemned lane that page holds only the show's reaped/condemned seasons, which
-      all agree "condemn"/"reap" and would (a) hide the one control that reaps the show's kept
-      seasons and (b) light the whole-show control as if the entire show were set to reap when
-      only some of it is. The show
+      whole-show `hideReap` computation runs over the whole show, every lane** — `showReapIsNoop`
+      and `groupReapEffective` both take `group.seasons` in the panel and `group_seasons` (the
+      strip marks, held as `showSeasons`) on the card, never the tab-filtered page. On the
+      Condemned lane that page holds only the show's reaped/condemned seasons, which all agree
+      "condemn"/"reap" and would hide the one control that reaps the show's kept seasons. The
+      whole-show control's *lit* state is a separate question and is never an aggregate: it reads
+      the show's OWN decision (`show_override`), so it can only ever clear what it lit (rule 50).
+      The show
       panel (`ShowPanel`) carries the whole-show Spare/Reap in its own bottom `.why-actions`
       footer, the same placement the movie/season panel uses. The bulk bar's Reap still keys off
       the tab verdict alone (a heterogeneous selection is not a single item); refining it for
@@ -409,3 +410,25 @@ Safari alone. New variants are blockers, like the rules above.
     `.strip-ov-reap-refused` / `.status-reap-held` / `.chip-reap-refused` classes. Never recolor
     these cells by `verdict` inline; add the surface to `handFate`, and its `.score-*` /
     `.strip-ov-*` class after the scan-verdict classes so it wins.
+
+50. **An override control reflects and acts on its OWN level; the effective (inherited) decision
+    colors the row but never lights a control.** The whitelist keeps a decision at two levels —
+    a whole show (its show key) or a single season (its own key), the season's winning over the
+    show's — so three views ride on every candidate, built once in `_candidate_out` / `GroupOut`
+    (`api/routes.py`) from the one `whitelist.effective_override` + `show_key`, never recomputed
+    as a client-side aggregate: `override` is the decision *in effect* (own or inherited) and
+    colors the chip, score, and strip; `override_own` is the item's own decision and is the ONLY
+    value a Spare/Reap control passes to `OverrideControls` (a movie's `override_own` equals its
+    `override`); `show_override` is the show's own decision, which lights the whole-show control
+    (card + `ShowPanel`). Each control clears the key it lit — a season control the season key, a
+    whole-show control the show key — so it can only ever reverse what it showed. Lighting a
+    control from the effective/aggregate state it *cannot* clear was the dead toggle this rule
+    exists to prevent: undoing a season kept by a whole-show spare changed nothing, because
+    clearing the season key left the show-level spare in force. When a whole-show decision keeps
+    or reaps a season, `KeptByShowNote` (`components/ReviewQueue.tsx`) names it beside that
+    season's control — its wording turning on whether the season's own decision is absent, the
+    same, or opposite — and a season-level clear NEVER silently un-decides the whole show (that
+    strips protection from every other season: fail-open, forbidden). The grace clock follows the
+    same effective set: `_sync_grace_clocks` (`api/whitelist.py`) deletes the clock when an
+    override takes an item off the reap list, so a scan-condemned item the owner spares and later
+    un-spares re-enters on a FRESH window, never a spent one (rule 4).

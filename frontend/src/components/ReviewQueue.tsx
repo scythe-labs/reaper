@@ -485,6 +485,71 @@ export function OverrideControls({
   );
 }
 
+/** The note beside a season's Spare/Reap when a *whole-show* decision is what keeps or
+ *  reaps it -- so the operator knows the season control toggles only the season's OWN
+ *  decision, not the show's. Its wording turns on how the season's own decision relates to
+ *  the show's: absent (the show decides), the same (clearing this one changes nothing), or
+ *  opposite (the season's own decision wins). Renders nothing when no show decision covers it,
+ *  so a movie or an untouched-show season shows no note. The glyph tracks the item's REAL
+ *  fate, so the note never contradicts the row's chip. */
+export function KeptByShowNote({
+  own,
+  showOverride,
+  className = "",
+}: {
+  own: Override | null;
+  showOverride: Override | null;
+  className?: string;
+}) {
+  if (!showOverride) return null;
+  const fate = own ?? showOverride; // an item's own decision wins over its show's
+  let body;
+  if (!own) {
+    body =
+      showOverride === "spare" ? (
+        <>
+          <b>The whole show is spared</b>, so this season is kept. Undo it on the show.
+        </>
+      ) : (
+        <>
+          <b>The whole show is set to reap</b>, so this season will be removed. Undo it on the
+          show.
+        </>
+      );
+  } else if (own === showOverride) {
+    body =
+      showOverride === "spare" ? (
+        <>
+          The whole show is <b>also spared</b>, so clearing this one won't remove it.
+        </>
+      ) : (
+        <>
+          The whole show is <b>also set to reap</b>, so clearing this one won't keep it.
+        </>
+      );
+  } else {
+    body =
+      own === "reap" ? (
+        <>
+          You reaped this season, so it <b>will be removed</b> even though the whole show is
+          spared.
+        </>
+      ) : (
+        <>
+          You spared this season, so it <b>stays</b> even though the whole show is set to reap.
+        </>
+      );
+  }
+  return (
+    <p className={`kept-note kept-${fate} ${className}`.trim()}>
+      <span className="kept-note-mark" aria-hidden="true">
+        {fate === "spare" ? <span className="mk-inf">∞</span> : <ScytheIcon />}
+      </span>
+      <span>{body}</span>
+    </p>
+  );
+}
+
 /** The resting decision marker: when a hand override is in force, the card rests as a small
  *  icon of that decision (∞ spared, scythe reaped) where the buttons sit, bottom-right. The
  *  hover rules fade it out as the buttons arrive, so the two never show together. Decorative:
@@ -596,33 +661,16 @@ function CardStatusLine({
   );
 }
 
-/** Whether a show-level reap actually takes anywhere: true when any season's reap is
- *  honored, false when every one is refused, undefined outside a reap override. Like
- *  `groupOverride`, judge over the WHOLE show (`group_seasons`), never the tab-filtered page. */
+/** Whether a show-level reap actually takes anywhere: true when any season's reap is honored,
+ *  false when every one is refused, undefined outside a reap override. Feeds the whole-show
+ *  override chip's `effective` flag. Judges over the WHOLE show (`group_seasons`), every lane,
+ *  never the tab-filtered page. */
 function groupReapEffective(
   items: ReadonlyArray<{ override: Override | null; override_effective: boolean | null }>,
 ): boolean | undefined {
   const reaped = items.filter((s) => s.override === "reap");
   if (reaped.length === 0) return undefined;
   return reaped.some((s) => s.override_effective !== false);
-}
-
-/** The single decision that governs a whole show: what all of its seasons agree on, or null
- *  when they are mixed. A show-level override makes every season inherit it, so agreement is
- *  the common case; a per-season override is what makes it mixed. Exported so the show panel
- *  reads the show's decision the same way the card does.
- *
- *  It must see EVERY season, every lane. The panel passes `group.seasons`; the card passes
- *  `group_seasons` (the strip marks), never the tab-filtered page -- on the Condemned lane
- *  that page holds only the show's reaped/condemned seasons, which all agree "reap" and would
- *  light the whole-show control as if the entire show were set to reap when only some is. So
- *  the parameter takes the strip-mark shape too. */
-export function groupOverride(
-  items: ReadonlyArray<{ override: Override | null }>,
-): Override | null {
-  if (items.every((s) => s.override === "spare")) return "spare";
-  if (items.every((s) => s.override === "reap")) return "reap";
-  return null;
 }
 
 /** Whether a whole-show Reap would change nothing -- the show analogue of rule 48's
@@ -982,8 +1030,12 @@ function SeasonList({
             </span>
             <span className="season-size num">{itemBytes(season.size_bytes)}</span>
             {inLane ? (
+              // The control toggles the season's OWN decision (override_own), never the one
+              // it inherits from its show -- clearing a season key cannot clear a show-level
+              // spare, so lighting it from the inherited state made a dead toggle. The note
+              // below says when the whole show is what keeps it.
               <OverrideControls
-                override={season.override}
+                override={season.override_own}
                 onSet={(d) => onSet(season.media_key, d)}
                 onClear={() => onClear(season.media_key)}
                 pending={pending}
@@ -993,6 +1045,13 @@ function SeasonList({
               // Other-lane rows are read-only here: they act from their own tab, and an
               // empty cell keeps the grid's columns aligned.
               <span aria-hidden="true" />
+            )}
+            {inLane && (
+              <KeptByShowNote
+                own={season.override_own}
+                showOverride={season.show_override}
+                className="season-row-note"
+              />
             )}
           </li>
         );
@@ -1084,8 +1143,10 @@ function MovieCard({
         {!selectMode && (
           <>
             <OverrideMark override={item.override} />
+            {/* A movie has no show to inherit from, so its own decision is its effective one;
+                the control toggles override_own for the same contract every row now follows. */}
             <OverrideControls
-              override={item.override}
+              override={item.override_own}
               onSet={(d) => onSet(item.media_key, d)}
               onClear={() => onClear(item.media_key)}
               pending={pending}
@@ -1148,12 +1209,15 @@ function ShowCard({
   const condemnedCount = first.group_condemned_count ?? group.items.length;
   const condemnedBytes = first.group_condemned_bytes ?? fetchedSize;
   const condemnedUnknown = first.group_unknown_size ?? fetchedUnknown;
-  // What the whole show agrees on, across every lane -- `marks`, not the tab-filtered
-  // `group.items`. On the Condemned lane `group.items` holds only this show's reaped/condemned
-  // seasons, which all agree "reap" and would light the whole-show control as if the entire
-  // show were set to reap when only some of it is. A per-season override then reads as mixed.
+  // The whole show's marks, across every lane -- `marks`, not the tab-filtered `group.items`
+  // (on the Condemned lane that holds only this show's reaped/condemned seasons). Used for the
+  // strip and for whether a whole-show reap would change anything.
   const showSeasons = marks ?? group.items;
-  const showOverride = groupOverride(showSeasons);
+  // The show's OWN decision -- the show key the whole-show control toggles, read straight from
+  // the row, never rolled up from the seasons' own marks. The control clears only this key, so
+  // lighting it from an aggregate it cannot clear was a dead toggle. Seasons overridden one by
+  // one keep their marks in the strip; this stays null until the whole show is decided.
+  const showOverride = first.show_override;
   const state = showOverride === "spare" ? "card-spared" : showOverride === "reap" ? "card-reaped" : "";
   const { selectMode, isSelected } = select;
 

@@ -370,6 +370,23 @@ class TestOverrideRoutesAndTheGraceClock:
         client.post("/api/override", json={"media_key": "radarr:1:22", "decision": "spare"})
         assert "radarr:1:22" not in _clock_rows(tmp_path)
 
+    def test_sparing_a_scan_condemned_item_restarts_its_clock_on_unspare(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """A scan-condemned item the owner SPARES leaves the reap list, so its clock is
+        dropped; un-sparing re-enters it on a FRESH window rather than the weeks-old one it
+        left with, which would drop it straight past grace with no warning (rule 4).
+        radarr:1:21 was first flagged at the fixture's NOW."""
+        original = _clock_rows(tmp_path)["radarr:1:21"]
+        # Spared: off the list, clock gone.
+        client.post("/api/override", json={"media_key": "radarr:1:21", "decision": "spare"})
+        assert "radarr:1:21" not in _clock_rows(tmp_path)
+        # Un-spared: back on the list, but the countdown starts now -- not the spent one.
+        client.delete("/api/override/radarr:1:21")
+        refreshed = _clock_rows(tmp_path)
+        assert "radarr:1:21" in refreshed
+        assert refreshed["radarr:1:21"] > original
+
     def test_the_queue_reports_whether_a_reap_took(
         self, client: TestClient, tmp_path: Path
     ) -> None:
@@ -381,3 +398,97 @@ class TestOverrideRoutesAndTheGraceClock:
 
         assert by_key["radarr:1:22"]["override_effective"] is True
         assert by_key["radarr:1:23"]["override_effective"] is False
+
+
+# --- override views in API responses: own vs inherited-from-show ---------------
+
+
+@pytest.fixture
+def show_client(tmp_path: Path) -> Iterator[TestClient]:
+    """A logged-in client over one show with two seasons: one the scan condemned, one it
+    cautiously kept. Both carry the show's group key, so a whole-show override reaches them."""
+    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    engine = sa_create_engine(settings.sync_database_url)
+    Base.metadata.create_all(engine)
+    show = "sonarr:1:42"
+    with Session(engine) as s:
+        snap = Snapshot(
+            created_at=NOW,
+            policy_hash="p" * 64,
+            scoring_hash="s" * 64,
+            horizon_at=NOW,
+            item_count=2,
+        )
+        s.add(snap)
+        s.flush()
+        for n, verdict, explanation in ((1, "condemn", "{}"), (2, "protect", CAUTIOUS)):
+            s.add(
+                Candidate(
+                    snapshot_id=snap.id,
+                    media_key=f"{show}:{n}",
+                    title=f"Season {n}",
+                    media_type="season",
+                    size_bytes=GB,
+                    verdict=verdict,
+                    score=80,
+                    coverage_bp=10_000,
+                    explanation_json=explanation,
+                    group_key=show,
+                    group_title="A Show",
+                    created_at=NOW,
+                )
+            )
+        s.commit()
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+class TestOverrideViewsInResponses:
+    """The three views a control needs: the decision in effect (colors the row), the item's
+    OWN decision (what the control toggles), and the show's decision (the note's source)."""
+
+    SHOW = "sonarr:1:42"
+
+    def _seasons(self, client: TestClient) -> dict[str, Any]:
+        group = client.get(f"/api/groups/{self.SHOW}").json()
+        return {s["media_key"]: s for s in group["seasons"]}
+
+    def test_a_whole_show_spare_reads_as_inherited_on_each_season(
+        self, show_client: TestClient
+    ) -> None:
+        show_client.post("/api/override", json={"media_key": self.SHOW, "decision": "spare"})
+        group = show_client.get(f"/api/groups/{self.SHOW}").json()
+        # The whole-show control toggles the show key, so the group reports the show's decision.
+        assert group["show_override"] == "spare"
+        season = self._seasons(show_client)[f"{self.SHOW}:1"]
+        assert season["override"] == "spare"  # effective: the row reads kept
+        assert season["override_own"] is None  # nothing of its own for a season control to undo
+        assert season["show_override"] == "spare"  # what the "kept by the whole show" note names
+
+    def test_a_season_spared_on_its_own_owns_it(self, show_client: TestClient) -> None:
+        show_client.post("/api/override", json={"media_key": f"{self.SHOW}:1", "decision": "spare"})
+        group = show_client.get(f"/api/groups/{self.SHOW}").json()
+        assert group["show_override"] is None  # the show itself is undecided
+        season = self._seasons(show_client)[f"{self.SHOW}:1"]
+        assert season["override"] == "spare"
+        assert season["override_own"] == "spare"  # its own key: the control can clear it
+        assert season["show_override"] is None  # no whole-show note
+
+    def test_an_own_reap_wins_over_a_show_spare_in_the_views(self, show_client: TestClient) -> None:
+        show_client.post("/api/override", json={"media_key": self.SHOW, "decision": "spare"})
+        show_client.post("/api/override", json={"media_key": f"{self.SHOW}:1", "decision": "reap"})
+        season = self._seasons(show_client)[f"{self.SHOW}:1"]
+        assert season["override"] == "reap"  # the item's own key wins: it will be removed
+        assert season["override_own"] == "reap"
+        assert season["show_override"] == "spare"  # the note still names the show's choice
+
+    def test_a_movie_owns_its_effective_decision(self, client: TestClient) -> None:
+        client.post("/api/override", json={"media_key": "radarr:1:22", "decision": "spare"})
+        rows = client.get("/api/candidates?verdict=protect&limit=50").json()
+        movie = {r["media_key"]: r for r in rows}["radarr:1:22"]
+        assert movie["override"] == "spare"
+        assert movie["override_own"] == "spare"  # no show to inherit from
+        assert movie["show_override"] is None

@@ -225,9 +225,21 @@ class CandidateOut(BaseModel):
     """True if the owner has hand-spared this media_key (or its show). Lets the queue strike it
     through before the next scan moves it to the Spared list for real."""
     override: str | None = None
-    """The owner's manual decision on this item -- ``"spare"``, ``"reap"``, or ``None``. Set
-    the moment they click, so the card can show the pending intent before the next scan bakes
-    it into the stored verdict. Inherited from the show for a season the owner overrode whole."""
+    """The owner's manual decision *in effect* on this item -- ``"spare"``, ``"reap"``, or
+    ``None``. Set the moment they click, so the card can show the pending intent before the
+    next scan bakes it into the stored verdict. This is the EFFECTIVE decision: a season with
+    no decision of its own inherits its show's. It colors the row's chip and score, which show
+    the item's real fate. To decide what a control can toggle, read ``override_own``."""
+    override_own: str | None = None
+    """This item's OWN manual decision, ignoring any it inherits from its show -- what a
+    Spare/Reap control on this row can actually toggle. Equals ``override`` for a movie (no
+    show to inherit from). ``None`` for a season kept only because the whole show is spared:
+    its control rests un-lit, and ``show_override`` says why it is still kept."""
+    show_override: str | None = None
+    """The whole-show decision covering this season (its show key's ``"spare"``/``"reap"``),
+    or ``None``. Drives the "kept because the whole show is spared" note beside a season's
+    control, so the operator knows a season-level toggle will not change a show-level choice.
+    Always ``None`` for a movie."""
     override_effective: bool | None = None
     """For a ``"reap"`` override: whether the engine honors it (it joins the counts, the
     grace countdown and the next plan), or refuses it for a safety stop or an unchecked
@@ -282,6 +294,11 @@ class GroupOut(BaseModel):
     chip: ChipOut | None = None
     """The show-level status line and chip: those of its highest-scoring season, the
     same member the collapsed card leads with."""
+    show_override: str | None = None
+    """The show's own manual decision (``"spare"``/``"reap"`` on the show key), or ``None``.
+    What the panel's whole-show control toggles, and what lights it -- never an aggregate of
+    the seasons' own decisions, which the control cannot clear. Seasons overridden one by one
+    keep their marks in the strip; this stays ``None`` until the whole show is decided."""
     links: LinksOut = Field(default_factory=LinksOut)
     show_status: str | None = None
     """Whether the show is finished, for the show card: ``"ended"``, ``"continuing"`` or

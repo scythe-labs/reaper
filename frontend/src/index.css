@@ -1212,12 +1212,66 @@ tbody tr.selected {
   padding: 0.7rem 1.1rem 0.9rem;
   background: var(--surface);
   border-top: 1px solid var(--border);
+  /* A column so the "kept by the whole show" note can sit above the buttons; the buttons
+     and any error keep their own row inside it. */
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+.why-actions-row {
   display: flex;
   align-items: center;
   gap: 0.6rem;
 }
 .why-actions .error {
   font-size: 0.82rem;
+}
+
+/* The note beside a season's Spare/Reap when a whole-show decision is what keeps or reaps it:
+   a quiet well, so the buttons stay the loud thing. The glyph tracks the season's real fate
+   (green ∞ kept, red scythe removed) so it never contradicts the row's chip; the copy itself
+   carries the meaning. Used in the season why-panel footer and under an expanded season row. */
+.kept-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+.kept-note b {
+  color: var(--text);
+  font-weight: 600;
+}
+.kept-note-mark {
+  flex: none;
+  line-height: 1.2;
+}
+.kept-spare .kept-note-mark {
+  color: var(--protect);
+}
+.kept-reap .kept-note-mark {
+  color: var(--condemn);
+}
+.kept-note-mark .mk-inf {
+  font-weight: 700;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+.kept-note-mark .scythe {
+  width: 13px;
+  height: 13px;
+}
+/* Under an expanded season row (a 4-column grid): span every column on a fresh line so the
+   note reads as belonging to the row above it, not squeezed into a cell. */
+.season-row-note {
+  grid-column: 1 / -1;
+  margin-top: 0.15rem;
 }
 
 /* The way back up from a season's reasoning to its show. */

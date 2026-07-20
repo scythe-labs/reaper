@@ -89,10 +89,19 @@ export interface Candidate {
    *  or the strongest reason a reaped one scored. What the card shows instead of a synopsis. */
   reason: string | null;
   spared: boolean;
-  /** The owner's manual decision on this item -- "spare", "reap", or null. Set the moment
-   *  they click, so the card shows the pending intent before the next scan bakes it in.
-   *  Inherited from the show for a season the owner overrode whole. */
+  /** The manual decision *in effect* -- "spare", "reap", or null -- own or inherited from
+   *  the show. It colors the row's chip and score (the item's real fate). Set the moment they
+   *  click, so the card shows the pending intent before the next scan bakes it in. To decide
+   *  what a control can toggle, read `override_own`. */
   override: Override | null;
+  /** This item's OWN decision, ignoring one it inherits from its show -- what a Spare/Reap
+   *  control on this row toggles. Equals `override` for a movie. Null for a season kept only
+   *  because the whole show is spared; `show_override` then says why it is still kept. */
+  override_own: Override | null;
+  /** The whole-show decision covering this season (its show's "spare"/"reap"), or null.
+   *  Drives the "kept because the whole show is spared" note beside a season's control. Always
+   *  null for a movie. */
+  show_override: Override | null;
   /** For a "reap" override: whether the engine honors it -- it joins the counts, the
    *  grace countdown and the next plan -- or refuses it (someone is watching right now,
    *  or the file isn't managed). Null when there is no reap override. Red only on true. */
@@ -132,6 +141,10 @@ export interface Group {
    *  owner's attention, else the highest-scoring one. */
   reason: string | null;
   chip: Chip | null;
+  /** The show's own decision (the show key's "spare"/"reap"), or null -- what the panel's
+   *  whole-show control toggles and what lights it. Never an aggregate of the seasons' own
+   *  decisions, which that control cannot clear. Null until the whole show is decided. */
+  show_override: Override | null;
   links: Links;
   /** Whether the show has finished, taken from whichever season rows carry it -- one
    *  reading of the series is stamped onto every season in the same scan, so they cannot

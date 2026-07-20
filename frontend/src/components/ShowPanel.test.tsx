@@ -29,7 +29,7 @@ const NO_LINKS: Links = {
 };
 
 function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Candidate {
-  return {
+  const c: Candidate = {
     id: n,
     media_key: `sonarr:1:${n}`,
     title: "Example Show",
@@ -53,6 +53,8 @@ function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Ca
     reason: null,
     spared: false,
     override: null,
+    override_own: null,
+    show_override: null,
     override_effective: null,
     chip: null,
     show_status: null,
@@ -60,6 +62,8 @@ function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Ca
     group_seasons: null,
     ...extra,
   };
+  if (extra.override_own === undefined) c.override_own = c.override;
+  return c;
 }
 
 function group(seasons: Candidate[]): Group {
@@ -73,6 +77,7 @@ function group(seasons: Candidate[]): Group {
     unknown_size_seasons: 0,
     reason: null,
     chip: null,
+    show_override: null,
     links: NO_LINKS,
     show_status: "ended",
     seasons,

@@ -345,7 +345,7 @@ async def list_candidates(
             _candidate_out(
                 r,
                 flagged.get(r.media_key),
-                whitelist.effective_override(r.media_key, decisions),
+                decisions,
                 group_condemned=group_totals.get(r.group_key) if r.group_key else None,
                 group_seasons=group_marks.get(r.group_key) if r.group_key else None,
             )
@@ -656,11 +656,20 @@ def _season_number(media_key: str) -> int | None:
 def _candidate_out(
     r: Candidate,
     flagged_at: datetime | None = None,
-    override: str | None = None,
+    decisions: dict[str, str] | None = None,
     *,
     group_condemned: tuple[int, int, int] | None = None,
     group_seasons: list[GroupSeasonMarkOut] | None = None,
 ) -> CandidateOut:
+    # Three views of the one whitelist: the decision in EFFECT (own, or inherited from the
+    # show) colors the row; the item's OWN decision is what a control on this row can toggle;
+    # the SHOW's decision is what still keeps a season the operator did not touch. Computed in
+    # one place so a season row and its show card can never disagree about what is spared.
+    decisions = decisions or {}
+    override = whitelist.effective_override(r.media_key, decisions)
+    override_own = decisions.get(r.media_key)
+    _show_key = whitelist.show_key(r.media_key)
+    show_override = decisions.get(_show_key) if _show_key else None
     return CandidateOut(
         id=r.id,
         media_key=r.media_key,
@@ -692,6 +701,8 @@ def _candidate_out(
         reason=_primary_reason(r.explanation_json, r.verdict),
         spared=override == "spare",
         override=override,
+        override_own=override_own,
+        show_override=show_override,
         # Whether a hand reap actually takes: decide_verdict honors it past cautious
         # protections but never past a safety stop or an unchecked protection. The UI
         # colors the row red only when this is True, so it never promises a removal
@@ -816,7 +827,7 @@ async def candidate_detail(request: Request, candidate_id: int) -> CandidateDeta
         base = _candidate_out(
             row,
             flagged.first_flagged_at if flagged else None,
-            whitelist.effective_override(row.media_key, decisions),
+            decisions,
         )
         return CandidateDetail(
             **base.model_dump(),
@@ -874,7 +885,7 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
             _candidate_out(
                 r,
                 flagged.get(r.media_key),
-                whitelist.effective_override(r.media_key, decisions),
+                decisions,
             )
             for r in rows
         ]
@@ -899,6 +910,11 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
             unknown_size_seasons=sum(1 for c in seasons if c.size_bytes is None),
             reason=lead.reason,
             chip=lead.chip,
+            # The show's own decision (the show key), which the panel's whole-show control
+            # toggles. Read straight from the whitelist, never rolled up from the seasons'
+            # own marks -- the control clears only this key, so lighting it from an aggregate
+            # it cannot clear is the very bug this replaced.
+            show_override=decisions.get(group_key),
             links=await _deep_links(session, lead_row),
             # A show-level fact, so any season carrying it answers for the whole show:
             # one reading of the series is stamped onto every one of its seasons in the

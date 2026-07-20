@@ -7,10 +7,61 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-20 (three review-queue fixes: the show card's whole-show controls, and
-one amber that meant two things)
+Last updated: 2026-07-20 (undo on TV seasons: a control now acts on its own level, plus a
+grace-clock reset on re-entry)
 
-### Newest — the show card judged half a show
+### Newest — you could not un-decide a TV season, only movies
+
+The operator reported it plainly: on TV shows you could no longer un-select a spared or reaped
+item; on movies it still worked. An audit (five parallel readers, each finding adversarially
+verified) confirmed the shape and found its twins.
+
+**The bug, one sentence:** a season's Spare/Reap control DISPLAYED the *effective* override --
+own, or inherited from a whole-show spare -- but its clear/set acted on the season's OWN key, so
+when a show-level spare was what kept the season, clearing the season key changed nothing. A
+movie has no show, so its effective override IS its own key; that is why movies always worked.
+The real data had 5 whole-show spares, so the operator hit it immediately.
+
+**The twins (same class), all fixed together:**
+
+- The whole-show control on the card *and* the show panel had the mirror bug: it lit from an
+  *aggregate* of the seasons' effective overrides but cleared only the show key, so a show whose
+  seasons were all overridden one by one lit "Spared" and could not be cleared.
+- The bulk "Clear override" on a selected show read the same aggregate; it now agrees with the
+  card once the card reads the show's own decision.
+
+**The fix — a control reflects and acts on its own level** (new rule 50). Three views ride on
+every candidate, built once in `_candidate_out` / `GroupOut` from the one
+`whitelist.effective_override` + `show_key`: `override` (in effect -- colors the row),
+`override_own` (the item's own decision -- the only value a control toggles), and `show_override`
+(the show's own decision -- lights the whole-show control). A season control clears the season
+key; a whole-show control clears the show key; each can only ever reverse what it lit. When a
+whole-show decision keeps or reaps a season, `KeptByShowNote` names it beside the season's
+control -- its wording turning on whether the season's own decision is absent, the same, or
+opposite (the last one caught in the mockup: a season reaped against a spared show now reads
+"you reaped this season, so it will be removed," not "also spared"). A season-level clear never
+un-decides the whole show: that would strip protection from every other season (fail-open), so
+it resolves toward keeping the file, and the operator undoes a whole-show decision on the show.
+`groupOverride` (the old aggregate) is deleted.
+
+The wrong assumption this time: "effective state is what a control shows, so it is what a
+control clears." Display and action were reading different keys.
+
+**Plus one safety-adjacent grace bug (from the same audit).** `_sync_grace_clocks` kept a
+scan-condemned item's grace clock even while it was spared, and never reset it on un-spare -- so
+un-sparing an old condemnation re-entered it with a weeks-old clock that dropped it straight past
+grace with no Leaving Soon warning. Now the clock is keyed on the *effective* reap-list
+membership: a spare takes the item off the list and deletes its clock, so a later un-spare earns
+a FRESH window (rule 4). The deliberate spare is a real departure, not a transient scan outage,
+so the delete forces the reset that `_apply_first_flag`'s gap heuristic would not.
+
+Verified against a copy of the operator's real DB through the production `_candidate_out`: 58
+inherited seasons read effective=spare / own=None / show=spare, and the seasons spared on their
+own key read own=spare. Two audit findings deferred by choice: two lesser grace-clock edges and
+the bulk "N selected" count (a show card standing for many seasons). All gates green: ruff,
+mypy, 1707 pytest, alembic no-drift, eslint, 122 vitest, vite build.
+
+### The show card judged half a show
 
 Three things the operator caught on the Condemned lane, mocked as an approved artifact then
 driven live in their own browser.

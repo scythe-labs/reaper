@@ -88,33 +88,46 @@ async def _affected_candidates(session: AsyncSession, media_key: str) -> list[Ca
 async def _sync_grace_clocks(session: AsyncSession, media_key: str) -> None:
     """Grace bookkeeping for an override change, so the countdown matches the click.
 
-    A hand reap enters the effective condemned set immediately (services.condemned), so
-    its grace clock starts now -- written through the scan's own clock decision
-    (``snapshot.record_first_flagged_bulk``: set once, reset only on a genuine return),
-    which is what makes "on the list since" and the Leaving Soon warning true from the
-    moment the owner clicks rather than from the next scan.
+    The grace clock tracks one thing: how long an item has been on the reap list. An
+    override moves an item on or off that list at once, so the clock moves with it rather
+    than waiting for the next scan.
 
-    The reverse direction cleans up: removing the reap (or flipping it to spare) deletes
-    the clock again for rows the scan did not condemn, so a stale hand-reap timestamp
-    can never shorten the grace window of a later, real condemnation (rule 4). Rows the
-    scan condemned keep their scan-owned clock untouched.
+    ON the list -- effectively condemned: a scan condemnation with no override, or a hand
+    reap the engine honors. Its clock is (re)recorded through the scan's own decision
+    (``snapshot.record_first_flagged_bulk``: set once, and reset only on a genuine return),
+    so "on the list since" and the Leaving Soon warning read true from the moment of the
+    click.
+
+    OFF the list -- spared, or judged keep/abstain: its clock is deleted. That is a cleanup
+    (a stale hand-reap timestamp can never shorten a later real condemnation) and, just as
+    important, a safety reset: a scan-condemned item the owner SPARES leaves the list and
+    loses its clock, so a later un-spare re-enters it with a FRESH window instead of coasting
+    on a weeks-old timestamp that would drop it straight past grace with no Leaving Soon
+    warning (rule 4). ``_apply_first_flag`` alone would not reset here -- a deliberate spare
+    is indistinguishable from a brief scan outage by gap -- so the delete forces the reset.
     """
     decisions = await whitelist.overrides(session)
     rows = await _affected_candidates(session, media_key)
     if not rows:
         return
 
-    def reaped_now(candidate: Candidate) -> bool:
-        return whitelist.effective_override(
-            candidate.media_key, decisions
-        ) == "reap" and reap_is_effective(candidate)
+    def on_reap_list(candidate: Candidate) -> bool:
+        # What the grace clock tracks: effectively condemned. A hand spare takes an item off
+        # the list even when the scan condemned it; a hand reap puts it on only if the engine
+        # honors it; with no override, the frozen scan verdict decides.
+        ov = whitelist.effective_override(candidate.media_key, decisions)
+        if ov == "spare":
+            return False
+        if ov == "reap":
+            return reap_is_effective(candidate)
+        return candidate.verdict == "condemn"
 
-    to_start = [c.media_key for c in rows if reaped_now(c)]
-    if to_start:
+    on_list = [c.media_key for c in rows if on_reap_list(c)]
+    if on_list:
         profile = await active_profile_settings(session)
-        await record_first_flagged_bulk(session, to_start, utcnow(), grace_days=profile.grace_days)
+        await record_first_flagged_bulk(session, on_list, utcnow(), grace_days=profile.grace_days)
     for candidate in rows:
-        if candidate.verdict == "condemn" or reaped_now(candidate):
+        if on_reap_list(candidate):
             continue
         clock = await session.get(FirstFlagged, candidate.media_key)
         if clock is not None:

@@ -10,7 +10,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { CandidateDetail, SignalContribution } from "../api";
+import { api, type CandidateDetail, type SignalContribution } from "../api";
 import { WhyPanel, allocateShares } from "./WhyPanel";
 
 vi.mock("../api", () => ({ api: { override: vi.fn(), clearOverride: vi.fn() } }));
@@ -34,7 +34,7 @@ function detail(
   signals: SignalContribution[],
   over: Partial<CandidateDetail> = {},
 ): CandidateDetail {
-  return {
+  const d: CandidateDetail = {
     id: 1,
     media_key: "sonarr:1:2:3",
     title: "Example Show",
@@ -58,6 +58,8 @@ function detail(
     reason: null,
     spared: false,
     override: null,
+    override_own: null,
+    show_override: null,
     override_effective: null,
     chip: null,
     season_number: 3,
@@ -91,6 +93,8 @@ function detail(
     },
     ...over,
   };
+  if (over.override_own === undefined) d.override_own = d.override;
+  return d;
 }
 
 function show(item: CandidateDetail) {
@@ -380,5 +384,37 @@ describe("the scoring receipt", () => {
     const unread = groupOf("Couldn't check");
     expect(visibleRows(unread)).toBe(12);
     expect(unread.querySelector("details")).toBeNull();
+  });
+});
+
+// The Spare/Reap footer decides the SEASON, never the show above it. It must read the season's
+// OWN decision (so a click always reverses something you can see) and, when a whole-show
+// decision is what really keeps or reaps the season, say so -- clearing a season key cannot
+// clear a show-level choice, and a dead "Spared" toggle was the bug this fixes.
+describe("the season footer's own-vs-show decision", () => {
+  it("rests un-lit for a season kept only because the whole show is spared, and says why", () => {
+    show(detail(WORKED_ROWS, { override: "spare", override_own: null, show_override: "spare" }));
+    // Effective spare, but nothing of the season's own to undo: the button is not pressed.
+    expect(screen.getByRole("button", { name: /Spare/ })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByText(/this season is kept/i)).toBeInTheDocument();
+    expect(screen.getByText(/Undo it on the show/i)).toBeInTheDocument();
+  });
+
+  it("clears the season's OWN key when its lit button is pressed, even under a show spare", async () => {
+    const { userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    // Own reap against a whole-show spare: the season's own decision wins and it will go.
+    show(
+      detail(WORKED_ROWS, {
+        verdict: "abstain",
+        override: "reap",
+        override_own: "reap",
+        show_override: "spare",
+      }),
+    );
+    expect(screen.getByText(/will be removed/i)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Reaping/ }));
+    // The season key, never the show key -- the whole-show spare is untouched.
+    expect(api.clearOverride).toHaveBeenCalledWith("sonarr:1:2:3");
   });
 });

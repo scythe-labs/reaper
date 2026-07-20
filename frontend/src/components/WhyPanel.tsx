@@ -30,7 +30,12 @@ import {
 } from "../api";
 import { coverage, itemBytes, since } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
-import { OverrideControls, ShowStatusChip, useHoldsBackUnmeasured } from "./ReviewQueue";
+import {
+  KeptByShowNote,
+  OverrideControls,
+  ShowStatusChip,
+  useHoldsBackUnmeasured,
+} from "./ReviewQueue";
 
 /** The built-in signal ids. Anything else in `explanation.signals[].id` is a custom
  *  rule's own name, and its row wears the "Your rule" tag. */
@@ -848,18 +853,25 @@ export function WhyPanel({
       {/* Decide without leaving the reasoning. Sticky, so the buttons stay in reach at
           the end of a long explanation. */}
       <div className="why-actions">
-        <OverrideControls
-          override={item.override}
-          onSet={(decision) => setOverride.mutate({ key: item.media_key, decision })}
-          onClear={() => clearOverride.mutate(item.media_key)}
-          pending={setOverride.isPending || clearOverride.isPending}
-          // Same rule as the queue: a condemned item is already on the block, so Reap here
-          // would change nothing. Spare (rescue) stays; Reap returns on Sanctuary and Limbo.
-          hideReap={item.verdict === "condemn"}
-        />
-        {(setOverride.isError || clearOverride.isError) && (
-          <span className="error">Couldn't save that. Try again.</span>
-        )}
+        {/* When a whole-show decision keeps or reaps this season, say so above the buttons:
+            the control toggles the season's OWN decision (override_own), and clearing a season
+            key cannot clear a show-level one. Renders nothing for a movie or an untouched-show
+            season. */}
+        <KeptByShowNote own={item.override_own} showOverride={item.show_override} />
+        <div className="why-actions-row">
+          <OverrideControls
+            override={item.override_own}
+            onSet={(decision) => setOverride.mutate({ key: item.media_key, decision })}
+            onClear={() => clearOverride.mutate(item.media_key)}
+            pending={setOverride.isPending || clearOverride.isPending}
+            // Same rule as the queue: a condemned item is already on the block, so Reap here
+            // would change nothing. Spare (rescue) stays; Reap returns on Sanctuary and Limbo.
+            hideReap={item.verdict === "condemn"}
+          />
+          {(setOverride.isError || clearOverride.isError) && (
+            <span className="error">Couldn't save that. Try again.</span>
+          )}
+        </div>
       </div>
     </aside>
   );

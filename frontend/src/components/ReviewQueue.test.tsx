@@ -12,7 +12,7 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type Candidate, type GroupSeasonMark, type Verdict } from "../api";
-import { compactSpan, ReviewQueue, ShowStatusChip } from "./ReviewQueue";
+import { compactSpan, KeptByShowNote, ReviewQueue, ShowStatusChip } from "./ReviewQueue";
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
@@ -28,7 +28,7 @@ const { apiMock } = vi.hoisted(() => ({
 vi.mock("../api", () => ({ api: apiMock }));
 
 function movie(n: number, extra: Partial<Candidate> = {}): Candidate {
-  return {
+  const c: Candidate = {
     id: n,
     media_key: `radarr:1:${n}`,
     title: `Example Movie ${n}`,
@@ -52,6 +52,8 @@ function movie(n: number, extra: Partial<Candidate> = {}): Candidate {
     reason: null,
     spared: false,
     override: null,
+    override_own: null,
+    show_override: null,
     override_effective: null,
     chip: null,
     show_status: null,
@@ -59,6 +61,10 @@ function movie(n: number, extra: Partial<Candidate> = {}): Candidate {
     group_seasons: null,
     ...extra,
   };
+  // Default an item's own decision to its effective one unless a test sets them apart (to
+  // exercise a season kept only by its show).
+  if (extra.override_own === undefined) c.override_own = c.override;
+  return c;
 }
 
 /** A season row of one show. Shared `group_key` folds them into a single show card. */
@@ -541,5 +547,45 @@ describe("the dormancy span", () => {
 
     await screen.findByText(/Not watched in less than a day/);
     expect(screen.queryByText("Held back: size unknown")).not.toBeInTheDocument();
+  });
+});
+
+// The note that keeps a season's Spare/Reap honest when a WHOLE-SHOW decision is what really
+// governs it: the control toggles the season's own decision, and this note says what the show
+// is doing so the operator never fights a toggle that cannot reach the show-level choice. Its
+// wording turns on the relationship between the season's own decision and its show's.
+describe("the kept-by-the-whole-show note", () => {
+  const render1 = (own: "spare" | "reap" | null, show: "spare" | "reap" | null) =>
+    render(<KeptByShowNote own={own} showOverride={show} />);
+
+  it("says nothing when no whole-show decision covers the season", () => {
+    const { container } = render1(null, null);
+    expect(container).toBeEmptyDOMElement();
+    // A season with only its own decision (a movie's shape) shows no note either.
+    render1("spare", null);
+    expect(screen.queryByText(/whole show/i)).not.toBeInTheDocument();
+  });
+
+  it("explains an inherited spare and points to the show", () => {
+    render1(null, "spare");
+    expect(screen.getByText(/this season is kept/i)).toBeInTheDocument();
+    expect(screen.getByText(/Undo it on the show/i)).toBeInTheDocument();
+  });
+
+  it("warns that clearing an own spare won't help while the show also spares it", () => {
+    render1("spare", "spare");
+    expect(screen.getByText(/clearing this one won't remove it/i)).toBeInTheDocument();
+  });
+
+  it("says a season reaped against a spared show will still be removed", () => {
+    render1("reap", "spare");
+    expect(screen.getByText(/will be removed/i)).toBeInTheDocument();
+    expect(screen.getByText(/even though the whole show is spared/i)).toBeInTheDocument();
+  });
+
+  it("says a season spared against a reaped show stays", () => {
+    render1("spare", "reap");
+    expect(screen.getByText(/stays/i)).toBeInTheDocument();
+    expect(screen.getByText(/even though the whole show is set to reap/i)).toBeInTheDocument();
   });
 });
