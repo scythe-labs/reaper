@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { applyAccent } from "./accent";
 import { api, ApiError, type AuthUser, type Snapshot, type Verdict } from "./api";
 import { Fairness } from "./components/Fairness";
 import { Login } from "./components/Login";
@@ -369,6 +370,13 @@ function Dashboard({ user }: { user: AuthUser }) {
     const name = generalSettings?.application_name;
     if (name && document.title !== name) document.title = name;
   }, [generalSettings?.application_name]);
+
+  // The install's chosen accent colour (Settings → General), applied to the whole UI. Saved
+  // on the server, so it follows the install, not the browser. index.html pre-paints it from
+  // a cache to avoid a flash; this keeps it in step after a save or on another device.
+  useEffect(() => {
+    applyAccent(generalSettings?.accent_color);
+  }, [generalSettings?.accent_color]);
 
   // The background-scan cue, polled from the shell so it lights up on every screen. Fast
   // while a scan runs; a gentle idle poll so a scan started elsewhere (the scheduler,

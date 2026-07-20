@@ -98,10 +98,28 @@ class TestGeneralSettings:
         assert data == {
             "application_name": "Reaper",
             "application_url": None,
+            "accent_color": "#25c3ff",
             "api_key_set": False,
             "proxy_trust_enabled": False,
             "trusted_proxies": [],
         }
+
+    def test_a_valid_accent_is_saved_lowercased(self, client: TestClient) -> None:
+        data = client.put("/api/settings/general", json={"accent_color": "#4F46E5"}).json()
+        assert data["accent_color"] == "#4f46e5"
+
+    def test_a_malformed_accent_is_refused_and_changes_nothing(self, client: TestClient) -> None:
+        client.put("/api/settings/general", json={"accent_color": "#4f46e5"})
+        response = client.put("/api/settings/general", json={"accent_color": "blue"})
+        assert response.status_code == 422
+        assert "#" in response.json()["detail"]
+        # The bad value never landed; the previous colour still stands.
+        assert client.get("/api/settings/general").json()["accent_color"] == "#4f46e5"
+
+    def test_an_empty_accent_resets_to_the_default(self, client: TestClient) -> None:
+        client.put("/api/settings/general", json={"accent_color": "#000000"})
+        data = client.put("/api/settings/general", json={"accent_color": ""}).json()
+        assert data["accent_color"] == "#25c3ff"
 
     def test_partial_save_changes_only_what_was_sent(self, client: TestClient) -> None:
         data = client.put("/api/settings/general", json={"application_name": "Media Reaper"}).json()

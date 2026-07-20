@@ -62,6 +62,10 @@ APPLICATION_NAME_KEY = "application_name"
 #: Where people reach this install (``https://reaper.example.com``). Used to build the
 #: links notifications carry; empty means notifications simply carry no links.
 APPLICATION_URL_KEY = "application_url"
+#: The colour the whole UI is tinted with -- buttons, links, highlights, the scan line.
+#: A ``#rrggbb`` string, purely cosmetic. Unlike the per-browser theme it is stored on the
+#: server, so every browser that opens this install sees it. Validated at the API edge.
+ACCENT_COLOR_KEY = "accent_color"
 #: The one instance API key, Fernet-encrypted like every stored credential. Sent by
 #: callers as ``X-Api-Key``; the middleware compares a SHA-256 of it (see main.py's
 #: startup, which caches the digest on app.state).
@@ -77,6 +81,8 @@ LOG_LEVEL_KEY = "log_level"
 
 DEFAULT_PLEX_WEB_URL = "https://app.plex.tv"
 DEFAULT_APPLICATION_NAME = "Reaper"
+#: The built-in accent, a sky blue. The default the UI ships with and resets to.
+DEFAULT_ACCENT_COLOR = "#25c3ff"
 
 
 async def _get(session: AsyncSession, key: str, default: Any) -> Any:
@@ -168,6 +174,20 @@ async def get_application_url(session: AsyncSession) -> str | None:
 async def set_application_url(session: AsyncSession, url: str | None) -> None:
     cleaned = (url or "").strip().rstrip("/")
     await _set(session, APPLICATION_URL_KEY, cleaned or None)
+
+
+async def get_accent_color(session: AsyncSession) -> str:
+    """The UI accent colour as ``#rrggbb``. Defaults to the built-in sky blue."""
+    value = await _get(session, ACCENT_COLOR_KEY, default=None)
+    colour = str(value).strip().lower() if value else ""
+    return colour or DEFAULT_ACCENT_COLOR
+
+
+async def set_accent_color(session: AsyncSession, colour: str | None) -> None:
+    """Store the accent colour, lower-cased. Empty resets to the default. The value is
+    validated to ``#rrggbb`` at the API edge, so a malformed colour never reaches here."""
+    cleaned = (colour or "").strip().lower()
+    await _set(session, ACCENT_COLOR_KEY, cleaned or None)
 
 
 # --- the instance API key ----------------------------------------------------

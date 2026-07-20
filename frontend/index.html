@@ -16,6 +16,26 @@
       } catch (e) {
         /* storage unavailable: fall back to the device preference */
       }
+      // Apply the saved accent colour before first paint too, so a custom colour never
+      // flashes the built-in sky blue. Kept in step with accent.ts (its applyAccent writes
+      // this cache; the ink maths must match accentInk there).
+      try {
+        var reaperAccent = localStorage.getItem("reaper-accent");
+        if (reaperAccent && /^#[0-9a-fA-F]{6}$/.test(reaperAccent)) {
+          var root = document.documentElement;
+          root.style.setProperty("--accent", reaperAccent);
+          var lin = function (i) {
+            var v = parseInt(reaperAccent.slice(i, i + 2), 16) / 255;
+            return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+          };
+          var L = 0.2126 * lin(1) + 0.7152 * lin(3) + 0.0722 * lin(5);
+          var white = 1.05 / (L + 0.05);
+          var dark = (L + 0.05) / (0.012 + 0.05); // 0.012 ≈ luminance of #06202c
+          root.style.setProperty("--accent-ink", white >= dark ? "#ffffff" : "#06202c");
+        }
+      } catch (e) {
+        /* storage unavailable: the stylesheet default accent stands */
+      }
     </script>
   </head>
   <body>

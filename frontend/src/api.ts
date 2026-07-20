@@ -606,6 +606,8 @@ export interface About {
 export interface GeneralSettings {
   application_name: string;
   application_url: string | null;
+  /** The UI accent as #rrggbb; the built-in sky blue until changed. */
+  accent_color: string;
   /** Whether a key exists at all; the value only leaves through the reveal call. */
   api_key_set: boolean;
   proxy_trust_enabled: boolean;
@@ -965,6 +967,7 @@ export const api = {
   saveGeneral: (body: {
     application_name?: string;
     application_url?: string;
+    accent_color?: string;
     proxy_trust_enabled?: boolean;
     trusted_proxies?: string[];
   }) => put<GeneralSettings>("/api/settings/general", body),

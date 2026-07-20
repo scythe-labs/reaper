@@ -9,7 +9,8 @@
 // confirms it.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
+import { accentInk, DEFAULT_ACCENT, isHexColor } from "../accent";
 import { api, type Instance, type InstanceTest } from "../api";
 import { bytes, date } from "../format";
 import { LogsPanel } from "./LogsPanel";
@@ -73,6 +74,19 @@ function applyTheme(choice: ThemeChoice) {
   }
 }
 
+// Quick-pick accents. The first is the built-in default; the rest are a spread of hues that
+// stay clear of the fixed red "remove" and green "keep" verdict colours. Any hex is allowed
+// via the field, so this is a shortcut, not the whole choice.
+const ACCENT_PRESETS = [
+  DEFAULT_ACCENT,
+  "#4f46e5",
+  "#7c3aed",
+  "#0ea5e9",
+  "#14b8a6",
+  "#f59e0b",
+  "#ec4899",
+];
+
 function GeneralPanel() {
   const queryClient = useQueryClient();
   const general = useQuery({ queryKey: ["general-settings"], queryFn: api.general });
@@ -80,6 +94,7 @@ function GeneralPanel() {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [proxies, setProxies] = useState("");
+  const [accent, setAccent] = useState(DEFAULT_ACCENT);
   const [theme, setTheme] = useState<ThemeChoice>(readTheme);
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -94,15 +109,19 @@ function GeneralPanel() {
     setName(general.data.application_name);
     setUrl(general.data.application_url ?? "");
     setProxies(general.data.trusted_proxies.join(", "));
+    setAccent(general.data.accent_color);
   }, [general.data]);
 
   const save = useMutation({
     mutationFn: api.saveGeneral,
     onSuccess: (data) => {
+      // Re-seed from the canonical stored values (rule 39). Setting the query cache also
+      // makes the shell re-apply the accent app-wide, so a save re-tints everything.
       queryClient.setQueryData(["general-settings"], data);
       setName(data.application_name);
       setUrl(data.application_url ?? "");
       setProxies(data.trusted_proxies.join(", "));
+      setAccent(data.accent_color);
     },
   });
 
@@ -146,6 +165,8 @@ function GeneralPanel() {
 
   const nameDirty = name.trim() !== data.application_name;
   const urlDirty = url.trim() !== (data.application_url ?? "");
+  const accentValid = isHexColor(accent);
+  const accentDirty = accent.trim().toLowerCase() !== data.accent_color.toLowerCase();
   const proxiesDirty =
     proxies
       .split(",")
@@ -210,6 +231,88 @@ function GeneralPanel() {
               )}
             </div>
           </div>
+        </div>
+      </div>
+
+      <div className="set-group">
+        <h3>Appearance</h3>
+        <div className="set-rows">
+          <div className="set-row accent-row">
+            <span className="set-label">Accent color</span>
+            <p className="help">
+              The color Reaper uses for buttons, links, and highlights. Everyone who opens this
+              install sees it. Pick from the wheel or type a hex code.
+            </p>
+            <div className="set-control">
+              <span className="swatch-wrap">
+                <input
+                  type="color"
+                  value={accentValid ? accent : DEFAULT_ACCENT}
+                  aria-label="Accent color"
+                  onChange={(e) => setAccent(e.target.value)}
+                />
+              </span>
+              <input
+                type="text"
+                className="hexfield"
+                value={accent}
+                spellCheck={false}
+                maxLength={7}
+                aria-label="Accent color hex code"
+                onChange={(e) => setAccent(e.target.value)}
+              />
+              {accentDirty && (
+                <button
+                  className="primary"
+                  disabled={save.isPending || !accentValid}
+                  onClick={() => save.mutate({ accent_color: accent.trim().toLowerCase() })}
+                >
+                  Save
+                </button>
+              )}
+              {accent.toLowerCase() !== DEFAULT_ACCENT && (
+                <button className="link" onClick={() => setAccent(DEFAULT_ACCENT)}>
+                  Reset to default
+                </button>
+              )}
+            </div>
+            {!accentValid && (
+              <p className="help field-error">Enter a hex code like #25c3ff.</p>
+            )}
+            <div className="presets" aria-label="Quick colors">
+              {ACCENT_PRESETS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  className="preset-dot"
+                  style={{ background: c }}
+                  aria-label={c}
+                  aria-pressed={accent.toLowerCase() === c}
+                  onClick={() => setAccent(c)}
+                />
+              ))}
+            </div>
+            <div
+              className="accent-preview"
+              style={
+                accentValid
+                  ? ({
+                      "--accent": accent,
+                      "--accent-ink": accentInk(accent),
+                    } as CSSProperties)
+                  : undefined
+              }
+            >
+              <span className="pv-label">Preview</span>
+              <button className="primary" type="button" disabled>
+                Scan library
+              </button>
+              <a href="#" onClick={(e) => e.preventDefault()}>
+                Policy → Deletion
+              </a>
+            </div>
+          </div>
+
           <div className="set-row">
             <span className="set-label">Theme</span>
             <p className="help">

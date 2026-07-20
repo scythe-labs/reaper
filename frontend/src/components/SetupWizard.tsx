@@ -121,7 +121,39 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
       <PlexPanel />
 
       <div className="setup-finish">
-        {setup.scan_ready ? (
+        {!setup.scan_ready ? (
+          <p className="muted">
+            Connect Tautulli plus at least one of Radarr or Sonarr above, then you'll be able
+            to run your first scan.
+          </p>
+        ) : scanning ? (
+          <>
+            <div>
+              <div className="setup-scanning">
+                <span className="spinner" aria-hidden="true" />
+                <h2>Your first scan is running</h2>
+              </div>
+              <p className="muted">
+                Big libraries with a lot of watch history can take a while. You don't have to
+                wait here: head into the app, and the bar at the top shows the scan's progress.
+                The review queue fills in the moment it finishes.
+              </p>
+            </div>
+            <button className="primary btn-lg" onClick={onSkip}>
+              Go to the app
+            </button>
+          </>
+        ) : setup.has_scanned ? (
+          <>
+            <div>
+              <h2>You're all set</h2>
+              <p className="muted">Reaper has scanned your library.</p>
+            </div>
+            <button className="primary btn-lg" onClick={onSkip}>
+              Go to the review queue
+            </button>
+          </>
+        ) : (
           <>
             <div>
               <h2>Ready to scan</h2>
@@ -133,16 +165,11 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
             <button
               className="primary btn-lg"
               onClick={() => firstScan.mutate()}
-              disabled={scanning || firstScan.isPending}
+              disabled={firstScan.isPending}
             >
-              {scanning ? "Scanning…" : firstScan.isPending ? "Starting…" : "Run first scan"}
+              {firstScan.isPending ? "Starting…" : "Run first scan"}
             </button>
           </>
-        ) : (
-          <p className="muted">
-            Connect Tautulli plus at least one of Radarr or Sonarr above, then you'll be able
-            to run your first scan.
-          </p>
         )}
       </div>
       {firstScan.error && (
@@ -150,15 +177,6 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
       )}
       {scanError && <p className="notice notice-error">The scan hit a problem: {scanError}</p>}
       {scanMsg && <p className="muted setup-scanmsg">{scanMsg}</p>}
-
-      {setup.complete && (
-        <div className="setup-done">
-          <strong>You're all set.</strong> Reaper has scanned your library.
-          <button className="primary" onClick={onSkip}>
-            Go to the review queue
-          </button>
-        </div>
-      )}
     </div>
   );
 }

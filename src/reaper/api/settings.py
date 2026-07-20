@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 from ipaddress import ip_network
 from typing import Any
@@ -1125,9 +1126,15 @@ async def test_notifications(request: Request, payload: NotificationsTestIn) -> 
 # ---------------------------------------------------------------------------
 
 
+#: A six-digit hex colour, ``#rrggbb``. The one shape the accent may take.
+_HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
 class GeneralSettingsOut(BaseModel):
     application_name: str
     application_url: str | None = None
+    accent_color: str
+    """The UI accent as ``#rrggbb``; the built-in sky blue until changed."""
     api_key_set: bool
     """Whether a key exists at all -- the value itself only leaves through the
     dedicated reveal route, never rides along on a settings read."""
@@ -1140,6 +1147,7 @@ class GeneralSettingsIn(BaseModel):
 
     application_name: str | None = Field(default=None, max_length=60)
     application_url: str | None = Field(default=None, max_length=500)
+    accent_color: str | None = Field(default=None, max_length=7)
     proxy_trust_enabled: bool | None = None
     trusted_proxies: list[str] | None = Field(default=None, max_length=20)
 
@@ -1152,6 +1160,7 @@ async def _general_out(session: AsyncSession) -> GeneralSettingsOut:
     return GeneralSettingsOut(
         application_name=await app_settings.get_application_name(session),
         application_url=await app_settings.get_application_url(session),
+        accent_color=await app_settings.get_accent_color(session),
         api_key_set=(await session.get(AppSetting, app_settings.API_KEY_KEY)) is not None,
         proxy_trust_enabled=await app_settings.proxy_trust_enabled(session),
         trusted_proxies=await app_settings.get_trusted_proxies(session),
@@ -1211,10 +1220,20 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
                         "like 172.16.0.1 or 172.16.0.0/12.",
                     ) from None
 
+        if payload.accent_color is not None:
+            cleaned_colour = payload.accent_color.strip()
+            if cleaned_colour and not _HEX_COLOR.match(cleaned_colour):
+                raise HTTPException(
+                    422,
+                    "The accent colour must be a hex code like #25c3ff.",
+                )
+
         if payload.application_name is not None:
             await app_settings.set_application_name(session, payload.application_name)
         if payload.application_url is not None:
             await app_settings.set_application_url(session, payload.application_url)
+        if payload.accent_color is not None:
+            await app_settings.set_accent_color(session, payload.accent_color)
         if payload.proxy_trust_enabled is not None:
             await app_settings.set_proxy_trust_enabled(session, enabled=payload.proxy_trust_enabled)
         if payload.trusted_proxies is not None:

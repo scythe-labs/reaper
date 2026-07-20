@@ -39,14 +39,19 @@
   --unknown: #9a6212;
   --unknown-soft: #fcf3e1;
 
-  --accent: #4f46e5;
-  --accent-hover: #4338ca;
-  --accent-soft: #eae9fd;
-  --accent-ring: rgba(79, 70, 229, 0.35);
-  /* The ink that rides on a solid --accent fill. White clears AA on the deep indigo of
-   * light mode; dark mode flips it to a navy (see the dark block) because white on the
-   * lighter periwinkle --accent there fails WCAG contrast. */
-  --accent-ink: #fff;
+  /* The accent is operator-configurable (Settings -> General): one colour re-tints the
+   * whole UI, so everything below derives from --accent rather than being hand-set.
+   * --accent and --accent-ink are applied at runtime from the saved value (App applies it;
+   * index.html pre-paints it from a localStorage cache to avoid a flash). The values here
+   * are the built-in default -- a sky blue -- and the fallback when nothing is stored. */
+  --accent: #25c3ff;
+  --accent-hover: color-mix(in srgb, var(--accent), #000 14%);
+  --accent-soft: color-mix(in srgb, var(--accent) 15%, var(--surface));
+  --accent-ring: color-mix(in srgb, var(--accent) 42%, transparent);
+  /* The ink that rides on a solid --accent fill. Dark by default because the sky-blue
+   * accent is bright (white would fail WCAG AA on it); App recomputes it for a custom
+   * colour, picking dark or light by the accent's luminance so contrast always clears. */
+  --accent-ink: #06202c;
 
   /* Plex brand gold, for the sign-in button. */
   --plex: #e5a00d;
@@ -120,13 +125,14 @@
     --unknown: #e0a33f;
     --unknown-soft: #2a2013;
 
-    --accent: #818cf8;
-    --accent-hover: #a5aefb;
-    --accent-soft: #1e1f3a;
-    --accent-ring: rgba(129, 140, 248, 0.4);
-    /* --accent is a light periwinkle in dark mode, so white text on it is only ~3:1 --
-     * below AA. A deep navy ink reaches ~7:1 against it and keeps the CTAs readable. */
-    --accent-ink: #10122b;
+    /* Same operator colour as light mode; only the derivations differ, so the accent pops
+     * on the dark ground: hover brightens (mix white) instead of darkening, and the soft
+     * tint carries more of the accent over the darker surface. */
+    --accent: #25c3ff;
+    --accent-hover: color-mix(in srgb, var(--accent), #fff 16%);
+    --accent-soft: color-mix(in srgb, var(--accent) 22%, var(--surface));
+    --accent-ring: color-mix(in srgb, var(--accent) 45%, transparent);
+    --accent-ink: #06202c;
 
     --plex: #e5a00d;
     --plex-hover: #f2ad1f;
@@ -177,11 +183,11 @@
   --unknown: #e0a33f;
   --unknown-soft: #2a2013;
 
-  --accent: #818cf8;
-  --accent-hover: #a5aefb;
-  --accent-soft: #1e1f3a;
-  --accent-ring: rgba(129, 140, 248, 0.4);
-  --accent-ink: #10122b;
+  --accent: #25c3ff;
+  --accent-hover: color-mix(in srgb, var(--accent), #fff 16%);
+  --accent-soft: color-mix(in srgb, var(--accent) 22%, var(--surface));
+  --accent-ring: color-mix(in srgb, var(--accent) 45%, transparent);
+  --accent-ink: #06202c;
 
   --plex: #e5a00d;
   --plex-hover: #f2ad1f;
@@ -226,11 +232,11 @@
   --unknown: #9a6212;
   --unknown-soft: #fcf3e1;
 
-  --accent: #4f46e5;
-  --accent-hover: #4338ca;
-  --accent-soft: #eae9fd;
-  --accent-ring: rgba(79, 70, 229, 0.35);
-  --accent-ink: #fff;
+  --accent: #25c3ff;
+  --accent-hover: color-mix(in srgb, var(--accent), #000 14%);
+  --accent-soft: color-mix(in srgb, var(--accent) 15%, var(--surface));
+  --accent-ring: color-mix(in srgb, var(--accent) 42%, transparent);
+  --accent-ink: #06202c;
 
   --plex: #e5a00d;
   --plex-hover: #f2ad1f;
@@ -4306,6 +4312,83 @@ button.danger:hover:not(:disabled) {
 .set-row.dimmed .help {
   opacity: 0.55;
 }
+
+/* The accent-colour row stacks its parts (control, presets, preview) instead of the
+   two-column label/control grid, so it flows top to bottom like the mock. */
+.set-row.accent-row {
+  display: block;
+}
+.set-row.accent-row .set-control {
+  justify-self: initial;
+  margin-top: 0.55rem;
+}
+.set-row.accent-row .help {
+  max-width: 62ch;
+}
+.field-error {
+  color: var(--condemn);
+  margin-top: 0.4rem;
+}
+/* The colour swatch: a native colour input, clipped to a rounded square on the control
+   standard so it reads as one of the app's own boxes rather than the raw OS widget. */
+.swatch-wrap {
+  position: relative;
+  width: 2.3rem;
+  height: 2.3rem;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  flex: none;
+}
+.swatch-wrap input[type="color"] {
+  position: absolute;
+  inset: -6px;
+  width: calc(100% + 12px);
+  height: calc(100% + 12px);
+  border: none;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+}
+.hexfield {
+  width: 8.5rem;
+  font-variant-numeric: tabular-nums;
+  text-transform: lowercase;
+}
+.presets {
+  display: flex;
+  gap: 0.45rem;
+  margin-top: 0.6rem;
+}
+.preset-dot {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  border: 2px solid var(--surface);
+  box-shadow: 0 0 0 1px var(--border-strong);
+  cursor: pointer;
+  padding: 0;
+}
+.preset-dot[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.accent-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+}
+.accent-preview .pv-label {
+  font-size: 0.7rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
 .set-row.set-status {
   grid-template-columns: 1fr;
   padding: 0.6rem 1.1rem;
@@ -4675,19 +4758,10 @@ button.danger:hover:not(:disabled) {
   font-family: var(--mono);
   font-size: 0.8rem;
 }
-.setup-done {
+.setup-scanning {
   display: flex;
   align-items: center;
-  gap: 1rem;
-  flex-wrap: wrap;
-  margin-top: 1.5rem;
-  padding: 1rem 1.25rem;
-  border-radius: var(--radius);
-  background: var(--protect-soft);
-  border: 1px solid color-mix(in srgb, var(--protect) 40%, transparent);
-}
-.setup-done button {
-  margin-left: auto;
+  gap: 0.6rem;
 }
 
 /* password form (safety) + quantity input (units) + lazy sentinel */
