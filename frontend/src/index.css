@@ -962,6 +962,69 @@ button.link:hover:not(:disabled) {
   transition: width 0.2s ease;
 }
 
+/* The background-scan cue: a thin accent line pinned to the very top of the window, shown
+   only while a scan runs (ScanLine in App.tsx). Determinate -- the fill tracks the scan's
+   real percent -- and it fades out the moment the scan finishes, so a still top edge always
+   means nothing is running. Sits above the page but below the modal scrim (z 60), so an
+   open dialog covers it. */
+.scanline {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 55;
+  height: 3px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s ease;
+}
+.scanline.on {
+  opacity: 1;
+}
+.scanline-fill {
+  position: relative;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+  overflow: hidden;
+  transition: width 0.3s ease;
+}
+/* A faint highlight travelling the filled length, so the line reads as live work rather
+   than a bar that stalled between the scan's coarse percent steps. */
+.scanline-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--accent-ink) 35%, transparent),
+    transparent
+  );
+}
+.scanline.on .scanline-fill::after {
+  animation: scanline-shimmer 1.25s linear infinite;
+}
+@keyframes scanline-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the activity signal, drop the motion: no shimmer, no fade. */
+  .scanline {
+    transition: none;
+  }
+  .scanline-fill::after {
+    content: none;
+  }
+}
+
 /* ---- layout -------------------------------------------------------------- */
 
 main.split {

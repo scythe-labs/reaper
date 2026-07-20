@@ -273,6 +273,33 @@ function WhyPanelFallback({ error, onClose }: { error: boolean; onClose: () => v
   );
 }
 
+/** A thin accent line pinned to the very top of the window while a scan runs in the
+ *  background, filling to the scan's real percent and gone the moment it finishes. Ambient
+ *  by design: it only says "a scan is working"; the phase, counts and controls live on the
+ *  scan bar (Settings → Jobs), which is where you go to actually read them.
+ *
+ *  Unlike SafetyBanner this is not a safety surface, so it may show nothing when it knows
+ *  nothing: an absent line reads as "idle", the calm and correct default, and a dropped
+ *  status poll must not paint a scan that may not be running. (The armed-state banner is the
+ *  surface that must never fail quiet.) Kept mounted so it can fade rather than pop, and
+ *  aria-hidden while idle so a screen reader hears it only when there is activity. */
+export function ScanLine({ running, percent }: { running: boolean; percent: number }) {
+  const pct = Math.max(0, Math.min(100, percent));
+  return (
+    <div
+      className={running ? "scanline on" : "scanline"}
+      role="progressbar"
+      aria-label="Scanning your library"
+      aria-hidden={!running}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={running ? Math.round(pct) : undefined}
+    >
+      <div className="scanline-fill" style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
 function Dashboard({ user }: { user: AuthUser }) {
   const [view, setView] = useState<View>("review");
   const [verdict, setVerdict] = useState<Verdict>("condemn");
@@ -343,6 +370,17 @@ function Dashboard({ user }: { user: AuthUser }) {
     if (name && document.title !== name) document.title = name;
   }, [generalSettings?.application_name]);
 
+  // The background-scan cue, polled from the shell so it lights up on every screen. Fast
+  // while a scan runs; a gentle idle poll so a scan started elsewhere (the scheduler,
+  // another device) still surfaces here without a manual start or a tab refocus -- the
+  // whole point of a global "something is running" line. Shares the ["scanStatus"] cache
+  // with the scan bar, so the two never disagree.
+  const { data: scanStatus } = useQuery({
+    queryKey: ["scanStatus"],
+    queryFn: api.scanStatus,
+    refetchInterval: (query) => (query.state.data?.running ? 1000 : 15000),
+  });
+
   const { data: detail, isError: detailError } = useQuery({
     queryKey: ["candidate", selectedId],
     queryFn: () => api.candidate(selectedId!),
@@ -393,6 +431,7 @@ function Dashboard({ user }: { user: AuthUser }) {
 
   return (
     <div className="app">
+      <ScanLine running={scanStatus?.running ?? false} percent={scanStatus?.percent ?? 0} />
       <header className="masthead">
         <div className="brand">
           <svg className="brand-mark sm" viewBox="0 0 48 48" fill="none" aria-hidden="true">

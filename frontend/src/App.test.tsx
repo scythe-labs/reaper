@@ -9,7 +9,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ScanFreshness, UserMenu } from "./App";
+import { ScanFreshness, ScanLine, UserMenu } from "./App";
 import { ApiError, type AuthUser, type Snapshot } from "./api";
 
 const { apiMock } = vi.hoisted(() => ({ apiMock: { logout: vi.fn() } }));
@@ -81,6 +81,31 @@ describe("ScanFreshness", () => {
       />,
     );
     expect(screen.getByText(/came back incomplete/i)).toBeInTheDocument();
+  });
+});
+
+describe("ScanLine", () => {
+  it("is hidden and announces nothing while idle", () => {
+    render(<ScanLine running={false} percent={0} />);
+    // aria-hidden takes it out of the accessibility tree, so it is only found with hidden.
+    const bar = screen.getByRole("progressbar", { hidden: true });
+    expect(bar).toHaveAttribute("aria-hidden", "true");
+    expect(bar).not.toHaveAttribute("aria-valuenow");
+  });
+
+  it("shows and reports the percent while a scan runs", () => {
+    render(<ScanLine running percent={42} />);
+    const bar = screen.getByRole("progressbar");
+    expect(bar).toHaveAttribute("aria-hidden", "false");
+    expect(bar).toHaveAttribute("aria-valuenow", "42");
+    expect(bar).toHaveAccessibleName(/scanning your library/i);
+  });
+
+  it("clamps an out-of-range percent to the fill width", () => {
+    const { container, rerender } = render(<ScanLine running percent={150} />);
+    expect(container.querySelector(".scanline-fill")).toHaveStyle({ width: "100%" });
+    rerender(<ScanLine running percent={-10} />);
+    expect(container.querySelector(".scanline-fill")).toHaveStyle({ width: "0%" });
   });
 });
 
