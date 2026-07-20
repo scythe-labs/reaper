@@ -878,7 +878,10 @@ def inspect(
             PolicyWarning(
                 field="require_approval",
                 severity="danger",
-                message="This profile deletes without a human looking at the list first.",
+                message=(
+                    "This turns off your approval, so a run could remove titles "
+                    "without showing you the list first."
+                ),
             )
         )
 
