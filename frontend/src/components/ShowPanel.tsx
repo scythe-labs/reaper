@@ -11,7 +11,13 @@
 import type { Candidate, Group } from "../api";
 import { itemBytes, totalBytes } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
-import { groupOverride, OverrideControls, showReapIsNoop, ShowStatusChip } from "./ReviewQueue";
+import {
+  groupOverride,
+  handFate,
+  OverrideControls,
+  showReapIsNoop,
+  ShowStatusChip,
+} from "./ReviewQueue";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
 import { JumpPill, Synopsis, WhyHero } from "./WhyPanel";
 
@@ -110,7 +116,7 @@ export function ShowPanel({
           {group.seasons.map((season) => (
             <li key={season.id}>
               <button type="button" className="panel-season" onClick={() => onOpenSeason(season.id)}>
-                <span className={`score score-${season.verdict}`}>{season.score}</span>
+                <span className={`score score-${handFate(season)}`}>{season.score}</span>
                 <span className="panel-season-name">
                   {season.season_number === 0
                     ? "Specials"

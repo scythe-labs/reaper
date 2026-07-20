@@ -329,10 +329,27 @@ export function Poster({ url, alt }: { url: string | null; alt: string }) {
   return <img className="poster" src={url} alt={alt} loading="lazy" onError={() => setBroken(true)} />;
 }
 
-/** The score chip. Colour carries the verdict so it reads without the label. */
+/** Which colour a score badge or strip square wears once a hand decision is in play.
+ *  A hand SPARE, or a reap the engine honours, shows SOLID -- "you chose this" -- so the
+ *  cell states the item's real fate, not just Reaper's first read. A reap the engine
+ *  REFUSED reads amber ("refused"): the ask is noted, the file is still held. Anything
+ *  untouched keeps its scan verdict. Shared by the score badge and the season strip so the
+ *  two can never disagree with each other or with the row's chip. */
+export type Fate = Verdict | "reap" | "spare" | "refused";
+export function handFate(item: {
+  verdict: Verdict;
+  override: Override | null;
+  override_effective: boolean | null;
+}): Fate {
+  if (item.override === "spare") return "spare";
+  if (item.override === "reap") return item.override_effective === false ? "refused" : "reap";
+  return item.verdict;
+}
+
+/** The score chip. Colour carries the item's fate so it reads without the label. */
 function Score({ item }: { item: Candidate }) {
   return (
-    <span className={`score score-${item.verdict}`} title={`Score ${item.score} of 100`}>
+    <span className={`score score-${handFate(item)}`} title={`Score ${item.score} of 100`}>
       {item.score}
     </span>
   );
@@ -741,11 +758,11 @@ const MARK_LABELS: Record<string, string> = {
   abstain: "left alone",
 };
 
-/** The season strip: one small square per season of the show, colored by its lane
+/** The season strip: one small square per season of the show, colored by its fate
  *  across the WHOLE snapshot -- so "which seasons stay and which go" reads at a glance
  *  without expanding anything. A hand decision paints its square solid; a reap the
- *  engine refuses keeps its scan color, and the tooltip says both facts. Each square
- *  opens that season's own reasoning (the show card itself opens the show). */
+ *  engine refuses reads amber (noted, still held), and the tooltip says both facts. Each
+ *  square opens that season's own reasoning (the show card itself opens the show). */
 function SeasonStrip({
   marks,
   onOpen,
@@ -757,13 +774,20 @@ function SeasonStrip({
     <div className="season-strip">
       {marks.map((mark, i) => {
         const name = mark.season === 0 ? "Specials" : `Season ${mark.season ?? "?"}`;
-        const reapRefused = mark.override === "reap" && mark.override_effective === false;
+        const fate = handFate(mark);
+        const reapRefused = fate === "refused";
+        // The base square is the scan verdict; a hand decision paints over it. A refused
+        // reap wears the same amber the row's chip does -- noted, but the file is held --
+        // so the strip never claims a removal the engine declined (`.strip-ov-reap-refused`
+        // sits after `.strip-abstain` in index.css and wins).
         const handClass =
-          mark.override === "spare"
+          fate === "spare"
             ? " strip-ov-spare"
-            : mark.override === "reap" && !reapRefused
+            : fate === "reap"
               ? " strip-ov-reap"
-              : "";
+              : fate === "refused"
+                ? " strip-ov-reap-refused"
+                : "";
         const overrideNote =
           mark.override === "spare"
             ? ", you spared it"

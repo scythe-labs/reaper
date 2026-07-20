@@ -377,3 +377,14 @@ Safari alone. New variants are blockers, like the rules above.
       footer, the same placement the movie/season panel uses. The bulk bar's Reap still keys off
       the tab verdict alone (a heterogeneous selection is not a single item); refining it for
       show-only selections is an open follow-up, not a silent gap.
+
+49. **A fate-bearing cell colours by the item's fate, never by the scan verdict alone.** The
+    score badge (`Score`) and the season strip square (`SeasonStrip`) both route their colour
+    through the one `handFate` helper (`components/ReviewQueue.tsx`): a hand spare or an
+    *effective* hand reap paints SOLID ("you chose this"), a reap the engine *refused* reads
+    amber (`--unknown`, the row chip's own "kept for now" tone), and an untouched cell keeps its
+    scan verdict. A held reap must never wear the solid red that means "removed," and a hand
+    decision must never leave the number the colour the scan first gave it — that reads as a
+    contradiction next to the row's chip. Never recolour these cells by `verdict` inline; add the
+    surface to `handFate`, and its `.score-*` / `.strip-ov-*` class after the scan-verdict classes
+    so it wins.

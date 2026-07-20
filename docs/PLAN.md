@@ -7,9 +7,34 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-20 (the whole-show Spare/Reap the show panel never had)
+Last updated: 2026-07-20 (the score badge and strip square now follow the item's fate)
 
-### Newest — the whole-show Spare/Reap the show panel never had
+### Newest — the number never followed the hand
+
+Two display bugs the operator caught on one card, same root cause. The score badge and one
+strip square colored themselves from Reaper's *scan verdict* and never looked at a hand
+override. So a row could read "Reaped by hand · will be removed" while its number stayed
+green (a scan `protect`), and a reap the engine *held* ("Reap requested · kept for now")
+left its strip square plain grey, indistinguishable from a season nobody touched. Mocked as
+a rendered artifact, approved, then driven end-to-end in a real browser.
+
+- **A cell's color now follows the item's fate, not just the first read.** One shared helper,
+  `handFate` (`components/ReviewQueue.tsx`), maps override + effectiveness + verdict to a color
+  token, and both the score badge (`Score`, used on cards and in `ShowPanel`) and the season
+  strip (`SeasonStrip`) go through it, so the two can never disagree with each other or with
+  the row's chip.
+- **Solid for a decision that takes effect, amber for a reap that was held.** An effective hand
+  reap is solid red, a hand spare solid green (the "you chose this" solid language the chips and
+  strip overrides already spoke). A reap the engine refused is amber — the same `--unknown` tone
+  the row's `chip-reap-refused` wears — because the file is *not* going anywhere, so it must never
+  wear the solid red that means "removed." New `.score-reap/.score-spare/.score-refused` and
+  `.strip-ov-reap-refused` classes carry it, defined after the scan-verdict classes so they win.
+- **The assumption that turned out wrong:** that the score number *is* the score, so the scan
+  verdict alone should color it. On a screen where a hand decision overrides the verdict, the
+  number that stays the old color reads as a contradiction, not as information. The honest cell
+  states the outcome.
+
+### The whole-show Spare/Reap the show panel never had
 
 A gap the action-grammar pass left: the show panel (`ShowPanel`) listed every season but
 offered no way to act on the show, the one override-bearing surface with no buttons at all.

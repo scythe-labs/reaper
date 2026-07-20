@@ -11,7 +11,7 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { api, type Candidate, type Verdict } from "../api";
+import { api, type Candidate, type GroupSeasonMark, type Verdict } from "../api";
 import { compactSpan, ReviewQueue, ShowStatusChip } from "./ReviewQueue";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -343,6 +343,93 @@ describe("a reap the engine refused", () => {
     expect(
       screen.queryByText(/kept for now: Needs a look/),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("the score badge's colour follows the fate", () => {
+  // The number cannot keep the scan verdict while the row says "will be removed": it wears
+  // the fate a hand decision forces. Solid reap/spare when it takes effect, amber when a
+  // reap is held.
+  async function scoreClassFor(item: Candidate): Promise<string> {
+    apiMock.candidates.mockResolvedValue(page([item]));
+    const { container } = renderQueue();
+    await screen.findByText("Example Movie 1");
+    return container.querySelector(".score")!.className;
+  }
+
+  it("goes solid red when the item is reaped by hand", async () => {
+    // A protect item (green by the scan) that a hand reap will actually remove.
+    const cls = await scoreClassFor(
+      movie(1, { verdict: "protect", override: "reap", override_effective: true }),
+    );
+    expect(cls).toContain("score-reap");
+    expect(cls).not.toContain("score-protect");
+  });
+
+  it("goes amber when the reap is held for now", async () => {
+    const cls = await scoreClassFor(
+      movie(1, { verdict: "abstain", override: "reap", override_effective: false }),
+    );
+    expect(cls).toContain("score-refused");
+    expect(cls).not.toContain("score-abstain");
+  });
+
+  it("goes solid green when the item is spared by hand", async () => {
+    const cls = await scoreClassFor(
+      movie(1, { verdict: "condemn", override: "spare" }),
+    );
+    expect(cls).toContain("score-spare");
+    expect(cls).not.toContain("score-condemn");
+  });
+
+  it("keeps the scan verdict's colour when nothing was overridden", async () => {
+    const cls = await scoreClassFor(movie(1, { verdict: "condemn" }));
+    expect(cls).toContain("score-condemn");
+  });
+});
+
+describe("the season strip's colours follow the fate", () => {
+  // A show card's strip draws one square per season from `group_seasons`. Each square must
+  // agree with its row: solid for an effective hand decision, amber for a reap the engine
+  // held, the scan verdict otherwise.
+  function mark(id: number, verdict: Verdict, extra: Partial<GroupSeasonMark> = {}): GroupSeasonMark {
+    return {
+      id,
+      season: id,
+      verdict,
+      override: null,
+      override_effective: null,
+      size_bytes: 1024 ** 3,
+      ...extra,
+    };
+  }
+
+  async function stripClasses(marks: GroupSeasonMark[]): Promise<string[]> {
+    const rows = marks.map((m) =>
+      season(m.id, m.verdict, {
+        override: m.override,
+        override_effective: m.override_effective,
+        group_seasons: marks,
+      }),
+    );
+    apiMock.candidates.mockResolvedValue(page(rows));
+    const { container } = renderQueue();
+    await screen.findByText("Example Show");
+    return Array.from(container.querySelectorAll(".strip-sq")).map((el) => el.className);
+  }
+
+  it("paints a held reap amber, not solid and not its plain scan colour", async () => {
+    const classes = await stripClasses([
+      mark(14, "condemn"),
+      mark(19, "abstain", { override: "reap", override_effective: false }),
+      mark(20, "abstain", { override: "reap", override_effective: true }),
+    ]);
+    // 14 condemned, 19 reap-held (amber), 20 reap-effective (solid).
+    expect(classes[0]).toContain("strip-condemn");
+    expect(classes[1]).toContain("strip-ov-reap-refused");
+    expect(classes[1]).not.toContain("strip-ov-reap ");
+    expect(classes[2]).toContain("strip-ov-reap");
+    expect(classes[2]).not.toContain("strip-ov-reap-refused");
   });
 });
 

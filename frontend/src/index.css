@@ -1169,6 +1169,23 @@ tbody tr.selected {
   background: var(--surface-2);
   color: var(--abstain);
 }
+/* A hand decision recolours the number to the fate it forces, so it never contradicts the
+   row's chip: SOLID for a decision that takes effect (you chose this), amber for a reap the
+   engine refused (noted, the file is held). This mirrors the chips (.chip-hand-*) and the
+   strip (.strip-ov-*), the app's one hand-decision language. */
+.score-reap {
+  background: var(--condemn);
+  color: var(--condemn-soft);
+}
+.score-spare {
+  background: var(--protect);
+  color: var(--protect-soft);
+}
+.score-refused {
+  background: var(--unknown-soft);
+  color: var(--unknown);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--unknown) 45%, transparent);
+}
 
 /* ---- why panel ----------------------------------------------------------- */
 
@@ -3500,8 +3517,8 @@ button.sm {
   background: var(--surface-2);
 }
 /* A hand override paints the square SOLID -- "you chose this" reads at a glance next
-   to the outlined scan verdicts. A reap that the engine refuses (someone streaming,
-   an unmanaged file) never gets the solid fill; the square keeps its scan color. */
+   to the outlined scan verdicts. A reap the engine refuses (someone streaming, an
+   unmanaged file) is the exception below: not solid, amber, because the file is held. */
 .strip-ov-spare {
   color: var(--protect-soft);
   background: var(--protect);
@@ -3511,6 +3528,15 @@ button.sm {
   color: var(--condemn-soft);
   background: var(--condemn);
   box-shadow: none;
+}
+/* A reap the engine refuses is NOT solid -- the file is not going anywhere. It wears the
+   amber the row's chip uses for "kept for now", so a hand ask that was held reads as noted
+   rather than done, and never as a removal. Defined after .strip-abstain so it wins over the
+   square's scan-verdict base. */
+.strip-ov-reap-refused {
+  color: var(--unknown);
+  background: var(--unknown-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--unknown) 45%, transparent);
 }
 
 /* --- hand overrides: the paired Spare / Reap toggle ---------------------------------------- */
