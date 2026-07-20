@@ -32,7 +32,7 @@ export function CondemnedChip() {
  *  A reap is refused in two different lanes, and their chips read nothing alike. A
  *  protection that fired says "Kept · playing right now", so dropping the prefix leaves a
  *  clause that already fits. A reap refused because a protection could not be checked
- *  carries that lane's own chip instead, capitalised and sometimes with a middot of its
+ *  carries that lane's own chip instead, capitalized and sometimes with a middot of its
  *  own, so each of those is mapped to a clause here rather than pasted in mid-sentence.
  *  Both lanes come from `decide_verdict`'s reap branch (blocked, or a safety stop). */
 const BLOCKED_WHY: Record<string, string> = {
@@ -64,7 +64,7 @@ const OVERRIDE_CLASSES: Record<ChipFamily, { spare: string; refused: string; rea
   },
   "status-chip": {
     spare: "status-chip status-hand-spare",
-    refused: "status-chip status-look",
+    refused: "status-chip status-reap-held",
     reap: "status-chip status-hand-reap",
   },
 };
@@ -73,9 +73,10 @@ const OVERRIDE_CLASSES: Record<ChipFamily, { spare: string; refused: string; rea
  *  owner's decisions; outlined chips are Reaper's. A reap takes effect on the server the
  *  moment it is saved, and the views that show it (the queue and its counts, the show
  *  panel, the why panel, the grace countdown) refresh together through
- *  `useOverrideMutations`' refresh(). The engine still refuses a reap it must not honour
+ *  `useOverrideMutations`' refresh(). The engine still refuses a reap it must not honor
  *  (someone is watching right now, the file isn't managed, or a protection could not be
- *  checked); that reads amber and says why, via `chipWhy` above. */
+ *  checked); that reads dashed red (held, not a done removal) and says why, via `chipWhy`
+ *  above. Amber is reserved for "left for you to decide" and never marks a held reap. */
 export function OverrideChip({
   override,
   effective,

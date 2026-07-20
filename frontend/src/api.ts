@@ -43,9 +43,9 @@ export interface GroupSeasonMark {
   season: number | null;
   verdict: Verdict;
   override: Override | null;
-  /** For a "reap" override: whether the engine honours it (true paints the square solid
-   *  red) or refuses it for a safety stop or an unchecked protection (false paints it amber,
-   *  "kept for now"). Null when there is no reap override. */
+  /** For a "reap" override: whether the engine honors it (true paints the square solid
+   *  red) or can't yet, for a safety stop or an unchecked protection (false paints it dashed
+   *  red with a scythe, "kept for now"). Null when there is no reap override. */
   override_effective: boolean | null;
   /** The season's size on disk, so the card can state whole-show totals without a
    *  second fetch. Null when nothing would report one, which is not zero. */
@@ -93,7 +93,7 @@ export interface Candidate {
    *  they click, so the card shows the pending intent before the next scan bakes it in.
    *  Inherited from the show for a season the owner overrode whole. */
   override: Override | null;
-  /** For a "reap" override: whether the engine honours it -- it joins the counts, the
+  /** For a "reap" override: whether the engine honors it -- it joins the counts, the
    *  grace countdown and the next plan -- or refuses it (someone is watching right now,
    *  or the file isn't managed). Null when there is no reap override. Red only on true. */
   override_effective: boolean | null;
@@ -111,7 +111,7 @@ export interface Candidate {
 }
 
 /** Whether a show has finished, as three states rather than a bool, so "the server never
- *  said" can never be drawn as a definite answer. "continuing" is labelled "Still going"
+ *  said" can never be drawn as a definite answer. "continuing" is labeled "Still going"
  *  on screen: that arm also covers a show that hasn't started airing yet. */
 export type ShowStatus = "ended" | "continuing" | "unknown";
 
@@ -793,7 +793,7 @@ export interface Notifications {
 // ---------------------------------------------------------------------------
 
 /** A header our own frontend sends on every request. It is the load-bearing half
- *  of the CSRF defence: a cross-origin page cannot set a custom header without a
+ *  of the CSRF defense: a cross-origin page cannot set a custom header without a
  *  CORS preflight, which this server never grants. See reaper/api/middleware.py. */
 const CSRF_HEADER = { "X-Reaper-CSRF": "1" };
 

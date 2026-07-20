@@ -14,6 +14,14 @@ refreshes Plex. Python 3.13 / FastAPI backend + React 19 / Vite frontend, one co
   operators whose servers we will never see. Never commit a real title, host, path,
   username, or stat — use generic placeholders. Live-testing findings are recorded as
   ratios and shapes, never fingerprints. This applies to commit messages too.
+- **American English spelling everywhere — code, identifiers, comments, docs, tests,
+  operator copy, and commit messages.** Write `color`, `behavior`, `honor`, `normalize`,
+  `serialize`, `judgment`, `canceled`, `labeled`, `gray`, `license`, `defense`, `center`,
+  `recognize`, `artifact`, not their British forms (`colour`, `behaviour`, `judgement`,
+  `grey`, …). Identifiers follow too (`normalize_label`, `SeasonJudgment`). The *only*
+  exceptions are names owned by someone else and spelled British at the source: standard-
+  library tokens like `asyncio.CancelledError` and the ARIA `aria-labelledby` attribute keep
+  their real spelling. When in doubt, prefer the American form.
 - **Treat Reaper as production code.** It will be released; write for an unknown operator,
   never for one specific server.
 - **Keep `docs/PLAN.md` current.** It is the living plan — what is done and, more
@@ -357,34 +365,47 @@ Safari alone. New variants are blockers, like the rules above.
     (Spare↔Spared, Reap↔Reaping) never resizes them: a shrinking button left a red ghost in the
     region it vacated, in Safari only.
 47. **Card hover is the accent, additive on the open card.** A card's hover is the accent edge,
-    not grey; the open (`card-selected`) card keeps its accent selection bar on hover and deepens
+    not gray; the open (`card-selected`) card keeps its accent selection bar on hover and deepens
     it, never trading it for the plain hover (which reads as a deselect). Any `:hover` that can
     also be `.active`/selected re-asserts the selected treatment at equal-or-higher specificity,
     so the chosen state is not lost under the pointer.
-48. **Reap is dropped wherever the item is already condemned; Keep-first colours the pair.** A
+48. **Reap is dropped wherever the item is already condemned; Keep-first colors the pair.** A
     hand Reap does nothing to an already-condemned item, so it is hidden on the Condemned lane in
     every surface carrying `OverrideControls` (card, panel, bulk bar) via `hideReap` from the tab
     verdict — never reimplement that test inline. "Reap now" (the real deletion) is a different
-    control and is never hidden. Spare invites in green; Reap stays the quiet grey of a plain
+    control and is never hidden. Spare invites in green; Reap stays the quiet gray of a plain
     button until hovered; a chosen decision is the solid hand-decision chip.
     - **A whole show is not atomic, so it uses its own no-op test.** A movie/season on the
       Condemned lane is fully condemned (`verdict === "condemn"` → Reap hidden). A show is on
       that lane because *some* season is, and a whole-show Reap still takes the seasons the scan
       kept — so both buttons stay until *every* season is condemned. That show test is
       `showReapIsNoop` (in `components/ReviewQueue.tsx`), the one place it lives; the show card's
-      whole-show control and the show panel both call it, never a fourth inline copy. The show
+      whole-show control and the show panel both call it, never a fourth inline copy. **Every
+      whole-show computation runs over the whole show, every lane** — `showReapIsNoop`,
+      `groupOverride`, and `groupReapEffective` all take `group.seasons` in the panel and
+      `group_seasons` (the strip marks, held as `showSeasons`) on the card, never the tab-filtered
+      page. On the Condemned lane that page holds only the show's reaped/condemned seasons, which
+      all agree "condemn"/"reap" and would (a) hide the one control that reaps the show's kept
+      seasons and (b) light the whole-show control as if the entire show were set to reap when
+      only some of it is. The show
       panel (`ShowPanel`) carries the whole-show Spare/Reap in its own bottom `.why-actions`
       footer, the same placement the movie/season panel uses. The bulk bar's Reap still keys off
       the tab verdict alone (a heterogeneous selection is not a single item); refining it for
       show-only selections is an open follow-up, not a silent gap.
 
-49. **A fate-bearing cell colours by the item's fate, never by the scan verdict alone.** The
-    score badge (`Score`) and the season strip square (`SeasonStrip`) both route their colour
+49. **A fate-bearing cell colors by the item's fate, never by the scan verdict alone.** The
+    score badge (`Score`) and the season strip square (`SeasonStrip`) both route their color
     through the one `handFate` helper (`components/ReviewQueue.tsx`): a hand spare or an
-    *effective* hand reap paints SOLID ("you chose this"), a reap the engine *refused* reads
-    amber (`--unknown`, the row chip's own "kept for now" tone), and an untouched cell keeps its
-    scan verdict. A held reap must never wear the solid red that means "removed," and a hand
-    decision must never leave the number the colour the scan first gave it — that reads as a
-    contradiction next to the row's chip. Never recolour these cells by `verdict` inline; add the
-    surface to `handFate`, and its `.score-*` / `.strip-ov-*` class after the scan-verdict classes
-    so it wins.
+    *effective* hand reap paints SOLID ("you chose this"); a reap the engine *can't honor yet*
+    reads **dashed red** (`--condemn` on `--condemn-soft`, a dashed border, never solid), and on
+    the strip it also carries a small scythe corner-mark (`.strip-mark`) so it still reads as
+    YOUR ask and never blends into the plain condemned outline beside it; an untouched cell keeps
+    its scan verdict. **Amber (`--unknown`) now means exactly one thing — "left for you to
+    decide" (the abstain `status-look` chip) — and never a held reap.** A held reap must never
+    wear the solid red that means "removed," and a hand decision must never leave the number the
+    color the scan first gave it. Keep the held-reap language consistent across movies and
+    seasons: a movie already carries the scythe via its resting `OverrideMark`, the strip square
+    carries it as the corner-mark, and both wear the dashed-red `.score-refused` /
+    `.strip-ov-reap-refused` / `.status-reap-held` / `.chip-reap-refused` classes. Never recolor
+    these cells by `verdict` inline; add the surface to `handFate`, and its `.score-*` /
+    `.strip-ov-*` class after the scan-verdict classes so it wins.

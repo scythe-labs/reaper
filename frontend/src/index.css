@@ -3,7 +3,7 @@
  * Semantic classes, not utilities. The point of this file is that the *visual* language
  * carries meaning the copy would otherwise have to repeat:
  *
- *   - condemn is red, protect is green, abstain is grey;
+ *   - condemn is red, protect is green, abstain is gray;
  *   - a protection that FIRED and one that was merely CHECKED look different;
  *   - a protection that could NOT BE CHECKED looks different again — amber, dashed —
  *     because "we could not look" is not "we looked and it was fine", and rendering
@@ -39,7 +39,7 @@
   --unknown: #9a6212;
   --unknown-soft: #fcf3e1;
 
-  /* The accent is operator-configurable (Settings -> General): one colour re-tints the
+  /* The accent is operator-configurable (Settings -> General): one color re-tints the
    * whole UI, so everything below derives from --accent rather than being hand-set.
    * --accent and --accent-ink are applied at runtime from the saved value (App applies it;
    * index.html pre-paints it from a localStorage cache to avoid a flash). The values here
@@ -50,7 +50,7 @@
   --accent-ring: color-mix(in srgb, var(--accent) 42%, transparent);
   /* The ink that rides on a solid --accent fill. Dark by default because the sky-blue
    * accent is bright (white would fail WCAG AA on it); App recomputes it for a custom
-   * colour, picking dark or light by the accent's luminance so contrast always clears. */
+   * color, picking dark or light by the accent's luminance so contrast always clears. */
   --accent-ink: #06202c;
 
   /* Plex brand gold, for the sign-in button. */
@@ -125,7 +125,7 @@
     --unknown: #e0a33f;
     --unknown-soft: #2a2013;
 
-    /* Same operator colour as light mode; only the derivations differ, so the accent pops
+    /* Same operator color as light mode; only the derivations differ, so the accent pops
      * on the dark ground: hover brightens (mix white) instead of darkening, and the soft
      * tint carries more of the accent over the darker surface. */
     --accent: #25c3ff;
@@ -422,8 +422,8 @@ a:hover {
   box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 18%, transparent);
 }
 /* Soft-surface tones shared by the top-of-page banner and the Settings safety panel, so a
-   colour tweak lands in both instead of silently diverging. The banner sets its own text
-   colour; the safety panel inherits. */
+   color tweak lands in both instead of silently diverging. The banner sets its own text
+   color; the safety panel inherits. */
 .banner-safe,
 .safety-state.safe {
   background: var(--protect-soft);
@@ -997,7 +997,7 @@ button.link:hover:not(:disabled) {
   overflow: hidden;
   transition: width 0.3s ease;
 }
-/* A faint highlight travelling the filled length, so the line reads as live work rather
+/* A faint highlight traveling the filled length, so the line reads as live work rather
    than a bar that stalled between the scan's coarse percent steps. */
 .scanline-fill::after {
   content: "";
@@ -1074,7 +1074,7 @@ main.split {
 }
 
 /* Narrower than this the five section tabs are wider than the row they sit in (~400px of
-   tabs in a ~335px track on a 375px phone), and a centred, non-wrapping flex row
+   tabs in a ~335px track on a 375px phone), and a centerd, non-wrapping flex row
    pushes the leading tab off the left edge where nothing can scroll to it. Same answer as
    .bulk-bar: one line, scrolled sideways, never a ragged second row. 560px is the narrowest
    width on the file's 1100/900/640/560 grid and the only one the overflow actually reaches;
@@ -1169,10 +1169,11 @@ tbody tr.selected {
   background: var(--surface-2);
   color: var(--abstain);
 }
-/* A hand decision recolours the number to the fate it forces, so it never contradicts the
-   row's chip: SOLID for a decision that takes effect (you chose this), amber for a reap the
-   engine refused (noted, the file is held). This mirrors the chips (.chip-hand-*) and the
-   strip (.strip-ov-*), the app's one hand-decision language. */
+/* A hand decision recolors the number to the fate it forces, so it never contradicts the
+   row's chip: SOLID for a decision that takes effect (you chose this), DASHED RED for a reap
+   the engine can't honor yet (noted, the file is held) -- never solid, never the amber that
+   now means only "left for you to decide". This mirrors the chips (.chip-hand-*,
+   .chip-reap-refused) and the strip (.strip-ov-*), the app's one hand-decision language. */
 .score-reap {
   background: var(--condemn);
   color: var(--condemn-soft);
@@ -1182,9 +1183,9 @@ tbody tr.selected {
   color: var(--protect-soft);
 }
 .score-refused {
-  background: var(--unknown-soft);
-  color: var(--unknown);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--unknown) 45%, transparent);
+  background: var(--condemn-soft);
+  color: var(--condemn);
+  border: 1px dashed var(--condemn);
 }
 
 /* ---- why panel ----------------------------------------------------------- */
@@ -1585,7 +1586,7 @@ a.rating-chip:hover {
   flex: 1;
 }
 
-/* A keep Reaper could not check is visually quieter AND explicitly labelled: it took the
+/* A keep Reaper could not check is visually quieter AND explicitly labeled: it took the
  * full discount, and that is worth a sentence, not just a dimmed row. */
 .signal-unknown {
   opacity: 0.75;
@@ -2015,7 +2016,7 @@ a.rating-chip:hover {
 }
 
 /* The owner's own protect conditions. Each stored rule reads as a green "keep it when…" chip
-   (protect-coloured, because that is all it can do); the add row is field + operator + value. */
+   (protect-colored, because that is all it can do); the add row is field + operator + value. */
 .conditions {
   margin-top: 1.25rem;
 }
@@ -2061,7 +2062,7 @@ a.rating-chip:hover {
   width: 7rem;
 }
 
-/* Custom-rules editor: a Radarr-style table where each rule declares its EFFECT, colour-coded
+/* Custom-rules editor: a Radarr-style table where each rule declares its EFFECT, color-coded
    in the same verdict language as the review queue (remove = red, keep = green).
 
    THE settings-bearing card, wherever one appears on the policy tab: the custom-rules
@@ -2468,7 +2469,7 @@ a.rating-chip:hover {
 
 /* The refusal. It must not look like a result. */
 /* "Needs a scan" is INFORMATION, not a warning: neutral surface, solid border, no alarm
-   colour. You didn't do anything wrong; the numbers just need refreshing. */
+   color. You didn't do anything wrong; the numbers just need refreshing. */
 .sim-info {
   background: var(--surface-2);
   border: 1px solid var(--border-strong);
@@ -2586,7 +2587,7 @@ a.rating-chip:hover {
   font-size: 0.88rem;
 }
 /* "New on the list": the titles a draft would newly flag, score on the right in the
-   condemn colour -- the same verdict language as everywhere else. */
+   condemn color -- the same verdict language as everywhere else. */
 .sim-examples {
   list-style: none;
   margin: 0.4rem 0 0.9rem;
@@ -2751,7 +2752,7 @@ details.grace summary {
   text-overflow: ellipsis;
   white-space: nowrap;
   /* The title opens that item's reasoning, so it is a button, which would otherwise
-     centre its label in the grid cell. */
+     center its label in the grid cell. */
   text-align: left;
 }
 .grace-remaining {
@@ -2896,7 +2897,7 @@ tbody tr.spared-row .title-cell {
 }
 /* The plan currently shown above wears the app's active-item look (the raised surface of
    .tab.active), so the list says which row you are already reading. The negative margin
-   cancels the added padding, so marking a row never shifts its neighbours. */
+   cancels the added padding, so marking a row never shifts its neighbors. */
 .run-history li.open {
   background: var(--surface);
   box-shadow: var(--shadow-sm);
@@ -3121,7 +3122,15 @@ tbody tr.spared-row .title-cell {
 .card-selected:hover {
   box-shadow: inset 3px 0 0 var(--accent), var(--shadow-md);
 }
-.card-spared {
+/* A spared card recedes -- but the dim must NOT be `opacity` on the card itself. An `opacity`
+   layer anywhere ABOVE the season strip makes Safari drop a strip square's fill to dark on a
+   child `:hover` (a group-opacity repaint bug -- the reason the strip hover only ever broke on
+   spared shows). So the dim goes on the poster and the text blocks, everything EXCEPT the
+   `.season-strip`, whose squares (and their hover ring) then keep a clean, un-composited layer.
+   `.card-side` is left alone on purpose too: its Spare/Reap buttons reveal on hover, and an
+   opacity layer over them is the same hazard. */
+.card-spared .poster,
+.card-spared .card-body > *:not(.season-strip) {
   opacity: 0.7;
 }
 .card-spared .card-title {
@@ -3356,8 +3365,10 @@ button.sm {
   color: var(--condemn);
 }
 /* Hand decisions wear SOLID chips: outlined chips are Reaper's verdicts, filled ones
-   are yours. The refused-reap case stays amber (chip-reap-refused): the ask is noted,
-   the file is still held, and the text says why. */
+   are yours. The reap the engine can't honor yet (chip-reap-refused) is dashed red: still
+   in the reap family you chose, but hollow and dashed so it never reads as a done removal,
+   and no longer the amber that means "left for you to decide". The ask is noted, the file
+   is held, and the text says why. */
 .chip-hand-reap {
   background: var(--condemn);
   color: var(--condemn-soft);
@@ -3367,8 +3378,9 @@ button.sm {
   color: var(--protect-soft);
 }
 .chip-reap-refused {
-  background: var(--unknown-soft);
-  color: var(--unknown);
+  background: var(--condemn-soft);
+  color: var(--condemn);
+  border: 1px dashed var(--condemn);
 }
 /* "We could not check" -- amber, and dashed so it never reads as a settled answer at a
  * glance. Same pairing the unchecked protections and .sig-unreadable use, for the same
@@ -3380,7 +3392,7 @@ button.sm {
 }
 
 /* The file's resolution, worn next to the size. Quiet by design: it informs a keep/reap
-   call ("that's our only 4K copy") without competing with the verdict colours. */
+   call ("that's our only 4K copy") without competing with the verdict colors. */
 .res-badge {
   display: inline-flex;
   align-items: center;
@@ -3462,6 +3474,15 @@ button.sm {
   color: var(--protect-soft);
   background: var(--protect);
 }
+/* A reap the engine can't honor yet: dashed red, mirroring .chip-reap-refused and the
+   dashed .score-refused / .strip-ov-reap-refused. It is no longer .status-look -- amber now
+   means only "left for you to decide", and a held reap is a decision you made, not one left
+   open. The dashed border reads "provisional" the way .chip-unchecked does. */
+.status-reap-held {
+  color: var(--condemn);
+  background: var(--condemn-soft);
+  border: 1px dashed var(--condemn);
+}
 
 /* The season strip: one square per season of the show, colored by its lane across the
    WHOLE snapshot -- kept and condemned side by side without expanding anything. A hand
@@ -3480,6 +3501,8 @@ button.sm {
   border-radius: 5px;
   display: grid;
   place-items: center;
+  /* The held-reap scythe (.strip-mark) pins to this square's corner. */
+  position: relative;
   font-family: inherit;
   font-size: 0.68rem;
   font-weight: 700;
@@ -3490,18 +3513,57 @@ button.sm {
   appearance: none;
   outline: 1.5px solid transparent;
   outline-offset: 1px;
-  transition:
-    transform 0.08s ease,
-    outline-color 0.08s ease;
+  transition: color 0.1s ease;
 }
+/* Hovering a square is how you open one season. macOS Safari has a compositing bug that
+   drops a strip square's FILL to dark on hover inside a card (we moved the spared `opacity`
+   off the strip, but it can still happen), so the hover is built to SURVIVE that rather than
+   fight it: the number switches to the theme's bright text with a `--bg`-colored halo -- which
+   stays readable on the green/red fill AND on a dropped-dark square, in either theme -- under
+   an accent outline for the ring. Only `color`, `text-shadow`, and `outline` change: there is
+   no `background` or `box-shadow` for Safari to drop, and no `transform`/`filter` (their own
+   Safari hazard). `--text` is readable on `--bg` by definition, so the dropped case is covered
+   for free. */
 .strip-sq:hover {
-  transform: translateY(-1px);
-  outline-color: color-mix(in srgb, var(--accent) 45%, transparent);
-}
-.strip-sq:focus-visible {
-  transform: translateY(-1px);
+  color: var(--text);
+  text-shadow:
+    0 0 2px var(--bg),
+    0 0 3px var(--bg),
+    0 1px 2px var(--bg);
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+/* The held reap's scythe: a hand ask Reaper can't honor yet, marked so the square still
+   reads as YOURS -- the strip has no resting OverrideMark the way a movie card does. The
+   surface-colored halo lifts it off the dashed-red square and any neighbor. */
+.strip-mark {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 0.72rem;
+  height: 0.72rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--condemn);
+  background: var(--surface);
+  box-shadow: 0 0 0 1.5px var(--surface);
+  pointer-events: none;
+}
+.strip-mark svg {
+  width: 0.52rem;
+  height: 0.52rem;
+}
+/* Keyboard focus matches the hover so tabbing through the strip reads as clearly as a
+   pointer does -- the same bright number + halo, and an accent ring set a touch wider. */
+.strip-sq:focus-visible {
+  color: var(--text);
+  text-shadow:
+    0 0 2px var(--bg),
+    0 0 3px var(--bg),
+    0 1px 2px var(--bg);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .strip-condemn {
   color: var(--condemn);
@@ -3517,8 +3579,9 @@ button.sm {
   background: var(--surface-2);
 }
 /* A hand override paints the square SOLID -- "you chose this" reads at a glance next
-   to the outlined scan verdicts. A reap the engine refuses (someone streaming, an
-   unmanaged file) is the exception below: not solid, amber, because the file is held. */
+   to the outlined scan verdicts. A reap the engine can't honor yet (someone streaming, an
+   unmanaged file) is the exception: not solid, dashed red with a scythe, because the file
+   is held. */
 .strip-ov-spare {
   color: var(--protect-soft);
   background: var(--protect);
@@ -3529,14 +3592,16 @@ button.sm {
   background: var(--condemn);
   box-shadow: none;
 }
-/* A reap the engine refuses is NOT solid -- the file is not going anywhere. It wears the
-   amber the row's chip uses for "kept for now", so a hand ask that was held reads as noted
-   rather than done, and never as a removal. Defined after .strip-abstain so it wins over the
-   square's scan-verdict base. */
+/* A reap the engine can't honor yet is NOT solid -- the file is not going anywhere. It is
+   dashed red (with the scythe corner-mark above): still the reap you chose, but hollow and
+   dashed so it never reads as a done removal, and no longer the amber that means "left for
+   you to decide". Defined after .strip-abstain so it wins over the square's scan-verdict
+   base. */
 .strip-ov-reap-refused {
-  color: var(--unknown);
-  background: var(--unknown-soft);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--unknown) 45%, transparent);
+  color: var(--condemn);
+  background: var(--condemn-soft);
+  border: 1.5px dashed var(--condemn);
+  box-shadow: none;
 }
 
 /* --- hand overrides: the paired Spare / Reap toggle ---------------------------------------- */
@@ -3635,7 +3700,7 @@ button.sm {
   justify-content: center;
 }
 /* Keep-first: the safe action (Spare) invites in green; the destructive one (Reap) stays the
-   quiet grey of the base button and only reddens as you reach for it. Reuses the app's
+   quiet gray of the base button and only reddens as you reach for it. Reuses the app's
    green-spare and quiet-danger conventions, so a delete stays a deliberate move. */
 .ov-spare {
   background: color-mix(in srgb, var(--protect) 15%, var(--surface));
@@ -4289,7 +4354,7 @@ button.danger:hover:not(:disabled) {
   border: 1px solid transparent;
   margin: 0.75rem 0 1.25rem;
 }
-/* The .safe / .armed tones (soft fill + color-mix border + dot colour) are shared with the
+/* The .safe / .armed tones (soft fill + color-mix border + dot color) are shared with the
    top-of-page banner near the top of this file; only the panel-specific spacing lives here. */
 .safety-state p { margin: 0.2rem 0 0; font-size: 0.84rem; }
 .safety-row {
@@ -4445,7 +4510,7 @@ button.danger:hover:not(:disabled) {
   opacity: 0.55;
 }
 
-/* The accent-colour row stacks its parts (control, presets, preview) instead of the
+/* The accent-color row stacks its parts (control, presets, preview) instead of the
    two-column label/control grid, so it flows top to bottom like the mock. */
 .set-row.accent-row {
   display: block;
@@ -4461,7 +4526,7 @@ button.danger:hover:not(:disabled) {
   color: var(--condemn);
   margin-top: 0.4rem;
 }
-/* The colour swatch: a native colour input, clipped to a rounded square on the control
+/* The color swatch: a native color input, clipped to a rounded square on the control
    standard so it reads as one of the app's own boxes rather than the raw OS widget. */
 .swatch-wrap {
   position: relative;
@@ -4992,7 +5057,7 @@ button.danger:hover:not(:disabled) {
 .modal {
   width: min(560px, 100%);
   /* dvh, not vh: on mobile browsers vh resolves to the toolbar-hidden viewport, so a
-     centred delete-confirm modal could push its actions off-screen. dvh tracks the actually
+     centerd delete-confirm modal could push its actions off-screen. dvh tracks the actually
      visible area -- matching the .why mobile sheet fix. */
   max-height: 88dvh;
   overflow-y: auto;

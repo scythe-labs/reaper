@@ -7,15 +7,54 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-20 (the score badge and strip square now follow the item's fate)
+Last updated: 2026-07-20 (three review-queue fixes: the show card's whole-show controls, and
+one amber that meant two things)
 
-### Newest — the number never followed the hand
+### Newest — the show card judged half a show
+
+Three things the operator caught on the Condemned lane, mocked as an approved artifact then
+driven live in their own browser.
+
+1. **The whole-show controls read only the condemned lane, not the whole show.** The card
+   computed `showReapIsNoop`, `groupOverride`, and `groupReapEffective` over `group.items` --
+   the tab-filtered page, which on the Condemned lane holds *only* a show's reaped/condemned
+   seasons. So they all agreed "reap/condemn," which (a) hid the whole-show Reap even though the
+   show had kept seasons a whole-show reap would take, and (b) lit the whole-show control as
+   "Reaping" when only *some* seasons were reaped. The panel had it right all along (it passes
+   `group.seasons`). Fix: the card judges over `group_seasons` (the strip marks, `showSeasons`),
+   every lane. The wrong assumption: "the seasons on this tab are the show." They are not.
+2. **One amber meant two different things.** A reap the engine can't honor yet ("held") wore the
+   same amber as "left for you to decide" -- the refused-reap chip literally reused the
+   `status-look` class. The operator read a held reap as undecided. Fix: held reaps are now
+   **dashed red with a scythe** (still in the reap family they chose, hollow and dashed so it
+   never reads as a done removal), and amber is reserved for "left for you to decide" alone.
+   Consistent across movies (resting `OverrideMark` scythe) and seasons (strip corner-mark);
+   rule 49 updated.
+3. **The season-square hover was a hairline** and vanished on the solid fills (a spared
+   show's green squares especially). Now the square lifts, grows, and gets a full accent ring
+   with a soft shadow, so it reads on every fill. Transform/outline/filter sit outside layout,
+   so nothing reflows. Keyboard focus matches it.
+
+All gates green: eslint, 115 vitest, tsc, vite build.
+
+### Earlier — one spelling, American, everywhere
+
+Swept the whole tree from British to American spelling (color, behavior, honor, normalize,
+judgment, canceled, labeled, gray, license, defense, center, …), 404 edits across 99 files,
+including identifiers (`normalize_label`, `labeled_in_section`, `SeasonJudgment`). Two tokens
+were left British because their spelling is owned elsewhere: `asyncio.CancelledError` (stdlib)
+and the ARIA `aria-labelledby` attribute. Word-boundary matching protected both automatically
+(the British stem is glued to a following letter, so no whole word matched). The convention is
+now a golden rule in `CLAUDE.md`, so future work stays consistent. All gates green after the
+sweep: ruff, mypy, 1702 pytest, eslint, 112 vitest, vite build, no alembic drift.
+
+### The number never followed the hand
 
 Two display bugs the operator caught on one card, same root cause. The score badge and one
 strip square colored themselves from Reaper's *scan verdict* and never looked at a hand
 override. So a row could read "Reaped by hand · will be removed" while its number stayed
 green (a scan `protect`), and a reap the engine *held* ("Reap requested · kept for now")
-left its strip square plain grey, indistinguishable from a season nobody touched. Mocked as
+left its strip square plain gray, indistinguishable from a season nobody touched. Mocked as
 a rendered artifact, approved, then driven end-to-end in a real browser.
 
 - **A cell's color now follows the item's fate, not just the first read.** One shared helper,
@@ -76,10 +115,10 @@ rendered artifact and approved before any code, then driven end-to-end in a real
   have already decided rests instead as a small icon of that decision (∞ spared, scythe reaped)
   in the buttons' place; the same hover fades it out as the buttons arrive.
 - **Hover is drawn in the accent, additive on the open card.** Every card's hover is the accent
-  edge now, not the old grey. On the open (selected) card the hover is additive: the accent
+  edge now, not the old gray. On the open (selected) card the hover is additive: the accent
   selection bar stays and deepens, so hovering the open row can no longer read as a click that
   would deselect it — the complaint that started this.
-- **Keep-first buttons.** Spare invites in green; Reap stays the quiet grey of a plain button
+- **Keep-first buttons.** Spare invites in green; Reap stays the quiet gray of a plain button
   and only reddens as you reach for it, so a delete stays deliberate. A chosen decision is the
   solid hand-decision chip (green spare, red reap), the same solid-means-yours language the
   override chips use. A found-along-the-way defect: the chosen button dropped its solid fill
@@ -87,7 +126,7 @@ rendered artifact and approved before any code, then driven end-to-end in a real
   outranks `.active`; the active state now re-asserts at hover.
 - **A bug only a real browser drew, and only Safari.** Live testing found a thin red bar just
   right of the Reap button in the item panel after switching a decision. It reproduced in neither
-  Chrome nor headless WebKit. The first guess — a sticky-footer repaint failing over the coloured
+  Chrome nor headless WebKit. The first guess — a sticky-footer repaint failing over the colored
   signal bars behind it — was wrong, and its fix (`will-change` on the footer) did nothing; the
   operator's second screenshot showed the real cause. The buttons changed width when their label
   toggled (Reap↔Reaping, Spare↔Spared) and the chosen state is solid, so when the button shrank
@@ -96,7 +135,7 @@ rendered artifact and approved before any code, then driven end-to-end in a real
   leaves no vacated region — removed it, confirmed by the operator in Safari. Two lessons worth
   keeping: a green headless pass in one engine is not a paint-bug check (compositing bugs live on
   the GPU you did not test), and the honest fix removes the condition, not the symptom.
-- Shipped earlier in the same session: the accent colour is operator-configurable (General
+- Shipped earlier in the same session: the accent color is operator-configurable (General
   settings), and the first-run wizard lets you head into the app while the first scan runs.
 
 ### The full ratings row, and the rescan that never applied
@@ -183,13 +222,13 @@ deeper than its symptom.
   the real finding was that a reap override changed *nothing* until the next scan: not
   the counts, not grace, not the plan. One new module, `services/condemned.py`, now
   assembles the **effective condemned set** (scan-condemned minus hand-spares plus
-  hand-reaps that `decide_verdict` honours — rule 22: the reap branch is the engine's,
+  hand-reaps that `decide_verdict` honors — rule 22: the reap branch is the engine's,
   only the plumbing is new), and every acting surface reads it: `grace_report` (and
   through it the Leaving Soon shelf), `build_plan`'s step expansion, the confirmation
   phrase (`_planned_candidates`), the executor's per-item keep-set and caps, the
   per-show rollups behind the card counts, and the simulator. Structural stops
   (streaming now, unmanaged) and unchecked protections still refuse, and the UI says
-  so: solid red squares/pills for honoured hand decisions, an amber "Reap requested ·
+  so: solid red squares/pills for honored hand decisions, an amber "Reap requested ·
   kept for now: {why}" for refusals (`override_effective` on rows and season marks).
   The override routes start the grace clock through the scan's own decision
   (`snapshot.record_first_flagged_bulk`, now public) and remove it again when a reap is
@@ -203,7 +242,7 @@ deeper than its symptom.
   mirrored token blocks under `:root[data-theme=…]` plus a pre-paint boot script in
   index.html; the choice is per-browser (localStorage), deliberately not server state.
   **Reverse proxy trust**, off by default and fail-closed: forwarded addresses are
-  honoured only when the direct peer is one of the operator-listed proxies
+  honored only when the direct peer is one of the operator-listed proxies
   (`middleware.client_ip` walks X-Forwarded-For right-to-left past trusted hops), which
   keeps the per-IP login lockout accurate behind Nginx/Traefik/Caddy instead of
   collapsing every visitor into the proxy's address. Applied live via
@@ -272,7 +311,7 @@ The Reap workflow and the Plex settings surface were reworked in one pass, mocke
   ride the shelf opt-in.
 - **The switches moved into the product.** `leaving_soon_enabled` and the read-only
   opt-in are `app_setting` rows edited under Settings → Plex; the env var seeds the
-  first run only and the stored value wins after (rule 16 honoured, `.env.example`
+  first run only and the stored value wins after (rule 16 honored, `.env.example`
   reworded). Turning the feature off — or any single library off — runs one last empty
   reconcile so no stale shelf lingers.
 - **Server, connection, and library pickers.** Settings → Plex lists the account's
@@ -539,7 +578,7 @@ bundled with them (B-6, B-9, PE-5). The tree is green: 1,150 backend tests, ruff
 - **Operator-authored condition values are typed (PE-2).** `Condition.validate_for`
   rejects a value that does not match the field's type at save time (422), and a bad
   *stored* value degrades that one item as blocked instead of crashing the whole scan.
-- **The backtest is honestly labelled (PE-3).** It remains engine-complete and tested
+- **The backtest is honestly labeled (PE-3).** It remains engine-complete and tested
   but unreachable; every operator-facing string that told people to "run a backtest"
   is reworded, the dead `BacktestOut` schema is gone, and the milestone table below now
   says 🟡 not ✅. Wiring `POST /api/policy/backtest` (+ the calibration prior + minimal
@@ -615,7 +654,7 @@ findings verified before acting) surfaced and fixed:
   regression test pins two instances protecting simultaneously.
 - **Cancellation discipline in one place**: every concurrent fan-out goes through
   `reaper.aio.gather_reaped` / `reap` -- on the first failure the surviving branches
-  are cancelled, drained and logged before the failure propagates, so nothing keeps
+  are canceled, drained and logged before the failure propagates, so nothing keeps
   reading an operator's services for a scan that is already dead, at any nesting
   level. `scan()`'s fan-out creates every task through one `_spawn` helper so the reap
   list cannot miss a future branch.
@@ -852,12 +891,12 @@ Built bottom-up, each layer validated before the next:
   Tautulli must be present or it refuses. The scheduler never calls it.
 - **A data-loss bug caught by adversarial review, before any live delete.** Two independent
   reviewers found that the executor did not re-check the manual whitelist — a spare added
-  *during the grace window* (exactly what the executor exists to honour) would have been
+  *during the grace window* (exactly what the executor exists to honor) would have been
   deleted, because a spare changes neither the frozen `condemn` verdict nor the manifest
   hash. Fixed: the planner now hashes the **whole** condemned set (so a later spare does not
   void the run), builds steps only for non-spared items, and the executor re-checks the
   override **per item** in dry-run and for real. Pinned by
-  `tests/test_reap_loop.py::TestASpareIsHonouredAtExecuteTime`.
+  `tests/test_reap_loop.py::TestASpareIsHonoredAtExecuteTime`.
 
 **The UI path.** The review queue's select mode grew a **"Reap now…"** action (on the "Would
 reap" tab): pick items, and it builds a plan restricted to exactly those (`only_media_keys`,
@@ -916,7 +955,7 @@ the next follow-ups.
 
 ### This round — the keep-list is configurable
 
-- **"Honour your keep list" became "Spare titles you've tagged."** The `reaper-keep` tag was
+- **"Honor your keep list" became "Spare titles you've tagged."** The `reaper-keep` tag was
   hardcoded; now each policy carries `keep_tags` (a list) and `keep_tags_match` (ANY / ALL), and
   the editor shows removable tag chips + an add box + the match switch. A new `lists.ArrTagRule`
   provider fetches each tag and combines them (union for ANY, intersection for ALL). Movies read
@@ -950,7 +989,7 @@ could not be checked. That rule lives in `snapshot._verdict(override=…)` and i
   season's; `whitelist.effective_override` resolves a season to its own key first, then its
   show's — so "reap this whole show" covers every season, yet you can spare one season back and
   the season key wins. Verified live end to end.
-- **The planner honours it in the gap before a re-scan** (`effective_override` on each condemned
+- **The planner honors it in the gap before a re-scan** (`effective_override` on each condemned
   row), exactly as it already did for spares — a show spared after a snapshot froze is excluded,
   season by season.
 - **UI.** Every card carries a paired **∞ Spare / ✕ Reap** toggle (click the lit one to clear);
@@ -1069,7 +1108,7 @@ This pass makes the *reasoning itself* legible, and adds the review controls a r
   where it clamps to two lines with a "more".
 - **A sort control, and filters as icon pills.** Score / Size / Year / Title with a direction
   toggle, server-side, with a score tiebreak so a show's seasons never scatter. Media-type and
-  requested became labelled dropdown pills beside it.
+  requested became labeled dropdown pills beside it.
 - **Posters line up.** The show card's expand chevron moved off the left into the card's side,
   so every poster — movie and show — sits flush at the same left edge.
 - **A whole show can be spared in one go**, and the Spare button wears an **∞** — because
@@ -1425,7 +1464,7 @@ doc change.**
 |---|---|
 | Condemn logic | **Flat AND** of typed conditions. No OR, no nesting, no NOT. |
 | Protections | **Gates with no CONDEMN constructor** — structurally cannot delete |
-| Protect authoring | **Catalogue + user-authored protect rules** (safe: worst case is nothing deletes) |
+| Protect authoring | **Catalog + user-authored protect rules** (safe: worst case is nothing deletes) |
 | Signals | **Unsigned**, fixed denominator including unknown weights |
 | Observations | **Known / Absent / Unknown** — never conflated |
 | Delete mode | DB-only grace period → cancellable → then irreversible |
@@ -1564,7 +1603,7 @@ live clients is that step.
 - **Manual whitelist.** The media-key "spare this file" path was an empty set passed into
   every evaluation; it is now a real `whitelist` table, consulted in the scan (a spared
   key judges PROTECT), the planner (excluded even from a frozen snapshot's condemned set),
-  and grace (a cancelled item leaves the countdown at once). Spare/un-spare on every
+  and grace (a canceled item leaves the countdown at once). Spare/un-spare on every
   condemn row. Un-sparing deletes nothing — it lets the file be judged again.
 - **Fairness view.** `engine/requester.py` was complete and tested but *orphaned*. It now
   powers a per-requester leaderboard: requests made, disk granted, share ever played, disk
@@ -1593,7 +1632,7 @@ decides: what flags a title → what's always kept → pace and limits → delet
 sticky section rail and the live simulator alongside. Iterated as a rendered mockup (eight
 revisions) before any code.
 
-- **Three saves stay separate on purpose**: the hashed policy (per media type, labelled
+- **Three saves stay separate on purpose**: the hashed policy (per media type, labeled
   "Save movie policy" / "Save TV policy"), the un-hashed pace/limits (its own button; a cap
   change never voids an approval; the ask-first toggle leads the section, above the caps),
   and the password-gated deletion switch (a shared `DeletionToggle` in Policy → Deletion,
@@ -1932,11 +1971,11 @@ Everything here came from one annotated-screenshot review of the queue against l
   before the guard sees it. The evidence side reads each viewer's most recent play per
   season (`user_season_last`, same query that fed the old DISTINCT pairs), rolled up per
   show fail-closed: any unreadable timestamp makes the viewer count as active.
-- **Two hardwired season behaviours became policy toggles**: `keep_specials` (off =
+- **Two hardwired season behaviors became policy toggles**: `keep_specials` (off =
   specials judged like any other season; they still never occupy a keep-last slot, and
   airing/still-downloading still protect them) and `flag_keep_conflicts` (off = the
   more-watched-than-kept detector stays quiet and the keep rule is simply followed).
-  Both default to the old behaviour. All four fields ride the policy hash, so the
+  Both default to the old behavior. All four fields ride the policy hash, so the
   simulator honestly refuses stale numbers until the next scan.
 - **The "request filter does not work" report was honest data, badly presented.** The
   filter worked; on the condemned tab zero items carried a requester (requested media
@@ -2006,7 +2045,7 @@ condemns and never raises a score; every protection knob moves the condemned set
 only; anything that validates must score; `decide_verdict` matches its spec at every
 boundary; season plans stay consistent under all 32 toggle combinations per show. A
 **pinned baseline** (every vector judged under the shipped default policies at extraction
-time) turns the fixture into an engine-drift trip-wire: any behavioural change to
+time) turns the fixture into an engine-drift trip-wire: any behavioral change to
 scoring shows up as a failing diff and must be acknowledged by regenerating the fixture
 (`scripts/policy_lab_extract.py`, which any operator checkout can re-run against its own
 data) in the same change.
@@ -2183,7 +2222,7 @@ silently on a copy edit.** It happened twice in one week. Nothing enforces this 
 
 ### Known defects, not fixed
 
-Found by a fan-out audit after the size work. Labelled by what an operator would care
+Found by a fan-out audit after the size work. Labeled by what an operator would care
 about, not by where they live.
 
 One of the six is now closed: `watched_status` was coerced to `0` on ingest, which made
@@ -2210,7 +2249,7 @@ them truthfully.
 1. **The canary lands on the item Reaper knows least about.** `planner.py` orders
    smallest-first so ordinal 0 is "the least costly possible mistake" (its words). A
    fabricated `0` sorts to the front, so the run's one real proof that deletion works is
-   spent on the item whose size was never read. The comment and the behaviour disagree.
+   spent on the item whose size was never read. The comment and the behavior disagree.
 
    **Planned in full: `docs/SIZE_TRUTH_PLAN.md`.** The canary is one of four consequences
    of the same root cause (a fabricated zero on the accounting column); the others are both
@@ -2231,9 +2270,9 @@ them truthfully.
    whole-show figure and the reclaim totals are still understated by exactly this, which is
    the nullable-column thread below, not this one.
 3. ~~**`gates.py` claims an unset field "cannot change any verdict."**~~ Fixed as a comment,
-   not a behaviour change: `_UNSET` now says `Absent` is inert on the condemn and gate lanes
+   not a behavior change: `_UNSET` now says `Absent` is inert on the condemn and gate lanes
    and *not* on the keep lane, cites `signals.evaluate_keep`, and says why the live builders
-   must set every field explicitly. The behaviour was already pinned
+   must set every field explicitly. The behavior was already pinned
    (`tests/test_engine_invariants.py`, `tests/test_custom_condemn.py`); only the prose was
    stale. Rule 7 — the comment was true when written and is not now.
 
@@ -2381,7 +2420,7 @@ left, each because the correct fix is wider than the finding and wants its own c
 - **Should the planner gate on grace?** Today a plan is built from *all* condemned items;
   a grace-aware planner would include only cleared ones. That is the honest end state, but
   it empties the plan until items age out of grace, so it changes the current demo. Held
-  deliberately — it is a behaviour decision, not an oversight.
+  deliberately — it is a behavior decision, not an oversight.
 - **`FEW_WATCHERS` and `LOW_RATING` earn nothing.** Consider dropping them; they add hash
   surface and bug surface for no measured skill. (A scoring change — delete-adjacent.)
 - **Tests are not type-checked.** CI runs `mypy src/reaper` only; `mypy tests` reports ~190

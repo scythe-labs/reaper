@@ -22,9 +22,9 @@ import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
 import { JumpPill, Synopsis, WhyHero } from "./WhyPanel";
 
 /** The one pill a season row wears. The owner's hand decision replaces the scan chip
- *  (solid means "you chose this"); a reap the engine refuses reads amber and says why,
- *  because "you asked" and "it is gone" are different facts. The wording is the shared
- *  chip's, in this list's own class family. */
+ *  (solid means "you chose this"); a reap the engine can't honor yet reads dashed red and
+ *  says why, because "you asked" and "it is gone" are different facts. The wording is the
+ *  shared chip's, in this list's own class family. */
 function SeasonPill({ season }: { season: Candidate }) {
   if (season.override !== null) {
     return (

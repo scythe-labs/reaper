@@ -266,9 +266,59 @@ describe("the whole-show override buttons", () => {
     expect(screen.getByRole("button", { name: "Reap" })).toBeInTheDocument();
   });
 
+  it("keeps Reap when the kept seasons are on other lanes, absent from the Condemned page", async () => {
+    // The real shape on the Condemned lane: every FETCHED row is condemned (the kept seasons
+    // sit on other lanes and never load here), but `group_seasons` still carries the whole
+    // show, including a kept one. A whole-show Reap takes that kept season, so Reap must stay
+    // -- the card judges over `group_seasons`, not the tab-filtered page.
+    const marks: GroupSeasonMark[] = [
+      { id: 1, season: 1, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+      { id: 2, season: 2, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+      { id: 3, season: 3, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+    ];
+    apiMock.candidates.mockResolvedValue(
+      page([
+        season(1, "condemn", { group_seasons: marks }),
+        season(2, "condemn", { group_seasons: marks }),
+      ]),
+    );
+    renderQueue("condemn");
+    expect(await screen.findByRole("button", { name: "Spare" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reap" })).toBeInTheDocument();
+  });
+
+  it("does not light the whole-show Reap when only some seasons are reaped", async () => {
+    // On the Condemned lane the fetched rows are the reaped/condemned seasons, which all agree
+    // "reap". But across the whole show (group_seasons) the override is mixed -- other seasons
+    // are untouched -- so the whole-show control must NOT read as "Reaping" (its active state).
+    const marks: GroupSeasonMark[] = [
+      { id: 5, season: 5, verdict: "abstain", override: "reap", override_effective: false, size_bytes: 1024 ** 3 },
+      { id: 8, season: 8, verdict: "condemn", override: "reap", override_effective: true, size_bytes: 1024 ** 3 },
+      { id: 10, season: 10, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+    ];
+    apiMock.candidates.mockResolvedValue(
+      page([season(8, "condemn", { override: "reap", override_effective: true, group_seasons: marks })]),
+    );
+    renderQueue("condemn");
+    await screen.findByText("Example Show");
+    // Both buttons present and inactive: the Reap button says "Reap", never the active "Reaping".
+    expect(screen.getByRole("button", { name: "Reap" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reaping" })).not.toBeInTheDocument();
+  });
+
   it("drops Reap once every season of the show is condemned", async () => {
     // Now a whole-show Reap would change nothing, so it falls away just as the movie's does.
-    apiMock.candidates.mockResolvedValue(page([season(1, "condemn"), season(2, "condemn")]));
+    // Every season condemned in `group_seasons` too, so the whole-show view agrees.
+    const marks: GroupSeasonMark[] = [
+      { id: 1, season: 1, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+      { id: 2, season: 2, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+    ];
+    apiMock.candidates.mockResolvedValue(
+      page([
+        season(1, "condemn", { group_seasons: marks }),
+        season(2, "condemn", { group_seasons: marks }),
+      ]),
+    );
     renderQueue("condemn");
     expect(await screen.findByRole("button", { name: "Spare" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Reap$/ })).not.toBeInTheDocument();
@@ -319,7 +369,7 @@ describe("a reap the engine refused", () => {
   it("reads as one sentence whichever lane kept the item", async () => {
     // Two lanes refuse a hand reap: a safety stop that fired (its chip is "Kept · ...")
     // and a protection that could not be checked (its chip is that lane's own wording,
-    // capitalised and carrying a middot). Both have to land in the same sentence.
+    // capitalized and carrying a middot). Both have to land in the same sentence.
     const streaming = movie(1, {
       override: "reap",
       override_effective: false,
@@ -339,17 +389,17 @@ describe("a reap the engine refused", () => {
     expect(
       screen.getByText("Reap requested · kept for now: a check on it couldn't be settled"),
     ).toBeInTheDocument();
-    // The lane chip's own capitalised wording never lands mid-sentence.
+    // The lane chip's own capitalized wording never lands mid-sentence.
     expect(
       screen.queryByText(/kept for now: Needs a look/),
     ).not.toBeInTheDocument();
   });
 });
 
-describe("the score badge's colour follows the fate", () => {
+describe("the score badge's color follows the fate", () => {
   // The number cannot keep the scan verdict while the row says "will be removed": it wears
-  // the fate a hand decision forces. Solid reap/spare when it takes effect, amber when a
-  // reap is held.
+  // the fate a hand decision forces. Solid reap/spare when it takes effect, dashed red when
+  // a reap is held (never amber -- amber means "left for you to decide").
   async function scoreClassFor(item: Candidate): Promise<string> {
     apiMock.candidates.mockResolvedValue(page([item]));
     const { container } = renderQueue();
@@ -366,7 +416,7 @@ describe("the score badge's colour follows the fate", () => {
     expect(cls).not.toContain("score-protect");
   });
 
-  it("goes amber when the reap is held for now", async () => {
+  it("goes dashed red when the reap is held for now", async () => {
     const cls = await scoreClassFor(
       movie(1, { verdict: "abstain", override: "reap", override_effective: false }),
     );
@@ -382,16 +432,17 @@ describe("the score badge's colour follows the fate", () => {
     expect(cls).not.toContain("score-condemn");
   });
 
-  it("keeps the scan verdict's colour when nothing was overridden", async () => {
+  it("keeps the scan verdict's color when nothing was overridden", async () => {
     const cls = await scoreClassFor(movie(1, { verdict: "condemn" }));
     expect(cls).toContain("score-condemn");
   });
 });
 
-describe("the season strip's colours follow the fate", () => {
+describe("the season strip's colors follow the fate", () => {
   // A show card's strip draws one square per season from `group_seasons`. Each square must
-  // agree with its row: solid for an effective hand decision, amber for a reap the engine
-  // held, the scan verdict otherwise.
+  // agree with its row: solid for an effective hand decision, dashed red (with a scythe
+  // mark) for a reap the engine can't honor yet, the scan verdict otherwise. Amber is never
+  // used here -- it means only "left for you to decide".
   function mark(id: number, verdict: Verdict, extra: Partial<GroupSeasonMark> = {}): GroupSeasonMark {
     return {
       id,
@@ -404,7 +455,7 @@ describe("the season strip's colours follow the fate", () => {
     };
   }
 
-  async function stripClasses(marks: GroupSeasonMark[]): Promise<string[]> {
+  async function stripRender(marks: GroupSeasonMark[]) {
     const rows = marks.map((m) =>
       season(m.id, m.verdict, {
         override: m.override,
@@ -415,21 +466,32 @@ describe("the season strip's colours follow the fate", () => {
     apiMock.candidates.mockResolvedValue(page(rows));
     const { container } = renderQueue();
     await screen.findByText("Example Show");
-    return Array.from(container.querySelectorAll(".strip-sq")).map((el) => el.className);
+    const squares = Array.from(container.querySelectorAll(".strip-sq"));
+    return { squares, classes: squares.map((el) => el.className) };
   }
 
-  it("paints a held reap amber, not solid and not its plain scan colour", async () => {
-    const classes = await stripClasses([
+  it("paints a held reap dashed red, not solid and not its plain scan color", async () => {
+    const { classes } = await stripRender([
       mark(14, "condemn"),
       mark(19, "abstain", { override: "reap", override_effective: false }),
       mark(20, "abstain", { override: "reap", override_effective: true }),
     ]);
-    // 14 condemned, 19 reap-held (amber), 20 reap-effective (solid).
+    // 14 condemned, 19 reap-held (dashed red), 20 reap-effective (solid).
     expect(classes[0]).toContain("strip-condemn");
     expect(classes[1]).toContain("strip-ov-reap-refused");
     expect(classes[1]).not.toContain("strip-ov-reap ");
     expect(classes[2]).toContain("strip-ov-reap");
     expect(classes[2]).not.toContain("strip-ov-reap-refused");
+  });
+
+  it("marks the held reap with a scythe so it never reads as the plain condemned square", async () => {
+    const { squares } = await stripRender([
+      mark(14, "condemn"),
+      mark(19, "abstain", { override: "reap", override_effective: false }),
+    ]);
+    // Only the held reap carries the mark; the plain condemned square must not.
+    expect(squares[0]!.querySelector(".strip-mark")).toBeNull();
+    expect(squares[1]!.querySelector(".strip-mark")).not.toBeNull();
   });
 });
 

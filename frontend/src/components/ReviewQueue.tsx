@@ -223,7 +223,7 @@ function OverrideIcon() {
   );
 }
 
-/** A labelled dropdown pill with a leading icon -- the filter/sort control shape. */
+/** A labeled dropdown pill with a leading icon -- the filter/sort control shape. */
 function Pill({
   icon,
   value,
@@ -329,12 +329,14 @@ export function Poster({ url, alt }: { url: string | null; alt: string }) {
   return <img className="poster" src={url} alt={alt} loading="lazy" onError={() => setBroken(true)} />;
 }
 
-/** Which colour a score badge or strip square wears once a hand decision is in play.
- *  A hand SPARE, or a reap the engine honours, shows SOLID -- "you chose this" -- so the
+/** Which color a score badge or strip square wears once a hand decision is in play.
+ *  A hand SPARE, or a reap the engine honors, shows SOLID -- "you chose this" -- so the
  *  cell states the item's real fate, not just Reaper's first read. A reap the engine
- *  REFUSED reads amber ("refused"): the ask is noted, the file is still held. Anything
- *  untouched keeps its scan verdict. Shared by the score badge and the season strip so the
- *  two can never disagree with each other or with the row's chip. */
+ *  can't honor yet ("refused") reads DASHED RED, never solid: the ask is noted, the file is
+ *  still held. Amber is no longer used here at all -- it means only "left for you to decide"
+ *  (the abstain `status-look` chip). Anything untouched keeps its scan verdict. Shared by the
+ *  score badge and the season strip so the two can never disagree with each other or with
+ *  the row's chip. */
 export type Fate = Verdict | "reap" | "spare" | "refused";
 export function handFate(item: {
   verdict: Verdict;
@@ -346,7 +348,7 @@ export function handFate(item: {
   return item.verdict;
 }
 
-/** The score chip. Colour carries the item's fate so it reads without the label. */
+/** The score chip. Color carries the item's fate so it reads without the label. */
 function Score({ item }: { item: Candidate }) {
   return (
     <span className={`score score-${handFate(item)}`} title={`Score ${item.score} of 100`}>
@@ -595,8 +597,11 @@ function CardStatusLine({
 }
 
 /** Whether a show-level reap actually takes anywhere: true when any season's reap is
- *  honoured, false when every one is refused, undefined outside a reap override. */
-function groupReapEffective(items: Candidate[]): boolean | undefined {
+ *  honored, false when every one is refused, undefined outside a reap override. Like
+ *  `groupOverride`, judge over the WHOLE show (`group_seasons`), never the tab-filtered page. */
+function groupReapEffective(
+  items: ReadonlyArray<{ override: Override | null; override_effective: boolean | null }>,
+): boolean | undefined {
   const reaped = items.filter((s) => s.override === "reap");
   if (reaped.length === 0) return undefined;
   return reaped.some((s) => s.override_effective !== false);
@@ -605,8 +610,16 @@ function groupReapEffective(items: Candidate[]): boolean | undefined {
 /** The single decision that governs a whole show: what all of its seasons agree on, or null
  *  when they are mixed. A show-level override makes every season inherit it, so agreement is
  *  the common case; a per-season override is what makes it mixed. Exported so the show panel
- *  reads the show's decision the same way the card does. */
-export function groupOverride(items: Candidate[]): Override | null {
+ *  reads the show's decision the same way the card does.
+ *
+ *  It must see EVERY season, every lane. The panel passes `group.seasons`; the card passes
+ *  `group_seasons` (the strip marks), never the tab-filtered page -- on the Condemned lane
+ *  that page holds only the show's reaped/condemned seasons, which all agree "reap" and would
+ *  light the whole-show control as if the entire show were set to reap when only some is. So
+ *  the parameter takes the strip-mark shape too. */
+export function groupOverride(
+  items: ReadonlyArray<{ override: Override | null }>,
+): Override | null {
   if (items.every((s) => s.override === "spare")) return "spare";
   if (items.every((s) => s.override === "reap")) return "reap";
   return null;
@@ -620,8 +633,16 @@ export function groupOverride(items: Candidate[]): Override | null {
  *  hidden. A show is not atomic: it is on that lane because SOME season is condemned, and a
  *  whole-show Reap still takes the seasons the scan kept. So Reap only falls away once every
  *  season is already headed for removal -- scan-condemned and not hand-spared. A show holding
- *  any hand reap keeps Reap too, so that decision stays toggleable back off. */
-export function showReapIsNoop(seasons: Candidate[]): boolean {
+ *  any hand reap keeps Reap too, so that decision stays toggleable back off.
+ *
+ *  It must run over the WHOLE show, every lane -- the panel already passes `group.seasons`.
+ *  The card once passed only the seasons on the current tab, so on the Condemned lane it saw
+ *  a set that was all-condemned by construction and wrongly dropped Reap, hiding the one
+ *  control that reaps the show's kept seasons. So the parameter takes the strip-mark shape
+ *  too (`group_seasons`), not just a full `Candidate`. */
+export function showReapIsNoop(
+  seasons: ReadonlyArray<{ verdict: Verdict; override: Override | null }>,
+): boolean {
   if (seasons.some((s) => s.override === "reap")) return false;
   return seasons.every((s) => s.verdict === "condemn" && s.override !== "spare");
 }
@@ -760,9 +781,11 @@ const MARK_LABELS: Record<string, string> = {
 
 /** The season strip: one small square per season of the show, colored by its fate
  *  across the WHOLE snapshot -- so "which seasons stay and which go" reads at a glance
- *  without expanding anything. A hand decision paints its square solid; a reap the
- *  engine refuses reads amber (noted, still held), and the tooltip says both facts. Each
- *  square opens that season's own reasoning (the show card itself opens the show). */
+ *  without expanding anything. A hand decision paints its square solid; a reap the engine
+ *  can't honor yet reads dashed red and carries a small scythe corner-mark -- so it stays
+ *  clearly YOURS (the way a movie card's resting scythe does) yet never the solid red of a
+ *  removal, and never the plain condemned outline beside it. The tooltip says both facts.
+ *  Each square opens that season's own reasoning (the show card itself opens the show). */
 function SeasonStrip({
   marks,
   onOpen,
@@ -776,10 +799,11 @@ function SeasonStrip({
         const name = mark.season === 0 ? "Specials" : `Season ${mark.season ?? "?"}`;
         const fate = handFate(mark);
         const reapRefused = fate === "refused";
-        // The base square is the scan verdict; a hand decision paints over it. A refused
-        // reap wears the same amber the row's chip does -- noted, but the file is held --
-        // so the strip never claims a removal the engine declined (`.strip-ov-reap-refused`
-        // sits after `.strip-abstain` in index.css and wins).
+        // The base square is the scan verdict; a hand decision paints over it. A reap the
+        // engine can't honor yet reads dashed red (noted, but the file is held), never the
+        // solid red of a removal, and carries the scythe mark below so it never blends into
+        // the plain condemned outline (`.strip-ov-reap-refused` sits after `.strip-abstain`
+        // in index.css and wins).
         const handClass =
           fate === "spare"
             ? " strip-ov-spare"
@@ -818,6 +842,13 @@ function SeasonStrip({
             }}
           >
             {mark.season === 0 ? "SP" : (mark.season ?? "·")}
+            {/* A held reap keeps the scythe so the square still reads as YOUR ask, the way a
+                movie card's resting OverrideMark does -- the strip has no such mark of its own. */}
+            {reapRefused && (
+              <span className="strip-mark" aria-hidden="true">
+                <ScytheIcon />
+              </span>
+            )}
           </button>
         );
       })}
@@ -1117,9 +1148,12 @@ function ShowCard({
   const condemnedCount = first.group_condemned_count ?? group.items.length;
   const condemnedBytes = first.group_condemned_bytes ?? fetchedSize;
   const condemnedUnknown = first.group_unknown_size ?? fetchedUnknown;
-  // What the whole show agrees on. A show-level override makes every season inherit it, so
-  // this is the show's decision in the common case; a per-season override reads as mixed.
-  const showOverride = groupOverride(group.items);
+  // What the whole show agrees on, across every lane -- `marks`, not the tab-filtered
+  // `group.items`. On the Condemned lane `group.items` holds only this show's reaped/condemned
+  // seasons, which all agree "reap" and would light the whole-show control as if the entire
+  // show were set to reap when only some of it is. A per-season override then reads as mixed.
+  const showSeasons = marks ?? group.items;
+  const showOverride = groupOverride(showSeasons);
   const state = showOverride === "spare" ? "card-spared" : showOverride === "reap" ? "card-reaped" : "";
   const { selectMode, isSelected } = select;
 
@@ -1158,7 +1192,7 @@ function ShowCard({
               {group.title}
               {group.year && <span className="card-year"> {group.year}</span>}
             </h3>
-            <OverrideChip override={showOverride} effective={groupReapEffective(group.items)} />
+            <OverrideChip override={showOverride} effective={groupReapEffective(showSeasons)} />
           </div>
           <div className="card-meta">
             <span className="chip chip-tv">TV</span>
@@ -1199,8 +1233,11 @@ function ShowCard({
                 pending={pending}
                 // Not the movie's tab-based `hideReap`: a whole-show Reap still takes the
                 // show's kept seasons, so it stays until the WHOLE show is condemned
-                // (showReapIsNoop). The season rows below keep the per-lane test.
-                hideReap={showReapIsNoop(group.items)}
+                // (showReapIsNoop). Judged over `marks` -- every season, every lane -- not
+                // `group.items`, which on the Condemned tab holds only this show's condemned
+                // seasons and would wrongly read as "all condemned" and hide Reap. The season
+                // rows below keep the per-lane test.
+                hideReap={showReapIsNoop(showSeasons)}
               />
             </>
           )}
@@ -1607,7 +1644,7 @@ export function ReviewQueue({
           <button
             key={t.verdict}
             className={t.verdict === verdict ? "tab active" : "tab"}
-            // The list you are on is stated, not just coloured, the same as the masthead
+            // The list you are on is stated, not just colored, the same as the masthead
             // and the settings rail. Plain buttons, not the tabs pattern: these switch a
             // whole list rather than swapping panels, and none of that pattern's keyboard
             // contract (arrow keys, a tabpanel to point at) exists here.
