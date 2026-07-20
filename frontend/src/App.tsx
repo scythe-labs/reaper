@@ -9,6 +9,7 @@ import { Login } from "./components/Login";
 import { PolicyEditor, type PolicySectionId } from "./components/PolicyEditor";
 import { ReapPlan } from "./components/ReapPlan";
 import { ReviewQueue } from "./components/ReviewQueue";
+import { ScytheGlyph } from "./components/ScytheGlyph";
 import { Settings, type Panel } from "./components/Settings";
 import { SetupWizard } from "./components/SetupWizard";
 import { ShowPanel } from "./components/ShowPanel";
@@ -442,10 +443,7 @@ function Dashboard({ user }: { user: AuthUser }) {
       <ScanLine running={scanStatus?.running ?? false} percent={scanStatus?.percent ?? 0} />
       <header className="masthead">
         <div className="brand">
-          <svg className="brand-mark sm" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-            <path d="M31 9C17 9 9 17 9 29c8-8 16-12 26-10-1-5-2-8-4-10Z" fill="currentColor" />
-            <path d="M31 9 19 40" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" />
-          </svg>
+          <ScytheGlyph className="brand-mark sm" />
           <div className="brand-text">
             <span className="brand-word">Reaper</span>
             <span className="muted brand-sub">explainable pruning for Plex</span>

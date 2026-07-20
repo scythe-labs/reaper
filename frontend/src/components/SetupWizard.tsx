@@ -12,6 +12,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { api } from "../api";
 import { phaseLabel } from "./ScanBar";
+import { ScytheGlyph } from "./ScytheGlyph";
 import { PlexPanel, ServicesPanel } from "./Settings";
 
 // The tick is the only thing that says whether a step is finished, so it carries the state
@@ -84,10 +85,7 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
     <div className="setup">
       <div className="setup-head">
         <div className="brand">
-          <svg className="brand-mark" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-            <path d="M31 9C17 9 9 17 9 29c8-8 16-12 26-10-1-5-2-8-4-10Z" fill="currentColor" />
-            <path d="M31 9 19 40" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" />
-          </svg>
+          <ScytheGlyph className="brand-mark" />
           <div>
             <h1>Welcome to Reaper</h1>
             <p className="muted">

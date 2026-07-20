@@ -41,6 +41,7 @@ import {
 import { bytes, count, itemBytes, totalBytes } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { ReapConfirm } from "./ReapConfirm";
+import { ScytheGlyph } from "./ScytheGlyph";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
 
 //: How many cards to *render* at a time. A tab can hold thousands, so we draw a screenful and
@@ -357,23 +358,12 @@ function Score({ item }: { item: Candidate }) {
   );
 }
 
-/** The reap glyph: a small scythe. Only reap ACTIONS wear it -- close buttons keep ✕. */
+/** The reap glyph: the brand scythe (see ScytheGlyph), shrunk into a reap ACTION -- the same
+ *  drawing as the header mark, so the two never read as different icons. A heavier snath (5.5
+ *  vs the header's 3.5) holds the shape's weight at button size, where the logo's own stroke
+ *  would thin to a hairline. Only reap actions wear it -- close buttons keep ✕. */
 function ScytheIcon() {
-  return (
-    <svg className="scythe" viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-      <path
-        d="M12.9 2.1 C8.8 -0.4, 3.2 1.5, 1.3 7.3 C4.1 3.9, 8.9 3.3, 12.4 3.4 Z"
-        fill="currentColor"
-      />
-      <path
-        d="M12 3 C10.6 7.2, 9.4 10.8, 8.6 14.4"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-      />
-      <path d="M10.2 8.6 l2 0.7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
-  );
+  return <ScytheGlyph className="scythe" width={13} height={13} strokeWidth={5.5} />;
 }
 
 /** The label the resolution badge wears: 4K, HD or SD. Null (no data) shows nothing. */

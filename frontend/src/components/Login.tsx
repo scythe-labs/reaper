@@ -14,24 +14,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, type AuthContext, type PlexPoll } from "../api";
 import { trapTab } from "./ModalShell";
 import { ServerPickList, usePlexPinPoll } from "./PlexPin";
-
-function Mark() {
-  // A stylized scythe: a handle sweeping down-left, a curved blade across the top.
-  return (
-    <svg className="brand-mark" viewBox="0 0 48 48" fill="none" aria-hidden="true">
-      <path
-        d="M31 9C17 9 9 17 9 29c8-8 16-12 26-10-1-5-2-8-4-10Z"
-        fill="currentColor"
-      />
-      <path
-        d="M31 9 19 40"
-        stroke="currentColor"
-        strokeWidth="3.5"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
+import { ScytheGlyph } from "./ScytheGlyph";
 
 function PlexGlyph() {
   return (
@@ -305,7 +288,7 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
   return (
     <div className="auth-card">
       <div className="brand-badge">
-        <Mark />
+        <ScytheGlyph className="brand-mark" />
       </div>
       <h1 className="brand-word">Recovery</h1>
       <p className="auth-tagline">Single-use admin access</p>
@@ -356,7 +339,7 @@ export function Login() {
       ) : (
         <div className="auth-card">
           <div className="brand-badge">
-            <Mark />
+            <ScytheGlyph className="brand-mark" />
           </div>
           <h1 className="brand-word">Reaper</h1>
           <p className="auth-tagline">Explainable pruning for Plex</p>
