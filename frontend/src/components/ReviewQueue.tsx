@@ -14,6 +14,7 @@
 
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import {
+  type CSSProperties,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
@@ -938,27 +939,24 @@ function seasonName(title: string, showTitle: string): string {
 }
 
 /** The expanded show: EVERY season in the latest snapshot, whatever its lane, so kept
- *  and condemned read side by side. Rows from this tab keep their Spare/Reap buttons;
- *  rows from other lanes are dimmed and act from their own tab (clicking any row still
- *  opens its full reasoning). */
+ *  and condemned read side by side. Every row is actable from here, not just the ones on
+ *  the tab you opened: each carries its own Spare/Reap, judged by that season's OWN verdict
+ *  (rule 51), so an under-scored season inside a condemned show can be decided in place
+ *  instead of only from Limbo. Clicking any row still opens its full reasoning. */
 function SeasonList({
   groupKey,
-  tabVerdict,
   selectedId,
   onOpen,
   onSet,
   onClear,
   pending,
-  hideReap,
 }: {
   groupKey: string;
-  tabVerdict: Verdict;
   selectedId: number | null;
   onOpen: (id: number) => void;
   onSet: (key: string, decision: Override) => void;
   onClear: (key: string) => void;
   pending: boolean;
-  hideReap: boolean;
 }) {
   const { data, isPending, error } = useQuery({
     queryKey: ["group", groupKey],
@@ -978,74 +976,71 @@ function SeasonList({
     );
   }
 
+  // The Reap column is reserved only when some season in this show can actually show a Reap
+  // (any non-condemned season). A show that is condemned top to bottom shows Spare alone on
+  // every row and leaves no empty Reap slot, so the size sits flush without a gap. Every
+  // row in one list uses the same width, so Spare and Reap line up straight down it.
+  const anyReapable = data.seasons.some((s) => s.verdict !== "condemn");
   return (
-    <ul className="season-list">
-      {data.seasons.map((season) => {
-        const inLane = season.verdict === tabVerdict;
-        return (
-          <li
-            key={season.id}
-            className={`season-row clickable ${inLane ? "" : "season-other"} ${
-              season.override === "spare"
-                ? "card-spared"
-                : season.override === "reap"
-                  ? "card-reaped"
-                  : ""
-            } ${season.id === selectedId ? "card-selected" : ""}`}
-            onClick={() => onOpen(season.id)}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onOpen(season.id);
-              }
-            }}
-          >
-            <Score item={season} />
-            <span className="season-title">
-              {seasonName(season.title, data.title)}
-              {/* The owner's decision replaces the scan chip: one pill, the truth. */}
-              {season.override !== null ? (
-                <OverrideChip
-                  override={season.override}
-                  effective={season.override_effective}
-                  keptWhy={chipWhy(season.chip)}
-                />
-              ) : season.verdict === "condemn" ? (
-                <CondemnedChip />
-              ) : (
-                <StatusChip chip={season.chip} />
-              )}
-            </span>
-            <span className="season-size num">{itemBytes(season.size_bytes)}</span>
-            {inLane ? (
-              // The control toggles the season's OWN decision (override_own), never the one
-              // it inherits from its show -- clearing a season key cannot clear a show-level
-              // spare, so lighting it from the inherited state made a dead toggle. The note
-              // below says when the whole show is what keeps it.
-              <OverrideControls
-                override={season.override_own}
-                onSet={(d) => onSet(season.media_key, d)}
-                onClear={() => onClear(season.media_key)}
-                pending={pending}
-                hideReap={hideReap}
+    <ul
+      className="season-list"
+      style={{ "--btns": anyReapable ? "11.8rem" : "5.75rem" } as CSSProperties}
+    >
+      {data.seasons.map((season) => (
+        <li
+          key={season.id}
+          className={`season-row clickable ${
+            season.override === "spare"
+              ? "card-spared"
+              : season.override === "reap"
+                ? "card-reaped"
+                : ""
+          } ${season.id === selectedId ? "card-selected" : ""}`}
+          onClick={() => onOpen(season.id)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              onOpen(season.id);
+            }
+          }}
+        >
+          <Score item={season} />
+          <span className="season-title">
+            {seasonName(season.title, data.title)}
+            {/* The owner's decision replaces the scan chip: one pill, the truth. */}
+            {season.override !== null ? (
+              <OverrideChip
+                override={season.override}
+                effective={season.override_effective}
+                keptWhy={chipWhy(season.chip)}
               />
+            ) : season.verdict === "condemn" ? (
+              <CondemnedChip />
             ) : (
-              // Other-lane rows are read-only here: they act from their own tab, and an
-              // empty cell keeps the grid's columns aligned.
-              <span aria-hidden="true" />
+              <StatusChip chip={season.chip} />
             )}
-            {inLane && (
-              <KeptByShowNote
-                own={season.override_own}
-                showOverride={season.show_override}
-                className="season-row-note"
-              />
-            )}
-          </li>
-        );
-      })}
+          </span>
+          {/* The control toggles the season's OWN decision (override_own), never the one it
+              inherits from its show (rule 50). Reap is dropped only when this season's own
+              verdict is condemn -- reaping it changes nothing (rule 51); Spare is never
+              dropped. The note below says when the whole show is what keeps it. */}
+          <OverrideControls
+            override={season.override_own}
+            onSet={(d) => onSet(season.media_key, d)}
+            onClear={() => onClear(season.media_key)}
+            pending={pending}
+            hideReap={season.verdict === "condemn"}
+          />
+          <span className="season-size num">{itemBytes(season.size_bytes)}</span>
+          <KeptByShowNote
+            own={season.override_own}
+            showOverride={season.show_override}
+            className="season-row-note"
+          />
+        </li>
+      ))}
     </ul>
   );
 }
@@ -1159,7 +1154,6 @@ function ShowCard({
   onSet,
   onClear,
   pending,
-  hideReap,
 }: {
   group: Group;
   selectedId: number | null;
@@ -1170,7 +1164,6 @@ function ShowCard({
   onSet: (key: string, decision: Override) => void;
   onClear: (key: string) => void;
   pending: boolean;
-  hideReap: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const first = group.items[0]!;
@@ -1301,13 +1294,11 @@ function ShowCard({
       {!selectMode && open && (
         <SeasonList
           groupKey={group.key}
-          tabVerdict={first.verdict}
           selectedId={selectedId}
           onOpen={onOpen}
           onSet={onSet}
           onClear={onClear}
           pending={pending}
-          hideReap={hideReap}
         />
       )}
     </article>
@@ -1934,7 +1925,6 @@ export function ReviewQueue({
                   onSet={onSet}
                   onClear={onClear}
                   pending={pending}
-                  hideReap={verdict === "condemn"}
                 />
               ) : (
                 <MovieCard

@@ -370,9 +370,12 @@ Safari alone. New variants are blockers, like the rules above.
     also be `.active`/selected re-asserts the selected treatment at equal-or-higher specificity,
     so the chosen state is not lost under the pointer.
 48. **Reap is dropped wherever the item is already condemned; Keep-first colors the pair.** A
-    hand Reap does nothing to an already-condemned item, so it is hidden on the Condemned lane in
-    every surface carrying `OverrideControls` (card, panel, bulk bar) via `hideReap` from the tab
-    verdict — never reimplement that test inline. "Reap now" (the real deletion) is a different
+    hand Reap does nothing to an already-condemned item, so it is hidden in every surface carrying
+    `OverrideControls` (card, panel, season list, bulk bar) via `hideReap` — judged by the item's
+    OWN verdict (`verdict === "condemn"`), never the tab's, so a mixed season expansion drops Reap
+    on exactly the condemned rows (rule 51); the bulk bar is the one exception and keys on the tab
+    verdict (a heterogeneous selection is not one item). Never reimplement that test inline. Spare
+    is never a no-op and is never hidden. "Reap now" (the real deletion) is a different
     control and is never hidden. Spare invites in green; Reap stays the quiet gray of a plain
     button until hovered; a chosen decision is the solid hand-decision chip.
     - **A whole show is not atomic, so it uses its own no-op test.** A movie/season on the
@@ -432,3 +435,18 @@ Safari alone. New variants are blockers, like the rules above.
     same effective set: `_sync_grace_clocks` (`api/whitelist.py`) deletes the clock when an
     override takes an item off the reap list, so a scan-condemned item the owner spares and later
     un-spares re-enters on a FRESH window, never a spent one (rule 4).
+
+51. **Row actions align in fixed columns; the size holds still; every season is actable in
+    place.** In the expanded season list (`SeasonList`) Spare keeps the left button column and
+    Reap the right, both to the LEFT of a right-pinned size in its own column, so buttons and
+    sizes read as straight columns whatever a row's button count. The button track and the size
+    track are FIXED width, never `auto`: each `.season-row` is its own grid, so an `auto` track
+    sizes to that row's own text ("22.5 GiB" vs "9.1 GiB") and drifts the buttons row to row. The
+    button track is the `--btns` custom property, set once per list by `SeasonList` from whether
+    any season there can show Reap (any non-condemned one), so a show condemned top to bottom
+    reserves no empty Reap slot; `.season-row .override-controls` is `justify-self: start` so a
+    lone Spare lands in the same column as a paired row's Spare. Every season row is actable from
+    here — the old read-only "other-lane" row (and its edge marker) is gone — each with its own
+    `OverrideControls` keyed to `override_own` (rule 50) and `hideReap` from that season's own
+    verdict (rule 48). A per-tab `hideReap` on a list row, a read-only season row, or an `auto`
+    button/size track that lets the columns drift is a regression.

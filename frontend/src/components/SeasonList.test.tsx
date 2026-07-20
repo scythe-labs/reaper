@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The all-seasons list under an expanded show card. Two behaviors are load-bearing:
 // the open list must say "loading" and "failed" out loud (an open chevron over silence
-// reads as broken), and rows from other lanes are visible for the whole-show picture
-// but act only from their own tab -- no Spare/Reap buttons here.
+// reads as broken), and every season is actable in place -- each carries its own Spare/Reap,
+// judged by that season's own verdict (rule 51), whatever tab you opened the show from.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
@@ -167,7 +167,7 @@ describe("the all-seasons list", () => {
     expect(await screen.findByText(/Couldn't load the seasons/)).toBeInTheDocument();
   });
 
-  it("lists every lane, with actions only on this tab's rows", async () => {
+  it("lists every lane and lets you act on each, dropping Reap only where it is a no-op", async () => {
     const group: Group = {
       group_key: "sonarr:5:42",
       title: "Example Show",
@@ -196,13 +196,16 @@ describe("the all-seasons list", () => {
     expect(await screen.findByText("Kept · someone is partway through")).toBeInTheDocument();
     expect(screen.getByText("Would be removed")).toBeInTheDocument();
 
-    // Only the row from THIS tab (Limbo) carries Spare/Reap; the other two act from
-    // their own tabs. Exactly two Spare buttons exist: the card head's and the limbo row's.
-    // Scope to the season list: the card's strip squares are also Season-named buttons.
+    // Every season is actable in place now, not just this tab's. Scope to the season list
+    // (the card head's whole-show control and the strip squares are also buttons).
     const list = screen.getByRole("list");
     const rows = within(list).getAllByRole("button", { name: /Season \d/ });
     expect(rows).toHaveLength(3);
-    expect(screen.getAllByRole("button", { name: /^Spare$/ })).toHaveLength(2);
+    // Spare is on every row; it is never a no-op.
+    expect(within(list).getAllByRole("button", { name: /^Spare$/ })).toHaveLength(3);
+    // Reap shows only where it would change something -- the kept season and the limbo one,
+    // never the already-condemned row (reaping it changes nothing).
+    expect(within(list).getAllByRole("button", { name: /^Reap$/ })).toHaveLength(2);
   });
 
   it("says a season's size is unknown rather than showing it as empty", async () => {

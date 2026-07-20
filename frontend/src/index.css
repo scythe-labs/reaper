@@ -3371,10 +3371,15 @@ details.grace summary {
   .card .season-row > .season-size {
     grid-area: 2 / 2 / 3 / 3;
   }
-  /* The override buttons, or the empty cell an other-tab row puts there instead. */
-  .card .season-row > :last-child {
+  /* Placed by class, not `:last-child`: every row now carries its own buttons, and a
+     KeptByShowNote can follow them as the real last child. Size and buttons share the second
+     row; the note, when present, drops to a full-width third row. */
+  .card .season-row > .override-controls {
     grid-area: 2 / 3 / 3 / 4;
     justify-self: end;
+  }
+  .card .season-row > .season-row-note {
+    grid-area: 3 / 1 / 4 / 4;
   }
 }
 
@@ -3903,6 +3908,12 @@ button.sm {
   display: inline-flex;
   gap: 0.3rem;
 }
+/* In the season list the control sits in a fixed-width button track (--btns): pin it to the
+   track's left so a lone Spare lands in the same column as the Spare of a row that also shows
+   Reap, and Reap always one button to its right -- both read as straight columns (rule 51). */
+.season-row .override-controls {
+  justify-self: start;
+}
 /* The row buttons stay hidden until you hover that row (or Tab to it): a calm list at rest,
    the actions a pointer-move away. Kept in flow (visibility, not display) so the column
    reserves their width and the card never reflows as they appear. */
@@ -4251,15 +4262,18 @@ button.sm {
 }
 .season-row {
   display: grid;
-  grid-template-columns: 2.6rem 1fr auto auto;
+  /* score | title | Spare/Reap | size.  The button track (--btns, set once per list by
+     SeasonList so a fully-condemned show that only ever shows Spare reserves no empty Reap
+     slot) and the size track are both a FIXED width, so every row places its buttons and its
+     size at the same x -- the columns can't drift with the size string ("22.5 GiB" vs
+     "9.1 GiB") or the button count. Only the title (1fr) flexes. See rule 51. */
+  grid-template-columns: 2.6rem 1fr var(--btns, 11.8rem) 4.75rem;
   align-items: center;
   gap: 0.7rem;
   padding: 0.4rem 0.5rem;
   margin: 0 -0.5rem;
   border-radius: 6px;
   border-bottom: 1px solid var(--border);
-  /* Reserved for the other-tab marker below, so a row never shifts when it gains one. */
-  border-left: 2px solid transparent;
 }
 .season-row.clickable {
   cursor: pointer;
@@ -4299,20 +4313,10 @@ button.sm {
   font-size: 0.85rem;
 }
 
-/* A season from another tab, listed so the whole show reads at once: visible and
-   clickable for its reasoning, acted on from its own tab.
-
-   It is marked with a rule down its edge rather than a fade, because every part of this
-   row is text. Fading the row took the words with it -- the --muted size line composited
-   to 2.44:1 on a light surface at 0.6 and still only 3.50:1 at 0.8 -- and fading only the
-   badges is no better: the score pill starts at 4.94:1, so even 0.9 drops it to 4.25:1.
-   The edge rule carries the same "not this tab's row" meaning at no cost to any of them. */
-.season-row.season-other {
-  border-left-color: var(--border-strong);
-}
 .season-size {
   color: var(--muted);
   font-size: 0.84rem;
+  text-align: right;
 }
 
 /* ==========================================================================
