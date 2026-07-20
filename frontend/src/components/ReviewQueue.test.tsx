@@ -11,7 +11,7 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { api, type Candidate } from "../api";
+import { api, type Candidate, type Verdict } from "../api";
 import { compactSpan, ReviewQueue, ShowStatusChip } from "./ReviewQueue";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -79,7 +79,7 @@ function GraceProbe() {
   return null;
 }
 
-function renderQueue() {
+function renderQueue(verdict: Verdict = "condemn") {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -87,7 +87,7 @@ function renderQueue() {
     <QueryClientProvider client={queryClient}>
       <GraceProbe />
       <ReviewQueue
-        verdict="condemn"
+        verdict={verdict}
         onVerdictChange={() => {}}
         selectedId={null}
         selectedGroupKey={null}
@@ -219,6 +219,24 @@ describe("a bulk override", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Reap" })).not.toBeDisabled(),
     );
+  });
+});
+
+describe("the per-card override buttons", () => {
+  it("offers Spare but not Reap on the Condemned lane, since the item is already on the block", async () => {
+    apiMock.candidates.mockResolvedValue(page([movie(1)]));
+    renderQueue();
+    // The card's own Spare (rescue) is here; there is no per-card Reap on this lane -- it
+    // would force onto a list the item is already on. The bulk bar's Reap is another surface.
+    expect(await screen.findByRole("button", { name: "Spare" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Reap$/ })).not.toBeInTheDocument();
+  });
+
+  it("offers both Spare and Reap off the Condemned lane, where forcing a reap means something", async () => {
+    apiMock.candidates.mockResolvedValue(page([movie(1, { verdict: "protect" })]));
+    renderQueue("protect");
+    expect(await screen.findByRole("button", { name: "Spare" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reap" })).toBeInTheDocument();
   });
 });
 

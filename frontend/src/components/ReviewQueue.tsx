@@ -404,19 +404,24 @@ function DormantPill({ dormantFor }: { dormantFor: string | null }) {
   );
 }
 
-/** The two hand-overrides, as a paired toggle: **Spare** (∞ keep forever) and **Reap** (force
- *  onto the list). The active one is lit; clicking it again clears the override and lets Reaper
- *  judge the item again. Clicking the other switches. Stops the click from opening the panel. */
+/** The hand-overrides, as a toggle: **Spare** (∞ keep forever) and **Reap** (force onto the
+ *  list). The active one is lit; clicking it again clears the override and lets Reaper judge
+ *  the item again. Clicking the other switches. Stops the click from opening the panel.
+ *
+ *  On the Condemned lane the item is already on the block, so Reap would change nothing:
+ *  `hideReap` drops it there and leaves Spare (rescue) on its own. */
 export function OverrideControls({
   override,
   onSet,
   onClear,
   pending,
+  hideReap = false,
 }: {
   override: Override | null;
   onSet: (decision: Override) => void;
   onClear: () => void;
   pending: boolean;
+  hideReap?: boolean;
 }) {
   const click = (e: ReactMouseEvent, decision: Override) => {
     e.stopPropagation();
@@ -441,21 +446,36 @@ export function OverrideControls({
         </span>{" "}
         {override === "spare" ? "Spared" : "Spare"}
       </button>
-      <button
-        type="button"
-        className={`ov-btn ov-reap ${override === "reap" ? "active" : ""}`}
-        disabled={pending}
-        aria-pressed={override === "reap"}
-        onClick={(e) => click(e, "reap")}
-        title={
-          override === "reap"
-            ? "Marked for reaping. Click to undo"
-            : "Force this onto the reap list"
-        }
-      >
-        <ScytheIcon /> {override === "reap" ? "Reaping" : "Reap"}
-      </button>
+      {!hideReap && (
+        <button
+          type="button"
+          className={`ov-btn ov-reap ${override === "reap" ? "active" : ""}`}
+          disabled={pending}
+          aria-pressed={override === "reap"}
+          onClick={(e) => click(e, "reap")}
+          title={
+            override === "reap"
+              ? "Marked for reaping. Click to undo"
+              : "Force this onto the reap list"
+          }
+        >
+          <ScytheIcon /> {override === "reap" ? "Reaping" : "Reap"}
+        </button>
+      )}
     </div>
+  );
+}
+
+/** The resting decision marker: when a hand override is in force, the card rests as a small
+ *  icon of that decision (∞ spared, scythe reaped) where the buttons sit, bottom-right. The
+ *  hover rules fade it out as the buttons arrive, so the two never show together. Decorative:
+ *  the same decision is named by the card's override chip and by the buttons themselves. */
+function OverrideMark({ override }: { override: Override | null }) {
+  if (!override) return null;
+  return (
+    <span className={`override-mark ${override}`} aria-hidden="true">
+      {override === "spare" ? <span className="mk-inf">∞</span> : <ScytheIcon />}
+    </span>
   );
 }
 
@@ -821,6 +841,7 @@ function SeasonList({
   onSet,
   onClear,
   pending,
+  hideReap,
 }: {
   groupKey: string;
   tabVerdict: Verdict;
@@ -829,6 +850,7 @@ function SeasonList({
   onSet: (key: string, decision: Override) => void;
   onClear: (key: string) => void;
   pending: boolean;
+  hideReap: boolean;
 }) {
   const { data, isPending, error } = useQuery({
     queryKey: ["group", groupKey],
@@ -895,6 +917,7 @@ function SeasonList({
                 onSet={(d) => onSet(season.media_key, d)}
                 onClear={() => onClear(season.media_key)}
                 pending={pending}
+                hideReap={hideReap}
               />
             ) : (
               // Other-lane rows are read-only here: they act from their own tab, and an
@@ -916,6 +939,7 @@ function MovieCard({
   onSet,
   onClear,
   pending,
+  hideReap,
 }: {
   item: Candidate;
   selected: boolean;
@@ -924,6 +948,7 @@ function MovieCard({
   onSet: (key: string, decision: Override) => void;
   onClear: (key: string) => void;
   pending: boolean;
+  hideReap: boolean;
 }) {
   const state = item.override === "spare" ? "card-spared" : item.override === "reap" ? "card-reaped" : "";
   const { selectMode, isSelected } = select;
@@ -984,14 +1009,19 @@ function MovieCard({
       <div className="card-side">
         <Score item={item} />
         {/* In Select mode the whole card is a target, so the inline buttons stand down -- the
-            bulk bar carries the actions instead. */}
+            bulk bar carries the actions instead. Otherwise the decision icon rests here until
+            you hover, when the buttons take its place. */}
         {!selectMode && (
-          <OverrideControls
-            override={item.override}
-            onSet={(d) => onSet(item.media_key, d)}
-            onClear={() => onClear(item.media_key)}
-            pending={pending}
-          />
+          <>
+            <OverrideMark override={item.override} />
+            <OverrideControls
+              override={item.override}
+              onSet={(d) => onSet(item.media_key, d)}
+              onClear={() => onClear(item.media_key)}
+              pending={pending}
+              hideReap={hideReap}
+            />
+          </>
         )}
       </div>
     </article>
@@ -1008,6 +1038,7 @@ function ShowCard({
   onSet,
   onClear,
   pending,
+  hideReap,
 }: {
   group: Group;
   selectedId: number | null;
@@ -1018,6 +1049,7 @@ function ShowCard({
   onSet: (key: string, decision: Override) => void;
   onClear: (key: string) => void;
   pending: boolean;
+  hideReap: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const first = group.items[0]!;
@@ -1116,14 +1148,19 @@ function ShowCard({
         </div>
         <div className="card-side">
           {/* Spare or reap the whole show in one go -- the decision covers every season. In
-              Select mode the inline buttons stand down; the bulk bar carries the actions. */}
+              Select mode the inline buttons stand down; the bulk bar carries the actions.
+              Otherwise the decision icon rests here until hover reveals the buttons. */}
           {!selectMode && (
-            <OverrideControls
-              override={showOverride}
-              onSet={(d) => onSet(group.key, d)}
-              onClear={() => onClear(group.key)}
-              pending={pending}
-            />
+            <>
+              <OverrideMark override={showOverride} />
+              <OverrideControls
+                override={showOverride}
+                onSet={(d) => onSet(group.key, d)}
+                onClear={() => onClear(group.key)}
+                pending={pending}
+                hideReap={hideReap}
+              />
+            </>
           )}
         </div>
       </div>
@@ -1137,6 +1174,7 @@ function ShowCard({
           onSet={onSet}
           onClear={onClear}
           pending={pending}
+          hideReap={hideReap}
         />
       )}
     </article>
@@ -1763,6 +1801,7 @@ export function ReviewQueue({
                   onSet={onSet}
                   onClear={onClear}
                   pending={pending}
+                  hideReap={verdict === "condemn"}
                 />
               ) : (
                 <MovieCard
@@ -1774,6 +1813,7 @@ export function ReviewQueue({
                   onSet={onSet}
                   onClear={onClear}
                   pending={pending}
+                  hideReap={verdict === "condemn"}
                 />
               );
             })}

@@ -3078,9 +3078,12 @@ tbody tr.spared-row .title-cell {
   box-shadow: var(--shadow-sm);
   transition: box-shadow 0.15s var(--ease), border-color 0.15s var(--ease);
 }
+/* Hover speaks in the accent on every card -- accent edge + a faint accent wash -- so pointing
+   at any row reads the same way. */
 .card:hover {
   box-shadow: var(--shadow-md);
-  border-color: var(--border-strong);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
 }
 .card.clickable {
   cursor: pointer;
@@ -3093,6 +3096,13 @@ tbody tr.spared-row .title-cell {
 .card-selected {
   border-color: var(--accent);
   box-shadow: inset 3px 0 0 var(--accent), var(--shadow-sm);
+}
+/* Hovering the open card is additive: the accent selection bar stays and the hover only
+   deepens it (raised shadow), so it never trades the accent edge for a plain one and can't
+   read as a deselect. After .card:hover in source, so this box-shadow wins; the accent border
+   and wash still come from .card:hover. */
+.card-selected:hover {
+  box-shadow: inset 3px 0 0 var(--accent), var(--shadow-md);
 }
 .card-spared {
   opacity: 0.7;
@@ -3212,6 +3222,7 @@ tbody tr.spared-row .title-cell {
 }
 
 .card-side {
+  position: relative;
   flex: none;
   display: flex;
   flex-direction: column;
@@ -3507,6 +3518,62 @@ button.sm {
   display: inline-flex;
   gap: 0.3rem;
 }
+/* The row buttons stay hidden until you hover that row (or Tab to it): a calm list at rest,
+   the actions a pointer-move away. Kept in flow (visibility, not display) so the column
+   reserves their width and the card never reflows as they appear. */
+.card-side .override-controls,
+.season-row .override-controls {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.14s var(--ease);
+}
+.card:hover > .card-side .override-controls,
+.card:focus-within > .card-side .override-controls,
+.card-head:hover > .card-side .override-controls,
+.card-head:focus-within > .card-side .override-controls,
+.season-row:hover .override-controls,
+.season-row:focus-within .override-controls {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* A card you've decided on rests as a small icon of that decision (∞ spared, scythe reaped),
+   bottom-right in the buttons' slot; the same hover that reveals the buttons fades it out, so
+   the two never show at once. Purely a status marker (aria-hidden): the decision is also named
+   by the card's override chip and the buttons. */
+.override-mark {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2rem;
+  height: 1.9rem;
+  pointer-events: none;
+  transition: opacity 0.14s var(--ease);
+}
+.override-mark.spare {
+  color: var(--protect);
+}
+.override-mark.reap {
+  color: var(--condemn);
+}
+.override-mark .mk-inf {
+  font-weight: 700;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+.override-mark .scythe {
+  width: 16px;
+  height: 16px;
+}
+.card:hover > .card-side .override-mark,
+.card:focus-within > .card-side .override-mark,
+.card-head:hover > .card-side .override-mark,
+.card-head:focus-within > .card-side .override-mark {
+  opacity: 0;
+}
 .ov-btn {
   display: inline-flex;
   align-items: center;
@@ -3710,7 +3777,7 @@ button.sm {
   cursor: pointer;
 }
 .card-head:hover {
-  background: var(--hover);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
 }
 /* The selection tick's column, present only in Select mode -- posters otherwise sit
    flush left on movie and show cards alike. */
@@ -3779,11 +3846,16 @@ button.sm {
   cursor: pointer;
 }
 .season-row.clickable:hover {
-  background: var(--hover);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
 }
 .season-row.card-selected {
   background: var(--accent-soft);
   box-shadow: inset 3px 0 0 var(--accent);
+}
+/* The open season row keeps its accent wash on hover instead of dropping to the lighter one,
+   so hovering it deepens rather than dims -- the row-level twin of .card-selected:hover. */
+.season-row.card-selected:hover {
+  background: var(--accent-soft);
 }
 .season-row:last-child {
   border-bottom: none;
