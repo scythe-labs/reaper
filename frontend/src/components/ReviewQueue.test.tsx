@@ -61,6 +61,20 @@ function movie(n: number, extra: Partial<Candidate> = {}): Candidate {
   };
 }
 
+/** A season row of one show. Shared `group_key` folds them into a single show card. */
+function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Candidate {
+  return movie(n, {
+    media_key: `sonarr:1:${n}`,
+    media_type: "season",
+    title: "Example Show",
+    group_key: "sonarr:show:1",
+    group_title: "Example Show",
+    season_number: n,
+    verdict,
+    ...extra,
+  });
+}
+
 /** One page of candidates, with `total` deciding whether another page is claimed to exist. */
 function page(items: Candidate[], total = items.length, offset = 0) {
   return {
@@ -237,6 +251,27 @@ describe("the per-card override buttons", () => {
     renderQueue("protect");
     expect(await screen.findByRole("button", { name: "Spare" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reap" })).toBeInTheDocument();
+  });
+});
+
+describe("the whole-show override buttons", () => {
+  it("keeps Reap on a part-condemned show on the Condemned lane, unlike a condemned movie", async () => {
+    // The show is here because SOME season is condemned; a whole-show Reap still takes the
+    // seasons the scan kept, so it is not the movie's no-op and both buttons stay.
+    apiMock.candidates.mockResolvedValue(
+      page([season(1, "condemn"), season(2, "condemn"), season(3, "protect")]),
+    );
+    renderQueue("condemn");
+    expect(await screen.findByRole("button", { name: "Spare" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reap" })).toBeInTheDocument();
+  });
+
+  it("drops Reap once every season of the show is condemned", async () => {
+    // Now a whole-show Reap would change nothing, so it falls away just as the movie's does.
+    apiMock.candidates.mockResolvedValue(page([season(1, "condemn"), season(2, "condemn")]));
+    renderQueue("condemn");
+    expect(await screen.findByRole("button", { name: "Spare" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Reap$/ })).not.toBeInTheDocument();
   });
 });
 

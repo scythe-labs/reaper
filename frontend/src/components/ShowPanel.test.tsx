@@ -1,0 +1,129 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// The show panel is where a whole-show Spare or Reap gets made. What is load-bearing here:
+//   - a show carries BOTH buttons, because a whole-show reap covers the seasons the scan
+//     kept, unlike a condemned movie where reap is a no-op -- but Reap falls away once every
+//     season is already condemned;
+//   - the decision acts on the show's group key, and a failed save says so.
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Candidate, Group, Links, Verdict } from "../api";
+import { ShowPanel } from "./ShowPanel";
+
+const { apiMock } = vi.hoisted(() => ({
+  apiMock: { override: vi.fn(), clearOverride: vi.fn() },
+}));
+
+vi.mock("../api", () => ({ api: apiMock }));
+
+const NO_LINKS: Links = {
+  plex: null,
+  tautulli: null,
+  seerr: null,
+  radarr: null,
+  sonarr: null,
+  imdb: null,
+  tmdb: null,
+  rotten_tomatoes: null,
+  trakt: null,
+};
+
+function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Candidate {
+  return {
+    id: n,
+    media_key: `sonarr:1:${n}`,
+    title: "Example Show",
+    media_type: "season",
+    size_bytes: 1024 ** 3,
+    verdict,
+    score: 80,
+    coverage_bp: 10_000,
+    first_flagged_at: null,
+    year: 2011,
+    summary: null,
+    poster_url: null,
+    requested_by: null,
+    group_key: "sonarr:show:1",
+    group_title: "Example Show",
+    group_condemned_count: null,
+    group_condemned_bytes: null,
+    group_unknown_size: null,
+    video_resolution: null,
+    dormant_for: null,
+    reason: null,
+    spared: false,
+    override: null,
+    override_effective: null,
+    chip: null,
+    show_status: null,
+    season_number: n,
+    group_seasons: null,
+    ...extra,
+  };
+}
+
+function group(seasons: Candidate[]): Group {
+  return {
+    group_key: "sonarr:show:1",
+    title: "Example Show",
+    year: 2011,
+    poster_url: null,
+    summary: null,
+    size_bytes: seasons.reduce((sum, s) => sum + (s.size_bytes ?? 0), 0),
+    unknown_size_seasons: 0,
+    reason: null,
+    chip: null,
+    links: NO_LINKS,
+    show_status: "ended",
+    seasons,
+  };
+}
+
+function renderPanel(g: Group) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <ShowPanel group={g} onOpenSeason={() => {}} onClose={() => {}} />
+    </QueryClientProvider>,
+  );
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("the show panel's whole-show buttons", () => {
+  it("offers both Spare and Reap for a part-condemned show", () => {
+    renderPanel(group([season(1, "condemn"), season(2, "protect")]));
+    expect(screen.getByRole("button", { name: "Spare" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reap" })).toBeInTheDocument();
+  });
+
+  it("drops Reap once every season is condemned", () => {
+    renderPanel(group([season(1, "condemn"), season(2, "condemn")]));
+    expect(screen.getByRole("button", { name: "Spare" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Reap$/ })).not.toBeInTheDocument();
+  });
+
+  it("reaps the whole show through its group key", async () => {
+    const { userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    apiMock.override.mockResolvedValue(undefined);
+    renderPanel(group([season(1, "condemn"), season(2, "protect")]));
+
+    await user.click(screen.getByRole("button", { name: "Reap" }));
+    await waitFor(() => expect(apiMock.override).toHaveBeenCalledWith("sonarr:show:1", "reap"));
+  });
+
+  it("says so when the save fails", async () => {
+    const { userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    apiMock.override.mockRejectedValue(new Error("boom"));
+    renderPanel(group([season(1, "condemn"), season(2, "protect")]));
+
+    await user.click(screen.getByRole("button", { name: "Spare" }));
+    expect(await screen.findByText("Couldn't save that. Try again.")).toBeInTheDocument();
+  });
+});

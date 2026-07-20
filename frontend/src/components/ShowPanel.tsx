@@ -10,7 +10,8 @@
 
 import type { Candidate, Group } from "../api";
 import { itemBytes, totalBytes } from "../format";
-import { ShowStatusChip } from "./ReviewQueue";
+import { useOverrideMutations } from "../useOverrideMutations";
+import { groupOverride, OverrideControls, showReapIsNoop, ShowStatusChip } from "./ReviewQueue";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
 import { JumpPill, Synopsis, WhyHero } from "./WhyPanel";
 
@@ -43,6 +44,13 @@ export function ShowPanel({
   onClose: () => void;
 }) {
   const seasonLabel = group.seasons.length === 1 ? "1 season" : `${group.seasons.length} seasons`;
+
+  // The show panel is where a whole-show call gets made, so Spare and Reap live at its bottom
+  // edge too, through the same shared hook the cards and the why-panel use so every view
+  // refreshes together. The decision covers every season; groupOverride reads what the show
+  // currently agrees on.
+  const { setOverride, clearOverride } = useOverrideMutations();
+  const showOverride = groupOverride(group.seasons);
 
   return (
     <aside className="why">
@@ -117,6 +125,23 @@ export function ShowPanel({
           ))}
         </ul>
       </section>
+
+      {/* Decide the whole show without leaving its reasoning, pinned to the panel's bottom
+          edge like the movie and single-season panels. Both buttons, because a whole-show
+          Reap still takes the seasons the scan kept; it drops only once the whole show is
+          condemned (showReapIsNoop), where it would be the no-op a condemned movie's is. */}
+      <div className="why-actions">
+        <OverrideControls
+          override={showOverride}
+          onSet={(decision) => setOverride.mutate({ key: group.group_key, decision })}
+          onClear={() => clearOverride.mutate(group.group_key)}
+          pending={setOverride.isPending || clearOverride.isPending}
+          hideReap={showReapIsNoop(group.seasons)}
+        />
+        {(setOverride.isError || clearOverride.isError) && (
+          <span className="error">Couldn't save that. Try again.</span>
+        )}
+      </div>
     </aside>
   );
 }

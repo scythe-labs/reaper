@@ -367,3 +367,13 @@ Safari alone. New variants are blockers, like the rules above.
     verdict — never reimplement that test inline. "Reap now" (the real deletion) is a different
     control and is never hidden. Spare invites in green; Reap stays the quiet grey of a plain
     button until hovered; a chosen decision is the solid hand-decision chip.
+    - **A whole show is not atomic, so it uses its own no-op test.** A movie/season on the
+      Condemned lane is fully condemned (`verdict === "condemn"` → Reap hidden). A show is on
+      that lane because *some* season is, and a whole-show Reap still takes the seasons the scan
+      kept — so both buttons stay until *every* season is condemned. That show test is
+      `showReapIsNoop` (in `components/ReviewQueue.tsx`), the one place it lives; the show card's
+      whole-show control and the show panel both call it, never a fourth inline copy. The show
+      panel (`ShowPanel`) carries the whole-show Spare/Reap in its own bottom `.why-actions`
+      footer, the same placement the movie/season panel uses. The bulk bar's Reap still keys off
+      the tab verdict alone (a heterogeneous selection is not a single item); refining it for
+      show-only selections is an open follow-up, not a silent gap.

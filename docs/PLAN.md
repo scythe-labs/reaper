@@ -7,9 +7,35 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-19 (the review queue's action grammar, and a bug only Safari drew)
+Last updated: 2026-07-20 (the whole-show Spare/Reap the show panel never had)
 
-### Newest — the review queue's action grammar (and a bug only Safari drew)
+### Newest — the whole-show Spare/Reap the show panel never had
+
+A gap the action-grammar pass left: the show panel (`ShowPanel`) listed every season but
+offered no way to act on the show, the one override-bearing surface with no buttons at all.
+Mocked as a rendered artifact and approved before code.
+
+- **The show panel now carries the whole-show Spare/Reap**, pinned to its own bottom
+  `.why-actions` footer, the same placement the movie/season panel already used ("normalize
+  the buttons to the bottom"). It acts on the show's `group_key` through the shared
+  `useOverrideMutations`, so the panel and the queue refresh as one.
+- **A show shows BOTH buttons where a movie shows only Spare.** The action-grammar rule hid
+  Reap on the Condemned lane because an already-condemned item makes a hand Reap a no-op. That
+  is true for a *movie* (atomic), but a *show* is on that lane because *some* season is
+  condemned — "6 of 9 would be removed" — and a whole-show Reap still takes the kept seasons.
+  So Reap stays for a show until *every* season is condemned. The assumption that turned out
+  wrong: that the tab verdict alone decides `hideReap`. It does for an atomic item; a show
+  needed its own no-op test.
+- **One test, `showReapIsNoop`** (`components/ReviewQueue.tsx`), shared by the show card's
+  whole-show control and the show panel — never a second inline copy (rule 48). It also keeps
+  Reap while a hand-spared-condemned season exists (a whole-show reap would flip it) and while
+  any hand reap is in force (so it stays toggleable). The card's per-season `SeasonList` and
+  movies keep the plain tab test.
+- **Deliberately out of scope:** the bulk bar still drops Reap by tab verdict alone. Its
+  selection is heterogeneous (movies and shows together), so a show-aware rule there is a
+  separate decision, recorded as a follow-up rather than a silent gap.
+
+### The review queue's action grammar (and a bug only Safari drew)
 
 Operator-driven UI work on how a queue row offers its decisions. Each change was mocked as a
 rendered artifact and approved before any code, then driven end-to-end in a real browser.

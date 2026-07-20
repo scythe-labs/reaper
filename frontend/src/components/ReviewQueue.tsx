@@ -587,11 +587,26 @@ function groupReapEffective(items: Candidate[]): boolean | undefined {
 
 /** The single decision that governs a whole show: what all of its seasons agree on, or null
  *  when they are mixed. A show-level override makes every season inherit it, so agreement is
- *  the common case; a per-season override is what makes it mixed. */
-function groupOverride(items: Candidate[]): Override | null {
+ *  the common case; a per-season override is what makes it mixed. Exported so the show panel
+ *  reads the show's decision the same way the card does. */
+export function groupOverride(items: Candidate[]): Override | null {
   if (items.every((s) => s.override === "spare")) return "spare";
   if (items.every((s) => s.override === "reap")) return "reap";
   return null;
+}
+
+/** Whether a whole-show Reap would change nothing -- the show analogue of rule 48's
+ *  already-condemned test. It decides `hideReap` for a show on both the card and the panel,
+ *  so the test lives here once rather than being reimplemented at each surface.
+ *
+ *  A movie on the Condemned lane is atomically condemned, so its own Reap is a no-op and is
+ *  hidden. A show is not atomic: it is on that lane because SOME season is condemned, and a
+ *  whole-show Reap still takes the seasons the scan kept. So Reap only falls away once every
+ *  season is already headed for removal -- scan-condemned and not hand-spared. A show holding
+ *  any hand reap keeps Reap too, so that decision stays toggleable back off. */
+export function showReapIsNoop(seasons: Candidate[]): boolean {
+  if (seasons.some((s) => s.override === "reap")) return false;
+  return seasons.every((s) => s.verdict === "condemn" && s.override !== "spare");
 }
 
 type Group = {
@@ -1158,7 +1173,10 @@ function ShowCard({
                 onSet={(d) => onSet(group.key, d)}
                 onClear={() => onClear(group.key)}
                 pending={pending}
-                hideReap={hideReap}
+                // Not the movie's tab-based `hideReap`: a whole-show Reap still takes the
+                // show's kept seasons, so it stays until the WHOLE show is condemned
+                // (showReapIsNoop). The season rows below keep the per-lane test.
+                hideReap={showReapIsNoop(group.items)}
               />
             </>
           )}
