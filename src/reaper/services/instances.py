@@ -217,7 +217,7 @@ async def delete_instance(session: AsyncSession, instance_id: int) -> bool:
 # Connection test -- read-only, and honest about failure
 # ---------------------------------------------------------------------------
 
-#: Shown when nothing in the chain below recognises the failure. Never a bare class name:
+#: Shown when nothing in the chain below recognizes the failure. Never a bare class name:
 #: "ConnectError: All connection attempts failed" is the first thing a new operator sees
 #: if a URL is wrong, and it teaches them nothing about what to change.
 _GENERIC_FAILURE = "Couldn't connect. The full reason is in Reaper's log."
@@ -273,7 +273,7 @@ def _self_signed(chain: list[BaseException]) -> bool:
 
 
 def _explain_failure(kind: InstanceKind, exc: BaseException) -> str:
-    """One plain sentence an operator can act on, for the families we can recognise.
+    """One plain sentence an operator can act on, for the families we can recognize.
 
     Everything else falls through to :data:`_GENERIC_FAILURE`; the raw exception is
     logged by the caller either way, so nothing is lost, it just is not put in front of

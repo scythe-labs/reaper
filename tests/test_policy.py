@@ -141,7 +141,7 @@ class TestEvidenceHash:
     def test_a_weight_edit_keeps_the_evidence_hash(self) -> None:
         a = _policy(signals=_split(50, 50))
         b = _policy(signals=_split(80, 20))
-        assert a.scoring_hash() != b.scoring_hash()  # scoring behaviour moved
+        assert a.scoring_hash() != b.scoring_hash()  # scoring behavior moved
         assert a.evidence_hash() == b.evidence_hash()  # ...but the evidence is the same -> replay
 
     def test_a_rating_bar_edit_keeps_the_evidence_hash(self) -> None:

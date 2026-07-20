@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Reading Sonarr season statistics correctly.
 
-This module exists because of one field that is a trap. The behaviour below was
+This module exists because of one field that is a trap. The behavior below was
 confirmed against a production Sonarr instance holding a four-figure number of
 series.
 

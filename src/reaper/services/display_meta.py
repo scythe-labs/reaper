@@ -52,7 +52,7 @@ def normalize_resolution(plex_value: str | None, quality_name: str | None) -> st
 
     Plex's ``videoResolution`` first (it describes the file Plex actually serves),
     falling back to parsing the *arr's quality name (e.g. "Bluray-1080p"). Anything
-    unrecognisable is ``None`` -- the badge is hidden, never guessed.
+    unrecognizable is ``None`` -- the badge is hidden, never guessed.
     """
     if plex_value:
         value = plex_value.strip().lower()

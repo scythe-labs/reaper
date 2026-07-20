@@ -34,7 +34,7 @@ log = structlog.get_logger(__name__)
 
 
 class ArrClient(BaseClient):
-    """Shared Sonarr/Radarr behaviour."""
+    """Shared Sonarr/Radarr behavior."""
 
     service: ClassVar[str] = "arr"
     default_prefix: ClassVar[str] = "/api/v3"

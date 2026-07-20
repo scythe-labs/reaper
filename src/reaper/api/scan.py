@@ -177,12 +177,12 @@ async def start_scan(request: Request) -> ScanStatus:
             status.phase = "error"
             log.warning("scan.background_failed", error=str(exc))
         finally:
-            # An errored run does not honour a queued follow-up: rerunning would repeat
+            # An errored run does not honor a queued follow-up: rerunning would repeat
             # (or mask) the failure the owner needs to see first.
             status.running = False
             status.followup_queued = False
 
-    # Held on app.state so the task is not garbage-collected mid-run, and can be cancelled on
+    # Held on app.state so the task is not garbage-collected mid-run, and can be canceled on
     # shutdown. It is deliberately NOT tied to this request's lifetime.
     request.app.state.scan_task = asyncio.create_task(run())
     return status

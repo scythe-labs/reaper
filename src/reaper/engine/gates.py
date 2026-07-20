@@ -219,7 +219,7 @@ class GateConfig:
 
 
 # ---------------------------------------------------------------------------
-# The catalogue
+# The catalog
 # ---------------------------------------------------------------------------
 
 
@@ -240,7 +240,7 @@ class RatingRule:
     """One "keep it if it clears this bar" rule, for one rating source.
 
     ``floor`` is in tenths (7.5 -> 75), the same convention the whole policy uses, and it
-    reads the same for a percentage source: 75% is 75, because 84% arrives normalised to
+    reads the same for a percentage source: 75% is 75, because 84% arrives normalized to
     8.4 on the 0-10 scale and its tenths are 84. ``min_votes`` only bites on sources that
     count votes (IMDb, TMDb); it is ignored for Rotten Tomatoes and Metacritic, which are
     percentages with no vote concept (see ``ratings.Rating.has_meaningful_vote_count``).
@@ -521,7 +521,7 @@ class DataHorizonGate:
 
     Tautulli cannot import Plex history from before it was installed, so everything watched
     before that looks never-watched -- the single biggest mass-deletion vector in the whole
-    ecosystem. The real defence against it lives in fact *derivation*, not in this gate:
+    ecosystem. The real defense against it lives in fact *derivation*, not in this gate:
     dormancy is measured from ``max(added_at, horizon)`` (see ``services.snapshot.build_facts``,
     ``engine.backtest.facts_as_of`` and ``engine.calibration.derive``), so a pre-horizon item
     is clamped to the horizon rather than read as decades dormant.
@@ -529,7 +529,7 @@ class DataHorizonGate:
     This gate's only independent job, therefore, is to fail closed when dormancy is
     ``Unknown`` -- it is not handed ``added_at`` and cannot itself re-check the clamp, so it
     must not claim to have. It duplicates ``MinDormancyGate``'s Unknown fail-closed on
-    purpose: defence-in-depth on the one fact whose absence would otherwise condemn the item
+    purpose: defense-in-depth on the one fact whose absence would otherwise condemn the item
     we know least about. When dormancy is Known it abstains, and it does NOT assert that
     history "covers" the item, because it never independently verified that.
     """

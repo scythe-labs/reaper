@@ -48,7 +48,7 @@ are popular** — the largest files are 4K features.
 
 Removing it (and adding a dormancy gate) cut regret by a third and roughly doubled
 skill over the age-matched baseline. So the reasoning was right even though the "worse
-than random" claim that originally motivated it was an artefact of the bad baseline.
+than random" claim that originally motivated it was an artifact of the bad baseline.
 
 > Use a reward term to **rank** what the risk model has already selected. Never to
 > select.
@@ -144,7 +144,7 @@ the same SQLite file as the schema. A routine `rm reaper.db` during a migration 
 destroyed them — twice.
 
 Worse: a cache table *leaked into a migration*. Alembic's autogenerate saw `imdb_rating`
-in `reaper.db`, didn't recognise it, and helpfully proposed to `create_table` it. That
+in `reaper.db`, didn't recognize it, and helpfully proposed to `create_table` it. That
 migration then failed on a fresh database.
 
 ⇒ Split them. `reaper.db` is small, precious, migrated. `cache.db` is **orders of
@@ -200,7 +200,7 @@ stale scores and render it, and it will look exactly as authoritative as a true 
 policy editor with a weight slider and a live count is therefore a trap unless it can
 tell the two situations apart.
 
-⇒ Hash the policy's *scoring behaviour* separately from its thresholds
+⇒ Hash the policy's *scoring behavior* separately from its thresholds
 (`PolicyBody.scoring_hash()`), record it on the snapshot, and **refuse to answer** when
 they differ. A plausible wrong number is worse than a blank, because the owner acts on
 it.
@@ -367,7 +367,7 @@ list is fetched once per scan and handed to `resolve_movie` / `resolve_show`; th
 reported root that prefixes an item's path is that item's root, and only what sits
 strictly below it is evidence (`identity._below_arr_root`). With no root reported, or a
 path under none of them, the corroborator **stands down** and returns nothing — never a
-fixed strip, which is the unsound behaviour being removed.
+fixed strip, which is the unsound behavior being removed.
 
 **Narrowed a third time, same day: ranking by depth is itself the bug.** Keeping the
 one-segment strip on the *Plex* side, on the argument that Plex's root is unknown and one
@@ -395,7 +395,7 @@ and the narrowing **abstains** rather than letting either overrule the other.
 corroborator that stands aside is not neutral, and that is the lesson worth carrying: it
 hands the decision to whatever runs next. The twins gate ran *before* the folder winner was
 computed, so any twin pair made the contradiction veto unreachable and a folder answer from
-outside the group was discarded in favour of the group. And a failed root-folder read was
+outside the group was discarded in favor of the group. And a failed root-folder read was
 treated as "no roots", which silently removed the veto and let a stale Plex size bind the
 copy the folder would have disputed. Both now resolve the same way: the folder's answer is
 computed first and compared against the group, and an unreadable root list refuses the whole
@@ -436,7 +436,7 @@ on something the owner meant to protect).
 The probe that *discovered* this was itself bitten by it — its cleanup step matched the
 tags case-sensitively, found nothing, and left two labels on a real item.
 
-⇒ Casefold every label comparison. `normalise_label()` in `clients/plex.py` is the only
+⇒ Casefold every label comparison. `normalize_label()` in `clients/plex.py` is the only
 comparison form, and removal re-reads the item to remove the tag under the exact
 spelling Plex is using.
 
@@ -556,7 +556,7 @@ The name-matches-two case turned out to be, on a real library, **every** remaini
 ambiguity — and inspecting the listings showed the shape precisely: a curated section
 (built years after the original) re-lists the *very same file* under its own rating key at
 a **different full path** with the same leaf and the same parent-folder name. So "same
-full path" can never recognise it; what does is the **exact byte size**: the two listings'
+full path" can never recognize it; what does is the **exact byte size**: the two listings'
 part sizes were byte-equal, and equal to Radarr's own `movieFile.size`. A curated re-list
 farm points at the same bytes (links or a bit-exact copy), and no two different encodes
 share an exact byte count in practice.
@@ -649,7 +649,7 @@ that Plex's own UI renders as percentages. Radarr hands the very same Rotten
 Tomatoes / Metacritic scores through as raw percentages (`96`), while its
 IMDb/TMDb/Trakt values are 0-10 averages.
 
-⇒ **Normalise per provider, never per source.** "Divide any Rotten Tomatoes value by
+⇒ **Normalize per provider, never per source.** "Divide any Rotten Tomatoes value by
 ten" is exactly right for Radarr and silently turned Plex's 84% into 0.84 — which the
 review view would have displayed as 8%.
 
@@ -674,7 +674,7 @@ filtering cannot protect you.** An allow-list of read commands is required.
 It omits `ratingKey`, `externalServiceId`, `mediaAddedAt` and `status4k` — all of which
 the API returns and all of which are load-bearing. **Do not codegen from it.**
 
-Also: `GET /request` defaults to `take=10`. Forget to pass it and you silently analyse
+Also: `GET /request` defaults to `take=10`. Forget to pass it and you silently analyze
 the ten most recent requests and conclude the rest do not exist.
 
 ### The requester rule must be per-*media*, not per-*request*
@@ -910,7 +910,7 @@ Anomalies found, every one explained and none an ingest bug:
   stray absent old row observed (one row in a six-figure history) is consistent with this and heals
   on the next sweep.
 - **Upstream metadata drifts under you.** Two titles changed genre lists at the source
-  within hours of the scan. Frozen-at-scan facts are the correct behaviour, but any
+  within hours of the scan. Frozen-at-scan facts are the correct behavior, but any
   validation that diffs a snapshot against a live source must budget for source-side
   mutation, or it will cry wolf.
 - **A validation tolerance is part of the claim.** The humanized dormancy phrase keeps
@@ -937,7 +937,7 @@ Anomalies found, every one explained and none an ingest bug:
   branch entirely.
 - **Shrinking the popularity window from 365 to 7 days condemned nothing new** (with
   watchers honestly recomputed for the narrow window): the dormancy gate and rating
-  floor pick up the slack. Defence-in-depth is real — single-gate misconfiguration is
+  floor pick up the slack. Defense-in-depth is real — single-gate misconfiguration is
   survivable in this library's shape.
 
 ## Prior art

@@ -235,7 +235,7 @@ class TestTheBacktestUsesTheDerivedPrior:
         assert result.prior_is_derived is False
         assert "borrowed from another library" in result.summary()
 
-    def test_a_derived_prior_is_labelled_as_measured_here(self) -> None:
+    def test_a_derived_prior_is_labeled_as_measured_here(self) -> None:
         result = backtest.BacktestResult(cutoff=NOW, condemn_at=60, prior=_prior(rate=0.40))
         result.condemned = [("Film", 80.0, 1)]
         result.condemned_dormancy = [1200.0]

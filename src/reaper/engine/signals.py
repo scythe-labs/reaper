@@ -6,7 +6,7 @@ is the *floor*, not the middle. All protection lives in the gate lane; nothing h
 can protect, and nothing here can be negative.
 
 That sounds like a detail. It is the difference between a correct scorer and one
-that deletes your favourite film during an outage.
+that deletes your favorite film during an outage.
 
 ## Why unsigned
 
@@ -190,7 +190,7 @@ class SignalState(enum.StrEnum):
     """What this row actually says, for a reader who only sees the number.
 
     Four states, because four genuinely different situations all end at zero pressure
-    and are otherwise indistinguishable once the result is serialised:
+    and are otherwise indistinguishable once the result is serialized:
 
     * ``ADDS`` -- it pushed toward removing (the only state with pressure above zero).
     * ``ARGUES_KEEP`` -- we read a real value and it argues for keeping: a rating above
@@ -203,7 +203,7 @@ class SignalState(enum.StrEnum):
       it was fine".
 
     ``ARGUES_KEEP`` and ``NOT_APPLICABLE`` are kept apart deliberately. Folding them
-    together would let an item with nothing in its favour read as if something argued
+    together would let an item with nothing in its favor read as if something argued
     for keeping it, which overstates the case for keeping in one direction and hides a
     thin evidence base in the other.
     """

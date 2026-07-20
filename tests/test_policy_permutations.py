@@ -145,7 +145,7 @@ def with_rule(policy: PolicyBody, rule: dict) -> PolicyBody:
 
 class TestPinnedBaseline:
     def test_every_vector_reproduces_its_baseline_under_the_default_policies(self) -> None:
-        """If this fails, the engine's behaviour changed for real library shapes.
+        """If this fails, the engine's behavior changed for real library shapes.
 
         That may be intentional -- a scorer change bumps SCORER_VERSION -- in which case
         regenerate the fixture (scripts/policy_lab_extract.py) in the same change, so the

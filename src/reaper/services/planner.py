@@ -143,7 +143,7 @@ def confirmation_phrase(candidates: Sequence[Candidate]) -> str:
     The GB figure covers the items that have a size, and it is never asked to absorb the
     ones that do not. When the allowance (``ProfileSettings.max_unmeasured_per_run``) has
     admitted any, the phrase gains a ``+ N UNSIZED`` suffix, so the owner types an
-    acknowledgement that the run holds things the GB figure does not describe. With the
+    acknowledgment that the run holds things the GB figure does not describe. With the
     allowance at its default the suffix never appears and the phrase is byte-identical to
     what it has always been.
 
@@ -326,7 +326,7 @@ async def build_plan(
 
     # A snapshot is frozen evidence, so the owner's overrides since it was taken are
     # applied here: a spare drops its item (no plan ever targets a file the owner told us
-    # to keep), and a hand reap adds one -- when decide_verdict honours it past the
+    # to keep), and a hand reap adds one -- when decide_verdict honors it past the
     # cautious protections (services.condemned). A decision on a whole show covers each of
     # its seasons. The executor re-derives this same set per item at execute time,
     # catching an override changed later in the grace window.
@@ -418,7 +418,7 @@ async def build_plan(
                 members_by_group.setdefault(c.group_key, set()).add(c.media_key)
         # Shows whose only reapable seasons are ones nothing would size. They have no
         # entry above (that map holds measured members only), so without this they would
-        # fall through as an unrecognised key and be refused as "not condemned in this
+        # fall through as an unrecognized key and be refused as "not condemned in this
         # snapshot" -- true of the key, and completely misleading about the show.
         unmeasured_groups: dict[str, set[str]] = {}
         for c in held_back:
@@ -514,7 +514,7 @@ async def build_plan(
         # The manifest binds to the WHOLE condemned set, spared or not. A spare is not a
         # change to what was condemned -- it is a decision to keep one of them -- so sparing
         # an item after approval must not change this fingerprint and void the run; the
-        # executor honours the spare per item instead. Both sides hash the identical frozen
+        # executor honors the spare per item instead. Both sides hash the identical frozen
         # candidate rows for this immutable snapshot, so this fingerprint is a frozen-set
         # integrity check (it catches a condemned candidate row lost or tampered with under
         # the run), NOT live library drift -- nothing re-reads the *arr here. Live drift is

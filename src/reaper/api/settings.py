@@ -1126,7 +1126,7 @@ async def test_notifications(request: Request, payload: NotificationsTestIn) -> 
 # ---------------------------------------------------------------------------
 
 
-#: A six-digit hex colour, ``#rrggbb``. The one shape the accent may take.
+#: A six-digit hex color, ``#rrggbb``. The one shape the accent may take.
 _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
@@ -1221,11 +1221,11 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
                     ) from None
 
         if payload.accent_color is not None:
-            cleaned_colour = payload.accent_color.strip()
-            if cleaned_colour and not _HEX_COLOR.match(cleaned_colour):
+            cleaned_color = payload.accent_color.strip()
+            if cleaned_color and not _HEX_COLOR.match(cleaned_color):
                 raise HTTPException(
                     422,
-                    "The accent colour must be a hex code like #25c3ff.",
+                    "The accent color must be a hex code like #25c3ff.",
                 )
 
         if payload.application_name is not None:

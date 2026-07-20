@@ -20,7 +20,7 @@ from reaper.clients.plex import (
     GuardedSession,
     benign_shelf_write,
     declared_mutation,
-    normalise_label,
+    normalize_label,
 )
 from reaper.config import RuntimeSafety
 
@@ -194,7 +194,7 @@ class TestGetShapedMutationsAreGated:
         assert not isinstance(caught.value, SafetyViolationError)
 
     def test_an_ordinary_section_read_stays_free(self) -> None:
-        """Reads that merely LOOK like the refresh path's neighbours (the section
+        """Reads that merely LOOK like the refresh path's neighbors (the section
         listing is_refreshing polls) must not need arming."""
         session = GuardedSession(READ_ONLY)
         with pytest.raises(Exception) as caught:
@@ -216,21 +216,21 @@ class TestLeavingSoonWriteAllowed:
         assert SHELF_UNARMED.destructive_allowed is False
 
 
-class TestLabelNormalisation:
+class TestLabelNormalization:
     """Plex title-cases label tags on the way in. Every comparison must account for it,
     or Reaper fails to find a label it wrote -- and 'I can't find my Leaving-Soon mark'
     becomes 'this item isn't flagged, so it's safe to act on'."""
 
     def test_case_and_whitespace_are_folded(self) -> None:
-        assert normalise_label("Leaving-Soon") == normalise_label("leaving-soon")
-        assert normalise_label("  reaper-keep ") == normalise_label("Reaper-Keep")
+        assert normalize_label("Leaving-Soon") == normalize_label("leaving-soon")
+        assert normalize_label("  reaper-keep ") == normalize_label("Reaper-Keep")
 
     def test_distinct_labels_stay_distinct(self) -> None:
-        assert normalise_label("leaving-soon") != normalise_label("reaper-keep")
+        assert normalize_label("leaving-soon") != normalize_label("reaper-keep")
 
 
 class TestSessionTlsChoice:
-    """The Plex session honours the per-server certificate choice (requests reads it
+    """The Plex session honors the per-server certificate choice (requests reads it
     off ``Session.verify``), and on is the only default."""
 
     def test_verification_defaults_on(self) -> None:

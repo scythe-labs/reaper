@@ -195,8 +195,8 @@ async def sync_section(
     )
     collection_plan = reconcile(target, on_collection)
 
-    labelled = await plex.labelled_in_section(section_key, kind=kind, label=LEAVING_SOON_LABEL)
-    label_plan = reconcile(target, labelled)
+    labeled = await plex.labeled_in_section(section_key, kind=kind, label=LEAVING_SOON_LABEL)
+    label_plan = reconcile(target, labeled)
 
     if apply and not (collection_plan.is_noop and label_plan.is_noop):
         with benign_shelf_write():

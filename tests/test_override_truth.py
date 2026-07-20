@@ -4,7 +4,7 @@
 Before this pass a reap override changed nothing until the next scan: the queue kept its
 green pill, the counts and the plan excluded the item, and grace never started. Now one
 module (``services.condemned``) assembles the effective condemned set -- scan-condemned
-minus hand-spares plus hand-reaps the engine honours -- and grace, the planner, the
+minus hand-spares plus hand-reaps the engine honors -- and grace, the planner, the
 confirmation counts and the executor all read it. Pinned here:
 
 * ``reap_override_verdict`` plumbs a frozen row into ``decide_verdict`` and nothing
@@ -147,7 +147,7 @@ async def _row(
 
 
 class TestEffectiveCondemned:
-    async def test_spares_leave_and_honoured_reaps_join(
+    async def test_spares_leave_and_honored_reaps_join(
         self, factory: async_sessionmaker[AsyncSession]
     ) -> None:
         async with factory() as session:
@@ -215,7 +215,7 @@ class TestEffectiveCondemned:
 
         assert [i.media_key for i in report.in_grace] == ["radarr:1:5"]
 
-    async def test_the_plan_includes_an_honoured_reap_and_refuses_a_refused_one(
+    async def test_the_plan_includes_an_honored_reap_and_refuses_a_refused_one(
         self, factory: async_sessionmaker[AsyncSession]
     ) -> None:
         async with factory() as session:
@@ -241,7 +241,7 @@ class TestEffectiveCondemned:
                     .all()
                 )
             }
-            # The honoured reap is planned; the structural refusal is not.
+            # The honored reap is planned; the structural refusal is not.
             assert planned_keys == {"radarr:1:6", "radarr:1:7"}
 
             # Naming the refused one explicitly fails loudly, never silently shrinks.
@@ -333,7 +333,7 @@ def _clock_rows(tmp_path: Path) -> dict[str, Any]:
 
 
 class TestOverrideRoutesAndTheGraceClock:
-    def test_an_honoured_reap_starts_the_clock_and_withdrawing_it_stops_it(
+    def test_an_honored_reap_starts_the_clock_and_withdrawing_it_stops_it(
         self, client: TestClient, tmp_path: Path
     ) -> None:
         response = client.post(

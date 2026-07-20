@@ -32,7 +32,7 @@ from reaper.engine.gates import GateId
 #: The protections a manual "reap" override may NOT overrule -- a file that is streaming
 #: right now must not be deleted, and an unmanaged file has no path to delete through.
 #: Everything else (dormancy, rating, popularity, a curated list, the keep list) is a
-#: *cautious* judgement the owner is entitled to overrule by hand.
+#: *cautious* judgment the owner is entitled to overrule by hand.
 STRUCTURAL_GATES = frozenset({GateId.STREAMING_NOW, GateId.UNMANAGED})
 
 

@@ -116,7 +116,7 @@ CASES: list[tuple[str, InstanceKind, BaseException, str]] = [
     ),
     # -- HTTP statuses ----------------------------------------------------------------
     (
-        "unauthorised",
+        "unauthorized",
         InstanceKind.SONARR,
         IntegrationError("service", "unauthorized", status=401),
         "Sonarr refused the API key. Copy it again from its own settings.",
@@ -224,7 +224,7 @@ CASES: list[tuple[str, InstanceKind, BaseException, str]] = [
         "Tautulli answered, but turned the request down. Check the API key first, then the URL.",
     ),
     (
-        "nothing we recognise",
+        "nothing we recognize",
         InstanceKind.SONARR,
         RuntimeError("something else entirely"),
         _GENERIC_FAILURE,

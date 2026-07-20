@@ -3,7 +3,7 @@
 // The grace panel: what is counting down, and what has cleared.
 //
 // Reaper never deletes the moment it condemns. A condemned item waits out a grace window
-// first, and this is where the owner watches that clock -- and stops it. Cancelling a
+// first, and this is where the owner watches that clock -- and stops it. Canceling a
 // grace is "spare it" (the same manual whitelist the review queue uses), so an item the
 // owner rescues here is protected everywhere, at once.
 //

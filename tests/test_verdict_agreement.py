@@ -119,7 +119,7 @@ class TestAProtectionStillBeatsTheScore:
 
 class TestRowsTheSimulatorMustNotReDecide:
     """The two row kinds the simulator keeps out of the score comparison, and the scan
-    behaviour that makes that the ONLY correct treatment. The simulator marks a stored
+    behavior that makes that the ONLY correct treatment. The simulator marks a stored
     row with non-empty ``protections_unknown`` abstained at any threshold, and keeps an
     overridden row at its stored verdict; these sweeps pin that the scan agrees at every
     score and threshold, so the route's skip can never drift from production."""

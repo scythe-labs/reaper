@@ -9,7 +9,7 @@ the next scan while the queue showed no change and the plan excluded it.
 
 This is the ONE place that assembles "condemned, as of this moment":
 
-    scan-condemned rows  -  hand-spares  +  hand-reaps that decide_verdict honours
+    scan-condemned rows  -  hand-spares  +  hand-reaps that decide_verdict honors
 
 Everything that acts or counts imports it -- grace (and through it the Leaving Soon
 shelf), the planner's step expansion, the confirmation-phrase count, the executor's

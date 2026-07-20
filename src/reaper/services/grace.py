@@ -2,7 +2,7 @@
 """The grace period: the countdown between "condemned" and "actually gone".
 
 Reaper never deletes the instant it condemns something. A condemned item sits in a grace
-window of ``grace_days`` first, during which it can be cancelled by hand, rescued by
+window of ``grace_days`` first, during which it can be canceled by hand, rescued by
 anyone watching it, or simply reconsidered when the next scan re-judges it. Only after
 the window closes is it eligible for a real deletion -- and that step is still supervised
 and, for now, deliberately unbuilt.
@@ -13,7 +13,7 @@ while an item stays condemned, precisely so a transient outage cannot reset it),
 window length is the owner's ``grace_days``. Grace status is therefore *derived*, not
 tracked -- one source of truth, nothing to drift.
 
-It deletes nothing. Cancelling a grace is spelt "spare it" (the manual whitelist); rescue
+It deletes nothing. Canceling a grace is spelled "spare it" (the manual whitelist); rescue
 happens naturally, because a play resets dormancy and the next scan no longer condemns it.
 """
 

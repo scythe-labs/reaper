@@ -81,7 +81,7 @@ async def set_override(
 
     Idempotent, and switches decision in place: reaping an already-spared item flips it to
     reap. Flushes so the override is visible to any read later in the same unit of work; the
-    caller owns the commit. ``title`` is denormalised in for display; the media_key is identity.
+    caller owns the commit. ``title`` is denormalized in for display; the media_key is identity.
     """
     entry = await session.get(WhitelistEntry, media_key)
     if entry is None:

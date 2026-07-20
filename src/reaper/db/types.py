@@ -4,7 +4,7 @@
 ``EpochDateTime`` stores every timestamp as an **INTEGER unix epoch (UTC seconds)**
 and presents it to Python as a timezone-aware ``datetime``.
 
-Storing epoch rather than a DATETIME column is not a micro-optimisation; it
+Storing epoch rather than a DATETIME column is not a micro-optimization; it
 removes a bug class rather than guarding against it. SQLite has no native date
 type and stores no timezone, so ``DateTime(timezone=True)`` is silently a no-op
 there: an aware datetime goes in and a *naive* one comes back. Comparing that

@@ -75,7 +75,7 @@ function applyTheme(choice: ThemeChoice) {
 }
 
 // Quick-pick accents. The first is the built-in default; the rest are a spread of hues that
-// stay clear of the fixed red "remove" and green "keep" verdict colours. Any hex is allowed
+// stay clear of the fixed red "remove" and green "keep" verdict colors. Any hex is allowed
 // via the field, so this is a shortcut, not the whole choice.
 const ACCENT_PRESETS = [
   DEFAULT_ACCENT,
@@ -1175,7 +1175,7 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
           <button
             key={p.id}
             className={panel === p.id ? "settings-tab active" : "settings-tab"}
-            // The active panel is stated, not just coloured, the same as the masthead.
+            // The active panel is stated, not just colored, the same as the masthead.
             aria-current={panel === p.id ? "page" : undefined}
             onClick={() => setPanel(p.id)}
           >

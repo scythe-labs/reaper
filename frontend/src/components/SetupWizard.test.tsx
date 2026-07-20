@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The one behaviour that matters on the first-run screen: once the first scan is running you
+// The one behavior that matters on the first-run screen: once the first scan is running you
 // can leave for the app immediately, instead of being held on the wizard until it finishes.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";

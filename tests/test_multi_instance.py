@@ -28,7 +28,7 @@ ADDED = from_epoch("1700000000")
 
 def _plex_index(*items: tuple[int, str]) -> identity.PlexIndex:
     """A Plex movie index from ``(rating_key, title)`` pairs -- no external ids, so the
-    join here exercises the title+year backstop (the multi-instance behaviour predates
+    join here exercises the title+year backstop (the multi-instance behavior predates
     id matching and must survive it unchanged)."""
     return identity.PlexIndex.build(
         [

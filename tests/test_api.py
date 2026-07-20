@@ -736,7 +736,7 @@ class TestTheSimulator:
         assert self._simulate(client, 50)["exact"] is True
 
     def test_it_names_what_a_change_would_newly_condemn(self, client: TestClient) -> None:
-        """A count is abstract; a title the owner recognises is what stops a bad
+        """A count is abstract; a title the owner recognizes is what stops a bad
         threshold. Dropping the threshold pulls in the cleanly-abstained item -- and the
         example names it. The blocked "Unmatched" row scores higher, yet must not appear:
         its protections could not be checked, so no threshold may condemn it."""
@@ -791,7 +791,7 @@ class TestTheSimulator:
         assert result["no_longer_condemned"] == 0
 
     def test_a_hand_reap_on_a_protected_row_counts_as_condemned(self, client: TestClient) -> None:
-        """The rating floor is a cautious judgement the owner may overrule: once they
+        """The rating floor is a cautious judgment the owner may overrule: once they
         hand-reap the protected fixture, the simulator must count it condemned at any
         threshold, exactly as the plan and the counts now do (services.condemned). At a
         draft of 95 the stored condemn (91) legitimately drops out, so the hand-reaped

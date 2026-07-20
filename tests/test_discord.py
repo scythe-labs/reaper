@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Discord notifications.
 
-The behaviour that matters is not "does it send a nice embed" -- it is "can a broken
+The behavior that matters is not "does it send a nice embed" -- it is "can a broken
 webhook ever break Reaper". So the failure paths get the most attention: every one must
 return False and stay silent, never raise, and never log the URL.
 """
@@ -20,7 +20,7 @@ WEBHOOK = "https://discord.com/api/webhooks/123/token-is-a-secret"
 def _notifier() -> DiscordNotifier:
     # build_notifier now resolves the webhook from the database; that path is exercised in
     # tests/test_review_backend_core_B.py. These tests are about the notifier's own
-    # behaviour, so they construct it directly against the webhook.
+    # behavior, so they construct it directly against the webhook.
     return DiscordNotifier(WEBHOOK)
 
 

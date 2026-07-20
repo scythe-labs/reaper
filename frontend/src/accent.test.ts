@@ -41,7 +41,7 @@ describe("applyAccent", () => {
     });
   });
 
-  it("sets --accent and a contrast-safe --accent-ink, and caches the colour for pre-paint", () => {
+  it("sets --accent and a contrast-safe --accent-ink, and caches the color for pre-paint", () => {
     applyAccent(DEFAULT_ACCENT);
     const s = document.documentElement.style;
     expect(s.getPropertyValue("--accent")).toBe("#25c3ff");
@@ -49,14 +49,14 @@ describe("applyAccent", () => {
     expect(localStorage.getItem(ACCENT_STORAGE_KEY)).toBe("#25c3ff");
   });
 
-  it("lower-cases the colour and flips the ink for a dark one", () => {
+  it("lower-cases the color and flips the ink for a dark one", () => {
     applyAccent("#4F46E5");
     const s = document.documentElement.style;
     expect(s.getPropertyValue("--accent")).toBe("#4f46e5");
     expect(s.getPropertyValue("--accent-ink")).toBe("#ffffff");
   });
 
-  it("ignores a missing or malformed colour, leaving the stylesheet default in place", () => {
+  it("ignores a missing or malformed color, leaving the stylesheet default in place", () => {
     applyAccent(undefined);
     applyAccent("nope");
     applyAccent("#fff");

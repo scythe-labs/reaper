@@ -168,7 +168,7 @@ retired one in `REAPER_SECRET_KEY_OLD` — comma-separated for a chain of them. 
 encrypts under the new key while still decrypting whatever the old ones wrote, so nothing
 is bricked halfway through; drop the old value once every credential has been re-saved.
 
-Honest limitation: a key file next to the database it protects is no defence against
+Honest limitation: a key file next to the database it protects is no defense against
 an attacker who already has your filesystem. It defends against the ordinary way
 these leak — a database copied into a backup, an issue report, a support thread. For
 real separation, supply the key from a secret manager.
@@ -293,7 +293,7 @@ that renders the delete button.
 Every timestamp is a **UTC instant stored as an integer unix epoch**
 (`src/reaper/db/types.py`), presented to Python as a timezone-aware `datetime`.
 
-This is not a micro-optimisation — it removes a bug class rather than guarding
+This is not a micro-optimization — it removes a bug class rather than guarding
 against one. SQLite stores no timezone, so `DateTime(timezone=True)` is silently a
 no-op there: aware datetimes go in, naive ones come back, and a naive/aware
 comparison is either a `TypeError` or — worse — quietly wrong by your UTC offset.
@@ -325,6 +325,6 @@ proves a named constraint can be dropped under batch mode, and it runs the real
 both the offline and online call sites. Flipping `render_as_batch` to `False` fails that
 test today, rather than surfacing years from now in the first migration that needs it.
 
-## Licence
+## License
 
 AGPL-3.0-or-later.

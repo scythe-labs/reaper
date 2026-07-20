@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The one operator-chosen colour, applied at runtime. Settings → General stores a #rrggbb
+// The one operator-chosen color, applied at runtime. Settings → General stores a #rrggbb
 // accent on the server; the whole UI derives from --accent (see index.css), so applying it
 // is just setting two custom properties on <html>:
-//   --accent      the colour itself
+//   --accent      the color itself
 //   --accent-ink  the text that rides on a solid accent fill -- dark or light by luminance,
 //                 so a bright accent never ends up with unreadable pale text on it.
 // The hover / soft / ring shades are pure color-mix() of --accent in the stylesheet, so they
@@ -17,15 +17,15 @@ const HEX = /^#[0-9a-fA-F]{6}$/;
 const DARK_INK = "#06202c";
 const LIGHT_INK = "#ffffff";
 export const ACCENT_STORAGE_KEY = "reaper-accent";
-/** The built-in accent, mirrored from the backend default. The colour Reset returns to. */
+/** The built-in accent, mirrored from the backend default. The color Reset returns to. */
 export const DEFAULT_ACCENT = "#25c3ff";
 
-/** Whether a string is a valid #rrggbb colour. */
+/** Whether a string is a valid #rrggbb color. */
 export function isHexColor(value: string): boolean {
   return HEX.test(value.trim());
 }
 
-/** Relative luminance (WCAG) of a #rrggbb colour, 0 (black) to 1 (white). */
+/** Relative luminance (WCAG) of a #rrggbb color, 0 (black) to 1 (white). */
 function luminance(hex: string): number {
   const channel = (i: number) => {
     const v = parseInt(hex.slice(i, i + 2), 16) / 255;
@@ -45,7 +45,7 @@ export function accentInk(hex: string): string {
 
 /** Apply the accent to the document, and cache it so index.html can pre-paint it next load.
  *  A missing or malformed value is ignored: the stylesheet default stands, never a broken
- *  colour. */
+ *  color. */
 export function applyAccent(color: string | null | undefined): void {
   if (!color || !HEX.test(color)) return;
   const hex = color.toLowerCase();
@@ -55,6 +55,6 @@ export function applyAccent(color: string | null | undefined): void {
   try {
     localStorage.setItem(ACCENT_STORAGE_KEY, hex);
   } catch {
-    // storage unavailable (private window): the colour still applies for this session.
+    // storage unavailable (private window): the color still applies for this session.
   }
 }

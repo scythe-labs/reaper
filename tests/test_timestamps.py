@@ -79,7 +79,7 @@ class TestStorage:
         # Whole-second precision; the instant must not move.
         assert abs((row.created_at - now).total_seconds()) < 1
 
-    async def test_a_non_utc_datetime_is_normalised_not_shifted(
+    async def test_a_non_utc_datetime_is_normalized_not_shifted(
         self, session: AsyncSession
     ) -> None:
         """A caller handing us US/Eastern must not move the underlying instant."""

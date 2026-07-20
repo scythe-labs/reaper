@@ -16,7 +16,7 @@ What the fixture contains, and deliberately nothing more:
   collapsed to ``Other``;
 * per-show season shapes as ``(season_number, watchers)`` pairs;
 * a pinned baseline: every vector judged under the SHIPPED default policies, so the
-  harness can detect any change in engine behaviour against real shapes.
+  harness can detect any change in engine behavior against real shapes.
 
 No titles, ids, media keys, paths, hosts, or usernames -- the golden rule applies to
 fixtures exactly as it does to code.
@@ -68,7 +68,7 @@ def obs(state: str, value: Any = None) -> dict[str, Any]:
 
 #: The observation states ``facts_codec._obs_to_dict`` emits. The fixture uses the same
 #: three names, so this is not a translation: it is the allow-list that sends anything
-#: unrecognised (a future state, a corrupt row) to the caller's default.
+#: unrecognized (a future state, a corrupt row) to the caller's default.
 _STATES = frozenset({"known", "absent", "unknown"})
 
 

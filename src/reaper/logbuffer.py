@@ -11,7 +11,7 @@ It also owns the *dynamic* log level. The stored setting (Settings -> Logs) wins
 the ``REAPER_LOG_LEVEL`` environment value after first boot, exactly like every other
 env-seeded switch, and changing it takes effect immediately: the structlog pipeline
 consults :func:`level_no` per event (see ``reaper.logging``), and the stdlib root logger
-is re-levelled in :func:`set_level`.
+is re-leveled in :func:`set_level`.
 
 Everything appended here has already passed the redaction layer -- the structlog
 processor sits after ``redact_secrets``, and the stdlib handler scrubs query-string

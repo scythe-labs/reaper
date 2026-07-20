@@ -15,7 +15,7 @@ data/
 **/*.db-shm
 **/*.key
 
-# Build artefacts. The image builds the frontend itself; copying a local node_modules
+# Build artifacts. The image builds the frontend itself; copying a local node_modules
 # in would both bloat the context and risk shipping host-native binaries.
 frontend/node_modules/
 frontend/dist/

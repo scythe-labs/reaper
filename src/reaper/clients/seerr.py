@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Seerr -- who asked for what, and when it actually arrived.
 
-Modelled from the live API rather than the published OpenAPI document, which is
+Modeled from the live API rather than the published OpenAPI document, which is
 stale: the spec omits ``ratingKey``, ``externalServiceId``, ``mediaAddedAt`` and
-``status4k``, yet the API returns all four (its routes serialise raw TypeORM
+``status4k``, yet the API returns all four (its routes serialize raw TypeORM
 entities). Generating a client from that spec would silently drop every field we
 actually need.
 
@@ -48,7 +48,7 @@ class MediaStatus(enum.IntEnum):
 
     The enum diverges between forks: ``DELETED`` is **7** on Seerr and Jellyseerr,
     but **6** on Overseerr, where 6 is ``BLOCKLISTED``. Never hardcode the integer;
-    compare against this enum and detect the flavour from ``/status``.
+    compare against this enum and detect the flavor from ``/status``.
     """
 
     UNKNOWN = 1
@@ -201,7 +201,7 @@ class SeerrClient(BaseClient):
         """One page of requests, plus the total.
 
         ``take`` is always sent explicitly: the server default is 10, and relying
-        on it would quietly analyse the ten most recent requests and report the
+        on it would quietly analyze the ten most recent requests and report the
         rest as non-existent.
         """
         payload = await self.get_json(

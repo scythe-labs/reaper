@@ -11,7 +11,7 @@ The rules pinned here:
   no CSRF risk), backs off per address on bad guesses, and is FENCED off the three
   irreversible authorities: the deletion switch, execute, and sign-in/key management;
 * reverse-proxy trust is off by default, applies immediately on save, and
-  ``client_ip`` only honours a forwarded chain when the peer itself is a listed proxy;
+  ``client_ip`` only honors a forwarded chain when the peer itself is a listed proxy;
 * the log ring is redacted before storage, polls incrementally by sequence number, and
   the recording level applies instantly and persists (stored value over env seed).
 """
@@ -113,7 +113,7 @@ class TestGeneralSettings:
         response = client.put("/api/settings/general", json={"accent_color": "blue"})
         assert response.status_code == 422
         assert "#" in response.json()["detail"]
-        # The bad value never landed; the previous colour still stands.
+        # The bad value never landed; the previous color still stands.
         assert client.get("/api/settings/general").json()["accent_color"] == "#4f46e5"
 
     def test_an_empty_accent_resets_to_the_default(self, client: TestClient) -> None:

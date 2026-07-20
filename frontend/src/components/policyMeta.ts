@@ -35,10 +35,10 @@ export const GATE_META: Record<string, GateMeta> = {
   },
   whitelisted: {
     label: "Spare titles you've tagged",
-    help: "A title carrying one of these tags in Sonarr/Radarr is kept, whatever it scores. (A ‘Never Reap’ Plex collection is honoured too.)",
+    help: "A title carrying one of these tags in Sonarr/Radarr is kept, whatever it scores. (A ‘Never Reap’ Plex collection is honored too.)",
   },
   curated_list: {
-    label: "Honour protected lists",
+    label: "Honor protected lists",
     help: "Right now this is the IMDb Top 250. Anything on it is kept.",
   },
   data_horizon: {

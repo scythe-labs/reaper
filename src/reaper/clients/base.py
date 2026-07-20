@@ -117,7 +117,7 @@ class GuardedTransport(httpx.AsyncBaseTransport):
 
     It is an allow-list of exact paths rather than a per-client opt-out, so the
     exemption is auditable in one place and a new client cannot quietly acquire a
-    licence to write.
+    license to write.
     """
 
     def __init__(
@@ -155,7 +155,7 @@ class GuardedTransport(httpx.AsyncBaseTransport):
 
 
 class BaseClient:
-    """Shared HTTP behaviour: auth headers, retries, error mapping, redaction."""
+    """Shared HTTP behavior: auth headers, retries, error mapping, redaction."""
 
     service: ClassVar[str] = "http"
 

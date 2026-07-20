@@ -306,7 +306,7 @@ Correct both comments.
 `chipWhy` removes a literal `"Kept · "` prefix and its result is interpolated into
 `OverrideChip`'s lowercase sentence "Reap requested · kept for now: {keptWhy}". But
 `reap_override_verdict` refuses a hand reap whenever `blocked` is true — the abstain lane —
-and abstain chips carry no `"Kept · "` prefix. They pass through capitalised, and several
+and abstain chips carry no `"Kept · "` prefix. They pass through capitalized, and several
 carry their own middot.
 
 **Failure.** An operator hits Reap on an item whose protections could not all be checked.
@@ -427,7 +427,7 @@ refuses it. Delete the source grep rather than keeping it alongside.
 
 The comment says `_STATE` maps `facts_codec`'s compact keys to the fixture's spelled-out
 ones. `facts_codec._obs_to_dict` already emits `"known"/"absent"/"unknown"`, so the dict maps
-each key to itself. Its real job is validating an unrecognised state down to the caller's
+each key to itself. Its real job is validating an unrecognized state down to the caller's
 default, which the comment does not say. Dev-only script; documentation-only impact.
 
 **Fix.** `_STATES = frozenset({"known", "absent", "unknown"})` with a comment stating what it
@@ -580,7 +580,7 @@ link, so the same flow now exists twice with different affordances.
 
 **Failure.** An operator with popups blocked clicks Link with Plex. The plex.tv tab never
 opens, the button stays disabled, nothing offers the approval URL or a way out, and five
-minutes later a grey line says the sign-in timed out with no explanation.
+minutes later a gray line says the sign-in timed out with no explanation.
 
 **Fix.** Hold the auth URL in state and, while `linking`, render the same affordances
 `Login.tsx` has: a visible fallback `<a href={authUrl} target="_blank" rel="noreferrer">` and
@@ -621,7 +621,7 @@ message that names the actual fix.
 
 **Fix.** A table-driven test feeding `_explain_failure` a constructed cause chain per family
 (`IntegrationError` from `ssl.SSLError`, from `ConnectTimeout`, from `ConnectError`; statuses
-401/404/429/302/500; a `ValueError` body; a bare `IntegrationError`; an unrecognised
+401/404/429/302/500; a `ValueError` body; a bare `IntegrationError`; an unrecognized
 exception), asserting the returned sentence. The SSL-under-`ConnectError` chain pins the
 ordering.
 
@@ -689,7 +689,7 @@ Drop the staleness wording from the history list so it lives in one place.
 
 In `KeepRulesEditor`'s "Leans toward keeping" form, the discount is a raw
 `<input type="number">` with the unit outside it as loose muted text. Rule 40 forbids
-exactly this. The same commit converted the neighbouring "full effect at" input in this very
+exactly this. The same commit converted the neighboring "full effect at" input in this very
 form to `FixedQuantity`, and the parallel control in `RemoveRulesEditor` (`:1012`) is already
 `FixedQuantity suffix="points"`, so the two halves of the same page disagree. (The input is
 nested in a `<label>`, so it does have an accessible name — but the name is "up to minus",
@@ -712,7 +712,7 @@ safer"). The diff touched all three (adding `aria-label`) as part of the consist
 rebuilt the number input beside the third into a `FixedQuantity`, so the rows were reworked
 with the control type left on the old pattern.
 
-**Failure.** For the lean-direction picker specifically: `lDir` initialises to `"high_keeps"`,
+**Failure.** For the lean-direction picker specifically: `lDir` initializes to `"high_keeps"`,
 so an operator who never opens the dropdown saves that default without ever seeing that a
 direction choice exists. That is exactly what `Segmented.tsx`'s own header comment ("never
 for a binary the user should see whole") exists to prevent.
@@ -737,14 +737,14 @@ matching `ServiceModal.tsx`. Since the row's `.help` already says "Turn this off
 server you run yourself…", shorten the notice to the consequence alone: "Reaper will accept
 this server's certificate without checking who issued it."
 
-### U-5 · A timed-out Plex sign-in renders as grey status text, not a failure — **low**
+### U-5 · A timed-out Plex sign-in renders as gray status text, not a failure — **low**
 
 `frontend/src/components/PlexPanel.tsx:103` · rule 42
 
 `PlexPanel` deliberately splits `message` (info, `<p className="muted">`) from `plexError`
 (`.notice.notice-error`) precisely so failures do not read as status — its own comment at
 `:42-44` says so. `onTimedOut` writes into `message`, so a link attempt that never completed
-is announced in the same grey type and the same slot a successful "Linked to …" occupies,
+is announced in the same gray type and the same slot a successful "Linked to …" occupies,
 one line above `onFailed` which correctly uses `plexError`.
 
 **Fix.** `setPlexError("Plex sign-in timed out. Try again.")` instead of `setMessage(...)`.
@@ -757,7 +757,7 @@ one line above `onFailed` which correctly uses `plexError`.
 `DEBUG` is the lowest rank in `LEVEL_RANK` (10) and unknown levels fall back to 20, so every
 line passes the `>= LEVEL_RANK["DEBUG"]` test. "Debug and up" filters nothing, which is
 identical to "All levels" — two adjacent options in one dropdown with different labels and
-identical behaviour.
+identical behavior.
 
 **Fix.** Drop the `DEBUG` option and keep "All levels" as the no-filter choice, or relabel so
 each names a distinct floor ("All levels", "Info and up", "Warnings and up", "Errors only").
@@ -997,7 +997,7 @@ where one sharpens an existing rule the more specific obligation governs.
     retry is scheduled; a remedy ("turn off the certificate check") only in the branch where
     it is the right remedy, and never without naming what it costs. (Sharpens rules 21
     and 25.)
-26. **Every option in a picker does something different from its neighbours.** If two values
+26. **Every option in a picker does something different from its neighbors.** If two values
     produce identical output, one of them is deleted.
 27. **A dropdown-driven action that stages state must be reachable when its value is already
     selected.** A sentinel option that is also the current value fires no `onChange` and

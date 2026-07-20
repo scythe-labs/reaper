@@ -47,7 +47,7 @@ class _RecordingLogger:
 
 
 def _make(tmp_path: Path, *, stored_destructive: bool | None) -> Settings:
-    """A schema-initialised install; optionally with the deletion toggle already stored,
+    """A schema-initialized install; optionally with the deletion toggle already stored,
     the way a real install looks after someone armed it in the web UI."""
     settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
     engine = sa_create_engine(settings.sync_database_url)

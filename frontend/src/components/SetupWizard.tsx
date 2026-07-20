@@ -15,7 +15,7 @@ import { phaseLabel } from "./ScanBar";
 import { PlexPanel, ServicesPanel } from "./Settings";
 
 // The tick is the only thing that says whether a step is finished, so it carries the state
-// as text too: colour and a glyph alone leave a screen reader hearing the step with no
+// as text too: color and a glyph alone leave a screen reader hearing the step with no
 // state at all, on the one screen a new operator cannot skip past.
 function Check({ done, children }: { done: boolean; children: React.ReactNode }) {
   return (

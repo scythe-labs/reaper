@@ -62,7 +62,7 @@ APPLICATION_NAME_KEY = "application_name"
 #: Where people reach this install (``https://reaper.example.com``). Used to build the
 #: links notifications carry; empty means notifications simply carry no links.
 APPLICATION_URL_KEY = "application_url"
-#: The colour the whole UI is tinted with -- buttons, links, highlights, the scan line.
+#: The color the whole UI is tinted with -- buttons, links, highlights, the scan line.
 #: A ``#rrggbb`` string, purely cosmetic. Unlike the per-browser theme it is stored on the
 #: server, so every browser that opens this install sees it. Validated at the API edge.
 ACCENT_COLOR_KEY = "accent_color"
@@ -177,16 +177,16 @@ async def set_application_url(session: AsyncSession, url: str | None) -> None:
 
 
 async def get_accent_color(session: AsyncSession) -> str:
-    """The UI accent colour as ``#rrggbb``. Defaults to the built-in sky blue."""
+    """The UI accent color as ``#rrggbb``. Defaults to the built-in sky blue."""
     value = await _get(session, ACCENT_COLOR_KEY, default=None)
-    colour = str(value).strip().lower() if value else ""
-    return colour or DEFAULT_ACCENT_COLOR
+    color = str(value).strip().lower() if value else ""
+    return color or DEFAULT_ACCENT_COLOR
 
 
-async def set_accent_color(session: AsyncSession, colour: str | None) -> None:
-    """Store the accent colour, lower-cased. Empty resets to the default. The value is
-    validated to ``#rrggbb`` at the API edge, so a malformed colour never reaches here."""
-    cleaned = (colour or "").strip().lower()
+async def set_accent_color(session: AsyncSession, color: str | None) -> None:
+    """Store the accent color, lower-cased. Empty resets to the default. The value is
+    validated to ``#rrggbb`` at the API edge, so a malformed color never reaches here."""
+    cleaned = (color or "").strip().lower()
     await _set(session, ACCENT_COLOR_KEY, cleaned or None)
 
 

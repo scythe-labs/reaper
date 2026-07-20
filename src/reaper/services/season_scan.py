@@ -123,7 +123,7 @@ class SonarrSource:
 
 
 @dataclass(frozen=True, slots=True)
-class SeasonJudgement:
+class SeasonJudgment:
     """One season, gathered and ready for the shared judge loop.
 
     Carries the season-guard verdict as a ``GateResult`` so the scan can merge it with
@@ -787,12 +787,12 @@ async def gather(
     flag_keep_conflicts: bool = True,
     membership_index: lists.MembershipIndex | None = None,
     allowed_sections: set[int] | None = None,
-) -> list[SeasonJudgement]:
+) -> list[SeasonJudgment]:
     """Gather every prunable season across every Sonarr instance, ready to judge.
 
     Read-only. Reads Sonarr for series and their season statistics, runs the guards to
     find prunable seasons, resolves only those shows against Plex, reads their watch
-    history from the local mirror, and returns a ``SeasonJudgement`` per content-bearing
+    history from the local mirror, and returns a ``SeasonJudgment`` per content-bearing
     season of a show that has something removable.
 
     ``degrade`` is the snapshot's degrade callback: an unreadable Sonarr marks the
@@ -987,9 +987,9 @@ async def gather(
     # judges viewer activity against the same instant -- the snapshot discipline.
     now = utcnow()
 
-    judgements: list[SeasonJudgement] = []
+    judgments: list[SeasonJudgment] = []
     for item in work:
-        judgements.extend(
+        judgments.extend(
             _judge_series(
                 item,
                 stats=stats,
@@ -1013,8 +1013,8 @@ async def gather(
             )
         )
 
-    log.info("season_scan.gathered", seasons=len(judgements), shows_pruned=len(work))
-    return judgements
+    log.info("season_scan.gathered", seasons=len(judgments), shows_pruned=len(work))
+    return judgments
 
 
 def _judge_series(
@@ -1038,8 +1038,8 @@ def _judge_series(
     keep_specials: bool = True,
     flag_keep_conflicts: bool = True,
     ratings: dict[str, ImdbRating] | None = None,
-) -> list[SeasonJudgement]:
-    """Build a judgement for every content-bearing season of one series.
+) -> list[SeasonJudgment]:
+    """Build a judgment for every content-bearing season of one series.
 
     Prunable AND protected seasons are emitted, so the Protected page can show the
     reasoning for the kept siblings -- not only the season that would go.
@@ -1121,7 +1121,7 @@ def _judge_series(
     whitelists = [m for m in hard if m.is_whitelist]
     curated = [m for m in hard if not m.is_whitelist]
 
-    judgements: list[SeasonJudgement] = []
+    judgments: list[SeasonJudgment] = []
     for season in item.seasons:
         if not season.has_content:
             continue
@@ -1162,8 +1162,8 @@ def _judge_series(
         season_requester = requested.get(
             requested_by.season_key(tvdb_id, n) or ""
         ) or requested.get(requested_by.show_key(tvdb_id) or "")
-        judgements.append(
-            SeasonJudgement(
+        judgments.append(
+            SeasonJudgment(
                 media_key=media_key,
                 plex_rating_key=plex_key,
                 title=title,
@@ -1200,4 +1200,4 @@ def _judge_series(
                 show_status=show_status_key(show_ended_obs),
             )
         )
-    return judgements
+    return judgments

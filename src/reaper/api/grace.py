@@ -2,7 +2,7 @@
 """The grace endpoint: what is counting down, and what has cleared.
 
 Read-only. Reports where each currently-condemned item sits in its grace window, using
-the active profile's ``grace_days``. Deletes nothing and plans nothing -- cancelling a
+the active profile's ``grace_days``. Deletes nothing and plans nothing -- canceling a
 grace is done by sparing the item (POST /api/whitelist), and the reap of a cleared item
 is the separate, supervised, still-unbuilt step.
 """

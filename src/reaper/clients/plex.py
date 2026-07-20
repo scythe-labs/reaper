@@ -8,7 +8,7 @@ We use ``plexapi`` rather than raw HTTP on purpose: it encodes the exact URI for
 batch edits and hub promotion that other tools in this space have provably got wrong,
 and those are the calls where being wrong means silently mangling the owner's library.
 
-Three behaviours here were established against a live server, and each one contradicts
+Three behaviors here were established against a live server, and each one contradicts
 what you would reasonably assume:
 
 **Labels are title-cased by Plex.** Write ``leaving-soon`` and read back
@@ -211,7 +211,7 @@ def benign_shelf_write() -> Iterator[None]:
 
     Set **only** by the Leaving Soon sync path, exactly as ``declared_mutation`` is set
     only by the executor -- the narrowness is what keeps this from becoming a general
-    licence to write. It tells :class:`GuardedSession` the write is the reversible,
+    license to write. It tells :class:`GuardedSession` the write is the reversible,
     file-touching-nothing shelf (the label batch edit and the collection edits) rather
     than a deletion, so it may be permitted in read-only mode *if the operator turned on
     "Update while read-only" in Settings -> Plex*. It never permits a delete, and that is
@@ -310,7 +310,7 @@ class GuardedSession(requests.Session):
         return super().request(method, url, *args, **kwargs)
 
 
-def normalise_label(tag: str) -> str:
+def normalize_label(tag: str) -> str:
     """The comparison form for a label tag.
 
     Plex title-cases what you write: ``leaving-soon`` comes back as ``Leaving-Soon``.
@@ -495,7 +495,7 @@ class PlexClient:
         **every** file behind the listing with its name and exact byte size (the first
         location's leaf feeds the global basename tier; the full set exists so an
         ambiguous id can be narrowed against all of a candidate's files, and
-        byte-identical re-lists of one file can be recognised), the display metadata
+        byte-identical re-lists of one file can be recognized), the display metadata
         (ratings with provenance, certification, runtime, resolution), and the
         title / year / added-at the listing already carries.
 
@@ -665,7 +665,7 @@ class PlexClient:
             log.warning("plex.refresh_state_unreadable", section=section_title, error=str(exc))
             return True
 
-    async def labelled_in_section(self, section_key: int, *, kind: str, label: str) -> set[int]:
+    async def labeled_in_section(self, section_key: int, *, kind: str, label: str) -> set[int]:
         """The rating keys in one section carrying ``label``, at the level the shelf
         works on: movies in a movie section, seasons in a show section.
 
@@ -698,7 +698,7 @@ class PlexClient:
             return await asyncio.to_thread(read)
         except Exception as exc:
             raise PlexError(
-                f"Could not read items labelled {label!r} in section {section_key}: {exc}"
+                f"Could not read items labeled {label!r} in section {section_key}: {exc}"
             ) from exc
 
     async def video_sections(self) -> list[PlexSection]:
@@ -760,7 +760,7 @@ class PlexClient:
         read.
         """
         server = await self._connect()
-        wanted = normalise_label(name)
+        wanted = normalize_label(name)
 
         def read() -> int | None:
             container = server.query(  # type: ignore[no-untyped-call]
@@ -769,7 +769,7 @@ class PlexClient:
             for el in container:
                 title = str(el.get("title") or "")
                 key = el.get("ratingKey")
-                if key and normalise_label(title) == wanted:
+                if key and normalize_label(title) == wanted:
                     return int(key)
             return None
 
@@ -838,7 +838,7 @@ class PlexClient:
         if not rating_keys:
             return
         server = await self._connect()
-        wanted = normalise_label(label)
+        wanted = normalize_label(label)
 
         def write() -> None:
             section = server.library.section(section_title)
@@ -850,7 +850,7 @@ class PlexClient:
                     # Only touch items that actually carry it, and remove it under the
                     # spelling Plex is really using.
                     for existing in item.labels:
-                        if normalise_label(str(existing.tag)) == wanted:
+                        if normalize_label(str(existing.tag)) == wanted:
                             chunk.append((item, str(existing.tag)))
                             break
 

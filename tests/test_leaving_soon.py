@@ -5,7 +5,7 @@ The shelf should track the grace set exactly, per library: movies appear on thei
 library's shelf when they enter grace and come off when they leave it; seasons do the
 same in their TV library. The reconcile is pure and gets pinned directly; the per-library
 orchestration is driven against a fake Plex client, so none of it needs a server -- the
-real adapter's live behaviour is the separate, supervised verification step.
+real adapter's live behavior is the separate, supervised verification step.
 """
 
 from __future__ import annotations
@@ -64,12 +64,12 @@ class _FakePlex:
         *,
         section_items: dict[int, set[int]],
         collections: dict[int, set[int]] | None = None,
-        labelled: dict[int, set[int]] | None = None,
+        labeled: dict[int, set[int]] | None = None,
     ) -> None:
         self._section_items = section_items
         # collection state per section key; a section absent has no collection yet.
         self.collections = dict(collections or {})
-        self.labelled = {k: set(v) for k, v in (labelled or {}).items()}
+        self.labeled = {k: set(v) for k, v in (labeled or {}).items()}
         self.calls: list[tuple[str, object]] = []
         # collection rating keys are distinct from section keys to catch conflation:
         # collection key = section key + 9000.
@@ -86,9 +86,9 @@ class _FakePlex:
         section_key = collection_key - 9000
         return set(self.collections[section_key])
 
-    async def labelled_in_section(self, section_key: int, *, kind: str, label: str) -> set[int]:
+    async def labeled_in_section(self, section_key: int, *, kind: str, label: str) -> set[int]:
         assert label == LEAVING_SOON_LABEL
-        return set(self.labelled.get(section_key, set()))
+        return set(self.labeled.get(section_key, set()))
 
     async def create_collection(
         self, section_key: int, *, kind: str, name: str, rating_keys: list[int]
@@ -107,7 +107,7 @@ class _FakePlex:
 
     async def add_label(self, section_title: str, rating_keys: list[int], label: str) -> None:
         self.calls.append(("label_add", tuple(rating_keys)))
-        self.labelled.setdefault(0, set()).update(rating_keys)
+        self.labeled.setdefault(0, set()).update(rating_keys)
 
     async def remove_label(self, section_title: str, rating_keys: list[int], label: str) -> None:
         self.calls.append(("label_remove", tuple(rating_keys)))
@@ -173,7 +173,7 @@ class TestSyncSection:
         plex = _FakePlex(
             section_items={10: {1, 9}},
             collections={10: {9}},
-            labelled={10: {9}},
+            labeled={10: {9}},
         )
         await sync_section(
             plex,  # type: ignore[arg-type]
@@ -208,7 +208,7 @@ class TestSyncSection:
         plex = _FakePlex(
             section_items={10: {1}},
             collections={10: {1}},
-            labelled={10: {1}},
+            labeled={10: {1}},
         )
         outcome = await sync_section(
             plex,  # type: ignore[arg-type]

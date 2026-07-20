@@ -518,7 +518,7 @@ function Signals({ item }: { item: CandidateDetail }) {
         <span className="sig-key sig-key-unread" />
         Couldn't check
         {/* The sum sentence is the legend's last item, not a stray line under it: what the
-            colours mean and what the numbers add to belong on the same line. It needs its own
+            colors mean and what the numbers add to belong on the same line. It needs its own
             element to BE an item: adjacent bare text nodes collapse into one anonymous flex
             item, and the row's gap never lands between them. */}
         <span>{discounted ? "Points before the keep rules." : "Points add up to the score."}</span>

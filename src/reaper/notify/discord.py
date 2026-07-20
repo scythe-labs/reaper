@@ -37,7 +37,7 @@ log = structlog.get_logger(__name__)
 _MAX_TITLES = 20
 _TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
 
-# Discord rate-limits per webhook and returns 429 with a Retry-After. We honour it once,
+# Discord rate-limits per webhook and returns 429 with a Retry-After. We honor it once,
 # but a notification is a courtesy, not a gate -- so the wait is bounded: a webhook that
 # asks us to sleep for minutes must never stall a scan/plan/run. Cap the wait, retry once,
 # and if it still 429s fall through to the ordinary "rejected" path.
@@ -93,7 +93,7 @@ class DiscordNotifier:
         payload["username"] = self._app_name
         try:
             response = await client.post(self._url, json=payload)
-            # A 429 is not a real failure -- the same message can land moments later. Honour
+            # A 429 is not a real failure -- the same message can land moments later. Honor
             # Retry-After and retry once (bounded) rather than silently dropping the warning.
             if response.status_code == 429:
                 response = await self._retry_after_429(client, payload, embed.title, response)

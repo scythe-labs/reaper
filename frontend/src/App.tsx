@@ -371,7 +371,7 @@ function Dashboard({ user }: { user: AuthUser }) {
     if (name && document.title !== name) document.title = name;
   }, [generalSettings?.application_name]);
 
-  // The install's chosen accent colour (Settings → General), applied to the whole UI. Saved
+  // The install's chosen accent color (Settings → General), applied to the whole UI. Saved
   // on the server, so it follows the install, not the browser. index.html pre-paints it from
   // a cache to avoid a flash; this keeps it in step after a save or on another device.
   useEffect(() => {
@@ -457,7 +457,7 @@ function Dashboard({ user }: { user: AuthUser }) {
             <button
               key={n.id}
               className={view === n.id ? "tab active" : "tab"}
-              // The view you are on is stated, not just coloured.
+              // The view you are on is stated, not just colored.
               aria-current={view === n.id ? "page" : undefined}
               onClick={() => {
                 // A plain tab visit must not replay an old cross-page jump.

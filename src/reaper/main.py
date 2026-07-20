@@ -155,7 +155,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Background maintenance. Refreshes only -- it never deletes. The startup catch-up
     # runs in a task rather than inline so a first-boot 280 MB dataset download does not
     # block the app from serving; the first scan degrades until it lands, which is the
-    # correct, loud behaviour, not a broken one.
+    # correct, loud behavior, not a broken one.
     scheduler = build_scheduler(
         cache_engine, settings.data_dir, session_factory=factory, secret_box=box
     )

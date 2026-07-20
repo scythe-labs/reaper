@@ -59,7 +59,7 @@ def _redact_value(value: Any) -> Any:
 
     A secret does not only arrive as a top-level string: it can be nested in a dict
     or list (``params={'apikey': ...}``, a headers dict), or logged as ``bytes``. This
-    recurses so the last-line-of-defence actually covers those, redacting any nested
+    recurses so the last-line-of-defense actually covers those, redacting any nested
     key whose name is a secret and applying the query-string pattern to every leaf.
     """
     if isinstance(value, dict):

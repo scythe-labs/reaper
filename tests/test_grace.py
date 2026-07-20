@@ -127,7 +127,7 @@ class TestPartition:
 
 class TestExclusions:
     async def test_a_spared_item_leaves_the_countdown(self, session: AsyncSession) -> None:
-        """Cancelling a grace spares the item; it must drop out at once, even though the
+        """Canceling a grace spares the item; it must drop out at once, even though the
         frozen snapshot still says condemn."""
         snap = await _snapshot(session)
         await _condemn(session, snapshot_id=snap, media_key="radarr:1:1", flagged_days_ago=2)
@@ -142,7 +142,7 @@ class TestExclusions:
         self, session: AsyncSession
     ) -> None:
         """Sparing a show pulls its condemned seasons out of the countdown too. The
-        planner and executor honour the show-level spare, so a grace view still calling
+        planner and executor honor the show-level spare, so a grace view still calling
         a season "ready" would be a false alarm about a file nothing will touch."""
         snap = await _snapshot(session)
         await _condemn(session, snapshot_id=snap, media_key="sonarr:1:5:s2", flagged_days_ago=30)

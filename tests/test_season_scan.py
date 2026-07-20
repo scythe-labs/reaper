@@ -130,7 +130,7 @@ class TestAiring:
 class TestTheShowJoin:
     """The Sonarr series -> Plex show join now runs through the one shared resolver
     (``identity.resolve_show``). These cases carry no external id, so they exercise the
-    title+year backstop -- the exact behaviour the old ``match_show`` guaranteed, preserved
+    title+year backstop -- the exact behavior the old ``match_show`` guaranteed, preserved
     now that there is a single implementation (see ``test_identity.py`` for the id tiers)."""
 
     def _index(self, *items: tuple[int, str, int | None]) -> identity.PlexIndex:
@@ -818,7 +818,7 @@ class TestGatherEndToEnd:
         )
         _reasons, degrade = _degrade_sink()
 
-        judgements = await season_scan.gather(
+        judgments = await season_scan.gather(
             cache_engine,
             sonarrs=[_source(_FakeSonarr(series))],
             tautulli=tautulli,  # type: ignore[arg-type]
@@ -832,7 +832,7 @@ class TestGatherEndToEnd:
             degrade=degrade,
         )
 
-        by_key = {j.media_key: j for j in judgements}
+        by_key = {j.media_key: j for j in judgments}
         # Season 3 is prunable (outside keep-last 2, not the first): resolved to its Plex key.
         assert "sonarr:1:42:3" in by_key
         assert by_key["sonarr:1:42:3"].plex_rating_key == 903
@@ -902,7 +902,7 @@ class TestGatherEndToEnd:
         )
         _reasons, degrade = _degrade_sink()
 
-        judgements = await season_scan.gather(
+        judgments = await season_scan.gather(
             cache_engine,
             sonarrs=[_source(_FakeSonarr(series))],
             tautulli=tautulli,  # type: ignore[arg-type]
@@ -917,7 +917,7 @@ class TestGatherEndToEnd:
             degrade=degrade,
         )
 
-        pruned = next(j for j in judgements if j.media_key == "sonarr:1:56:3")
+        pruned = next(j for j in judgments if j.media_key == "sonarr:1:56:3")
         assert pruned.matched_by is identity.MatchedBy.ID_AND_BASENAME
         assert pruned.match_status is identity.MatchStatus.MATCHED
         assert pruned.plex_rating_key == 903  # season 3 under the 4K copy, never the HD one
@@ -997,7 +997,7 @@ class TestGatherEndToEnd:
         )
         _reasons, degrade = _degrade_sink()
 
-        judgements = await season_scan.gather(
+        judgments = await season_scan.gather(
             cache_engine,
             sonarrs=[_source(_FakeSonarr(series))],
             tautulli=tautulli,  # type: ignore[arg-type]
@@ -1012,7 +1012,7 @@ class TestGatherEndToEnd:
             degrade=degrade,
         )
 
-        pruned = next(j for j in judgements if j.media_key == "sonarr:1:55:3")
+        pruned = next(j for j in judgments if j.media_key == "sonarr:1:55:3")
         # Rating resolved via the Plex-supplied imdb id, even though Sonarr had none.
         assert isinstance(pruned.facts.imdb_rating_tenths, Known)
         assert pruned.facts.imdb_rating_tenths.value == 71
@@ -1074,7 +1074,7 @@ class TestGatherEndToEnd:
         )
         _reasons, degrade = _degrade_sink()
 
-        judgements = await season_scan.gather(
+        judgments = await season_scan.gather(
             cache_engine,
             sonarrs=[_source(_FakeSonarr(series))],
             tautulli=tautulli,  # type: ignore[arg-type]
@@ -1089,10 +1089,10 @@ class TestGatherEndToEnd:
             membership_index=index,
         )
 
-        assert judgements, "the show's seasons must still be gathered"
-        for judgement in judgements:
-            assert isinstance(judgement.facts.is_whitelisted, Known)
-            assert judgement.facts.is_whitelisted.value is True
+        assert judgments, "the show's seasons must still be gathered"
+        for judgment in judgments:
+            assert isinstance(judgment.facts.is_whitelisted, Known)
+            assert judgment.facts.is_whitelisted.value is True
 
     async def test_an_unmatched_series_yields_unresolved_seasons(
         self, cache_engine: AsyncEngine
@@ -1112,7 +1112,7 @@ class TestGatherEndToEnd:
         tautulli = _FakeTautulli(shows=[], children={})
         _reasons, degrade = _degrade_sink()
 
-        judgements = await season_scan.gather(
+        judgments = await season_scan.gather(
             cache_engine,
             sonarrs=[_source(_FakeSonarr(series))],
             tautulli=tautulli,  # type: ignore[arg-type]
@@ -1125,7 +1125,7 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
         )
-        pruned = next(j for j in judgements if j.media_key == "sonarr:1:7:3")
+        pruned = next(j for j in judgments if j.media_key == "sonarr:1:7:3")
         assert pruned.plex_rating_key is None
         assert isinstance(pruned.facts.days_observed_unwatched, Unknown)
 
@@ -1142,7 +1142,7 @@ class TestGatherEndToEnd:
             }
         ]
         _reasons, degrade = _degrade_sink()
-        judgements = await season_scan.gather(
+        judgments = await season_scan.gather(
             cache_engine,
             sonarrs=[_source(_FakeSonarr(series))],
             tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
@@ -1155,7 +1155,7 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
         )
-        assert judgements == []
+        assert judgments == []
 
     async def test_an_unreachable_sonarr_degrades_the_snapshot(
         self, cache_engine: AsyncEngine
@@ -1170,7 +1170,7 @@ class TestGatherEndToEnd:
                 raise IntegrationError("sonarr", "connection refused")
 
         reasons, degrade = _degrade_sink()
-        judgements = await season_scan.gather(
+        judgments = await season_scan.gather(
             cache_engine,
             sonarrs=[_source(_DeadSonarr())],
             tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
@@ -1183,7 +1183,7 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
         )
-        assert judgements == []
+        assert judgments == []
         assert any("sonarr" in r and "unreachable" in r for r in reasons)
 
 

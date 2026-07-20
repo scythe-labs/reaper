@@ -65,7 +65,7 @@ class TestInstancesCrud:
         assert body["kind"] == "radarr"
         assert body["has_key"] is True
         assert body["base_url"] == "http://radarr.local:7878"  # trailing slash stripped
-        # The key is never serialised, under any field name.
+        # The key is never serialized, under any field name.
         assert "super-secret" not in created.text
 
         listed = client.get("/api/settings/instances").json()
@@ -181,7 +181,7 @@ class TestInstancesCrud:
         assert off_again["verify_tls"] is False
 
 
-class TestConnectionTestsHonourTheTlsChoice:
+class TestConnectionTestsHonorTheTlsChoice:
     """The TLS choice must reach the client that actually dials out -- the stored
     ``verify_tls`` for a saved instance, and the checkbox value sent with the request
     for the pre-save test on the add form."""

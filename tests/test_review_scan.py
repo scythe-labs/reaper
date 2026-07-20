@@ -528,7 +528,7 @@ class TestTheBacktestVerdictMatchesProduction:
         self, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Production abstains below ``coverage_floor_bp``; the backtest never checked
-        coverage and would over-count deletions. Now it honours the floor."""
+        coverage and would over-count deletions. Now it honors the floor."""
         monkeypatch.setattr(
             bt, "score", lambda *a, **k: Score(value=95.0, coverage=0.40, results=[])
         )
@@ -574,8 +574,8 @@ class TestExpectedRegretRateDegradesGracefully:
         _ = result.lift  # exercises the whole funnel without crashing
 
     def test_a_calibrated_prior_is_still_used(self) -> None:
-        """When every bucket is thick, the derived prior is honoured -- the fix only
-        changes behaviour for the uncalibrated case."""
+        """When every bucket is thick, the derived prior is honored -- the fix only
+        changes behavior for the uncalibrated case."""
         prior = RewatchPrior(
             buckets=(Bucket(low=1095, high=1825, samples=100, rewatched=40),),
             population=100,

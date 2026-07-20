@@ -65,7 +65,7 @@ class TestTheLaneAsymmetry:
         condition.validate_for(Lane.PROTECT)  # does not raise
 
     def test_the_condemn_vocabulary_never_offers_a_protect_only_field(self) -> None:
-        """The API filters by lane BEFORE serialising, so the browser is never even
+        """The API filters by lane BEFORE serializing, so the browser is never even
         shown a field it must not use. A condemn rule referencing one is not
         rejected -- it cannot be built."""
         condemn_keys = {spec.key for spec in vocabulary(Lane.CONDEMN)}

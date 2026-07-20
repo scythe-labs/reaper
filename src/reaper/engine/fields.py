@@ -472,7 +472,7 @@ BY_KEY: dict[str, FieldSpec] = {spec.key: spec for spec in REGISTRY}
 def vocabulary(lane: Lane) -> list[FieldSpec]:
     """The fields available in one lane.
 
-    The API calls this before serialising, so a protect-only field is never even
+    The API calls this before serializing, so a protect-only field is never even
     offered to the condemn editor. A condemn rule referencing ``watchers_all_time``
     is not rejected -- it cannot be built.
     """

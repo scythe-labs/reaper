@@ -9,7 +9,7 @@
 // instantly, with zero API calls, because the last snapshot's scores are re-decided in
 // the database rather than the library being re-read.
 //
-// The single most important behaviour in this file is what happens when that stops
+// The single most important behavior in this file is what happens when that stops
 // being true. The simulator can only honestly re-decide a *stored* score, so it is
 // exact for the threshold and the coverage floor, and **wrong for everything else**:
 // change a signal weight or a protection, and the stored scores were produced by the
@@ -515,7 +515,7 @@ function RatingFloorRow({
   );
 }
 
-/** The 100-point removal budget, in the savebar. The whole reason weights can be labelled
+/** The 100-point removal budget, in the savebar. The whole reason weights can be labeled
  *  as points: the server refuses any policy whose removal weights do not total exactly 100
  *  (PolicyBody._weights_total_one_hundred), so the number on a rule IS what it adds.
  *
@@ -1715,7 +1715,7 @@ export function PolicyEditor({
             <button
               key={s.id}
               className={activeSection === s.id ? "settings-tab active" : "settings-tab"}
-              // The section being read is stated, not just coloured, the same as the
+              // The section being read is stated, not just colored, the same as the
               // masthead and the settings rail.
               aria-current={activeSection === s.id ? "page" : undefined}
               onClick={() => {
@@ -1917,7 +1917,7 @@ export function PolicyEditor({
               </label>
               <p className="help rule-help">
                 A title carrying one of these tags in Sonarr/Radarr is kept, whatever it scored. A
-                ‘Never Reap’ Plex collection is honoured too.
+                ‘Never Reap’ Plex collection is honored too.
               </p>
               {whitelist.enabled && (
                 <>

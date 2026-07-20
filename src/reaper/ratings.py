@@ -33,7 +33,7 @@ Three further facts, all measured:
   above 10** -- including Rotten Tomatoes values that Plex's own UI displays as
   percentages. Radarr hands the very same score through raw (``96``). The same
   number therefore needs opposite handling depending on who delivered it, so
-  normalisation happens per provider, never per field name.
+  normalization happens per provider, never per field name.
 """
 
 from __future__ import annotations
@@ -104,7 +104,7 @@ class Rating:
 
     source: RatingSource
     value: float
-    """Normalised to 0-10, whatever scale the source natively uses."""
+    """Normalized to 0-10, whatever scale the source natively uses."""
     votes: int | None
     """None where the source has no vote concept (Rotten Tomatoes, Metacritic)."""
     provider: str
@@ -152,7 +152,7 @@ class Rating:
 
 
 def _to_ten(value: float, source: RatingSource) -> float:
-    """Radarr-shaped normalisation: its percentage sources arrive raw (96, not 9.6)."""
+    """Radarr-shaped normalization: its percentage sources arrive raw (96, not 9.6)."""
     return value / 10.0 if source in _PERCENTAGE_SOURCES else value
 
 
@@ -176,7 +176,7 @@ def from_plex(
     ``rottentomatoes://image.rating.*``. (An IMDb or TMDb image in that slot is
     still just an IMDb/TMDb value; only RT keeps two distinct populations.)
 
-    Values arrive already normalised: Plex serves every rating slot on a 0-10
+    Values arrive already normalized: Plex serves every rating slot on a 0-10
     scale whatever the source (measured -- see the module docstring), so an 84%
     Rotten Tomatoes score is ``"8.4"`` here. Raw percentages are a Radarr shape,
     handled in :func:`from_radarr`, never divided out of a Plex value.
@@ -204,7 +204,7 @@ def from_plex(
     # undivided: dividing a Tomatometer here (as Radarr's raw percentages need)
     # turned an 84% audience score into 0.84, displayed as 8%. Defensively, a
     # percentage-shaped source above 10 can only be a raw percentage from an
-    # agent that skipped Plex's normalisation -- the value itself proves the scale.
+    # agent that skipped Plex's normalization -- the value itself proves the scale.
     if number > 10 and source in _PERCENTAGE_SOURCES:
         number /= 10.0
     if not 0.0 <= number <= 10.0:

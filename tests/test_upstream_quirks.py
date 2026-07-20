@@ -260,7 +260,7 @@ class TestRatingProvenance:
 
     def test_a_percentage_shaped_plex_value_is_still_read_as_a_percentage(self) -> None:
         """Defensive: a percentage source above 10 can only be a raw percentage from
-        an agent that skipped Plex's 0-10 normalisation. The value proves the scale."""
+        an agent that skipped Plex's 0-10 normalization. The value proves the scale."""
         rating = from_plex("96", "rottentomatoes://image.rating.ripe")
 
         assert rating is not None
@@ -328,7 +328,7 @@ class TestRadarrRatings:
             RatingSource.TRAKT,
         }
 
-    def test_percentages_are_normalised_to_ten(self) -> None:
+    def test_percentages_are_normalized_to_ten(self) -> None:
         rt = pick(from_radarr(self.SAMPLE), RatingSource.ROTTEN_TOMATOES_CRITIC)
         assert rt is not None
         assert rt.value == 9.6  # 96% -> 9.6/10

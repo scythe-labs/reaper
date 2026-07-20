@@ -44,7 +44,7 @@ class AuthProvider(enum.StrEnum):
 class Instance(Base):
     """A configured *arr / Tautulli / Seerr instance.
 
-    Modelled one-to-many from day one: a separate 4K Sonarr/Radarr pair alongside
+    Modeled one-to-many from day one: a separate 4K Sonarr/Radarr pair alongside
     the HD pair is the common setup, and retrofitting multi-instance onto a
     single-instance schema means rewriting every foreign key.
     """
@@ -288,7 +288,7 @@ class Snapshot(Base):
     policy_hash: Mapped[str] = mapped_column(String(64), index=True)
 
     scoring_hash: Mapped[str] = mapped_column(String(64), default="")
-    """The policy's scoring behaviour -- its signals and gates -- with the thresholds
+    """The policy's scoring behavior -- its signals and gates -- with the thresholds
     excluded. See ``PolicyBody.scoring_hash``.
 
     This is what lets the simulator re-decide this snapshot honestly. Moving
@@ -398,7 +398,7 @@ class Candidate(Base):
     """Which measurement ``size_bytes`` holds, as a ``SizeSource`` value. NULL means no
     source reported one. Kept as a string column rather than a native enum for the same
     reason as every other enum here: SQLite has none, and a stored value this build does
-    not recognise must be handled by the reader, not rejected by the driver.
+    not recognize must be handled by the reader, not rejected by the driver.
 
     Read by the executor to compare like with like; never sent to the browser."""
 
@@ -490,7 +490,7 @@ class Candidate(Base):
 
     facts_json: Mapped[str | None] = mapped_column(Text, default=None)
     """The frozen scoring INPUTS for this item -- its full three-state ``Facts`` plus the
-    season-pruning guard result -- serialised by ``engine.facts_codec``. This is what lets
+    season-pruning guard result -- serialized by ``engine.facts_codec``. This is what lets
     the simulator replay the real engine under an edited policy with zero API calls, exact
     for any change the evidence hash permits. Nullable for snapshots taken before the field
     existed; the simulator falls back to "needs a fresh scan" when it is absent."""
@@ -507,7 +507,7 @@ class FirstFlagged(Base):
     unreachable.
 
     Janitorr #172 is the inverse bug: starting the clock at the item's *age* means the
-    entire back catalogue is already expired on day one.
+    entire back catalog is already expired on day one.
     """
 
     __tablename__ = "first_flagged"
@@ -530,7 +530,7 @@ class WhitelistEntry(Base):
     decision about a file, not a property of the scan that happened to surface it. Keyed
     by the stable ``media_key`` -- never the Plex rating key, which moves.
 
-    ``title`` is denormalised so the "spared" list reads without joining a snapshot
+    ``title`` is denormalized so the "spared" list reads without joining a snapshot
     (candidates are snapshot-scoped and churn); the media_key is the identity, the title
     is only ever display.
     """

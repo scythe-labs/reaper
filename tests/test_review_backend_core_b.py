@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Regressions from the backend-core-B review pass.
 
-Two clusters of behaviour the review pinned:
+Two clusters of behavior the review pinned:
 
 * **Discord is DB-backed and unbreakable.** The webhook lives in the database,
   Fernet-encrypted like an instance API key, seeded once from the environment; and the
   notifier's guarantee -- *nothing here raises into a scan, a plan, or a run* -- must hold
-  even for a malformed URL (``httpx.InvalidURL`` is not an ``HTTPError``) and must honour a
+  even for a malformed URL (``httpx.InvalidURL`` is not an ``HTTPError``) and must honor a
   429 rather than dropping the warning.
 * **The Leaving Soon heads-up is idempotent.** In the default read-only install the Plex
   label is never written, so the label diff cannot be the "what is new" signal -- a
@@ -184,7 +184,7 @@ class TestNotifierNeverRaises:
         )
         notifier = DiscordNotifier(WEBHOOK)
         assert await notifier.post(Embed(title="hi", description="x")) is True
-        assert route.call_count == 2  # first 429, then the honoured retry
+        assert route.call_count == 2  # first 429, then the honored retry
 
     @respx.mock
     async def test_a_429_without_retry_after_is_a_quiet_failure(self) -> None:

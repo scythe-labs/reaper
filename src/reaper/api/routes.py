@@ -376,7 +376,7 @@ async def _group_rollups(
 
     **Totals** -- what "Reap now" on each show group would actually plan:
     (count, bytes, unknown) over its ACTABLE member seasons across the WHOLE snapshot:
-    condemned minus hand-spares, plus hand-reaped seasons whose reap the engine honours
+    condemned minus hand-spares, plus hand-reaped seasons whose reap the engine honors
     (services.condemned). The show card's numbers must match the planner's expansion --
     ``build_plan`` expands a group key over the same effective set -- so the number
     beside a destructive button is derived from the set the server will act on
@@ -692,7 +692,7 @@ def _candidate_out(
         reason=_primary_reason(r.explanation_json, r.verdict),
         spared=override == "spare",
         override=override,
-        # Whether a hand reap actually takes: decide_verdict honours it past cautious
+        # Whether a hand reap actually takes: decide_verdict honors it past cautious
         # protections but never past a safety stop or an unchecked protection. The UI
         # colors the row red only when this is True, so it never promises a removal
         # the engine will refuse.
@@ -1218,7 +1218,7 @@ def _replay_simulation(
 
         # A hand spare enters as an extra PROTECT, exactly as _judge_item merges it; the
         # frozen season guard rides in `extra`. The reap override is carried into
-        # decide_verdict, which honours it only past the cautious cases.
+        # decide_verdict, which honors it only past the cautious cases.
         merged_extra = list(extra)
         if override == "spare":
             merged_extra.insert(
@@ -1302,7 +1302,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
     not be checked stays abstained at any threshold (the scan refuses to condemn on
     unchecked protections), and a row under a hand override follows the owner's decision
     whatever the threshold: a spare protects, and a reap condemns when the engine
-    honours it (services.condemned).
+    honors it (services.condemned).
 
     So rather than return a confident, stale number, it compares the candidate policy's
     ``scoring_hash`` against the snapshot's and, when they differ, **returns nothing but
@@ -1346,7 +1346,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         decisions = await whitelist.overrides(session)
 
         # Three tiers of re-decide, most exact first:
-        #  1. Scoring behaviour unchanged -> re-compare the STORED score against the new
+        #  1. Scoring behavior unchanged -> re-compare the STORED score against the new
         #     thresholds. Exact and cheapest (below).
         #  2. Scoring changed but the EVIDENCE is unchanged, and every governed row froze its
         #     Facts -> replay the real engine over those Facts. Exact for weight/rating/custom
@@ -1390,8 +1390,8 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         was_condemned = row.verdict == "condemn"
 
         # A hand override wins at any threshold: the owner looked and decided, and the
-        # scan honours that decision, so the simulator must too. A spare protects; a
-        # reap condemns exactly when the engine honours it (services.condemned) -- a
+        # scan honors that decision, so the simulator must too. A spare protects; a
+        # reap condemns exactly when the engine honors it (services.condemned) -- a
         # safety stop or an unchecked protection still keeps the file, and re-deciding
         # such a row on its score would report movement no scan will ever show.
         override = whitelist.effective_override(row.media_key, decisions)
@@ -1453,7 +1453,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
             if was_condemned:
                 gone += 1
 
-    # The few names the owner will actually recognise: the highest-scoring titles this
+    # The few names the owner will actually recognize: the highest-scoring titles this
     # draft flags that the saved policy does not. A count is abstract; a familiar title
     # is what stops a bad threshold before it is saved.
     newly_rows.sort(key=lambda r: r.score, reverse=True)
@@ -1514,7 +1514,7 @@ def _has_blocked_protections(explanation_json: str) -> bool:
 async def get_vocabulary(lane: Lane) -> VocabularyOut:
     """The fields available in one lane.
 
-    Filtered **server-side, before serialisation**. ``?lane=condemn`` never returns a
+    Filtered **server-side, before serialization**. ``?lane=condemn`` never returns a
     protect-only field, so the browser is not even shown one -- a dangerous condition is
     not merely rejected, it is unconstructable.
     """

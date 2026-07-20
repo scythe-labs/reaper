@@ -11,7 +11,7 @@ secure name there produces the worst kind of bug -- "I log in and nothing happen
 no error anywhere".
 
 So the name follows the connection: the ``__Host-`` name over HTTPS, a plain name
-otherwise. Both are honoured on read, and both are cleared on logout, so switching
+otherwise. Both are honored on read, and both are cleared on logout, so switching
 scheme never strands a session.
 """
 
@@ -32,7 +32,7 @@ def is_secure_request(request: Request) -> bool:
     """Is this connection HTTPS -- directly, or via a terminating proxy?
 
     Behind a reverse proxy the app speaks plain HTTP, and only
-    ``X-Forwarded-Proto`` records that the browser's leg was encrypted. Honour it,
+    ``X-Forwarded-Proto`` records that the browser's leg was encrypted. Honor it,
     so the cookie is marked ``Secure`` in exactly the cases where it can be.
     """
     if request.url.scheme == "https":

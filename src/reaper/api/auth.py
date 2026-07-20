@@ -79,7 +79,7 @@ def _box(request: Request) -> SecretBox:
 def _client_ip(request: Request) -> str:
     # The peer address, with one deliberate carve-out: when the operator turned on
     # reverse-proxy trust (Settings -> General) and the peer IS a listed proxy,
-    # X-Forwarded-For is honoured -- see middleware.client_ip for the walk. From any
+    # X-Forwarded-For is honored -- see middleware.client_ip for the walk. From any
     # other peer that header is attacker-controlled and ignored, because trusting it
     # would let a single host dodge the per-IP lockout by rotating a spoofed value.
     # The per-username lock (below) still runs alongside either way.

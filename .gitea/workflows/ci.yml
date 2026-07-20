@@ -111,7 +111,7 @@ jobs:
       # The registry host and image path are derived from the run context, never hardcoded:
       # this workflow has to be correct for any operator who forks Reaper onto their own
       # Gitea. Docker requires a lowercase image path, but repo owners are commonly
-      # capitalised, so the repository slug is lowercased here. A branch name may contain
+      # capitalized, so the repository slug is lowercased here. A branch name may contain
       # "/", which is not a legal tag character, so it is folded to "-".
       #
       # A pull request publishes as "pr-<number>" so it can be pulled and tested. That

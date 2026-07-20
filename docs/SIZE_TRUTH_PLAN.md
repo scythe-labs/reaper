@@ -167,7 +167,7 @@ time. **Stage 5 is therefore a bug fix, not merely an acquisition improvement.**
 
 ### 2.2 The corrected acquisition ladder
 
-The operator's stated ordering — the \*arrs first, then Plex — is honoured. What changes is
+The operator's stated ordering — the \*arrs first, then Plex — is honored. What changes is
 what each rung is *allowed to be used for*.
 
 | Media | Rung | Source | Measures | Plannable? |
@@ -180,7 +180,7 @@ what each rung is *allowed to be used for*.
 | either | — | nothing | — | held back |
 
 Season rung 2 stays plannable because the folder is a close proxy for the files and it is
-today's behaviour; rung 1 is *preferred* when available because it is exact and it repairs the
+today's behavior; rung 1 is *preferred* when available because it is exact and it repairs the
 interlock. Movie rungs 2 and 3 are recorded for **display only** (§4.5) and never make an item
 plannable.
 
@@ -215,7 +215,7 @@ three-design panel and four adversarial critics.
 | The allowance never relaxes the canary rule | The canary is a first mistake of known cost. An unmeasured canary is the original defect wearing a setting. No configuration may reintroduce it. |
 | Exceeding the allowance **aborts** the plan | Truncating to the first N would let sort order pick which unmeasured file dies. Matches `_check_caps`'s abort-not-truncate discipline (rule 5). |
 | Do not read the truth from `facts_json` per consumer | It is nullable by design (`models.py:438-443`), so it cannot be a sole source, and it splits one fact across two stores that can disagree. The column is the accounting surface and should hold the accounting truth. |
-| Never **sum** `PlexItem.files`, never sum across `merged_rating_keys` | Both over-state and push a number **upward** on the deletion lane. `_parse_sweep_element` flattens every Part of every Media into one tuple (`plex.py:108-121`), so an optimised copy inflates the sum; merged listings are byte-identical twins of one file (`identity.py:405-410`), so N listings gives N times the bytes. |
+| Never **sum** `PlexItem.files`, never sum across `merged_rating_keys` | Both over-state and push a number **upward** on the deletion lane. `_parse_sweep_element` flattens every Part of every Media into one tuple (`plex.py:108-121`), so an optimized copy inflates the sum; merged listings are byte-identical twins of one file (`identity.py:405-410`), so N listings gives N times the bytes. |
 
 ---
 
@@ -233,10 +233,10 @@ three-design panel and four adversarial critics.
 - New `size_source: Mapped[str | None]`, NULL exactly when `size_bytes` is NULL.
 
 **`size_source` must be a `StrEnum`, not a bare `String(16)`.** An unconstrained string on the
-deletion path means the executor's comparator selection resolves an unrecognised value in an
+deletion path means the executor's comparator selection resolves an unrecognized value in an
 unwritten `else` branch — either falsely skipping every such item, or bypassing the growth
 interlock. Define the enum beside the column, and make the executor's selection an
-**exhaustive match with a fail-closed default: an unrecognised or NULL source keeps the item**
+**exhaustive match with a fail-closed default: an unrecognized or NULL source keeps the item**
 (rule 2). Values:
 
 | value | quantity | media |
@@ -293,7 +293,7 @@ same call the repo already made for `watch_event.watched_status` (`history_sync.
   Write the ordering as one expression with a comment naming the invariant. Do **not** sort the
   combined list by a key that treats `None` as a number, and do not rely on a stable sort to
   keep the tail in place: the invariant is "no unmeasured item precedes a measured one", and it
-  should be obvious from the code rather than emergent from sort behaviour.
+  should be obvious from the code rather than emergent from sort behavior.
 - **Delete the SQL `.order_by(Candidate.size_bytes.asc())` at `:273`; replace with
   `.order_by(Candidate.media_key)`.** `all_condemned` feeds only `manifest_hash` (which sorts
   internally) and a `condemned_keys` set, so the ascending sort is dead weight — and once the
@@ -343,7 +343,7 @@ same call the repo already made for `watch_event.watched_status` (`history_sync.
    default (§4.1). `sonarr-files` compares against the summed live episode files
    (`:1220-1236`); `sonarr` compares against the same sum **and this is the pre-existing
    mismatch described in §2.1** — Stage 5 removes it by preferring `sonarr-files`. `radarr`
-   compares against live `sizeOnDisk`, today's behaviour. When the live counterpart is
+   compares against live `sizeOnDisk`, today's behavior. When the live counterpart is
    unreadable, **keep**, exactly as the existing branch does (`:1090-1096`) — never fall
    through to a different measurement.
 3. **Caps assert, they do not assume.** `_check_caps` (`:401-423`) and `_check_rolling_caps`
@@ -490,7 +490,7 @@ will assume the tightening argument covers it.
 max_unmeasured_per_run: int = Field(default=0, ge=0, le=25)
 ```
 
-`0` is the default and means today's behaviour: an item Reaper cannot measure is never
+`0` is the default and means today's behavior: an item Reaper cannot measure is never
 plannable. Above zero, up to that many unmeasured items may be planned per run.
 
 **Why a count and not a boolean.** An unmeasured item contributes nothing to
@@ -512,7 +512,7 @@ the help text has to say the GB caps do not cover these.
    reap, never by riding a show-level click the operator did not aim at it.
 4. **The confirmation phrase names them.** With unmeasured items in the plan the phrase gains a
    suffix: `REAP 6 ITEMS 41 GB + 2 UNSIZED`. The GB figure stays exact for the measured items,
-   and the operator has to type an acknowledgement that the run contains items the figure does
+   and the operator has to type an acknowledgment that the run contains items the figure does
    not cover. Both `runs.py:111` and `:265` call the same function, so the recompute stays
    byte-identical; update the `ReapConfirm.test.tsx:31` fixture (trap 4 in §6).
 5. **A new validator**, in the shape of the existing `_run_cap_within_rolling_cap`
@@ -607,7 +607,7 @@ Each stage must leave every gate green: `uv run ruff check .`, `ruff format --ch
 > regenerating twice costs nothing.
 
 What landed: `size_source` as a `StrEnum` (`db/models.SizeSource`) with a nullable
-`String(16)` column, carried through `SeasonJudgement` and `_judge_item` to the two persist
+`String(16)` column, carried through `SeasonJudgment` and `_judge_item` to the two persist
 sites. `size_bytes` is unchanged and still writes `or 0`. **`size_source` is already honest
 while `size_bytes` is not**: it is NULL exactly when no source reported a size, which is what
 makes the tally worth counting.
@@ -629,7 +629,7 @@ than reaching for a coercion at any of them.
 
 Planner partition + the `:273` sort replacement + group-expansion fix + `manifest_hash` null
 encoding + the explicit-selection refusal. Executor defensive skips + comparator selection +
-cap assertions. Retire `size_confirmed`'s `0`-as-sentinel reading in favour of the NULL check
+cap assertions. Retire `size_confirmed`'s `0`-as-sentinel reading in favor of the NULL check
 in the same change (its docstring already defers to this plan). API schemas, aggregates,
 counts, headers, sorts. TS types, `format.ts`, components. Tests construct NULL rows directly
 to exercise these paths.
@@ -642,12 +642,12 @@ is exercised by constructed fixtures, and no scan can produce one yet.
 ### Stage 3 — stop fabricating zero
 
 Drop `or 0` at `snapshot.py:653` and `season_scan.py:1143`, and widen the season carry chain
-that the earlier draft missed and mypy will catch: **`SeasonJudgement.size_bytes`
+that the earlier draft missed and mypy will catch: **`SeasonJudgment.size_bytes`
 (`season_scan.py:136`) → `_judge_item`'s `size_bytes` parameter (`snapshot.py:808`, fed at
 `:710`) → the `Candidate` write (`snapshot.py:871`)**, all currently typed `int`. Rewrite both
 long comments, which cite a growth check that has a 256 MiB hole (§1).
 
-*Observable:* **this is the behaviour-change commit.** An unmeasured item stops being
+*Observable:* **this is the behavior-change commit.** An unmeasured item stops being
 deletable and stops becoming the canary. Caps, the reclaim total and the confirmation phrase
 become exact. The held-back notice appears. Small and reviewable precisely because Stage 2
 already landed every consumer.

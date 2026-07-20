@@ -86,7 +86,7 @@ def _release_scan() -> None:
     _scan_running = False
 
 
-#: Every gate the catalogue knows how to build. A gate in a policy with no entry here
+#: Every gate the catalog knows how to build. A gate in a policy with no entry here
 #: would be a protection that silently does not fire, so the builder raises instead.
 #: RATING_FLOOR is absent on purpose: it takes a set of per-source bars from the policy
 #: rather than a single GateConfig, so ``build_gates`` constructs it explicitly.
@@ -158,12 +158,12 @@ async def _allowed_sections(session: AsyncSession) -> set[int] | None:
     library's enrichment (its items then resolve unmatched and are kept), so an empty or
     absent selection must widen to all, never narrow to none. Once the operator HAS synced
     their libraries and turned some off, the enabled subset scopes the sweep and the spine;
-    if they have turned every one off, that explicit choice is honoured (an empty set,
+    if they have turned every one off, that explicit choice is honored (an empty set,
     which enriches nothing).
 
     This is a configuration input that only ever *narrows* enrichment, not an evidence
     source (rule 28). If it cannot be read, the safe fallback is the FULL-coverage
-    behaviour -- scan every library -- so a settings-read hiccup is logged and defaults to
+    behavior -- scan every library -- so a settings-read hiccup is logged and defaults to
     ``None`` rather than aborting the whole scan.
     """
     try:

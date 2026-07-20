@@ -118,7 +118,7 @@ class TestWatchCountsFromAStaleMirrorAreNotZero:
     toward condemnation at exactly the rate the outage lasts.
     """
 
-    # The staleness behaviour itself is pinned by driving the real scan, in
+    # The staleness behavior itself is pinned by driving the real scan, in
     # tests/test_scan_pipeline.py::TestAStaleMirrorDegradesTheSnapshot, and the two clocks
     # are held apart in tests/test_history_sync.py, by
     # TestTheIngestClockIsSeparateFromTheWatchingClock.
@@ -175,7 +175,7 @@ class TestARepairedPolicyCannotExecute:
     the journal exists to prevent, so the scan degrades and the snapshot is not
     executable until the operator opens the editor and saves.
 
-    These pin the flags. The behaviour they feed -- the scan degrading and the plan being
+    These pin the flags. The behavior they feed -- the scan degrading and the plan being
     refused -- is driven end to end in
     ``test_scan_pipeline.TestARepairedPolicyCannotBeReapedFrom``.
     """

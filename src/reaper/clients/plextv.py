@@ -202,7 +202,7 @@ class PlexTvClient(BaseClient):
 
         Routed through ``_send`` so a transport error (a plex.tv outage) or a non-JSON body
         (a maintenance page served with HTTP 200) becomes an ``IntegrationError`` -- the same
-        normalisation ``get_json`` gives every read. Without it, ``owns_server``'s
+        normalization ``get_json`` gives every read. Without it, ``owns_server``'s
         ``except IntegrationError`` guard could not fail closed on a raw ``httpx`` error.
         """
         response = await self._send("POST", path, params=params)

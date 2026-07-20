@@ -6,13 +6,13 @@ the Facts away -- only the scoring *outputs* (the rounded score, the verdict) su
 Candidate row. That is why re-deciding a snapshot under a new weight or a new rating bar used
 to need a full re-scan: the raw inputs were gone.
 
-This module serialises the Facts (and the season-pruning guard result merged alongside them)
+This module serializes the Facts (and the season-pruning guard result merged alongside them)
 to canonical JSON so the simulator can replay the **real** engine -- ``score``,
 ``evaluate_all``, ``decide_verdict`` -- over the frozen evidence with zero API calls, and get
 a verdict bit-identical to a fresh scan of the same evidence.
 
 **The three-state ``Observation`` must round-trip exactly.** ``Known``/``Absent``/``Unknown``
-are not interchangeable: an ``Unknown`` serialised as ``Absent`` would flip the scorer's
+are not interchangeable: an ``Unknown`` serialized as ``Absent`` would flip the scorer's
 fail-safe arithmetic from "weight retained, pushes score down" to "evaluated as real absence",
 a fail-OPEN regression. Every field is tagged with its arm, and a round-trip test asserts an
 arbitrary Facts survives unchanged.
@@ -67,7 +67,7 @@ def _obs_from_dict(d: dict[str, Any]) -> Observation[Any]:
 
 def _rating_to_dict(r: Rating) -> dict[str, Any]:
     # as_of is always None in production (from_plex/from_radarr set it), so it is not
-    # serialised; a future dated rating would add it here.
+    # serialized; a future dated rating would add it here.
     return {"src": r.source.value, "val": r.value, "votes": r.votes, "prov": r.provider}
 
 

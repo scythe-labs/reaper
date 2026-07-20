@@ -238,7 +238,7 @@ class TestTheSignInExemptionIsNarrow:
     """Signing in is a POST, so it must be permitted even in read-only mode --
     requiring the owner to enable deletion before they may log in would be absurd.
 
-    But the exemption must be exactly one path, not a licence for the plex.tv
+    But the exemption must be exactly one path, not a license for the plex.tv
     client to write anything. plex.tv has genuinely destructive endpoints
     (DELETE /devices/{id} unregisters a device; /api/v2/users/signout invalidates
     tokens), and none of them are ours to call."""

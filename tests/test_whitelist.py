@@ -71,10 +71,10 @@ async def _snapshot_with(session: AsyncSession, condemned: list[tuple[str, int]]
 
 class TestService:
     async def test_spare_then_read_back(self, session: AsyncSession) -> None:
-        await whitelist.spare(session, media_key="radarr:1:7", title="Kept", note="a favourite")
+        await whitelist.spare(session, media_key="radarr:1:7", title="Kept", note="a favorite")
         assert await whitelist.overrides(session) == {"radarr:1:7": "spare"}
         spared = await whitelist.list_spared(session)
-        assert (spared[0].title, spared[0].note) == ("Kept", "a favourite")
+        assert (spared[0].title, spared[0].note) == ("Kept", "a favorite")
 
     async def test_spare_is_idempotent_and_updates_the_note(self, session: AsyncSession) -> None:
         await whitelist.spare(session, media_key="radarr:1:7", title="Kept", note="one")

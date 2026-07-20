@@ -117,7 +117,7 @@ def sequential_protections(
 
     Fail-closed: if ``m``'s final episode is unknown (Sonarr unavailable) or the viewer's
     episode index is unknown (a season with only un-backfilled rows), protect BOTH ``m`` and
-    ``m+1`` -- exactly the old season-level behaviour, never less.
+    ``m+1`` -- exactly the old season-level behavior, never less.
     """
     protected: set[int] = set()
     for progress in progress_by_user.values():

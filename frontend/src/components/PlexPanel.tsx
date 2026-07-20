@@ -43,7 +43,7 @@ export function PlexPanel() {
   // URL so the wait can offer it as a plain link, the way the login screen does.
   const [authUrl, setAuthUrl] = useState("");
   const [message, setMessage] = useState<string | null>(null);
-  // Failures get their own state so they render as an error, not as grey status text
+  // Failures get their own state so they render as an error, not as gray status text
   // that reads like "Linked to ...". Info stays in `message`.
   const [plexError, setPlexError] = useState<string | null>(null);
   // The web-address box mirrors the saved value and follows it when a save (or another
@@ -81,7 +81,7 @@ export function PlexPanel() {
       setPlexError(null);
       void queryClient.invalidateQueries({ queryKey: ["plex"] });
     },
-    // The toggle flips optimistically; a failed save must roll it back so the switch
+    // The toggle flips optimiztically; a failed save must roll it back so the switch
     // never claims the certificate check is on while the server still has it off. The
     // switch is disabled while pending, so `!next` is the value before the flip.
     onError: (e: Error, next: boolean) => {
@@ -104,7 +104,7 @@ export function PlexPanel() {
       done();
     },
     // A sign-in that never completed is a failure, not status: it goes to `plexError`
-    // so it renders as an error, not in the grey slot "Linked to ..." uses.
+    // so it renders as an error, not in the gray slot "Linked to ..." uses.
     onTimedOut: () => {
       setPlexError("Plex sign-in timed out. Try again.");
       done();

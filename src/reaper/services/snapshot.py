@@ -112,7 +112,7 @@ class ScanContext:
 
 @dataclass(frozen=True, slots=True)
 class RawItem:
-    """One movie, as the *arr sees it, before any judgement."""
+    """One movie, as the *arr sees it, before any judgment."""
 
     media_key: str
     title: str
@@ -493,7 +493,7 @@ async def scan(
     # A read-only extension of the same gather. It reads Sonarr, resolves prunable
     # seasons to Plex, and reads their watch history from the same local mirror. A
     # movie-only deployment (no Sonarr) skips it entirely.
-    season_task: asyncio.Task[list[season_scan.SeasonJudgement]] | None = None
+    season_task: asyncio.Task[list[season_scan.SeasonJudgment]] | None = None
     if sonarrs:
         activity_degraded = "tautulli-activity" in " ".join(context.degraded_reasons)
         season_task = _spawn(
@@ -564,7 +564,7 @@ async def scan(
     roots_tasks = [_spawn(_roots_from(source)) for source in radarrs]
 
     items: list[RawItem] = []
-    season_judgements: list[season_scan.SeasonJudgement] = []
+    season_judgments: list[season_scan.SeasonJudgment] = []
     try:
         # Awaited in the sequential code's order, so the first failure to surface is the
         # same one it would have raised then; the except below reaps every other task.
@@ -619,10 +619,10 @@ async def scan(
 
         if season_task is not None:
             emit(Progress("gathering", 4, 5, "TV seasons from Sonarr"))
-            season_judgements = await season_task
+            season_judgments = await season_task
     except BaseException:
         # A failure on any branch aborts the scan, exactly as it did sequentially -- but
-        # the surviving branches are reaped first (cancelled, drained, late failures
+        # the surviving branches are reaped first (canceled, drained, late failures
         # logged), so nothing keeps reading from sources after the scan is already dead
         # and no task's failure goes unobserved. Every task is in fanned_out because
         # every task was created by _spawn.
@@ -641,7 +641,7 @@ async def scan(
         # them). Movie first, TV second, exactly like the other combined hashes.
         evidence_hash=combine_hashes(movie_policy.evidence_hash(), tv_policy.evidence_hash()),
         horizon_at=context.horizon,
-        item_count=len(items) + len(season_judgements),
+        item_count=len(items) + len(season_judgments),
         degraded=context.degraded,
         degraded_reason="; ".join(context.degraded_reasons) or None,
     )
@@ -667,7 +667,7 @@ async def scan(
     tv_keeps = tv_policy.keep_configs()
     now = utcnow()
     condemned = 0
-    total = len(items) + len(season_judgements)
+    total = len(items) + len(season_judgments)
 
     condemned_keys: list[str] = []
     # Which rung of the size ladder actually fired, counted across the whole scan. This
@@ -767,30 +767,30 @@ async def scan(
     # Seasons run through the SAME judge: the season-pruning guard is merged in as an
     # extra gate result, so a protected season is protected by a gate exactly as a
     # streamed movie is, and the why-panel renders both identically.
-    for offset, judgement in enumerate(season_judgements):
+    for offset, judgment in enumerate(season_judgments):
         if offset % 100 == 0:
-            emit(Progress("scoring", len(items) + offset, total, judgement.title))
+            emit(Progress("scoring", len(items) + offset, total, judgment.title))
             await asyncio.sleep(0)  # keep the event loop live; see the movie loop above
-        size_sources[_size_bucket(judgement.size_source)] += 1
-        if judgement.size_source is None:
+        size_sources[_size_bucket(judgment.size_source)] += 1
+        if judgment.size_source is None:
             log.info(
                 "scan.size_unmeasured",
-                media_key=judgement.media_key,
+                media_key=judgment.media_key,
                 media_type="season",
                 reason="sonarr reported no size for the season",
             )
         verdict = _judge_item(
             session,
             snapshot_id=snapshot.id,
-            media_key=judgement.media_key,
-            plex_rating_key=judgement.plex_rating_key,
+            media_key=judgment.media_key,
+            plex_rating_key=judgment.plex_rating_key,
             # A season's poster is the SHOW's, not the season's -- shows always have one.
-            poster_rating_key=judgement.poster_rating_key,
-            title=judgement.title,
+            poster_rating_key=judgment.poster_rating_key,
+            title=judgment.title,
             media_type="season",
-            size_bytes=judgement.size_bytes,
-            size_source=judgement.size_source,
-            facts=judgement.facts,
+            size_bytes=judgment.size_bytes,
+            size_source=judgment.size_source,
+            facts=judgment.facts,
             gates=tv_gates,
             signals=tv_signals,
             custom_condemn=tv_custom,
@@ -800,29 +800,29 @@ async def scan(
             window_days=tv_window,
             grace_days=grace_days,
             display=Display(
-                year=judgement.year,
-                summary=judgement.summary,
-                poster_url=judgement.poster_url,
-                requested_by=judgement.requested_by,
-                group_key=judgement.group_key,
-                group_title=judgement.group_title,
-                tmdb_id=judgement.tmdb_id,
-                imdb_id=judgement.imdb_id,
-                title_slug=judgement.title_slug,
-                content_rating=judgement.content_rating,
-                runtime_minutes=judgement.runtime_minutes,
-                ratings_json=judgement.ratings_json,
-                show_status=judgement.show_status,
+                year=judgment.year,
+                summary=judgment.summary,
+                poster_url=judgment.poster_url,
+                requested_by=judgment.requested_by,
+                group_key=judgment.group_key,
+                group_title=judgment.group_title,
+                tmdb_id=judgment.tmdb_id,
+                imdb_id=judgment.imdb_id,
+                title_slug=judgment.title_slug,
+                content_rating=judgment.content_rating,
+                runtime_minutes=judgment.runtime_minutes,
+                ratings_json=judgment.ratings_json,
+                show_status=judgment.show_status,
             ),
-            matched_by=judgement.matched_by,
-            match_detail=judgement.match_detail,
-            match_status=judgement.match_status,
-            extra_results=(judgement.guard_result,),
-            override=whitelist.effective_override(judgement.media_key, override_map),
+            matched_by=judgment.matched_by,
+            match_detail=judgment.match_detail,
+            match_status=judgment.match_status,
+            extra_results=(judgment.guard_result,),
+            override=whitelist.effective_override(judgment.media_key, override_map),
         )
         if verdict == "condemn":
             condemned += 1
-            condemned_keys.append(judgement.media_key)
+            condemned_keys.append(judgment.media_key)
 
     # Grace clocks for everything condemned this run, in one batched pass -- the
     # _apply_first_flag decision per key, without a database round trip per item.
@@ -841,7 +841,7 @@ async def scan(
         "snapshot.built",
         snapshot=snapshot.id,
         items=len(items),
-        seasons=len(season_judgements),
+        seasons=len(season_judgments),
         condemned=condemned,
         degraded=context.degraded,
     )
@@ -1662,7 +1662,7 @@ async def sync_protection_lists(
 
     # gather_reaped, not bare gather: _run swallows every per-provider failure, so only
     # something unexpected (a cache-database fault) can raise here -- and when it does,
-    # the surviving providers are cancelled and drained rather than left refreshing
+    # the surviving providers are canceled and drained rather than left refreshing
     # lists for a scan that is already dead.
     await gather_reaped(*runs)
     return synced

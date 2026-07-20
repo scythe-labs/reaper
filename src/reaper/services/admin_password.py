@@ -106,7 +106,7 @@ async def set_password(
     if admins:
         admins[0].password_hash = hash_password(password)
         # A password change must invalidate every session the old password could have
-        # authorised -- except, optionally, the one making the change.
+        # authorized -- except, optionally, the one making the change.
         await close_all_for_user(
             session,
             admins[0].id,

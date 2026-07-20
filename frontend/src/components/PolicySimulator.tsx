@@ -6,7 +6,7 @@
 // and it carries the one button that fixes that.
 //
 // PolicyEditor.tsx decides which of the two renders, and its header says why that decision
-// is the most important behaviour on the page.
+// is the most important behavior on the page.
 
 import type { ProfileSettings, Simulation } from "../api";
 import { bytes, count, totalBytes } from "../format";

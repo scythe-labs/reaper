@@ -19,7 +19,7 @@ means the protection cannot fire, and a well-rated film becomes deletable. An
 empty or half-loaded table would therefore silently strip protection from the
 entire library -- the worst possible failure, arriving quietly.
 
-Two defences:
+Two defenses:
 
 * **The load is atomic.** Rows go into a staging table and are swapped in only
   once every row has landed. A download that dies halfway leaves the previous

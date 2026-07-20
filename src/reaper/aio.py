@@ -46,7 +46,7 @@ async def gather_reaped(*aws: Awaitable[Any]) -> list[Any]:
     """Run awaitables concurrently; on the first failure reap the rest, then re-raise.
 
     The results list is in argument order, exactly like ``asyncio.gather``. Unlike
-    gather, a failure cannot leave siblings running detached: they are cancelled and
+    gather, a failure cannot leave siblings running detached: they are canceled and
     awaited before the failure propagates, so a caller that catches it knows no
     stray read is still in flight.
     """

@@ -4,7 +4,7 @@
 Covers the three pure layers the why-panel's new header rests on:
 
 * ``normalize_resolution`` -- Plex first, *arr quality-name parse as fallback, and
-  ``None`` (badge hidden) for anything unrecognisable.
+  ``None`` (badge hidden) for anything unrecognizable.
 * ``build_ratings_json`` / ``parse_ratings_json`` -- the frozen ratings row. The IMDb
   entry must be the dataset's (the number the score used); Plex fills the rest; the
   *arr fills what Plex did not know. Ints only, both ways.
@@ -53,7 +53,7 @@ class TestNormalizeResolution:
         assert normalize_resolution(None, "SDTV") == "sd"
         assert normalize_resolution("", "DVD") == "sd"
 
-    def test_unrecognisable_is_none_never_guessed(self) -> None:
+    def test_unrecognizable_is_none_never_guessed(self) -> None:
         assert normalize_resolution(None, None) is None
         assert normalize_resolution(None, "Remux") is None
         assert normalize_resolution("wat", None) is None

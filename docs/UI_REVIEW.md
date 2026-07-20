@@ -261,10 +261,10 @@ section 6.
   changed: {message}", matching every other Settings panel.
 
 - [x] **I7 [high]** `frontend/src/components/Settings.tsx:1075` · The Plex link flow's
-  failures render as grey muted text: the catch blocks in `beginPoll` (635), `startLink`
+  failures render as gray muted text: the catch blocks in `beginPoll` (635), `startLink`
   (650), and `pick` (672) all write real errors into `message`, while the component's own
   comment (551-553) says failures get the separate `plexError` state "so they render as an
-  error, not as grey status text", and `plexError` already renders as `.notice.notice-error`
+  error, not as gray status text", and `plexError` already renders as `.notice.notice-error`
   one line above (1074). **Fix:** route the three catch blocks into `setPlexError`, keeping
   only informational text (timeout notice, "Linked to X.") in `message`.
 
@@ -564,7 +564,7 @@ section 6.
   "smallest first" in ReapConfirm). **Fix:** "Every safety check ran"; align the summary
   with the Cp6 rewording; change the canary tag text to "test item" (keep the class name).
 
-- [x] **Cp8 [high]** `frontend/src/components/PolicyEditor.tsx:87` · The "Honour protected
+- [x] **Cp8 [high]** `frontend/src/components/PolicyEditor.tsx:87` · The "Honor protected
   lists" help promises "any other list you mark as protected", but no marking affordance
   exists anywhere: the only curated list synced as a protection is the IMDb Top 250 (the
   RadarrImportList provider was defined but never wired into any sync, and has since been

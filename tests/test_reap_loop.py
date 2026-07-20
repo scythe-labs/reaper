@@ -431,7 +431,7 @@ class TestASeasonDryRunsAsAWholeSequence:
 
 class TestTheManifestGuard:
     async def test_a_changed_condemned_set_voids_the_run(self, session: AsyncSession) -> None:
-        """The stale-tab defence. Approve a plan, then the library moves; the run must
+        """The stale-tab defense. Approve a plan, then the library moves; the run must
         refuse rather than execute a plan nobody approved."""
         snapshot_id = await _snapshot_with(
             session, [("radarr:1:1", 1 * GB), ("radarr:1:2", 5 * GB)]
@@ -1047,7 +1047,7 @@ class TestTheUnmeasuredAllowance:
         self, session: AsyncSession
     ) -> None:
         """The GB figure stays exact for the items it describes, so the owner has to type
-        an acknowledgement that the run holds things it does not.
+        an acknowledgment that the run holds things it does not.
 
         Saved to the profile, not merely passed to ``build_plan``: the review surface
         reads the allowance live, so if only one of the two knew about it the phrase shown
@@ -1259,7 +1259,7 @@ class TestTheAllowanceIsACountNotASwitch:
 
     The whole reason this setting is safe to keep out of the policy hash is that both
     directions of a change resolve toward keeping. That only holds if a tightening is
-    actually honoured at execute time -- otherwise lowering 25 to 1 is silently ignored on
+    actually honored at execute time -- otherwise lowering 25 to 1 is silently ignored on
     the one population no byte cap can bound.
     """
 
@@ -1863,9 +1863,9 @@ class TestNoRatingKeyIsSpared:
         assert radarr.delete_calls == []
 
 
-class TestASpareIsHonouredAtExecuteTime:
+class TestASpareIsHonoredAtExecuteTime:
     """The most dangerous gap the review found: a spare added *after* the plan is built --
-    during the grace window this executor exists to honour -- must still stop the delete. A
+    during the grace window this executor exists to honor -- must still stop the delete. A
     spare does not change the frozen candidate row, so neither the verdict nor the manifest
     hash can see it; the executor re-checks the override per item. Two independent reviews
     flagged the original omission, so these tests pin the fix hard."""
@@ -2433,7 +2433,7 @@ class FakePlex:
 
 
 class FakeTautulli:
-    """A stand-in Tautulli whose history rows and error behaviour a test controls.
+    """A stand-in Tautulli whose history rows and error behavior a test controls.
 
     ``rows`` answers every key alike; ``rows_by_key`` answers per rating key (empty for
     keys not listed), for the merged-listings tests where WHICH key was played matters.

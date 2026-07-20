@@ -14,7 +14,7 @@ a policy hash, an unstable hash means approvals silently void themselves, or wor
 silently *don't*.
 
 It also kills a class of unit bug at the boundary: typing ``75`` into a field
-labelled "IMDb floor (tenths)" is a 422, not a policy that protects nothing because
+labeled "IMDb floor (tenths)" is a 422, not a policy that protects nothing because
 7.5 was compared against a Tomatometer of 96.
 
 ## 2. The hash covers meaning, not identity
@@ -262,7 +262,7 @@ class RatingRuleSpec(Frozen):
 
     Integers only, like every policy number, so the hash stays byte-stable. ``floor`` is
     in tenths (7.5 -> 75) and reads identically for a percentage source (75% -> 75), since
-    Plex normalises an 84% score to 8.4 whose tenths are 84. ``min_votes`` only means
+    Plex normalizes an 84% score to 8.4 whose tenths are 84. ``min_votes`` only means
     something on the sources that count votes (IMDb, TMDb); for a percentage source
     (Rotten Tomatoes, Metacritic) it is required to be 0, because a vote floor there would
     silently do nothing.
@@ -376,7 +376,7 @@ class PolicyBody(Frozen):
     but never vetoes, and missing data keeps the file. See GradedKeepSpec."""
 
     keep_tags: tuple[str, ...] = ("reaper-keep",)
-    """The *arr tags that spare a title outright -- the configurable form of "honour your keep
+    """The *arr tags that spare a title outright -- the configurable form of "honor your keep
     list". A title carrying one of these (or all of them, per ``keep_tags_match``) is kept
     whatever it scores. Read at scan time and synced into the whitelist before scoring. Movies
     read Radarr tags, TV reads Sonarr tags, so the two policies carry their own."""
@@ -552,7 +552,7 @@ class PolicyBody(Frozen):
     _POST_SCORE_FIELDS: ClassVar[frozenset[str]] = frozenset({"condemn_at", "coverage_floor_bp"})
 
     def scoring_hash(self) -> str:
-        """Identifies the policy's *scoring behaviour*, ignoring the thresholds.
+        """Identifies the policy's *scoring behavior*, ignoring the thresholds.
 
         Two policies with the same scoring hash assign every item the same score and
         the same gate outcomes; they may still disagree about the verdict, because

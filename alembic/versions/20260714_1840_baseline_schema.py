@@ -4,7 +4,7 @@ The whole schema, in one revision.
 
 **Until Reaper's first release this migration is rewritten in place**, not appended
 to: nobody is running the tool yet, so there is no data to preserve and no upgrade
-path to honour. A chain of migrations between schemas that never shipped is pure cost
+path to honor. A chain of migrations between schemas that never shipped is pure cost
 -- it slows every fresh ``alembic upgrade head`` and each link is somewhere a SQLite
 batch-mode bug can hide. To change the schema: edit the models, delete ``reaper.db``,
 delete this file, regenerate, and upgrade from empty.

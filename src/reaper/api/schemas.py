@@ -167,7 +167,7 @@ class GroupSeasonMarkOut(BaseModel):
     verdict: str
     override: str | None = None
     override_effective: bool | None = None
-    """For a ``"reap"`` override: whether the engine honours it (True paints the square
+    """For a ``"reap"`` override: whether the engine honors it (True paints the square
     solid red), or refuses it for a safety stop or an unchecked protection (False keeps
     the square in its scan color). None when there is no reap override."""
     size_bytes: int | None = None
@@ -229,7 +229,7 @@ class CandidateOut(BaseModel):
     the moment they click, so the card can show the pending intent before the next scan bakes
     it into the stored verdict. Inherited from the show for a season the owner overrode whole."""
     override_effective: bool | None = None
-    """For a ``"reap"`` override: whether the engine honours it (it joins the counts, the
+    """For a ``"reap"`` override: whether the engine honors it (it joins the counts, the
     grace countdown and the next plan), or refuses it for a safety stop or an unchecked
     protection. None when there is no reap override. The UI shows red only on True."""
     chip: ChipOut | None = None
@@ -245,7 +245,7 @@ class CandidateOut(BaseModel):
     """Whether the show is finished: ``"ended"``, ``"continuing"`` or ``"unknown"``. None
     for a movie, where the question does not apply. Three states, not a bool, so "the
     server did not say" can never be drawn as a definite answer -- ``"unknown"`` renders
-    in the "we could not check" treatment. ``"continuing"`` is labelled "Still going",
+    in the "we could not check" treatment. ``"continuing"`` is labeled "Still going",
     because that arm also covers a show that has not started airing yet."""
 
 
@@ -597,7 +597,7 @@ class SimulationOut(BaseModel):
     examples_newly_condemned: list[SimExampleOut] = Field(default_factory=list)
     """The top few titles this draft would newly flag, highest score first -- the
     "New on the list" block. Populated only when ``exact``; a count is abstract, but
-    a title the owner recognises is what actually stops a bad threshold."""
+    a title the owner recognizes is what actually stops a bad threshold."""
 
     protected_by: list[GateCountOut] = Field(default_factory=list)
     """How many protected items each protection saved, busiest first -- the "Why
@@ -629,7 +629,7 @@ class FieldOut(BaseModel):
 class VocabularyOut(BaseModel):
     """The fields available in ONE lane.
 
-    Filtered server-side, before serialisation. A protect-only field is never even
+    Filtered server-side, before serialization. A protect-only field is never even
     offered to the condemn editor, so a dangerous condition is not merely rejected --
     it is unconstructable.
     """

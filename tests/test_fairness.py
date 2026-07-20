@@ -222,7 +222,7 @@ class TestRollUp:
         it would punish Bob for Alice's request."""
         reqs = [_request(plex_id=100, name="Alice", rating_key="555")]
         evidence = {"555": WatchEvidence(plays_by_user={200: 2}, distinct_watchers=1)}
-        media = {"555": MediaInfo(title="Bob's Favourite", size_bytes=5 * GB)}
+        media = {"555": MediaInfo(title="Bob's Favorite", size_bytes=5 * GB)}
 
         report = evaluate_fairness(reqs, evidence, media, POLICY, now=NOW)
 

@@ -108,7 +108,7 @@ async def deactivate(session: AsyncSession, username: str) -> None:
 
     user.is_active = False
     # resolve_session already refuses a deactivated user's cookie lazily, but evict the
-    # rows now too: defence in depth, and the sessions table stops advertising a dead
+    # rows now too: defense in depth, and the sessions table stops advertising a dead
     # account's devices.
     await close_all_for_user(session, user.id)
     await session.flush()

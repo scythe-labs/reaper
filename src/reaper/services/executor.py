@@ -482,7 +482,7 @@ def _measures(candidate: Candidate, comparable: frozenset[SizeSource]) -> bool:
     """Does the frozen size measure the same thing the live re-read will?
 
     An exhaustive allow-list with a fail-closed default: a source this build does not
-    recognise, or none at all, answers False and the item is kept. The alternative is an
+    recognize, or none at all, answers False and the item is kept. The alternative is an
     unwritten ``else`` branch that either skips every such item or, worse, compares a
     folder against a sum of files and calls the difference growth.
     """
@@ -684,7 +684,7 @@ class Executor:
         # Hashed over the WHOLE condemned set -- spared or not -- so that sparing an item
         # after approval does not change the fingerprint and void the run. The planner hashes
         # the same whole set for exactly this reason; a spare is not a change to *what was
-        # condemned*, it is a decision to keep one of them, which the per-item check honours.
+        # condemned*, it is a decision to keep one of them, which the per-item check honors.
         # Both sides hash the identical frozen candidate rows for this immutable snapshot, so
         # this is a snapshot-integrity check: it fires if a condemned candidate row is lost or
         # tampered with under the run (e.g. retention GC), NOT if the live library moved --
@@ -971,7 +971,7 @@ class Executor:
 
         # A spare wins over everything, in dry-run and for real alike. The owner may spare an
         # item by hand after the plan was built -- during the grace window this executor
-        # exists to honour -- and a frozen candidate row still reads ``condemn``, so this is
+        # exists to honor -- and a frozen candidate row still reads ``condemn``, so this is
         # the check (not the verdict, not the manifest hash) that keeps a hand-spared file.
         if whitelist.effective_override(candidate.media_key, self._decisions) == "spare":
             return self._mark_skipped(
@@ -1067,7 +1067,7 @@ class Executor:
         file this delete would remove. Read back from the stored explanation, so the keys
         the interlocks protect are exactly the keys the owner was shown. An explanation
         without the list (every non-merged bind, and every snapshot from before merging
-        existed) falls back to the single key, which is the pre-merge behaviour.
+        existed) falls back to the single key, which is the pre-merge behavior.
         """
         keys: list[int] = []
         if candidate.plex_rating_key is not None:
