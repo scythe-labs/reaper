@@ -3599,23 +3599,57 @@ button.sm {
   opacity: 0.55;
   cursor: default;
 }
-.ov-spare:hover:not(:disabled) {
-  border-color: var(--protect);
-  color: var(--protect);
+/* A fixed footprint so the label toggle (Spare<->Spared, Reap<->Reaping) never resizes the
+   button. Tidier and jitter-free, and it fixes a Safari repaint bug: when the active button
+   shrank back, Safari left the vacated solid-red region unpainted, a red sliver at the row's
+   right edge. No size change, no vacated region, nothing to mis-paint. Scoped to the toggling
+   OverrideControls buttons; the bulk bar's static Spare/Reap keep their natural width. */
+.override-controls .ov-btn {
+  min-width: 5.75rem;
+  justify-content: center;
 }
-.ov-spare.active {
-  background: var(--protect-soft);
-  border-color: var(--protect);
+/* Keep-first: the safe action (Spare) invites in green; the destructive one (Reap) stays the
+   quiet grey of the base button and only reddens as you reach for it. Reuses the app's
+   green-spare and quiet-danger conventions, so a delete stays a deliberate move. */
+.ov-spare {
+  background: color-mix(in srgb, var(--protect) 15%, var(--surface));
+  border-color: color-mix(in srgb, var(--protect) 55%, transparent);
   color: var(--protect);
+  font-weight: 600;
+}
+.ov-spare:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--protect) 24%, var(--surface));
+  border-color: var(--protect);
 }
 .ov-reap:hover:not(:disabled) {
   border-color: var(--condemn);
   color: var(--condemn);
+  background: var(--condemn-soft);
+}
+/* A made decision reads at a glance: the solid hand-decision chip, green for spare, red for
+   reap -- the same solid-means-yours language the override chips use. */
+.ov-spare.active {
+  background: var(--protect);
+  border-color: var(--protect);
+  color: var(--protect-soft);
 }
 .ov-reap.active {
-  background: var(--condemn-soft);
+  background: var(--condemn);
   border-color: var(--condemn);
-  color: var(--condemn);
+  color: var(--condemn-soft);
+}
+/* Hovering a chosen button keeps its solid fill: the plain :hover rules outrank .active (the
+   :not() adds a class's weight), so without these an active button drops back to the outline
+   hover style the moment the pointer is over it. */
+.ov-spare.active:hover:not(:disabled) {
+  background: var(--protect);
+  border-color: var(--protect);
+  color: var(--protect-soft);
+}
+.ov-reap.active:hover:not(:disabled) {
+  background: var(--condemn);
+  border-color: var(--condemn);
+  color: var(--condemn-soft);
 }
 
 /* A card the owner marked for reaping: a red-tinted border, the mirror of card-spared's dim. */

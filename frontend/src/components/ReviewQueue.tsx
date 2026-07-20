@@ -1891,14 +1891,19 @@ export function ReviewQueue({
               </span>{" "}
               Spare
             </button>
-            <button
-              type="button"
-              className="sm ov-btn ov-reap"
-              disabled={pending || selected.size === 0}
-              onClick={() => bulk.mutate({ keys: [...selected], decision: "reap" })}
-            >
-              <ScytheIcon /> Reap
-            </button>
+            {/* On Condemned the items are already on the block, so a bulk Reap override does
+                nothing: drop it there, exactly as the per-card and panel buttons do. The real
+                deletion is "Reap now" below, a different button, which stays. */}
+            {verdict !== "condemn" && (
+              <button
+                type="button"
+                className="sm ov-btn ov-reap"
+                disabled={pending || selected.size === 0}
+                onClick={() => bulk.mutate({ keys: [...selected], decision: "reap" })}
+              >
+                <ScytheIcon /> Reap
+              </button>
+            )}
             <button
               type="button"
               className="sm ghost"

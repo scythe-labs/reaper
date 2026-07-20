@@ -853,6 +853,9 @@ export function WhyPanel({
           onSet={(decision) => setOverride.mutate({ key: item.media_key, decision })}
           onClear={() => clearOverride.mutate(item.media_key)}
           pending={setOverride.isPending || clearOverride.isPending}
+          // Same rule as the queue: a condemned item is already on the block, so Reap here
+          // would change nothing. Spare (rescue) stays; Reap returns on Sanctuary and Limbo.
+          hideReap={item.verdict === "condemn"}
         />
         {(setOverride.isError || clearOverride.isError) && (
           <span className="error">Couldn't save that. Try again.</span>

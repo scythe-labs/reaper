@@ -212,12 +212,12 @@ describe("a bulk override", () => {
     const user = await selectAllDrawn();
     await user.click(screen.getByRole("button", { name: "Spare" }));
 
-    await waitFor(() => expect(screen.getByRole("button", { name: "Reap" })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: /Reap now/ })).toBeDisabled());
     expect(screen.getByRole("button", { name: "Clear override" })).toBeDisabled();
     await waitFor(() => expect(settle).toHaveLength(2));
     settle.forEach((s) => s());
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Reap" })).not.toBeDisabled(),
+      expect(screen.getByRole("button", { name: /Reap now/ })).not.toBeDisabled(),
     );
   });
 });
@@ -237,6 +237,25 @@ describe("the per-card override buttons", () => {
     renderQueue("protect");
     expect(await screen.findByRole("button", { name: "Spare" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Reap" })).toBeInTheDocument();
+  });
+});
+
+describe("the bulk Reap override", () => {
+  it("is dropped on Condemned, where the real deletion (Reap now) stays instead", async () => {
+    apiMock.candidates.mockResolvedValue(page([movie(1)]));
+    renderQueue();
+    await selectAllDrawn();
+    // The redundant bulk Reap override is gone on this lane; Reap now (the real delete) stays.
+    expect(screen.queryByRole("button", { name: /^Reap$/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Reap now/ })).toBeInTheDocument();
+  });
+
+  it("keeps the bulk Reap override off the Condemned lane", async () => {
+    apiMock.candidates.mockResolvedValue(page([movie(1, { verdict: "protect" })]));
+    renderQueue("protect");
+    await selectAllDrawn();
+    expect(screen.getByRole("button", { name: /^Reap$/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Reap now/ })).not.toBeInTheDocument();
   });
 });
 
