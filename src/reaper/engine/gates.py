@@ -499,10 +499,8 @@ class MinDormancyGate:
                 self.id,
                 PROTECT,
                 detail=(
-                    f"untouched for just {humanize_days(dormant.value)}, less than the "
-                    f"{humanize_days(floor)} Reaper waits before removing anything. Titles left "
-                    "alone for under three years still get watched again a fifth to a third of the "
-                    "time."
+                    f"untouched for just {humanize_days(dormant.value)}, "
+                    f"less than the {humanize_window(floor)} Reaper waits"
                 ),
             )
         return GateResult(
@@ -510,7 +508,7 @@ class MinDormancyGate:
             ABSTAIN,
             detail=(
                 f"Untouched for {humanize_days(dormant.value)}, past the "
-                f"{humanize_days(floor)} it has to sit unwatched first."
+                f"{humanize_window(floor)} it has to sit unwatched first."
             ),
         )
 
