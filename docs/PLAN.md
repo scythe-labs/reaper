@@ -7,9 +7,48 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-17 (the full ratings row, and the rescan that never applied)
+Last updated: 2026-07-19 (the review queue's action grammar, and a bug only Safari drew)
 
-### Newest — the full ratings row, and the rescan that never applied
+### Newest — the review queue's action grammar (and a bug only Safari drew)
+
+Operator-driven UI work on how a queue row offers its decisions. Each change was mocked as a
+rendered artifact and approved before any code, then driven end-to-end in a real browser.
+
+- **Reap is gone wherever the item is already condemned.** On the Condemned lane an item is
+  already on the block, so a hand Reap override changed nothing. It is dropped from the card,
+  the item panel, and the bulk bar there; Spare (rescue) stays. Reap remains on Sanctuary and
+  Limbo, where forcing an item onto the list means something. The real deletion, "Reap now",
+  is a different control and is untouched. One prop, `hideReap` from the tab verdict, threads
+  the rule through `OverrideControls` everywhere.
+- **The row rests quiet; the actions come on hover.** The Spare/Reap buttons are hidden until
+  a row is hovered or focused, so a long list reads as scores, not a wall of buttons. A row you
+  have already decided rests instead as a small icon of that decision (∞ spared, scythe reaped)
+  in the buttons' place; the same hover fades it out as the buttons arrive.
+- **Hover is drawn in the accent, additive on the open card.** Every card's hover is the accent
+  edge now, not the old grey. On the open (selected) card the hover is additive: the accent
+  selection bar stays and deepens, so hovering the open row can no longer read as a click that
+  would deselect it — the complaint that started this.
+- **Keep-first buttons.** Spare invites in green; Reap stays the quiet grey of a plain button
+  and only reddens as you reach for it, so a delete stays deliberate. A chosen decision is the
+  solid hand-decision chip (green spare, red reap), the same solid-means-yours language the
+  override chips use. A found-along-the-way defect: the chosen button dropped its solid fill
+  back to the outline hover the moment the pointer was over it, because `:hover:not(:disabled)`
+  outranks `.active`; the active state now re-asserts at hover.
+- **A bug only a real browser drew, and only Safari.** Live testing found a thin red bar just
+  right of the Reap button in the item panel after switching a decision. It reproduced in neither
+  Chrome nor headless WebKit. The first guess — a sticky-footer repaint failing over the coloured
+  signal bars behind it — was wrong, and its fix (`will-change` on the footer) did nothing; the
+  operator's second screenshot showed the real cause. The buttons changed width when their label
+  toggled (Reap↔Reaping, Spare↔Spared) and the chosen state is solid, so when the button shrank
+  back Safari left the vacated solid-red region unpainted. Fixing the trigger instead of the paint
+  — a stable button width (min-width, verified identical across every label state in both engines)
+  leaves no vacated region — removed it, confirmed by the operator in Safari. Two lessons worth
+  keeping: a green headless pass in one engine is not a paint-bug check (compositing bugs live on
+  the GPU you did not test), and the honest fix removes the condition, not the symptom.
+- Shipped earlier in the same session: the accent colour is operator-configurable (General
+  settings), and the first-run wizard lets you head into the app while the first scan runs.
+
+### The full ratings row, and the rescan that never applied
 
 Three operator reports, each of which turned out to be a data or sequencing gap rather
 than a display bug.

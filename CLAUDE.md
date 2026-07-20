@@ -341,3 +341,29 @@ a style choice.
     paragraph covering two controls, and never help detached from the row it explains.
     Known deferred exception to the notice unification: the `.warn` banner (ScanBar +
     the review card) merges into `.notice-warn` whenever the review UI is next touched.
+
+## The queue's action grammar (from the review-queue UX pass, 2026-07-19)
+
+How a queue row presents its Spare/Reap decision, settled over a run of approved mockups and
+driven end-to-end in a real browser — which is where the one bug behind rule 46 surfaced, in
+Safari alone. New variants are blockers, like the rules above.
+
+46. **Row actions reveal on hover; a decided row rests as its icon.** The per-row Spare/Reap
+    (`OverrideControls`) is hidden until the row is hovered or keyboard-focused — kept in flow
+    with `visibility`, never `display`, so nothing reflows. A row carrying a hand override rests
+    as a small icon of it (`OverrideMark`: ∞ spared, scythe reaped) in the buttons' slot, faded
+    out by the same hover. Never park the full buttons on every row at rest, and never show the
+    icon and the buttons at once. Give the toggling buttons a fixed width so a label change
+    (Spare↔Spared, Reap↔Reaping) never resizes them: a shrinking button left a red ghost in the
+    region it vacated, in Safari only.
+47. **Card hover is the accent, additive on the open card.** A card's hover is the accent edge,
+    not grey; the open (`card-selected`) card keeps its accent selection bar on hover and deepens
+    it, never trading it for the plain hover (which reads as a deselect). Any `:hover` that can
+    also be `.active`/selected re-asserts the selected treatment at equal-or-higher specificity,
+    so the chosen state is not lost under the pointer.
+48. **Reap is dropped wherever the item is already condemned; Keep-first colours the pair.** A
+    hand Reap does nothing to an already-condemned item, so it is hidden on the Condemned lane in
+    every surface carrying `OverrideControls` (card, panel, bulk bar) via `hideReap` from the tab
+    verdict — never reimplement that test inline. "Reap now" (the real deletion) is a different
+    control and is never hidden. Spare invites in green; Reap stays the quiet grey of a plain
+    button until hovered; a chosen decision is the solid hand-decision chip.
