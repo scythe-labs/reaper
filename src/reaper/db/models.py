@@ -223,7 +223,7 @@ class Profile(Base):
     active_policy_id: Mapped[int] = mapped_column(ForeignKey("policy.id"))
 
     settings_json: Mapped[str] = mapped_column(Text)
-    """ProfileSettings: the four caps, grace_days, require_approval."""
+    """ProfileSettings: the four caps, caps_enabled, grace_days, the unknown-size allowance."""
 
     created_at: Mapped[UtcTimestamp]
     updated_at: Mapped[UtcTimestamp]

@@ -263,7 +263,7 @@ class TestCaps:
         settings_ = ProfileSettings()
         assert settings_.max_items_per_run == 10
         assert settings_.max_bytes_per_run == 500_000_000_000
-        assert settings_.require_approval is True
+        assert settings_.caps_enabled is True
 
     def test_a_run_cap_larger_than_the_rolling_cap_is_refused(self) -> None:
         """Otherwise the rolling cap is decorative."""
@@ -363,10 +363,15 @@ class TestTheDangerousConfigDetector:
 
         assert any(w.field == "condemn_at" and w.severity == "danger" for w in warnings)
 
-    def test_unattended_deletion_is_always_flagged(self) -> None:
-        warnings = inspect(_policy(), ProfileSettings(require_approval=False))
+    def test_caps_off_relaxes_the_invariant_and_raises_no_danger(self) -> None:
+        """Turning the caps off is a deliberate first-run choice, not a misconfiguration.
+        The run-cap-vs-rolling-cap invariant must not fire (it constrains nothing when
+        nothing is enforced, so this combination must construct at all), and inspect must
+        not flag the profile as dangerous."""
+        settings_ = ProfileSettings(caps_enabled=False, max_items_per_run=1000, max_items_per_30d=1)
 
-        assert any(w.field == "require_approval" and w.severity == "danger" for w in warnings)
+        assert settings_.caps_enabled is False
+        assert not any(w.severity == "danger" for w in inspect(_policy(), settings_))
 
     def test_the_shipped_default_raises_no_warnings(self) -> None:
         """A user who changes nothing should see a clean policy."""

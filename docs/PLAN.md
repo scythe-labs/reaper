@@ -7,10 +7,51 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-20 (the Reap page is a breakdown, not a countdown list; Leaving Soon's
-manual update moved to Settings → Plex)
+Last updated: 2026-07-21 (the per-run caps can be switched off; the inert "Ask me before
+every run" toggle is gone)
 
-### Newest — the Reap page stopped being a grace list, and became a breakdown
+### Newest — the caps are switchable, and a toggle that did nothing is gone
+
+Two operator questions in one pass. First: a dry run aborted at "569 over the per-run cap of 10"
+even after the operator thought they had turned limits off. They had not: the only toggle in
+*Pace and limits* was **"Ask me before every run deletes anything"** (`require_approval`), which is
+a different control. Second, following from that: what does that toggle even do?
+
+**The assumption that turned out wrong.** `require_approval` looked like a safety gate. It gated
+nothing. Traced across the whole codebase (adversarially, twice): its entire footprint was one
+policy-editor warning when off, plus being stored and echoed. The execute route gates on the host
+being **armed** (password) and the **typed confirmation phrase**, never on `require_approval`; the
+executor, planner, and scheduler never read it. Its own docstring admitted it was a placeholder for
+an "earned AutonomyGrant" flow that is not wired. So the toggle described behavior that is *always*
+true and cannot be turned off (Reaper never deletes on its own), and implied an "off" (unattended
+deletion) that does not exist. Removed entirely (rule 25/38).
+
+**The caps became optional, on by default.** New `ProfileSettings.caps_enabled` (un-hashed, like
+the caps themselves). Off, `executor._check_caps` and `_check_rolling_caps` stop enforcing the four
+run-size caps -- for a big first cleanup -- while every other gate stands: the deletion password,
+the confirmation phrase, the manifest re-check, the canary, the live per-item vetoes, and the
+**separate** unknown-size allowance, which the switch never touches (its check runs before the caps
+early-return). The four volume caps live only in the executor (the planner enforces just the
+unknown-size allowance), so gating there disables them completely; dry-run and execute agree
+because both walk the same `_check_caps`. The abort copy now points to *Policy → Pace and limits*
+and names the off switch, instead of only "raise the cap." In the UI the caps matrix is hidden (not
+disabled) while the toggle is off, with an amber "no cap on run size" notice; grace and unknown-size
+stay put. Drove it end to end: on the real 569-item set, a dry run aborts with caps on and
+**completes** with caps off; the old approval toggle is gone.
+
+**Upgrade-safe, without a migration.** Removing a field from a Pydantic model with
+`extra="forbid"` would otherwise crash every read of an *existing* profile, whose stored
+blob still carries `require_approval` -- and `active_profile_settings` feeds scans, execute,
+grace, the shelf, and the very settings page used to fix it. So it now degrades exactly like
+`active_policy` already did: it drops unknown keys and re-validates (keeping the operator's
+caps and grace, defaulting `caps_enabled` on), and falls back to the cautious built-ins on an
+otherwise-unreadable blob. No Alembic change (the column is unchanged; `alembic check` clean).
+Proven live: a legacy blob returns 200 with values preserved, not a 500. Found by an
+adversarial review pass over the diff, which otherwise confirmed the caps gating fails closed
+on every axis (dry-run/execute agree, the unknown-size guard survives caps-off, no other
+interlock weakened).
+
+### The Reap page stopped being a grace list, and became a breakdown
 
 The operator pushed back on the Reap page's grace panel: it listed only 20 of ~570 counting-down
 titles, each with a *cancel* link -- an arbitrary slice, and *cancel* was just "spare this file",

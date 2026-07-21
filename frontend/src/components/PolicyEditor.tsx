@@ -1462,7 +1462,6 @@ export function PolicyEditor({
     (f) => f === "keep_last_seasons" || f === "keep_last_scope",
     (f) => f === "custom_condemn",
     (f) => f === "graded_keeps",
-    (f) => f === "require_approval",
     (f) => f === "max_unmeasured_per_run",
   ];
   const unanchoredWarnings = allWarnings.filter((w) => !anchors.some((p) => p(w.field)));
@@ -2137,68 +2136,73 @@ export function PolicyEditor({
           <>
             <label className="toggle pace-approval">
               <Switch
-                checked={pace.require_approval}
-                onChange={(require_approval) => updatePace({ require_approval })}
+                checked={pace.caps_enabled}
+                onChange={(caps_enabled) => updatePace({ caps_enabled })}
               />
-              <span>Ask me before every run deletes anything</span>
+              <span>Limit how much each run removes</span>
             </label>
-            {/* The caution follows the live toggle, not a server warning. validate_policy
-                reads SAVED settings and its query is keyed on the policy body, so a
-                require_approval warning can never track this pace toggle -- it renders here
-                straight from pace.require_approval instead. The require_approval anchor stays
-                in `anchors` so the server's saved-state copy is still claimed and never leaks
-                into the bottom stack. */}
-            {!pace.require_approval && (
-              <p className="notice notice-error notice-inline">
-                Approval is off, so a run can remove titles without showing you the list first.
+            <p className="help pace-approval-help">
+              An extra ceiling on how much one run and a rolling month remove, on top of the
+              deletion password. Turn off for a big first cleanup, back on for routine runs.
+            </p>
+            {!pace.caps_enabled && (
+              <p className="notice notice-warn notice-inline">
+                No cap on run size. A run can remove everything you've approved at once.
+                Deletion still needs the password and your approval of the list.
               </p>
             )}
 
             {/* The four caps as a 2x2 matrix: titles / disk freed down the side, per run /
                 per 30 days across the top. The headers carry what four labels and four help
-                lines used to, and the fixed grid tracks keep the boxes lined up. */}
-            <div className="pace-matrix">
-              <span />
-              <span className="col-h">Per run</span>
-              <span className="col-h">
-                Per 30 days <em>rolling</em>
-              </span>
+                lines used to, and the fixed grid tracks keep the boxes lined up. Hidden,
+                not disabled, while the caps are off -- the same gates-are-hidden grammar the
+                rest of the editor uses. */}
+            {pace.caps_enabled && (
+              <>
+                <div className="pace-matrix">
+                  <span />
+                  <span className="col-h">Per run</span>
+                  <span className="col-h">
+                    Per 30 days <em>rolling</em>
+                  </span>
 
-              <span className="row-h">Titles</span>
-              <FixedQuantity
-                value={pace.max_items_per_run}
-                suffix="titles"
-                min={1}
-                width="narrow"
-                ariaLabel="Most titles per run"
-                onChange={(v) => updatePace({ max_items_per_run: v || 1 })}
-              />
-              <FixedQuantity
-                value={pace.max_items_per_30d}
-                suffix="titles"
-                min={1}
-                width="narrow"
-                ariaLabel="Most titles per 30 days"
-                onChange={(v) => updatePace({ max_items_per_30d: v || 1 })}
-              />
+                  <span className="row-h">Titles</span>
+                  <FixedQuantity
+                    value={pace.max_items_per_run}
+                    suffix="titles"
+                    min={1}
+                    width="narrow"
+                    ariaLabel="Most titles per run"
+                    onChange={(v) => updatePace({ max_items_per_run: v || 1 })}
+                  />
+                  <FixedQuantity
+                    value={pace.max_items_per_30d}
+                    suffix="titles"
+                    min={1}
+                    width="narrow"
+                    ariaLabel="Most titles per 30 days"
+                    onChange={(v) => updatePace({ max_items_per_30d: v || 1 })}
+                  />
 
-              <span className="row-h">Disk freed</span>
-              <QuantityInput
-                value={pace.max_bytes_per_run}
-                units={SIZE_UNITS}
-                ariaLabel="Most disk freed per run"
-                onChange={(v) => updatePace({ max_bytes_per_run: v })}
-              />
-              <QuantityInput
-                value={pace.max_bytes_per_30d}
-                units={SIZE_UNITS}
-                ariaLabel="Most disk freed per 30 days"
-                onChange={(v) => updatePace({ max_bytes_per_30d: v })}
-              />
-            </div>
-            <p className="help matrix-note">
-              Cross a limit and the whole run stops. It never deletes just the part that fits.
-            </p>
+                  <span className="row-h">Disk freed</span>
+                  <QuantityInput
+                    value={pace.max_bytes_per_run}
+                    units={SIZE_UNITS}
+                    ariaLabel="Most disk freed per run"
+                    onChange={(v) => updatePace({ max_bytes_per_run: v })}
+                  />
+                  <QuantityInput
+                    value={pace.max_bytes_per_30d}
+                    units={SIZE_UNITS}
+                    ariaLabel="Most disk freed per 30 days"
+                    onChange={(v) => updatePace({ max_bytes_per_30d: v })}
+                  />
+                </div>
+                <p className="help matrix-note">
+                  Cross a limit and the whole run stops. It never deletes just the part that fits.
+                </p>
+              </>
+            )}
 
             {/* Grace and unknown-size are not caps, so they step out of the matrix: one label,
                 one control, one short line of help bound directly beneath it. */}

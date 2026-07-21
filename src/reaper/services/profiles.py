@@ -2,9 +2,9 @@
 """The profile: how much Reaper may do, and how long it waits.
 
 A profile is the container for the mutable, non-hashed part of a configuration -- the
-four caps, the grace period, whether a run needs human approval -- kept deliberately
-*off* the policy hash so tightening a limit never voids a pending approval (see
-``engine.policy.ProfileSettings``).
+four caps, whether those caps are enforced, the grace period, and the unknown-size
+allowance -- kept deliberately *off* the policy hash so tightening a limit never voids a
+pending approval (see ``engine.policy.ProfileSettings``).
 
 For now Reaper is single-profile: there is one profile, and these helpers read and update
 it. The model already supports many (per-library, per-media-type), and the multi-profile
@@ -44,18 +44,45 @@ DEFAULT_PROFILE_NAME = "default"
 
 
 async def active_profile_settings(session: AsyncSession) -> ProfileSettings:
-    """The caps/grace/approval settings a run must obey.
+    """The caps, grace, and unknown-size settings a run must obey.
 
     The single profile's settings, or the built-in defaults if no profile has been saved
-    yet. Defaults are the *cautious* ones -- ten items a run, approval required -- so an
-    install that has configured nothing is not thereby permitted to do more.
+    yet. Defaults are the *cautious* ones -- ten items a run, caps on -- so an install
+    that has configured nothing is not thereby permitted to do more.
+
+    **This must not raise on a stored blob this model no longer accepts**, for the same
+    reason ``active_policy`` does not: it is read by scans, execute, grace, the shelf, and
+    the very settings page an operator would use to fix it, so a field removed after a row
+    was written would otherwise take out all of them at once. Under ``extra="forbid"`` a
+    departed key is a hard error, so unknown keys are dropped and the rest re-validated --
+    an upgrade keeps the operator's caps and grace, losing only the gone field, and any new
+    field falls back to its cautious default (``caps_enabled`` True). A blob unreadable for
+    any other reason degrades to the built-in defaults rather than crashing every reader.
     """
     row = (
         await session.execute(select(Profile).order_by(Profile.id.asc()).limit(1))
     ).scalar_one_or_none()
     if row is None:
         return ProfileSettings()
-    return ProfileSettings.model_validate_json(row.settings_json)
+    try:
+        return ProfileSettings.model_validate_json(row.settings_json)
+    except ValidationError:
+        try:
+            raw = json.loads(row.settings_json)
+        except ValueError:
+            raw = None
+        if isinstance(raw, dict):
+            known = {k: v for k, v in raw.items() if k in ProfileSettings.model_fields}
+            try:
+                settings = ProfileSettings.model_validate(known)
+            except ValidationError:
+                pass
+            else:
+                dropped = sorted(set(raw) - set(known))
+                log.info("profile.settings_migrated", dropped=dropped)
+                return settings
+        log.warning("profile.settings_unreadable")
+        return ProfileSettings()
 
 
 async def active_policy_row(session: AsyncSession, media_type: str) -> PolicyModel | None:

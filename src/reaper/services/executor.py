@@ -522,16 +522,20 @@ def _check_caps(
     """A run over its per-run cap ABORTS before it starts. It never runs the part that
     fits: truncating would make *what* gets deleted depend on sort order. The rolling
     30-day caps are enforced separately, by ``Executor._check_rolling_caps``, which also
-    aborts rather than truncates."""
+    aborts rather than truncates.
+
+    The unknown-size limit is always enforced; the four run-size caps are enforced only
+    while ``caps_enabled`` is on. Turning the caps off is a deliberate choice (a big first
+    cleanup), and it drops only the run-size ceilings -- never the unknown-size rule, which
+    is a separate keep-what-we-cannot-measure guard, and never any other interlock."""
     allow_unmeasured = settings.max_unmeasured_per_run > 0
     deletable = _deletable(deletes, effective_keys, allow_unmeasured=allow_unmeasured)
-    items = len(deletable)
-    total_bytes = _deletable_bytes(deletable, allow_unmeasured=allow_unmeasured)
 
     # The allowance is a COUNT, and this is where the host enforces it as one. The planner
     # checks it too, at plan time, but the settings can move between approving a plan and
     # running it -- and lowering a limit that is only ever read as "above zero or not"
-    # would be silently ignored on the one population no byte cap can bound.
+    # would be silently ignored on the one population no byte cap can bound. Enforced
+    # whether or not the run-size caps are on: it is not a run-size cap.
     unmeasured = sum(1 for d in deletable if d.candidate.size_bytes is None)
     if unmeasured > settings.max_unmeasured_per_run:
         raise ExecutionError(
@@ -540,17 +544,26 @@ def _check_caps(
             "trimmed: which of them gets deleted must never come down to sort order."
         )
 
+    # The four run-size caps are the optional second layer, on top of the deletion
+    # password and the typed confirmation. Off, they stop bounding the run.
+    if not settings.caps_enabled:
+        return
+
+    items = len(deletable)
+    total_bytes = _deletable_bytes(deletable, allow_unmeasured=allow_unmeasured)
     if items > settings.max_items_per_run:
         raise ExecutionError(
-            f"This plan would delete {items} items, over the per-run cap of "
-            f"{settings.max_items_per_run}. The run is aborted, not truncated: which "
-            "items got deleted must never depend on sort order. Raise the cap or "
-            "reduce the plan."
+            f"This plan would remove {items} titles, over your per-run cap of "
+            f"{settings.max_items_per_run}. It stops rather than deleting just part, "
+            "because which titles go must never come down to sort order. Raise the cap "
+            "or turn limits off in Policy, under Pace and limits."
         )
     if total_bytes > settings.max_bytes_per_run:
         raise ExecutionError(
-            f"This plan would delete {total_bytes / 1024**3:.0f} GB, over the per-run cap "
-            f"of {settings.max_bytes_per_run / 1024**3:.0f} GB. Aborted, not truncated."
+            f"This plan would remove {total_bytes / 1024**3:.0f} GB, over your per-run "
+            f"cap of {settings.max_bytes_per_run / 1024**3:.0f} GB. It stops rather than "
+            "deleting just part. Raise the cap or turn limits off in Policy, under Pace "
+            "and limits."
         )
 
 
@@ -820,8 +833,11 @@ class Executor:
         the configured monthly budget arithmetically unreachable -- no sequence of runs
         can exceed it, because each run is admitted only if the whole of it still fits.
         Checked in dry run too, so the simulation proves the same refusal a real run
-        would hit.
+        would hit. Skipped entirely while ``caps_enabled`` is off: the rolling budget is a
+        run-size cap like the others, so the one switch governs it too.
         """
+        if not self._settings.caps_enabled:
+            return
         allow_unmeasured = self._settings.max_unmeasured_per_run > 0
         deletable = _deletable(deletes, self._effective_keys, allow_unmeasured=allow_unmeasured)
         items = len(deletable)

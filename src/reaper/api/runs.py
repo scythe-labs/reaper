@@ -369,8 +369,8 @@ def _settings_out(settings: ProfileSettings) -> ProfileSettingsIO:
         max_bytes_per_run=settings.max_bytes_per_run,
         max_items_per_30d=settings.max_items_per_30d,
         max_bytes_per_30d=settings.max_bytes_per_30d,
+        caps_enabled=settings.caps_enabled,
         grace_days=settings.grace_days,
-        require_approval=settings.require_approval,
         max_unmeasured_per_run=settings.max_unmeasured_per_run,
     )
 
@@ -397,8 +397,8 @@ async def update_profile(request: Request, payload: ProfileSettingsIO) -> Profil
             max_bytes_per_run=payload.max_bytes_per_run,
             max_items_per_30d=payload.max_items_per_30d,
             max_bytes_per_30d=payload.max_bytes_per_30d,
+            caps_enabled=payload.caps_enabled,
             grace_days=payload.grace_days,
-            require_approval=payload.require_approval,
             max_unmeasured_per_run=payload.max_unmeasured_per_run,
         )
     except ValidationError as exc:

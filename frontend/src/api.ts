@@ -515,8 +515,11 @@ export interface ProfileSettings {
   max_bytes_per_run: number;
   max_items_per_30d: number;
   max_bytes_per_30d: number;
+  /** Whether the four caps above are enforced at all. On by default; off drops the
+   *  run-size ceilings for a big first cleanup while every other gate stands. Never
+   *  governs `max_unmeasured_per_run`. */
+  caps_enabled: boolean;
   grace_days: number;
-  require_approval: boolean;
   /** How many items with no size one run may delete. 0, the default, means never: the GB
    *  caps cannot bound them, so this count is the only bound there is. */
   max_unmeasured_per_run: number;

@@ -49,13 +49,56 @@ class TestActiveProfileSettings:
         permitted to do more than the defaults allow."""
         settings = await active_profile_settings(session)
         assert settings.max_items_per_run == 10
-        assert settings.require_approval is True
+        assert settings.caps_enabled is True
 
     async def test_a_saved_profile_is_what_loads(self, session: AsyncSession) -> None:
         await save_profile_settings(session, ProfileSettings(max_items_per_run=25, grace_days=30))
         loaded = await active_profile_settings(session)
         assert loaded.max_items_per_run == 25
         assert loaded.grace_days == 30
+
+    async def test_a_legacy_field_in_stored_settings_does_not_crash_the_read(
+        self, session: AsyncSession
+    ) -> None:
+        """A profile written by an older build can carry a field this model has since
+        removed. Under extra='forbid' that would crash EVERY read -- including the settings
+        page an operator would use to fix it -- so the loader drops unknown keys and keeps
+        the operator's real settings, defaulting any new field to its cautious value. This
+        is the upgrade path for the removed 'require_approval' setting."""
+        # Create the profile normally (sets up the policy FK), then overwrite its blob with
+        # one an older build would have written: a departed 'require_approval', no
+        # 'caps_enabled'.
+        await save_profile_settings(session, ProfileSettings(max_items_per_run=25, grace_days=30))
+        row = (
+            await session.execute(select(Profile).order_by(Profile.id.asc()).limit(1))
+        ).scalar_one()
+        row.settings_json = (
+            '{"max_items_per_run":25,"max_bytes_per_run":500000000000,'
+            '"max_items_per_30d":100,"max_bytes_per_30d":2000000000000,'
+            '"grace_days":30,"require_approval":false,"max_unmeasured_per_run":0}'
+        )
+        await session.flush()
+
+        loaded = await active_profile_settings(session)
+        assert loaded.max_items_per_run == 25  # operator's real setting preserved
+        assert loaded.grace_days == 30  # preserved
+        assert loaded.caps_enabled is True  # new field falls back to the cautious default
+
+    async def test_an_unreadable_settings_blob_degrades_to_cautious_defaults(
+        self, session: AsyncSession
+    ) -> None:
+        """A blob that is not repairable (bad JSON, or a value out of range) must not crash
+        the read path either. It degrades to the built-in cautious defaults -- caps on."""
+        await save_profile_settings(session, ProfileSettings(max_items_per_run=25))
+        row = (
+            await session.execute(select(Profile).order_by(Profile.id.asc()).limit(1))
+        ).scalar_one()
+        row.settings_json = "not json at all"
+        await session.flush()
+
+        loaded = await active_profile_settings(session)
+        assert loaded.max_items_per_run == 10  # cautious default
+        assert loaded.caps_enabled is True
 
 
 class TestSavingCreatesTheBackingPolicyRow:

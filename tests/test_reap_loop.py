@@ -480,13 +480,32 @@ class TestCapsAbortNeverTruncate:
 
         assert report.state is RunState.ABORTED
         assert report.aborted_reason is not None
-        assert "aborted, not truncated" in report.aborted_reason.lower()
+        assert "over your per-run cap" in report.aborted_reason.lower()
         assert report.deleted_items == 0
         # This is a DRY run, so the abort is a *finding*, not a consumed run: the row stays
         # PLANNED and re-runnable, so raising the cap and running again just works.
         stored = await session.get(ReapRun, run.id)
         assert stored is not None
         assert stored.state is RunState.PLANNED
+
+    async def test_caps_off_lets_a_run_over_the_cap_proceed(self, session: AsyncSession) -> None:
+        """With the caps switched off, a plan larger than the per-run cap no longer aborts:
+        the run-size ceiling is the one thing the switch drops. Every other gate is
+        untouched, and this dry run still sends nothing."""
+        condemned = [(f"radarr:1:{i}", 1 * GB) for i in range(5)]
+        snapshot_id = await _snapshot_with(session, condemned)
+        run = await build_plan(
+            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
+        )
+
+        # A cap of 3 that WOULD abort five items -- but caps_enabled=False turns it off.
+        settings = ProfileSettings(caps_enabled=False, max_items_per_run=3, max_items_per_30d=100)
+        report = await Executor(
+            session, safety=_read_only(), settings=settings, dry_run=True
+        ).execute(run.id)
+
+        assert report.state is RunState.COMPLETED
+        assert report.aborted_reason is None
 
     async def test_a_real_run_over_the_cap_marks_the_run_aborted(
         self, session: AsyncSession
@@ -1091,7 +1110,34 @@ class TestTheUnmeasuredAllowance:
         ).execute(run.id)
 
         assert report.state is RunState.ABORTED
-        assert "3 items" in (report.aborted_reason or "")
+        assert "3 titles" in (report.aborted_reason or "")
+
+    async def test_caps_off_still_enforces_the_unknown_size_limit(
+        self, session: AsyncSession
+    ) -> None:
+        """The caps switch drops the run-size caps, never the keep-unknown-size rule. With
+        caps off and the unknown-size allowance lowered after approval below what the plan
+        admitted, the run still aborts on the unmeasured count: that guard is checked before
+        the run-size caps and is not governed by the switch."""
+        snapshot_id = await _snapshot_with(
+            session, [("radarr:1:1", None), ("radarr:1:2", None), ("radarr:1:3", 1 * GB)]
+        )
+        run = await build_plan(
+            session,
+            snapshot_id=snapshot_id,
+            policy_hash="p" * 64,
+            approved_by="admin",
+            max_unmeasured=2,
+        )
+
+        # Caps OFF, but the unknown-size allowance was lowered to 1 after approval.
+        settings = ProfileSettings(caps_enabled=False, max_unmeasured_per_run=1)
+        report = await Executor(
+            session, safety=_read_only(), settings=settings, dry_run=True
+        ).execute(run.id)
+
+        assert report.state is RunState.ABORTED
+        assert "couldn't measure" in (report.aborted_reason or "")
 
     async def test_they_never_contribute_zero_to_a_byte_cap(self, session: AsyncSession) -> None:
         """The tempting shortcut once they can be planned is to let them count as 0 bytes

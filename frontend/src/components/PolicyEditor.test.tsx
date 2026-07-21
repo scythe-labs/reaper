@@ -77,8 +77,8 @@ const pace: ProfileSettings = {
   max_bytes_per_run: 500_000_000_000,
   max_items_per_30d: 100,
   max_bytes_per_30d: 2_000_000_000_000,
+  caps_enabled: true,
   grace_days: 14,
-  require_approval: true,
   max_unmeasured_per_run: 0,
 };
 

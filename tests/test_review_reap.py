@@ -328,4 +328,4 @@ class TestCapsCountOnlyWhatWillActuallyBeDeleted:
 
         assert report.state is RunState.ABORTED
         assert report.aborted_reason is not None
-        assert "aborted, not truncated" in report.aborted_reason.lower()
+        assert "over your per-run cap" in report.aborted_reason.lower()

@@ -335,19 +335,19 @@ class SnapshotOut(BaseModel):
 
 
 class ProfileSettingsIO(BaseModel):
-    """The caps, grace and approval settings -- how much Reaper may do, and how long it
-    waits. Deliberately not part of the policy hash: tightening a cap never voids a
-    pending approval. Validation (a run cap above the rolling cap, a grace under a week)
-    is enforced by the domain, so an out-of-range value comes back as a 422 with the
-    reason, not a silent clamp.
+    """The caps, whether they are enforced, grace, and the unknown-size allowance -- how
+    much Reaper may do, and how long it waits. Deliberately not part of the policy hash:
+    tightening a cap never voids a pending approval. Validation (a run cap above the
+    rolling cap, a grace under a week) is enforced by the domain, so an out-of-range value
+    comes back as a 422 with the reason, not a silent clamp.
     """
 
     max_items_per_run: int = Field(ge=1, le=1000)
     max_bytes_per_run: int = Field(ge=1)
     max_items_per_30d: int = Field(ge=1)
     max_bytes_per_30d: int = Field(ge=1)
+    caps_enabled: bool = True
     grace_days: int = Field(ge=7)
-    require_approval: bool = True
     max_unmeasured_per_run: int = Field(default=0, ge=0, le=25)
     """How many items with no size one run may delete. The GB caps cannot bound them, so
     this count is the only bound there is. Defaults to 0: never."""

@@ -2310,9 +2310,15 @@ a.rating-chip:hover {
 .intent-band .help {
   margin-top: 0.5rem;
 }
-/* The ask-first toggle leads the pace section, above the numeric caps. */
+/* The caps on/off toggle leads the pace section; its help sits directly beneath it, then
+   the caps matrix (or the off warning) below that. */
 .pace-approval {
-  margin: 0 0 1.1rem;
+  margin: 0 0 0.35rem;
+}
+/* Aligned under the toggle's label (past the 40px switch + its gap), so the help reads as
+   bound to the switch, not to the matrix that follows. */
+.pace-approval-help {
+  margin: 0 0 1rem 2.9rem;
 }
 /* The bordered card grouping the TV season-protection controls is .rules-card's twin, and
    is declared with it above so the two settings-bearing cards stay one thing. */

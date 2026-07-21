@@ -642,15 +642,19 @@ class ProfileSettings(Frozen):
     max_items_per_30d: int = Field(default=100, ge=1)
     max_bytes_per_30d: int = Field(default=2_000 * 1_000_000_000, ge=1)
 
+    caps_enabled: bool = True
+    """Whether the four caps above are enforced at all. On by default, so an install that
+    configures nothing still runs bounded. Off, the per-run and 30-day caps stop aborting
+    a run -- for a big first cleanup, say -- while every other gate still stands: the
+    deletion password, the typed confirmation, the frozen-manifest re-check, the canary,
+    and the live per-item vetoes. It never touches ``max_unmeasured_per_run``, which is
+    the separate keep-unknown-size rule, not a run-size cap. Un-hashed like the caps: it
+    only ever loosens, and the executor re-reads it at execute time."""
+
     grace_days: int = Field(default=14, ge=7)
     """How long a condemned item sits, cancellable, before it is actually deleted.
     Floored at 7: a grace period shorter than a week is one your users cannot
     realistically act on."""
-
-    require_approval: bool = True
-    """Designed to be turned off only by an earned AutonomyGrant. That flow is not wired
-    yet (nothing can create a grant today), so until it ships this is a plain setting --
-    and ``inspect`` flags any profile that has it off as a danger."""
 
     max_unmeasured_per_run: int = Field(default=0, ge=0, le=25)
     """How many items with no size a single run may delete. ``0``, the default, means
@@ -667,6 +671,12 @@ class ProfileSettings(Frozen):
 
     @model_validator(mode="after")
     def _run_cap_within_rolling_cap(self) -> Self:
+        if not self.caps_enabled:
+            # The caps are off, so the relationships between them constrain nothing. Keep
+            # validating them here would reject legal combinations (a run cap above the
+            # rolling cap, an unknown-size allowance above the hidden run cap) that can
+            # never fire while enforcement is off.
+            return self
         if self.max_items_per_run > self.max_items_per_30d:
             raise ValueError(
                 f"A single run may delete {self.max_items_per_run} items but the 30-day "
@@ -869,18 +879,6 @@ def inspect(
                     f"A threshold of {body.condemn_at} condemns almost everything the "
                     "protections do not save. Check the simulator's counts and review "
                     "the flagged list carefully before arming this."
-                ),
-            )
-        )
-
-    if not settings.require_approval:
-        warnings.append(
-            PolicyWarning(
-                field="require_approval",
-                severity="danger",
-                message=(
-                    "This turns off your approval, so a run could remove titles "
-                    "without showing you the list first."
                 ),
             )
         )

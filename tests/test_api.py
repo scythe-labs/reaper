@@ -454,7 +454,7 @@ class TestTheProfileControlsTheCaps:
     def test_it_opens_on_cautious_defaults(self, client: TestClient) -> None:
         body = client.get("/api/profile").json()
         assert body["max_items_per_run"] == 10  # the cautious built-in
-        assert body["require_approval"] is True
+        assert body["caps_enabled"] is True
 
     def test_settings_round_trip_and_persist(self, client: TestClient) -> None:
         current = client.get("/api/profile").json()
