@@ -1,1013 +1,864 @@
-# Diff review — `dev`, changes since `f750744`, 2026-07-19
+# Diff review — `dev`, changes since `4478aa7`, 2026-07-21
 
-> **Scope.** The 30 commits and 85 files changed since `f750744` (the fact-layer rework,
-> the points/budget change, identity binding for split libraries, the watch-cache rebuild,
-> the UI control-grammar pass, and the four new frontend panels). This is a *diff* review,
-> not a whole-codebase pass; the second whole-codebase review (dev @ `5b885f5`, closed
-> 2026-07-17) is preserved in this file's git history and its findings are all fixed.
+> **Scope.** The 16 commits and 84 files changed since `4478aa7` (the Jobs rebuild with
+> per-job schedules, the switchable per-run caps and the caps matrix, the Reap-page
+> breakdown, the Scales rebuild, the review-queue action-grammar pass across three
+> commits, the Deep brand mark, and the four scan-perf commits: instrumentation, the
+> paged season sweep, concurrent Leaving Soon reconciles, and batched shelf writes).
+> This is a *diff* review, not a whole-codebase pass; the previous diff review (dev @
+> `f750744`, 2026-07-19) is preserved in this file's git history.
 >
-> **Method.** 33 finder passes (7 file groups × 5 lenses: correctness, production,
-> security, quality, UX) over the diff, then every candidate hit by 3 independent skeptics
-> on different lenses (does-it-reproduce, is-it-already-handled, is-the-fix-correct), with
-> majority rule. Then 5 completeness sweeps (cross-file contract drift, semantic regression
-> against commit intent, untested behavior, a mechanical copy/UI-grammar sweep, and a
-> devil's advocate pass over the files nobody scrutinised), each verified the same way.
-> 91 candidates raised, 37 refuted, 54 confirmed, deduplicated here to **40 findings:
-> 1 critical, 4 high, 12 medium, 23 low.**
+> **Method.** Seven scoped reviewer passes (one per file group: Plex client + Leaving
+> Soon, scan pipeline, jobs/scheduler/settings, caps/policy/executor, breakdown +
+> Scales, review queue + overrides, brand/shell/CSS), each reviewing its group across
+> all eight categories below and required to verify every candidate against the working
+> tree before reporting — one reviewer confirmed its finding with a live vitest probe.
+> The three high findings and four of the mediums were then re-verified independently
+> against the tree; one high was re-scoped after the re-check refuted its broadest
+> claim (the startup ratings catch-up *does* have a freshness guard; the finding
+> survives in narrowed form as B-3). One bug (B-4) was found independently by two
+> reviewers working from different directions, which is as confirmed as it gets here.
+> Duplicates merged: **43 findings: 0 critical, 3 high, 13 medium, 27 low.**
 >
-> **Every CI gate is green on this tree** (`ruff`, `ruff format`, `mypy`, 1579 pytest,
-> `eslint`, `tsc`, `vite build`, 48 vitest). Nothing below is caught by the gates. Two
-> findings are regressions introduced by this diff (B-1, B-2); most of the rest are
-> comments that now over-promise, recoveries that cannot be reached, and control-grammar
-> misses from the consistency pass.
+> **CI gates on this tree:** `ruff`, `ruff format`, `mypy` (91 files), pytest (1736),
+> `eslint`, vitest (145), `tsc` + `vite build`, and `alembic upgrade head` + `alembic
+> check` are all green. `docker build` was **not** run (no Docker daemon on the review
+> machine) — run it before release. Nothing below is caught by the gates.
+>
+> Reviewer verification notes worth keeping (things checked and found *correct*): the
+> caps-off switch still enforces the unknown-size allowance; the confirmation phrase
+> still derives from the exact effective set; the three override views
+> (`override`/`override_own`/`show_override`) are built once server-side and every
+> surface lights controls from own decisions and colors from effective ones;
+> `showReapIsNoop`/`groupReapEffective` take whole-show season sets on every lane;
+> `_sync_grace_clocks` runs on all four mutation routes with the rule-4 semantics;
+> `handFate` is the single fate router and the dashed-red classes win by declaration
+> order; the `_watch_stats` single-query rewrite is semantically identical to the three
+> queries it replaced; the phase-band change cannot strand a landed snapshot; GracePanel
+> left no dangling references; the new breakdown/fairness routers sit behind the `/api`
+> auth middleware; `api.ts` types match the changed backend schemas exactly; and the
+> pre-paint favicon script validates stored data before applying it.
 
 ---
 
 ## 1. Bugs
 
-### B-1 · The folder corroborator destroys the byte-identical-twins group — **critical**
-
-`src/reaper/engine/identity.py:561` (regression, `1fabcf7`)
-
-`_narrow_among_id_hits` now tries `_narrow_by_path_depth` **before** the size corroborator.
-The size branch is the only path that can return several rating keys — the byte-identical
-twins group, which exists precisely because "the file's plays are split across those
-listings and reading only one would under-count watching, which is the direction that
-condemns." `_narrow_by_path_depth` returns a single key and returns early, so whenever the
-two listings of one file sit at different paths the group is never formed.
-
-**Failure.** The exact shape the docstring says was verified live: one file listed twice,
-a curated section re-listing it under its own rating key at a different path. Main listing
-`/data/movies/Title/file.mkv`, curated re-listing `/data/curated/Title/file.mkv`, arr path
-`/movies/Title/file.mkv`. Shared suffix depth is 3 vs 2, so the main listing binds alone.
-Every play against the curated key is invisible: watcher counts fall, dormancy climbs, and
-a file people actually watch is condemned. `LEARNINGS.md:483` records that on the tested
-library *every* remaining ambiguity was a twin pair.
-
-**Fix.** Do **not** simply swap the order — the size branch returns `()` when
-`file_size is None`, and a show never has a size, so path narrowing would become
-unreachable for shows and the split HD/4K bug this commit fixed would return. Instead make
-`_narrow_by_path_depth` return `None` when the matched listings are byte-identical at this
-basename (all carry this basename at exactly `file_size`, every such size known), so the
-twins group still forms and path narrowing still runs for everything else. Update the
-docstring at `identity.py:522-531`, which still claims all twins are returned. Add a
-regression test passing `file_path` to the existing twins fixtures with divergent Plex
-paths.
-
-### B-2 · Folder-depth binding preempts exact byte size and can bind to the wrong copy — **high**
-
-`src/reaper/engine/identity.py:491` (regression, `1fabcf7`) · rule 6
-
-`_narrow_by_path_depth` treats "strictly deepest shared trailing path" as proof of
-identity, but the module's premise is that mount roots differ. When the differing segment
-is the library folder itself — exactly the HD-vs-4K case this was written for — a deeper
-shared suffix is a coincidence between the arr's container root name and one library's
-folder name, not evidence. `_shared_suffix_depth` is allowed to consume the arr's outermost
-segment (its container mount root), and the strict-margin rule at 484/491 then treats that
-coincidence as a win.
-
-**Failure.** Two Radarr instances each map their own host directory to `/movies` inside
-the container (the common setup); both report `/movies/Title/file.mkv`. Plex holds
-`/data/media/movies/Title/file.mkv` and `/data/media/movies-4k/Title/file.mkv`. Shared
-depth is 3 vs 2, so the 4K item binds to the HD listing and reads the HD copy's watch
-history and `added_at`. Size would have separated them but is never reached. On the show
-half there is no size at all, so this converts a correct abstain into a wrong bind.
-
-**Fix.** Do not let `_shared_suffix_depth` consume the arr's outermost segment — compare
-only below each side's root. Then require a margin over that reduced depth. Note the
-proposed "consult `file_size` first" does nothing for shows (`resolve_show` always passes
-`file_size=None`) and the suggested "shared depth must exceed the arr path length minus
-root" guard kills the intended case, since Sonarr series paths are typically two segments.
-Fix B-1 and B-2 together; they are one ordering/eligibility problem.
-
-### B-3 · Watch-cache shape check compares column names only, so it never fires — **high**
-
-`src/reaper/services/history_sync.py:204` (`c8fefdc`) · rules 7, 24
-
-`ensure_schema` decides the table is stale by comparing PRAGMA column **names** against
-`_WATCH_EVENT_COLUMNS`. The only shape change in this commit is
-`watched_status REAL NOT NULL` → `watched_status REAL`. Names and order are identical
-before and after, so the rebuild never fires on a real upgraded install. Installs that ran
-the previous code already have `media_index` from the old `ALTER TABLE`, so they carry all
-ten names in this order.
-
-**Failure.** Verified in sqlite: the ten column names are byte-identical across the two
-shapes, and the NULL insert fails. (a) Every pre-existing `0.0` written by the old `or 0`
-coercion survives and is still read as "started, did not finish" — the exact ambiguity
-`season_watch_stats`' new `max_unknown` branch defends against. (b) The next `sync` writes
-`None` for any row without a `watched_status`, and SQLite raises
-`IntegrityError: NOT NULL constraint failed`. `scan_runner._run_scan_locked` catches only
-`IntegrationError` around `history_sync.sync`, so that propagates and the whole scan aborts
-with a raw SQL error.
-
-**Fix.** Store the expected `(name, type, notnull)` triple per column and compare against
-`tuple((r[1], str(r[2]).upper(), int(r[3])) for r in cols)` (PRAGMA rows are
-`cid, name, type, notnull, dflt_value, pk`). In `tests/test_season_scan.py`,
-**add** the ten-column `watched_status REAL NOT NULL` legacy shape rather than replacing
-the nine-column one — both must rebuild. The current test passes only because its
-nine-column table trips the name mismatch, so it gives false assurance.
-
-### B-4 · A quiet library is misdiagnosed as a stalled ingest and blocks every deletion — **high**
-
-`src/reaper/services/snapshot.py:410-411` (`c8fefdc`) · rule 24
-
-The new staleness guard calls `history_sync.latest()`, which is `MAX(watched_at)` over the
-mirror: the time of the newest *play*, not the newest *sync*. Its docstring claims it is
-the one thing that can tell a stalled ingest from a quiet library; the two produce an
-identical `MAX(watched_at)`. The real freshness signal, `history_sync_state.synced_at`, is
-already written by `_store_tautulli_total` on every successful sync and is never read.
-
-**Failure.** A single-household server, or any operator away for a long weekend, records no
-plays for 48 hours. Every scan degrades, `planner` refuses to plan a degraded snapshot
-(`planner.py:257`), and nothing can be reviewed for removal until somebody watches
-something. The operator is told "watch history has not updated recently", a false
-diagnosis. This hits hardest on exactly the quiet libraries with the most to reclaim.
-
-This fails in the safe direction (toward keeping files), so it is an availability and
-false-diagnosis defect, not a data-loss one, and it clears as soon as any play lands.
-
-**Fix.** Add `history_sync.last_synced_at(engine)` reading `history_sync_state.synced_at`
-and gate the degrade on that. Correct two comments in the same change (rule 24):
-`latest()`'s docstring claim that it distinguishes a stall from a quiet library, and
-`MIRROR_STALE_AFTER`'s claim that it "matches `WHITELIST_STALE_AFTER`'s reasoning" —
-`WHITELIST_STALE_AFTER` measures `last_synced_at`, a different quantity. Update
-`tests/test_scan_pipeline.py`'s stale-mirror test to seed `synced_at`.
-
-### B-5 · A fabricated `0` size reaches a real delete, and three comments say it cannot — **high**
-
-`src/reaper/services/executor.py:1097`, `src/reaper/services/snapshot.py:653`,
-`src/reaper/services/season_scan.py:1143` (`ae76eb8`, `2a4c7d2`, `406630b`) · rules 5, 24, 30
-
-This diff correctly made an unreadable arr size `None` in the fact layer, then collapsed it
-straight back to `0` on the candidate row on both writers (`item.size_bytes or 0`,
-`season.size_on_disk or 0`). Each site carries a comment asserting the executor's second
-layer catches it because "0 against any real size is unbounded growth". It does not:
-`_grew_materially(0, live)` reduces to `live > 0 + max(0 // 10, _SIZE_DRIFT_FLOOR)`, i.e.
-`live > 256 MB`.
-
-**Failure, two halves.**
-*The delete.* Radarr returns `hasFile: true` with `sizeOnDisk` missing (partial payload)
-for a genuinely 180 MB file. The row stores `0`. At execute time
-`_grew_materially(0, 188743680)` is `False`, the growth interlock is silent, and the file is
-deleted against an approved size of 0. Bounded at 256 MB, which is the same absolute
-allowance `_SIZE_DRIFT_FLOOR` deliberately grants any small item — so the delete itself is
-close to documented design, and the item was condemned, gated and typed-confirmed.
-*The accounting, which is not bounded.* `_check_caps` (`executor.py:410`) and
-`_check_rolling_caps` (`executor.py:696`) both sum `candidate.size_bytes` before any send,
-counting `0` for **every** unreported-size item including large ones, and
-`api/runs.py:110` derives `total_bytes` into the server-recomputed confirmation phrase. So
-a run can delete materially more than the cap the operator confirmed, and the byte total
-they typed is wrong. That is a rule 5 / rule 30 violation.
-
-The season comment is doubly wrong: it also claims `_send_season` "refuses twice", but the
-first refusal (`executor.py:1229`) only fires when a live file size is unreadable.
-
-**Fix.** Make an unconfirmed size fail closed rather than relying on growth math. In
-`_send_movie` and `_send_season`, before the `_grew_materially` call:
-`if int(candidate.size_bytes) <= 0: return self._mark_skipped(...)` with plain copy
-("Reaper never got a size for this when it was scanned, so it can't confirm this is what
-you approved. Kept."). Preferably also make `Candidate.size_bytes` nullable and have the
-cap paths refuse to plan an item with no confirmed size rather than counting it as 0. Then
-correct all three comments to cite the guard that actually fires.
-
-### B-6 · The `fell_back` recovery notice can never render on load — **medium**
-
-`frontend/src/components/PolicyEditor.tsx:1472` and `:2144` (`57d2405`) · rule 36
-
-`dirty` forces true on `saved.needs_save` only. In `services/profiles.py:133-142` the two
-recoveries are mutually exclusive: `rescaled=True` (which becomes `needs_save`) when
-`rebalance()` repaired the body, and `fell_back=True` with `rescaled` left `False` when it
-could not. So whenever `fell_back` is true, `dirty` is false, the savebar at `:2143` never
-renders, and the notice inside it at `:2162` is unreachable on the load it exists to
-explain. The Save button that would replace the broken row is unreachable with it, so every
-subsequent load falls back again.
-
-`scan_runner.py:530-535` does degrade the snapshot on `active.repaired`, so no deletion runs
-under the fallback policy — this is a dead-end loop, not data loss. But the degradation
-string at `scan_runner.py:533` tells the operator to "open the policy page, check the
-points, and save", and the policy page shows them nothing to save.
-
-**Fix.** (1) `dirty` must include the flag:
-`Boolean(saved.needs_save) || Boolean(saved.fell_back) || JSON.stringify(draft) !== ...`.
-(2) Move the `saved?.fell_back` notice out of the savebar to an unconditional render near
-the top of `.editor-controls`, beside the `pendingSwitch` notice, so it does not depend on
-any dirty computation. (3) Update the comment at `:1468-1471`, which names only the rescale
-recovery. (4) Add a vitest case mounting `PolicyEditor` with
-`{needs_save: false, fell_back: true}` asserting the notice renders. The backend already
-has this covered at `tests/test_api.py:995`; only the frontend gate drops it.
-
-### B-7 · Applying a preset always overshoots the 100-point budget and deadlocks both saves — **medium**
-
-`frontend/src/components/PolicyEditor.tsx:1567` (`7e0f7ab`, `57d2405`)
-
-`applyPreset` resets only `draft.signals` to `DEFAULT_WEIGHTS`, which already sum to
-exactly 100. It leaves `draft.custom_condemn` untouched. The new budget check sums both and
-disables Save whenever `pointsLeft !== 0`, matching the server's
-`PolicyBody._weights_total_one_hundred`. So a preset click guarantees `100 + yourWeight`
-for any operator with a custom removal rule.
-
-**Failure.** An operator with one 15-point custom rule clicks "Cautious". The draft is 115.
-The savebar reads "Take 15 away before saving" and Save is disabled. Because `applyPreset`
-also stages the preset's caps into the pace draft and one Save button covers both, the
-unrelated pace save is blocked too. The operator can recover only by manually lowering
-built-ins or discarding, and the three presets are unusable for anyone with a custom rule.
-
-**Fix.** Have `applyPreset` reset the whole removal lane to 100. Mirroring the server is
-best: rescale the combined set with largest-remainder so the preset's mix and the
-operator's rules together total exactly 100 — the same arithmetic as `engine/policy.rebalance`
-(`policy.py:668-699`), which is score-preserving. State the behavior in the preset help
-text, which currently promises only a threshold and a pace.
-
-### B-8 · The why panel renders the value and the operator's own bar with the same lossy phrase — **medium**
-
-`src/reaper/engine/fields.py:746` (`a26ac83`) · rule 21
-
-`_render` now routes `FieldType.DAYS` through `humanize_days`, and `_explain_number` uses
-`_render` for **both** sides: the measured value and `bar.format(_render(spec, target))`.
-`humanize_days` collapses to at most two units and buckets months in 30-day steps, so any
-two day-counts in the same bucket render identically.
-
-**Failure.** Verified by running `evaluate`: a rule `days_unwatched >= 400` against an item
-at 396 days gives "Not watched in 1 year, 1 month, within your 1 year, 1 month". Flipping
-the bar to 396 gives "…past your 1 year, 1 month". The matched and unmatched cases are
-word-for-word identical apart from within/past, and each line asserts the value is on one
-side of a number it prints as equal to itself. Every day-count from 395 to 424 collapses to
-the same phrase — exactly the marginal items an operator scrutinises before approving a
-deletion.
-
-**Fix.** Keep `humanize_days` for the measured value; render the operator's threshold
-exactly, in the units they typed. The spec already carries `unit_suffix="days"`
-(`fields.py:262`), served to the editor and rendered as the fixed unit beside the input, so
-the operator types "400 days" and the panel echoes back "your 1 year, 1 month". Add
-`_render_bar(spec, target)` formatting DAYS as `f"{_num(target):,.0f} days"`. `release_age`
-(`fields.py:431`) has the same shape and needs the same fix. Add a regression test asserting
-the value phrase and the bar phrase are never the same string for differing inputs.
-
-### B-9 · A corrupt policy body raises out of the one function whose contract is "must not raise" — **medium**
-
-`src/reaper/services/profiles.py:137`, `src/reaper/engine/policy.py:685` · rule 7
-
-`active_policy`'s docstring promises in bold that it must not raise on a stored body that no
-longer validates, because the editor, the simulator and the scan all read it and a raise
-takes out the page that fixes the problem. Two holes, both verified by execution:
-
-1. `json.loads(row.body_json)` at `profiles.py:137` sits **outside** the `try`. Pydantic v2
-   raises `ValidationError` (`json_invalid`) for malformed JSON, so control reaches the
-   handler and `json.loads` then raises `JSONDecodeError` uncaught.
-2. Valid JSON that is not an object escapes by a different route: `rebalance([])` →
-   `AttributeError: 'list' object has no attribute 'get'`, which `rebalance`'s
-   `except (KeyError, TypeError, ValueError, ValidationError)` does not catch, defeating
-   the "returns None when the body is unreadable" contract in its own docstring.
-
-Reachability requires an externally edited, truncated or restored row — every in-app writer
-is `body.model_dump_json()`. Impact is availability, and it fails closed (the scan crashes
-rather than deleting); the harm is the editor lockout the docstrings say the fallback exists
-to prevent.
-
-**Fix.** In `active_policy`: `try: raw = json.loads(row.body_json) except ValueError: raw = None`,
-then `repaired = rebalance(raw) if isinstance(raw, dict) else None`, falling through to the
-existing `fell_back=True` return. In `rebalance`: `if not isinstance(body, dict): return None`
-at the top of the try, and add `AttributeError` to the except tuple. Add tests for a
-non-JSON and a JSON-array `body_json` asserting `fell_back=True` rather than a raise.
-
-### B-10 · Sparing or reaping never refreshes the grace countdown — **medium**
-
-`frontend/src/useOverrideMutations.ts:16` (`7fd871b`) · rule 7
-
-The new shared hook's header comment declares it the single place "the list of caches an
-override touches is written once, here" and that "every cache refreshes together". `refresh()`
-invalidates `["candidates"]`, `["group"]` and `["candidate"]` — not `["grace"]`.
-`grace_report` builds its list from `whitelist.overrides` + `effective_condemned`, so a
-spare removes an item from the countdown immediately and a hand reap enters it immediately.
-With `staleTime: 30_000` and `refetchOnWindowFocus: false`, the plan view serves the stale
-countdown.
-
-Not a regression — the baseline call sites had the same omission — but the diff created this
-function wholesale and wrapped it in a comment asserting the opposite. `StatusChip.tsx`'s
-`OverrideChip` doc makes the same false claim ("a reap takes effect immediately: counts,
-grace countdown, the next plan").
-
-**Failure.** Operator hand-reaps from the queue, switches to the plan view within 30 s:
-a just-spared item is still listed as counting down toward removal, a just-reaped one is
-missing, and the summary counts are wrong by the same amount — on the page where the
-deletion plan is built. The plan itself is server-built and the phrase is server-recomputed,
-so nothing incorrect is deleted.
-
-**Fix.** Add `void queryClient.invalidateQueries({ queryKey: ["grace"] });` to `refresh()`.
-The pattern already exists in three other places (`GracePanel.tsx:110`,
-`PolicyEditor.tsx:1364`, `PlexPanel.tsx:268`). Have `GracePanel`'s `cancel` call the shared
-`refresh()` instead of its own list (its `["whitelist"]` invalidation has no consumer query).
-Correct both comments.
-
-### B-11 · `chipWhy` strips only the protect-lane prefix, so a refused reap renders mid-sentence — **medium**
-
-`frontend/src/components/StatusChip.tsx:33` (`7fd871b`) · rule 21
-
-`chipWhy` removes a literal `"Kept · "` prefix and its result is interpolated into
-`OverrideChip`'s lowercase sentence "Reap requested · kept for now: {keptWhy}". But
-`reap_override_verdict` refuses a hand reap whenever `blocked` is true — the abstain lane —
-and abstain chips carry no `"Kept · "` prefix. They pass through capitalized, and several
-carry their own middot.
-
-**Failure.** An operator hits Reap on an item whose protections could not all be checked.
-The card renders "Reap requested · kept for now: Needs a look · left for you to decide" —
-two middots in one chip, a capital mid-sentence, and a phrase naming the abstain reason
-rather than why the reap was refused. The genuinely wrong pair is that one and "Needs a
-look · watched more than a season your rule keeps"; `Couldn't be found in Plex` and
-`Some checks couldn't run` interpolate accurately and suffer only the capital.
-
-**Fix.** Do not fall through to `"a safety stop applies"` — that phrase is only true for the
-`STRUCTURAL_GATES` path (`verdict.py:36`) and would be inaccurate for the unmatched and
-unchecked-protection cases. Either have the server supply the refusal reason rather than
-reusing the lane chip, or map the blocked-abstain cases to their own lowercase clause.
-
-### B-12 · A saved manual Plex address can never be edited again — **medium**
-
-`frontend/src/components/PlexPanel.tsx:432` (new file)
-
-The Connection `<select>` collapses "the address you typed" and "open the manual editor"
-onto one sentinel value. When the saved URI is not a discovered connection,
-`connectionValue` is already `MANUAL_CONNECTION` and the only manual option rendered is
-`Manual · {savedUri}` — the currently selected one. Re-selecting the selected option fires
-no `onChange`, so `openManual()` never runs and the manual-address row can never be shown.
-
-**Failure.** Not a wrong-port save (`PUT /plex/connection` probes before writing,
-`settings.py:671`), but an address that worked when saved and later needs editing: the host
-moved, the port changed, or it must switch to https. The escape hatch is narrow rather than
-absent — if discovery succeeded and lists a reachable connection, selecting it fires
-`onChange` and flips `savedIsDiscovered` true, at which point `Manual address…` appears. But
-that mutates the live connection, fails if the alternate does not probe, and is unavailable
-entirely when `connections` is empty.
-
-**Fix.** Give the stored manual address its own option value: render
-`<option value={savedUri}>Manual · {savedUri}</option>` when `!savedIsDiscovered`, set
-`connectionValue` to `manualOpen ? MANUAL_CONNECTION : savedUri`, and always render a
-separate `<option value={MANUAL_CONNECTION}>Manual address…</option>`.
-
-### B-13 · A failed snapshot fetch is reported as "No scan has run yet" — **low**
-
-`frontend/src/App.tsx:104` · rule 36
-
-`ScanFreshness` treats `undefined` data as "no scan exists". The query uses `retry: false`,
-and `/api/snapshots/latest` 404s only for the genuine no-scan case; every other failure
-lands as `data === undefined` too. The component collapses them into a positive claim and
-drops the `snapshot.degraded` line, the only staleness signal on the review screen.
-
-React Query retains the last successful data across failed refetches, so this bites on the
-first fetch of a session (with `retry: false`, one dropped request sticks until a focus
-refetch), plus a brief flash on every load. `planner.py:257-261` refuses to plan a degraded
-snapshot server-side, so it cannot enable a deletion.
-
-**Fix.** Pass `isPending` and `error` into `ScanFreshness` (`App.tsx:285` already has them).
-Three states: pending → "Checking the last scan…"; `error instanceof ApiError && error.status === 404`
-→ the existing no-scan copy; any other error → a `.notice.notice-error` saying the last
-scan's state couldn't be read. `ApiError` carries `status` (`api.ts:769-777`).
-
-### B-14 · A failed sign-out's error notice is unreachable — **low**
-
-`frontend/src/App.tsx:152` · rule 36
-
-`UserMenu`'s new `onBlur` closes the disclosure whenever focus leaves the wrapper, and Sign
-out becomes `disabled` while pending. Disabling a focused control moves focus off it
-(Firefox and WebKit dispatch `focusout` with a null `relatedTarget`), so `onBlur` fires and
-unmounts the dropdown including the `signOut.isError` notice added in the same change. The
-mutation state persists, so reopening later shows a stale "Couldn't sign you out" with no
-context. `api.logout()` genuinely rejects (`api.ts:807-810`), so the notice is not dead
-code; the residual case is a 500 from `/api/auth/logout` on an engine that fires `focusout`
-on disable.
-
-**Fix.** `if (signOut.isPending || signOut.isError) return;` at the top of `onBlur` and in
-the mousedown-outside listener, plus `signOut.reset()` when the menu opens.
-
-### B-15 · The new dormancy phrase is mangled to "less than ad" in the queue — **low**
-
-`src/reaper/clock.py:385` → `frontend/src/components/ReviewQueue.tsx` · rule 21
-
-`humanize_days` changed its sub-day return from "today" to "less than a day". That string
-reaches the frontend verbatim as `CandidateOut.dormant_for`, and `compactSpan()` rewrites
-unit words with a regex that matches the " day" inside "a day". The old value contained no
-unit word, so this never fired before.
-
-**Failure.** A title played a few hours ago renders its amber pill as "Not watched in less
-than ad". The `title` attribute (`ReviewQueue.tsx:393`) is still correct, and reaching the
-card requires a hand reap or a deliberately disabled dormancy protection, so no decision is
-affected.
-
-**Fix.** Make `compactSpan` only rewrite a unit that follows a number:
-`replace(/(\d+) days?/g, "$1d")` per unit. Add a case pinning
-`compactSpan("less than a day") === "less than a day"`.
+### B-1 · Scales binds TMDB ids without a movie/tv namespace — **high**
+
+`src/reaper/services/fairness.py:128` (`_content_key`), `:152-156` (`by_tmdb`), `:185`
+
+TMDB movie ids and TMDB TV ids are separate, numerically overlapping id spaces. Movie
+candidates store Radarr's movie-namespace `tmdbId`; season candidates store Sonarr's
+TV-namespace series `tmdbId`. The rewritten roll-up keys a request as bare
+`("tmdb", id)` ignoring `MediaRequest.media_type`, and indexes candidates by the raw
+integer ignoring `CandidateInfo.media_type`. A TV request whose show has TMDB TV id N
+binds to any movie candidate with TMDB movie id N: the requester is charged that
+movie's size as "granted", and if it is condemned their card shows a reclaimable chip
+naming the wrong title and opening the wrong review card. The rest of the codebase
+disambiguates exactly this (`membership_index` lookups pass `media_type`); the roll-up
+does not (rules 6/29). The IMDb fallback is safe (globally unique); only the tmdb
+branch collides.
+
+**Fix.** Namespace the key by media kind on both sides — `("tmdb-movie", id)` for a
+movie request/candidate, `("tmdb-tv", id)` for a TV request / season candidate — in
+both `_content_key` and the `by_tmdb` index. Add a collision test with a movie and a
+season sharing one numeric id.
+
+### B-2 · Intent band and simulator still claim per-run caps while caps are off — **high**
+
+`frontend/src/components/PolicyEditor.tsx:1658` (`paceClause`),
+`frontend/src/components/PolicySimulator.tsx:200`
+
+`paceClause` renders "removes at most N titles or X per run" with no check of
+`pace.caps_enabled`, and the simulator's Outcome pace note does the same. When the
+operator uses the flow this range explicitly advertises ("Turn off for a big first
+cleanup"), the executor skips `_check_caps` and `_check_rolling_caps` entirely, yet the
+page's one-sentence policy summary still asserts a hard per-run bound — directly
+contradicting the caps-off warning rendered further down the same page. The comment
+above `paceClause` ("so it can never disagree with the controls below it") is now
+false; the copy claims a safeguard that is not in force (rules 7/24/25).
+
+**Fix.** Branch both strings on `pace.caps_enabled`: when off, say the run has no size
+limit until limits are turned back on (the grace clause still binds and stays). Pass
+`caps_enabled` through wherever the figures render.
+
+### B-3 · The ratings job's off switch does not govern the startup catch-up, and its warning misses the real consequence — **high**
+
+`frontend/src/components/Settings.tsx:698` (`offWarning`),
+`src/reaper/services/scheduler.py:297-307` (`catch_up_on_startup`),
+`src/reaper/main.py` (spawned unconditionally), `src/reaper/services/imdb_dataset.py:59`
+
+The per-job off switch removes the cron job only. `catch_up_on_startup` never consults
+`get_maintenance_schedules`: it refreshes whenever the dataset is degraded (missing or
+past the 14-day `DEFAULT_MAX_AGE`). With the job off, the dataset inevitably passes 14
+days, after which (a) every snapshot degrades via `DatasetDegradedError`
+(`snapshot.py:615` — fail closed, so no run can start), and (b) every subsequent app
+restart downloads the full ~280 MB dataset anyway, despite "off". The modal's warning
+("With this off, scores keep using the ratings Reaper already has, and they slowly go
+out of date") describes neither outcome: scores do *not* keep using stale ratings past
+14 days — scans come back degraded and block runs — and downloads do not actually stop
+across restarts. Rules 7/24/25. (An earlier draft of this finding claimed the download
+runs on *every* restart; re-verification refuted that — the freshness guard is real,
+the off-switch bypass and the wrong warning are what remain.)
+
+**Fix.** Decide the contract and make code and copy match. Recommended: keep the
+startup catch-up (it prevents the degraded-forever state) and rewrite the warning to
+state the real consequences: after two weeks without a refresh, scans come back
+incomplete and no run can start, and Reaper will still refresh once at startup when the
+data is that old. Alternatively make `catch_up_on_startup` honor the stored off value
+and have the warning lead with the degradation.
+
+### B-4 · `library_season_index` can silently return a partial map, violating its complete-or-raise contract — **medium** (found independently twice)
+
+`src/reaper/clients/plex.py:820, 844-852`; contract at `plex.py:798-800` and
+`src/reaper/services/season_scan.py:983-985`
+
+The docstring ("Raises `PlexError` on any failure rather than returning a partial
+map") and the caller's load-bearing comment are what let the season scan skip
+degradation on sweep results. But the pagination advances and terminates on the
+*filtered* count: `elements` drops any child without a `ratingKey` (line 820), then
+`start += len(elements)` and `len(elements) < SWEEP_PAGE_SIZE` ends the section — so a
+full page containing even one dropped child silently truncates the rest of the
+section. Separately, `int(container.get("totalSize") or container.get("size") or 0)`
+falls back to the *page* size, so a server that omits `totalSize` (or clamps the
+container below the requested page size) truncates after page one. Both return a
+normal map, no raise. Shows entirely beyond the cut fall back safely to the per-show
+path, but a show *straddling* the cut is present in the sweep result and gets no
+fallback: its unswept seasons abstain (kept — fine), and a viewer whose newest watched
+season is among the unswept ones vanishes from `_progress_by_user`, so
+`sequential_protections` anchors them one season early and the season they are about
+to start loses its mid-binge protection — a narrow fail-open. Reachability requires an
+anomalous server response, but the code's own defensive filter treats that input as
+possible while the termination logic treats it as end-of-section; the defense and the
+paging math cannot both be right. (The same pattern pre-exists in
+`library_guid_index`, `labeled_in_section`, and `section_rating_keys`; this range
+added a fourth copy in the one function whose docstring promises completeness.)
+
+**Fix.** Advance `start` and test the short-page condition on the raw container child
+count, and treat a filtered-vs-raw mismatch (or an absent `totalSize` alongside a full
+page) as `PlexError`, so anomalies raise and every show falls back per show as the
+contract promises. Apply the same hardening to the three pre-existing twins when next
+touched.
+
+### B-5 · Collection detach removes by the constant name, not the stored spelling, so a case-variant shelf never shrinks — **medium**
+
+`src/reaper/clients/plex.py:1065-1099` (`remove_collection_members`),
+`src/reaper/services/leaving_soon.py:230-235`
+
+`find_collection` deliberately adopts a shelf collection whose title matches
+casefolded, so a collection stored as a case variant of the shelf name is treated as
+*the* shelf and its members are read. But the new partial-removal path issues
+`removeCollection(name)` — the tag-minus form — with the constant shelf name. The
+codebase's own live-verified doctrine for the identical mechanism says tag removal is
+case-sensitive: `remove_label` groups by "the exact spelling Plex stored" precisely
+because "a case-sensitive removal silently removes nothing", and the new docstring
+itself says "a collection is a tag". On a case-variant collection the detach returns
+200 and removes nothing: an item that left grace stays on the shelf indefinitely (the
+shelf over-claims — the exact dishonesty the "removals first" ordering exists to
+prevent), while `ShelfOutcome` reports `removed=N, applied=True`. Every pass recomputes
+the same removals and silently no-ops again; nothing converges. The full-clear path is
+immune (deletes by key). The test fake asserts the constant name, cementing the bug.
+
+**Fix.** Mirror `remove_label`: the chunk's items come back from the multi-id metadata
+read already carrying their collection tags — group them by the exact stored spelling
+that casefold-matches the shelf name and issue `removeCollection` per spelling. Or have
+`find_collection` return the stored title and thread it through `sync_section`.
+
+### B-6 · `ensure_schema`'s check and DDL now run in separate transactions — a TOCTOU the old code did not have — **medium**
+
+`src/reaper/services/history_sync.py:211-226`
+
+The perf change split `ensure_schema` into a read-connection shape check and a later
+write transaction that acts on the *stale* `cols`/`live` captured before the write
+lock was taken. The old code did check + DDL inside one `engine.begin()`, which SQLite
+serialized. Now two concurrent callers can both read "shape stale" before either
+commits, and the second executes `DROP TABLE watch_event` on the table the first just
+rebuilt. Concurrent callers are real: the scan pipeline, `GET /api/fairness`, and the
+scheduler's nightly sync all call it in the same process. The common interleaving is a
+benign double rebuild; in the worst one the second DROP lands after an in-flight sync
+has begun inserting pages, and since sync pages newest-first, the rows lost are the
+*newest* plays — evidence whose absence adds deletion pressure (fail-open) for one
+scan until the next sync's overlap re-fetches them. Only reachable on the one-time
+stale-shape rebuild path, hence medium.
+
+**Fix.** Keep the read-only fast path, but re-run `PRAGMA table_info(watch_event)`
+inside the `engine.begin()` block and decide DROP/CREATE from that fresh read,
+restoring the old atomicity.
+
+### B-7 · Enter/Space on a revealed Spare/Reap button never saves the override — **medium**
+
+`frontend/src/components/ReviewQueue.tsx:1002` (row handler), `:423`
+(`OverrideControls`, the shared fix point)
+
+Every season row and card carries an `onKeyDown` that does `e.preventDefault();
+onOpen(...)` for Enter/Space with no target check. Keydown from the nested
+`OverrideControls` buttons bubbles into it, so the preventDefault cancels the button's
+native activation and the row opens the why-panel instead. Verified with a temporary
+vitest probe: focus the season row's Spare button, press Enter — the override API is
+called zero times and the panel opens once. The codebase already knows this hazard:
+`SeasonStrip` squares stop Enter/Space propagation for exactly this reason (lines
+877-881), but `OverrideControls` has no such guard. Partially pre-existing on cards,
+but this range's headline change ("every season is actable in place", rule 51) extended
+the broken keyboard path to every season row, and rule 46's contract explicitly
+includes keyboard-focus reveal. Feedback is visible (the button stays unlit), so no
+silent wrong deletion — but the advertised keyboard flow cannot spare or reap anything.
+
+**Fix.** In `OverrideControls`, stop propagation of Enter/Space on the buttons
+(mirroring the strip-square guard), or guard every row/card key handler with
+`if (e.target !== e.currentTarget) return`. One change in the shared component fixes
+all surfaces.
+
+### B-8 · The Reap page's unmeasured-items line contradicts the plan, in both allowance modes — **medium**
+
+`frontend/src/components/ReapBreakdown.tsx:157-162` (line), `:101-105` (headline),
+`:142-146` (ledger)
+
+"N titles can't be measured, so Reaper won't remove them" renders unconditionally
+whenever `will_reap_unknown > 0`. With `max_unmeasured_per_run > 0` the planner admits
+unmeasured items into the plan, so the Reap page tells the operator these files are
+safe while the plan built directly below will delete them. The queue already solved
+this with `useHoldsBackUnmeasured()`, which this component does not consult.
+Conversely, under the default allowance of 0 the headline and "Will be reaped" row
+count `will_reap` *including* the unmeasured items the plan holds back, so the ledger
+total disagrees with the run's item count and the confirmation-phrase count shown on
+the same page (rule 30; `api/breakdown.py`'s docstring claims the numbers match the
+exact planned set, which the unmeasured tail breaks — rule 24).
+
+**Fix.** Read `useHoldsBackUnmeasured()`: when true, keep the "won't remove them" line
+and subtract `will_reap_unknown` from the headline/ledger count (or annotate the
+total); when false, reword to say they are only removed within the unknown-size
+allowance. Test the allowance-on wording.
+
+### B-9 · All requesters without a Plex id merge into one row under the first person's name — **medium**
+
+`src/reaper/services/fairness.py:171-181, 218-224`
+
+`rows` is keyed on `req.requester.plex_id`, which is `None` for Seerr local users not
+linked to Plex. Every such user collapses into a single row keyed `None`, named after
+whichever request came first; worse, the per-title `seen: set[int | None]` dedupe
+treats two distinct unlinked users as one person, so the second user's request of a
+shared title is dropped from their own tally entirely. Requests, granted disk, and
+reclaimable titles are misattributed to another person's name on a leaderboard the
+operator reads before a run (rule 6). A stable per-user id exists (`seerr_user_id`).
+The keying survived from the old code, but `roll_up` was fully rewritten in this range
+and re-chose it, still untested for the `None` case.
+
+**Fix.** Key `rows` and the per-title `seen` set on `seerr_user_id` (always present),
+keeping `plex_id` only for the watch join. Add a test with two unlinked requesters.
+
+### B-10 · Presets stage cap values but not `caps_enabled`, so "Cautious" can leave an uncapped profile — **medium**
+
+`frontend/src/components/PolicyEditor.tsx:69` (`PresetCaps`)
+
+`PresetCaps` picks only the five numeric keys and `applyPreset` merges only those. If
+the operator previously turned caps off and saved, clicking Cautious — whose help
+promises "removes less per run" — stages the values but leaves `caps_enabled: false`,
+and the save persists an unbounded profile. The validator accepts it (the invariant
+check is skipped while caps are off), and the intent band lies about the result (B-2
+compounds this). Every preset's pace promise implies enforcement.
+
+**Fix.** Add `caps_enabled: true` to `PresetCaps` and to each entry in `PRESETS`.
+
+### B-11 · The static PNG favicon is declared after the SVG link, so the accent-following favicon can lose the tie-break — **medium**
+
+`frontend/index.html:8-9`
+
+The accent feature rewrites only the `#favicon` SVG link (the pre-paint script and
+`applyFavicon` in `accent.ts`). But line 9 declares a 32×32 PNG icon *after* the SVG
+link, and that PNG is baked at the default sky accent and never updated. Per the HTML
+spec, when multiple icons are equally appropriate the user agent uses the last one
+declared, and an exact-size PNG is a strong match (the SVG carries no `sizes`).
+Browsers resolving that way show the stale sky icon forever, silently defeating the
+feature the operator just configured. The standard pattern is raster fallback first,
+SVG last.
+
+**Fix.** Swap the two lines so the SVG is declared last, and verify in a real browser
+session that changing the accent swaps the tab icon; optionally have `applyFavicon`
+also retarget or remove the PNG link once a data-URI icon is applied.
+
+### B-12 · `set_maintenance_schedule` is a read-modify-write of the whole overrides dict — **low**
+
+`src/reaper/services/app_settings.py:297-302`
+
+It reads the full `maintenance_schedules` JSON dict, mutates one key, and writes the
+whole dict back. Two overlapping saves for different jobs (two browser tabs, or a save
+racing startup) can both read the same base dict and last-write-wins the other's
+override away; the scheduler then disagrees with the stored state until restart, when
+the lost override silently reverts to its default.
+
+**Fix.** Scope the storage per job (one key per job id), or perform the merge in a
+single guarded UPDATE.
+
+### B-13 · Collection member removal regressed from key-addressed to title-addressed, breaking duplicate-titled libraries — **low** (fails closed)
+
+`src/reaper/clients/plex.py:1087-1092`
+
+The removed `remove_from_collection` addressed the collection by rating key, immune to
+section-title ambiguity. The replacement resolves the section via
+`server.library.section(section_title)`; plexapi documents that duplicate titles
+return the *last* match. With two libraries sharing a title (a common 4K/HD
+arrangement), the first twin's detach raises `BadRequest` at plexapi's item
+validation, so every partial detach in that library fails with a recorded
+`ShelfOutcome.error`, every pass, where the old key-addressed path worked. Fail-closed
+but persistent per-library breakage, and a rule 6 step backward on a path that
+previously had the stable identifier. (`add_label`/`remove_label` share the title
+addressing pre-range; only the collection path regressed here.)
+
+**Fix.** Pass `section_key` into `remove_collection_members` (`sync_section` has it)
+and resolve via `sectionByID`; consider the same for the label writers while there.
+
+### B-14 · One condemned candidate can count twice in `total_reclaimable_items` — **low**
+
+`src/reaper/services/fairness.py:196-199, 241-242`
+
+Requests carrying a tmdb id group under the tmdb key; requests for the same content
+carrying only an imdb id group under the imdb key. Both groups can bind the same
+candidates, and each adds its own content key to `reclaimable_content`, so the items
+total counts the title twice while the bytes total (deduped by candidate id) counts it
+once — the summary strip can disagree with itself.
+
+**Fix.** Dedupe the items total by candidate id, the way the bytes total already does.
 
 ---
 
 ## 2. Hacks and workarounds
 
-### H-1 · The repaired-policy degrade is pinned by grepping source text, not by behavior — **medium**
+### H-1 · `--btns` track widths hardcoded in TSX must silently stay in sync with three CSS values — **low**
 
-`tests/test_fact_layer_states.py:201-205`
+`frontend/src/components/ReviewQueue.tsx:987`; `frontend/src/index.css:4059, 4153, 4420`
 
-The only test for "a scan on a repaired policy must not be executable" reads
-`src/reaper/services/scan_runner.py` as a string and asserts the literal substring
-`"if active.repaired:"` appears in it. It proves nothing: it passes if the branch appends to
-a list nobody consumes, if `pre_scan_degradations` stops reaching `snapshot.degraded`, or if
-`degraded` stops blocking execution — and it fails on a pure rename that keeps behavior
-correct. The path is also cwd-relative, unlike `tests/test_multi_instance.py:128` which
-anchors on `Path(__file__).parent.parent`; CI runs from the repo root so this is latent
-fragility, not a live break.
+`SeasonList` sets `--btns` to `"11.8rem"` (two 5.75rem buttons plus a 0.3rem gap) or
+`"5.75rem"`. Those numbers derive from `.ov-btn { min-width: 5.75rem }`, the
+`.override-controls` gap, and the CSS fallback `var(--btns, 11.8rem)` — three
+declarations that nothing flags as coupled. A future button-width tweak drifts or
+clips the fixed columns rule 51 exists to keep straight.
 
-**Fix, cheaper than it looks.** `tests/test_scan_pipeline.py:567-638` already monkeypatches
-`scan_runner.profiles.active_policies` with a fake returning real `ActivePolicy` objects and
-captures `extra_degrade_reasons`. Return `ActivePolicy(DEFAULT_MOVIE_POLICY, "default", rescaled=True)`
-from that stub to exercise this branch with no new scaffolding, assert
-`snapshot.degraded is True` and the reason names the policy, then assert the execute route
-refuses it. Delete the source grep rather than keeping it alongside.
-
-### H-2 · `_STATE` is documented as a key translation but is an identity map — **low**
-
-`scripts/policy_lab_extract.py:86`
-
-The comment says `_STATE` maps `facts_codec`'s compact keys to the fixture's spelled-out
-ones. `facts_codec._obs_to_dict` already emits `"known"/"absent"/"unknown"`, so the dict maps
-each key to itself. Its real job is validating an unrecognized state down to the caller's
-default, which the comment does not say. Dev-only script; documentation-only impact.
-
-**Fix.** `_STATES = frozenset({"known", "absent", "unknown"})` with a comment stating what it
-does, and `kind = raw if (raw := str(entry.get("k"))) in _STATES else default`.
-
-### H-3 · `parse_humanized` survives after its only call site was deleted — **low**
-
-`scripts/policy_lab_extract.py:56`
-
-The refactor to read frozen facts (`023b37e`) removed the dormancy reconstruction that
-called `parse_humanized`, but left the function, its `UNITS` table, and the now-only-for-it
-`import re`. The point of the change was to stop parsing operator-facing copy; leaving the
-parser invites the next person to reach for it — and this commit's own comment records that
-a reworded sentence silently deleted 210 known season ranks from the fixture.
-
-**Fix.** Delete `parse_humanized`, `UNITS`, and the `re` import.
-(`scripts/validate_ingest.py` has its own copy and still uses it; leave that one alone.)
+**Fix.** Define one `--ov-btn-w` custom property and derive all four sites from it
+(`min-width: var(--ov-btn-w)`; `--btns: calc(2 * var(--ov-btn-w) + 0.3rem)`), or at
+minimum cross-comment both files.
 
 ---
 
 ## 3. Refactor opportunities
 
-### R-1 · The hand-spare detail string is defined twice and coupled by exact equality — **low**
+### R-1 · Dead `["grace"]` query invalidation with a comment naming a removed surface — **low** (found independently twice)
 
-`src/reaper/services/snapshot.py:796`, `src/reaper/api/routes.py:488`
+`frontend/src/components/PolicyEditor.tsx:1416`
 
-`routes._SPARE_DETAIL` and `snapshot._HAND_SPARE_DETAIL` hold the same literal, and the
-review chip identifies a hand spare purely by string equality. This diff had to edit both in
-lockstep, and each file's comment asks the other to "stay in step" — the definition of a
-drift-prone duplicate. Note the diff **improved** this (the baseline had four raw inline
-copies and no constant), and no numbered rule covers it; rule 18 is frontend-scoped and
-rule 3 is scoped to condemn/score logic.
+`savePace.onSuccess` still invalidates `["grace"]` under the comment "Reap's read-only
+grace countdown shows grace_days; keep it in step." This range replaced GracePanel
+with ReapBreakdown (query key `["reap-breakdown"]`) and removed `api.grace` entirely;
+no query registers under `["grace"]`, so the invalidation is a no-op and the comment
+names a mechanism that no longer exists (rule 24). Meanwhile a saved grace change does
+*not* invalidate `["reap-breakdown"]`, the surface that replaced it.
 
-**Failure.** A future copy pass rewords one side; `_kept_phrase` stops matching and every
-hand-spared item renders "Kept · on your keep list" instead of "Kept · you spared it",
-telling the operator the item is protected by a list it is not on.
-`tests/test_review_chips.py` still passes because it feeds a third copy of the literal.
+**Fix.** Delete the invalidation and comment; if the breakdown should refresh on a
+grace change, invalidate `["reap-breakdown"]` instead.
 
-**Fix.** One constant, imported by `routes.py:520`, `routes.py:1171`, `snapshot.py` and
-`_replay_simulation`. Change the test to reference it rather than a literal.
+### R-2 · `/api/grace` route and its schemas are consumed by nothing — **low**
 
-### R-2 · `LocalSheet` hand-rolls the dialog contract `ModalShell` now owns — **low**
+`src/reaper/api/grace.py:33`; `src/reaper/api/schemas.py:685-700`
 
-`frontend/src/components/Login.tsx:213` · rule 18
+`api.ts` dropped `api.grace` and the GracePanel UI is gone, but the backend keeps the
+route plus `GraceReportOut`/`GraceItemOut`. Nothing in the product calls it. Related:
+the `App.tsx:331` comment still says "The grace countdown and Scales list titles…" —
+the grace countdown surface no longer exists. Rule 38's spirit: dead safety-adjacent
+surface area is deleted, not stockpiled.
 
-`ModalShell` was added as "the one modal" owning `role="dialog"`, `aria-modal`,
-Escape-to-close, focus-in-on-open, focus-restore-on-close and Tab containment, with a header
-comment saying it is "written once so no modal can ship without it". `LocalSheet` implements
-its own version of the first four and has **no Tab trap**, so the two have already diverged
-and the comment is untrue of this file. (The sheet's `role="dialog"` and some of its focus
-handling predate the diff; the divergence is what this change created.)
+**Fix.** Remove the route and both schemas (or fold what the breakdown still needs
+into `breakdown.py`), and reword the App.tsx comment to name only Scales.
 
-**Failure.** A keyboard user opens the local-account sheet and tabs past Sign in. Focus
-lands on the buttons behind the scrim, which the sheet declares unreachable via
-`aria-modal="true"`.
+### R-3 · `searchFor` prop and its run-once effect are dead after App.tsx dropped the queue-search jump — **low**
 
-**Fix.** Give `ModalShell` a stay-mounted mode (render always, `inert={!open}`, run focus
-and trap only while open) and render `LocalSheet` through it. If the slide-in must stay
-separate, export `ModalShell`'s `FOCUSABLE` list and `trapTab` helper, wire them into the
-sheet, and correct the "every modal" comment to name the exception.
+`frontend/src/components/ReviewQueue.tsx:1315-1363`
 
-### R-3 · `SignalRow`'s docstring was stranded above `PointsBudget` — **low**
+This range removed `goToQueueSearch`/`queueSearch` from App.tsx (Scales now jumps by
+id via `onOpenItem`/`onOpenGroup`) and stopped passing `searchFor`. ReviewQueue still
+declares the prop, documents it, and carries the `handledSearch` ref and effect that no
+caller can trigger — dead plumbing on an already-large prop surface that invites a
+half-rewire later.
 
-`frontend/src/components/PolicyEditor.tsx:485`
+**Fix.** Delete the prop, its doc comment, and the effect.
 
-The commit that replaced the per-signal "share of the score" readout with flat points
-inserted `PointsBudget` between `SignalRow`'s JSDoc and `SignalRow` itself. The result is two
-stacked doc blocks, the first documenting a function 70 lines below and describing a readout
-that no longer exists (`share` and the `totalWeight` prop were both deleted in the same
-diff).
+### R-4 · `.fair-card` re-implements `.card`'s hover/selected/focus grammar declaration-for-declaration — **low**
 
-**Fix.** Delete the stale block, or move a corrected version above `function SignalRow` at
-`:542` describing the flat "up to N points" readout it now renders.
+`frontend/src/index.css:2982-3018` (duplicating `:3536-3573`)
 
-### R-4 · `draftRuleCount` is named and documented as a rule count but prints point totals — **low**
+The new Scales requester card copies the review-queue card's entire interaction
+grammar — transition triple, hover accent border and wash, focus ring, inset open bar,
+additive open+hover deepen — under new class names; the block's own comment admits it
+copies "the review queue's card language." This is the drift surface rule 18 exists
+for: a future card-hover tweak (rule 47 already forced one) now has to land twice.
 
-`frontend/src/components/PolicyEditor.tsx:538`
+**Fix.** Extract a shared base (grouped selectors or one common class both surfaces
+apply) so the treatment is declared once.
 
-The name and the docstring example ("4 built-in signals · 1 of your rules") promise a count
-of rules; the two arguments are the point sums `builtInWeight` and `yourWeight`. The
-rendered string happens to read acceptably as a points split, which is what makes it a trap.
+### R-5 · The frontend hardcodes the upkeep job list, making the `jobMeta` fallback unreachable — **low**
 
-**Failure.** A developer asked to also show the number of custom rules trusts the name and
-passes `draft.custom_condemn.length`, producing "70 built in · 1 yours" beside "100 of 100
-removal points used" — two numbers that no longer add to the total beside them.
+`frontend/src/components/Settings.tsx:676, 1109-1112`
 
-**Fix.** Rename to `pointsSplit` and correct the docstring to the string it produces.
+`MAINTENANCE_IDS` duplicates the backend's job-id list and `JobsPanel` maps only those
+ids, dropping any job the server returns that is not in the hardcoded list. The
+`jobMeta` fallback written "so the lookup is total" can never fire because the filter
+runs first. A fourth upkeep job added server-side would silently not appear on the
+Jobs page.
 
-### R-5 · The second "less than a day" return in `humanize_days` is unreachable — **low**
+**Fix.** Render from `schedule.data.jobs` (filtering out the scan job), preserving the
+server's order, with the `jobMeta` fallback covering ids without copy.
 
-`src/reaper/clock.py:106`
+### R-6 · New season-row `hideReap` inlines `verdict === "condemn"` instead of the `isCondemned` helper — **low**
 
-After the `whole <= 0` early return, `whole >= 1`, so at least one unit is non-zero and
-`present` can never be empty. The unreachability is total: NaN and inf raise inside `round()`
-before reaching it. The diff edited this exact line (it used to return "today"), so the dead
-branch was re-stated rather than removed, leaving the wording in two places with one never
-exercised.
+`frontend/src/components/ReviewQueue.tsx:983, 1034`
 
-**Fix.** Delete lines 106-107 and let the final join run.
+Rule 48 says never reimplement the already-condemned no-op test inline; `isCondemned`
+(line 608) is the one expression. The new per-row control passes
+`hideReap={season.verdict === "condemn"}` and computes `anyReapable` with the raw
+comparison. The semantics are correct (own verdict, per rule 51), but it is a fresh
+inline copy of the test the helper exists to centralize.
+
+**Fix.** Use `isCondemned` in both places.
 
 ---
 
 ## 4. Performance
 
-### P-1 · The scan reads the watch mirror twice — **low**
+### PF-1 · Hourly presets are offered for the ratings job, which does a full ~280 MB download per run — **medium**
 
-`src/reaper/services/snapshot.py:410`
+`frontend/src/components/Settings.tsx:730-738`;
+`src/reaper/services/imdb_dataset.py:308-311`
 
-The new staleness check calls `history_sync.latest(engine)` a few lines after
-`history_sync.horizon(engine)`. Both are thin wrappers over `_state()`, which runs
-`ensure_schema()` (a PRAGMA plus every DDL statement inside an `engine.begin()` write
-transaction) and then a `SELECT COUNT(*), MIN(watched_at), MAX(watched_at)` aggregate.
-`history_sync.state()` already returns all three in one pass. The table has a covering index
-on `watched_at`, so this is an O(n) index scan rather than a heap scan — modest at a few
-hundred thousand rows, but it is pure duplicate work plus a second write-transaction DDL
-pass on every scan.
+`maintenancePresets` is one shared list for all three upkeep jobs. For the ratings
+job, each run is a full download plus a multi-minute parse/load with no freshness
+check and no conditional GET — and the scheduler module's own docstring says the
+dataset publishes once a day and "there is no value in hammering it." An operator
+innocently picking "Every hour" gets roughly 24 full downloads a day for zero data
+benefit.
 
-**Fix.** `mirror = await history_sync.state(engine)` once before the `no_history` branch,
-then use `mirror.earliest` and `mirror.latest`. Folds naturally into B-4's fix.
-
-### P-2 · `stats()` computes and discards three values plus two aggregate queries — **low**
-
-`scripts/policy_lab_extract.py:162`
-
-After the switch to frozen facts the only value taken from `stats()` is `recency`. It still
-computes `days`, `window` and `ever` for every candidate, and `movie_last` / `season_last` /
-`window_start` exist solely to feed those dead outputs, costing two extra `GROUP BY` scans of
-`watch_event` at startup. Dev-only script, so the cost is a one-off manual run; the durable
-harm is that the dead outputs read as if the script still derives dormancy itself,
-contradicting the new comment that says frozen facts are the source.
-
-**Fix.** Narrow to `recency_days(keys, media_type) -> list[float]`, drop the three dead
-outputs and the two queries that feed them, update the call site.
+**Fix.** Per-job preset lists (ratings: Off / Every day only), or add a freshness
+short-circuit to `refresh_ratings` (skip when the last sync is within ~20 hours) so
+aggressive schedules are harmless. The short-circuit also softens B-3.
 
 ---
 
 ## 5. Production readiness
 
-### PR-1 · The Plex link flow in Settings has no fallback URL and no cancel — **low**
+### PR-1 · An unrepairable profile blob silently resets to defaults, which can loosen grace and caps versus what the operator saved — **medium**
 
-`frontend/src/components/PlexPanel.tsx:118` (new file) · rules 42, 36
+`src/reaper/services/profiles.py:84`
 
-`startLink` awaits `api.plexLinkStart()` and only then calls `window.open`. The user gesture
-has already been consumed by the await, so browsers routinely block the popup;
-`window.open(..., "noopener")` returns null by spec, so the return value carries no signal
-and is discarded along with `start.auth_url`. Polling begins regardless. While `linking` is
-true the only control rendered is the disabled "Waiting for Plex…" button: no fallback link,
-no cancel, no error. `Login.tsx` already keeps the URL in state and renders a "Didn't open?"
-link, so the same flow now exists twice with different affordances.
+`active_profile_settings` now falls back: full parse, salvage-known-keys, then bare
+`ProfileSettings()` with only a warning log. The final step fires when a stored value
+no longer validates (exactly how the current `grace_days` floor came about). Defaults
+are cautious in absolute terms, but relative to the operator's saved values they can
+loosen the deletion path: a grace of 30 becomes 14 (items become deletable 16 days
+earlier than promised to users), a run cap of 5 becomes 10. The directly analogous
+`active_policy` recovery sets `fell_back`/`repaired`, degrades the scan, and shows a
+loud editor notice; this degradation is invisible — the settings page shows defaults
+as if chosen.
 
-**Failure.** An operator with popups blocked clicks Link with Plex. The plex.tv tab never
-opens, the button stays disabled, nothing offers the approval URL or a way out, and five
-minutes later a gray line says the sign-in timed out with no explanation.
+**Fix.** Mirror the policy pattern: return a flag when the blob was unreadable,
+surface it on the profile GET so Pace shows a recovery notice, and have the scan treat
+it as a degradation the way a repaired policy is.
 
-**Fix.** Hold the auth URL in state and, while `linking`, render the same affordances
-`Login.tsx` has: a visible fallback `<a href={authUrl} target="_blank" rel="noreferrer">` and
-a Cancel wired to `pin.cancel()` + `setLinking(false)`. Route `onTimedOut` through
-`setPlexError` (see U-5).
+### PR-2 · Held (refused) hand reaps are invisible in the reap ledger — **medium**
 
-### PR-2 · The log viewer claims it is retrying when following is switched off — **low**
+`src/reaper/services/breakdown.py:149-153`;
+`frontend/src/components/ReapBreakdown.tsx:108-114, 132-137`
 
-`frontend/src/components/LogsPanel.tsx:190` (new file) · rule 21
+`hand_reaped` counts only reaps `decide_verdict` honors. A hand reap the engine
+refuses (blocked evidence, structural gate) appears nowhere in the breakdown: an
+operator who marked five items sees "+ 3 marked to reap by hand" with no line
+explaining the other two. In the degenerate case (nothing condemned, all reaps held)
+the page says the last scan condemned nothing while Review shows the operator's asks
+dashed-red as held. Rule 23 requires every consumer of override states to enumerate
+them; this new consumer silently drops one. The counts beside the destructive action
+stay correct, so no wrong deletion — the ledger just under-reports the operator's own
+decisions without saying so.
 
-The error strip shown when the log query fails with lines already on screen says "Retrying…"
-unconditionally. Retrying is only true while `live` is on, because that is the only thing
-setting `refetchInterval`. With "Follow new lines" off, `refetchInterval` is `false`, React
-Query's default retries are exhausted, and nothing further is scheduled. That branch also
-offers no manual retry: the "Try again" button exists only in the `lines.length === 0`
-branch at `:162`.
+**Fix.** Also count reap decisions where `reap_is_effective` is false (the keys are
+already in `decisions`), return it as `hand_reaped_held`, and render one line ("N of
+your reap marks are held back for safety, see Review") when nonzero.
 
-**Fix.** Make the copy match the state: when `live`, say updates hit a problem and are being
-retried; when not, say updates are paused and render the same `logs.refetch()` "Try again"
-button used in the empty branch.
+### PR-3 · The batch collection detach silently locks the collection field on every detached item — **low**
 
-### PR-3 · `_explain_failure`, ninety ordering-sensitive lines, has zero tests — **low**
+`src/reaper/clients/plex.py:1092`
 
-`src/reaper/services/instances.py:244`
+plexapi's `removeCollection(name)` defaults `locked=True` and always emits the lock on
+the edit. Every item taken off the shelf by the new tag-edit path gets its collection
+field locked — a persistent metadata change the old per-child DELETE never made, which
+alters how Plex agents and third-party collection tools treat those items afterward.
+The docstring claims the write "removes ONLY the named collection", true for
+membership but silent about the lock (rules 7/24). There is no leave-lock-alone option
+in this API shape (`locked=False` would actively *clear* operator-set locks), so the
+trade-off has to be chosen deliberately.
 
-`test_connection`'s error reporting was replaced wholesale with `_causes` +
-`_explain_failure`: a cause-chain walk and a fifteen-branch classifier whose correctness
-depends entirely on branch order (the SSL check must precede the transport branch because
-certificate problems surface as `ConnectError`; the `IntegrationError`-with-no-status branch
-must come after the transport families). Nothing in `tests/` references `_explain_failure`,
-`_causes` or `_GENERIC_FAILURE`. Branch order is correct at HEAD, so this is coverage
-exposure, not a live defect — but this is the first screen a new operator sees.
+**Fix.** Choose the lock behavior explicitly, document the side effect in the
+docstring, and note it as a known delta from the per-child DELETE path.
 
-**Failure.** Move the SSL check below `httpx.ConnectError`, or drop `__context__` from
-`_causes`. Every test passes, and an operator with a self-signed certificate is told
-"Couldn't reach the server at this address. Check the URL and port" instead of the one
-message that names the actual fix.
+### PR-4 · The concurrent shelf reconcile shares one requests session across four threads, against the client's own documented premise — **low**
 
-**Fix.** A table-driven test feeding `_explain_failure` a constructed cause chain per family
-(`IntegrationError` from `ssl.SSLError`, from `ConnectTimeout`, from `ConnectError`; statuses
-401/404/429/302/500; a `ValueError` body; a bare `IntegrationError`; an unrecognized
-exception), asserting the returned sentence. The SSL-under-`ConnectError` chain pins the
-ordering.
+`src/reaper/services/leaving_soon.py:61-66, 285-316`; premise at
+`src/reaper/clients/plex.py:399-404`
+
+`sync_shelves` now runs up to four `sync_section` tasks, each pushing reads and writes
+through `asyncio.to_thread` on the single shared `GuardedSession`, without taking
+`_sweep_lock` — whose rationale states "requests does not promise a Session is safe to
+share across threads, so the sweeps take this lock and run one at a time." The fan-out
+breaks the stated invariant without updating it (rule 24). No concrete corruption was
+constructed (urllib3's pool checkout is atomic; per-library section objects keep
+plexapi edit state disjoint), so this is documented-invariant debt rather than a
+demonstrated race — but the shelf path now writes, not just reads.
+
+**Fix.** Either update the `_sweep_lock` and `SHELF_CONCURRENCY` comments to state why
+unlocked cross-thread session sharing is acceptable here, or serialize the shelf
+writes consistently with the sweeps.
+
+### PR-5 · The schema fast path attests only `watch_event`'s columns, so future SCHEMA additions will never reach existing caches — **low**
+
+`src/reaper/services/history_sync.py:207-215`
+
+The old code re-ran the full idempotent SCHEMA (both tables, three indexes) on every
+call; the new fast path returns as soon as `watch_event`'s columns match. That is safe
+today only by accident of history — the companion table and all indexes date to the
+initial commit — and the invariant is undocumented. The next person who adds an index
+or companion table to SCHEMA without touching `_WATCH_EVENT_COLUMNS` ships DDL that
+existing caches silently never execute.
+
+**Fix.** Add a comment on `_WATCH_EVENT_COLUMNS` stating that any SCHEMA addition must
+change the column tuple (forcing the rebuild path), or cheaply extend the fast-path
+check to confirm the companion table exists.
+
+### PR-6 · No committed way to regenerate the five PNG icon assets the comments say are generated — **low**
+
+`frontend/src/brand/deepIcon.ts:5-9`; `frontend/src/brand/deepIcon.test.ts:3-5`
+
+`deepIcon.ts` states the committed `favicon.svg` and the apple-touch/manifest PNGs are
+generated from `deepIconSvg`, and the test instructs regenerating them on change — but
+the repo contains no rasterization script, and the drift test guards only the SVG. A
+future brand tweak regenerates the SVG to satisfy the test while the five PNGs
+silently keep the old drawing, with no documented command to fix them (rules 7/24: a
+process that exists only as prose).
+
+**Fix.** Commit a small node script that writes `favicon.svg` and rasterizes the PNGs
+from `deepIconSvg`, reference it from the comment, and have the test assert against it
+(or at least assert the PNGs exist with the right dimensions).
 
 ---
 
 ## 6. Security
 
-### S-1 · Certificate-failure copy recommends disabling verification on any `SSLError` — **low**
-
-`src/reaper/services/instances.py:256`
-
-The first branch of `_explain_failure` fires on any `ssl.SSLError` anywhere in the cause
-chain and recommends turning off the certificate check. That branch also covers hostname
-mismatch, an expired or wrong-CA certificate, and active interception — not only the
-self-signed case the sentence names. The connection carries a full-admin API key (a Tautulli
-key can delete libraries and restart the service).
-
-The sentence is already conditioned ("If it is a self-signed certificate on a server you run
-yourself…"), so this is closer to a copy-accuracy defect than a vulnerability, and the
-verification toggle is a deliberate, operator-controlled feature. It is filed here because
-the failure mode it mis-advises on is the one where the advice is harmful.
-
-**Fix.** Bind the remedy to the case it is safe for and name the cost: "The server's
-certificate couldn't be verified. Only turn off the certificate check if this is your own
-server on your own network: your API key travels on this connection." Optionally split the
-branch so `ssl.SSLCertVerificationError` with a self-signed or unknown-CA reason gets the
-remedy and other `SSLError` kinds get a message that does not suggest disabling
-verification.
-
-*No other security findings survived verification.* Specifically checked and clean: no raw
-`httpx`/`requests` outside `clients/` beyond the sanctioned Discord webhook (rule 33); no
-secrets in URLs or logs; no new `verify=False` default; no `dangerouslySetInnerHTML`; the
-new routes carry the auth dependency and the CSRF header requirement; no new unpinned
-dependency.
+No findings. Checked across the range: the new breakdown and fairness routers sit
+under `/api` behind the auth middleware; the pre-paint favicon script validates the
+stored value's `data:image/svg+xml` prefix before applying it, so localStorage cannot
+inject an arbitrary URL; no secrets appear in URLs or logs; all HTTP stays inside
+`clients/` (the Discord webhook remains the one sanctioned exception); the scheduler
+gained no path to a mutating call, and the transport guard still gates the new batched
+shelf writes (journalled intent, armed host).
 
 ---
 
 ## 7. UI/UX consistency
 
-### U-1 · A plan built from an older scan warns only in the history list, never beside Execute — **medium**
+### U-1 · `KeptByShowNote` states "will be removed" for a reap the engine refuses — **medium**
 
-`frontend/src/components/ReapPlan.tsx:222` · rules 42, 36
+`frontend/src/components/ReviewQueue.tsx:486`; consumed at `:1037` and
+`WhyPanel.tsx:860`
 
-The new `olderScan` check renders only as a muted tail on the open row down in "Recent
-plans" ("· open above, built from an older scan"). The plan summary above, which carries the
-live `Execute…` button, says nothing. Rule 42 requires the warning beside the control that
-fixes it. It also fails silent: `olderScan` is `latestSnapshot != null && …`, so while the
-snapshot query is loading or if it errored, nothing appears and the operator gets no signal
-either way.
+The component receives only `own` and `showOverride`, never `override_effective`. Two
+branches assert removal as fact ("The whole show is set to reap, so this season will
+be removed"; "You reaped this season, so it will be removed"). Reachable today: whole
+show set to reap while one season is being streamed — that season's inherited reap is
+refused, its chip reads "Reap requested · kept for now: playing right now" (dashed
+red), and the note on the same row says it will be removed. Rule 49 established that a
+held reap must never be presented as a done removal, and the `_candidate_out` comment
+says the UI "never promises a removal the engine will refuse" — this note promises
+exactly that. The component's own docstring ("the note never contradicts the row's
+chip") is currently false for held reaps.
 
-Several executor interlocks do re-read fresh state on a stale plan (manual spares, the
-streaming veto, played-since-approval, per-item existence and size, the canary), so the
-blast radius is bounded. What a superseded scan loses is policy-derived protection only the
-new scan would have found — a keep-tag added in the arr, a rating change.
+**Fix.** Pass the row's `override_effective` into `KeptByShowNote` and add a held-reap
+wording branch ("marked to reap but kept for now") matching the chip's language.
 
-**Fix.** Compute `staleRun` in the `run` block and render a `.notice.notice-warn` inside
-`.plan-summary`, directly above Execute…, with a plain lead and the fixing control ("This
-plan was built from an older scan. Build a new plan.") wired to `plan.mutate()`. Handle the
-unknown case explicitly: when the query is pending or errored, say Reaper couldn't check.
-Drop the staleness wording from the history list so it lives in one place.
+### U-2 · The curated-lists off warning is factually wrong: every scan still refreshes the lists — **medium**
 
-### U-2 · The lean-keep discount is a bare number box beside loose "up to −" text — **medium**
+`frontend/src/components/Settings.tsx:704-705`
 
-`frontend/src/components/PolicyEditor.tsx:1256` · rule 40
+The warning says the protection lists stop updating and a title that joins one later
+won't be protected until a hand refresh. But every scan re-syncs the curated lists
+regardless of this job (`scan_runner.py:598` calls `sync_protection_lists`, which
+defaults `include_top_250=True`), and list membership is only ever consulted during a
+scan — which just refreshed it. Turning the job off removes essentially nothing for
+anyone who scans; the warning's claim of lost protection is false (rule 25).
 
-In `KeepRulesEditor`'s "Leans toward keeping" form, the discount is a raw
-`<input type="number">` with the unit outside it as loose muted text. Rule 40 forbids
-exactly this. The same commit converted the neighboring "full effect at" input in this very
-form to `FixedQuantity`, and the parallel control in `RemoveRulesEditor` (`:1012`) is already
-`FixedQuantity suffix="points"`, so the two halves of the same page disagree. (The input is
-nested in a `<label>`, so it does have an accessible name — but the name is "up to minus",
-which is meaningless.)
+**Fix.** Correct the warning ("Scans still refresh these lists on their own; this only
+affects the daily standalone refresh between scans."), or drop the off switch for this
+job.
 
-**Fix.** `<FixedQuantity value={lPoints} onChange={setLPoints} suffix="points off" min={1} max={100} width="narrow" ariaLabel="Points this rule takes off" />`,
-and reduce the loose text to "up to". For consistency make the summary row at `:1154` read
-`lowers the score, up to −{k.max_discount} points`, matching the `+{r.weight} points` the
-remove rows gained at `:921`.
+### U-3 · The show card's override chip claims "will be kept" even when a season's own effective reap wins — **low**
 
-### U-3 · Three two-option dropdowns survived the control-grammar pass — **medium**
+`frontend/src/components/ReviewQueue.tsx:1242`
 
-`frontend/src/components/PolicyEditor.tsx:1000`, `:1195`, `:1229` · rule 41
+The chip renders from the show's own decision. With a whole-show spare and one season
+carrying its own honored reap (the season key wins per `effective_override`), the
+card-level chip reads "Spared by hand · will be kept" while a season inside will be
+removed. The replaced aggregate returned null on mixed sets, so it never overclaimed
+this way. Lighting the *control* from `show_override` is correct (rule 50); the
+display chip need not make an unqualified whole-show claim.
 
-Rule 41 states a choice between two visible options is the shared `Segmented`, and that
-"hiding a binary inside a dropdown is never allowed". Three `<select>` elements hold exactly
-two options each: the condemn-rule boolean picker (`:1000`), the hard-keep boolean picker
-(`:1195`), and the lean-direction picker (`:1229`, "the more, the safer" / "the less, the
-safer"). The diff touched all three (adding `aria-label`) as part of the consistency pass and
-rebuilt the number input beside the third into a `FixedQuantity`, so the rows were reworked
-with the control type left on the old pattern.
+**Fix.** When any season's own decision opposes the show's, soften the chip (drop the
+"will be kept/removed" clause or append "except N seasons"), computed from
+`showSeasons`, which the card already holds.
 
-**Failure.** For the lean-direction picker specifically: `lDir` initializes to `"high_keeps"`,
-so an operator who never opens the dropdown saves that default without ever seeing that a
-direction choice exists. That is exactly what `Segmented.tsx`'s own header comment ("never
-for a binary the user should see whole") exists to prevent.
+### U-4 · Rule 45's deferred `.warn` → `.notice-warn` merge came due this range and was not done — **low**
 
-**Fix.** Replace all three with `Segmented`. Worth a separate look while in here:
-`BOOL_OPS = (Op.EQ,)` at `fields.py:69` means the comparison `<select>` beside a bool value
-renders a single-option dropdown that cannot be changed at all.
+`frontend/src/components/ScanBar.tsx:198`; `frontend/src/components/WhyPanel.tsx:235`
 
-### U-4 · The certificate warning is detached from the toggle that causes it — **low**
+Rule 45 defers the `.warn` banner merge "whenever the review UI is next touched." This
+range rebuilt the review UI across three commits and rewrote ScanBar into `ScanRow` —
+which converted its two error paragraphs to the shared notice classes but left the
+degraded-snapshot banner on the legacy `.warn` one block below. The trigger condition
+fired twice over and the debt survived.
 
-`frontend/src/components/PlexPanel.tsx:529` · rule 42
+**Fix.** Convert the degraded banner in ScanRow and WhyPanel's `.warn kept-notice` to
+`.notice.notice-warn`, then retire `.warn` from `index.css` (keep `.warn.danger` only
+where still consumed).
 
-Turning off "Check the server's certificate" raises a `.notice.notice-warn` that renders
-*after* the `</div>` closing `.set-rows` (`:527`), below the unrelated "Plex web address" row
-(`:498-526`), rather than beside the switch that produced it (`:478-496`). `.set-rows` is a
-bordered container, so the warning renders outside the box holding the control.
-`ServiceModal.tsx` renders the identical warning directly beneath its own certificate switch,
-so the same warning now has two placements.
+### U-5 · Schedule clock times are shown without a timezone and are actually server-container time — **low**
 
-**Fix.** Move the block inside the certificate `.set-row`, beneath its `.set-control`,
-matching `ServiceModal.tsx`. Since the row's `.help` already says "Turn this off only for a
-server you run yourself…", shorten the notice to the consequence alone: "Reaper will accept
-this server's certificate without checking who issued it."
+`frontend/src/components/Settings.tsx:721-738, 757-793`
 
-### U-5 · A timed-out Plex sign-in renders as gray status text, not a failure — **low**
+`CronTrigger.from_crontab` evaluates in the container's local timezone (commonly UTC
+in Docker) while the new UI renders prominent wall-clock copy ("Every night at 2 AM",
+"Default: Every day at 3:30 AM") with no qualifier. For an operator whose container
+runs UTC in a UTC-7 home, "2 AM" fires at 7 PM local, and the relative "next in 3 hr"
+line will visibly contradict the stated clock time. Pre-existing for the one scan
+preset; this range multiplies the clock-time surfaces.
 
-`frontend/src/components/PlexPanel.tsx:103` · rule 42
+**Fix.** Add one help line in the modal ("times are the server's clock"), or derive
+the rendered description from the trigger's actual next-run instant in the browser's
+timezone.
 
-`PlexPanel` deliberately splits `message` (info, `<p className="muted">`) from `plexError`
-(`.notice.notice-error`) precisely so failures do not read as status — its own comment at
-`:42-44` says so. `onTimedOut` writes into `message`, so a link attempt that never completed
-is announced in the same gray type and the same slot a successful "Linked to …" occupies,
-one line above `onFailed` which correctly uses `plexError`.
+### U-6 · On a schedule-load error the scan row says "Automatic scan: checking…" forever — **low**
 
-**Fix.** `setPlexError("Plex sign-in timed out. Try again.")` instead of `setMessage(...)`.
-`startLink` already clears both before each attempt, so no lingering-error concern.
+`frontend/src/components/Settings.tsx:795-799, 1104`
 
-### U-6 · The log filter offers two options that do the same thing — **low**
+`scanScheduleText(undefined)` returns the "checking…" line and `JobsPanel` passes
+`undefined` both while pending and on error, so a failed load leaves the row claiming
+to check indefinitely. The page-level error notice does render (rule 17's explicit
+error state exists), but the row's own line conflates loading with failure.
 
-`frontend/src/components/LogsPanel.tsx:128`
+**Fix.** Thread the error state into `scanScheduleText` ("Couldn't check the
+schedule.") or pass a tri-state instead of `ScheduledJob | undefined`.
 
-`DEBUG` is the lowest rank in `LEVEL_RANK` (10) and unknown levels fall back to 20, so every
-line passes the `>= LEVEL_RANK["DEBUG"]` test. "Debug and up" filters nothing, which is
-identical to "All levels" — two adjacent options in one dropdown with different labels and
-identical behavior.
+### U-7 · Unmeasured condemned titles display as "Reclaimable · 0 B" in Scales — **low**
 
-**Fix.** Drop the `DEBUG` option and keep "All levels" as the no-filter choice, or relabel so
-each names a distinct floor ("All levels", "Info and up", "Warnings and up", "Errors only").
+`src/reaper/services/fairness.py:266-270`; `frontend/src/components/Fairness.tsx:61`
 
-### U-7 · The show-status chip's accessible name is on an element that cannot take one — **low**
+`_load_candidates` coerces a missing size to 0 (the comment owns the tradeoff, so rule
+7 is satisfied), but the chip then renders a literal "Reclaimable · 0 B" for a title
+the arr would not size, and the person's reclaimable bytes silently under-report. The
+breakdown page carries unmeasured items as an explicit count; Scales shows a false
+zero instead.
 
-`frontend/src/components/ReviewQueue.tsx:667`
+**Fix.** Carry `size_bytes: int | None` through `ReclaimableTitle`/`ReclaimableTitleOut`
+and render "size unknown" on the chip when null (totals keep summing measured only).
 
-`ShowStatusChip` renders a `<span>` with no role and puts the disambiguating sentence in
-`aria-label`. ARIA prohibits naming elements with an implicit generic role, so assistive tech
-falls back to the visible text and announces the bare "Ended" / "Status unknown" that the
-code's own comment identifies as ambiguous. Used at three call sites (`ReviewQueue.tsx:1067`,
-`WhyPanel.tsx:749`, `ShowPanel.tsx:77`). A `<span>` is not focusable, so the route is browse
-mode, not Tab.
+### U-8 · Requester cards are keyed by display name, which is not unique — **low**
 
-**Fix.** Give it a role that supports naming (`role="img"` with the `aria-label`, or
-`role="note"`), or drop `aria-label` and render the long form in a visually-hidden span
-alongside. Keep `title` for the mouse tooltip.
+`frontend/src/components/Fairness.tsx:264-271`
 
-### U-8 · Policy help text says "*arr", which no operator says — **low**
+`key={row.name}`, where the name falls back through display name and username; two
+people can share one, producing duplicate sibling keys and wrong reconciliation of the
+cards' open/closed state (rule 19). `RequesterRowOut` currently carries no id to key
+on.
 
-`frontend/src/components/policyMeta.ts:50` · rule 21
+**Fix.** Add the stable per-user id to `RequesterRowOut` (pairs with B-9) and key on
+it.
 
-The `unmanaged` protection's help string, new in this diff's plain-language pass, uses the
-community shorthand "*arr". Every other entry in the same file spells the services out. The
-string is live: `GateRow` renders `meta.help` for every gate except `whitelisted` and
-`rating_floor` (`PolicyEditor.tsx:1792`).
+### U-9 · "across 1 people" in the Scales summary strip — **low**
 
-**Fix.** "If Sonarr or Radarr doesn't own the file, Reaper has no safe way to remove it."
+`frontend/src/components/Fairness.tsx:237`
+
+No singular form; a one-requester install reads "Requests across 1 people", and the
+component test pins the ungrammatical string (rule 21).
+
+**Fix.** Pluralize ("1 person" / "N people") and update the test.
+
+### U-10 · The non-clickable `.media-chip.static` still lights the accent hover — **low**
+
+`frontend/src/index.css:3130-3135` (and the `.mc-go` rule at `:3170`)
+
+`.media-chip:hover:not(:disabled)` outranks the global button hover, but the static
+variant is a `<span>`, which never matches `:disabled` — so a chip with nothing to
+open gets the accent border and wash on hover while `cursor: default` says it does
+nothing, contradicting the file's own rule stated 150 lines up ("hover only promises
+the accent where there is something to open"). The branch is defensive, so the
+contradiction surfaces exactly when backend data drifts.
+
+**Fix.** Scope the hover to real actions: `.media-chip:not(.static):hover:not(:disabled)`.
+
+### U-11 · Cap abort copy was reworded only for the two per-run messages — **low**
+
+`src/reaper/services/executor.py:541, 848, 855`
+
+The per-run cap messages were rewritten to plain language, but the unmeasured message
+still says "aborted, not trimmed: which of them gets deleted must never come down to
+sort order" and both rolling-cap messages still say "The run is aborted, not
+truncated" — the jargon phrasing rule 21 targets and this range deliberately removed
+elsewhere (tests were even updated away from asserting the old phrase). The rolling
+messages also do not mention the caps switch the per-run ones now point to, though the
+same switch governs them.
+
+**Fix.** Reword the rolling-cap and unmeasured aborts in the same voice ("It stops
+rather than deleting just part. Wait for the window to pass, raise the cap, or turn
+limits off in Policy, under Pace and limits.").
 
 ---
 
 ## 8. Improvements
 
-### I-1 · The ingest side of the NULL `watched_status` fix has no test — **medium**
+### I-1 · No test pins that caps-off skips the rolling 30-day budget or the byte caps — **low**
 
-`src/reaper/services/history_sync.py:296`
+`tests/test_reap_loop.py:483`
 
-`a2120c3` exists so a completion Tautulli never reported is stored as NULL rather than `0.0`,
-because the sequential guard reads `watched_status = 1` as completed and a fabricated `0.0`
-makes a viewer look further behind than they are. `_float_or_none` is the only place NULL is
-ever written in production, and it has no test — `tests/test_history_sync.py` is untouched by
-the entire diff. Every test exercising the NULL path inserts rows with raw SQL and bypasses
-`sync`, so they prove the *query* handles NULL while proving nothing about whether one is
-ever produced.
+`test_caps_off_lets_a_run_over_the_cap_proceed` exercises only the per-run item cap;
+nothing pins the `caps_enabled` guard in `_check_rolling_caps` (`executor.py:839`) or
+the per-run byte cap under the switch. A future refactor could silently regress the
+rolling half of the switch in either direction without a test failing.
 
-**Failure.** Revert line 296 to `float(row.get("watched_status") or 0)` and the suite stays
-fully green, while in production `max_unknown` is always NULL, the sequential guard parks the
-viewer on their last confirmed episode, and the season they are about to watch loses its
-protection.
+**Fix.** Add one executor test with caps off and a plan exceeding the 30-day and
+per-run byte caps, asserting the run completes.
 
-**Fix.** Drive `sync` with rows whose payload omits `watched_status` and one where it is `""`;
-assert the stored column is NULL, and assert a genuine `0.0` still round-trips as `0.0` so
-the fix is pinned in both directions. Add direct `_float_or_none` unit cases.
+### I-2 · Two new fail-closed branches in the season gather have no test — **low**
 
-### I-2 · The rescale test's `< 1.0` tolerance does not establish the claim the migration rests on — **low**
+`tests/test_season_scan.py` (`TestGatherEndToEnd`)
 
-`tests/test_policy.py:496` · rule 31
+(1) `library_season_index` *raising* `PlexError` → warning plus whole-library per-show
+fallback (`season_scan.py:988-991`) — the fake's empty-dict path exercises different
+code than the except. (2) `keep_in_progress=False` skipping the entire Sonarr
+`episodes()` fan-out (`season_scan.py:1016`) — correct today only because
+`plan_series_prune` empties `seq_protected` when the guard is off, and nothing pins
+that coupling.
 
-`test_rescaling_preserves_every_score` is the only proof that `policy.rebalance()` cannot move
-a score, and it asserts `abs(before - after) < 1.0` over a single four-signal shape.
-Largest-remainder does not bound score drift below one point: each weight's delta is bounded
-by 1, but the deltas do not cancel in the score, since
-`score' - score = Σ (w'_i - w_i·100/T)·fill_i`, so positive deltas can land on filled signals
-and negative ones on empty signals.
+**Fix.** Add a gather test whose fake Plex raises from `library_season_index` and
+asserts seasons still resolve via the fallback, and one asserting `episodes()` is
+never called when the guard is off. (Both also become the natural home for B-4's
+regression tests.)
 
-**Failure.** No exotic fixture needed. A four-signal legacy policy with weights `(1, 1, 1, 5)`
-on the exact signal set the test itself uses rescales to `[13, 13, 12, 62]` and drifts past
-the assertion; a six-equal-weight policy rescaling to `17,17,17,17,16,16` drifts 1.33 points
-with pressure only on the 16s — past the boundary that decides condemn vs abstain.
+### I-3 · Two comments made stale by this range's own changes — **low**
 
-**Fix.** Make it a property test over drawn weight vectors, varying the *count* of signals,
-and assert what matters: `decide_verdict` is unchanged, or `round(before) == round(after)` at
-the shipped thresholds. When a counterexample falls out, either correct
-`policy.rebalance`'s docstring claim that "largest-remainder keeps that under a point", or
-allocate remainder points to the largest weights so the residual lands where fill is
-likeliest.
+`src/reaper/services/snapshot.py:414-416`; `src/reaper/services/season_scan.py:22-24`
 
-### I-3 · The show-status rollup test does not pin order-independence — **low**
+The first justifies the single `history_sync.state` read with "each re-runs the schema
+check inside a write transaction" — no longer true now that the common path is a read
+connection (the choice is still right; the stated reason is not). The second still
+claims resolution "bounds the per-show Plex calls to the shows that actually have
+something removable" — the new sweep reads every season of every show in the allowed
+sections; only the fallback and the Sonarr fan-out remain bounded (rule 24
+discipline).
 
-`tests/test_show_status.py:223`
+**Fix.** Reword both to match the new behavior.
 
-The test says the rollup "must skip [the empty row] rather than let row order blank a status
-the group plainly has", but the fixture puts the season carrying `ended` **first** and the
-null second. A naive `seasons[0].show_status` implementation passes. The assertion on the
-seasons array order also locks that ordering in, so the test cannot be strengthened by
-chance. `routes.py:875` is correct as shipped; this is coverage, not a defect.
+### I-4 · Spelling and grammar slips in new comments — **low**
 
-**Fix.** Add a fourth show whose first season (by the order `/api/groups` returns) carries
-`show_status=None` and whose later season carries `ended`, asserting the group still reports
-`ended`. Keep the existing show as the both-orders case.
+`frontend/src/components/Settings.tsx:952` ("greys" → "grays");
+`frontend/src/index.css:1054, 5576` ("centerd" → "centered", twice — introduced by the
+Americanization sweep itself); `src/reaper/engine/policy.py:675` ("Keep validating
+them here would reject" → "Keeping the validation here would reject").
 
-### I-4 · `_OBSERVED_FIELDS` claims to be exhaustive over the score lane but is not — **low**
-
-`tests/test_engine_invariants.py:421` · rule 7
-
-The comment says "Every `Observation` field on `Facts` that the score lane can read", and the
-property tests iterate exactly this tuple to substitute `Unknown`. It omits `genres`, which is
-condemn-lane authorable (`fields.BY_KEY` key `genre`). Harmless today because `_CUSTOM_CONDEMN`
-and `_KEEPS` do not reference it, but the comment tells the next author the sweep is exhaustive
-when it is not.
-
-**Fix.** Add `"genres"` and derive the tuple from `fields.BY_KEY`'s fact attribute names rather
-than hand-listing, so a new authorable field cannot leave the sweep behind. Do **not** add
-`others_watching` (no `FieldSpec` at all; gate-lane only, via `OthersWatchingGate`) or
-`in_curated_list` — the original suggestion was wrong on both. If a field must stay out, name it
-in the comment with the reason.
-
-### I-5 · The new bulk override and select-everything paths have no tests — **low**
-
-`frontend/src/components/ReviewQueue.tsx:1242`
-
-`7fd871b` added a bulk override mutation (`allSettled` + failure reconciliation + selection
-retention) and a select-everything mutation that must fail closed when paging is incomplete.
-Both write the override that decides whether an item is reaped or spared. Neither has a test;
-`useOverrideMutations.ts`, extracted in the same batch and shared with the why panel, is also
-untested. The code satisfies rule 20 today — this is regression exposure only.
-
-**Failure.** Someone changes `onSuccess` to `setSelected(new Set())` unconditionally (a natural
-cleanup). Three of fifty override writes failed; those three silently drop out of the selection
-and the next plan is built from a selection the operator believes includes them. Nothing fails.
-Equally, dropping the `if (result.hasNextPage || result.isError || !result.data) throw` guard at
-`:1282` makes "select everything matching" silently mean "select the first page".
-
-**Fix.** `frontend/src/components/ReviewQueue.test.tsx` mocking `../api` the way
-`SeasonList.test.tsx` does, covering: a bulk spare where one of three `api.override` calls
-rejects (assert `refresh()` ran, the failed key alone stays selected, the notice names the
-count); `selectEverything` stopping short of the last page (assert selection untouched, error
-rendered); and acting disabled while pending. The test must first enter select mode via the
-toggle at `:1602`, since the bulk bar at `:1737` renders only then.
+**Fix.** The three one-word edits.
 
 ---
 
 ## Suggested fix order
 
-1. **B-1 + B-2** together (one ordering/eligibility fix in `identity.py`, plus the docstring)
-   — the only findings that change what gets deleted.
-2. **B-3** (watch-cache shape) — an upgraded install currently crashes its scan on the first
-   Tautulli row with no `watched_status`.
-3. **B-5** (unconfirmed size fails closed in the executor + the cap paths + three comments).
-4. **B-4 + P-1** together (`synced_at` instead of `latest()`, one mirror read).
-5. **B-6 + B-7** (the policy editor's two dead ends), then **B-9** (corrupt body).
-6. **H-1** and **I-1** (replace the source-grep test; pin the NULL ingest) — cheap, and both
-   guard fixes already landed.
-7. **U-1, U-2, U-3** (the control-grammar misses), then the remaining lows by file.
+1. **The three highs.** B-1 (Scales tmdb namespace), B-2 + B-10 together (caps-off
+   honesty in the editor: intent band, simulator, presets), B-3 + U-2 + PF-1 together
+   (the jobs page's contract with reality: ratings catch-up vs the off switch, both
+   off-warnings, per-job presets or the freshness short-circuit).
+2. **The deletion-adjacent mediums.** B-4 (sweep pagination, plus I-2's tests), B-5 +
+   B-13 + PR-3 together (one pass over `remove_collection_members`: spelling-grouped
+   removal, key-addressed section, lock decision), B-6 + PR-5 (one pass over
+   `ensure_schema`), PR-1 (profile fallback surfacing), PR-2 + B-8 together (the
+   breakdown's held reaps and unmeasured lines).
+3. **The queue's honesty and keyboard.** B-7 (one guard in `OverrideControls`), U-1,
+   U-3, R-6, H-1.
+4. **Scales cleanups in one pass.** B-9 + U-8 (seerr-id keying and card keys), B-14,
+   U-7, U-9.
+5. **The rest of the lows** grouped by file: Settings.tsx (B-12, U-5, U-6, R-5),
+   frontend shell (B-11, R-1, R-2, R-3, R-4, U-4, U-10, PR-6), copy and comments
+   (U-11, I-3, I-4, PR-4's comment decision), and I-1's test.
 
 ---
 
 ## Agent rules
 
-Rules for the next agent working in this repo. These are constraints, not suggestions; each
-one is derived from a confirmed finding above. They extend CLAUDE.md's numbered rules, and
-where one sharpens an existing rule the more specific obligation governs.
+Direct constraints for the next coding agent, derived from what this review actually
+found. They extend CLAUDE.md's rules 1–51; where one sharpens an existing rule, the
+sharper obligation governs.
 
-1. **A corroborator that can return a group must run before one that returns a single
-   match** — and reordering any step in an identity/binding ladder requires re-checking
-   every case the earlier order served, including the case whose only evidence is absent for
-   one media type (a show has no size). Adding a step to a ladder means testing every prior
-   branch that step now preempts.
-2. **A path-similarity comparison never consumes either side's mount root.** Shared-suffix
-   depth is evidence only below each side's root; a match on a container root name is a
-   coincidence, not identity.
-3. **A schema-shape check compares the full column shape** — `(name, type, notnull)` at
-   minimum — never names alone. A migration or rebuild triggered by a nullability, type, or
-   default change must be tested against the *actual* legacy shape a real upgraded install
-   carries, not a convenient older one.
-4. **Never re-collapse an `Unknown` to a sentinel on the way to storage.** If the fact layer
-   models "not reported" as `None`, the column it lands in is nullable and every consumer
-   handles NULL. `x or 0` on a size, count, age, or score is a blocker.
-5. **A count, cap, or byte total that backs a confirmation phrase is computed only from
-   confirmed values.** An item with no confirmed size is excluded from the plan or blocks
-   it; it is never counted as zero. (Sharpens rules 5 and 30.)
-6. **An interlock's guarantee is proven by its arithmetic before it is written down.**
-   Before a comment claims a downstream check catches a case, substitute the values and
-   verify the branch actually fires. `_grew_materially(0, live)` does not flag growth below
-   the drift floor. (Sharpens rules 7 and 24.)
-7. **A staleness or liveness check reads the signal for the thing it names.** "The ingest
-   ran" is `synced_at`; "somebody watched something" is `MAX(watched_at)`. Degrading a scan
-   on the wrong one makes a quiet library indistinguishable from a broken one.
-8. **A function whose docstring says it must not raise catches every exception its own body
-   can produce** — including the ones outside the `try`, and including `AttributeError` from
-   a shape that is valid JSON but not an object. Validate shape with `isinstance` before
-   calling methods on decoded data.
-9. **A recovery notice renders on the load it explains.** A warning nested inside a
-   conditional container (a savebar, a dirty gate, a disclosure) is unreachable in exactly
-   the state it exists for. Render safety and recovery notices unconditionally, and include
-   every recovery flag in whatever gate offers the fix. (Sharpens rule 36.)
-10. **Every operator-visible copy string is rendered through its actual display path before
-    it ships.** A backend string that reaches a frontend rewriter (`compactSpan`,
-    truncation, prefix-stripping, sentence interpolation) is tested end to end. A regex that
-    rewrites units matches only a unit that follows a number.
-11. **A string-prefix parser handles every lane that can produce the string.** Stripping a
-    protect-lane prefix from an abstain-lane chip is a category error; enumerate the lanes.
-    (Sharpens rule 23.)
-12. **Two modules never hold the same literal.** A cross-module comparison by string equality
-    imports one constant from one place. A comment asking another file to "stay in step" is
-    the bug, not the mitigation.
-13. **A test never asserts on source text.** No `Path(...).read_text()` grep for a code
-    construct, no `hasattr` as a stand-in for behavior. Drive the real function and assert
-    the observable outcome. Anchor any path a test does read on `Path(__file__).parent`.
-14. **A behavior-changing commit lands with a test that fails when it is reverted.** Before
-    committing, revert the change locally and confirm the suite goes red. If it stays green,
-    the test does not pin the behavior.
-15. **A tolerance in a test states the property, not a convenient bound.** `abs(a - b) < 1.0`
-    over one fixture is not a preservation proof; assert the decision (`decide_verdict`) is
-    unchanged, and vary the dimension the property actually depends on (the *count* of
-    signals, not just their sizes).
-16. **A fixture that pins order-independence contains the adverse order.** If the naive
-    implementation passes the fixture, the fixture proves nothing.
-17. **A tuple or list documented as exhaustive is derived, not hand-written.** Enumerate from
-    the source of truth (`fields.BY_KEY`) so a new field cannot silently leave the sweep
-    behind; if an entry is deliberately excluded, name it and say why.
-18. **A regenerated fixture is diffed for behavior change, not just regenerated.** A fixture
-    rebuilt from the code blesses whatever the code does; state in the commit which values
-    moved and why.
-19. **Deleting a call site deletes the callee.** Dead parsers, dead helpers, and their
-    imports and lookup tables go in the same commit — especially a parser of operator copy,
-    which is what the change was removing.
-20. **A shared hook or shell that claims to be the single implementation is the single
-    implementation.** Adding one means migrating every existing copy in the same change, or
-    naming the exception in its header comment. A cache-invalidation list that says "written
-    once, here" includes every query key the mutation's server side touches.
-21. **A number with a unit is `QuantityInput` or `FixedQuantity`; a visible binary is
-    `Segmented`.** When a consistency pass touches a row, it converts the row's controls, not
-    just its `aria-label`. Before closing such a pass, grep the changed files for
-    `<input type="number"` and for every `<select>` with exactly two `<option>` children.
-    (Enforces rules 40 and 41.)
-22. **A warning renders inside the container holding the control it is about.** Check the
-    closing tags, not just the source order; a notice after `</div>` is in a different box on
-    screen. (Enforces rule 42.)
-23. **An accessible name goes on an element whose role can take one.** `aria-label` on a
-    bare `<span>` or `<div>` is ignored; add a role or use a visually-hidden span.
-24. **A flow duplicated across two screens has the same affordances on both.** If one has a
-    fallback link, a cancel, and an error channel, so does the other — and a popup opened
-    after an `await` is assumed blocked, so the URL is always rendered as a link too.
-25. **Copy that names a mechanism is true in the current state.** "Retrying…" only when a
-    retry is scheduled; a remedy ("turn off the certificate check") only in the branch where
-    it is the right remedy, and never without naming what it costs. (Sharpens rules 21
-    and 25.)
-26. **Every option in a picker does something different from its neighbors.** If two values
-    produce identical output, one of them is deleted.
-27. **A dropdown-driven action that stages state must be reachable when its value is already
-    selected.** A sentinel option that is also the current value fires no `onChange` and
-    strands the operator.
-28. **Applying a preset produces a valid, savable draft.** If a validity rule spans two parts
-    of a document (built-in signals and custom rules), a preset resets or rescales both to
-    satisfy it — never one half, leaving the other to break the invariant.
-29. **A rendered comparison shows both sides at a precision that can distinguish them.** A
-    lossy formatter may render a measured value; the operator's own threshold is echoed back
-    in the units they typed it in.
-30. **A comment or docstring displaced by an insertion is moved with the code it documents.**
-    After inserting a component or function between a doc block and its subject, re-read both
-    blocks; a name that stops matching its arguments is renamed in the same change.
+1. **Every tmdb id key is namespaced by media kind.** A bare integer tmdb key in any
+   map, index, or lookup is a blocker; the key carries movie-vs-TV alongside the
+   number, on both the write and the read side (sharpens rules 6/29 — B-1).
+2. **A rendered limit checks its enable switch.** Any UI string, summary clause, or
+   simulator note that states a cap, budget, or bound must branch on the setting that
+   enables enforcement; rendering the stored figure while the switch is off is a
+   blocker (sharpens rules 7/25 — B-2).
+3. **A preset that promises enforcement stages the enabling switch.** Applying a
+   preset must set every switch its help text implies, not just the values behind the
+   switch (B-10).
+4. **A job's off switch governs every path that runs the job.** Startup catch-ups,
+   recovery paths, and other side entrances either honor the stored off value or the
+   off-warning copy explicitly names the exception. Off-warning copy states the real,
+   code-verified consequence of turning the job off — including degradation that
+   blocks runs — never a guessed softer one (B-3, U-2).
+5. **Pagination advances and terminates on the raw page count.** A defensive filter
+   that can shrink a page must either raise on anomaly or be kept out of the paging
+   math; and a total-size fallback must never default to the page size. A
+   complete-or-raise docstring is a contract: violating input raises, it never returns
+   a partial result (sharpens rule 27 — B-4).
+6. **Plex tag-style removals address the stored spelling and sections by key.**
+   Any label or collection removal groups items by the exact stored tag spelling
+   (casefold-matched, following `remove_label`) and resolves sections via
+   `sectionByID`, never by title (B-5, B-13).
+7. **A check-then-write re-reads inside the write transaction.** Splitting a state
+   check into a read connection is fine only if the write transaction re-reads the
+   state it acts on; DDL or destructive writes driven by pre-lock reads are a blocker
+   (B-6).
+8. **Multi-key JSON settings are updated per key or under a guarded merge.** A
+   read-modify-write of a whole settings dict across an await is a blocker (B-12).
+9. **Interactive children of a keyboard-handling row stop Enter/Space propagation.**
+   Any control nested inside a row or card that has its own Enter/Space handler either
+   stops propagation (the `SeasonStrip` guard is the model) or the container checks
+   `e.target === e.currentTarget`. Adding a control to a row without this check is a
+   blocker (B-7).
+10. **Prose about a removal consults `override_effective`.** Any note, chip, or
+    sentence that asserts an item "will be removed" or "will be kept" must branch on
+    the effective state, including held reaps and opposing season-level decisions
+    (extends rule 49 from color to wording — U-1, U-3).
+11. **Every number on the Reap page derives from the planner's exact set.** Headline,
+    ledger, and per-line counts consult the same branches the planner does — including
+    the unknown-size allowance via `useHoldsBackUnmeasured()` — and every stored
+    override state (held reaps included) appears in the ledger or is explicitly
+    summarized (sharpens rules 23/30 — B-8, PR-2).
+12. **Rows are keyed and aggregated by a stable server id, never a display name.**
+    If the schema lacks an id, add one in the same change; user-level roll-ups key on
+    the always-present per-user id, not an optional linked-account id (B-9, U-8).
+13. **Removing a surface removes its whole supply chain in the same change.** Route,
+    schemas, client method, props, query-key invalidations, and comments naming it —
+    grep for the query key and prop name before closing (R-1, R-2, R-3).
+14. **Silent recovery on operator-configured safety values is forbidden.** A fallback
+    that replaces saved profile/policy values must surface a flag the UI renders and
+    degrade the scan, following the `ActivePolicy` pattern; a log line alone is a
+    blocker (sharpens rule 2 — PR-1).
+15. **Server-defined lists render from the server response.** A hardcoded frontend
+    copy of a backend id list (jobs, phases, states) is a blocker when the server
+    already returns the list; fallback copy handles unknown ids (R-5).
+16. **Values coupled across TSX and CSS are derived from one declaration.** A width,
+    gap, or count that must agree between a component and a stylesheet lives in one
+    custom property both read, or both sites carry a cross-reference comment (H-1).
+17. **Generated assets ship with their generator.** A comment saying an asset is
+    generated must name a committed, runnable script, and a drift test covers every
+    generated artifact, not just one (PR-6; extends rule 24 to assets).
+18. **The icon link the app rewrites is declared last.** Static fallback icons precede
+    the dynamic one in `index.html`; adding an icon link after `#favicon` is a blocker
+    (B-11).
