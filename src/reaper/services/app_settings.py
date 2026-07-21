@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clock import utcnow
@@ -32,10 +33,13 @@ from reaper.db.models import AppSetting
 
 DESTRUCTIVE_KEY = "destructive_enabled"
 SCAN_SCHEDULE_KEY = "scan_schedule"
-#: Per-job cron overrides for the background upkeep jobs, ``{job_id: cron|null}``. A job
-#: present with null is turned off; absent falls back to the code default. See
+#: Per-job cron override for one background upkeep job, stored one row PER JOB under
+#: ``maintenance_schedule:{job_id}``. One row per job (rather than a single ``{job_id: cron}``
+#: blob) so saving two jobs at once cannot last-write-wins each other's override -- the old
+#: read-modify-write of a shared dict raced across two saves (B-12). A row present with a null
+#: value is turned off; no row falls back to the code default. See
 #: ``scheduler.DEFAULT_MAINTENANCE_CRONS`` and ``get_maintenance_schedules``.
-MAINTENANCE_SCHEDULES_KEY = "maintenance_schedules"
+MAINTENANCE_SCHEDULE_PREFIX = "maintenance_schedule:"
 #: The Discord webhook, stored Fernet-encrypted exactly like an instance API key -- its
 #: token lives in the URL path, so the whole URL is a credential.
 DISCORD_WEBHOOK_KEY = "discord_webhook_enc"
@@ -302,18 +306,33 @@ async def get_maintenance_schedules(session: AsyncSession) -> dict[str, str | No
     turned off; absent falls back to the built-in default (see
     ``scheduler.DEFAULT_MAINTENANCE_CRONS``). The present-with-null case is deliberately
     distinct from absent, so "off" survives a default-time change in the code.
+
+    Read from the per-job rows (one ``maintenance_schedule:{job_id}`` each), so a job that
+    was explicitly turned off is present with ``None`` and one never touched is simply absent.
     """
-    value = await _get(session, MAINTENANCE_SCHEDULES_KEY, default={})
-    if not isinstance(value, dict):
-        return {}
-    return {str(k): (str(v) if v else None) for k, v in value.items()}
+    rows = (
+        (
+            await session.execute(
+                select(AppSetting).where(AppSetting.key.startswith(MAINTENANCE_SCHEDULE_PREFIX))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    out: dict[str, str | None] = {}
+    for row in rows:
+        job_id = row.key[len(MAINTENANCE_SCHEDULE_PREFIX) :]
+        value = json.loads(row.value_json)
+        out[job_id] = str(value) if value else None
+    return out
 
 
 async def set_maintenance_schedule(session: AsyncSession, job_id: str, cron: str | None) -> None:
-    """Store one upkeep job's schedule. ``None`` turns it off (stored explicitly)."""
-    current = await get_maintenance_schedules(session)
-    current[job_id] = cron or None
-    await _set(session, MAINTENANCE_SCHEDULES_KEY, current)
+    """Store one upkeep job's schedule. ``None`` turns it off (stored explicitly).
+
+    Writes only this job's own row, so a concurrent save of a *different* job cannot clobber
+    it -- the fix for the whole-dict read-modify-write that raced (B-12)."""
+    await _set(session, f"{MAINTENANCE_SCHEDULE_PREFIX}{job_id}", cron or None)
 
 
 # --- Discord webhook -------------------------------------------------------

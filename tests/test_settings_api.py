@@ -441,6 +441,20 @@ class TestSchedule:
         resp = client.put("/api/settings/jobs/not_a_job/schedule", json={"cron": "0 6 * * *"})
         assert resp.status_code == 404
 
+    def test_saving_one_upkeep_job_leaves_the_others_untouched(self, client: TestClient) -> None:
+        """Each job's schedule is its own stored row, so saving one never drops another. The
+        old shared-dict read-modify-write could last-write-wins a concurrent save away (B-12)."""
+        client.put("/api/settings/jobs/refresh_ratings/schedule", json={"cron": "0 6 * * *"})
+        client.put("/api/settings/jobs/refresh_curated_lists/schedule", json={"cron": None})
+        resp = client.put(
+            "/api/settings/jobs/full_history_sweep/schedule", json={"cron": "0 7 * * *"}
+        )
+        by_id = {j["id"]: j for j in resp.json()["jobs"]}
+        # All three overrides survive, each in its own row.
+        assert by_id["refresh_ratings"]["cron"] == "0 6 * * *"
+        assert by_id["refresh_curated_lists"]["cron"] is None
+        assert by_id["full_history_sweep"]["cron"] == "0 7 * * *"
+
 
 class TestRunJob:
     def test_a_known_maintenance_job_can_be_run_now(self, client: TestClient) -> None:

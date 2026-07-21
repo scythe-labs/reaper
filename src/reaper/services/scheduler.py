@@ -25,6 +25,7 @@ first ratings load can take a while -- never stacks a second copy on top of itse
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import structlog
@@ -65,8 +66,26 @@ MAINTENANCE_JOB_IDS: tuple[str, ...] = tuple(DEFAULT_MAINTENANCE_CRONS)
 SCHEDULABLE_JOB_IDS: tuple[str, ...] = (SCAN_JOB_ID, *MAINTENANCE_JOB_IDS)
 
 
+#: Skip a scheduled ratings refresh when the dataset was synced this recently. IMDb
+#: publishes the ratings dataset once a day, so a re-download inside a day fetches identical
+#: bytes: this is what makes an aggressive schedule (the shared presets go down to hourly)
+#: harmless -- roughly one download a day whatever the cron -- rather than 24 full downloads
+#: for no new data. A day-apart schedule is always older than this, so it always runs.
+RATINGS_MIN_REFRESH_INTERVAL = timedelta(hours=20)
+
+
 async def refresh_ratings(cache_engine: AsyncEngine, data_dir: Path) -> None:
-    """Download and load the IMDb ratings dataset. Idempotent; safe to run any time."""
+    """Download and load the IMDb ratings dataset. Idempotent; safe to run any time.
+
+    Short-circuits when the dataset was refreshed within ``RATINGS_MIN_REFRESH_INTERVAL``, so
+    an aggressive schedule cannot re-pull the same daily-published data on repeat. The startup
+    catch-up gates on the 14-day staleness itself, so a genuinely stale dataset (which is far
+    older than the window) still refreshes there.
+    """
+    state = await ImdbRatings(cache_engine).state()
+    if state.synced_at is not None and utcnow() - state.synced_at < RATINGS_MIN_REFRESH_INTERVAL:
+        log.info("scheduler.ratings_fresh_skip", synced_at=state.synced_at.isoformat())
+        return
     try:
         rows = await imdb_dataset.refresh(cache_engine, data_dir)
         log.info("scheduler.ratings_refreshed", rows=rows)

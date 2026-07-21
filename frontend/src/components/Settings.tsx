@@ -673,7 +673,6 @@ function AboutPanel() {
 // --- Jobs ------------------------------------------------------------------
 
 const SCAN_ID = "scheduled_scan";
-const MAINTENANCE_IDS = ["refresh_ratings", "refresh_curated_lists", "full_history_sweep"];
 
 interface JobMeta {
   title: string;
@@ -696,13 +695,13 @@ const JOB_META: Record<string, JobMeta> = {
     title: "Refresh IMDb ratings",
     desc: "Downloads the latest IMDb ratings so scores use current numbers.",
     offWarning:
-      "With this off, scores keep using the ratings Reaper already has, and they slowly go out of date.",
+      "With this off, ratings won't refresh on a schedule. Reaper still refreshes them once at startup if they're over two weeks old, because past that a scan comes back incomplete and can't remove anything until they're refreshed.",
   },
   refresh_curated_lists: {
     title: "Refresh curated lists",
     desc: "Re-pulls the protection lists Reaper ships with, like the IMDb Top 250, so nothing on them gets flagged.",
     offWarning:
-      "With this off, the curated protection lists stop updating. A title that joins one later won't be protected until you refresh by hand.",
+      "This only affects the standalone daily refresh. Every scan already re-pulls these lists on its own, and they're only used during a scan, so turning this off changes little for anyone who scans.",
   },
   full_history_sweep: {
     title: "Full watch-history update",
@@ -792,7 +791,10 @@ function describeCron(cron: string): string {
   return `Custom (${cron})`;
 }
 
-function scanScheduleText(job: ScheduledJob | undefined): string {
+function scanScheduleText(job: ScheduledJob | undefined, failed: boolean): string {
+  // A failed load is not "still checking": say so, so the row doesn't claim to be checking
+  // forever after the schedule query errored (U-6).
+  if (failed) return "Couldn't check the schedule.";
   if (!job) return "Automatic scan: checking…";
   if (job.cron === null) return "Automatic scan is off. It runs when you ask.";
   return `Automatic scan: ${describeCron(job.cron)} · next ${whenText(job.next_run_at)}`;
@@ -857,6 +859,9 @@ function ScheduleModal({ job, onClose }: { job: ScheduledJob; onClose: () => voi
               Default: {describeCron(job.default_cron)}. You can Run now anytime.
             </span>
           )}
+          {/* The clock times above are the server's, not this browser's -- commonly UTC in a
+              Docker container. Said once so "2 AM" is not read as local time (U-5). */}
+          <span className="help">Times are your server's clock, often UTC in Docker.</span>
         </label>
 
         {choice === CUSTOM_VALUE && (
@@ -1101,15 +1106,19 @@ function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
           snapshot={snapshot}
           title={jobMeta(SCAN_ID).title}
           desc={jobMeta(SCAN_ID).desc}
-          scheduleText={scanScheduleText(scanJob)}
+          scheduleText={scanScheduleText(scanJob, schedule.isError)}
           onEdit={() => scanJob && setEditing(scanJob)}
           canEdit={!!scanJob}
         />
         <LeavingSoonRow onGoToPlex={onGoToPlex} />
-        {MAINTENANCE_IDS.map((id) => {
-          const job = jobsById.get(id);
-          return job ? <JobRow key={id} job={job} onEdit={() => setEditing(job)} /> : null;
-        })}
+        {/* Render the upkeep jobs from the server's own list (scan aside; it has its own
+            row), in its order, so a job added server-side appears here without a frontend
+            edit. jobMeta falls back to the raw id for a job with no copy yet. */}
+        {(schedule.data?.jobs ?? [])
+          .filter((job) => job.id !== SCAN_ID)
+          .map((job) => (
+            <JobRow key={job.id} job={job} onEdit={() => setEditing(job)} />
+          ))}
       </div>
 
       {schedule.isPending && <p className="muted">Loading the upkeep jobs…</p>}

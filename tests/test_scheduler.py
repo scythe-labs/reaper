@@ -10,11 +10,14 @@ is stale, skips the download when it is warm, and never deletes.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.session import create_engine, create_session_factory
@@ -91,6 +94,63 @@ class TestStartupCatchUp:
         await scheduler.catch_up_on_startup(cache_engine, tmp_path)
 
         assert called == []  # warm dataset, no download
+
+
+async def _seed_synced(engine: AsyncEngine, *, hours_ago: float) -> None:
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS imdb_rating "
+                "(tconst TEXT PRIMARY KEY, average_rating REAL, num_votes INTEGER)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS imdb_dataset_sync "
+                "(id INTEGER PRIMARY KEY, synced_at INTEGER NOT NULL, row_count INTEGER NOT NULL)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT OR REPLACE INTO imdb_dataset_sync (id, synced_at, row_count) "
+                "VALUES (1, :ts, :n)"
+            ),
+            {"ts": int((utcnow() - timedelta(hours=hours_ago)).timestamp()), "n": 1_000_000},
+        )
+
+
+class TestRatingsRefreshFreshnessGuard:
+    """The scheduled refresh short-circuits when the dataset was pulled recently, so an
+    aggressive schedule (the shared presets go down to hourly) cannot re-download the same
+    daily-published data on repeat (PF-1)."""
+
+    async def test_a_recent_refresh_short_circuits_the_download(
+        self, cache_engine: AsyncEngine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        await _seed_synced(cache_engine, hours_ago=1)
+        called: list[str] = []
+
+        async def fake_download(engine: AsyncEngine, data_dir: Path) -> int:
+            called.append("downloaded")
+            return 0
+
+        monkeypatch.setattr(scheduler.imdb_dataset, "refresh", fake_download)
+        await scheduler.refresh_ratings(cache_engine, tmp_path)
+        assert called == []  # synced an hour ago, well within the window
+
+    async def test_a_stale_dataset_still_refreshes(
+        self, cache_engine: AsyncEngine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        await _seed_synced(cache_engine, hours_ago=25)
+        called: list[str] = []
+
+        async def fake_download(engine: AsyncEngine, data_dir: Path) -> int:
+            called.append("downloaded")
+            return 7
+
+        monkeypatch.setattr(scheduler.imdb_dataset, "refresh", fake_download)
+        await scheduler.refresh_ratings(cache_engine, tmp_path)
+        assert called == ["downloaded"]  # 25h old, past the 20h window
 
 
 class TestTheSchedulerIsUpkeepOnly:
