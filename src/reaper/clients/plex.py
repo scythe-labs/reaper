@@ -60,8 +60,13 @@ BATCH_SIZE = 100
 #: per item, not per page), bounded so a huge library never materialises in one response.
 SWEEP_PAGE_SIZE = 1000
 
-#: Rating keys per batched ``/library/metadata/{ids}`` read (show folder paths).
-METADATA_BATCH_SIZE = 100
+#: Rating keys per batched ``/library/metadata/{ids}`` read (Rating children + folder
+#: paths). The ids ride in the URL path, so this is bounded by URL length, not by response
+#: size: 400 keys is ~4 KB of comma-joined ids, comfortably under the usual ~8 KB limit,
+#: and cuts a 10k-item enrichment from ~100 serial round-trips to ~25. Raise with care --
+#: past a few thousand keys a server can answer 414, and the existing ``except`` maps that
+#: to ``PlexError`` (the snapshot then degrades), which is safe but not free.
+METADATA_BATCH_SIZE = 400
 
 
 def _parse_rating_children(el: Element) -> list[Rating]:
@@ -329,6 +334,22 @@ class PlexSection:
     kind: str
     """``"movie"`` or ``"show"`` -- Plex's own section types. Music and photo sections
     are never surfaced: Reaper has no business in them."""
+
+
+@dataclass(frozen=True)
+class PlexSeasonRow:
+    """One season as a listing sweep sees it: its number, its own rating key, its added-at.
+
+    Grouped under its show's rating key by :meth:`PlexClient.library_season_index`. The
+    added-at is carried raw as Plex reports it (an epoch string); ``from_epoch`` parses it.
+    The season-number ambiguity policy (a number that appears twice under one show is
+    dropped) is applied by the caller, in the one place it lives for both this sweep and the
+    per-show fallback.
+    """
+
+    season_index: int | None
+    rating_key: int
+    added_at: str | None
 
 
 #: Plex's numeric metadata types, for listing and collection creation. Only the two the
@@ -752,6 +773,88 @@ class PlexClient:
             return await asyncio.to_thread(read)
         except Exception as exc:
             raise PlexError(f"Could not list section {section_key}: {exc}") from exc
+
+    async def library_season_index(
+        self, *, allowed_sections: set[int] | None = None
+    ) -> dict[int, list[PlexSeasonRow]]:
+        """Every season in the show libraries, grouped under its show's rating key.
+
+        The bulk replacement for a per-show ``get_children_metadata`` call: one paged
+        ``type=3`` sweep of each show section yields every season at once, each carrying its
+        number (``index``), its own rating key, its show (``parentRatingKey``) and its own
+        added-at. Reading seasons this way is possible straight from Plex even though
+        Tautulli has no season-sweep command, and the keys are identical: both address the
+        same linked server, so the season key a sweep returns equals the one the per-show
+        call returns and joins the same watch history.
+
+        ``allowed_sections`` scopes the sweep to the show libraries the operator included in
+        scans, the SAME set the GUID sweep and the Tautulli spine filter on, so the season
+        keys join the same items those listed. Read RAW like the GUID sweep -- container XML,
+        no object walk, GETs only -- and under the same ``_sweep_lock``, since it shares the
+        one requests session with the movie and show GUID sweeps.
+
+        **Raises** ``PlexError`` on any failure rather than returning a partial map: a caller
+        reading a truncated season sweep as complete would let a real season's watch history
+        go unread and unprotect it. The caller falls back per show for anything absent here.
+        """
+        server = await self._connect()
+        code = _PLEX_TYPE_CODES["season"]
+
+        def read() -> dict[int, list[PlexSeasonRow]]:
+            out: dict[int, list[PlexSeasonRow]] = {}
+            for section in server.library.sections():
+                if section.type != "show":
+                    continue
+                # The same scope filter the GUID sweep uses (services.library_index), so the
+                # two never disagree about which sections were read.
+                if allowed_sections is not None and int(section.key) not in allowed_sections:
+                    continue
+                start = 0
+                while True:
+                    container = server.query(  # type: ignore[no-untyped-call]
+                        f"/library/sections/{section.key}/all?type={code}"
+                        f"&X-Plex-Container-Start={start}&X-Plex-Container-Size={SWEEP_PAGE_SIZE}"
+                    )
+                    elements = [el for el in container if el.get("ratingKey")]
+                    for el in elements:
+                        parent = el.get("parentRatingKey")
+                        if parent is None:
+                            # A season with no show cannot be attributed to one. Skipped, so
+                            # it abstains, never guessed onto the wrong show.
+                            continue
+                        try:
+                            show_rk = int(parent)
+                            rk = int(el.get("ratingKey") or 0)
+                        except (TypeError, ValueError):
+                            continue
+                        raw_index = el.get("index")
+                        try:
+                            index = int(raw_index) if raw_index is not None else None
+                        except (TypeError, ValueError):
+                            index = None
+                        out.setdefault(show_rk, []).append(
+                            PlexSeasonRow(
+                                season_index=index,
+                                rating_key=rk,
+                                added_at=el.get("addedAt"),
+                            )
+                        )
+                    start += len(elements)
+                    total = int(container.get("totalSize") or container.get("size") or 0)
+                    # Short page ends the section, total or no total -- never one signal alone.
+                    if (
+                        not elements
+                        or len(elements) < SWEEP_PAGE_SIZE
+                        or (total and start >= total)
+                    ):
+                        break
+            return out
+
+        async with self._sweep_lock:
+            try:
+                return await asyncio.to_thread(read)
+            except Exception as exc:
+                raise PlexError(f"Could not sweep Plex seasons: {exc}") from exc
 
     async def find_collection(self, section_key: int, name: str) -> int | None:
         """The rating key of the collection called ``name`` in one section, or ``None``.

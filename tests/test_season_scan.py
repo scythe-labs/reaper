@@ -23,6 +23,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from reaper.clients.plex import PlexSeasonRow
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.clock import utcnow
 from reaper.config import Settings
@@ -206,6 +207,28 @@ class TestResolveSeasonKeys:
         result = await season_scan.resolve_season_keys(client, 900)  # type: ignore[arg-type]
         assert 1 in result
         assert 2 not in result  # dropped, not bound to 201 or 202
+
+
+class TestSeasonsFromRows:
+    """The shared ambiguity policy the season sweep and the per-show fallback both run
+    through, so a duplicate season number is dropped the same way whichever path found it."""
+
+    def test_it_maps_number_to_key_and_parses_added_at(self) -> None:
+        rows = [(1, 101, "1000000"), (2, 202, None)]
+        out = season_scan.seasons_from_rows(rows)
+        assert out[1].rating_key == 101
+        assert out[1].added_at is not None
+        assert out[2].rating_key == 202
+        assert out[2].added_at is None  # absent added-at stays None, never a 1970 date
+
+    def test_a_duplicated_number_is_dropped(self) -> None:
+        out = season_scan.seasons_from_rows([(1, 101, None), (2, 201, None), (2, 202, None)])
+        assert 1 in out
+        assert 2 not in out  # the whole season abstains rather than bind to one duplicate
+
+    def test_rows_missing_index_or_key_are_skipped(self) -> None:
+        out = season_scan.seasons_from_rows([(None, 101, None), (3, None, None), (4, 404, None)])
+        assert set(out) == {4}
 
 
 # ---------------------------------------------------------------------------
@@ -785,16 +808,44 @@ def _source(client: Any) -> season_scan.SonarrSource:
     return season_scan.SonarrSource(client=client, instance_id=1, name="hd")
 
 
-class _FakePlexGuids:
-    """A stand-in for the plexapi GUID sweep: rating_key -> PlexItem."""
+def _season_rows(children: dict[int, list[dict[str, Any]]]) -> dict[int, list[PlexSeasonRow]]:
+    """Turn ``{show_key: [{media_index, rating_key, added_at?}]}`` into the sweep's shape,
+    so a test can describe seasons the same way for the sweep and the Tautulli fallback."""
+    return {
+        show: [
+            PlexSeasonRow(
+                season_index=c.get("media_index"),
+                rating_key=int(c["rating_key"]),
+                added_at=c.get("added_at"),
+            )
+            for c in rows
+        ]
+        for show, rows in children.items()
+    }
 
-    def __init__(self, items: dict[int, identity.PlexItem]) -> None:
+
+class _FakePlexGuids:
+    """A stand-in for the plexapi sweeps: the GUID index (rating_key -> PlexItem) and the
+    season index (show rating_key -> its season rows). ``seasons`` empty means the sweep
+    found nothing, which sends every show to the per-show Tautulli fallback."""
+
+    def __init__(
+        self,
+        items: dict[int, identity.PlexItem],
+        seasons: dict[int, list[PlexSeasonRow]] | None = None,
+    ) -> None:
         self._items = items
+        self._seasons = seasons or {}
 
     async def library_guid_index(
         self, *, section_type: str, allowed_sections: set[int] | None = None
     ) -> dict[int, identity.PlexItem]:
         return self._items
+
+    async def library_season_index(
+        self, *, allowed_sections: set[int] | None = None
+    ) -> dict[int, list[PlexSeasonRow]]:
+        return self._seasons
 
 
 class TestGatherEndToEnd:
@@ -842,6 +893,62 @@ class TestGatherEndToEnd:
         # The first and last-two seasons are protected, and emitted so the panel shows why.
         assert by_key["sonarr:1:42:1"].guard_result.outcome == PROTECT
         assert by_key["sonarr:1:42:5"].guard_result.outcome == PROTECT
+
+    async def test_a_show_the_sweep_missed_falls_back_to_the_per_show_read(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The season sweep is present but returns nothing for this show (a partial sweep, or
+        a show the sweep could not place). Resolution must fall back to the per-show Tautulli
+        read rather than lose the season -- the belt-and-suspenders that keeps S2 unable to
+        resolve LESS than the path it replaced."""
+        series = [
+            {
+                "id": 42,
+                "title": "Long Show",
+                "year": 2005,
+                "status": "ended",
+                "ended": True,
+                "imdbId": "tt0001",
+                "seasons": [_season_payload(n) for n in range(1, 6)],
+            }
+        ]
+        tautulli = _FakeTautulli(
+            shows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
+            children={900: [{"media_index": n, "rating_key": 900 + n} for n in range(1, 6)]},
+        )
+        # Plex is linked and matches the show, but the season sweep is empty for it.
+        plex = _FakePlexGuids(
+            {
+                900: identity.PlexItem(
+                    rating_key=900,
+                    title="Long Show",
+                    year=2005,
+                    added_at=None,
+                    ids=identity.ExternalIds.of(imdb="tt0001"),
+                )
+            },
+            seasons={},
+        )
+        _reasons, degrade = _degrade_sink()
+
+        judgments = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(_FakeSonarr(series))],
+            tautulli=tautulli,  # type: ignore[arg-type]
+            plex=plex,  # type: ignore[arg-type]
+            horizon=utcnow() - timedelta(days=4000),
+            active_rating_keys=set(),
+            activity_degraded=False,
+            keep_last_seasons=2,
+            keep_first_season=True,
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+        )
+
+        by_key = {j.media_key: j for j in judgments}
+        # Season 3 still resolves to its Plex key, via the per-show fallback.
+        assert by_key["sonarr:1:42:3"].plex_rating_key == 903
 
     async def test_a_show_duplicated_in_plex_narrows_by_its_folder_name(
         self, cache_engine: AsyncEngine
@@ -898,7 +1005,15 @@ class TestGatherEndToEnd:
                     file_basename="duplicated show (2160p)",
                     files=(identity.PlexFile("duplicated show (2160p)"),),
                 ),
-            }
+            },
+            # The season sweep carries both copies' seasons; the 4K copy (900) is the one the
+            # folder name binds this Sonarr to, so its keys are the ones that resolve.
+            seasons=_season_rows(
+                {
+                    800: [{"media_index": n, "rating_key": 800 + n} for n in range(1, 6)],
+                    900: [{"media_index": n, "rating_key": 900 + n} for n in range(1, 6)],
+                }
+            ),
         )
         _reasons, degrade = _degrade_sink()
 
@@ -993,7 +1108,10 @@ class TestGatherEndToEnd:
                         ),
                     ),
                 )
-            }
+            },
+            seasons=_season_rows(
+                {800: [{"media_index": n, "rating_key": 800 + n} for n in range(1, 6)]}
+            ),
         )
         _reasons, degrade = _degrade_sink()
 

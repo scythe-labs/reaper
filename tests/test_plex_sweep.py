@@ -201,3 +201,43 @@ class TestLibraryGuidIndex:
             (RatingSource.ROTTEN_TOMATOES_AUDIENCE, 8.8)
         ]
         assert len(server.queries) == 2  # one listing page + one metadata batch
+
+
+SEASON_LISTING = """
+<MediaContainer size="4" totalSize="4">
+  <Directory ratingKey="901" parentRatingKey="900" index="1" addedAt="1000000" title="Season 1"/>
+  <Directory ratingKey="902" parentRatingKey="900" index="2" addedAt="1000001" title="Season 2"/>
+  <Directory ratingKey="951" parentRatingKey="950" index="1" addedAt="1000002" title="Season 1"/>
+  <Directory ratingKey="999" index="1" title="Orphan season with no show"/>
+</MediaContainer>
+"""
+
+
+class TestLibrarySeasonIndex:
+    async def test_seasons_group_under_their_show_with_every_field(self) -> None:
+        server = _FakeServer(
+            [_FakeSection(1, "movie"), _FakeSection(2, "show")],
+            {"/library/sections/2/all": SEASON_LISTING},
+        )
+        out = await _client_with(server).library_season_index()
+        # Grouped by parentRatingKey; the orphan row (no show) is dropped, never guessed.
+        assert set(out) == {900, 950}
+        assert {r.season_index for r in out[900]} == {1, 2}
+        assert {r.rating_key for r in out[900]} == {901, 902}
+        first = next(r for r in out[900] if r.season_index == 1)
+        assert first.rating_key == 901
+        assert first.added_at == "1000000"  # raw epoch string; from_epoch parses it later
+        # Only the show section is swept -- the movie section (type=3 makes no sense there)
+        # is never queried.
+        assert all("/library/sections/2/all" in q for q in server.queries)
+        assert all("type=3" in q for q in server.queries)
+
+    async def test_allowed_sections_scopes_the_sweep(self) -> None:
+        server = _FakeServer(
+            [_FakeSection(2, "show"), _FakeSection(7, "show")],
+            {"/library/sections/2/all": SEASON_LISTING, "/library/sections/7/all": SEASON_LISTING},
+        )
+        out = await _client_with(server).library_season_index(allowed_sections={2})
+        # Section 7 is excluded, so only section 2 was read.
+        assert all("/library/sections/2/all" in q for q in server.queries)
+        assert set(out) == {900, 950}

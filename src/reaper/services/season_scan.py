@@ -25,29 +25,36 @@ Plex calls to the shows that actually have something removable.
 
 ## The season -> Plex rating key join (verify against a live server)
 
-There is no Tautulli sweep that lists seasons; ``get_library_media_info`` returns
-show-level rows only. So a show's seasons are resolved via one
-``get_children_metadata`` call per show (several shows in flight at once, bounded by
-``RESOLVE_CONCURRENCY``), and two field assumptions are load-bearing and must be
-checked against a real instance before the first live TV reap:
+Tautulli has no season-sweep command (``get_library_media_info`` returns show-level rows
+only), but Plex itself lists every season in a show library in a handful of paged
+``type=3`` reads. So a library's seasons are resolved in one sweep
+(``PlexClient.library_season_index``), grouped under each show's rating key, replacing a
+per-show ``get_children_metadata`` call each. A show the sweep does not return falls back
+to that per-show call, so the join can only ever match or beat the old coverage. The
+season keys are identical either way: both address the same linked server, so a swept
+season's rating key equals the per-show call's and joins the same watch history (verified
+live, key-for-key, before the sweep replaced the fan-out). These field assumptions are
+load-bearing:
 
 1. A show row from ``get_library_media_info`` carries ``rating_key`` and ``year``, and
    its ``title`` matches the Sonarr series title closely enough to join on.
-2. ``get_children_metadata`` on that show returns one child per season, each with
-   ``rating_key`` (the season's Plex key) and ``media_index`` (the season number).
-3. Each season child carries its OWN ``added_at`` -- the date that season's files
-   landed, not the show's -- so a season backfilled into an old show reads as recently
-   arrived. Dormancy is floored on this; a season whose ``added_at`` cannot be read is
+2. A ``type=3`` season row carries ``ratingKey`` (the season's Plex key), ``index`` (the
+   season number), and ``parentRatingKey`` (its show) -- and ``get_children_metadata``
+   returns the same ``rating_key`` and ``media_index`` for the fallback.
+3. Each season row carries its OWN ``added_at`` -- the date that season's files landed,
+   not the show's -- so a season backfilled into an old show reads as recently arrived.
+   Dormancy is floored on this; a season whose ``added_at`` cannot be read is
    Unknown-dormant and therefore abstains, never condemned off the show's old date.
 
-All three are the documented shapes, but "documented" is not "verified", so each is
-isolated in a pure function with a fail-closed default rather than trusted inline.
+All are the documented shapes, but "documented" is not "verified", so the ambiguity policy
+and each fact are isolated in pure functions with fail-closed defaults rather than trusted
+inline.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from itertools import batched
@@ -59,7 +66,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from reaper.aio import gather_reaped
 from reaper.clients.base import IntegrationError
-from reaper.clients.plex import PlexClient
+from reaper.clients.plex import PlexClient, PlexError, PlexSeasonRow
 from reaper.clients.sonarr_stats import SeasonStats, parse_season_stats, rank_seasons
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
@@ -95,14 +102,14 @@ def _rating_obs(value: float | None, looked_up: bool) -> Observation[int]:
     return Unknown(reason="no IMDb id to look up", source="imdb")
 
 
-#: How many shows to resolve against Tautulli / Sonarr at once. The single biggest cost in
-#: a TV scan is one Tautulli ``get_children_metadata`` plus one Sonarr ``episodes`` call per
-#: prunable show, and this bounds how many run concurrently. On a large library that is the
-#: longest serial-ish stretch of the whole scan, so this is set high enough to collapse
-#: hundreds of round trips into a handful of batches, and low enough that a modest
-#: self-hosted Tautulli/Sonarr sees a bounded burst, never a stampede. Every call is a
-#: read that fails closed (an unresolved show abstains; a failed episodes() falls back to
-#: season-level protection), so a timeout under load never over-condemns -- it only keeps.
+#: How many shows to read per-show against Tautulli / Sonarr at once. Season resolution is
+#: now one paged Plex ``type=3`` sweep of the show libraries, not a call per show, so this
+#: bounds only the Sonarr ``episodes()`` fan-out (episode-precise mid-binge) and the season
+#: sweep's per-show fallback (a show Plex did not return). Set high enough to collapse many
+#: round trips into a handful of batches, low enough that a modest self-hosted Tautulli/Sonarr
+#: sees a bounded burst, never a stampede. Every call is a read that fails closed (an
+#: unresolved show abstains; a failed episodes() falls back to season-level protection), so a
+#: timeout under load never over-condemns -- it only keeps.
 RESOLVE_CONCURRENCY = 8
 
 
@@ -545,32 +552,22 @@ async def build_tv_index(
     )
 
 
-async def resolve_season_keys(
-    tautulli: TautulliClient, show_rating_key: int
+def seasons_from_rows(
+    rows: Iterable[tuple[Any, Any, Any]],
 ) -> dict[int, PlexSeason]:
-    """season number -> its Plex season (rating key + own added-at), for one show.
+    """season number -> its Plex season, from ``(media_index, rating_key, added_at)`` rows.
 
-    Resolved from ``get_children_metadata``; a season we cannot find here simply has no
-    key, so its facts go Unknown and it abstains. Returns an empty map on any read
-    failure rather than raising -- one show that will not resolve is not a reason to
-    abort the whole scan, and an empty map is the fail-closed outcome (every season
-    abstains).
-
-    A season number that appears **twice** (a split or mis-scanned Plex library can emit
-    two "Season N" items) is dropped entirely rather than bound to whichever rating key
-    happened to sort last -- picking one risks reading an empty duplicate's history for a
-    season people actually watched. An ambiguous season, like an ambiguous show, abstains.
+    The one place the season-number ambiguity policy lives, shared by the Plex season sweep
+    and the per-show Tautulli fallback so the two can never drift. A season number that
+    appears **twice** (a split or mis-scanned library can emit two "Season N" items) is
+    dropped entirely rather than bound to whichever rating key sorts last -- picking one
+    risks reading an empty duplicate's history for a season people actually watched. An
+    ambiguous season, like an ambiguous show, abstains. ``from_epoch`` parses ``added_at``
+    whether it arrives as Tautulli's epoch int or Plex's epoch string.
     """
-    try:
-        children = await tautulli.children_metadata(show_rating_key)
-    except IntegrationError as exc:
-        log.warning("season_scan.children_failed", show=show_rating_key, error=str(exc))
-        return {}
     result: dict[int, PlexSeason] = {}
     ambiguous: set[int] = set()
-    for child in children:
-        index = child.get("media_index")
-        rk = child.get("rating_key")
+    for index, rk, added in rows:
         if index is None or rk is None:
             continue
         try:
@@ -583,8 +580,31 @@ async def resolve_season_keys(
             del result[n]  # a second "Season n" -> drop both and fail closed
             ambiguous.add(n)
             continue
-        result[n] = PlexSeason(rating_key=key, added_at=from_epoch(child.get("added_at")))
+        result[n] = PlexSeason(rating_key=key, added_at=from_epoch(added))
     return result
+
+
+async def resolve_season_keys(
+    tautulli: TautulliClient, show_rating_key: int
+) -> dict[int, PlexSeason]:
+    """season number -> its Plex season (rating key + own added-at), for one show.
+
+    The per-show fallback: the season sweep (``PlexClient.library_season_index``) resolves
+    every show in a handful of paged reads, and this covers only a show that sweep did not
+    return. Resolved from ``get_children_metadata``; a season we cannot find here simply has
+    no key, so its facts go Unknown and it abstains. Returns an empty map on any read failure
+    rather than raising -- one show that will not resolve is not a reason to abort the whole
+    scan, and an empty map is the fail-closed outcome (every season abstains).
+    """
+    try:
+        children = await tautulli.children_metadata(show_rating_key)
+    except IntegrationError as exc:
+        log.warning("season_scan.children_failed", show=show_rating_key, error=str(exc))
+        return {}
+    return seasons_from_rows(
+        (child.get("media_index"), child.get("rating_key"), child.get("added_at"))
+        for child in children
+    )
 
 
 async def season_watch_stats(
@@ -951,16 +971,52 @@ async def gather(
                 return
         item.season_final_episode = _final_episodes(episodes)
 
-    # One Tautulli read per DISTINCT matched show: two Sonarr series can bind to the same
-    # Plex show, and it is still one show's season list. One flat reaped fan-out, so an
-    # unexpected failure in any one read cancels and drains ALL the others -- nothing
-    # keeps polling Tautulli or Sonarr for a scan that is already dead.
+    # The DISTINCT matched shows: two Sonarr series can bind to the same Plex show, and it is
+    # still one show's season list.
     show_keys = list(
         dict.fromkeys(item.show_rating_key for item in work if item.show_rating_key is not None)
     )
-    season_coros = [_seasons_for(rk) for rk in show_keys]
-    fanned = await gather_reaped(*season_coros, *(_episodes_for(item) for item in work))
-    resolved_shows: dict[int, dict[int, PlexSeason]] = dict(fanned[: len(season_coros)])
+
+    # One paged Plex type=3 sweep of the show libraries resolves EVERY show's seasons at once,
+    # replacing a per-show Tautulli read each. The keys are identical -- both address the same
+    # linked server -- so a swept season joins the same watch history the per-show call would
+    # have. library_season_index never returns a partial map: it either sweeps completely or
+    # raises, and on a raise we fall back to the per-show path for every show rather than
+    # degrade, since the same data is reachable one show at a time (slower, never less safe).
+    swept: dict[int, list[PlexSeasonRow]] = {}
+    if plex is not None and show_keys:
+        try:
+            swept = await plex.library_season_index(allowed_sections=allowed_sections)
+        except PlexError as exc:
+            log.warning("season_scan.season_sweep_failed", error=str(exc))
+
+    resolved_shows: dict[int, dict[int, PlexSeason]] = {}
+    fallback_keys: list[int] = []
+    for rk in show_keys:
+        rows = swept.get(rk)
+        if rows is None:
+            # A show the sweep did not return (a whole-sweep failure leaves every show here; a
+            # healthy sweep leaves none). Resolved per show below, exactly as before S2.
+            fallback_keys.append(rk)
+        else:
+            resolved_shows[rk] = seasons_from_rows(
+                (r.season_index, r.rating_key, r.added_at) for r in rows
+            )
+    if fallback_keys:
+        log.info("season_scan.season_sweep_fallback", shows=len(fallback_keys))
+
+    # Per-show fallback reads plus the episodes() reads, in one flat reaped fan-out so an
+    # unexpected failure in any one cancels and drains ALL the others -- nothing keeps polling
+    # Tautulli or Sonarr for a scan that is already dead. The episodes() read exists only to
+    # feed episode-precise mid-binge protection; with keep_in_progress off, season_final_episode
+    # is never consulted (season_pruning short-circuits to no sequential protection), so the
+    # whole Sonarr fan-out is skipped. Skipping only ever keeps MORE: with no final-episode map
+    # the guard falls back to whole-season protection.
+    season_coros = [_seasons_for(rk) for rk in fallback_keys]
+    episode_coros = [_episodes_for(item) for item in work] if keep_in_progress else []
+    fanned = await gather_reaped(*season_coros, *episode_coros)
+    for rk, seasons in fanned[: len(season_coros)]:
+        resolved_shows[rk] = seasons
 
     all_season_keys: set[int] = set()
     for item in work:
@@ -977,6 +1033,9 @@ async def gather(
     # show Sonarr has no (or a wrong) imdbId for still gets its rating when Plex knows it.
     imdb_ids = [str(w.series["imdbId"]) for w in work if w.series.get("imdbId")]
     imdb_ids += [w.plex_imdb_id for w in work if w.plex_imdb_id]
+    # A show's Sonarr imdbId and its Plex-matched imdb id are usually the same string;
+    # the dataset lookup returns a keyed map, so deduping only trims the chunk count.
+    imdb_ids = list(dict.fromkeys(imdb_ids))
     try:
         ratings = await ImdbRatings(engine).lookup(imdb_ids) if imdb_ids else {}
     except DatasetDegradedError as exc:
