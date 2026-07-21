@@ -7,10 +7,11 @@
 import type { Doc } from "./blocks";
 import { arming } from "./content/arming";
 import { cheatSheet } from "./content/cheatSheet";
+import { deletionSafety } from "./content/deletionSafety";
 import { overview } from "./content/overview";
 import { understandingPolicy } from "./content/understandingPolicy";
 
-export const DOCS: Doc[] = [overview, understandingPolicy, cheatSheet, arming];
+export const DOCS: Doc[] = [overview, understandingPolicy, cheatSheet, deletionSafety, arming];
 
 /** The order groups appear in the index. A group not listed here falls to the end, in the
  *  order its first doc appears in DOCS. */
