@@ -21,9 +21,11 @@ the database is the source of truth thereafter.
 
 from __future__ import annotations
 
+import errno
 import os
 import re
 import secrets
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -53,6 +55,40 @@ class InstanceSeed(BaseModel):
     def _strip_trailing_slash(cls, v: str) -> str:
         # Every client joins paths onto this; a trailing slash yields '//api/v3'.
         return v.strip().rstrip("/")
+
+
+class DataDirError(RuntimeError):
+    """The data directory is missing or not writable, so Reaper cannot start.
+
+    SQLite reports this as ``unable to open database file`` -- an error that names
+    neither the path nor the cause. The usual trigger is a bind-mounted data folder
+    owned by a different user than the one Reaper runs as (uid mismatch). This carries
+    a plain, actionable message so the operator sees the fix, not a driver traceback.
+    """
+
+    def __init__(self, data_dir: Path, cause: OSError) -> None:
+        self.data_dir = data_dir
+        self.cause = cause
+        super().__init__(_data_dir_error_message(data_dir, cause))
+
+
+def _data_dir_error_message(data_dir: Path, cause: OSError) -> str:
+    lead = f"Reaper can't write to its data folder ({data_dir})."
+    # EACCES/EPERM is the ownership case -- give the chown fix. Anything else (a full
+    # disk, a read-only mount) gets the plain lead plus the original error, since the
+    # ownership advice would be wrong there.
+    if cause.errno in (errno.EACCES, errno.EPERM):
+        uid = os.getuid()
+        gid = os.getgid()
+        return (
+            f"{lead}\n"
+            "It keeps its database there, so it can't start. The folder is owned by a\n"
+            f"different user than the one Reaper runs as (uid {uid}). If you bind-mounted\n"
+            "a host folder, give it to that user and restart:\n\n"
+            f"  chown -R {uid}:{gid} <the host folder you mapped to {data_dir}>\n\n"
+            f"Original error: {cause}"
+        )
+    return f"{lead} It keeps its database there, so it can't start.\n\nOriginal error: {cause}"
 
 
 class Settings(BaseSettings):
@@ -134,8 +170,22 @@ class Settings(BaseSettings):
         return v.expanduser().resolve()
 
     def ensure_data_dir(self) -> Path:
-        """Both the app and Alembic need this before opening the database."""
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        """Both the app and Alembic need this before opening the database.
+
+        ``mkdir(exist_ok=True)`` succeeds on an already-present mount even when it is
+        not writable, so the failure would otherwise surface much later as SQLite's
+        opaque ``unable to open database file``. Probe write access here -- with a
+        temp file that leaves nothing behind -- and fail with a plain, actionable
+        message (see ``DataDirError``) instead.
+        """
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            # TemporaryFile is unlinked immediately on POSIX, so a crash cannot strand
+            # a probe file, and its unique name cannot collide with a real one.
+            with tempfile.TemporaryFile(dir=self.data_dir):
+                pass
+        except OSError as exc:
+            raise DataDirError(self.data_dir, exc) from exc
         return self.data_dir
 
     @property

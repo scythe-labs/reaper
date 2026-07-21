@@ -33,21 +33,21 @@ services:
       - "8420:8420"
 
     volumes:
-      # A named volume works with no setup: Docker seeds it from the image, where /data
-      # is already owned by the unprivileged `reaper` user (uid 1000) that the container
-      # runs as.
-      #
-      # To bind-mount a host directory instead -- easier to back up, and what you want on
-      # a NAS -- replace the line below with `./data:/data` and create it with the right
-      # owner FIRST. Docker would otherwise create it owned by root, and Reaper never runs
-      # as root, so it could not write its database and the container would restart-loop:
-      #
-      #   mkdir -p ./data && sudo chown -R 1000:1000 ./data
-      #
-      # There is no PUID/PGID support. The uid is baked into the image.
+      # A named volume works with no setup. To bind-mount a host directory instead --
+      # easier to back up, and what you want on a NAS -- replace the line below with
+      # `./data:/data`. No chown needed: the container starts as root, fixes the folder's
+      # ownership, then drops to an unprivileged user before it touches the database.
+      # Set PUID/PGID below to choose that user (default 1000).
       - reaper-data:/data
 
     environment:
+      # Which user the app runs as. The container starts as root only to chown /data to
+      # this user, then drops to it before opening the database. Default 1000 matches the
+      # image, so leaving these unset changes nothing. On Unraid, set 99 / 100 to keep the
+      # appdata folder owned by nobody:users.
+      # PUID: "1000"
+      # PGID: "1000"
+
       # Whether a BRAND NEW install comes up able to delete. This seeds the first run
       # only: once you have set it in the web UI (Policy -> Deletion, which asks for your
       # admin password) the stored value wins and this is ignored. Leave it false and

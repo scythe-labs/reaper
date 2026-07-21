@@ -27,9 +27,7 @@
 
 Deletion is off until you turn it on. Until then Reaper can only scan, score and explain, so you can run it for weeks and just read the results. It never touches your files directly: everything goes through Sonarr and Radarr, so this container needs no access to your media shares.
 
-Before the first start, create the data folder and give it to user 1000. Reaper runs as that user and does not use PUID or PGID, so it cannot write a folder owned by root:
-  mkdir -p /mnt/user/appdata/reaper
-  chown -R 1000:1000 /mnt/user/appdata/reaper
+Ownership of the data folder is handled for you. The container fixes it on start and then drops to the user set by PUID and PGID (default 99 and 100, Unraid's nobody:users), so you do not need to chown anything first.
 
 Then open the WebUI and follow the setup wizard. It creates your admin login and links Plex, Sonarr, Radarr, Tautulli and Seerr. API keys are entered there and stored encrypted, not in this template.
 
@@ -48,7 +46,9 @@ Locked out? Open this container's console and run: reaper-admin reset-password -
   <DonateLink/>
   <Requires/>
   <Config Name="WebUI port" Target="8420" Default="8420" Mode="tcp" Description="The port you reach Reaper's web interface on. Change the left side only if something else on this server already uses 8420." Type="Port" Display="always" Required="true" Mask="false">8420</Config>
-  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/reaper" Mode="rw" Description="Reaper's database, its encryption key, and the cached data it scans. Back this folder up. It must be owned by user 1000: chown -R 1000:1000 /mnt/user/appdata/reaper" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/reaper</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/reaper" Mode="rw" Description="Reaper's database, its encryption key, and the cached data it scans. Back this folder up. Its ownership is fixed automatically on start, so you do not need to chown it." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/reaper</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="The user id Reaper runs as. The container fixes the data folder to this user on start, then drops to it before opening the database. The default 99 is Unraid's nobody, so your appdata stays owned the usual way." Type="Variable" Display="advanced" Required="false" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="The group id Reaper runs as, paired with PUID. The default 100 is Unraid's users group." Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
   <Config Name="Allow deletion" Target="REAPER_DESTRUCTIVE_ACTIONS_ENABLED" Default="false" Mode="" Description="The starting state for deletion, used on the first run only. Leave it false. After the first run Reaper remembers your choice and this field is ignored: you turn deletion on in the web interface under Policy, which asks for your password. Set it true only if you want a fresh install to come up ready to delete." Type="Variable" Display="always" Required="false" Mask="false">false</Config>
   <Config Name="Encryption key" Target="REAPER_SECRET_KEY" Default="" Mode="" Description="Optional. Encrypts your stored API keys. Leave it empty and Reaper makes one on first start and saves it to the data folder as secret.key, which you back up with the database. Fill it in only if you would rather hold the key yourself, for example from a password manager. Generate one with: python -c &quot;import secrets; print(secrets.token_urlsafe(32))&quot;" Type="Variable" Display="always" Required="false" Mask="true"/>
   <Config Name="Recovery mode" Target="REAPER_RECOVERY" Default="false" Mode="" Description="Set true and restart to print a single-use login link to this container's log, good for 15 minutes. Use it if you are locked out, then set it back to false." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>

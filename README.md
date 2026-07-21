@@ -84,11 +84,12 @@ On **Unraid**, use [`contrib/unraid/my-Reaper.xml`](contrib/unraid/my-Reaper.xml
 copy it to `/boot/config/plugins/dockerMan/templates-user/`, then add the container from
 the template dropdown.
 
-> **The container runs as uid 1000, and there is no `PUID`/`PGID`.** A named volume (what
-> `docker-compose.yml` uses) inherits the right owner from the image and needs nothing. A
-> **bind mount** does not: Docker creates it owned by root, Reaper never runs as root, and
-> the container will restart-loop unable to write its database. Create it first:
-> `mkdir -p ./data && sudo chown -R 1000:1000 ./data`
+> **Ownership is handled for you.** The container starts as root only to chown its data
+> folder, then drops to an unprivileged user before it opens the database, so a bind mount
+> created owned by root just works. Set `PUID`/`PGID` to choose that user (default 1000);
+> on Unraid, set them to `99`/`100` to keep the appdata folder owned by `nobody:users`. The
+> app process itself never runs as root. To keep it off root entirely, pin
+> `user: "1000:1000"` and create the folder owned by 1000 yourself.
 
 ### First run, in order
 

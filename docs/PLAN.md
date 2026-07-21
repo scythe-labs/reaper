@@ -626,8 +626,12 @@ noted below; fresh DBs are clean).
   seasons' on-disk sizes, not the whole series.
 - **Supply chain and container (P-9, I-2).** Base images digest-pinned; CI actions
   pinned to commit SHAs; `.dockerignore` uses `**/` forms; `python-dotenv` declared;
-  only `/data` is chowned; the entrypoint honors `REAPER_HOST`/`REAPER_PORT` and the
-  healthcheck follows the port.
+  the entrypoint starts as root only to chown `/data` to `PUID`/`PGID` (default 1000)
+  and drops to that user via gosu before anything opens the database, so a root-owned
+  bind mount needs no manual chown and the app process itself never runs as root; a
+  `reaper.preflight` write-probe (via `Settings.ensure_data_dir`) turns an unwritable
+  data folder into a plain, actionable message instead of SQLite's opaque traceback;
+  the entrypoint honors `REAPER_HOST`/`REAPER_PORT` and the healthcheck follows the port.
 - **Assorted P-10.** `/api/health` is a bare liveness probe (the banner reads the
   authenticated safety route, sharing the `["safety"]` query the deletion toggle
   invalidates); `IN :keys` queries chunk at 500; the IMDb dataset parse runs off the

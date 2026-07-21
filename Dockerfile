@@ -51,13 +51,24 @@ RUN uv pip install --system --no-cache --no-deps -e .
 
 COPY --from=frontend /app/frontend/dist ./frontend/dist
 
-# Never run as root: this container holds credentials that can delete a media library.
-# Only /data is writable by the runtime user; the code under /app stays root-owned so a
-# compromised process cannot rewrite what it executes.
-RUN useradd --system --uid 1000 --create-home reaper \
+# The app must not run as root: this container holds credentials that can delete a
+# media library. But the data folder is a bind mount on most installs, and Docker
+# creates a bind mount owned by root -- which a fixed-uid image cannot write. So the
+# entrypoint starts as root, chowns /data to PUID:PGID (default 1000), and drops to
+# that user with gosu BEFORE anything opens the database. The app process is never
+# root, and /app stays root-owned so a compromised process cannot rewrite what it
+# executes. gosu comes from Debian's signed repo (like the base image's own apt).
+#
+# There is no `USER` line on purpose: PID 1 is root only long enough to fix ownership
+# and drop. If you would rather it never touch root, pin `user: "1000:1000"` in your
+# compose and the entrypoint skips the root branch and runs in place.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gosu \
+    && rm -rf /var/lib/apt/lists/* \
+    && gosu nobody true \
+    && useradd --system --uid 1000 --create-home reaper \
     && mkdir -p /data \
     && chown -R reaper:reaper /data
-USER reaper
 
 VOLUME ["/data"]
 # The default port; REAPER_PORT below overrides the actual bind.
