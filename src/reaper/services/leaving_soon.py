@@ -216,15 +216,30 @@ async def sync_section(
 
     if apply and not (collection_plan.is_noop and label_plan.is_noop):
         with benign_shelf_write():
-            # Removals first: the shelf must never briefly claim more than is true.
-            if collection_key is not None and collection_plan.to_remove:
-                await plex.remove_from_collection(collection_key, collection_plan.to_remove)
+            # Removals first: the shelf must never briefly claim more than is true. When
+            # EVERY current member is leaving (a plain clear, or a total list swap where
+            # nothing carries over), drop the whole collection in ONE request rather than
+            # detaching members one at a time; otherwise detach just the leavers by batch
+            # tag-edit.
+            clears_collection = (
+                bool(on_collection) and set(collection_plan.to_remove) == on_collection
+            )
+            if collection_key is not None and clears_collection:
+                await plex.delete_collection(collection_key)
+                collection_key = None  # gone now; a re-add below recreates it from target
+            elif collection_key is not None and collection_plan.to_remove:
+                await plex.remove_collection_members(
+                    section_title,
+                    name=LEAVING_SOON_COLLECTION,
+                    rating_keys=collection_plan.to_remove,
+                )
             if label_plan.to_remove:
                 await plex.remove_label(section_title, label_plan.to_remove, LEAVING_SOON_LABEL)
             if collection_plan.to_add:
                 if collection_key is None:
-                    # Creating with the full target set: Plex refuses an empty
-                    # collection, so the shelf is born already holding its items.
+                    # No collection (never had one, or the clear above dropped it): Plex
+                    # refuses an empty collection, so it is born already holding the full
+                    # target set.
                     await plex.create_collection(
                         section_key,
                         kind=kind,
@@ -486,12 +501,12 @@ async def cleanup_sections(
 ) -> bool:
     """Take everything off the given libraries' shelves, so nothing stale lingers.
 
-    The same per-library reconcile with an empty target set -- removing the last item
-    deletes the collection server-side, and the labels come off with it. Writes only
-    when the guard allows (armed, or the read-only opt-in); otherwise this is a no-op
-    and the marks stay until Reaper is next allowed to write. Returns whether the
-    cleanup actually ran. Best-effort: a failure is logged, never raised, because
-    turning a warning off must always succeed.
+    The same per-library reconcile with an empty target set -- every current member is
+    leaving, so each library drops its whole collection in one request (delete_collection)
+    and the labels come off with it. Writes only when the guard allows (armed, or the
+    read-only opt-in); otherwise this is a no-op and the marks stay until Reaper is next
+    allowed to write. Returns whether the cleanup actually ran. Best-effort: a failure is
+    logged, never raised, because turning a warning off must always succeed.
     """
     if not sections:
         return False

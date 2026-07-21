@@ -244,19 +244,21 @@ _GET_SHAPED_MUTATIONS = re.compile(r"^/library/sections/[^/]+/refresh$")
 #: The write shapes ``benign_shelf_write`` may permit, each matched by exact method AND
 #: path so the benign branch can never widen:
 #:
-#: * the batch label edit -- ``PUT /library/sections/{key}/all``;
+#: * the batch tag edit -- ``PUT /library/sections/{key}/all`` -- which carries BOTH the
+#:   label add/remove and the collection-membership remove (a collection is a tag, so
+#:   detaching a member is ``collection[].tag.tag-={name}`` on this same endpoint);
 #: * creating a collection -- ``POST /library/collections``;
 #: * adding items to one -- ``PUT /library/collections/{key}/items``;
-#: * removing one item from one -- ``DELETE /library/collections/{key}/children/{key}``.
+#: * deleting a whole (emptied) collection -- ``DELETE /library/collections/{key}``.
 #:
-#: Removing the last item deletes the collection on the server side, so an empty shelf
-#: disappears without ever issuing ``DELETE /library/metadata/{key}`` -- the shape that
-#: deletes an item (and, on a permissive server, its files), which is deliberately NOT
-#: on this list and must never be added to it.
+#: The whole-collection delete is how an emptied shelf disappears in ONE request instead of
+#: one delete per member. ``DELETE /library/metadata/{key}`` -- the shape that deletes an
+#: item (and, on a permissive server, its files) -- is a DIFFERENT path (``.../metadata/``,
+#: not ``.../collections/``) and is deliberately NOT on this list and must never be added.
 _LABEL_EDIT = re.compile(r"^/library/sections/[^/]+/all$")
 _COLLECTION_CREATE = re.compile(r"^/library/collections$")
 _COLLECTION_ADD = re.compile(r"^/library/collections/[^/]+/items$")
-_COLLECTION_REMOVE = re.compile(r"^/library/collections/[^/]+/children/[^/]+$")
+_COLLECTION_DELETE = re.compile(r"^/library/collections/[^/]+$")
 
 
 def _benign_shape(method: str, path: str) -> bool:
@@ -268,7 +270,7 @@ def _benign_shape(method: str, path: str) -> bool:
     if verb == "POST":
         return bool(_COLLECTION_CREATE.match(path))
     if verb == "DELETE":
-        return bool(_COLLECTION_REMOVE.match(path))
+        return bool(_COLLECTION_DELETE.match(path))
     return False
 
 
@@ -904,7 +906,7 @@ class PlexClient:
     # and an armed instance. GuardedSession enforces both; these methods cannot opt out.
 
     async def add_label(self, section_title: str, rating_keys: list[int], label: str) -> None:
-        """Add a label to many items in one request per chunk.
+        """Add a label to many items in one read plus one edit per chunk.
 
         **Verified against a live server: this PRESERVES existing labels.** Adding a
         second label leaves the first in place, so Reaper's "Leaving Soon" mark does not
@@ -920,8 +922,17 @@ class PlexClient:
         def write() -> None:
             section = server.library.section(section_title)
             for start in range(0, len(rating_keys), BATCH_SIZE):
-                chunk = [section.fetchItem(k) for k in rating_keys[start : start + BATCH_SIZE]]
-                section.batchMultiEdits(chunk).addLabel(label).saveMultiEdits()
+                keys = rating_keys[start : start + BATCH_SIZE]
+                # ONE /library/metadata/<id,id,...> read for the whole chunk, not one GET
+                # per item: fetchItem and fetchItems hit the SAME endpoint, and a list of
+                # ids becomes a single multi-id path. The batch edit itself is byte-identical,
+                # so Plex's additive label write -- which PRESERVES existing labels, the
+                # verified property above -- is exactly as before. An item removed from Plex
+                # since the scan simply does not come back from the read and is skipped, never
+                # a failed reconcile.
+                items = section.fetchItems(keys)
+                if items:
+                    section.batchMultiEdits(items).addLabel(label).saveMultiEdits()
 
         try:
             await asyncio.to_thread(write)
@@ -946,19 +957,22 @@ class PlexClient:
         def write() -> None:
             section = server.library.section(section_title)
             for start in range(0, len(rating_keys), BATCH_SIZE):
-                chunk = []
-                for key in rating_keys[start : start + BATCH_SIZE]:
-                    item = section.fetchItem(key)
-                    item.reload()
-                    # Only touch items that actually carry it, and remove it under the
-                    # spelling Plex is really using.
+                keys = rating_keys[start : start + BATCH_SIZE]
+                # ONE multi-id read for the chunk -- the metadata carries each item's labels,
+                # so there is no per-item fetch and no per-item reload. Only items that
+                # actually carry the label are edited, grouped by the exact spelling Plex
+                # stored (so removal stays case-correct against Plex's title-casing), which
+                # collapses to one write per spelling per chunk -- in practice one -- instead
+                # of one write per item.
+                by_spelling: dict[str, list[Any]] = {}
+                for item in section.fetchItems(keys):
                     for existing in item.labels:
                         if normalize_label(str(existing.tag)) == wanted:
-                            chunk.append((item, str(existing.tag)))
+                            by_spelling.setdefault(str(existing.tag), []).append(item)
                             break
 
-                for item, actual_tag in chunk:
-                    section.batchMultiEdits([item]).removeLabel(actual_tag).saveMultiEdits()
+                for actual_tag, group in by_spelling.items():
+                    section.batchMultiEdits(group).removeLabel(actual_tag).saveMultiEdits()
 
         try:
             await asyncio.to_thread(write)
@@ -1048,33 +1062,66 @@ class PlexClient:
         except Exception as exc:
             raise PlexError(f"Could not add items to collection {collection_key}: {exc}") from exc
 
-    async def remove_from_collection(self, collection_key: int, rating_keys: list[int]) -> None:
-        """Take items off a collection, one request per item (the only shape Plex has).
+    async def remove_collection_members(
+        self, section_title: str, *, name: str, rating_keys: list[int]
+    ) -> None:
+        """Take items off the named collection in one request per chunk.
 
-        ``DELETE /library/collections/{key}/children/{ratingKey}`` -- a benign shelf
-        shape: it detaches the item from the collection and touches nothing else.
-        Removing the last item deletes the collection itself on the server side, which
-        is exactly how an empty shelf disappears rather than lingering as a dead row.
+        A "dumb" collection's membership IS the ``collection`` tag (verified against a live
+        server), so a batch tag-edit -- ``collection[].tag.tag-={name}`` on
+        ``PUT /library/sections/{key}/all``, the same endpoint the label edit uses --
+        detaches many items at once, where the old per-item
+        ``DELETE .../children/{ratingKey}`` cost one round-trip each (minutes on a large
+        shelf). The ``-`` form removes ONLY the named collection, so an item's other
+        collections are left in place. The reads batch too: one ``/library/metadata/<ids>``
+        per chunk, never one fetch per item.
+
+        Only ever called when the collection keeps at least one member afterward; a full
+        clear goes through :meth:`delete_collection`, so batch-removing is never asked to
+        empty a collection and never depends on Plex's empty-collection cleanup.
         """
         if not rating_keys:
             return
         server = await self._connect()
 
         def write() -> None:
-            for key in rating_keys:
-                server.query(  # type: ignore[no-untyped-call]
-                    f"/library/collections/{collection_key}/children/{key}",
-                    method=server._session.delete,
-                )
+            section = server.library.section(section_title)
+            for start in range(0, len(rating_keys), BATCH_SIZE):
+                items = section.fetchItems(rating_keys[start : start + BATCH_SIZE])
+                if items:
+                    section.batchMultiEdits(items).removeCollection(name).saveMultiEdits()
 
         try:
             await asyncio.to_thread(write)
         except SafetyViolationError:
             raise
         except Exception as exc:
-            raise PlexError(
-                f"Could not remove items from collection {collection_key}: {exc}"
-            ) from exc
+            raise PlexError(f"Could not remove items from the {name!r} collection: {exc}") from exc
+
+    async def delete_collection(self, collection_key: int) -> None:
+        """Delete a whole collection in one request.
+
+        ``DELETE /library/collections/{key}`` -- a benign shelf shape. This is how an
+        emptied "Leaving Soon" shelf disappears: one request, instead of one
+        ``DELETE .../children/{ratingKey}`` per member (minutes of serial round-trips on a
+        large shelf). It removes only the collection object; the items and their files are
+        untouched -- that is a different path, ``/library/metadata/{key}``, which the guard
+        never permits under the benign branch.
+        """
+        server = await self._connect()
+
+        def write() -> None:
+            server.query(  # type: ignore[no-untyped-call]
+                f"/library/collections/{collection_key}",
+                method=server._session.delete,
+            )
+
+        try:
+            await asyncio.to_thread(write)
+        except SafetyViolationError:
+            raise
+        except Exception as exc:
+            raise PlexError(f"Could not delete collection {collection_key}: {exc}") from exc
 
     async def refresh_path(self, section_title: str, path: str) -> None:
         """Rescan **one directory**, not the whole section.

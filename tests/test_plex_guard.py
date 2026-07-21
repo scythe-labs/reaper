@@ -120,13 +120,21 @@ class TestTheBenignShelfIsGatedSeparately:
             session.put("http://127.0.0.1:1/library/collections/900/items?uri=x", timeout=0.05)
         assert not isinstance(caught.value, SafetyViolationError)
 
-    def test_removing_a_collection_child_is_a_shelf_shape(self) -> None:
-        """The one DELETE the shelf may issue: detaching an item from the collection.
-        It touches nothing but the collection membership."""
+    def test_deleting_a_whole_collection_is_a_shelf_shape(self) -> None:
+        """The one DELETE the shelf may issue: dropping the whole (emptied) collection in
+        one request. It removes only the collection object, never an item or its files."""
         session = GuardedSession(SHELF_UNARMED)
         with benign_shelf_write(), pytest.raises(Exception) as caught:
-            session.delete("http://127.0.0.1:1/library/collections/900/children/42", timeout=0.05)
+            session.delete("http://127.0.0.1:1/library/collections/900", timeout=0.05)
         assert not isinstance(caught.value, SafetyViolationError)
+
+    def test_detaching_one_collection_child_is_no_longer_a_shelf_shape(self) -> None:
+        """The per-item ``.../children/{key}`` DELETE was replaced by a batch tag-edit
+        (detach many at once) plus the whole-collection delete above, so it is no longer on
+        the benign list: inside a benign block it falls back to the armed-and-declared rule."""
+        session = GuardedSession(SHELF_UNARMED)
+        with benign_shelf_write(), pytest.raises(SafetyViolationError, match="turned off"):
+            session.delete("http://127.0.0.1:1/library/collections/900/children/42")
 
     def test_deleting_metadata_is_never_a_shelf_shape(self) -> None:
         """THE load-bearing negative. ``DELETE /library/metadata/{key}`` removes an item

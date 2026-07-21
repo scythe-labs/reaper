@@ -101,9 +101,19 @@ class _FakePlex:
         self.calls.append(("collection_add", tuple(rating_keys)))
         self.collections[collection_key - 9000].update(rating_keys)
 
-    async def remove_from_collection(self, collection_key: int, rating_keys: list[int]) -> None:
+    async def remove_collection_members(
+        self, section_title: str, *, name: str, rating_keys: list[int]
+    ) -> None:
+        assert name == LEAVING_SOON_COLLECTION
         self.calls.append(("collection_remove", tuple(rating_keys)))
-        self.collections[collection_key - 9000] -= set(rating_keys)
+        # section_title is loose here (like the real label edit); detach the keys from
+        # whichever section's collection holds them.
+        for members in self.collections.values():
+            members -= set(rating_keys)
+
+    async def delete_collection(self, collection_key: int) -> None:
+        self.calls.append(("collection_delete", collection_key))
+        self.collections.pop(collection_key - 9000, None)
 
     async def add_label(self, section_title: str, rating_keys: list[int], label: str) -> None:
         self.calls.append(("label_add", tuple(rating_keys)))
@@ -169,23 +179,68 @@ class TestSyncSection:
 
     async def test_it_removes_before_it_adds(self) -> None:
         """Remove first, then add: the shelf never briefly over-covers if a later add
-        fails partway."""
+        fails partway. Item 8 stays on the shelf, so this is a partial detach (batch
+        removeCollection), not a whole-collection drop."""
         plex = _FakePlex(
-            section_items={10: {1, 9}},
-            collections={10: {9}},
-            labeled={10: {9}},
+            section_items={10: {1, 8, 9}},
+            collections={10: {8, 9}},
+            labeled={10: {8, 9}},
         )
         await sync_section(
             plex,  # type: ignore[arg-type]
             section_key=10,
             section_title="Movies",
             kind="movie",
-            in_grace={1},
+            in_grace={1, 8},
             apply=True,
         )
         kinds = [name for name, _ in plex.calls]
         assert kinds.index("collection_remove") < kinds.index("collection_add")
         assert kinds.index("label_remove") < kinds.index("label_add")
+        assert plex.collections[10] == {1, 8}  # 9 detached, 1 added, 8 stayed
+
+    async def test_a_full_clear_drops_the_whole_collection(self) -> None:
+        """Nothing stays in grace, so the shelf is emptied by ONE whole-collection delete,
+        never a detach per member."""
+        plex = _FakePlex(
+            section_items={10: {7, 8, 9}},
+            collections={10: {7, 8, 9}},
+            labeled={10: {7, 8, 9}},
+        )
+        await sync_section(
+            plex,  # type: ignore[arg-type]
+            section_key=10,
+            section_title="Movies",
+            kind="movie",
+            in_grace=set(),
+            apply=True,
+        )
+        kinds = [name for name, _ in plex.calls]
+        assert "collection_delete" in kinds
+        assert "collection_remove" not in kinds  # never per-member
+        assert 10 not in plex.collections  # collection gone
+
+    async def test_a_total_swap_drops_then_recreates(self) -> None:
+        """The whole current membership leaves AND a fresh set arrives (a list replaced
+        from another tool): drop the collection whole, then recreate it from the new set --
+        never detach the old members one by one."""
+        plex = _FakePlex(
+            section_items={10: {1, 2, 8, 9}},
+            collections={10: {8, 9}},  # the stale, externally-set membership
+            labeled={10: {8, 9}},
+        )
+        await sync_section(
+            plex,  # type: ignore[arg-type]
+            section_key=10,
+            section_title="Movies",
+            kind="movie",
+            in_grace={1, 2},  # the real grace set, disjoint from what was on the shelf
+            apply=True,
+        )
+        kinds = [name for name, _ in plex.calls]
+        assert kinds.index("collection_delete") < kinds.index("create")
+        assert "collection_remove" not in kinds
+        assert plex.collections[10] == {1, 2}
 
     async def test_the_first_marks_create_the_collection_with_its_items(self) -> None:
         """Plex refuses an empty collection, so the shelf is born already holding its
