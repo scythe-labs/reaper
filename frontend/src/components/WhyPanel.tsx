@@ -550,17 +550,18 @@ function Gates({
   blurb,
   outcomes,
   tone,
+  collapsible,
 }: {
   title: string;
   blurb: string;
   outcomes: GateOutcome[];
   tone: "fired" | "checked";
+  collapsible?: boolean;
 }) {
   if (outcomes.length === 0) return null;
 
-  return (
-    <section className="block">
-      <h3>{title}</h3>
+  const body = (
+    <>
       <p className="blurb">{blurb}</p>
       <ul className={`gates gates-${tone}`}>
         {/* Keyed on gate AND detail: several custom rules share the "custom" gate id,
@@ -578,6 +579,32 @@ function Gates({
           );
         })}
       </ul>
+    </>
+  );
+
+  return (
+    <section className="block">
+      <h3>{title}</h3>
+      {/* The cleared list is the quietest of the three protection blocks -- every check came
+          back clear -- so it rests folded behind one disclosure and the operator opens it only
+          to read the full list. Same native-<details> grammar and muted summary as `.sig-rest`.
+          A protection that spared the file is never folded: it is the reason the file lives. */}
+      {collapsible ? (
+        <details className="gates-fold">
+          <summary>
+            <span className="fold-caret" aria-hidden="true">
+              ▸
+            </span>
+            <span className="fold-shut-label">
+              {outcomes.length === 1 ? "Show 1" : `Show all ${outcomes.length}`}
+            </span>
+            <span className="fold-open-label">Hide</span>
+          </summary>
+          {body}
+        </details>
+      ) : (
+        body
+      )}
     </section>
   );
 }
@@ -823,17 +850,18 @@ export function WhyPanel({
       )}
 
       <Gates
-        title="Protections that fired"
+        title="What spared it"
         blurb="Any one of these keeps the file, whatever it scored."
         outcomes={explanation.protections_fired}
         tone="fired"
       />
 
       <Gates
-        title="Protections that were checked and did not fire"
-        blurb="What Reaper looked for and did not find. The numbers are the ones it actually used."
+        title="Protections it cleared"
+        blurb="The numbers are the ones it actually used."
         outcomes={explanation.protections_checked}
         tone="checked"
+        collapsible
       />
 
       <LeftForYou outcomes={explanation.protections_unknown} />

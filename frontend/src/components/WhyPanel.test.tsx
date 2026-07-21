@@ -387,6 +387,52 @@ describe("the scoring receipt", () => {
   });
 });
 
+// The three protection blocks read at different volumes. What spared the file is the reason it
+// lives, so it stays open. The checks that came back clear are the quiet "nothing to see here"
+// block, so they rest folded behind one disclosure the operator opens only to read the list.
+describe("the protection blocks", () => {
+  const CHECKED = [
+    { gate: "whitelist", detail: "Not on your keep list." },
+    { gate: "streaming", detail: "Nobody is watching it right now." },
+    { gate: "arr", detail: "Managed by Sonarr or Radarr." },
+  ];
+
+  it("rests the cleared list folded, and opens it on click", async () => {
+    const { userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    const base = detail(WORKED_ROWS);
+    show(detail(WORKED_ROWS, { explanation: { ...base.explanation, protections_checked: CHECKED } }));
+
+    expect(screen.getByRole("heading", { name: "Protections it cleared" })).toBeTruthy();
+    const label = screen.getByText("Show all 3");
+    const disclosure = label.closest("details") as HTMLDetailsElement;
+    const summary = label.closest("summary") as HTMLElement;
+    expect(disclosure.open).toBe(false);
+
+    await user.click(summary);
+    // Opening reveals the checks; it never renames the section.
+    expect(disclosure.open).toBe(true);
+    expect(screen.getByText("Nobody is watching it right now.")).toBeTruthy();
+  });
+
+  it("never folds what spared the file", () => {
+    const base = detail(WORKED_ROWS);
+    show(
+      detail(WORKED_ROWS, {
+        explanation: {
+          ...base.explanation,
+          protections_fired: [{ gate: "whitelist", detail: "On your keep list." }],
+        },
+      }),
+    );
+
+    const spared = screen.getByRole("heading", { name: "What spared it" });
+    // A fired protection is the reason the file lives: its block is always open, never a fold.
+    expect(spared.closest("section")?.querySelector("details")).toBeNull();
+    expect(screen.getByText("On your keep list.")).toBeTruthy();
+  });
+});
+
 // The Spare/Reap footer decides the SEASON, never the show above it. It must read the season's
 // OWN decision (so a click always reverses something you can see) and, when a whole-show
 // decision is what really keeps or reaps the season, say so -- clearing a season key cannot
