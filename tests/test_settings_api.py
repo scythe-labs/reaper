@@ -232,6 +232,36 @@ class TestInstancesCrud:
         ).json()
         assert off_again["verify_tls"] is False
 
+    def test_the_redownload_block_defaults_off_and_round_trips(self, client: TestClient) -> None:
+        """``add_import_exclusion`` is off unless the operator turns it on, an explicit on
+        round-trips, and an update that never mentions it leaves the choice alone --
+        omitted must mean "unchanged", never "back to the default"."""
+        created = client.post(
+            "/api/settings/instances",
+            json={"kind": "radarr", "name": "HD", "base_url": "https://a.local", "api_key": "k"},
+        ).json()
+        assert created["add_import_exclusion"] is False
+
+        on = client.post(
+            "/api/settings/instances",
+            json={
+                "kind": "radarr",
+                "name": "UHD",
+                "base_url": "https://b.local",
+                "api_key": "k",
+                "add_import_exclusion": True,
+            },
+        ).json()
+        assert on["add_import_exclusion"] is True
+
+        renamed = client.put(f"/api/settings/instances/{on['id']}", json={"name": "4K"}).json()
+        assert renamed["add_import_exclusion"] is True  # untouched by an unrelated update
+
+        back_off = client.put(
+            f"/api/settings/instances/{on['id']}", json={"add_import_exclusion": False}
+        ).json()
+        assert back_off["add_import_exclusion"] is False
+
 
 class TestConnectionTestsHonorTheTlsChoice:
     """The TLS choice must reach the client that actually dials out -- the stored

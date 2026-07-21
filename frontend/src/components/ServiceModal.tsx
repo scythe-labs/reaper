@@ -8,6 +8,11 @@
 // field means "keep the stored key". "Check the server's certificate" is on by default;
 // turning it off is a deliberate per-service choice for a self-signed server the operator
 // runs themselves, and it only appears once SSL is on (plain http has no certificate).
+//
+// Sonarr and Radarr also carry "Block re-download after delete" (off by default): whether a
+// delete asks the *arr to add an import exclusion so a list can't re-add the title. It is
+// wired for Radarr movie deletes; on Sonarr it is stored but inert (Reaper prunes seasons,
+// not whole series), and the help text says so rather than pretending otherwise.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -126,12 +131,17 @@ export function ServiceModal({
   const [urlBase, setUrlBase] = useState(initial?.urlBase ?? "");
   const [ssl, setSsl] = useState(initial?.ssl ?? false);
   const [verifyCert, setVerifyCert] = useState(instance?.verify_tls ?? true);
+  // Whether a delete through this instance adds an import exclusion. Off by default, and
+  // only shown for the *arr (movies/shows) -- Tautulli and Seerr never delete.
+  const [addExclusion, setAddExclusion] = useState(instance?.add_import_exclusion ?? false);
   const [enabled, setEnabled] = useState(instance?.enabled ?? true);
   const [apiKey, setApiKey] = useState("");
   const [test, setTest] = useState<InstanceTest | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const baseUrl = () => joinBaseUrl({ ssl, host, port, urlBase });
+  // Only Sonarr and Radarr delete, so only they carry the re-download switch.
+  const isArr = kind === "radarr" || kind === "sonarr";
 
   // A full URL pasted into the hostname field is split across the fields instead of
   // being stored as a "hostname" that silently contains a scheme and port.
@@ -175,18 +185,23 @@ export function ServiceModal({
           enabled: boolean;
           api_key?: string;
           verify_tls?: boolean;
+          add_import_exclusion?: boolean;
         } = { name, base_url: baseUrl(), enabled };
         if (apiKey) body.api_key = apiKey; // blank keeps the stored key
         if (ssl) body.verify_tls = verifyCert; // over plain http the setting is moot; keep it stored
+        if (isArr) body.add_import_exclusion = addExclusion;
         return api.updateInstance(instance.id, body);
       }
-      return api.createInstance({
-        kind,
-        name,
-        base_url: baseUrl(),
-        api_key: apiKey,
-        verify_tls: ssl ? verifyCert : true,
-      });
+      const createBody: {
+        kind: string;
+        name: string;
+        base_url: string;
+        api_key: string;
+        verify_tls?: boolean;
+        add_import_exclusion?: boolean;
+      } = { kind, name, base_url: baseUrl(), api_key: apiKey, verify_tls: ssl ? verifyCert : true };
+      if (isArr) createBody.add_import_exclusion = addExclusion;
+      return api.createInstance(createBody);
     },
     onSuccess: () => {
       invalidate();
@@ -273,6 +288,21 @@ export function ServiceModal({
                 self-signed certificate.
               </p>
             )}
+          </>
+        )}
+        {isArr && (
+          <>
+            <label className="toggle">
+              <Switch checked={addExclusion} onChange={setAddExclusion} />
+              <span>Block re-download after delete</span>
+            </label>
+            <p className="help">
+              {kind === "sonarr"
+                ? "This only applies when Reaper removes a whole show. Today it removes seasons, not whole shows, so your choice is saved but not used yet."
+                : addExclusion
+                  ? "When Reaper removes a movie, it adds a Radarr list exclusion so an import list can't add it back and re-download it."
+                  : "A deleted movie can be added back by a list and re-downloaded. Reaper won't add or check the exclusion when it removes one."}
+            </p>
           </>
         )}
         <label className="field-sm">

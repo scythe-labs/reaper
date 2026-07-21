@@ -861,6 +861,10 @@ export interface Instance {
   base_url: string;
   enabled: boolean;
   verify_tls: boolean;
+  /** When Reaper deletes through this instance, ask the *arr to add an import (list)
+   *  exclusion so a list can't re-add and re-download the title. Off by default. Wired for
+   *  Radarr movie deletes; stored-but-inert on Sonarr (it prunes seasons, not whole shows). */
+  add_import_exclusion: boolean;
   has_key: boolean;
   api_path_prefix: string;
   detected_version: string | null;
@@ -1042,6 +1046,7 @@ export const api = {
     base_url: string;
     api_key: string;
     verify_tls?: boolean;
+    add_import_exclusion?: boolean;
   }) => post<Instance>("/api/settings/instances", body),
   updateInstance: (
     id: number,
@@ -1051,6 +1056,7 @@ export const api = {
       api_key?: string;
       enabled?: boolean;
       verify_tls?: boolean;
+      add_import_exclusion?: boolean;
     },
   ) => put<Instance>(`/api/settings/instances/${id}`, body),
   deleteInstance: (id: number) => del<{ removed: boolean }>(`/api/settings/instances/${id}`),

@@ -105,6 +105,7 @@ class InstanceOut(BaseModel):
     base_url: str
     enabled: bool
     verify_tls: bool
+    add_import_exclusion: bool
     has_key: bool
     api_path_prefix: str
     detected_version: str | None = None
@@ -122,6 +123,7 @@ class InstanceCreateIn(BaseModel):
     base_url: str
     api_key: str
     verify_tls: bool = True
+    add_import_exclusion: bool = False
 
 
 class InstanceUpdateIn(BaseModel):
@@ -130,6 +132,7 @@ class InstanceUpdateIn(BaseModel):
     api_key: str | None = None  # blank/omitted keeps the stored key
     enabled: bool | None = None
     verify_tls: bool | None = None  # omitted keeps the stored setting; explicit False sticks
+    add_import_exclusion: bool | None = None  # omitted keeps the stored setting
 
 
 class InstanceTestIn(BaseModel):
@@ -384,6 +387,7 @@ async def create_instance(request: Request, payload: InstanceCreateIn) -> Instan
                 base_url=payload.base_url,
                 api_key=payload.api_key,
                 verify_tls=payload.verify_tls,
+                add_import_exclusion=payload.add_import_exclusion,
             )
         except instances.InstanceConflictError as exc:
             # A duplicate name is a conflict; anything else the service refused (a blank
@@ -410,6 +414,7 @@ async def update_instance(
                 api_key=payload.api_key,
                 enabled=payload.enabled,
                 verify_tls=payload.verify_tls,
+                add_import_exclusion=payload.add_import_exclusion,
             )
         except instances.InstanceConflictError as exc:
             # A rename into an existing name is a conflict, not a missing resource.

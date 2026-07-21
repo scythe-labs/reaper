@@ -134,6 +134,10 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     name="hd",
                     base_url="https://radarr.example",
                     api_key_enc="enc",
+                    # This Radarr blocks re-download, so the plan body below carries the
+                    # exclusion. The flag is per-instance and off by default; the plan
+                    # mirrors whatever this row says (see planner.build_plan).
+                    add_import_exclusion=True,
                     created_at=now,
                 ),
                 Instance(
@@ -331,6 +335,7 @@ class TestTheRunsApi:
         assert step["method"] == "DELETE"
         assert step["path"] == "/api/v3/movie/10"  # radarr:1:10 -> movie 10
         assert step["is_canary"] is True
+        # The body mirrors this Radarr's own setting (the fixture's row blocks re-download).
         assert step["body"] == {"deleteFiles": True, "addImportExclusion": True}
         # No credential is ever in a journalled step.
         assert "api_key" not in json.dumps(step).lower()
