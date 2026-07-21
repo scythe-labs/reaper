@@ -2121,8 +2121,8 @@ export function PolicyEditor({
           Pace and limits
         </h3>
         <p className="blurb">
-          How much a single reap may do, and how long the grace countdown lasts. One setting for
-          all of Reaper, movies and TV alike.
+          Ceilings on how much one run and a rolling month may remove, plus the grace countdown.
+          Movies and TV alike.
         </p>
 
         {pace === null ? (
@@ -2142,65 +2142,81 @@ export function PolicyEditor({
               />
               <span>Ask me before every run deletes anything</span>
             </label>
-            <WarnBlock warnings={warningsFor((f) => f === "require_approval")} />
-            <div className="caps-grid">
-              <label>
-                <span>Most titles per run</span>
-                <FixedQuantity
-                  value={pace.max_items_per_run}
-                  suffix="titles"
-                  min={1}
-                  width="narrow"
-                  ariaLabel="Most titles per run"
-                  onChange={(v) => updatePace({ max_items_per_run: v || 1 })}
-                />
-                <span className="help">The most titles a single run will delete.</span>
-              </label>
-              <label>
-                <span>Most space per run</span>
-                <QuantityInput
-                  value={pace.max_bytes_per_run}
-                  units={SIZE_UNITS}
-                  onChange={(v) => updatePace({ max_bytes_per_run: v })}
-                />
-                <span className="help">The most disk one run can free.</span>
-              </label>
-              <label>
-                <span>Most titles per month</span>
-                <FixedQuantity
-                  value={pace.max_items_per_30d}
-                  suffix="titles"
-                  min={1}
-                  width="narrow"
-                  ariaLabel="Most titles per month"
-                  onChange={(v) => updatePace({ max_items_per_30d: v || 1 })}
-                />
-                <span className="help">A rolling limit over the last 30 days.</span>
-              </label>
-              <label>
-                <span>Most space per month</span>
-                <QuantityInput
-                  value={pace.max_bytes_per_30d}
-                  units={SIZE_UNITS}
-                  onChange={(v) => updatePace({ max_bytes_per_30d: v })}
-                />
-                <span className="help">A rolling disk limit over the last 30 days.</span>
-              </label>
-              <label>
-                <span>Grace period</span>
+            {/* The caution follows the live toggle, not a server warning. validate_policy
+                reads SAVED settings and its query is keyed on the policy body, so a
+                require_approval warning can never track this pace toggle -- it renders here
+                straight from pace.require_approval instead. The require_approval anchor stays
+                in `anchors` so the server's saved-state copy is still claimed and never leaks
+                into the bottom stack. */}
+            {!pace.require_approval && (
+              <p className="notice notice-error notice-inline">
+                Approval is off, so a run can remove titles without showing you the list first.
+              </p>
+            )}
+
+            {/* The four caps as a 2x2 matrix: titles / disk freed down the side, per run /
+                per 30 days across the top. The headers carry what four labels and four help
+                lines used to, and the fixed grid tracks keep the boxes lined up. */}
+            <div className="pace-matrix">
+              <span />
+              <span className="col-h">Per run</span>
+              <span className="col-h">
+                Per 30 days <em>rolling</em>
+              </span>
+
+              <span className="row-h">Titles</span>
+              <FixedQuantity
+                value={pace.max_items_per_run}
+                suffix="titles"
+                min={1}
+                width="narrow"
+                ariaLabel="Most titles per run"
+                onChange={(v) => updatePace({ max_items_per_run: v || 1 })}
+              />
+              <FixedQuantity
+                value={pace.max_items_per_30d}
+                suffix="titles"
+                min={1}
+                width="narrow"
+                ariaLabel="Most titles per 30 days"
+                onChange={(v) => updatePace({ max_items_per_30d: v || 1 })}
+              />
+
+              <span className="row-h">Disk freed</span>
+              <QuantityInput
+                value={pace.max_bytes_per_run}
+                units={SIZE_UNITS}
+                ariaLabel="Most disk freed per run"
+                onChange={(v) => updatePace({ max_bytes_per_run: v })}
+              />
+              <QuantityInput
+                value={pace.max_bytes_per_30d}
+                units={SIZE_UNITS}
+                ariaLabel="Most disk freed per 30 days"
+                onChange={(v) => updatePace({ max_bytes_per_30d: v })}
+              />
+            </div>
+            <p className="help matrix-note">
+              Cross a limit and the whole run stops. It never deletes just the part that fits.
+            </p>
+
+            {/* Grace and unknown-size are not caps, so they step out of the matrix: one label,
+                one control, one short line of help bound directly beneath it. */}
+            <div className="pace-extra">
+              <span className="ex-label">Grace period</span>
+              <span className="ex-ctl">
                 <QuantityInput
                   value={pace.grace_days}
                   units={TIME_UNITS}
                   min={7}
+                  ariaLabel="Grace period"
                   onChange={(v) => updatePace({ grace_days: v })}
                 />
-                <span className="help">
-                  How long a title stays on the list, where you can still rescue it, before
-                  Reaper can remove it.
-                </span>
-              </label>
-              <label>
-                <span>Items with an unknown size</span>
+                <span className="help">Time on the list to rescue a title before removal.</span>
+              </span>
+
+              <span className="ex-label">Unknown-size items</span>
+              <span className="ex-ctl">
                 <FixedQuantity
                   value={pace.max_unmeasured_per_run}
                   suffix="per run"
@@ -2210,16 +2226,11 @@ export function PolicyEditor({
                   onChange={(v) => updatePace({ max_unmeasured_per_run: v })}
                 />
                 <span className="help">
-                  Reaper keeps these by default. It can't measure them, so the GB caps won't
-                  limit them. Set 0 to always keep them.
+                  Kept by default. Size caps can't measure them. Set 0 to always keep.
                 </span>
-              </label>
+                <WarnBlock warnings={warningsFor((f) => f === "max_unmeasured_per_run")} />
+              </span>
             </div>
-            <WarnBlock warnings={warningsFor((f) => f === "max_unmeasured_per_run")} />
-            <p className="help">
-              A run over a cap stops itself and removes nothing. It never quietly deletes just
-              the part that fits.
-            </p>
           </>
         )}
 

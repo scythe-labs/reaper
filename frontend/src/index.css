@@ -1879,12 +1879,14 @@ a.rating-chip:hover {
   margin-bottom: 1.1rem;
 }
 /* One shared label look for every labeled input -- the policy sliders (with a value on the
-   right), the login fields, the service forms and the caps grid -- so a label reads the same
-   on every screen: small, medium-weight, muted but readable. Applied via .field-label wherever
-   the label span is ours to class; the caps-grid labels have no dedicated span to class, so
-   they pick up the same appearance through the grouped selector. */
+   right), the login fields, the service forms, and the pace matrix's row + extra-setting
+   labels -- so a label reads the same on every screen: small, medium-weight, muted but
+   readable. Applied via .field-label wherever the label span is ours to class; the pace
+   labels have no dedicated field-label class, so they pick up the same look through the
+   grouped selector. */
 .field-label,
-.caps-grid label > span:first-child {
+.pace-matrix .row-h,
+.pace-extra .ex-label {
   font-size: 0.8rem;
   font-weight: 500;
   color: var(--muted);
@@ -3137,45 +3139,103 @@ details.grace summary {
   color: var(--protect);
 }
 
-.caps {
-  margin: 1rem 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.6rem 0.9rem;
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
-}
-.caps summary {
-  cursor: pointer;
-  font-size: 0.9rem;
-}
-.caps-grid {
+/* Pace and limits. The four caps read as one 2x2 matrix -- titles / disk freed down the
+   side, per run / per 30 days across the top -- so the boxes sit in fixed grid tracks and
+   line up down each column, and the row + column headers carry what four separate labels
+   and four help lines used to. */
+.pace-matrix {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-  gap: 0.75rem;
-  margin: 0.9rem 0;
+  grid-template-columns: max-content max-content max-content;
+  column-gap: 1.6rem;
+  row-gap: 0.55rem;
+  align-items: center;
+  margin: 0.3rem 0 0.1rem;
 }
-.caps-grid label {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  font-size: 0.8rem;
+.pace-matrix .col-h {
+  align-self: end;
+  padding-bottom: 0.05rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   color: var(--muted);
 }
-/* Every cap in this grid is a .qty box, so they line up with each other: one width for
-   every number, one for every unit (so GB, TB, weeks and months all read the same). */
-.caps-grid .qty input[type="number"] {
+/* The rolling cue rides small and plain inside the uppercase column header. */
+.pace-matrix .col-h em {
+  font-style: normal;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  font-size: 0.68rem;
+  color: var(--faint);
+}
+.pace-matrix .row-h {
+  white-space: nowrap;
+}
+/* One number width and one unit width across the matrix, so the title counts and the
+   GB/TB boxes align down every column. */
+.pace-matrix .qty input[type="number"] {
   flex: none;
   width: 5rem;
 }
-.caps-grid .qty select {
-  width: 5.25rem;
+.pace-matrix .qty.qty-narrow input[type="number"] {
+  width: 3.6rem;
 }
-.caps-grid label.toggle {
-  flex-direction: row;
-  align-items: center;
-  gap: 0.4rem;
-  color: var(--text);
+.pace-matrix .qty select {
+  width: 4.6rem;
+}
+.matrix-note {
+  margin-top: 0.75rem;
+}
+
+/* Grace and unknown-size are not caps, so they leave the matrix: a label column, the
+   control, and one short line of help bound directly beneath the control. */
+.pace-extra {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 1.6rem;
+  row-gap: 1rem;
+  align-items: start;
+  margin-top: 1.1rem;
+  padding-top: 1.05rem;
+  border-top: 1px solid var(--border);
+  max-width: 54ch;
+}
+.pace-extra .ex-label {
+  align-self: start;
+  padding-top: 0.5rem;
+  white-space: nowrap;
+}
+.pace-extra .ex-ctl {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+}
+.pace-extra .ex-ctl .help {
+  margin-top: 0;
+}
+/* "months" / "weeks" are wider than a size unit, so the grace box gets its own unit width
+   rather than jittering the shared matrix one. */
+.pace-extra .ex-ctl .qty select {
+  width: 6rem;
+}
+
+/* On a phone the editor is full width; tighten the matrix gaps and boxes so the three
+   columns still fit without a sideways scroll. */
+@media (max-width: 640px) {
+  .pace-matrix {
+    column-gap: 0.7rem;
+  }
+  .pace-matrix .qty input[type="number"] {
+    width: 3.6rem;
+  }
+  .pace-matrix .qty.qty-narrow input[type="number"] {
+    width: 3rem;
+  }
+  .pace-matrix .qty select {
+    width: 3.7rem;
+  }
 }
 
 .run-history {
