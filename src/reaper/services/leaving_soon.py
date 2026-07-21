@@ -403,6 +403,10 @@ async def run_sync(
         notified=result.notified,
         problems=len(result.problems),
     )
+    # A library that could not be reached is surfaced here rather than in the UI: the sync
+    # is fire-and-forget from Settings, and the operator finds a failure in the logs.
+    if result.problems:
+        log.warning("leaving_soon.problems", problems=result.problems)
     return result
 
 

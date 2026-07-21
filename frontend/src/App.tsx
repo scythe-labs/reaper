@@ -521,7 +521,10 @@ function Dashboard({ user }: { user: AuthUser }) {
           <ReapPlan
             onGoToDeletion={() => goToPolicySection("deletion")}
             onGoToPlexSettings={() => goToSettingsPanel("plex")}
-            onOpenReasons={goToItemReasons}
+            onGoToReview={() => {
+              setSelected(null);
+              setView("review");
+            }}
           />
         ) : view === "fairness" ? (
           <Fairness onOpenItem={goToItemReasons} onOpenGroup={goToGroupReasons} />

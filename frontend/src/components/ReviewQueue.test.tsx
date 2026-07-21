@@ -21,7 +21,7 @@ const { apiMock } = vi.hoisted(() => ({
     override: vi.fn(),
     clearOverride: vi.fn(),
     vocabularyValues: vi.fn(),
-    grace: vi.fn(),
+    reapBreakdown: vi.fn(),
   },
 }));
 
@@ -92,10 +92,10 @@ function page(items: Candidate[], total = items.length, offset = 0) {
   };
 }
 
-/** Stands in for the grace panel: the countdown an override changes, mounted so the test
- *  can see whether saving one refreshes it. */
-function GraceProbe() {
-  useQuery({ queryKey: ["grace"], queryFn: api.grace });
+/** Stands in for the Reap page's breakdown: the net an override changes, mounted so the
+ *  test can see whether saving one refreshes it. */
+function BreakdownProbe() {
+  useQuery({ queryKey: ["reap-breakdown"], queryFn: api.reapBreakdown });
   return null;
 }
 
@@ -105,7 +105,7 @@ function renderQueue(verdict: Verdict = "condemn") {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <GraceProbe />
+      <BreakdownProbe />
       <ReviewQueue
         verdict={verdict}
         onVerdictChange={() => {}}
@@ -150,11 +150,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   apiMock.vocabularyValues.mockResolvedValue({ values: [] });
   apiMock.group.mockResolvedValue(null);
-  apiMock.grace.mockResolvedValue({
-    in_grace: [],
-    in_grace_count: 0,
-    ready_count: 0,
-    total_bytes_in_grace: 0,
+  apiMock.reapBreakdown.mockResolvedValue({
+    has_snapshot: true,
+    will_reap: 0,
+    condemned_by: [],
   });
 });
 
@@ -202,17 +201,17 @@ describe("a bulk override", () => {
     }
   });
 
-  it("refreshes the grace countdown, which the override changes too", async () => {
-    // A spare drops an item out of the countdown and a hand reap puts one in, so the plan
-    // view must not go on serving the list it fetched before the decision.
+  it("refreshes the reap breakdown, which the override changes too", async () => {
+    // A spare drops an item out of the net and a hand reap adds one, so the Reap page's
+    // breakdown must not go on serving the numbers it fetched before the decision.
     apiMock.candidates.mockResolvedValue(page([movie(1)]));
     apiMock.override.mockResolvedValue(undefined);
     renderQueue();
     const user = await selectAllDrawn();
-    await waitFor(() => expect(apiMock.grace).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(apiMock.reapBreakdown).toHaveBeenCalledTimes(1));
 
     await user.click(screen.getByRole("button", { name: "Spare" }));
-    await waitFor(() => expect(apiMock.grace).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(apiMock.reapBreakdown).toHaveBeenCalledTimes(2));
   });
 
   it("blocks the other actions while it is in flight", async () => {

@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from reaper import __version__, logbuffer
 from reaper.api.auth import router as auth_router
+from reaper.api.breakdown import router as breakdown_router
 from reaper.api.fairness import router as fairness_router
 from reaper.api.grace import router as grace_router
 from reaper.api.leaving_soon import router as leaving_soon_router
@@ -290,6 +291,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(whitelist_router)
     app.include_router(fairness_router)
     app.include_router(grace_router)
+    app.include_router(breakdown_router)
     app.include_router(leaving_soon_router)
     app.include_router(logs_router)
 

@@ -700,6 +700,40 @@ class GraceReportOut(BaseModel):
     ready: list[GraceItemOut]
 
 
+class SignalCountOut(BaseModel):
+    """How many condemned titles one signal pushed toward removal, and their measured size.
+    ``id`` is a built-in signal id or a custom rule's name; the UI maps the built-ins to
+    plain labels and shows a custom rule under its own name."""
+
+    id: str
+    count: int
+    bytes: int
+    unknown_size: int
+
+
+class ReapBreakdownOut(BaseModel):
+    """What a reap built right now would remove, and why. Read-only; deletes nothing.
+
+    Counts are the reap decision (measured and unmeasured together); the byte figures sum
+    only what has a size, with the unmeasured carried as a separate count. ``has_snapshot``
+    is false before the first scan, when every figure is zero."""
+
+    has_snapshot: bool
+    policy_condemned: int
+    policy_condemned_bytes: int
+    policy_condemned_unknown: int
+    hand_spared: int
+    hand_reaped: int
+    hand_reaped_bytes: int
+    hand_reaped_unknown: int
+    will_reap: int
+    will_reap_bytes: int
+    will_reap_unknown: int
+    movies: int
+    seasons: int
+    condemned_by: list[SignalCountOut]
+
+
 class ReclaimableTitleOut(BaseModel):
     """A reclaimable title on a requester's row: title, the disk it holds, and how to open
     it. Every entry is condemned by the last scan, so the verdict is implicit. Exactly one

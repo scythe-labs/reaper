@@ -16,7 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, type Run, type RunReport } from "../api";
 import { bytes, count, date } from "../format";
-import { GracePanel } from "./GracePanel";
+import { ReapBreakdown } from "./ReapBreakdown";
 import { ReapConfirm } from "./ReapConfirm";
 
 function Steps({ run }: { run: Run }) {
@@ -96,14 +96,14 @@ function Report({ report }: { report: RunReport }) {
 export function ReapPlan({
   onGoToDeletion,
   onGoToPlexSettings,
-  onOpenReasons,
+  onGoToReview,
 }: {
   /** Jump to Policy → Deletion, where the switch lives. */
   onGoToDeletion: () => void;
-  /** Jump to Settings → Plex, where the Leaving Soon switches live. */
+  /** Jump to Settings → Plex, where the Leaving Soon shelf lives. */
   onGoToPlexSettings: () => void;
-  /** Open one item's reasoning on the review screen, for the countdown list below. */
-  onOpenReasons: (candidateId: number) => void;
+  /** Jump to the Review queue, where per-title decisions are made. */
+  onGoToReview: () => void;
 }) {
   const queryClient = useQueryClient();
   const [run, setRun] = useState<Run | null>(null);
@@ -163,7 +163,7 @@ export function ReapPlan({
         deletion. It can be dry-run end to end. Nothing here deletes anything.
       </p>
 
-      <GracePanel onGoToPlexSettings={onGoToPlexSettings} onOpenReasons={onOpenReasons} />
+      <ReapBreakdown onGoToPlexSettings={onGoToPlexSettings} onGoToReview={onGoToReview} />
 
       {plan.error && <p className="notice notice-error">{plan.error.message}</p>}
 

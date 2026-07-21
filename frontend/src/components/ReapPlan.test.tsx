@@ -17,8 +17,7 @@ const { apiMock } = vi.hoisted(() => ({
     dryRun: vi.fn(),
     runs: vi.fn(),
     latestSnapshot: vi.fn(),
-    grace: vi.fn(),
-    leavingSoonSettings: vi.fn(),
+    reapBreakdown: vi.fn(),
   },
 }));
 
@@ -63,7 +62,7 @@ async function buildPlan() {
   });
   const { container } = render(
     <QueryClientProvider client={queryClient}>
-      <ReapPlan onGoToDeletion={() => {}} onGoToPlexSettings={() => {}} onOpenReasons={() => {}} />
+      <ReapPlan onGoToDeletion={() => {}} onGoToPlexSettings={() => {}} onGoToReview={() => {}} />
     </QueryClientProvider>,
   );
   const person = userEvent.setup();
@@ -77,18 +76,22 @@ describe("ReapPlan staleness", () => {
     apiMock.safety.mockResolvedValue({ destructive_enabled: false });
     apiMock.createRun.mockResolvedValue(run);
     apiMock.runs.mockResolvedValue([run]);
-    apiMock.grace.mockResolvedValue({
-      grace_days: 7,
-      in_grace_count: 0,
-      ready_count: 0,
-      total_bytes_in_grace: 0,
-      total_bytes_ready: 0,
-      unknown_size_in_grace: 0,
-      unknown_size_ready: 0,
-      in_grace: [],
-      ready: [],
+    apiMock.reapBreakdown.mockResolvedValue({
+      has_snapshot: true,
+      policy_condemned: 2,
+      policy_condemned_bytes: 1024 ** 3,
+      policy_condemned_unknown: 0,
+      hand_spared: 0,
+      hand_reaped: 0,
+      hand_reaped_bytes: 0,
+      hand_reaped_unknown: 0,
+      will_reap: 2,
+      will_reap_bytes: 1024 ** 3,
+      will_reap_unknown: 0,
+      movies: 2,
+      seasons: 0,
+      condemned_by: [],
     });
-    apiMock.leavingSoonSettings.mockResolvedValue({});
     apiMock.latestSnapshot.mockResolvedValue({ ...snapshot, id: run.snapshot_id });
   });
 

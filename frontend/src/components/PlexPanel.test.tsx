@@ -18,6 +18,7 @@ const { apiMock } = vi.hoisted(() => ({
     setPlexLibraries: vi.fn(),
     leavingSoonSettings: vi.fn(),
     setLeavingSoonSettings: vi.fn(),
+    syncLeavingSoon: vi.fn(),
     setPlexWebUrl: vi.fn(),
     plexSetConnection: vi.fn(),
     plexSwitchServer: vi.fn(),

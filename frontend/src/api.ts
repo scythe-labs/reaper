@@ -530,29 +530,31 @@ export interface WhitelistEntry {
   created_at: string;
 }
 
-export interface GraceItem {
-  media_key: string;
-  /** The snapshot row behind this countdown, so its reasoning can be opened from here. */
-  candidate_id: number;
-  title: string;
-  /** Null when nothing would report a size. The countdown still runs. */
-  size_bytes: number | null;
-  grace_ends_at: string;
-  days_remaining: number;
-  in_grace: boolean;
+export interface SignalCount {
+  /** A built-in signal id or a custom rule's name. */
+  id: string;
+  count: number;
+  bytes: number;
+  unknown_size: number;
 }
 
-export interface GraceReport {
-  grace_days: number;
-  in_grace_count: number;
-  ready_count: number;
-  total_bytes_in_grace: number;
-  total_bytes_ready: number;
-  /** How many in each list have no size, and so sit outside the totals above. */
-  unknown_size_in_grace: number;
-  unknown_size_ready: number;
-  in_grace: GraceItem[];
-  ready: GraceItem[];
+export interface ReapBreakdown {
+  /** False before the first scan, when every figure is zero. */
+  has_snapshot: boolean;
+  policy_condemned: number;
+  policy_condemned_bytes: number;
+  policy_condemned_unknown: number;
+  hand_spared: number;
+  hand_reaped: number;
+  hand_reaped_bytes: number;
+  hand_reaped_unknown: number;
+  will_reap: number;
+  will_reap_bytes: number;
+  will_reap_unknown: number;
+  movies: number;
+  seasons: number;
+  /** Why the policy condemned them, most-common first. Overlapping: a title trips several. */
+  condemned_by: SignalCount[];
 }
 
 export interface LeavingSoonResult {
@@ -1066,7 +1068,7 @@ export const api = {
     request<ProfileSettings>("/api/profile", { method: "PUT", body: JSON.stringify(s) }),
 
   fairness: () => request<FairnessReport>("/api/fairness"),
-  grace: () => request<GraceReport>("/api/grace"),
+  reapBreakdown: () => request<ReapBreakdown>("/api/reap/breakdown"),
   syncLeavingSoon: () => post<LeavingSoonResult>("/api/leaving-soon/sync", {}),
 
   whitelist: () => request<WhitelistEntry[]>("/api/whitelist"),

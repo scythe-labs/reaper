@@ -7,10 +7,39 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-20 (undo on TV seasons: a control now acts on its own level, plus a
-grace-clock reset on re-entry)
+Last updated: 2026-07-20 (the Reap page is a breakdown, not a countdown list; Leaving Soon's
+manual update moved to Settings → Plex)
 
-### Newest — you could not un-decide a TV season, only movies
+### Newest — the Reap page stopped being a grace list, and became a breakdown
+
+The operator pushed back on the Reap page's grace panel: it listed only 20 of ~570 counting-down
+titles, each with a *cancel* link -- an arbitrary slice, and *cancel* was just "spare this file",
+the exact action the review queue already owns. Two questions: why a partial list you can manage,
+and why that ability here at all.
+
+**The assumption that turned out wrong.** The grace countdown reads like a gate -- "waits out 14
+days before it is eligible to be reaped" -- but `build_plan` and the executor never check
+`first_flagged_at`. Grace is a wall-clock heads-up (and what drives the Leaving Soon shelf), not a
+code gate on the plan. Rather than wire the gate, the operator chose to keep grace informational
+and stop the copy implying otherwise.
+
+**The rebuild.** The grace panel is gone from the Reap page. In its place, `ReapBreakdown` shows
+what a reap would remove: the ledger (condemned by policy, minus hand-spares, plus hand-reaps, the
+net), the movie/season split, and *why the policy condemned them* -- a participation tally over
+each condemned row's frozen `signals` (a title trips several at once, so the counts overlap; never
+a partition). New read-only endpoint `GET /api/reap/breakdown` over `services/breakdown.py`, built
+from the same `effective_condemned` set the planner acts on, so the ledger total matches the
+confirmation phrase. The by-signal tally mirrors the simulator's `_fired_gates`/`protected_by`
+precedent, reading `state == "adds"` (with a positive-contribution fallback for pre-`state` rows).
+
+**Leaving Soon's manual update moved to Settings → Plex.** Its on/off toggles already lived there;
+the "Update now" action and status followed, and a library that fails to sync is written to the
+logs (`leaving_soon.problems`), not shown inline. The Reap page keeps one line pointing to it. The
+`/api/grace` endpoint and `services/grace` stay (the shelf still uses the service); only the Reap
+page's use of them is gone. Drove it end to end: on real data, 595 condemned − 26 hand-spared =
+569 net, and the by-reason bars render from stored signals.
+
+### You could not un-decide a TV season, only movies
 
 The operator reported it plainly: on TV shows you could no longer un-select a spared or reaped
 item; on movies it still worked. An audit (five parallel readers, each finding adversarially
