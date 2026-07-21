@@ -382,7 +382,7 @@ class RunOut(BaseModel):
     item_count: int
     total_bytes: int
     confirmation_phrase: str
-    """The content-bound typed confirmation, e.g. "REAP 7 ITEMS 214 GB". Derived from the
+    """The content-bound typed confirmation, e.g. "REAP 7 SOULS 214 GB". Derived from the
     exact set this run would delete, so a stale plan reads as obviously different."""
 
     held_back_unknown_size: int = 0
@@ -453,7 +453,7 @@ class CreateRunIn(BaseModel):
 class ExecuteRunIn(BaseModel):
     """The typed, content-bound confirmation required to execute a real reap.
 
-    Not a checkbox: the phrase carries the exact count and size ("REAP 7 ITEMS 214 GB"),
+    Not a checkbox: the phrase carries the exact count and size ("REAP 7 SOULS 214 GB"),
     derived from the plan, so muscle memory cannot carry someone through it and a stale
     tab's phrase no longer matches the current plan. The server recomputes the expected
     phrase and refuses anything else.

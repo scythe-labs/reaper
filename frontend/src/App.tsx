@@ -7,6 +7,7 @@ import { api, ApiError, type AuthUser, type Snapshot, type Verdict } from "./api
 import { Fairness } from "./components/Fairness";
 import { Login } from "./components/Login";
 import { PolicyEditor, type PolicySectionId } from "./components/PolicyEditor";
+import { ReapConfirm } from "./components/ReapConfirm";
 import { ReapPlan } from "./components/ReapPlan";
 import { ReviewQueue } from "./components/ReviewQueue";
 import { ScytheGlyph } from "./components/ScytheGlyph";
@@ -14,7 +15,7 @@ import { Settings, type Panel } from "./components/Settings";
 import { SetupWizard } from "./components/SetupWizard";
 import { ShowPanel } from "./components/ShowPanel";
 import { WhyPanel } from "./components/WhyPanel";
-import { count, date } from "./format";
+import { bytes, count, date, souls } from "./format";
 
 type View = "review" | "policy" | "reap" | "fairness" | "settings";
 
@@ -91,6 +92,101 @@ function SafetyBanner({ onGoToDeletion }: { onGoToDeletion: () => void }) {
       </span>
     </div>
   );
+}
+
+/** The app-wide reap bar: shown on every screen while a reap runs, so its count and its Stop
+ *  are reachable after you close or navigate away from the reap sheet. A reap runs detached
+ *  from the request that started it, so this bar (and Stop) survive navigating away and a tab
+ *  reload -- it re-attaches by polling the shared status. Not a safety surface (the always-on
+ *  one is SafetyBanner), so it shows nothing when idle. Stop is graceful: the run halts after
+ *  the item in flight and still tidies Plex, and deletion stays armed. */
+function ReapBar({ onView }: { onView: (runId: number) => void }) {
+  const queryClient = useQueryClient();
+  const [dismissed, setDismissed] = useState<number | null>(null);
+  const { data: status } = useQuery({
+    queryKey: ["reapStatus"],
+    queryFn: api.reapStatus,
+    refetchInterval: (q) => (q.state.data?.running ? 1000 : false),
+  });
+  const stop = useMutation({
+    mutationFn: (id: number) => api.stopRun(id),
+    onSuccess: (s) => queryClient.setQueryData(["reapStatus"], s),
+  });
+
+  if (!status || status.run_id == null) return null;
+  const runId = status.run_id;
+  const running = status.running;
+  // Every terminal phase counts as ended -- including "error", so a reap that crashed after
+  // removing files still surfaces here (the one always-visible fallback) instead of vanishing.
+  const ended =
+    !running &&
+    (status.phase === "complete" || status.phase === "aborted" || status.phase === "error");
+  if (!running && !(ended && runId !== dismissed)) return null;
+
+  if (ended) {
+    const errored = status.phase === "error";
+    return (
+      <div className={errored ? "reap-bar errored" : "reap-bar done"}>
+        <span className="banner-dot" aria-hidden="true" />
+        <span className="reap-bar-text">
+          <b>{errored ? "Reap failed." : status.phase === "aborted" ? "Stopped." : "Reaped."}</b>{" "}
+          <span className="reap-bar-sub">
+            {souls(status.deleted_items)} removed · {bytes(status.deleted_bytes)} freed
+            {errored && status.error ? `. ${status.error}` : ""}
+          </span>
+        </span>
+        <span className="reap-bar-actions">
+          <button className="link" onClick={() => onView(runId)}>
+            View report
+          </button>
+          <button className="sm" onClick={() => setDismissed(runId)}>
+            Dismiss
+          </button>
+        </span>
+      </div>
+    );
+  }
+
+  const pct = status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
+  return (
+    <div className="reap-bar">
+      <span className="banner-dot" aria-hidden="true" />
+      <span className="reap-bar-text">
+        {status.stopping ? (
+          <b>Stopping after the current one…</b>
+        ) : (
+          <>
+            <b>
+              Reaping · {count(status.done)} of {count(status.total)}
+            </b>{" "}
+            <span className="reap-bar-sub">· {bytes(status.deleted_bytes)} freed</span>
+          </>
+        )}
+      </span>
+      <span className="reap-bar-actions">
+        <button className="link" onClick={() => onView(runId)}>
+          View
+        </button>
+        <button
+          className="stop-btn"
+          disabled={status.stopping || stop.isPending}
+          onClick={() => stop.mutate(runId)}
+        >
+          {status.stopping ? "Stopping…" : "Stop"}
+        </button>
+      </span>
+      <span className="reap-bar-fill" style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
+/** Reopen the reap sheet for a run by id -- the bar's View, from any screen. Fetches the run,
+ *  then hands it to the same ReapConfirm the review queue uses, which re-attaches to the live
+ *  status and shows progress or the finished report. */
+function ReapSheetLoader({ runId, onClose }: { runId: number; onClose: () => void }) {
+  const { data: run } = useQuery({ queryKey: ["run", runId], queryFn: () => api.run(runId) });
+  if (!run) return null;
+  return <ReapConfirm run={run} onClose={onClose} />;
 }
 
 /** A slim freshness line on the Review screen: when the queue was last built, and a loud
@@ -306,6 +402,8 @@ function Dashboard({ user }: { user: AuthUser }) {
   const [view, setView] = useState<View>("review");
   const [verdict, setVerdict] = useState<Verdict>("condemn");
   const [selected, setSelected] = useState<Selection>(null);
+  // The reap sheet reopened from the app-wide bar's View, by run id, on any screen.
+  const [reapSheetRun, setReapSheetRun] = useState<number | null>(null);
 
   // Cross-page jumps: "Turn it on in Policy → Deletion" from the Reap page lands on
   // the Deletion section, "Settings → Plex" lands on the Plex panel. The nonce makes
@@ -470,6 +568,7 @@ function Dashboard({ user }: { user: AuthUser }) {
       </header>
 
       <SafetyBanner onGoToDeletion={() => goToPolicySection("deletion")} />
+      <ReapBar onView={(runId) => setReapSheetRun(runId)} />
       {view === "review" && (
         <ScanFreshness
           snapshot={snapshot}
@@ -535,6 +634,9 @@ function Dashboard({ user }: { user: AuthUser }) {
           />
         )}
       </main>
+      {reapSheetRun !== null && (
+        <ReapSheetLoader runId={reapSheetRun} onClose={() => setReapSheetRun(null)} />
+      )}
     </div>
   );
 }

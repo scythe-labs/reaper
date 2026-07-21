@@ -96,7 +96,7 @@ class MediaRef:
 def manifest_hash(candidates: Sequence[Candidate]) -> str:
     """A content-bound fingerprint of the frozen condemned set a plan was built from.
 
-    The human approves *this*: the confirmation the UI shows ("REAP 7 ITEMS 214 GB") is
+    The human approves *this*: the confirmation the UI shows ("REAP 7 SOULS 214 GB") is
     derived from it, and the executor recomputes it before acting. Both sides hash the same
     immutable, per-snapshot candidate rows, so what this actually binds is the *integrity of
     the frozen set*: it changes if a condemned candidate row is lost or tampered with under
@@ -152,7 +152,9 @@ def confirmation_phrase(candidates: Sequence[Candidate]) -> str:
     """
     total, unsized = plan_bytes(candidates)
     gib = total / 1024**3
-    phrase = f"REAP {len(candidates)} ITEMS {gib:.0f} GB"
+    n = len(candidates)
+    noun = "SOUL" if n == 1 else "SOULS"
+    phrase = f"REAP {n} {noun} {gib:.0f} GB"
     return f"{phrase} + {unsized} UNSIZED" if unsized else phrase
 
 

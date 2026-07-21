@@ -323,7 +323,7 @@ class TestTheRunsApi:
         assert run["state"] == "planned"
         assert run["item_count"] == 1  # the single condemned movie
         # The confirmation is bound to what would be deleted: 1 item, ~5.5 GiB.
-        assert run["confirmation_phrase"].startswith("REAP 1 ITEMS")
+        assert run["confirmation_phrase"].startswith("REAP 1 SOUL")
 
         step = run["steps"][0]
         assert step["method"] == "DELETE"
@@ -421,7 +421,7 @@ class TestExecuteGates:
         run = armed_client.post("/api/runs").json()
         resp = armed_client.post(
             f"/api/runs/{run['id']}/execute",
-            json={"confirmation_phrase": "REAP 999 ITEMS 999 GB"},
+            json={"confirmation_phrase": "REAP 999 SOULS 999 GB"},
         )
         assert resp.status_code == 409
         assert "does not match" in resp.json()["detail"].lower()
@@ -442,9 +442,50 @@ class TestExecuteGates:
 
     def test_executing_a_missing_run_is_a_404(self, armed_client: TestClient) -> None:
         resp = armed_client.post(
-            "/api/runs/9999/execute", json={"confirmation_phrase": "REAP 0 ITEMS 0 GB"}
+            "/api/runs/9999/execute", json={"confirmation_phrase": "REAP 0 SOULS 0 GB"}
         )
         assert resp.status_code == 404
+
+    def test_the_reap_status_is_idle_before_any_run(self, armed_client: TestClient) -> None:
+        """The browser polls this to follow a reap and to re-attach to one already running.
+        With nothing in flight it reads idle, never a stale 'running'."""
+        body = armed_client.get("/api/runs/execute/status").json()
+        assert body["running"] is False
+        assert body["run_id"] is None
+
+    def test_stopping_when_nothing_is_running_is_a_409(self, armed_client: TestClient) -> None:
+        """Stop is only meaningful for the run actually in flight. With none running it is a
+        clear 409, not a silent no-op that might read as 'stopped'."""
+        run = armed_client.post("/api/runs").json()
+        resp = armed_client.post(f"/api/runs/{run['id']}/stop")
+        assert resp.status_code == 409
+        assert "not currently running" in resp.json()["detail"].lower()
+
+    def test_a_non_http_failure_starting_a_reap_releases_the_slot(
+        self, armed_client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A non-HTTP failure between claiming the single reap slot and starting the task must
+        release the slot. Catching only HTTPException would wedge the one deletion endpoint at
+        a permanent 409 'already running' until restart. Fails closed (nothing deleted), but it
+        must never get permanently stuck."""
+        from reaper.api import runs as runs_module
+
+        async def _boom(*_a: object, **_k: object) -> object:
+            raise RuntimeError("clients unavailable")
+
+        monkeypatch.setattr(runs_module, "build_reap_gateway", _boom)
+        run = armed_client.post("/api/runs").json()
+        body = {"confirmation_phrase": run["confirmation_phrase"]}
+
+        with pytest.raises(RuntimeError):
+            armed_client.post(f"/api/runs/{run['id']}/execute", json=body)
+
+        # The slot is released, not wedged: the status reads idle, and a retry fails the SAME
+        # way (a RuntimeError, having passed the slot guard), not a spurious 409 'already
+        # running' that would prove the slot stayed claimed.
+        assert armed_client.get("/api/runs/execute/status").json()["running"] is False
+        with pytest.raises(RuntimeError):
+            armed_client.post(f"/api/runs/{run['id']}/execute", json=body)
 
 
 class TestTheProfileControlsTheCaps:

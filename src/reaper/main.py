@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -216,10 +216,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         catch_up.cancel()
         # A background scan (api/scan.py) is detached from any request, so cancel it here
-        # rather than leaving a pending task when the loop stops.
+        # rather than leaving a pending task when the loop stops. A scan writes only our own
+        # rows and can be dropped, so it is cancelled but not awaited.
         scan_task = getattr(app.state, "scan_task", None)
         if scan_task is not None and not scan_task.done():
             scan_task.cancel()
+        # A reap (api/runs.py) is detached too, but it is DELETING -- so it must be cancelled
+        # AND awaited before the engines go, so the executor's CancelledError branch marks the
+        # run ABORTED and its finally commits that state and tidies Plex against the still-live
+        # DB and clients. Bounded, so a slow Plex cannot hang shutdown forever; if it exceeds
+        # the bound the second cancel (from wait_for) interrupts the cleanup and we proceed.
+        reap_task = getattr(app.state, "reap_task", None)
+        if reap_task is not None and not reap_task.done():
+            reap_task.cancel()
+            with suppress(asyncio.CancelledError, TimeoutError):
+                await asyncio.wait_for(reap_task, timeout=20)
         scheduler.shutdown(wait=False)
         await engine.dispose()
         await cache_engine.dispose()

@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 
 import structlog
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, FastAPI, Request
 from pydantic import BaseModel
 
 from reaper.clients.base import IntegrationError
@@ -88,25 +88,28 @@ class ScanStatus(BaseModel):
     policy's hashes and the "needs a fresh scan" notice never cleared."""
 
 
-def _status(request: Request) -> ScanStatus:
-    status: ScanStatus | None = getattr(request.app.state, "scan_status", None)
+def _status(app: FastAPI) -> ScanStatus:
+    status: ScanStatus | None = getattr(app.state, "scan_status", None)
     if status is None:
         status = ScanStatus()
-        request.app.state.scan_status = status
+        app.state.scan_status = status
     return status
 
 
-@router.post("/scan/start")
-async def start_scan(request: Request) -> ScanStatus:
+def launch_scan(app: FastAPI) -> ScanStatus:
     """Start a background scan, or queue one behind the scan already running.
+
+    Extracted from the ``/scan/start`` endpoint so a scan can be launched by something other
+    than a browser request -- notably the auto-rescan the reap kicks off when it finishes,
+    since removing files leaves the last snapshot's queue and policy preview stale. There is
+    exactly ONE scan mechanism; this is it, and both callers go through it.
 
     Never launches a parallel scan: a second request while one is in flight queues exactly
     one follow-up run instead. The follow-up matters because a scan reads the library under
-    the policies in force when it **began** -- whoever asks for a scan mid-run (the
-    auto-rescan after a policy save) needs one that starts after their request, or their
-    change would never be scanned in. Read-only throughout.
+    the policies in force when it **began** -- whoever asks for a scan mid-run needs one that
+    starts after their request, or their change would never be scanned in. Read-only throughout.
     """
-    status = _status(request)
+    status = _status(app)
     if status.running:
         status.followup_queued = True
         return status
@@ -122,10 +125,10 @@ async def start_scan(request: Request) -> ScanStatus:
     status.snapshot_id = None
     status.followup_queued = False
 
-    settings: Settings = request.app.state.settings
-    box: SecretBox = request.app.state.secret_box
-    cache_engine = request.app.state.cache_engine
-    factory = request.app.state.session_factory
+    settings: Settings = app.state.settings
+    box: SecretBox = app.state.secret_box
+    cache_engine = app.state.cache_engine
+    factory = app.state.session_factory
 
     def on_progress(progress: Progress) -> None:
         status.phase = progress.phase
@@ -187,12 +190,18 @@ async def start_scan(request: Request) -> ScanStatus:
             status.followup_queued = False
 
     # Held on app.state so the task is not garbage-collected mid-run, and can be canceled on
-    # shutdown. It is deliberately NOT tied to this request's lifetime.
-    request.app.state.scan_task = asyncio.create_task(run())
+    # shutdown. It is deliberately NOT tied to any request's lifetime.
+    app.state.scan_task = asyncio.create_task(run())
     return status
+
+
+@router.post("/scan/start")
+async def start_scan(request: Request) -> ScanStatus:
+    """Start a background scan from the browser (or queue one behind a running scan)."""
+    return launch_scan(request.app)
 
 
 @router.get("/scan/status")
 async def scan_status(request: Request) -> ScanStatus:
     """The current (or last) scan's progress. Cheap; the browser polls it while a scan runs."""
-    return _status(request)
+    return _status(request.app)

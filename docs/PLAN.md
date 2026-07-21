@@ -2673,3 +2673,79 @@ to approval, then built backend-first and driven end-to-end in the real app.
   apply policy" (a quick diff, not a full re-read); "Full watch-history sweep" → "Full
   watch-history update". Verified live: render, both modals, custom-cron reveal, a schedule
   save round-tripping through the API, and the running state.
+
+## A reap you can stop from anywhere, and that tidies up after itself (mocked, approved, built)
+
+The one deletion endpoint used to run **inline in its request** and hold the reap modal open
+for the whole run, with Cancel disabled: a long reap was trapped in the sheet, closing or
+navigating away had no handle on it, and there was no discoverable emergency stop. The reap
+now runs **detached from the request, like a scan**, and Stop is reachable from any screen.
+Mocked as a self-contained HTML artifact (both themes, the modal and the "navigated away"
+bar), iterated to approval, then built backend-first with the full gate suite green.
+
+- **The reap is backgrounded.** `POST /runs/{id}/execute` runs its synchronous gates (armed,
+  the content-bound phrase, and a new client-presence pre-check that mirrors the executor's
+  own no-Plex / no-Tautulli refusals so a misconfigured run still 409s immediately), then
+  starts the run on `app.state.reap_task` reporting to `app.state.reap_status`, and returns
+  that initial status — not the finished report. `GET /runs/execute/status` is polled to
+  follow a run and to re-attach to one already in flight; the report lands on the status when
+  the run ends. Only one reap runs at a time.
+- **Stop is graceful, never a hard kill.** `POST /runs/{id}/stop` sets a flag the executor
+  reads before its next item (alongside the arm-recheck), halting after the item in flight
+  via the same `ExecutionError` path a mid-run disarm uses — so the abort path runs and still
+  tidies Plex. It leaves deletion armed (stops one run, does not disarm the host); turning
+  deletion off stays the separate, independent kill switch. Stop is a convenience, not a
+  fail-closed interlock: an unreadable stop flag resolves toward *continuing* (the arm-recheck
+  is the fail-closed guard), so a blip never halts a healthy run.
+- **A stopped run still cleans up Plex.** `executor.execute` now runs its final state commit
+  and `_finalize_plex` in a `finally` (catching `CancelledError`), so whatever was removed
+  before the halt — a graceful Stop, a canary abort, or even a hard cancel on shutdown — has
+  its stale Plex entries refreshed and purged, and the run never lingers in `EXECUTING`. This
+  was already true for a graceful abort; the `finally` makes it hold under backgrounding too.
+- **A finished run rebuilds the stale queue.** Removing files leaves the last snapshot's
+  review queue and policy preview stale, so on any real run that removed at least one file
+  (completed *or* stopped) the executor kicks a fresh scan through the one shared
+  `scan.launch_scan` — the same one scan mechanism, not a parallel copy.
+- **The executor gained two injected hooks, both additive:** `stop_recheck` (the graceful
+  Stop) and `progress` (a cumulative `ReapProgress` emitted after each item, feeding the
+  polled status). A dry run and any headless run pass neither.
+- **Frontend.** `ReapConfirm` no longer traps the sheet open: once a reap starts it shows a
+  live progress bar and a green **Stop** (keep-first grammar — the safe action invites in
+  green like Spare, never red), the sheet closes freely, and the report renders from the
+  polled status when the run ends. A new app-wide **`ReapBar`** (companion to `SafetyBanner`,
+  armed-red while running, safe-green when just stopped) carries the count, a progress fill,
+  **Stop**, and **View** to every screen, so a run you navigated away from is still stoppable;
+  View reopens the sheet by run id (`ReapSheetLoader`).
+- **"Souls", not "items", on every reap surface**, singular-aware (`1 soul` / `N souls` via a
+  shared `format.souls`), including the server-recomputed confirmation phrase
+  (`REAP 1 SOUL 0 GB` / `REAP 42 SOULS 118 GB`) — `planner.confirmation_phrase` changed in
+  lockstep with the UI so execute still validates.
+- **Tests.** New executor tests: Stop halts before the next item, a stopped run still
+  refreshes and purges Plex, an unreadable stop flag keeps running, and progress is emitted
+  per item. New API tests: the status reads idle before any run, and Stop with nothing running
+  is a 409. `ReapConfirm.test` rewritten for the detached contract (progress + Stop, the sheet
+  closes freely, the report arrives via the status). Not driven against a live armed instance:
+  a real reap deletes real files, so end-to-end confirmation of an actual deletion is left to
+  the operator in a controlled setting.
+
+**Adversarial review (deletion path), all fixed.** A focused multi-agent review of the diff
+surfaced six confirmed issues, each fixed and covered by a test:
+- **[high] shutdown had no owner for the detached reap.** The lifespan cancelled `scan_task`
+  but never `reap_task`, so on shutdown the engines were disposed under an in-flight deletion
+  and the executor's `CancelledError` cleanup never ran — the run could linger `EXECUTING` with
+  Plex un-tidied. Now the lifespan cancels **and awaits** `reap_task` (bounded 20s) before
+  disposing engines, so the abort+finalize runs against live resources. New executor test:
+  a hard cancel marks the run ABORTED and still refreshes+purges Plex.
+- **[med] the reap slot could wedge.** `execute_run` claims the single slot synchronously,
+  but the release handler caught only `HTTPException`; a crypto/DB error out of
+  `build_reap_gateway` left `running=True` with no task to clear it, jamming the one deletion
+  endpoint at a permanent 409. Now it releases on **any** exception. New API test.
+- **[med] an errored reap vanished from the app-wide bar** (`ReapBar` treated only
+  complete/aborted as ended). Now `error` is a terminal state with its own amber tone and the
+  error text, and the backend re-scans on the error path too when files were removed.
+- **[low] reopening a live run showed stale/contradictory stages** — the arm+Reap stage lit
+  while a *different* run held the slot, and the dry-run "practice run" blurb rendered over
+  live progress. Both gated on `!running && !report` (and a "another reap is running" notice);
+  the dry run is skipped entirely when reopening an in-flight or finished run.
+Also fixed a same-diff race I caught first: the slot's check-then-set spanned an `await`, so
+two concurrent executes could both pass — now an atomic synchronous claim.

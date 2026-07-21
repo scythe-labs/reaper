@@ -376,6 +376,25 @@ class RunReport:
 
 
 @dataclass(frozen=True)
+class ReapProgress:
+    """A live snapshot of a running reap, emitted after every item.
+
+    A real reap is one item at a time and a large one takes a while, so the executor hands
+    the API layer this after each item to fill a status the browser polls -- the same shape
+    the scan uses (``snapshot.Progress``). Cumulative counts, not deltas, so a dropped poll
+    never loses ground. ``done``/``total`` count the *plan's* delete units (a whole season
+    is one), matching the number the owner confirmed.
+    """
+
+    done: int
+    total: int
+    deleted_items: int
+    deleted_bytes: int
+    skipped: int
+    title: str
+
+
+@dataclass(frozen=True)
 class _Delete:
     """One item's steps, resolved against its candidate.
 
@@ -589,6 +608,8 @@ class Executor:
         dry_run: bool = True,
         gateway: ReapGateway | None = None,
         armed_recheck: Callable[[], Awaitable[bool]] | None = None,
+        stop_recheck: Callable[[], Awaitable[bool]] | None = None,
+        progress: Callable[[ReapProgress], None] | None = None,
         exclusion_poll_attempts: int = 5,
         exclusion_poll_delay: float = 1.0,
         plex_settle_attempts: int = 10,
@@ -603,6 +624,15 @@ class Executor:
         # rows across its per-item commits and would keep answering with the stale
         # value). Required for a real run; a dry run sends nothing and needs none.
         self._armed_recheck = armed_recheck
+        # The explicit Stop, from the reap window or the follow-you bar: a separate signal
+        # from disarming, so stopping one run leaves deletion armed for the next. Re-read
+        # before every item, like the arm switch. A convenience layer, NOT a safety
+        # interlock -- the armed-recheck and the caps stay the fail-closed guards -- so an
+        # unreadable stop flag resolves toward continuing, never toward a spurious halt.
+        self._stop_recheck = stop_recheck
+        # A sink for per-item progress (the API's polled status). None for a dry run and any
+        # headless run; the reap still completes, it just reports nowhere.
+        self._progress = progress
         # dry_run defaults True. Deleting requires opting *in*, at the call site and
         # again at the host via the guard. Nothing deletes by omission.
         self._dry_run = dry_run
@@ -807,22 +837,50 @@ class Executor:
             if not self._dry_run:
                 run.state = RunState.ABORTED
                 run.aborted_reason = str(exc)
-
-        # The run's final state is committed BEFORE the Plex cleanup: the purge below can
-        # wait on Plex scans for a while, and the outcome of the run must already be
-        # durable by then, whatever happens during cleanup.
-        if not self._dry_run:
-            await self._session.commit()
-
-        # Purge stale Plex entries for whatever was actually removed -- on a COMPLETED or an
-        # ABORTED run alike, because a canary can fail its exclusion check *after* its file is
-        # already gone (that is the bug that left a stale entry). Post-processing, never fatal:
-        # the files are gone; this only keeps Plex's view honest. Gated on a section actually
-        # having been refreshed (i.e. a file really was removed).
-        if not self._dry_run and self._affected_sections:
-            await self._finalize_plex()
+        except asyncio.CancelledError:
+            # A hard cancel -- the app shutting down, or a force-stop that did not go
+            # through the graceful Stop (which raises ExecutionError above). Record it as an
+            # abort so the run does not linger in EXECUTING, then let the finally tidy Plex
+            # before the cancellation propagates. Every removed file is already journalled
+            # per item, so nothing is lost by aborting here.
+            report.state = RunState.ABORTED
+            report.aborted_reason = "The run was stopped before it finished."
+            if not self._dry_run:
+                run.state = RunState.ABORTED
+                run.aborted_reason = report.aborted_reason
+            raise
+        finally:
+            # Runs on EVERY exit -- COMPLETED, a graceful abort, and a hard cancel alike --
+            # because whatever ended the run, the files already removed must have their
+            # outcome made durable and their stale Plex entries cleared. Previously this sat
+            # after the try/except and an unexpected exception (or a cancel from
+            # backgrounding the run) skipped it, orphaning Plex entries and leaving the run
+            # EXECUTING. See _commit_and_finalize for why it is best-effort.
+            if not self._dry_run:
+                await self._commit_and_finalize()
 
         return report
+
+    async def _commit_and_finalize(self) -> None:
+        """Make the run's final state durable, then purge Plex's now-stale entries.
+
+        The final state is committed BEFORE the purge: the purge can wait on Plex scans for
+        a while, and the outcome must already be durable by then. Best-effort and never
+        fatal to the run's outcome -- a failed final commit leaves a recoverable EXECUTING
+        run (re-planned from a fresh scan), and a failed purge leaves a cosmetic lingering
+        Plex entry, never a lost file. The per-item VERIFIED marks are already committed
+        durably in the delete loop, so this final commit only persists the terminal state.
+
+        Purge runs on a COMPLETED or an ABORTED run alike, because a canary can fail its
+        exclusion check *after* its file is already gone; it is gated on a section actually
+        having been refreshed (a file really was removed), and _finalize_plex never raises.
+        """
+        try:
+            await self._session.commit()
+        except Exception as exc:  # pragma: no cover - defensive; a failed final commit re-plans
+            log.warning("reap.final_commit_failed", error=str(exc))
+        if self._affected_sections:
+            await self._finalize_plex()
 
     async def _check_rolling_caps(self, deletes: Sequence[_Delete]) -> None:
         """The 30-day budget: past verified deletions plus THIS run must fit both rolling
@@ -920,6 +978,7 @@ class Executor:
         # (deleted, but the exclusion did not land), so plowing on after the first surprise
         # is exactly what the canary exists to prevent.
         real_attempt_made = False
+        total = len(deletes)
         for index, delete in enumerate(deletes):
             # The mid-run kill switch, re-read before EVERY item (the first included --
             # the route's own check is seconds stale by now). Aborting mid-list is safe
@@ -931,6 +990,14 @@ class Executor:
                     "stopped here. Anything already deleted stays deleted; nothing "
                     "further was sent."
                 )
+            # The explicit Stop, checked in the same breath and the same fail-graceful way:
+            # a graceful halt through an ExecutionError, so execute()'s abort path runs and
+            # -- crucially -- still tidies Plex for whatever was already removed.
+            if not self._dry_run and await self._stop_requested():
+                raise ExecutionError(
+                    "You stopped this run, so it halted here. Anything already removed "
+                    "stays removed; nothing further was sent."
+                )
             outcome = await self._one_delete(delete, is_canary=index == 0, approved_at=approved_at)
             if not self._dry_run:
                 # Every item's step marks (VERIFIED, FAILED, SKIPPED) are made durable
@@ -941,6 +1008,7 @@ class Executor:
 
             if outcome.state == StepState.SKIPPED:
                 report.skipped += 1
+                self._emit_progress(index + 1, total, report, delete.candidate.title)
                 continue  # a skip touched no file, so it does not consume the canary
 
             # From here the item was really acted on (verified or failed).
@@ -958,7 +1026,13 @@ class Executor:
                     report.deleted_bytes += freed
                 else:
                     report.deleted_unmeasured += 1
-            elif outcome.state == StepState.FAILED and first_real_attempt:
+
+            # Emit AFTER this item's counters update, so the polled status shows the real
+            # running tally, and BEFORE the canary halt below, so a failed test item's count
+            # is reported before the run aborts.
+            self._emit_progress(index + 1, total, report, delete.candidate.title)
+
+            if outcome.state == StepState.FAILED and first_real_attempt:
                 # The canary -- the first real deletion -- misbehaved. Halt the whole run:
                 # a plan whose first, smallest, safest delete does not behave as predicted
                 # is a plan we do not understand.
@@ -1072,6 +1146,46 @@ class Executor:
         except Exception as exc:
             log.warning("reap.arm_recheck_unreadable", error=str(exc))
             return False
+
+    async def _stop_requested(self) -> bool:
+        """Did the operator press Stop, from the reap window or the follow-you bar?
+
+        Re-read before every item, like the arm switch. This is a convenience, not a safety
+        interlock: the arm-recheck above is the fail-closed guard, so an unreadable stop flag
+        resolves toward *continuing* (return False) rather than halting a healthy run on a
+        transient blip. Stopping still keeps every file it has not reached, and a genuine
+        Stop sets a durable flag that the next read sees.
+        """
+        if self._stop_recheck is None:
+            return False
+        try:
+            return bool(await self._stop_recheck())
+        except Exception as exc:  # pragma: no cover - the injected read is an in-memory flag
+            log.warning("reap.stop_recheck_unreadable", error=str(exc))
+            return False
+
+    def _emit_progress(self, done: int, total: int, report: RunReport, title: str) -> None:
+        """Hand the running tally to the injected progress sink, after each item.
+
+        No-op unless a sink was injected (the API's polled status). A failure in the sink
+        must never derail a deletion, so it is caught and logged -- reporting is strictly
+        secondary to the run.
+        """
+        if self._progress is None:
+            return
+        try:
+            self._progress(
+                ReapProgress(
+                    done=done,
+                    total=total,
+                    deleted_items=report.deleted_items,
+                    deleted_bytes=report.deleted_bytes,
+                    skipped=report.skipped,
+                    title=title,
+                )
+            )
+        except Exception as exc:  # pragma: no cover - defensive; progress is never load-bearing
+            log.warning("reap.progress_emit_failed", error=str(exc))
 
     def _equivalent_keys(self, candidate: Candidate) -> list[int]:
         """Every Plex rating key this candidate's watch evidence lives under.

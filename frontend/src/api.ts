@@ -510,6 +510,28 @@ export interface RunReport {
   outcomes: RunOutcome[];
 }
 
+/** A running (or just-finished) reap. Polled while a reap is in flight, and read once on
+ *  load to re-attach to one already running. A reap runs detached from the request that
+ *  started it, so it survives navigating away and closing the tab. */
+export interface ReapStatus {
+  running: boolean;
+  run_id: number | null;
+  /** The operator pressed Stop. The run halts after the item in flight, gracefully. */
+  stopping: boolean;
+  /** idle | reaping | complete | aborted | error */
+  phase: string;
+  done: number;
+  total: number;
+  deleted_items: number;
+  deleted_bytes: number;
+  skipped: number;
+  /** The item last acted on, for the live line. */
+  title: string;
+  error: string | null;
+  /** The after-action report, present once the run has ended (null while running). */
+  report: RunReport | null;
+}
+
 export interface ProfileSettings {
   max_items_per_run: number;
   max_bytes_per_run: number;
@@ -1059,15 +1081,24 @@ export const api = {
   scanStatus: () => request<ScanStatus>("/api/scan/status"),
 
   runs: () => request<Run[]>("/api/runs"),
+  run: (id: number) => request<Run>(`/api/runs/${id}`),
   /** Build a plan. With no keys it covers the whole condemned set; with `mediaKeys` it
    *  reaps just those items -- the safe path for a first, hand-picked deletion. */
   createRun: (mediaKeys?: string[]) =>
     post<Run>("/api/runs", mediaKeys && mediaKeys.length ? { media_keys: mediaKeys } : {}),
   dryRun: (id: number) => post<RunReport>(`/api/runs/${id}/dry-run`, {}),
-  /** Execute a real reap. Requires deletion armed on the host and the exact content-bound
-   *  confirmation phrase -- the server recomputes and refuses anything else. */
+  /** Start a real reap. Requires deletion armed on the host and the exact content-bound
+   *  confirmation phrase -- the server recomputes and refuses anything else. The reap then
+   *  runs detached; this returns the initial status, and the report lands on the status
+   *  (poll `reapStatus`) when the run ends. */
   executeRun: (id: number, confirmationPhrase: string) =>
-    post<RunReport>(`/api/runs/${id}/execute`, { confirmation_phrase: confirmationPhrase }),
+    post<ReapStatus>(`/api/runs/${id}/execute`, { confirmation_phrase: confirmationPhrase }),
+  /** The running (or last) reap's progress. Polled while a reap runs, and read once on load
+   *  to re-attach to one already in flight from any screen. */
+  reapStatus: () => request<ReapStatus>("/api/runs/execute/status"),
+  /** Stop the running reap, gracefully: it halts after the item in flight and still tidies
+   *  Plex. Leaves deletion armed. Reachable from any screen. */
+  stopRun: (id: number) => post<ReapStatus>(`/api/runs/${id}/stop`, {}),
 
   profile: () => request<ProfileSettings>("/api/profile"),
   saveProfile: (s: ProfileSettings) =>

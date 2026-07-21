@@ -218,7 +218,7 @@ class TestManifestHash:
         phrase = confirmation_phrase(
             [_fake_candidate("radarr:1:1", 100 * GB), _fake_candidate("radarr:1:2", 114 * GB)]
         )
-        assert phrase == "REAP 2 ITEMS 214 GB"
+        assert phrase == "REAP 2 SOULS 214 GB"
 
 
 class TestBuildPlan:
@@ -966,7 +966,7 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
     ) -> None:
         """The count and the byte total the owner types describe the exact set acted on.
 
-        Counting the unmeasured item would ask them to approve "2 ITEMS" for a run that
+        Counting the unmeasured item would ask them to approve "2 SOULS" for a run that
         can only ever delete one.
         """
         snapshot_id = await _snapshot_with(session, [("radarr:1:1", 10 * GB), ("radarr:1:2", None)])
@@ -975,7 +975,7 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
         planned = await _planned_candidates(session, run)
 
         assert [c.media_key for c in planned] == ["radarr:1:1"]
-        assert confirmation_phrase(planned) == "REAP 1 ITEMS 10 GB"
+        assert confirmation_phrase(planned) == "REAP 1 SOUL 10 GB"
 
     def test_an_unmeasured_size_hashes_differently_from_a_zero(self) -> None:
         """The manifest binds what the owner approved, so the two must not collide.
@@ -1006,7 +1006,7 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
         snapshot_id = await _snapshot_with(session, [("radarr:1:1", 1 * GB)])
         run = await _plan(session, snapshot_id)
 
-        assert confirmation_phrase(await _planned_candidates(session, run)) == "REAP 1 ITEMS 1 GB"
+        assert confirmation_phrase(await _planned_candidates(session, run)) == "REAP 1 SOUL 1 GB"
 
 
 class TestTheUnmeasuredAllowance:
@@ -1086,7 +1086,7 @@ class TestTheUnmeasuredAllowance:
         )
 
         planned = await _planned_candidates(session, run)
-        assert confirmation_phrase(planned) == "REAP 2 ITEMS 10 GB + 1 UNSIZED"
+        assert confirmation_phrase(planned) == "REAP 2 SOULS 10 GB + 1 UNSIZED"
 
     async def test_they_count_against_the_item_cap(self, session: AsyncSession) -> None:
         """Only the BYTE caps cannot bound them. The item caps must, or the population is
@@ -1459,6 +1459,138 @@ class TestDisarmMidRun:
         ).execute(run.id)
 
         assert report.state is RunState.COMPLETED
+
+
+class TestStopMidRun:
+    """Pressing Stop halts the run gracefully before its next item -- like disarming, but it
+    leaves deletion armed. Crucially, whatever was removed before the halt still has its stale
+    Plex entry tidied: a stopped run cleans up Plex exactly as a completed one does."""
+
+    async def test_stopping_between_items_halts_the_rest(self, session: AsyncSession) -> None:
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+        radarr = FakeRadarr()
+
+        answers = iter([False, True])  # running for the first item, stopped before the second
+
+        async def stopping() -> bool:
+            return next(answers)
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}), stop_recheck=stopping)
+
+        assert report.state is RunState.ABORTED
+        assert "stopped" in (report.aborted_reason or "").lower()
+        assert radarr.delete_calls == [1]  # the second item was never attempted
+        assert report.deleted_items == 1  # the first stays deleted and recorded
+
+    async def test_a_stopped_run_still_tidies_plex(self, session: AsyncSession) -> None:
+        """The requirement behind Stop: whatever was removed before the halt still gets its
+        stale Plex entry refreshed and purged, so nothing is left showing as unavailable."""
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+        plex = FakePlex(sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 99]})
+        radarr = FakeRadarr(path="/movies/One (2001)")
+
+        answers = iter([False, True])
+
+        async def stopping() -> bool:
+            return next(answers)
+
+        report = await _real(
+            session, run, _gateway(radarr={1: radarr}, plex=plex), stop_recheck=stopping
+        )
+
+        assert report.state is RunState.ABORTED
+        assert report.deleted_items == 1
+        # Refreshed for the file that WAS removed, and its stale entry purged -- on a STOPPED
+        # run, exactly as on a completed one.
+        assert plex.refreshed == [("Movies", "/movies/One (2001)")]
+        assert plex.emptied == ["Movies"]
+
+    async def test_an_unreadable_stop_flag_keeps_running(self, session: AsyncSession) -> None:
+        """Stop is a convenience, not a fail-closed interlock (the arm-recheck is that). An
+        unreadable stop flag must NOT halt a healthy run on a transient blip."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+        radarr = FakeRadarr()
+
+        async def broken() -> bool:
+            raise RuntimeError("flag unreadable")
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}), stop_recheck=broken)
+
+        assert report.state is RunState.COMPLETED
+        assert radarr.delete_calls == [1]  # it ran to completion, not halted on the blip
+
+    async def test_a_hard_cancel_still_marks_aborted_and_tidies_plex(
+        self, session: AsyncSession
+    ) -> None:
+        """A hard cancel mid-run (the app shutting down, or a force-stop) is not the graceful
+        Stop -- it arrives as CancelledError, not ExecutionError -- but the executor must still
+        mark the run ABORTED and tidy Plex for what was already removed BEFORE the cancellation
+        propagates, so shutdown never leaves the run EXECUTING with orphaned Plex entries. This
+        exercises the separate ``except asyncio.CancelledError`` branch and its finally."""
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+
+        class _CancelBeforeSecondItem(FakePlex):
+            """The streaming veto is re-polled before every delete; raise CancelledError on the
+            second poll to stand in for a shutdown landing between items."""
+
+            def __init__(self, **kw: Any) -> None:
+                super().__init__(**kw)
+                self._polls = 0
+
+            async def active_streams(self) -> list[ActiveStream]:
+                self._polls += 1
+                if self._polls >= 2:
+                    raise asyncio.CancelledError
+                return []
+
+        plex = _CancelBeforeSecondItem(
+            sections={"Movies": ["/movies"]}, item_counts={"Movies": [100, 99]}
+        )
+        radarr = FakeRadarr(path="/movies/One (2001)")
+
+        with pytest.raises(asyncio.CancelledError):
+            await _real(session, run, _gateway(radarr={1: radarr}, plex=plex))
+
+        refreshed = await session.get(ReapRun, run.id)
+        assert refreshed is not None
+        assert refreshed.state is RunState.ABORTED  # not left EXECUTING
+        assert plex.refreshed == [("Movies", "/movies/One (2001)")]  # the first item's path
+        assert plex.emptied == ["Movies"]  # tidied on the cancel path, before it propagated
+
+    async def test_progress_is_reported_after_every_item(self, session: AsyncSession) -> None:
+        """The polled status is fed a cumulative tally after each item, so a long run shows
+        movement and the app-wide bar can follow it."""
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 2 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+        seen: list[tuple[int, int, int]] = []
+
+        executor = Executor(
+            session,
+            safety=_armed(),
+            settings=ProfileSettings(),
+            dry_run=False,
+            gateway=_gateway(radarr={1: FakeRadarr()}),
+            armed_recheck=_armed_forever,
+            progress=lambda p: seen.append((p.done, p.total, p.deleted_items)),
+            exclusion_poll_delay=0.0,
+            plex_settle_delay=0.0,
+        )
+        report = await executor.execute(run.id)
+
+        assert report.deleted_items == 2
+        assert seen == [(1, 2, 1), (2, 2, 2)]  # one emit per item, counts cumulative
 
 
 class TestRowTimestamp:
@@ -2270,6 +2402,7 @@ async def _real(
     gateway: ReapGateway,
     *,
     armed_recheck: Any = _armed_forever,
+    stop_recheck: Any = None,
     settings: ProfileSettings | None = None,
 ) -> RunReport:
     """Execute a run for real (armed) against the given gateway of fakes. Zero poll delay so
@@ -2281,6 +2414,7 @@ async def _real(
         dry_run=False,
         gateway=gateway,
         armed_recheck=armed_recheck,
+        stop_recheck=stop_recheck,
         exclusion_poll_delay=0.0,
         plex_settle_delay=0.0,
     )

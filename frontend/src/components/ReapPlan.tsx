@@ -15,7 +15,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, type Run, type RunReport } from "../api";
-import { bytes, count, date } from "../format";
+import { bytes, count, date, souls } from "../format";
 import { ReapBreakdown } from "./ReapBreakdown";
 import { ReapConfirm } from "./ReapConfirm";
 
@@ -72,8 +72,8 @@ function Report({ report }: { report: RunReport }) {
   return (
     <div className="sim">
       <p className="blurb">
-        Dry run complete. Every safety check ran; <strong>{count(report.would_delete_items)}</strong>{" "}
-        items were actually deleted (it is a dry run, so this is zero), and{" "}
+        Dry run complete. Every safety check ran; <strong>{souls(report.would_delete_items)}</strong>{" "}
+        were actually reaped (it is a dry run, so this is zero), and{" "}
         {count(report.outcomes.length)} steps were walked.
       </p>
       <ul className="dryrun-outcomes">
@@ -172,17 +172,17 @@ export function ReapPlan({
           <div className="plan-summary">
             <span className="confirm-phrase">{run.confirmation_phrase}</span>
             <span className="muted">
-              {count(run.item_count)} items · {bytes(run.total_bytes)} · smallest first, and the
-              first item is a test: if it doesn't go exactly as planned, the run stops.
+              {souls(run.item_count)} · {bytes(run.total_bytes)} · smallest first, and the first
+              is a test: if it doesn't go exactly as planned, the run stops.
             </span>
             {/* The plan is smaller than the queue implied, and this is where the owner
                 finds out. Silence here reads as "that was everything". */}
             {run.held_back_unknown_size > 0 && (
               <p className="notice notice-warn">
-                {count(run.held_back_unknown_size)}{" "}
-                {run.held_back_unknown_size === 1 ? "item is" : "items are"} held back. Reaper
-                couldn't measure {run.held_back_unknown_size === 1 ? "its" : "their"} size, so it
-                won't delete {run.held_back_unknown_size === 1 ? "it" : "them"}.
+                {souls(run.held_back_unknown_size)}{" "}
+                {run.held_back_unknown_size === 1 ? "is" : "are"} held back. Reaper couldn't measure{" "}
+                {run.held_back_unknown_size === 1 ? "its" : "their"} size, so it won't delete{" "}
+                {run.held_back_unknown_size === 1 ? "it" : "them"}.
               </p>
             )}
             {staleRun && (

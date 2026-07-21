@@ -636,7 +636,7 @@ class ReapRun(Base):
         Enum(RunState, native_enum=False), default=RunState.PLANNED
     )
 
-    # The content-bound confirmation the human actually approved, e.g. "REAP 7 ITEMS
+    # The content-bound confirmation the human actually approved, e.g. "REAP 7 SOULS
     # 214 GB". Recomputed from the plan at execution time; a mismatch voids the run, so a
     # stale browser tab cannot replay yesterday's plan against today's library.
     approved_manifest_hash: Mapped[str] = mapped_column(String(64))

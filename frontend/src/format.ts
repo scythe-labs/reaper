@@ -43,6 +43,12 @@ export function count(value: number): string {
   return value.toLocaleString();
 }
 
+/** The Reaper's tally, singular-aware: "1 soul", "7 souls". Every reap surface counts in
+ *  souls, not items, so the count and its noun stay together in one place. */
+export function souls(value: number): string {
+  return `${value.toLocaleString()} ${value === 1 ? "soul" : "souls"}`;
+}
+
 /** Basis points to a percentage. Coverage is stored as bp because the policy body is
  *  integers-only -- floats do not canonicalise, and an unstable hash would void
  *  approvals at random. */
