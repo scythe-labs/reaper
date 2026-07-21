@@ -954,7 +954,7 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
 }
 
 /** The Leaving Soon shelf update, moved here from Plex settings. Its on/off toggle still
- *  lives on the Plex tab, so this row links there; when off, it greys out and can't run. */
+ *  lives on the Plex tab, so this row links there; when off, it grays out and can't run. */
 function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
   const queryClient = useQueryClient();
   const ls = useQuery({ queryKey: ["leaving-soon-settings"], queryFn: api.leavingSoonSettings });

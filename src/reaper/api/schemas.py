@@ -676,35 +676,6 @@ class LeavingSoonOut(BaseModel):
     rest of the pass."""
 
 
-class GraceItemOut(BaseModel):
-    media_key: str
-    candidate_id: int
-    """The snapshot row behind this countdown, so its reasoning can be opened from here."""
-    title: str
-    size_bytes: int | None
-    """None when nothing would report a size. The countdown still runs and the item still
-    appears; it just cannot be totalled, and it will not be reaped."""
-
-    grace_ends_at: str
-    days_remaining: int
-    in_grace: bool
-
-
-class GraceReportOut(BaseModel):
-    grace_days: int
-    in_grace_count: int
-    ready_count: int
-    total_bytes_in_grace: int
-    total_bytes_ready: int
-    unknown_size_in_grace: int = 0
-    """How many in each list have no size, and so sit outside the totals above rather
-    than inside them as zeros. Hidden at zero."""
-
-    unknown_size_ready: int = 0
-    in_grace: list[GraceItemOut]
-    ready: list[GraceItemOut]
-
-
 class SignalCountOut(BaseModel):
     """How many condemned titles one signal pushed toward removal, and their measured size.
     ``id`` is a built-in signal id or a custom rule's name; the UI maps the built-ins to

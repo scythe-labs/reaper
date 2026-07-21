@@ -195,7 +195,7 @@ export function ScanRow({
         )}
 
         {snapshot?.degraded && (
-          <p className="warn">
+          <p className="notice notice-warn">
             <strong>This scan came back incomplete.</strong> {snapshot.degraded_reason} You can
             still look at it, but Reaper won't act on it. A scan that missed a source could show a
             list that looks complete when it isn't.

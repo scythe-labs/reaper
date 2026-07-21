@@ -63,6 +63,13 @@ LEAVING_SOON_COLLECTION = "Leaving Soon"
 #: season fan-out is bounded: a modest self-hosted Plex should see a handful of parallel
 #: reads, never one per library at once, and the client's shared requests session pools only
 #: ten connections. A setup with many libraries reconciles in waves rather than a stampede.
+#:
+#: These tasks push reads AND writes through the one shared ``GuardedSession`` across threads
+#: without taking the client's ``_sweep_lock`` (which the GUID sweeps use). Acceptable here
+#: because urllib3's connection-pool checkout is atomic and each library's ``sync_section``
+#: holds a DISTINCT plexapi section object, so the per-library ``batchMultiEdits`` state never
+#: overlaps -- no shared mutable request state crosses threads. If that ever changes, serialize
+#: the shelf writes under ``_sweep_lock`` instead (rule 24 / PR-4).
 SHELF_CONCURRENCY = 4
 
 

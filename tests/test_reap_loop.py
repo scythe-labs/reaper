@@ -507,6 +507,32 @@ class TestCapsAbortNeverTruncate:
         assert report.state is RunState.COMPLETED
         assert report.aborted_reason is None
 
+    async def test_caps_off_skips_the_rolling_and_byte_caps_too(
+        self, session: AsyncSession
+    ) -> None:
+        """The switch drops EVERY run-size ceiling, not just the per-run item cap: a plan over
+        the per-run byte cap and the rolling 30-day caps still completes with caps off (I-1).
+        Each cap here is set below the plan, so any one still enforced would abort it."""
+        condemned = [(f"radarr:1:{i}", 400 * GB) for i in range(5)]  # 5 items, 2000 GB
+        snapshot_id = await _snapshot_with(session, condemned)
+        run = await build_plan(
+            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
+        )
+
+        settings = ProfileSettings(
+            caps_enabled=False,
+            max_items_per_run=1,
+            max_bytes_per_run=100 * GB,
+            max_items_per_30d=1,
+            max_bytes_per_30d=100 * GB,
+        )
+        report = await Executor(
+            session, safety=_read_only(), settings=settings, dry_run=True
+        ).execute(run.id)
+
+        assert report.state is RunState.COMPLETED
+        assert report.aborted_reason is None
+
     async def test_a_real_run_over_the_cap_marks_the_run_aborted(
         self, session: AsyncSession
     ) -> None:

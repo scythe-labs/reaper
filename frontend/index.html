@@ -5,10 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>Reaper</title>
-    <link id="favicon" rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Raster fallback FIRST, the accent-following SVG (#favicon, rewritten by accent.ts and
+         the pre-paint script below) LAST: when two icons are equally appropriate the HTML spec
+         has the browser use the last declared, and a sized PNG is a strong match, so the SVG
+         must come after it or a browser shows the stale default icon forever (B-11). -->
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
+    <link id="favicon" rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <script>
       // Apply the saved theme override before first paint, so a dark-choice page never
       // flashes light (or vice versa). "system" stores nothing and the device decides.

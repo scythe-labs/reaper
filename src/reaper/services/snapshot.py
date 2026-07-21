@@ -412,8 +412,8 @@ async def scan(
     emit(Progress("gathering", 0, 5, "watch history"))
 
     # One read of the mirror for both questions below: `state` returns the row count and
-    # both ends of the window in a single pass, where `horizon`/`latest` are two wrappers
-    # over it and each re-runs the schema check inside a write transaction.
+    # both ends of the window in a single pass, where `horizon`/`latest` are two thin
+    # wrappers that would each call ensure_schema and open their own read of the same table.
     mirror = await history_sync.state(engine)
     horizon = mirror.earliest
     no_history = horizon is None

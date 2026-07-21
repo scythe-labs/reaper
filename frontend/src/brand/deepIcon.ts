@@ -4,9 +4,14 @@
 // dark shell is fixed; the platter and its glow follow the operator's accent, so the
 // browser-tab favicon tracks the same --accent the rest of the UI derives from. This module
 // is the single source of that drawing for every raster medium -- the runtime favicon data
-// URI, and the committed favicon.svg / apple-touch / manifest PNGs, which are generated from
-// `deepIconSvg`. The in-app badge draws the same thing in JSX (BrandBadge.tsx), following
-// --accent live via color-mix; keep the two in step. Scythe geometry comes from ./scythe.
+// URI, and the committed favicon.svg / apple-touch / manifest PNGs. favicon.svg is
+// `deepIconSvg(DEFAULT_ACCENT)`; the PNGs are rasterized from the two SVG variants at the
+// default accent (the rounded rx=143 form for favicon-32 / apple-touch / icon-192 / icon-512,
+// the full-bleed `{radius:0}` form for icon-maskable-512). deepIcon.test.ts is the
+// enforcement: it fails if favicon.svg drifts from `deepIconSvg`, or if any PNG is missing or
+// the wrong size, so a brand change can't ship a stale asset. The in-app badge draws the same
+// thing in JSX (BrandBadge.tsx), following --accent live via color-mix; keep the two in step.
+// Scythe geometry comes from ./scythe.
 
 import { SCYTHE_BLADE_D, SCYTHE_SNATH_D, SCYTHE_SNATH_WIDTH } from "./scythe";
 

@@ -19,9 +19,10 @@ keeping the season:
   floor: the last N seasons, the first season, a season someone is part-way through,
   and any currently-airing season are protected outright, whatever they score.
 
-Only seasons that survive the guards as *prunable* are scored, and only shows that have
-at least one such season are resolved against Plex at all -- which bounds the per-show
-Plex calls to the shows that actually have something removable.
+Only seasons that survive the guards as *prunable* are scored. Plex resolution is one
+paged sweep over every season in the allowed show libraries (see below), so it is no
+longer bounded per show; only the per-show fallback (when the sweep cannot resolve a show)
+and the Sonarr episode fan-out stay limited to shows that actually have something prunable.
 
 ## The season -> Plex rating key join (verify against a live server)
 

@@ -672,8 +672,8 @@ class ProfileSettings(Frozen):
     @model_validator(mode="after")
     def _run_cap_within_rolling_cap(self) -> Self:
         if not self.caps_enabled:
-            # The caps are off, so the relationships between them constrain nothing. Keep
-            # validating them here would reject legal combinations (a run cap above the
+            # The caps are off, so the relationships between them constrain nothing. Keeping
+            # the validation here would reject legal combinations (a run cap above the
             # rolling cap, an unknown-size allowance above the hidden run cap) that can
             # never fire while enforcement is off.
             return self

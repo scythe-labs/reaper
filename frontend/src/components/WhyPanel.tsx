@@ -221,8 +221,8 @@ export function WhyHero({ posterUrl }: { posterUrl: string }) {
 /** Shown ONLY when Reaper could not confidently tie the item to a Plex entry -- the one match
  *  outcome the owner needs told, because it is *why* the file was kept. A clean match shows
  *  nothing at all. Two plain wordings, no jargon: nothing found in Plex, or more than one
- *  possible match. Reuses the shared amber `.warn` tone, like every other "we could not look"
- *  state. */
+ *  possible match. Reuses the shared amber `.notice-warn` tone, like every other "we could not
+ *  look" state. */
 function KeptNotice({ match }: { match: Match | undefined }) {
   if (!match || match.status === "matched" || match.status == null) return null;
 
@@ -232,7 +232,7 @@ function KeptNotice({ match }: { match: Match | undefined }) {
       : "We couldn't find this in your Plex, so there's no way to tell if anyone still watches it.";
 
   return (
-    <p className="warn kept-notice">
+    <p className="notice notice-warn kept-notice">
       <strong>Kept to be safe.</strong> {reason}
     </p>
   );

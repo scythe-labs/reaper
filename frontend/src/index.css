@@ -467,18 +467,6 @@ a:hover {
   color: var(--unknown);
 }
 
-.warn {
-  background: var(--unknown-soft);
-  border: 1px solid color-mix(in srgb, var(--unknown) 45%, transparent);
-  border-radius: var(--radius);
-  padding: 0.55rem 0.8rem;
-  font-size: 0.86rem;
-  margin: 0.5rem 0;
-}
-.warn.danger {
-  background: var(--condemn-soft);
-  border-color: var(--condemn);
-}
 /* The "kept to be safe" match notice: the shared amber tone, with the lead in the amber ink
    so the outcome reads first. */
 .kept-notice {
@@ -1058,7 +1046,7 @@ main.split {
 }
 
 /* Narrower than this the five section tabs are wider than the row they sit in (~400px of
-   tabs in a ~335px track on a 375px phone), and a centerd, non-wrapping flex row
+   tabs in a ~335px track on a 375px phone), and a centered, non-wrapping flex row
    pushes the leading tab off the left edge where nothing can scroll to it. Same answer as
    .bulk-bar: one line, scrolled sideways, never a ragged second row. 560px is the narrowest
    width on the file's 1100/900/640/560 grid and the only one the overflow actually reaches;
@@ -1827,7 +1815,7 @@ a.rating-chip:hover {
   color: var(--protect);
 }
 
-/* The solid amber notice -- the same tone as `.warn` / the "kept to be safe" notice, so
+/* The solid amber notice -- the same tone as `.notice-warn` / the "kept to be safe" notice, so
    every "Reaper wasn't sure, so it's kept" state reads the same way. */
 .gates-unknown li {
   display: block; /* the shared .gates li flex row would put the cause beside the list */
@@ -2984,8 +2972,10 @@ a.rating-chip:hover {
   gap: 0.55rem;
 }
 
-/* The requester card: the review queue's card language (surface, accent hover, accent
-   selection bar when open), purpose-built around a person instead of a title. */
+/* The requester card. Its OWN layout (padding, gap, the background transition its hover
+   wash needs); the interaction grammar itself -- accent hover, focus ring, the accent
+   selection bar when open, and the additive open+hover -- is shared with .card, declared on
+   the grouped .card rules below so a tweak lands once (R-4). */
 .fair-card {
   position: relative;
   display: flex;
@@ -3004,24 +2994,6 @@ a.rating-chip:hover {
    where there is something to open. */
 .fair-card.clickable {
   cursor: pointer;
-}
-.fair-card.clickable:hover {
-  box-shadow: var(--shadow-md);
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
-}
-.fair-card.clickable:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ring);
-}
-.fair-card.open {
-  border-color: var(--accent);
-  box-shadow: inset 3px 0 0 var(--accent), var(--shadow-sm);
-}
-/* Hovering the open card is additive: the accent selection bar stays and only deepens. */
-.fair-card.open.clickable:hover {
-  box-shadow: inset 3px 0 0 var(--accent), var(--shadow-md);
 }
 
 .fair-avatar {
@@ -3133,8 +3105,10 @@ a.rating-chip:hover {
   color: var(--text);
   text-align: left;
 }
-/* :not(:disabled) so this outranks the global button:hover and keeps the accent. */
-.media-chip:hover:not(:disabled) {
+/* :not(:disabled) so this outranks the global button:hover and keeps the accent. Excludes
+   the .static variant: it is a <span> with nothing to open, so :disabled never matches it and
+   the accent hover would promise an action it does not have (U-10). */
+.media-chip:not(.static):hover:not(:disabled) {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 7%, var(--surface));
 }
@@ -3553,8 +3527,12 @@ a.rating-chip:hover {
   transition: box-shadow 0.15s var(--ease), border-color 0.15s var(--ease);
 }
 /* Hover speaks in the accent on every card -- accent edge + a faint accent wash -- so pointing
-   at any row reads the same way. */
-.card:hover {
+   at any row reads the same way. Scales' .fair-card shares this whole interaction grammar
+   (hover, focus ring, selection bar, additive open+hover); it is declared once here and on the
+   three rules below, so a card-hover tweak lands in one place (R-4). A fair-card hovers only
+   while clickable; a review card always does. */
+.card:hover,
+.fair-card.clickable:hover {
   box-shadow: var(--shadow-md);
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 7%, var(--surface));
@@ -3562,12 +3540,14 @@ a.rating-chip:hover {
 .card.clickable {
   cursor: pointer;
 }
-.card.clickable:focus-visible {
+.card.clickable:focus-visible,
+.fair-card.clickable:focus-visible {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
-.card-selected {
+.card-selected,
+.fair-card.open {
   border-color: var(--accent);
   box-shadow: inset 3px 0 0 var(--accent), var(--shadow-sm);
 }
@@ -3575,7 +3555,8 @@ a.rating-chip:hover {
    deepens it (raised shadow), so it never trades the accent edge for a plain one and can't
    read as a deselect. After .card:hover in source, so this box-shadow wins; the accent border
    and wash still come from .card:hover. */
-.card-selected:hover {
+.card-selected:hover,
+.fair-card.open.clickable:hover {
   box-shadow: inset 3px 0 0 var(--accent), var(--shadow-md);
 }
 /* A spared card recedes -- but the dim must NOT be `opacity` on the card itself. An `opacity`
@@ -5581,7 +5562,7 @@ button.danger:hover:not(:disabled) {
 .modal {
   width: min(560px, 100%);
   /* dvh, not vh: on mobile browsers vh resolves to the toolbar-hidden viewport, so a
-     centerd delete-confirm modal could push its actions off-screen. dvh tracks the actually
+     centered delete-confirm modal could push its actions off-screen. dvh tracks the actually
      visible area -- matching the .why mobile sheet fix. */
   max-height: 88dvh;
   overflow-y: auto;

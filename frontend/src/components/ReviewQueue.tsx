@@ -1361,7 +1361,6 @@ export function ReviewQueue({
   selectedGroupKey,
   onSelect,
   onSelectGroup,
-  searchFor,
   stepRef,
 }: {
   verdict: Verdict;
@@ -1370,9 +1369,6 @@ export function ReviewQueue({
   selectedGroupKey: string | null;
   onSelect: (id: number) => void;
   onSelectGroup: (key: string) => void;
-  /** A title to look up, pushed in from another view. The nonce applies each jump once,
-   *  so clearing the box afterwards is not undone by the next render. */
-  searchFor?: { term: string; nonce: number } | null;
   /** Filled in with a way to move the open card one place up or down this list, for the
    *  keyboard review loop. The queue owns the order, so it owns the walk. */
   stepRef?: RefObject<((delta: 1 | -1) => void) | null>;
@@ -1400,16 +1396,6 @@ export function ReviewQueue({
     const id = setTimeout(() => setSearch(searchInput.trim()), 250);
     return () => clearTimeout(id);
   }, [searchInput]);
-
-  // A title handed over from another view fills the search box, once per jump: the box
-  // shows what is being looked for, so it stays the operator's to edit or clear.
-  const handledSearch = useRef(0);
-  useEffect(() => {
-    if (!searchFor || searchFor.nonce === handledSearch.current) return;
-    handledSearch.current = searchFor.nonce;
-    setSearchInput(searchFor.term);
-    setSearch(searchFor.term);
-  }, [searchFor]);
 
   // Each tab remembers its own filters. On a tab switch, adopt that tab's remembered set
   // and skip the save below for that render -- otherwise the old tab's filters would be

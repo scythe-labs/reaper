@@ -426,9 +426,9 @@ function Dashboard({ user }: { user: AuthUser }) {
     setView("settings");
   };
 
-  // The grace countdown and Scales list titles without saying why each one is where it is.
-  // Opening one lands on its reasoning, which lives on the review screen beside the queue --
-  // an item on its own card, a whole show on its group panel.
+  // Scales lists titles without saying why each one is where it is. Opening one lands on its
+  // reasoning, which lives on the review screen beside the queue -- an item on its own card,
+  // a whole show on its group panel.
   const goToItemReasons = (candidateId: number) => {
     setSelected({ kind: "item", id: candidateId });
     setView("review");

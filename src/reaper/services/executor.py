@@ -559,8 +559,9 @@ def _check_caps(
     if unmeasured > settings.max_unmeasured_per_run:
         raise ExecutionError(
             f"This run would delete {unmeasured} items Reaper couldn't measure, over your "
-            f"limit of {settings.max_unmeasured_per_run} per run. The run is aborted, not "
-            "trimmed: which of them gets deleted must never come down to sort order."
+            f"limit of {settings.max_unmeasured_per_run} per run. It stops rather than "
+            "deleting just part. Raise the unknown-size allowance in Policy, under Pace and "
+            "limits."
         )
 
     # The four run-size caps are the optional second layer, on top of the deletion
@@ -906,16 +907,17 @@ class Executor:
             raise ExecutionError(
                 f"This run would delete {items} items on top of the {past_items} already "
                 f"deleted in the last 30 days, over the rolling cap of "
-                f"{self._settings.max_items_per_30d}. The run is aborted, not truncated. "
-                "Wait for the window to pass, or raise the cap."
+                f"{self._settings.max_items_per_30d}. It stops rather than deleting just part. "
+                "Wait for the window to pass, raise the cap, or turn limits off in Policy, "
+                "under Pace and limits."
             )
         if past_bytes + total_bytes > self._settings.max_bytes_per_30d:
             raise ExecutionError(
                 f"This run would delete {total_bytes / 1024**3:.0f} GB on top of the "
                 f"{past_bytes / 1024**3:.0f} GB already deleted in the last 30 days, over "
-                f"the rolling cap of {self._settings.max_bytes_per_30d / 1024**3:.0f} GB. "
-                "The run is aborted, not truncated. Wait for the window to pass, or raise "
-                "the cap."
+                f"the rolling cap of {self._settings.max_bytes_per_30d / 1024**3:.0f} GB. It "
+                "stops rather than deleting just part. Wait for the window to pass, raise the "
+                "cap, or turn limits off in Policy, under Pace and limits."
             )
 
     async def _rolling_30d_deletions(self) -> tuple[int, int]:

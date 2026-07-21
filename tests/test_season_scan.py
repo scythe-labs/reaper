@@ -23,7 +23,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from reaper.clients.plex import PlexSeasonRow
+from reaper.clients.plex import PlexError, PlexSeasonRow
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.clock import utcnow
 from reaper.config import Settings
@@ -766,6 +766,7 @@ class _FakeSonarr:
     ) -> None:
         self._series = series
         self._episodes = episodes or {}
+        self.episodes_called: list[int] = []
 
     async def series(self) -> list[dict[str, Any]]:
         return self._series
@@ -774,6 +775,7 @@ class _FakeSonarr:
         return [{"path": "/data/tv", "accessible": True}]
 
     async def episodes(self, series_id: int) -> list[dict[str, Any]]:
+        self.episodes_called.append(series_id)
         return self._episodes.get(series_id, [])
 
 
@@ -833,9 +835,12 @@ class _FakePlexGuids:
         self,
         items: dict[int, identity.PlexItem],
         seasons: dict[int, list[PlexSeasonRow]] | None = None,
+        *,
+        season_index_error: bool = False,
     ) -> None:
         self._items = items
         self._seasons = seasons or {}
+        self._season_index_error = season_index_error
 
     async def library_guid_index(
         self, *, section_type: str, allowed_sections: set[int] | None = None
@@ -845,6 +850,8 @@ class _FakePlexGuids:
     async def library_season_index(
         self, *, allowed_sections: set[int] | None = None
     ) -> dict[int, list[PlexSeasonRow]]:
+        if self._season_index_error:
+            raise PlexError("season sweep failed")
         return self._seasons
 
 
@@ -949,6 +956,121 @@ class TestGatherEndToEnd:
         by_key = {j.media_key: j for j in judgments}
         # Season 3 still resolves to its Plex key, via the per-show fallback.
         assert by_key["sonarr:1:42:3"].plex_rating_key == 903
+
+    async def test_a_raising_season_sweep_falls_back_per_show_and_does_not_degrade(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """library_season_index RAISING (not returning empty) hits the ``except PlexError``
+        branch: the whole library falls back to the per-show read rather than degrading, since
+        the same data is reachable one show at a time (I-2). The empty-dict path above exercises
+        different code than this except."""
+        series = [
+            {
+                "id": 42,
+                "title": "Long Show",
+                "year": 2005,
+                "status": "ended",
+                "ended": True,
+                "imdbId": "tt0001",
+                "seasons": [_season_payload(n) for n in range(1, 6)],
+            }
+        ]
+        tautulli = _FakeTautulli(
+            shows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
+            children={900: [{"media_index": n, "rating_key": 900 + n} for n in range(1, 6)]},
+        )
+        plex = _FakePlexGuids(
+            {
+                900: identity.PlexItem(
+                    rating_key=900,
+                    title="Long Show",
+                    year=2005,
+                    added_at=None,
+                    ids=identity.ExternalIds.of(imdb="tt0001"),
+                )
+            },
+            season_index_error=True,  # the sweep raises
+        )
+        reasons, degrade = _degrade_sink()
+
+        judgments = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(_FakeSonarr(series))],
+            tautulli=tautulli,  # type: ignore[arg-type]
+            plex=plex,  # type: ignore[arg-type]
+            horizon=utcnow() - timedelta(days=4000),
+            active_rating_keys=set(),
+            activity_degraded=False,
+            keep_last_seasons=2,
+            keep_first_season=True,
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+        )
+
+        by_key = {j.media_key: j for j in judgments}
+        # Season 3 resolves via the per-show fallback, and the raise did not degrade the scan
+        # (it logs a warning and falls back; the only degradations here are unrelated).
+        assert by_key["sonarr:1:42:3"].plex_rating_key == 903
+        assert not any("sweep" in r.lower() or "season" in r.lower() for r in reasons)
+
+    async def test_episodes_are_not_fetched_when_keep_in_progress_is_off(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """With mid-binge protection off, ``season_final_episode`` is never consulted, so the
+        whole Sonarr episodes() fan-out is skipped (I-2). Skipping only ever keeps more."""
+        series = [
+            {
+                "id": 42,
+                "title": "Long Show",
+                "year": 2005,
+                "status": "ended",
+                "ended": True,
+                "imdbId": "tt0001",
+                "seasons": [_season_payload(n) for n in range(1, 6)],
+            }
+        ]
+        sonarr = _FakeSonarr(series, episodes={42: [{"seasonNumber": 3, "episodeNumber": 8}]})
+        tautulli = _FakeTautulli(
+            shows=[{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}],
+            children={900: [{"media_index": n, "rating_key": 900 + n} for n in range(1, 6)]},
+        )
+        _reasons, degrade = _degrade_sink()
+
+        off = await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(sonarr)],
+            tautulli=tautulli,  # type: ignore[arg-type]
+            horizon=utcnow() - timedelta(days=4000),
+            active_rating_keys=set(),
+            activity_degraded=False,
+            keep_last_seasons=2,
+            keep_first_season=True,
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            keep_in_progress=False,
+        )
+        assert sonarr.episodes_called == []  # the fan-out was skipped
+        assert "sonarr:1:42:3" in {j.media_key for j in off}  # seasons still resolve
+
+        # Companion: with the guard ON, the fan-out runs, so the skip above is a real branch.
+        sonarr_on = _FakeSonarr(series, episodes={42: [{"seasonNumber": 3, "episodeNumber": 8}]})
+        await season_scan.gather(
+            cache_engine,
+            sonarrs=[_source(sonarr_on)],
+            tautulli=tautulli,  # type: ignore[arg-type]
+            horizon=utcnow() - timedelta(days=4000),
+            active_rating_keys=set(),
+            activity_degraded=False,
+            keep_last_seasons=2,
+            keep_first_season=True,
+            window_days=365,
+            whitelisted=set(),
+            degrade=degrade,
+            keep_in_progress=True,
+        )
+        assert sonarr_on.episodes_called == [42]
 
     async def test_a_show_duplicated_in_plex_narrows_by_its_folder_name(
         self, cache_engine: AsyncEngine
