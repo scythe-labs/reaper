@@ -26,7 +26,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clock import utcnow
-from reaper.config import RuntimeSafety, Settings
+from reaper.config import RuntimeSafety, Settings, parse_trusted_proxies
 from reaper.crypto import SecretBox
 from reaper.db.models import AppSetting
 
@@ -227,19 +227,34 @@ async def clear_api_key(session: AsyncSession) -> None:
 # --- reverse proxy trust -----------------------------------------------------
 
 
-async def proxy_trust_enabled(session: AsyncSession) -> bool:
-    """Whether forwarded headers are honored at all. Off by default: fail closed."""
-    return bool(await _get(session, PROXY_TRUST_ENABLED_KEY, default=False))
+async def proxy_trust_enabled(session: AsyncSession, settings: Settings) -> bool:
+    """Whether forwarded headers are honored at all. Off by default: fail closed.
+
+    The stored value wins; ``REAPER_PROXY_TRUST_ENABLED`` is only the first-boot seed,
+    like every other env-seeded switch. Never-stored (a fresh install) falls back to the
+    seed; a stored ``false`` is a real choice and stays off.
+    """
+    stored = await _get(session, PROXY_TRUST_ENABLED_KEY, default=None)
+    if stored is None:
+        return settings.proxy_trust_enabled
+    return bool(stored)
 
 
 async def set_proxy_trust_enabled(session: AsyncSession, *, enabled: bool) -> None:
     await _set(session, PROXY_TRUST_ENABLED_KEY, bool(enabled))
 
 
-async def get_trusted_proxies(session: AsyncSession) -> list[str]:
+async def get_trusted_proxies(session: AsyncSession, settings: Settings) -> list[str]:
     """The proxy addresses (IPs or CIDR ranges) whose forwarded headers are trusted.
-    Validated at the API edge; stored as the cleaned strings."""
-    value = await _get(session, TRUSTED_PROXIES_KEY, default=[])
+    Validated at the API edge; stored as the cleaned strings.
+
+    The stored value wins; ``REAPER_TRUSTED_PROXIES`` (comma- or space-separated) is only
+    the first-boot seed. An empty stored list is a real choice and is kept, distinct from
+    never-stored, which falls back to the seed.
+    """
+    value = await _get(session, TRUSTED_PROXIES_KEY, default=None)
+    if value is None:
+        return parse_trusted_proxies(settings.trusted_proxies)
     return [str(v) for v in value if str(v).strip()]
 
 

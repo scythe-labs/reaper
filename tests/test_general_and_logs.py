@@ -35,7 +35,7 @@ from reaper.api.middleware import (
     client_ip,
     parse_proxy_networks,
 )
-from reaper.config import Settings
+from reaper.config import Settings, parse_trusted_proxies
 from reaper.db.base import Base
 from reaper.main import create_app
 from tests._auth import login
@@ -152,6 +152,51 @@ class TestGeneralSettings:
 
         client.put("/api/settings/general", json={"proxy_trust_enabled": False})
         assert client.app.state.trusted_proxies == ()  # type: ignore[attr-defined]
+
+
+class TestReverseProxyEnvSeed:
+    """REAPER_PROXY_TRUST_ENABLED / REAPER_TRUSTED_PROXIES seed the first-boot default;
+    the stored value (Settings -> General) wins thereafter, exactly like the deletion
+    switch. A declarative deployment can ship trust configured with no UI visit."""
+
+    def _seeded(self, tmp_path: Path) -> Settings:
+        settings = Settings(  # type: ignore[call-arg]
+            data_dir=tmp_path,
+            secret_key="k",
+            proxy_trust_enabled=True,
+            trusted_proxies="172.16.0.0/12, 10.0.0.5",
+        )
+        engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(engine)
+        engine.dispose()
+        return settings
+
+    def test_the_env_seed_governs_a_fresh_install(self, tmp_path: Path) -> None:
+        settings = self._seeded(tmp_path)
+        with TestClient(create_app(settings)) as c:
+            login(c, settings)
+            data = c.get("/api/settings/general").json()
+            assert data["proxy_trust_enabled"] is True
+            assert data["trusted_proxies"] == ["172.16.0.0/12", "10.0.0.5"]
+            # The live middleware state is armed from the seed at boot, not just the view.
+            assert len(c.app.state.trusted_proxies) == 2  # type: ignore[attr-defined]
+
+    def test_the_stored_value_wins_over_the_seed(self, tmp_path: Path) -> None:
+        settings = self._seeded(tmp_path)
+        with TestClient(create_app(settings)) as c:
+            login(c, settings)
+            # Turn it off in the UI: the stored false must win over the env seed, and take
+            # effect immediately (an empty tuple ignores every forwarded header again).
+            c.put("/api/settings/general", json={"proxy_trust_enabled": False})
+            assert c.get("/api/settings/general").json()["proxy_trust_enabled"] is False
+            assert c.app.state.trusted_proxies == ()  # type: ignore[attr-defined]
+
+
+def test_parse_trusted_proxies_splits_on_commas_and_whitespace() -> None:
+    assert parse_trusted_proxies("172.16.0.0/12, 10.0.0.5") == ["172.16.0.0/12", "10.0.0.5"]
+    assert parse_trusted_proxies("172.16.0.0/12  10.0.0.5") == ["172.16.0.0/12", "10.0.0.5"]
+    assert parse_trusted_proxies("   ") == []
+    assert parse_trusted_proxies("") == []
 
 
 class TestTheApiKeyLane:

@@ -1200,14 +1200,14 @@ class ApiKeyOut(BaseModel):
     key: str
 
 
-async def _general_out(session: AsyncSession) -> GeneralSettingsOut:
+async def _general_out(session: AsyncSession, settings: Settings) -> GeneralSettingsOut:
     return GeneralSettingsOut(
         application_name=await app_settings.get_application_name(session),
         application_url=await app_settings.get_application_url(session),
         accent_color=await app_settings.get_accent_color(session),
         api_key_set=(await session.get(AppSetting, app_settings.API_KEY_KEY)) is not None,
-        proxy_trust_enabled=await app_settings.proxy_trust_enabled(session),
-        trusted_proxies=await app_settings.get_trusted_proxies(session),
+        proxy_trust_enabled=await app_settings.proxy_trust_enabled(session, settings),
+        trusted_proxies=await app_settings.get_trusted_proxies(session, settings),
     )
 
 
@@ -1218,8 +1218,9 @@ async def _refresh_proxy_state(request: Request, session: AsyncSession) -> None:
     makes a General save take effect immediately. Disabled means an empty tuple:
     forwarded headers from anywhere are ignored, exactly like a fresh install.
     """
-    if await app_settings.proxy_trust_enabled(session):
-        entries = await app_settings.get_trusted_proxies(session)
+    settings = _settings(request)
+    if await app_settings.proxy_trust_enabled(session, settings):
+        entries = await app_settings.get_trusted_proxies(session, settings)
         request.app.state.trusted_proxies = parse_proxy_networks(entries)
     else:
         request.app.state.trusted_proxies = ()
@@ -1228,7 +1229,7 @@ async def _refresh_proxy_state(request: Request, session: AsyncSession) -> None:
 @router.get("/general")
 async def get_general(request: Request) -> GeneralSettingsOut:
     async with _factory(request)() as session:
-        return await _general_out(session)
+        return await _general_out(session, _settings(request))
 
 
 @router.put("/general")
@@ -1284,7 +1285,7 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
             await app_settings.set_trusted_proxies(session, payload.trusted_proxies)
         await session.commit()
         await _refresh_proxy_state(request, session)
-        result = await _general_out(session)
+        result = await _general_out(session, _settings(request))
     log.info("settings.general_saved")
     return result
 

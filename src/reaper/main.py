@@ -133,9 +133,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.api_key_digest = (
             hashlib.sha256(api_key.encode("utf-8")).digest() if api_key else None
         )
-        if await app_settings.proxy_trust_enabled(session):
+        if await app_settings.proxy_trust_enabled(session, settings):
             app.state.trusted_proxies = parse_proxy_networks(
-                await app_settings.get_trusted_proxies(session)
+                await app_settings.get_trusted_proxies(session, settings)
             )
         else:
             app.state.trusted_proxies = ()

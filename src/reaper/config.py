@@ -116,6 +116,20 @@ class Settings(BaseSettings):
     # development. Production must leave it on.
     serve_spa: bool = True
 
+    # --- Reverse proxy --------------------------------------------------------
+    # First-boot seed for reverse-proxy trust: whether forwarded headers
+    # (X-Forwarded-For) are believed at all, and from which proxy addresses. Both are
+    # OFF/empty by default, so an unconfigured install ignores forwarded headers
+    # entirely -- a header from an untrusted peer is attacker-controlled and would let a
+    # stranger spoof the address the login lockout keys on. These only seed the FIRST-RUN
+    # default; after that the stored value (Settings -> General) wins, exactly like the
+    # deletion switch, so a declarative deployment can ship trust configured while the UI
+    # stays the live control. REAPER_TRUSTED_PROXIES is comma- or space-separated (single
+    # addresses or CIDR ranges); an entry that does not parse is dropped downstream,
+    # trusting nobody extra. See ``app_settings.proxy_trust_enabled`` / ``get_trusted_proxies``.
+    proxy_trust_enabled: bool = False
+    trusted_proxies: str = ""
+
     # --- Secrets --------------------------------------------------------------
     # REAPER_SECRET_KEY decrypts every stored credential, so changing it to a *fresh*
     # value would render them all unreadable. To rotate, set the new key here and the
@@ -281,6 +295,17 @@ def parse_instance_seeds(env: dict[str, str]) -> list[InstanceSeed]:
             )
         )
     return seeds
+
+
+def parse_trusted_proxies(raw: str) -> list[str]:
+    """Split the ``REAPER_TRUSTED_PROXIES`` seed into individual entries.
+
+    Comma- or whitespace-separated, mirroring how ``REAPER_SECRET_KEY_OLD`` lists a
+    chain. Blank entries are dropped. The entries are NOT validated here -- that is the
+    middleware's ``parse_proxy_networks``, which drops anything malformed (fail closed:
+    an unparseable entry trusts nobody extra).
+    """
+    return [part.strip() for part in re.split(r"[,\s]+", raw) if part.strip()]
 
 
 def generate_secret_key() -> str:
