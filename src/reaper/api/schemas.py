@@ -788,11 +788,15 @@ class PersonTitleOut(BaseModel):
     requested_at: str | None = None
     available_at: str | None = None
     watched_by_them: int
+    """A movie's raw plays, or a series' distinct episodes watched. The row reads it per
+    ``media_type`` ("watched 3x" vs "62 episodes watched")."""
     verdict: str
     """condemn (reclaimable), protect (kept), or abstain (left to decide)."""
     item_id: int | None = None
     group_key: str | None = None
     co_requesters: list[str]
+    poster_url: str | None = None
+    """A ``/api/poster/{key}`` URL, or null when the title has no poster key."""
 
 
 class PersonDetailOut(BaseModel):

@@ -699,6 +699,64 @@ export interface RequesterRow {
   /** The heaviest reclaimable titles behind `reclaimable_items` (capped at 25 server-side);
    *  `reclaimable_items` stays the exact count. */
   reclaimable: ReclaimableTitle[];
+  /** Lifetime requests across every portal this person has an account on; `null` when the
+   *  Seerr user list could not be read. Display only. */
+  seerr_total: number | null;
+  /** At their movie / series request limit on any portal right now. Independent: the two
+   *  types have their own windows and units. */
+  movie_at_limit: boolean;
+  tv_at_limit: boolean;
+}
+
+/** One media type's request limit for a person. `limit` null is unlimited; the window
+ *  (`days`) and unit differ per type, so movies and series each carry their own. */
+export interface QuotaLine {
+  limit: number | null;
+  days: number | null;
+  at_limit: boolean;
+}
+
+export interface PersonQuota {
+  seerr_total: number;
+  movie: QuotaLine;
+  tv: QuotaLine;
+}
+
+/** One title a person requested that the last scan still has, for the details panel. */
+export interface PersonTitle {
+  title: string;
+  year: number | null;
+  media_type: string;
+  is_4k: boolean;
+  /** `null` when nothing about the title is measured; the row reads "size unknown". */
+  size_bytes: number | null;
+  requested_at: string | null;
+  available_at: string | null;
+  watched_by_them: number;
+  /** `condemn` (reclaimable), `protect` (kept), or `abstain` (left to decide). */
+  verdict: string;
+  /** Exactly one of `item_id` / `group_key` is set: a movie or lone season opens its own
+   *  card, a show its group. */
+  item_id: number | null;
+  group_key: string | null;
+  co_requesters: string[];
+  /** A `/api/poster/{key}` URL, or `null` when the title has no poster key. */
+  poster_url: string | null;
+}
+
+/** One person's full request story, behind a Scales row. */
+export interface PersonDetail {
+  plex_id: number | null;
+  name: string;
+  seerr_total: number | null;
+  requests_in_scan: number;
+  gb_granted_bytes: number;
+  played_by_them: number;
+  reclaimable_items: number;
+  reclaimable_bytes: number;
+  not_in_scan: number;
+  quota: PersonQuota | null;
+  titles: PersonTitle[];
 }
 
 export interface FairnessReport {
@@ -1115,6 +1173,9 @@ export const api = {
     request<ProfileSettings>("/api/profile", { method: "PUT", body: JSON.stringify(s) }),
 
   fairness: () => request<FairnessReport>("/api/fairness"),
+  /** One requester's full breakdown for the Scales panel: everything they asked for that
+   *  the last scan still has, plus their request limits. Keyed on the Seerr user id. */
+  person: (userId: number) => request<PersonDetail>(`/api/fairness/people/${userId}`),
   reapBreakdown: () => request<ReapBreakdown>("/api/reap/breakdown"),
   syncLeavingSoon: () => post<LeavingSoonResult>("/api/leaving-soon/sync", {}),
 

@@ -7,12 +7,16 @@
 // disk they were granted the last scan keeps against how much it would reclaim, and the
 // watched % on the side says how much of what they asked for they used themselves.
 //
-// It deletes nothing. It reads the last scan, so it can never disagree with Review: a title
-// is reclaimable here only when the scan condemns it, and each one opens its real card.
+// Every card opens its person panel (the why-panel shell, in ScalesPanel), whether or not
+// the scan condemns anything of theirs: the panel is their whole request story, not just a
+// reap list. App owns which person is open and renders the panel beside this list, exactly
+// as the review screen renders the why-panel beside the queue.
+//
+// It deletes nothing. It reads the last scan, so it can never disagree with Review.
 
 import { useQuery } from "@tanstack/react-query";
-import { useState, type KeyboardEvent } from "react";
-import { api, type ReclaimableTitle, type RequesterRow } from "../api";
+import { type KeyboardEvent } from "react";
+import { api, type RequesterRow } from "../api";
 import { bytes, count, date } from "../format";
 
 /** Share of their OWN requests this person has watched at least once. A behavioral signal
@@ -27,75 +31,17 @@ function initial(name: string): string {
   return c ? c.toUpperCase() : "?";
 }
 
-/** The film-strip placeholder a title wears in the chip. */
-function PosterMark() {
-  return (
-    <span className="mc-poster" aria-hidden="true">
-      <svg viewBox="0 0 24 24" width="14" height="14" fill="none">
-        <path d="M4 5h16v14H4z" stroke="currentColor" strokeWidth="1.6" />
-        <path
-          d="M8 5v14M16 5v14M4 9h4M16 9h4M4 15h4M16 15h4"
-          stroke="currentColor"
-          strokeWidth="1.2"
-        />
-      </svg>
-    </span>
-  );
-}
-
-/** A reclaimable title, carrying its size and a jump to its real card. Every entry is
- *  condemned by the last scan, so clicking it lands on the item (or show) showing that
- *  verdict -- no tab hunting, and nothing to guess. */
-function TitleChip({
-  title,
-  onOpen,
-}: {
-  title: ReclaimableTitle;
-  onOpen: (() => void) | null;
-}) {
-  const body = (
-    <>
-      <PosterMark />
-      <span className="mc-body">
-        <span className="mc-title">{title.title}</span>
-        <span className="mc-state">
-          Reclaimable · {title.size_bytes == null ? "size unknown" : bytes(title.size_bytes)}
-        </span>
-      </span>
-    </>
-  );
-  if (!onOpen) return <span className="media-chip static">{body}</span>;
-  return (
-    <button
-      type="button"
-      className="media-chip"
-      title="Open this in the review queue"
-      // Stop the click from also toggling the card shut.
-      onClick={(e) => {
-        e.stopPropagation();
-        onOpen();
-      }}
-    >
-      {body}
-      <span className="mc-go" aria-hidden="true">
-        ›
-      </span>
-    </button>
-  );
-}
-
-/** One requester's card. Exported so its states (reclaimable / clean / expanded) can be
- *  tested against props without standing up the query. */
+/** One requester's card: a summary that opens their full breakdown. Exported so its states
+ *  (reclaimable / clean / selected) can be tested against props without the query. */
 export function PersonCard({
   row,
-  onOpenItem,
-  onOpenGroup,
+  selected,
+  onSelect,
 }: {
   row: RequesterRow;
-  onOpenItem?: ((candidateId: number) => void) | undefined;
-  onOpenGroup?: ((key: string) => void) | undefined;
+  selected: boolean;
+  onSelect: (userId: number) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const watched = watchedPct(row);
   const granted = row.gb_granted_bytes;
   const reclaim = row.reclaimable_bytes;
@@ -105,31 +51,23 @@ export function PersonCard({
   const usedPct = granted > 0 ? (100 * used) / granted : 100;
   const reclaimPct = granted > 0 ? (100 * reclaim) / granted : 0;
   const hasReclaim = row.reclaimable_items > 0;
-  // The list is capped server-side; the count stays exact, so name the shortfall.
-  const moreCount = row.reclaimable_items - row.reclaimable.length;
 
-  const toggle = () => {
-    if (hasReclaim) setOpen((o) => !o);
-  };
+  const open = () => onSelect(row.user_id);
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      toggle();
+      open();
     }
-  };
-
-  const opener = (t: ReclaimableTitle): (() => void) | null => {
-    if (t.item_id != null && onOpenItem) return () => onOpenItem(t.item_id as number);
-    if (t.group_key != null && onOpenGroup) return () => onOpenGroup(t.group_key as string);
-    return null;
   };
 
   return (
     <div
-      className={`fair-card${hasReclaim ? " clickable" : ""}${open ? " open" : ""}`}
-      {...(hasReclaim
-        ? { role: "button", tabIndex: 0, "aria-expanded": open, onClick: toggle, onKeyDown }
-        : {})}
+      className={`fair-card clickable${selected ? " selected" : ""}`}
+      role="button"
+      tabIndex={0}
+      aria-label={`Open ${row.name}'s request breakdown`}
+      onClick={open}
+      onKeyDown={onKeyDown}
     >
       <span className="fair-avatar" aria-hidden="true">
         {initial(row.name)}
@@ -169,18 +107,6 @@ export function PersonCard({
             <span className="muted">nothing reclaimable</span>
           )}
         </div>
-
-        {open && hasReclaim && (
-          <div className="fair-detail">
-            <p className="fair-detail-lead">Requested, and the last scan would remove these:</p>
-            <div className="media-row">
-              {row.reclaimable.map((t, i) => (
-                <TitleChip key={`${t.item_id ?? t.group_key}-${i}`} title={t} onOpen={opener(t)} />
-              ))}
-              {moreCount > 0 && <span className="mc-more">+{count(moreCount)} more not shown</span>}
-            </div>
-          </div>
-        )}
       </div>
 
       <div className="fair-side">
@@ -199,15 +125,16 @@ export function PersonCard({
 }
 
 export function Fairness({
-  onOpenItem,
-  onOpenGroup,
+  selectedUserId,
+  onSelectPerson,
 }: {
-  /** Open one item's card (a movie or season) on the review screen. */
-  onOpenItem?: (candidateId: number) => void;
-  /** Open a whole show's panel on the review screen. */
-  onOpenGroup?: (key: string) => void;
+  /** The person whose panel is open, so their card wears the selection bar. */
+  selectedUserId?: number | null;
+  /** Open a person's panel. App owns the selection and renders the panel beside this list. */
+  onSelectPerson?: (userId: number) => void;
 }) {
   const { data, isPending, error } = useQuery({ queryKey: ["fairness"], queryFn: api.fairness });
+  const select = onSelectPerson ?? (() => {});
 
   return (
     <section className="fair">
@@ -269,8 +196,8 @@ export function Fairness({
               <PersonCard
                 key={row.user_id}
                 row={row}
-                onOpenItem={onOpenItem}
-                onOpenGroup={onOpenGroup}
+                selected={row.user_id === selectedUserId}
+                onSelect={select}
               />
             ))}
           </div>

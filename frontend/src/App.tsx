@@ -10,6 +10,7 @@ import { PolicyEditor, type PolicySectionId } from "./components/PolicyEditor";
 import { ReapConfirm } from "./components/ReapConfirm";
 import { ReapPlan } from "./components/ReapPlan";
 import { ReviewQueue } from "./components/ReviewQueue";
+import { ScalesPanel, ScalesPanelFallback } from "./components/ScalesPanel";
 import { ScytheGlyph } from "./components/ScytheGlyph";
 import { Settings, type Panel } from "./components/Settings";
 import { SetupWizard } from "./components/SetupWizard";
@@ -403,6 +404,9 @@ function Dashboard({ user }: { user: AuthUser }) {
   const [view, setView] = useState<View>("review");
   const [verdict, setVerdict] = useState<Verdict>("condemn");
   const [selected, setSelected] = useState<Selection>(null);
+  // Which Scales person has their panel open. Kept here (not in Fairness) so the panel is a
+  // sibling of the list inside `main.split`, exactly as the why-panel sits beside the queue.
+  const [scalesUser, setScalesUser] = useState<number | null>(null);
   // The reap sheet reopened from the app-wide bar's View, by run id, on any screen.
   const [reapSheetRun, setReapSheetRun] = useState<number | null>(null);
 
@@ -498,6 +502,12 @@ function Dashboard({ user }: { user: AuthUser }) {
     enabled: selectedGroupKey !== null,
   });
 
+  const { data: personDetail, isError: personError } = useQuery({
+    queryKey: ["fairness", "person", scalesUser],
+    queryFn: () => api.person(scalesUser!),
+    enabled: scalesUser !== null,
+  });
+
   // Reviewing is a loop: read the reasoning, decide, move to the next one. The queue owns
   // the order the cards are actually in (this tab, these filters, this sort), so it hands
   // back a way to walk that order instead of this component guessing at it.
@@ -557,6 +567,9 @@ function Dashboard({ user }: { user: AuthUser }) {
                 // A plain tab visit must not replay an old cross-page jump.
                 setPolicyFocus(null);
                 setSettingsFocus(null);
+                // Leaving Scales (or re-entering it) closes any open person panel, so the
+                // split view never lingers on a tab that has no panel to show.
+                setScalesUser(null);
                 setView(n.id);
               }}
             >
@@ -579,7 +592,14 @@ function Dashboard({ user }: { user: AuthUser }) {
         />
       )}
 
-      <main className={selected !== null && view === "review" ? "split" : ""}>
+      <main
+        className={
+          (selected !== null && view === "review") ||
+          (scalesUser !== null && view === "fairness")
+            ? "split"
+            : ""
+        }
+      >
         {view === "review" ? (
           <>
             <ReviewQueue
@@ -627,7 +647,20 @@ function Dashboard({ user }: { user: AuthUser }) {
             }}
           />
         ) : view === "fairness" ? (
-          <Fairness onOpenItem={goToItemReasons} onOpenGroup={goToGroupReasons} />
+          <>
+            <Fairness selectedUserId={scalesUser} onSelectPerson={setScalesUser} />
+            {scalesUser !== null &&
+              (personDetail ? (
+                <ScalesPanel
+                  detail={personDetail}
+                  onClose={() => setScalesUser(null)}
+                  onOpenItem={goToItemReasons}
+                  onOpenGroup={goToGroupReasons}
+                />
+              ) : (
+                <ScalesPanelFallback error={personError} onClose={() => setScalesUser(null)} />
+              ))}
+          </>
         ) : (
           <Settings
             key={settingsFocus?.nonce ?? "settings"}

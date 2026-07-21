@@ -73,6 +73,10 @@ class CandidateInfo:
     imdb_id: str | None
     year: int | None = None
     """Display only, for the per-person details drawer's title rows."""
+    poster_rating_key: int | None = None
+    """The Plex key to draw the title's poster from. For a season this is the SHOW's key
+    (many seasons have no poster of their own); a movie falls back to its own rating key. The
+    per-person panel proxies it through ``/api/poster``, exactly like the review card."""
 
 
 @dataclass(frozen=True)
@@ -340,10 +344,15 @@ class PersonTitle:
     requested_at: datetime | None
     available_at: datetime | None
     watched_by_them: int
+    """How much of it they watched: a movie's raw plays, but a series' DISTINCT episodes
+    watched (a resumed episode counts once). The row's wording follows ``media_type``."""
     verdict: str  # condemn (reclaimable) | protect | abstain
     item_id: int | None
     group_key: str | None
     co_requesters: tuple[str, ...]
+    poster_url: str | None
+    """A ``/api/poster/{key}`` URL, or ``None`` when the title carries no poster key. The
+    panel shows a film-strip placeholder in that case rather than a broken image."""
 
 
 @dataclass(frozen=True)
@@ -466,6 +475,7 @@ async def _load_candidates(session: AsyncSession) -> tuple[bool, list[CandidateI
             tmdb_id=c.tmdb_id,
             imdb_id=c.imdb_id,
             year=c.year,
+            poster_rating_key=c.poster_rating_key,
         )
         for c in rows
     ]
@@ -509,6 +519,31 @@ async def _evidence_index(
         k: WatchEvidence(plays_by_user=plays, distinct_watchers=len(plays))
         for k, plays in result.items()
     }
+
+
+async def _distinct_episodes(
+    cache_engine: AsyncEngine, plex_id: int | None, season_keys: set[int]
+) -> dict[int, int]:
+    """For one person, the number of DISTINCT episodes they watched under each season (an
+    episode's ``parent_rating_key`` is its season). Summed across a show's seasons this is the
+    show's distinct-episodes-watched, which is what the panel shows for a series -- a resumed
+    or rewatched episode counts once, unlike raw plays. Movies never come here (they show
+    plays); this is keyed only on season parents."""
+    if not season_keys or plex_id is None:
+        return {}
+    stmt = text(
+        "SELECT parent_rating_key AS k, COUNT(DISTINCT rating_key) AS eps "
+        "FROM watch_event WHERE user_id = :pid AND parent_rating_key IN :keys "
+        "GROUP BY parent_rating_key"
+    ).bindparams(bindparam("keys", expanding=True))
+
+    out: dict[int, int] = {}
+    async with cache_engine.connect() as conn:
+        for chunk in batched(sorted(season_keys), 500, strict=False):
+            rows = (await conn.execute(stmt, {"pid": plex_id, "keys": list(chunk)})).all()
+            for k, eps in rows:
+                out[int(k)] = int(eps)
+    return out
 
 
 async def build_report(
@@ -596,6 +631,17 @@ async def build_person_detail(
     evidence = await _evidence_index(
         cache_engine, {c.plex_rating_key for c in candidates if c.plex_rating_key is not None}
     )
+    # Distinct episodes this person watched, per season, so a series row can show episodes
+    # watched (not inflated raw plays). Keyed on the target's plex id, gathered once.
+    target_plex_id = next(
+        (r.requester.plex_id for r in requests if r.requester.seerr_user_id == user_id), None
+    )
+    season_keys = {
+        c.plex_rating_key
+        for c in candidates
+        if c.plex_rating_key is not None and c.media_type == "season"
+    }
+    episodes_by_season = await _distinct_episodes(cache_engine, target_plex_id, season_keys)
 
     # The tmdb index is namespaced by media kind, so a TV request never binds a same-numbered
     # movie candidate -- the same join the roll-up uses (rule 6/29).
@@ -652,6 +698,17 @@ async def build_person_detail(
                 plays += ev.plays_by_user.get(plex_id, 0)
         if plays > 0:
             played += 1
+        # What the row shows: a movie's raw plays ("watched 3x"), but a series' DISTINCT
+        # episodes watched ("62 episodes watched") -- a resumed episode is one episode, so the
+        # figure reads naturally and never inflates the way summed plays would.
+        if cands[0].media_type == "movie":
+            watched_shown = plays
+        else:
+            watched_shown = sum(
+                episodes_by_season.get(c.plex_rating_key, 0)
+                for c in cands
+                if c.plex_rating_key is not None
+            )
 
         # Title-level fate: reclaimable if ANY copy or season is condemned (a show is on the
         # reap lane if any season is, rule 48); else abstain if any abstains; else protect.
@@ -666,6 +723,10 @@ async def build_person_detail(
 
         display = cands[0].group_title or cands[0].title
         year = next((c.year for c in cands if c.year), None)
+        # The poster comes from Plex, proxied by our own image route -- the show's key for a
+        # season (many have no poster of their own), the item's own key otherwise.
+        poster_key = cands[0].poster_rating_key or cands[0].plex_rating_key
+        poster_url = f"/api/poster/{poster_key}" if poster_key else None
         if len(cands) == 1:
             item_id: int | None = cands[0].candidate_id
             group_key: str | None = None
@@ -684,7 +745,7 @@ async def build_person_detail(
                 size_bytes=title_size,
                 requested_at=mine.requested_at,
                 available_at=mine.available_at,
-                watched_by_them=plays,
+                watched_by_them=watched_shown,
                 verdict=verdict,
                 item_id=item_id,
                 group_key=group_key,
@@ -693,6 +754,7 @@ async def build_person_detail(
                 co_requesters=tuple(
                     sorted({_name(r) for r in group if r.requester.seerr_user_id != user_id})
                 ),
+                poster_url=poster_url,
             )
         )
 

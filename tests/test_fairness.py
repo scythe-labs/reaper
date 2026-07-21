@@ -630,6 +630,9 @@ class TestBuildPersonDetail:
         assert title.verdict == "condemn" and title.item_id is not None
         # The co-requester is named, so a shared title is never read as one person's alone.
         assert title.co_requesters == ("Bob",)
+        # The poster is proxied through our image route, falling back to the item's own key
+        # when it has no separate poster key.
+        assert title.poster_url == "/api/poster/555"
 
     async def test_an_unknown_key_is_none(
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
@@ -658,3 +661,15 @@ class TestBuildPersonDetail:
         )
         assert detail is not None
         assert detail.played_by_them == 1 and detail.titles[0].watched_by_them == 1
+
+    async def test_distinct_episodes_counts_episodes_not_replays(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        _factory, cache = report_env
+        # Two plays of one episode plus one play of another, all under season 770.
+        await _insert_event(cache, rating_key=9001, user_id=1, parent=770, gp=42)
+        await _insert_event(cache, rating_key=9001, user_id=1, parent=770, gp=42)
+        await _insert_event(cache, rating_key=9002, user_id=1, parent=770, gp=42)
+        eps = await fairness._distinct_episodes(cache, plex_id=1, season_keys={770})
+        # Two distinct episodes, not three raw plays -- the panel's "N episodes watched".
+        assert eps == {770: 2}

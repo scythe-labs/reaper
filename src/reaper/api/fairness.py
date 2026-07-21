@@ -198,6 +198,7 @@ async def get_person(request: Request, user_id: int) -> PersonDetailOut:
                 item_id=t.item_id,
                 group_key=t.group_key,
                 co_requesters=list(t.co_requesters),
+                poster_url=t.poster_url,
             )
             for t in detail.titles
         ],

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Scales reads the last scan, but it is the screen an operator scans before a run, so its
-// states have to be honest: a reclaimable card names the disk and links each title to its
-// real card; a clean card says so plainly; and the page says out loud when it is loading,
-// could not load, or has no scan to sit on.
+// states have to be honest: a reclaimable card names the disk; a clean card says so plainly;
+// and either one opens the person's full breakdown. The page says out loud when it is
+// loading, could not load, or has no scan to sit on.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -36,6 +36,9 @@ function row(over: Partial<RequesterRow> = {}): RequesterRow {
       { title: "Nightferry", size_bytes: 4 * GB, item_id: 102, group_key: null },
       { title: "Paper Harbor", size_bytes: 3 * GB, item_id: 103, group_key: null },
     ],
+    seerr_total: 88,
+    movie_at_limit: false,
+    tv_at_limit: false,
     ...over,
   };
 }
@@ -46,79 +49,48 @@ function renderWithClient(ui: ReactElement) {
 }
 
 describe("PersonCard", () => {
-  it("leads with the reclaimable disk and opens each title's real card", async () => {
-    const onOpenItem = vi.fn();
-    render(<PersonCard row={row()} onOpenItem={onOpenItem} onOpenGroup={vi.fn()} />);
+  it("leads with the reclaimable disk and opens the person's breakdown", async () => {
+    const onSelect = vi.fn();
+    render(<PersonCard row={row()} selected={false} onSelect={onSelect} />);
 
     expect(screen.getByText(/earning its keep/i)).toBeInTheDocument();
     expect(screen.getByText(/to reclaim · 3 titles/i)).toBeInTheDocument();
 
-    // Titles are hidden until the card is opened.
-    expect(screen.queryByText("The Long Shoreline")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /marlow/i }));
-
-    expect(screen.getByText("The Long Shoreline")).toBeInTheDocument();
-    expect(screen.getAllByText(/^Reclaimable ·/).length).toBe(3);
-
-    // The chip opens that exact item, no tab hunting. (Query by title text, not the button's
-    // accessible name -- the whole card is also a button and would match too.)
-    const chip = screen.getByText("The Long Shoreline").closest("button");
-    await userEvent.click(chip!);
-    expect(onOpenItem).toHaveBeenCalledWith(101);
+    expect(onSelect).toHaveBeenCalledWith(7);
   });
 
-  it("opens a whole show by its group, not one season", async () => {
-    const onOpenGroup = vi.fn();
-    render(
-      <PersonCard
-        row={row({
-          reclaimable_items: 1,
-          reclaimable_bytes: 5 * GB,
-          reclaimable: [{ title: "A Show", size_bytes: 5 * GB, item_id: null, group_key: "tv:7" }],
-        })}
-        onOpenItem={vi.fn()}
-        onOpenGroup={onOpenGroup}
-      />,
-    );
-    await userEvent.click(screen.getByRole("button", { name: /marlow/i }));
-    await userEvent.click(screen.getByText("A Show").closest("button")!);
-    expect(onOpenGroup).toHaveBeenCalledWith("tv:7");
-  });
-
-  it("says a clean requester is clean, and does not offer to expand", () => {
+  // The bug this whole change fixes: a requester with nothing reclaimable must still open.
+  it("opens a clean requester too, and says it is clean", async () => {
+    const onSelect = vi.fn();
     render(
       <PersonCard
         row={row({ reclaimable_items: 0, reclaimable_bytes: 0, reclaimable: [] })}
-        onOpenItem={vi.fn()}
-        onOpenGroup={vi.fn()}
+        selected={false}
+        onSelect={onSelect}
       />,
     );
+
     expect(screen.getByText(/nothing to reclaim/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    const card = screen.getByRole("button", { name: /marlow/i });
+    expect(card).toBeInTheDocument();
+    await userEvent.click(card);
+    expect(onSelect).toHaveBeenCalledWith(7);
   });
 
-  it("names the shortfall when the reclaimable list is capped", async () => {
-    render(
-      <PersonCard row={row({ reclaimable_items: 40 })} onOpenItem={vi.fn()} onOpenGroup={vi.fn()} />,
-    );
-    await userEvent.click(screen.getByRole("button", { name: /marlow/i }));
-    expect(screen.getByText("+37 more not shown")).toBeInTheDocument();
+  it("opens on Enter and Space, for keyboard users", async () => {
+    const onSelect = vi.fn();
+    render(<PersonCard row={row()} selected={false} onSelect={onSelect} />);
+    const card = screen.getByRole("button", { name: /marlow/i });
+    card.focus();
+    await userEvent.keyboard("{Enter}");
+    await userEvent.keyboard(" ");
+    expect(onSelect).toHaveBeenCalledTimes(2);
   });
 
-  it("says 'size unknown' for a reclaimable title the arr would not size", async () => {
-    render(
-      <PersonCard
-        row={row({
-          reclaimable_items: 1,
-          reclaimable_bytes: 0,
-          reclaimable: [{ title: "Unsized", size_bytes: null, item_id: 9, group_key: null }],
-        })}
-        onOpenItem={vi.fn()}
-        onOpenGroup={vi.fn()}
-      />,
-    );
-    await userEvent.click(screen.getByRole("button", { name: /marlow/i }));
-    expect(screen.getByText(/Reclaimable · size unknown/)).toBeInTheDocument();
+  it("wears the selection bar when it is the open card", () => {
+    const { container } = render(<PersonCard row={row()} selected onSelect={vi.fn()} />);
+    expect(container.querySelector(".fair-card.selected")).not.toBeNull();
   });
 });
 
@@ -158,5 +130,13 @@ describe("Fairness", () => {
     expect(await screen.findByText(/16 titles the scan would remove/i)).toBeInTheDocument();
     expect(screen.getByText(/across 1 person/i)).toBeInTheDocument();
     expect(screen.getByText("marlow")).toBeInTheDocument();
+  });
+
+  it("asks App to open a person when their card is clicked", async () => {
+    const onSelectPerson = vi.fn();
+    apiMock.fairness.mockResolvedValue(report([row()]));
+    renderWithClient(<Fairness onSelectPerson={onSelectPerson} />);
+    await userEvent.click(await screen.findByRole("button", { name: /marlow/i }));
+    expect(onSelectPerson).toHaveBeenCalledWith(7);
   });
 });

@@ -3043,8 +3043,7 @@ a.rating-chip:hover {
     border-color 0.15s var(--ease),
     background 0.15s var(--ease);
 }
-/* Only a card with a reclaimable detail is clickable, so hover only promises the accent
-   where there is something to open. */
+/* Every card opens its person panel, so every card is clickable. */
 .fair-card.clickable {
   cursor: pointer;
 }
@@ -3124,91 +3123,6 @@ a.rating-chip:hover {
   color: var(--condemn);
 }
 
-.fair-detail {
-  margin-top: 0.2rem;
-  padding-top: 0.6rem;
-  border-top: 1px dashed var(--border-strong);
-}
-.fair-detail-lead {
-  color: var(--muted);
-  font-size: 0.84rem;
-  margin: 0 0 0.55rem;
-}
-
-/* The reclaimable title, carrying its verdict and size and a jump to the queue -- so the
-   number and the titles behind it live in one place, instead of a bare link that made the
-   operator go find out what state each one was in. */
-.media-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: center;
-}
-.media-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0.32rem 0.6rem 0.32rem 0.32rem;
-  border: 1px solid var(--border);
-  /* A rounded rectangle, not a full pill: the chip carries a rectangular poster, and a
-     999px radius cuts across its corners so the poster pokes past the edge (and the accent
-     hover/focus ring). --radius clears the poster's own 4px corners with room to spare. */
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--text);
-  text-align: left;
-}
-/* :not(:disabled) so this outranks the global button:hover and keeps the accent. Excludes
-   the .static variant: it is a <span> with nothing to open, so :disabled never matches it and
-   the accent hover would promise an action it does not have (U-10). */
-.media-chip:not(.static):hover:not(:disabled) {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
-}
-.media-chip.static {
-  cursor: default;
-}
-.mc-poster {
-  flex: none;
-  width: 26px;
-  height: 39px;
-  border-radius: 4px;
-  display: grid;
-  place-items: center;
-  color: var(--faint);
-  background: var(--surface-2);
-  box-shadow: inset 0 0 0 1px var(--border);
-}
-.mc-body {
-  display: flex;
-  flex-direction: column;
-  gap: 0.12rem;
-  min-width: 0;
-}
-.mc-title {
-  font-weight: 600;
-  font-size: 0.84rem;
-  letter-spacing: -0.01em;
-}
-.mc-state {
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--condemn);
-  font-variant-numeric: tabular-nums;
-}
-.mc-go {
-  color: var(--faint);
-  margin-left: 0.1rem;
-  font-size: 0.95rem;
-}
-.media-chip:hover:not(:disabled) .mc-go {
-  color: var(--accent);
-}
-.mc-more {
-  font-size: 0.78rem;
-  color: var(--faint);
-}
-
 .fair-side {
   flex: none;
   display: flex;
@@ -3243,6 +3157,200 @@ a.rating-chip:hover {
   letter-spacing: 0.05em;
   color: var(--muted);
   margin-top: 0.15rem;
+}
+
+/* ---- Scales person panel (ScalesPanel) ---------------------------------- */
+/* The panel is the why-panel shell (.why, main.split), so it inherits the side-column /
+   right-hand-sheet behavior and the head/close grammar. Only its body is Scales' own: the
+   avatar id, the balance tiles, the request-limit chips, and the requested-title rows. */
+.scales-head-id {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 0;
+}
+.scales-head-id h2 {
+  font-size: 1.2rem;
+  margin: 0;
+}
+
+/* The four summary tiles, reusing .fair-stat chrome in a tight 2-up grid. */
+.scales-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+.fair-stat-num.green {
+  color: var(--protect);
+}
+
+/* Request limits: quiet chips, amber when the person is capped there right now. */
+.scales-limits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.scales-limit {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.26rem 0.7rem;
+}
+.scales-limit-k {
+  color: var(--muted);
+  font-weight: 600;
+}
+.scales-limit-v {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.scales-limit.at {
+  color: var(--unknown);
+  border-color: color-mix(in srgb, var(--unknown) 45%, var(--border));
+  background: var(--unknown-soft);
+}
+.scales-limit.at .scales-limit-k,
+.scales-limit.at .scales-limit-v {
+  color: var(--unknown);
+}
+
+/* The requested-title list. A heading row carries the count; rows are the panel's own
+   layout (a fixed poster, a title + meta column, and a right-pinned fate/size/watched
+   column), not the compact media-chip -- there is more to say about each one here. */
+.scales-h3row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.scales-count {
+  font-size: 0.75rem;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.scales-titles {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.scales-title {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  gap: 0.7rem;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.55rem;
+  text-align: left;
+  width: 100%;
+  color: var(--text);
+}
+/* :not(.static) so a title with nothing to open (no id) does not promise the accent hover. */
+.scales-title:not(.static) {
+  cursor: pointer;
+}
+.scales-title:not(.static):hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+.scales-poster {
+  flex: none;
+  width: 40px;
+  height: 60px;
+  border-radius: 5px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  color: var(--faint);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.scales-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.scales-title-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+.scales-title-name {
+  font-weight: 600;
+  font-size: 0.88rem;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scales-title-yr {
+  color: var(--muted);
+  font-weight: 400;
+}
+.scales-4k {
+  margin-left: 0.35rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--seerr);
+  border: 1px solid color-mix(in srgb, var(--seerr) 45%, var(--border));
+  border-radius: 4px;
+  padding: 0 0.22rem;
+  vertical-align: 1px;
+}
+.scales-title-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--faint);
+}
+.scales-dot {
+  margin-right: 0.4rem;
+  color: var(--border-strong);
+}
+.scales-title-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.24rem;
+  text-align: right;
+}
+.scales-size {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.scales-watch {
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+.scales-watch.yes {
+  color: var(--protect);
+}
+.scales-watch.no {
+  color: var(--faint);
+}
+/* "Kept" is the quiet, expected state: a plain gray label, not a green pill on every row.
+   The loud, actionable fates (Reclaimable red, Left-to-decide amber) keep their chips. */
+.scales-kept {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.scales-foot {
+  margin-top: 0.9rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  border-top: 1px dashed var(--border-strong);
+  padding-top: 0.7rem;
 }
 
 .dryrun-outcomes {
@@ -3581,9 +3689,9 @@ a.rating-chip:hover {
 }
 /* Hover speaks in the accent on every card -- accent edge + a faint accent wash -- so pointing
    at any row reads the same way. Scales' .fair-card shares this whole interaction grammar
-   (hover, focus ring, selection bar, additive open+hover); it is declared once here and on the
-   three rules below, so a card-hover tweak lands in one place (R-4). A fair-card hovers only
-   while clickable; a review card always does. */
+   (hover, focus ring, selection bar, additive selected+hover); it is declared once here and on
+   the three rules below, so a card-hover tweak lands in one place (R-4). Every Scales card is
+   clickable (each opens its person panel), and a review card always is too. */
 .card:hover,
 .fair-card.clickable:hover {
   box-shadow: var(--shadow-md);
@@ -3600,16 +3708,16 @@ a.rating-chip:hover {
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
 .card-selected,
-.fair-card.open {
+.fair-card.selected {
   border-color: var(--accent);
   box-shadow: inset 3px 0 0 var(--accent), var(--shadow-sm);
 }
-/* Hovering the open card is additive: the accent selection bar stays and the hover only
+/* Hovering the selected card is additive: the accent selection bar stays and the hover only
    deepens it (raised shadow), so it never trades the accent edge for a plain one and can't
    read as a deselect. After .card:hover in source, so this box-shadow wins; the accent border
    and wash still come from .card:hover. */
 .card-selected:hover,
-.fair-card.open.clickable:hover {
+.fair-card.selected.clickable:hover {
   box-shadow: inset 3px 0 0 var(--accent), var(--shadow-md);
 }
 /* A spared card recedes -- but the dim must NOT be `opacity` on the card itself. An `opacity`
