@@ -29,6 +29,7 @@ async def get_reap_breakdown(request: Request) -> ReapBreakdownOut:
         hand_reaped=report.hand_reaped,
         hand_reaped_bytes=report.hand_reaped_bytes,
         hand_reaped_unknown=report.hand_reaped_unknown,
+        hand_reaped_held=report.hand_reaped_held,
         will_reap=report.will_reap,
         will_reap_bytes=report.will_reap_bytes,
         will_reap_unknown=report.will_reap_unknown,

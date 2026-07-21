@@ -10,9 +10,16 @@
 // The compact dormancy span is pinned here too: it rewrites a string the server writes.
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type Candidate, type GroupSeasonMark, type Verdict } from "../api";
-import { compactSpan, KeptByShowNote, ReviewQueue, ShowStatusChip } from "./ReviewQueue";
+import {
+  compactSpan,
+  KeptByShowNote,
+  OverrideControls,
+  ReviewQueue,
+  ShowStatusChip,
+} from "./ReviewQueue";
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
@@ -554,8 +561,11 @@ describe("the dormancy span", () => {
 // is doing so the operator never fights a toggle that cannot reach the show-level choice. Its
 // wording turns on the relationship between the season's own decision and its show's.
 describe("the kept-by-the-whole-show note", () => {
-  const render1 = (own: "spare" | "reap" | null, show: "spare" | "reap" | null) =>
-    render(<KeptByShowNote own={own} showOverride={show} />);
+  const render1 = (
+    own: "spare" | "reap" | null,
+    show: "spare" | "reap" | null,
+    effective: boolean | null = null,
+  ) => render(<KeptByShowNote own={own} showOverride={show} effective={effective} />);
 
   it("says nothing when no whole-show decision covers the season", () => {
     const { container } = render1(null, null);
@@ -586,5 +596,41 @@ describe("the kept-by-the-whole-show note", () => {
     render1("spare", "reap");
     expect(screen.getByText(/stays/i)).toBeInTheDocument();
     expect(screen.getByText(/even though the whole show is set to reap/i)).toBeInTheDocument();
+  });
+
+  it("never promises removal for a reap the engine is holding (U-1)", () => {
+    // A season reaped against a spared show, but the engine can't honor the reap yet
+    // (streaming now): the note must say "kept for now", not "will be removed".
+    render1("reap", "spare", false);
+    expect(screen.getByText(/kept for now/i)).toBeInTheDocument();
+    expect(screen.queryByText(/will be removed/i)).not.toBeInTheDocument();
+  });
+
+  it("says an inherited reap the engine can't honor yet is kept for now (U-1)", () => {
+    render1(null, "reap", false);
+    expect(screen.getByText(/kept for now/i)).toBeInTheDocument();
+    expect(screen.queryByText(/will be removed/i)).not.toBeInTheDocument();
+  });
+});
+
+// The row and card that hold OverrideControls also handle Enter/Space themselves (to open the
+// why-panel). Keydown from the buttons must not bubble into that handler, whose preventDefault
+// would cancel the button's own activation and open the panel instead of saving the override.
+describe("keyboard activation of a revealed Spare/Reap button", () => {
+  it("saves the override and does not bubble to the row's key handler (B-7)", async () => {
+    const onSet = vi.fn();
+    const rowKeyDown = vi.fn();
+    render(
+      <div onKeyDown={rowKeyDown}>
+        <OverrideControls override={null} onSet={onSet} onClear={vi.fn()} pending={false} />
+      </div>,
+    );
+    screen.getByRole("button", { name: /spare/i }).focus();
+    await userEvent.keyboard("{Enter}");
+
+    expect(onSet).toHaveBeenCalledWith("spare");
+    // The key stopped at the control, so the row handler (which would preventDefault and open
+    // the panel) never ran.
+    expect(rowKeyDown).not.toHaveBeenCalled();
   });
 });

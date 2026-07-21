@@ -438,7 +438,17 @@ export function OverrideControls({
     override === decision ? onClear() : onSet(decision);
   };
   return (
-    <div className="override-controls" role="group" aria-label="Spare or reap this item">
+    <div
+      className="override-controls"
+      role="group"
+      aria-label="Spare or reap this item"
+      // The buttons activate on Enter/Space natively; stop the key from bubbling to a row or
+      // card whose own handler calls preventDefault, which would cancel the button's
+      // activation and open the panel instead (B-7). Mirrors the SeasonStrip square guard.
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+      }}
+    >
       <button
         type="button"
         className={`ov-btn ov-spare ${override === "spare" ? "active" : ""}`}
@@ -486,20 +496,31 @@ export function OverrideControls({
 export function KeptByShowNote({
   own,
   showOverride,
+  effective,
   className = "",
 }: {
   own: Override | null;
   showOverride: Override | null;
+  /** The row's ``override_effective``: false means a reap the engine can't honor yet (held). */
+  effective: boolean | null;
   className?: string;
 }) {
   if (!showOverride) return null;
   const fate = own ?? showOverride; // an item's own decision wins over its show's
+  // A reap the engine can't honor yet (streaming now, a structural gate) is HELD, not done, so
+  // the note must never promise removal for it -- it matches the chip's "kept for now" (U-1).
+  const heldReap = fate === "reap" && effective === false;
   let body;
   if (!own) {
     body =
       showOverride === "spare" ? (
         <>
           <b>The whole show is spared</b>, so this season is kept. Undo it on the show.
+        </>
+      ) : heldReap ? (
+        <>
+          <b>The whole show is set to reap</b>, but this season is <b>kept for now</b>. Undo it
+          on the show.
         </>
       ) : (
         <>
@@ -521,10 +542,17 @@ export function KeptByShowNote({
   } else {
     body =
       own === "reap" ? (
-        <>
-          You reaped this season, so it <b>will be removed</b> even though the whole show is
-          spared.
-        </>
+        heldReap ? (
+          <>
+            You reaped this season, but it is <b>kept for now</b>, even though the whole show is
+            spared.
+          </>
+        ) : (
+          <>
+            You reaped this season, so it <b>will be removed</b> even though the whole show is
+            spared.
+          </>
+        )
       ) : (
         <>
           You spared this season, so it <b>stays</b> even though the whole show is set to reap.
@@ -980,11 +1008,19 @@ function SeasonList({
   // (any non-condemned season). A show that is condemned top to bottom shows Spare alone on
   // every row and leaves no empty Reap slot, so the size sits flush without a gap. Every
   // row in one list uses the same width, so Spare and Reap line up straight down it.
-  const anyReapable = data.seasons.some((s) => s.verdict !== "condemn");
+  const anyReapable = data.seasons.some((s) => !isCondemned(s));
   return (
     <ul
       className="season-list"
-      style={{ "--btns": anyReapable ? "11.8rem" : "5.75rem" } as CSSProperties}
+      style={
+        {
+          // Both widths derive from --ov-btn-w / --ov-btn-gap (index.css), so a button-width
+          // change lands in one place and the columns can't drift (H-1, rule 16).
+          "--btns": anyReapable
+            ? "calc(2 * var(--ov-btn-w) + var(--ov-btn-gap))"
+            : "var(--ov-btn-w)",
+        } as CSSProperties
+      }
     >
       {data.seasons.map((season) => (
         <li
@@ -1031,12 +1067,13 @@ function SeasonList({
             onSet={(d) => onSet(season.media_key, d)}
             onClear={() => onClear(season.media_key)}
             pending={pending}
-            hideReap={season.verdict === "condemn"}
+            hideReap={isCondemned(season)}
           />
           <span className="season-size num">{itemBytes(season.size_bytes)}</span>
           <KeptByShowNote
             own={season.override_own}
             showOverride={season.show_override}
+            effective={season.override_effective}
             className="season-row-note"
           />
         </li>
@@ -1239,7 +1276,19 @@ function ShowCard({
               {group.title}
               {group.year && <span className="card-year"> {group.year}</span>}
             </h3>
-            <OverrideChip override={showOverride} effective={groupReapEffective(showSeasons)} />
+            <OverrideChip
+              override={showOverride}
+              effective={groupReapEffective(showSeasons)}
+              // Seasons whose OWN decision opposes the show's (their effective override differs
+              // from show_override), so the chip won't claim the whole show is kept/removed
+              // when one season inside goes the other way (U-3).
+              exceptions={
+                showOverride
+                  ? showSeasons.filter((s) => s.override != null && s.override !== showOverride)
+                      .length
+                  : 0
+              }
+            />
           </div>
           <div className="card-meta">
             <span className="chip chip-tv">TV</span>

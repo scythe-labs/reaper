@@ -12,6 +12,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, type SignalCount } from "../api";
 import { bytes, count } from "../format";
+import { useHoldsBackUnmeasured } from "./ReviewQueue";
 
 // Built-in signals read as a policy question in the editor ("How long it's gone
 // unwatched"); here they name the reason a title was condemned, so they get their own
@@ -70,6 +71,10 @@ export function ReapBreakdown({
     queryKey: ["reap-breakdown"],
     queryFn: api.reapBreakdown,
   });
+  // The planner holds unmeasured items back only while the unknown-size allowance is 0 (its
+  // default). Above zero it admits them, so the "won't remove them" line and the count that
+  // subtracts them would both be lies (B-8). One shared query key, so this is free here.
+  const holdsBackUnmeasured = useHoldsBackUnmeasured();
 
   if (isPending) return <p className="muted">Loading…</p>;
   // An unreadable breakdown must never look like "nothing to reap": say we couldn't look,
@@ -93,14 +98,21 @@ export function ReapBreakdown({
   }
 
   const overrides = data.hand_spared > 0 || data.hand_reaped > 0;
+  // The count the run will actually reap. With the allowance off (the default) the planner
+  // drops the unmeasured tail, so the headline and total must match the confirmed count, not
+  // will_reap, which still counts those held-back items (B-8, rule 30). Bytes already sum only
+  // what is measured, so they need no adjustment.
+  const reapCount = holdsBackUnmeasured
+    ? Math.max(0, data.will_reap - data.will_reap_unknown)
+    : data.will_reap;
 
   return (
     <div className="reap-breakdown">
       <div className="rb-headline">
         <span className="rb-head">What this reap removes</span>
         <span className="rb-meta">
-          <strong>{count(data.will_reap)}</strong>{" "}
-          {data.will_reap === 1 ? "title" : "titles"} · <strong>{bytes(data.will_reap_bytes)}</strong>
+          <strong>{count(reapCount)}</strong> {reapCount === 1 ? "title" : "titles"} ·{" "}
+          <strong>{bytes(data.will_reap_bytes)}</strong>
         </span>
       </div>
       <p className="rb-sub">Your policy's verdict from the last scan, with your own changes on top.</p>
@@ -141,7 +153,7 @@ export function ReapBreakdown({
             )}
             <div className="rb-row rb-total">
               <span className="rb-lab">Will be reaped</span>
-              <span className="rb-n">{count(data.will_reap)}</span>
+              <span className="rb-n">{count(reapCount)}</span>
               <span className="rb-sz">{bytes(data.will_reap_bytes)}</span>
             </div>
           </div>
@@ -154,12 +166,27 @@ export function ReapBreakdown({
         </>
       )}
 
-      {data.will_reap_unknown > 0 && (
+      {data.hand_reaped_held > 0 && (
         <div className="rb-line">
-          {plural(data.will_reap_unknown, "title", "titles")} can't be measured, so Reaper won't
-          remove {data.will_reap_unknown === 1 ? "it" : "them"}.
+          {plural(data.hand_reaped_held, "reap you marked is", "reaps you marked are")} held back
+          for safety, so a scan won't remove {data.hand_reaped_held === 1 ? "it" : "them"} yet.{" "}
+          <button className="link" onClick={onGoToReview}>
+            See Review →
+          </button>
         </div>
       )}
+      {data.will_reap_unknown > 0 &&
+        (holdsBackUnmeasured ? (
+          <div className="rb-line">
+            {plural(data.will_reap_unknown, "title", "titles")} can't be measured, so Reaper won't
+            remove {data.will_reap_unknown === 1 ? "it" : "them"}.
+          </div>
+        ) : (
+          <div className="rb-line">
+            {plural(data.will_reap_unknown, "title", "titles")} can't be measured. These are only
+            removed within your unknown-size allowance.
+          </div>
+        ))}
       <div className="rb-line">
         Warning your Plex users first? “Leaving Soon” is in{" "}
         <button className="link" onClick={onGoToPlexSettings}>

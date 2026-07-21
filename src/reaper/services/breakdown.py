@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.db.models import Candidate, Snapshot
 from reaper.services import whitelist
-from reaper.services.condemned import effective_condemned
+from reaper.services.condemned import effective_condemned, held_reaps
 
 
 @dataclass(frozen=True)
@@ -51,6 +51,10 @@ class ReapBreakdown:
     hand_reaped: int
     hand_reaped_bytes: int
     hand_reaped_unknown: int
+    hand_reaped_held: int
+    """Hand reaps the engine refuses to honor yet (blocked evidence, a structural gate), so
+    they are NOT in ``will_reap``. Reported so an operator who marked N items and sees fewer
+    reaped is told the rest are held, never silently dropped (PR-2)."""
     will_reap: int
     will_reap_bytes: int
     will_reap_unknown: int
@@ -71,6 +75,7 @@ def _empty() -> ReapBreakdown:
         hand_reaped=0,
         hand_reaped_bytes=0,
         hand_reaped_unknown=0,
+        hand_reaped_held=0,
         will_reap=0,
         will_reap_bytes=0,
         will_reap_unknown=0,
@@ -152,6 +157,10 @@ async def reap_breakdown(session: AsyncSession) -> ReapBreakdown:
     hand_reaped_bytes = sum(c.size_bytes for c in hand_reaped_rows if c.size_bytes is not None)
     hand_reaped_unknown = sum(1 for c in hand_reaped_rows if c.size_bytes is None)
 
+    # The operator's reap marks the engine refuses to honor yet: counted (not dropped) so the
+    # ledger can say "N of your reap marks are held" rather than silently under-report (PR-2).
+    hand_reaped_held = len(await held_reaps(session, latest.id, decisions))
+
     # Participation over the frozen condemned rows: for each signal that added pressure,
     # how many condemned titles carry it, and their measured size. Overlapping by design.
     counts: dict[str, int] = {}
@@ -181,6 +190,7 @@ async def reap_breakdown(session: AsyncSession) -> ReapBreakdown:
         hand_reaped=hand_reaped,
         hand_reaped_bytes=hand_reaped_bytes,
         hand_reaped_unknown=hand_reaped_unknown,
+        hand_reaped_held=hand_reaped_held,
         will_reap=will_reap,
         will_reap_bytes=will_bytes,
         will_reap_unknown=will_unknown,

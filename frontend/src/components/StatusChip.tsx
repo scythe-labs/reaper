@@ -81,16 +81,23 @@ export function OverrideChip({
   override,
   effective,
   keptWhy,
+  exceptions = 0,
   family = "chip",
 }: {
   override: Override | null;
   effective?: boolean | null | undefined;
   keptWhy?: string | null | undefined;
+  /** For a whole-show chip: how many seasons carry their OWN opposing decision. When any do,
+   *  the chip drops its unqualified "will be kept/removed" claim, since a season inside goes
+   *  the other way (U-3). Zero for movies and single seasons. */
+  exceptions?: number;
   family?: ChipFamily;
 }) {
   const classes = OVERRIDE_CLASSES[family];
+  const except =
+    exceptions > 0 ? `except ${exceptions} ${exceptions === 1 ? "season" : "seasons"}` : null;
   if (override === "spare") {
-    return <span className={classes.spare}>Spared by hand · will be kept</span>;
+    return <span className={classes.spare}>Spared by hand · {except ?? "will be kept"}</span>;
   }
   if (override !== "reap") return null;
   if (effective === false) {
@@ -100,5 +107,5 @@ export function OverrideChip({
       </span>
     );
   }
-  return <span className={classes.reap}>Reaped by hand · will be removed</span>;
+  return <span className={classes.reap}>Reaped by hand · {except ?? "will be removed"}</span>;
 }

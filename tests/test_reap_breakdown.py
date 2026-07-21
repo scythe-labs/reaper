@@ -52,6 +52,14 @@ def _explain(adds: list[str], *, keeps: list[str] | None = None) -> str:
     return json.dumps({"signals": signals, "protections_fired": [], "protections_unknown": []})
 
 
+def _blocked_explain() -> str:
+    """A frozen explanation the reap-override path reads as BLOCKED (a protection it could not
+    check), so a hand reap on it is refused, never honored."""
+    return json.dumps(
+        {"signals": [], "protections_fired": [], "protections_unknown": [{"gate": "keep_list"}]}
+    )
+
+
 async def _add(
     session: AsyncSession,
     *,
@@ -147,6 +155,29 @@ async def test_a_hand_reap_joins_the_net(session: AsyncSession) -> None:
     assert report.policy_condemned == 1
     assert report.hand_reaped == 1
     assert report.will_reap == 2
+
+
+async def test_a_refused_hand_reap_is_reported_as_held(session: AsyncSession) -> None:
+    """A hand reap on a row the engine can't confirm safe (a blocked protection) is HELD: not
+    in the net, but counted so the operator's mark is not silently dropped (PR-2)."""
+    snap = await _snapshot(session)
+    await _add(session, snapshot_id=snap, media_key="radarr:1:1")  # condemned by policy
+    await _add(
+        session,
+        snapshot_id=snap,
+        media_key="radarr:1:9",
+        verdict="abstain",
+        explanation=_blocked_explain(),
+    )
+    await whitelist.set_override(
+        session, media_key="radarr:1:9", title="x", decision="reap", note=None
+    )
+
+    report = await breakdown.reap_breakdown(session)
+
+    assert report.hand_reaped == 0  # the refused reap is not honored, so not in the net
+    assert report.hand_reaped_held == 1  # but it is reported, not dropped
+    assert report.will_reap == 1  # only the policy-condemned row
 
 
 async def test_by_reason_participation_overlaps(session: AsyncSession) -> None:

@@ -103,6 +103,13 @@
 
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+
+  /* One Spare/Reap button's width and the gap between the pair. Every site that must agree on
+     the button track derives from these two: the button min-width, the season list's --btns
+     track (set in ReviewQueue.tsx), and its grid fallback. Change the width here alone, never
+     the derived literals (H-1, rule 16). */
+  --ov-btn-w: 5.75rem;
+  --ov-btn-gap: 0.3rem;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -4056,7 +4063,7 @@ button.sm {
 /* --- hand overrides: the paired Spare / Reap toggle ---------------------------------------- */
 .override-controls {
   display: inline-flex;
-  gap: 0.3rem;
+  gap: var(--ov-btn-gap);
 }
 /* In the season list the control sits in a fixed-width button track (--btns): pin it to the
    track's left so a lone Spare lands in the same column as the Spare of a row that also shows
@@ -4151,7 +4158,7 @@ button.sm {
    right edge. No size change, no vacated region, nothing to mis-paint. Scoped to the toggling
    OverrideControls buttons; the bulk bar's static Spare/Reap keep their natural width. */
 .override-controls .ov-btn {
-  min-width: 5.75rem;
+  min-width: var(--ov-btn-w);
   justify-content: center;
 }
 /* Keep-first: the safe action (Spare) invites in green; the destructive one (Reap) stays the
@@ -4417,7 +4424,8 @@ button.sm {
      slot) and the size track are both a FIXED width, so every row places its buttons and its
      size at the same x -- the columns can't drift with the size string ("22.5 GiB" vs
      "9.1 GiB") or the button count. Only the title (1fr) flexes. See rule 51. */
-  grid-template-columns: 2.6rem 1fr var(--btns, 11.8rem) 4.75rem;
+  grid-template-columns: 2.6rem 1fr var(--btns, calc(2 * var(--ov-btn-w) + var(--ov-btn-gap)))
+    4.75rem;
   align-items: center;
   gap: 0.7rem;
   padding: 0.4rem 0.5rem;

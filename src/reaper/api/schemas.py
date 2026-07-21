@@ -731,6 +731,9 @@ class ReapBreakdownOut(BaseModel):
     hand_reaped: int
     hand_reaped_bytes: int
     hand_reaped_unknown: int
+    hand_reaped_held: int = 0
+    """Hand reaps the engine won't honor yet, so they are not in ``will_reap``. The page shows
+    one line when nonzero so the operator's held marks are not silently dropped."""
     will_reap: int
     will_reap_bytes: int
     will_reap_unknown: int

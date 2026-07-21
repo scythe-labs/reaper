@@ -577,6 +577,9 @@ export interface ReapBreakdown {
   hand_reaped: number;
   hand_reaped_bytes: number;
   hand_reaped_unknown: number;
+  /** Hand reaps the engine won't honor yet, so they are not in `will_reap`. The page shows
+   *  one line when nonzero so the operator's held marks are not silently dropped. */
+  hand_reaped_held: number;
   will_reap: number;
   will_reap_bytes: number;
   will_reap_unknown: number;

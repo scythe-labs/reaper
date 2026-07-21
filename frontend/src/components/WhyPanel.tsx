@@ -857,7 +857,11 @@ export function WhyPanel({
             the control toggles the season's OWN decision (override_own), and clearing a season
             key cannot clear a show-level one. Renders nothing for a movie or an untouched-show
             season. */}
-        <KeptByShowNote own={item.override_own} showOverride={item.show_override} />
+        <KeptByShowNote
+          own={item.override_own}
+          showOverride={item.show_override}
+          effective={item.override_effective}
+        />
         <div className="why-actions-row">
           <OverrideControls
             override={item.override_own}

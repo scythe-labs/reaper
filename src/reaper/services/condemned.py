@@ -88,6 +88,35 @@ def reap_is_effective(candidate: Candidate) -> bool:
     )
 
 
+async def _reap_overridden_rows(
+    session: AsyncSession, snapshot_id: int, reap_keys: list[str]
+) -> list[Candidate]:
+    """The not-already-condemned rows a reap decision could cover.
+
+    A reap decision names an item (a movie's or a season's media_key) or a whole show (the
+    seasons' ``group_key``). Shared by :func:`effective_condemned` and :func:`held_reaps` so
+    the two never disagree on which rows a reap even touches.
+    """
+    if not reap_keys:
+        return []
+    return list(
+        (
+            await session.execute(
+                select(Candidate).where(
+                    Candidate.snapshot_id == snapshot_id,
+                    Candidate.verdict != "condemn",
+                    or_(
+                        Candidate.media_key.in_(reap_keys),
+                        Candidate.group_key.in_(reap_keys),
+                    ),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+
 async def effective_condemned(
     session: AsyncSession, snapshot_id: int, decisions: dict[str, str]
 ) -> dict[str, Candidate]:
@@ -116,31 +145,29 @@ async def effective_condemned(
     }
 
     reap_keys = sorted(k for k, d in decisions.items() if d == "reap")
-    if not reap_keys:
-        return out
-
-    # A reap decision names an item (a movie's or a season's media_key) or a whole show
-    # (the seasons' group_key). Fetch the not-already-condemned rows it could cover.
-    overridden = (
-        (
-            await session.execute(
-                select(Candidate).where(
-                    Candidate.snapshot_id == snapshot_id,
-                    Candidate.verdict != "condemn",
-                    or_(
-                        Candidate.media_key.in_(reap_keys),
-                        Candidate.group_key.in_(reap_keys),
-                    ),
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    for c in overridden:
+    for c in await _reap_overridden_rows(session, snapshot_id, reap_keys):
         # A season spared back out of a hand-reaped show resolves to "spare" here.
         if whitelist.effective_override(c.media_key, decisions) != "reap":
             continue
         if reap_is_effective(c):
             out[c.media_key] = c
     return out
+
+
+async def held_reaps(
+    session: AsyncSession, snapshot_id: int, decisions: dict[str, str]
+) -> list[Candidate]:
+    """The hand reaps the engine will NOT honor yet: a reap override on a row the scan did not
+    condemn, whose reap is refused (blocked evidence, a structural gate). These are HELD, not
+    in the reap set -- the complement of what :func:`effective_condemned` admits from the same
+    overridden rows, surfaced so the breakdown can report the operator's marks that are on
+    hold rather than dropping them silently (PR-2). Reuses ``reap_is_effective``, never a
+    second copy of the honor test.
+    """
+    reap_keys = sorted(k for k, d in decisions.items() if d == "reap")
+    return [
+        c
+        for c in await _reap_overridden_rows(session, snapshot_id, reap_keys)
+        if whitelist.effective_override(c.media_key, decisions) == "reap"
+        and not reap_is_effective(c)
+    ]

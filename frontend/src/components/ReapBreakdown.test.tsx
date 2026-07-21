@@ -9,10 +9,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReapBreakdown as Breakdown } from "../api";
 import { ReapBreakdown } from "./ReapBreakdown";
 
-const { apiMock } = vi.hoisted(() => ({ apiMock: { reapBreakdown: vi.fn() } }));
+const { apiMock } = vi.hoisted(() => ({ apiMock: { reapBreakdown: vi.fn(), profile: vi.fn() } }));
 vi.mock("../api", () => ({ api: apiMock }));
 
 const GB = 1024 ** 3;
+
+// The component consults the profile (via useHoldsBackUnmeasured) to know whether the planner
+// holds unmeasured items back. Default: allowance 0, so it does (the common case).
+function profileWith(maxUnmeasured: number) {
+  return {
+    max_items_per_run: 10,
+    max_bytes_per_run: 1,
+    max_items_per_30d: 100,
+    max_bytes_per_30d: 1,
+    caps_enabled: true,
+    grace_days: 14,
+    max_unmeasured_per_run: maxUnmeasured,
+  };
+}
 
 function full(overrides: Partial<Breakdown> = {}): Breakdown {
   return {
@@ -24,6 +38,7 @@ function full(overrides: Partial<Breakdown> = {}): Breakdown {
     hand_reaped: 38,
     hand_reaped_bytes: 300 * GB,
     hand_reaped_unknown: 0,
+    hand_reaped_held: 0,
     will_reap: 569,
     will_reap_bytes: 4500 * GB,
     will_reap_unknown: 0,
@@ -51,6 +66,7 @@ function renderBreakdown(onPlex = () => {}, onReview = () => {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   apiMock.reapBreakdown.mockResolvedValue(full());
+  apiMock.profile.mockResolvedValue(profileWith(0));
 });
 
 describe("the ledger", () => {
@@ -75,9 +91,34 @@ describe("the ledger", () => {
   });
 
   it("names how many can't be measured and won't be removed", async () => {
-    apiMock.reapBreakdown.mockResolvedValue(full({ will_reap_unknown: 4 }));
+    apiMock.reapBreakdown.mockResolvedValue(full({ will_reap: 569, will_reap_unknown: 4 }));
     renderBreakdown();
-    expect(await screen.findByText(/4 titles can't be measured/)).toBeInTheDocument();
+    expect(await screen.findByText(/4 titles can't be measured, so Reaper won't remove/)).toBeInTheDocument();
+    // With the allowance off the planner drops those 4, so the headline and total count only
+    // 565, and the raw 569 never appears (B-8).
+    expect(screen.getAllByText("565").length).toBeGreaterThan(0);
+    expect(screen.queryByText("569")).not.toBeInTheDocument();
+  });
+
+  it("rewords the unmeasured line when the allowance admits them", async () => {
+    apiMock.profile.mockResolvedValue(profileWith(10)); // allowance on
+    apiMock.reapBreakdown.mockResolvedValue(full({ will_reap: 569, will_reap_unknown: 4 }));
+    renderBreakdown();
+    // Allowance on: the planner admits the unmeasured, so the line must not promise they are
+    // kept, and the count is not reduced (B-8).
+    expect(
+      await screen.findByText(/only removed within your unknown-size allowance/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/won't remove them/)).not.toBeInTheDocument();
+    // Not reduced: the unmeasured stay in the count when the allowance admits them.
+    expect(screen.getAllByText("569").length).toBeGreaterThan(0);
+  });
+
+  it("reports held hand reaps rather than dropping them", async () => {
+    apiMock.reapBreakdown.mockResolvedValue(full({ hand_reaped_held: 2 }));
+    renderBreakdown();
+    // The operator marked reaps the engine won't honor yet: say so (PR-2).
+    expect(await screen.findByText(/2 reaps you marked are held back for safety/)).toBeInTheDocument();
   });
 });
 
