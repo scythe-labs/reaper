@@ -28,12 +28,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import structlog
+from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED, EVENT_JOB_SUBMITTED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from reaper.clients.tautulli import TautulliClient
+from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind
@@ -45,6 +47,22 @@ log = structlog.get_logger(__name__)
 #: The job id for the optional automatic scan. One job, reconciled in place when the
 #: owner changes the schedule -- never stacked.
 SCAN_JOB_ID = "scheduled_scan"
+
+#: The background upkeep jobs and the cron they run on out of the box. Every one is
+#: read-only (refresh/sweep), staggered off peak hours, and now operator-editable: a
+#: stored override (see ``app_settings.get_maintenance_schedules``) wins over these, and
+#: an owner may turn any of them off entirely. Absence of a stored value falls back here.
+DEFAULT_MAINTENANCE_CRONS: dict[str, str] = {
+    "refresh_ratings": "30 3 * * *",
+    "refresh_curated_lists": "45 3 * * *",
+    "full_history_sweep": "0 4 * * *",
+}
+
+#: The upkeep jobs, in display order. The scan is scheduled separately (its own key).
+MAINTENANCE_JOB_IDS: tuple[str, ...] = tuple(DEFAULT_MAINTENANCE_CRONS)
+
+#: Every job whose schedule the owner may edit, scan first. Drives the Jobs settings list.
+SCHEDULABLE_JOB_IDS: tuple[str, ...] = (SCAN_JOB_ID, *MAINTENANCE_JOB_IDS)
 
 
 async def refresh_ratings(cache_engine: AsyncEngine, data_dir: Path) -> None:
@@ -174,6 +192,108 @@ def apply_scan_schedule(
     log.info("scheduler.scan_scheduled", cron=cron)
 
 
+def _maintenance_specs(
+    cache_engine: AsyncEngine,
+    data_dir: Path,
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    secret_box: SecretBox,
+) -> dict[str, tuple[object, list[object]]]:
+    """The (callable, args) each upkeep job is added with. One place, so wiring a job at
+    build time and re-wiring it on a schedule change can never drift apart."""
+    return {
+        "refresh_ratings": (refresh_ratings, [cache_engine, data_dir]),
+        "refresh_curated_lists": (refresh_curated_lists, [cache_engine]),
+        "full_history_sweep": (full_history_sweep, [session_factory, cache_engine, secret_box]),
+    }
+
+
+def effective_maintenance_cron(job_id: str, stored: dict[str, str | None]) -> str | None:
+    """The cron a job actually runs on: a stored override (which may be ``None`` for off)
+    wins; an absent job falls back to its built-in default."""
+    if job_id in stored:
+        return stored[job_id]
+    return DEFAULT_MAINTENANCE_CRONS.get(job_id)
+
+
+def apply_maintenance_schedule(
+    scheduler: AsyncIOScheduler,
+    job_id: str,
+    cron: str | None,
+    *,
+    cache_engine: AsyncEngine,
+    data_dir: Path,
+    session_factory: async_sessionmaker[AsyncSession],
+    secret_box: SecretBox,
+) -> None:
+    """Reconcile one upkeep job to a cron string, or remove it when ``cron`` is ``None``.
+
+    ``None`` means the owner turned the job off; the job is dropped from the scheduler but
+    can still be run once by hand (see :func:`run_maintenance_now`). A malformed cron raises
+    ``ValueError`` (surfaced as a 422) rather than being silently dropped.
+    """
+    specs = _maintenance_specs(
+        cache_engine, data_dir, session_factory=session_factory, secret_box=secret_box
+    )
+    if job_id not in specs:
+        raise KeyError(job_id)
+    func, args = specs[job_id]
+    if cron is None:
+        if scheduler.get_job(job_id) is not None:
+            scheduler.remove_job(job_id)
+        log.info("scheduler.maintenance_off", job=job_id)
+        return
+    trigger = CronTrigger.from_crontab(cron)  # ValueError on a bad expression
+    scheduler.add_job(func, trigger, args=args, id=job_id, replace_existing=True)
+    log.info("scheduler.maintenance_scheduled", job=job_id, cron=cron)
+
+
+def run_maintenance_now(
+    scheduler: AsyncIOScheduler,
+    job_id: str,
+    *,
+    cache_engine: AsyncEngine,
+    data_dir: Path,
+    session_factory: async_sessionmaker[AsyncSession],
+    secret_box: SecretBox,
+) -> None:
+    """Fire an upkeep job immediately, whether or not it is on a schedule.
+
+    A scheduled job is nudged in place (its cron is untouched, so the next regular run still
+    happens). A job the owner turned off is run as a one-shot that removes itself afterward,
+    so "run now" never quietly turns the schedule back on.
+    """
+    specs = _maintenance_specs(
+        cache_engine, data_dir, session_factory=session_factory, secret_box=secret_box
+    )
+    if job_id not in specs:
+        raise KeyError(job_id)
+    func, args = specs[job_id]
+    job = scheduler.get_job(job_id)
+    if job is not None:
+        job.modify(next_run_time=utcnow())
+    else:
+        scheduler.add_job(
+            func, "date", run_date=utcnow(), args=args, id=job_id, replace_existing=True
+        )
+
+
+def track_running_jobs(scheduler: AsyncIOScheduler) -> set[str]:
+    """Return a live set of the job ids currently executing.
+
+    APScheduler emits ``SUBMITTED`` when a job hands off to the executor and
+    ``EXECUTED``/``ERROR`` when it finishes; mirroring those into a set gives the Jobs page an
+    honest "running now" signal for each job without inventing a status store. Register this
+    before the scheduler starts so the very first firing is seen.
+    """
+    running: set[str] = set()
+    scheduler.add_listener(lambda e: running.add(e.job_id), EVENT_JOB_SUBMITTED)
+    scheduler.add_listener(
+        lambda e: running.discard(e.job_id), EVENT_JOB_EXECUTED | EVENT_JOB_ERROR
+    )
+    return running
+
+
 async def catch_up_on_startup(cache_engine: AsyncEngine, data_dir: Path) -> None:
     """Run the refreshes that a fresh (or long-idle) install needs *now*, not at 3am.
 
@@ -204,25 +324,16 @@ def build_scheduler(
         job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600}
     )
 
-    scheduler.add_job(
-        refresh_ratings,
-        CronTrigger(hour=3, minute=30),
-        args=[cache_engine, data_dir],
-        id="refresh_ratings",
-        replace_existing=True,
+    specs = _maintenance_specs(
+        cache_engine, data_dir, session_factory=session_factory, secret_box=secret_box
     )
-    scheduler.add_job(
-        refresh_curated_lists,
-        CronTrigger(hour=3, minute=45),
-        args=[cache_engine],
-        id="refresh_curated_lists",
-        replace_existing=True,
-    )
-    scheduler.add_job(
-        full_history_sweep,
-        CronTrigger(hour=4, minute=0),
-        args=[session_factory, cache_engine, secret_box],
-        id="full_history_sweep",
-        replace_existing=True,
-    )
+    for job_id, cron in DEFAULT_MAINTENANCE_CRONS.items():
+        func, args = specs[job_id]
+        scheduler.add_job(
+            func,
+            CronTrigger.from_crontab(cron),
+            args=args,
+            id=job_id,
+            replace_existing=True,
+        )
     return scheduler

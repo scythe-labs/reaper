@@ -58,6 +58,11 @@ export function date(iso: string): string {
   });
 }
 
+/** The clock time, for the surfaces that want the hour a thing happened, not just the day. */
+export function time(iso: string): string {
+  return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+
 /** How long ago, in the coarse terms the decisions are actually made in. */
 export function since(iso: string): string {
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);

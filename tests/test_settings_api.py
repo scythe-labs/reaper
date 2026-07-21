@@ -388,25 +388,58 @@ class TestSetupStatus:
 
 
 class TestSchedule:
-    def test_the_maintenance_jobs_are_listed(self, client: TestClient) -> None:
+    def test_every_schedulable_job_is_listed(self, client: TestClient) -> None:
         schedule = client.get("/api/settings/schedule").json()
-        ids = {j["id"] for j in schedule["jobs"]}
-        assert "refresh_ratings" in ids
-        assert schedule["scan_cron"] is None  # no automatic scan by default
+        by_id = {j["id"]: j for j in schedule["jobs"]}
+        # The scan and all three upkeep jobs are always listed, off or not.
+        assert {
+            "scheduled_scan",
+            "refresh_ratings",
+            "refresh_curated_lists",
+            "full_history_sweep",
+        } <= (by_id.keys())
+        assert by_id["scheduled_scan"]["cron"] is None  # no automatic scan by default
+        # An upkeep job carries its built-in default and runs on it out of the box.
+        assert by_id["refresh_ratings"]["default_cron"] == "30 3 * * *"
+        assert by_id["refresh_ratings"]["cron"] == "30 3 * * *"
+        assert by_id["refresh_ratings"]["running"] is False
 
-    def test_a_valid_cron_is_stored_and_a_bad_one_refused(self, client: TestClient) -> None:
-        ok = client.put("/api/settings/schedule", json={"scan_cron": "30 4 * * *"})
+    def test_the_scan_cron_is_stored_and_a_bad_one_refused(self, client: TestClient) -> None:
+        ok = client.put("/api/settings/jobs/scheduled_scan/schedule", json={"cron": "30 4 * * *"})
         assert ok.status_code == 200, ok.text
-        assert ok.json()["scan_cron"] == "30 4 * * *"
-        assert any(j["id"] == "scheduled_scan" for j in ok.json()["jobs"])
+        by_id = {j["id"]: j for j in ok.json()["jobs"]}
+        assert by_id["scheduled_scan"]["cron"] == "30 4 * * *"
+        assert by_id["scheduled_scan"]["next_run_at"] is not None  # now scheduled
 
-        bad = client.put("/api/settings/schedule", json={"scan_cron": "not a cron"})
+        bad = client.put("/api/settings/jobs/scheduled_scan/schedule", json={"cron": "not a cron"})
         assert bad.status_code == 422
 
         # Clearing it removes the job again.
-        cleared = client.put("/api/settings/schedule", json={"scan_cron": None}).json()
-        assert cleared["scan_cron"] is None
-        assert not any(j["id"] == "scheduled_scan" for j in cleared["jobs"])
+        cleared = client.put(
+            "/api/settings/jobs/scheduled_scan/schedule", json={"cron": None}
+        ).json()
+        by_id = {j["id"]: j for j in cleared["jobs"]}
+        assert by_id["scheduled_scan"]["cron"] is None
+        assert by_id["scheduled_scan"]["next_run_at"] is None
+
+    def test_an_upkeep_job_can_be_rescheduled_or_turned_off(self, client: TestClient) -> None:
+        off = client.put("/api/settings/jobs/refresh_ratings/schedule", json={"cron": None})
+        assert off.status_code == 200, off.text
+        by_id = {j["id"]: j for j in off.json()["jobs"]}
+        assert by_id["refresh_ratings"]["cron"] is None  # off
+        assert by_id["refresh_ratings"]["next_run_at"] is None  # no longer scheduled
+
+        on = client.put("/api/settings/jobs/refresh_ratings/schedule", json={"cron": "0 6 * * *"})
+        by_id = {j["id"]: j for j in on.json()["jobs"]}
+        assert by_id["refresh_ratings"]["cron"] == "0 6 * * *"
+        assert by_id["refresh_ratings"]["next_run_at"] is not None
+
+        bad = client.put("/api/settings/jobs/refresh_ratings/schedule", json={"cron": "nope"})
+        assert bad.status_code == 422
+
+    def test_an_unknown_job_schedule_is_a_404(self, client: TestClient) -> None:
+        resp = client.put("/api/settings/jobs/not_a_job/schedule", json={"cron": "0 6 * * *"})
+        assert resp.status_code == 404
 
 
 class TestRunJob:
@@ -426,6 +459,16 @@ class TestRunJob:
         # The library scan runs through the streaming /api/scan endpoint (so the UI can show
         # progress), never this fire-and-forget one -- it is deliberately not on the list.
         assert client.post("/api/settings/jobs/scheduled_scan/run", json={}).status_code == 404
+
+    def test_a_turned_off_job_can_still_be_run_now(self, client: TestClient) -> None:
+        # Turning a job off removes it from the scheduler, but "run now" must still work --
+        # it runs once without turning the schedule back on. Pause first so the real,
+        # network-touching work never fires inside the test.
+        client.put("/api/settings/jobs/refresh_curated_lists/schedule", json={"cron": None})
+        client.app.state.scheduler.pause()  # type: ignore[attr-defined]
+        resp = client.post("/api/settings/jobs/refresh_curated_lists/run", json={})
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"status": "started", "job": "refresh_curated_lists"}
 
 
 class TestPoster:

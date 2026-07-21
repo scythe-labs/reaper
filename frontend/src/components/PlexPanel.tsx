@@ -284,18 +284,10 @@ export function PlexPanel() {
     },
   });
 
-  // The manual "update the shelf now" pass, the same one that runs after every scan. It
-  // reports what it moved; a library it couldn't reach is written to the logs, not shown
-  // here, so this line stays a quiet summary rather than an error surface.
-  const runSync = useMutation({
-    mutationFn: api.syncLeavingSoon,
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["leaving-soon-settings"] }),
-  });
-
   const lsStatus = (() => {
     if (!leavingSoon.data) return null;
     const last = leavingSoon.data.last;
-    if (!last) return "Not updated yet. It runs after every scan, or with Update now below.";
+    if (!last) return "Not updated yet. It runs after every scan, or from the Jobs page.";
     const movies = `${count(last.movies)} movie${last.movies === 1 ? "" : "s"}`;
     const seasons = `${count(last.seasons)} season${last.seasons === 1 ? "" : "s"}`;
     const wrote = last.applied ? "" : " · preview only, nothing was written in Plex";
@@ -657,7 +649,7 @@ export function PlexPanel() {
                   Reaper keeps a Leaving Soon collection in each library you turned on above,
                   and puts the matching label on everything in it. Items appear when they
                   start counting down and drop off when they're spared or removed. Updates
-                  after every scan, or with Update now below.
+                  after every scan, or from the Jobs page.
                 </p>
                 <div className="set-control">
                   <Switch
@@ -689,36 +681,10 @@ export function PlexPanel() {
                   <span>{lsStatus}</span>
                 </div>
               )}
-              {leavingSoon.data.enabled && (
-                <div className="set-row">
-                  <span className="set-label">Update the shelf now</span>
-                  <p className="help">
-                    Reaper refreshes this after every scan. Update now to push the current set
-                    to Plex right away. A library it can't reach is written to the logs.
-                  </p>
-                  <div className="set-control">
-                    <button disabled={runSync.isPending} onClick={() => runSync.mutate()}>
-                      {runSync.isPending ? "Updating…" : "Update now"}
-                    </button>
-                    {runSync.data && (
-                      <span className="muted">
-                        {runSync.data.applied
-                          ? `${count(runSync.data.added_count)} added, ${count(runSync.data.cleared_count)} cleared in Plex${runSync.data.notified ? " · Discord notified" : ""}`
-                          : `${count(runSync.data.added_count)} to add, ${count(runSync.data.cleared_count)} to clear · preview only, nothing was written`}
-                        {runSync.data.problems.length > 0 &&
-                          " · some libraries didn't sync, see the logs"}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
             </div>
           )}
           {saveLeavingSoon.error && (
             <p className="notice notice-error">{saveLeavingSoon.error.message}</p>
-          )}
-          {runSync.error && (
-            <p className="notice notice-error">The shelves didn't update: {runSync.error.message}</p>
           )}
         </div>
       )}

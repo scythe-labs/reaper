@@ -11,11 +11,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { accentInk, DEFAULT_ACCENT, isHexColor } from "../accent";
-import { api, type Instance, type InstanceTest } from "../api";
-import { bytes, date } from "../format";
+import { api, type Instance, type InstanceTest, type ScheduledJob } from "../api";
+import { bytes, count, since } from "../format";
 import { LogsPanel } from "./LogsPanel";
+import { ModalShell } from "./ModalShell";
 import { PlexPanel } from "./PlexPanel";
-import { ScanBar } from "./ScanBar";
+import { ScanRow } from "./ScanBar";
 import { KINDS, kindLabel, ServiceModal, TestBadge } from "./ServiceModal";
 import { Switch } from "./Switch";
 
@@ -671,18 +672,74 @@ function AboutPanel() {
 
 // --- Jobs ------------------------------------------------------------------
 
-const CRON_PRESETS: { label: string; cron: string | null }[] = [
+const SCAN_ID = "scheduled_scan";
+const MAINTENANCE_IDS = ["refresh_ratings", "refresh_curated_lists", "full_history_sweep"];
+
+interface JobMeta {
+  title: string;
+  desc: string;
+  /** The schedule editor's intro; falls back to `desc`. */
+  modalDesc?: string;
+  /** Shown in the editor while the job is being turned off. */
+  offWarning?: string;
+}
+
+// The display copy for every job, in one place, so the row and its editor never drift.
+const JOB_META: Record<string, JobMeta> = {
+  [SCAN_ID]: {
+    title: "Update library and apply policy",
+    desc: "Checks what changed since the last scan and re-scores it against your policy. A quick pass, not a full re-read. It only reads, and can't remove a thing.",
+    modalDesc:
+      "Reaper can scan on its own to keep the queue fresh. It still only reads. You approve every deletion by hand.",
+  },
+  refresh_ratings: {
+    title: "Refresh IMDb ratings",
+    desc: "Downloads the latest IMDb ratings so scores use current numbers.",
+    offWarning:
+      "With this off, scores keep using the ratings Reaper already has, and they slowly go out of date.",
+  },
+  refresh_curated_lists: {
+    title: "Refresh curated lists",
+    desc: "Re-pulls the protection lists Reaper ships with, like the IMDb Top 250, so nothing on them gets flagged.",
+    offWarning:
+      "With this off, the curated protection lists stop updating. A title that joins one later won't be protected until you refresh by hand.",
+  },
+  full_history_sweep: {
+    title: "Full watch-history update",
+    desc: 'Re-reads your whole watch history, not just new plays, so imported or backdated views still count and a wiped history is caught before "never watched" turns wrong.',
+    offWarning:
+      'With this off, Reaper stops re-reading your full history. Imported or backdated plays won\'t be counted, and a wiped history won\'t be caught, so "never watched" can drift out of date.',
+  },
+};
+
+/** The copy for a job id. Every scheduled job has an entry; the fallback only exists so the
+ *  lookup is total for the type checker. */
+function jobMeta(id: string): JobMeta {
+  return JOB_META[id] ?? { title: id, desc: "" };
+}
+
+const SCAN_PRESETS: { label: string; cron: string | null }[] = [
   { label: "Off (scan by hand)", cron: null },
-  { label: "Every night at 2am", cron: "0 2 * * *" },
-  { label: "Every Sunday at 3am", cron: "0 3 * * 0" },
-  { label: "First of the month, 3am", cron: "0 3 1 * *" },
+  { label: "Every night at 2 AM", cron: "0 2 * * *" },
+  { label: "Every Sunday at 3 AM", cron: "0 3 * * 0" },
+  { label: "First of the month, 3 AM", cron: "0 3 1 * *" },
 ];
 
-/** "Off" is a real choice, so it needs a value of its own that is not a cron line. */
-const SCHEDULE_OFF = "__off__";
-/** The value the picker sits on before the schedule has been read: it matches no option,
- *  so nothing is shown as the current setting. */
-const SCHEDULE_UNREAD = "__unread__";
+/** The upkeep presets. "Every day" carries the job's own default time (staggered off peak),
+ *  so choosing it keeps the natural setting exactly what it was. */
+function maintenancePresets(defaultCron: string): { label: string; cron: string | null }[] {
+  return [
+    { label: "Off (don't run)", cron: null },
+    { label: "Every day", cron: defaultCron },
+    { label: "Every 12 hours", cron: "0 */12 * * *" },
+    { label: "Every 6 hours", cron: "0 */6 * * *" },
+    { label: "Every hour", cron: "0 * * * *" },
+  ];
+}
+
+/** Picker sentinels that are not cron lines: "off" and "type your own". */
+const OFF_VALUE = "__off__";
+const CUSTOM_VALUE = "__custom__";
 
 function whenText(iso: string | null): string {
   if (!iso) return "not scheduled";
@@ -695,126 +752,116 @@ function whenText(iso: string | null): string {
   return new Date(iso).toLocaleString();
 }
 
-/** The upkeep jobs — refresh ratings, refresh lists, sweep history. Each shows when it is
- *  next due and can be run on the spot; none of them can delete anything. */
-function MaintenanceJobs() {
-  const queryClient = useQueryClient();
-  const { data, isPending, isError } = useQuery({ queryKey: ["schedule"], queryFn: api.schedule });
-  const [ran, setRan] = useState<Record<string, string>>({});
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-  const run = useMutation({
-    mutationFn: (id: string) => api.runJob(id),
-    onSuccess: (_r, id) => {
-      setRan((m) => ({ ...m, [id]: "Started. It will run in the background." }));
-      void queryClient.invalidateQueries({ queryKey: ["schedule"] });
-    },
-  });
-
-  // An unread list is not an empty one: say so, rather than showing no jobs at all.
-  if (isPending) {
-    return <p className="muted">Loading…</p>;
-  }
-  if (isError) {
-    return <p className="notice notice-error">Couldn't load these jobs. Reload to try again.</p>;
-  }
-
-  // The scheduled scan (if any) is represented by the Library scan card above, not here.
-  const jobs = (data?.jobs ?? []).filter((j) => j.id !== "scheduled_scan");
-
-  return (
-    <>
-      <ul className="job-list">
-        {jobs.map((job) => (
-          <li key={job.id}>
-            <div className="job-id">
-              <strong>{job.label}</strong>
-              <span className="muted">{ran[job.id] ?? `next ${whenText(job.next_run_at)}`}</span>
-            </div>
-            <button
-              className="ghost sm"
-              disabled={run.isPending}
-              onClick={() => run.mutate(job.id)}
-            >
-              Run now
-            </button>
-          </li>
-        ))}
-      </ul>
-      {run.error && (
-        <p className="notice notice-error">The job didn't start: {run.error.message}</p>
-      )}
-    </>
-  );
+function clockLabel(hour: number, minute: number): string {
+  const period = hour < 12 ? "AM" : "PM";
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${hour12}:${String(minute).padStart(2, "0")} ${period}`;
 }
 
-function AutoScanSchedule() {
+function ordinal(n: number): string {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 13) return `${n}th`;
+  const ones = n % 10;
+  return `${n}${ones === 1 ? "st" : ones === 2 ? "nd" : ones === 3 ? "rd" : "th"}`;
+}
+
+/** A cron line in plain words, for the shapes the presets and defaults produce. Anything
+ *  outside those reads as its raw line rather than a confident wrong guess. */
+function describeCron(cron: string): string {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return `Custom (${cron})`;
+  const [m = "", h = "", dom = "", mon = "", dow = ""] = parts;
+  const numeric = (x: string) => /^\d+$/.test(x);
+  const everyDay = dom === "*" && mon === "*" && dow === "*";
+
+  const hourStep = /^\*\/(\d+)$/.exec(h);
+  if (numeric(m) && hourStep && everyDay) return `Every ${hourStep[1]} hours`;
+  if (numeric(m) && h === "*" && everyDay) return "Every hour";
+  if (!numeric(m) || !numeric(h)) return `Custom (${cron})`;
+
+  const at = clockLabel(Number(h), Number(m));
+  if (everyDay) return `Every day at ${at}`;
+  if (dom === "*" && mon === "*" && numeric(dow)) {
+    return `Every ${WEEKDAYS[Number(dow) % 7]} at ${at}`;
+  }
+  if (numeric(dom) && mon === "*" && dow === "*") {
+    return `Monthly on the ${ordinal(Number(dom))} at ${at}`;
+  }
+  return `Custom (${cron})`;
+}
+
+function scanScheduleText(job: ScheduledJob | undefined): string {
+  if (!job) return "Automatic scan: checking…";
+  if (job.cron === null) return "Automatic scan is off. It runs when you ask.";
+  return `Automatic scan: ${describeCron(job.cron)} · next ${whenText(job.next_run_at)}`;
+}
+
+function maintenanceScheduleText(job: ScheduledJob): string {
+  if (job.cron === null) return "Off. Run it by hand.";
+  return `${describeCron(job.cron)} · next ${whenText(job.next_run_at)}`;
+}
+
+/** The one schedule editor, for the scan and every upkeep job. Presets plus "off" plus a
+ *  cron line of your own; turning an upkeep job off carries a plain warning of what stops. */
+function ScheduleModal({ job, onClose }: { job: ScheduledJob; onClose: () => void }) {
   const queryClient = useQueryClient();
-  const { data, isPending, isError } = useQuery({ queryKey: ["schedule"], queryFn: api.schedule });
-  const [custom, setCustom] = useState("");
+  const meta = jobMeta(job.id);
+  const presets =
+    job.id === SCAN_ID ? SCAN_PRESETS : maintenancePresets(job.default_cron ?? "0 4 * * *");
+  const isKnownPreset = presets.some((p) => p.cron !== null && p.cron === job.cron);
+
+  const [choice, setChoice] = useState<string>(
+    job.cron === null ? OFF_VALUE : isKnownPreset ? job.cron : CUSTOM_VALUE,
+  );
+  const [custom, setCustom] = useState(job.cron && !isKnownPreset ? job.cron : "");
   const [error, setError] = useState<string | null>(null);
 
   const save = useMutation({
-    mutationFn: (cron: string | null) => api.saveSchedule(cron),
+    mutationFn: (cron: string | null) => api.saveJobSchedule(job.id, cron),
     onSuccess: () => {
-      setError(null);
       void queryClient.invalidateQueries({ queryKey: ["schedule"] });
+      onClose();
     },
     onError: (e: Error) => setError(e.message),
   });
 
-  // "No schedule" is itself a setting, so an unread query must not fall back to it: that
-  // would show "Off (scan by hand)" as the answer. Until the schedule is read the picker
-  // sits on a disabled "Checking…" entry, so no real choice reads as the current one.
-  const current = data ? (data.scan_cron ?? null) : undefined;
-  const chosen = data ? (data.scan_cron ?? SCHEDULE_OFF) : SCHEDULE_UNREAD;
-  // A cron line the operator typed themselves is not one of the four, so it joins the
-  // list as its own entry rather than leaving the picker blank.
-  const customCron =
-    current && !CRON_PRESETS.some((p) => p.cron === current) ? current : null;
+  const chosenCron =
+    choice === OFF_VALUE ? null : choice === CUSTOM_VALUE ? custom.trim() || null : choice;
+  const turningOff = chosenCron === null;
+  const saveDisabled = save.isPending || (choice === CUSTOM_VALUE && custom.trim() === "");
 
   return (
-    <>
-      {isError && (
-        <p className="notice notice-error">Couldn't load the schedule. Reload to try again.</p>
-      )}
-      <div className="set-rows">
-        <div className="set-row">
-          <span className="set-label">Automatic scan</span>
-          <p className="help">
-            When Reaper starts a scan on its own. Off means a scan only runs when you ask
-            for one.
-          </p>
-          <div className="set-control">
-            <select
-              value={chosen}
-              aria-label="Automatic scan"
-              disabled={save.isPending}
-              onChange={(e) => {
-                const next = e.target.value;
-                save.mutate(next === SCHEDULE_OFF ? null : next);
-              }}
-            >
-              {!data && (
-                <option value={SCHEDULE_UNREAD} disabled>
-                  {isPending ? "Checking…" : "Couldn't check"}
-                </option>
-              )}
-              {CRON_PRESETS.map((p) => (
-                <option key={p.label} value={p.cron ?? SCHEDULE_OFF}>
-                  {p.label}
-                </option>
-              ))}
-              {customCron && <option value={customCron}>Your own schedule · {customCron}</option>}
-            </select>
-          </div>
-        </div>
-        <div className="set-row">
-          <span className="set-label">Your own schedule</span>
-          <p className="help">
-            A cron line, for when none of the times above fit. For example 30 4 * * * runs
-            at 4:30am every day.
-          </p>
-          <div className="set-control">
+    <ModalShell title={meta.title} onClose={onClose} canClose={!save.isPending}>
+      <div className="service-form">
+        <p className="help">{meta.modalDesc ?? meta.desc}</p>
+
+        <label className="field-sm">
+          <span className="field-label">How often</span>
+          <select
+            value={choice}
+            aria-label="How often"
+            disabled={save.isPending}
+            onChange={(e) => setChoice(e.target.value)}
+          >
+            {presets.map((p) => (
+              <option key={p.label} value={p.cron ?? OFF_VALUE}>
+                {p.label}
+              </option>
+            ))}
+            <option value={CUSTOM_VALUE}>Your own schedule…</option>
+          </select>
+          {job.default_cron && (
+            <span className="help">
+              Default: {describeCron(job.default_cron)}. You can Run now anytime.
+            </span>
+          )}
+        </label>
+
+        {choice === CUSTOM_VALUE && (
+          <label className="field-sm">
+            <span className="field-label">Your own schedule</span>
             <input
               type="text"
               value={custom}
@@ -822,57 +869,255 @@ function AutoScanSchedule() {
               aria-label="Your own schedule"
               onChange={(e) => setCustom(e.target.value)}
             />
-            <button
-              className="ghost"
-              disabled={!custom.trim() || save.isPending}
-              onClick={() => save.mutate(custom.trim())}
-            >
-              Set
-            </button>
-          </div>
+            <span className="help">
+              A cron line, for when none of the presets fit. 30 4 * * * runs at 4:30 AM every day.
+            </span>
+          </label>
+        )}
+
+        {turningOff && meta.offWarning && <p className="notice notice-warn">{meta.offWarning}</p>}
+        {error && <p className="notice notice-error">{error}</p>}
+
+        <div className="add-actions">
+          <span className="flex-spacer" />
+          <button className="ghost" onClick={onClose} disabled={save.isPending}>
+            Cancel
+          </button>
+          <button
+            className="primary"
+            onClick={() => save.mutate(chosenCron)}
+            disabled={saveDisabled}
+          >
+            {save.isPending ? "Saving…" : "Save"}
+          </button>
         </div>
       </div>
-      {error && <p className="notice notice-error">{error}</p>}
-    </>
+    </ModalShell>
   );
 }
 
-function JobsPanel() {
+/** One upkeep job: what it is, when it runs, and Edit + Run now. It shows an honest
+ *  "running now" while it works; none of these can delete anything. */
+function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
+  const queryClient = useQueryClient();
+  const meta = jobMeta(job.id);
+  const run = useMutation({
+    mutationFn: () => api.runJob(job.id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["schedule"] });
+      // A beat later, once the scheduler has actually submitted the job, so a long upkeep
+      // run still reads as "running" even if the first refetch landed before it started.
+      window.setTimeout(
+        () => void queryClient.invalidateQueries({ queryKey: ["schedule"] }),
+        700,
+      );
+    },
+  });
+  const running = job.running || run.isPending;
+
+  return (
+    <div className="jobrow">
+      <div className="jobrow-main">
+        <div className="jobrow-title">{meta.title}</div>
+        <div className="jobrow-desc">{meta.desc}</div>
+        {running && (
+          <div className="jobrow-run">
+            <span className="spin" aria-hidden="true" /> Running now…
+          </div>
+        )}
+        <div className="jobrow-sched">{maintenanceScheduleText(job)}</div>
+        {run.error && (
+          <p className="notice notice-error notice-inline">
+            The job didn't start: {run.error.message}
+          </p>
+        )}
+      </div>
+      <div className="jobrow-actions">
+        <span className="slot-edit">
+          <button className="ghost" onClick={onEdit}>
+            Edit
+          </button>
+        </span>
+        <span className="slot-act">
+          <button className="primary" onClick={() => run.mutate()} disabled={running}>
+            {running ? "Running…" : "Run now"}
+          </button>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/** The Leaving Soon shelf update, moved here from Plex settings. Its on/off toggle still
+ *  lives on the Plex tab, so this row links there; when off, it greys out and can't run. */
+function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
+  const queryClient = useQueryClient();
+  const ls = useQuery({ queryKey: ["leaving-soon-settings"], queryFn: api.leavingSoonSettings });
+  const runSync = useMutation({
+    mutationFn: api.syncLeavingSoon,
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["leaving-soon-settings"] }),
+  });
+
+  const title = "Update Leaving Soon shelf";
+  const desc =
+    'Pushes the current countdown set to the Plex "Leaving Soon" shelf, so people get a heads-up before anything goes.';
+
+  if (ls.isPending) {
+    return (
+      <div className="jobrow">
+        <div className="jobrow-main">
+          <div className="jobrow-title">{title}</div>
+          <div className="jobrow-desc">{desc}</div>
+          <div className="jobrow-sched">Loading…</div>
+        </div>
+      </div>
+    );
+  }
+  if (ls.isError || !ls.data) {
+    return (
+      <div className="jobrow">
+        <div className="jobrow-main">
+          <div className="jobrow-title">{title}</div>
+          <div className="jobrow-desc">{desc}</div>
+          <p className="notice notice-error notice-inline">
+            Couldn't load the shelf status. Reload to try again.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const { enabled, last } = ls.data;
+
+  if (!enabled) {
+    return (
+      <div className="jobrow dimmed">
+        <div className="jobrow-main">
+          <div className="jobrow-title">{title}</div>
+          <div className="jobrow-desc">{desc}</div>
+          <div className="jobrow-sched">
+            Off.{" "}
+            <button className="link" onClick={onGoToPlex}>
+              Turn it on in Plex → Leaving Soon
+            </button>
+          </div>
+        </div>
+        <div className="jobrow-actions">
+          <span className="slot-edit" />
+          <span className="slot-act">
+            <button className="primary" disabled>
+              Update now
+            </button>
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  const running = runSync.isPending;
+  return (
+    <div className="jobrow">
+      <div className="jobrow-main">
+        <div className="jobrow-title">{title}</div>
+        <div className="jobrow-desc">{desc}</div>
+        {last && (
+          <div className="jobrow-meta">
+            <strong>{count(last.movies)}</strong> movie{last.movies === 1 ? "" : "s"} and{" "}
+            <strong>{count(last.seasons)}</strong> season{last.seasons === 1 ? "" : "s"} on the
+            shelves
+          </div>
+        )}
+        {running ? (
+          <div className="jobrow-run">
+            <span className="spin" aria-hidden="true" /> Updating…
+          </div>
+        ) : (
+          <div className="jobrow-sched">
+            Runs after every scan{last ? ` · last updated ${since(last.at)}` : ""}
+          </div>
+        )}
+        <div className="jobrow-link">
+          <button className="link" onClick={onGoToPlex}>
+            Manage in Plex → Leaving Soon
+          </button>
+        </div>
+        {runSync.data && !running && (
+          <div className="jobrow-sched">
+            {runSync.data.applied
+              ? `${count(runSync.data.added_count)} added, ${count(runSync.data.cleared_count)} cleared in Plex${runSync.data.notified ? " · Discord notified" : ""}`
+              : `${count(runSync.data.added_count)} to add, ${count(runSync.data.cleared_count)} to clear · preview only, nothing was written`}
+            {runSync.data.problems.length > 0 && " · some libraries didn't sync, see the logs"}
+          </div>
+        )}
+        {runSync.error && (
+          <p className="notice notice-error notice-inline">
+            The shelves didn't update: {runSync.error.message}
+          </p>
+        )}
+      </div>
+      <div className="jobrow-actions">
+        <span className="slot-edit" />
+        <span className="slot-act">
+          <button className="primary" onClick={() => runSync.mutate()} disabled={running}>
+            {running ? "Updating…" : "Update now"}
+          </button>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
   const { data: snapshot } = useQuery({
     queryKey: ["snapshot"],
     queryFn: api.latestSnapshot,
     retry: false,
   });
+  const schedule = useQuery({
+    queryKey: ["schedule"],
+    queryFn: api.schedule,
+    // Poll only while something is actually running, so the "running now" states and the
+    // next-run lines stay live without hammering the endpoint the rest of the time.
+    refetchInterval: (query) => (query.state.data?.jobs.some((j) => j.running) ? 1500 : false),
+  });
+  const [editing, setEditing] = useState<ScheduledJob | null>(null);
+
+  const jobsById = new Map<string, ScheduledJob>(
+    (schedule.data?.jobs ?? []).map((j) => [j.id, j]),
+  );
+  const scanJob = jobsById.get(SCAN_ID);
 
   return (
     <div className="panel">
       <h2>Jobs</h2>
       <p className="blurb">
         Everything Reaper runs on a timer lives here, and you can run any of it now without
-        waiting. None of these can delete a thing. A scan just refreshes the review queue, and
-        the rest is cache upkeep.
+        waiting. None of these can delete a thing. A scan just refreshes the review queue; the
+        rest is upkeep.
       </p>
 
-      <h3>Library scan</h3>
-      <p className="help">
-        Reads your library and re-scores it. Watch the progress below.
-        {snapshot && ` Last scan ${date(snapshot.created_at)}.`}
-      </p>
-      <ScanBar snapshot={snapshot} />
+      <div className="set-rows">
+        <ScanRow
+          snapshot={snapshot}
+          title={jobMeta(SCAN_ID).title}
+          desc={jobMeta(SCAN_ID).desc}
+          scheduleText={scanScheduleText(scanJob)}
+          onEdit={() => scanJob && setEditing(scanJob)}
+          canEdit={!!scanJob}
+        />
+        <LeavingSoonRow onGoToPlex={onGoToPlex} />
+        {MAINTENANCE_IDS.map((id) => {
+          const job = jobsById.get(id);
+          return job ? <JobRow key={id} job={job} onEdit={() => setEditing(job)} /> : null;
+        })}
+      </div>
 
-      <h3>Run automatically</h3>
-      <p className="help">
-        Reaper can scan on its own to keep the queue fresh. It still only reads. You approve
-        every deletion by hand.
-      </p>
-      <AutoScanSchedule />
+      {schedule.isPending && <p className="muted">Loading the upkeep jobs…</p>}
+      {schedule.isError && (
+        <p className="notice notice-error">Couldn't load the upkeep jobs. Reload to try again.</p>
+      )}
 
-      <h3>Background upkeep</h3>
-      <p className="help">
-        Refreshing IMDb ratings and protection lists, and sweeping watch history, so scans stay
-        accurate. These run once a day on their own; run one now if you can't wait.
-      </p>
-      <MaintenanceJobs />
+      {editing && <ScheduleModal job={editing} onClose={() => setEditing(null)} />}
     </div>
   );
 }
@@ -1187,7 +1432,7 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
         {panel === "general" && <GeneralPanel />}
         {panel === "services" && <ServicesPanel />}
         {panel === "plex" && <PlexPanel />}
-        {panel === "jobs" && <JobsPanel />}
+        {panel === "jobs" && <JobsPanel onGoToPlex={() => setPanel("plex")} />}
         {panel === "notifications" && <NotificationsPanel />}
         {panel === "security" && <SecurityPanel />}
         {panel === "logs" && <LogsPanel />}

@@ -801,13 +801,16 @@ export interface PlexLinkPoll {
 
 export interface ScheduledJob {
   id: string;
-  label: string;
+  /** The schedule the job runs on now, `null` when it is off. */
+  cron: string | null;
+  /** The built-in default cron, for reference in the editor. `null` for the scan. */
+  default_cron: string | null;
   next_run_at: string | null;
-  trigger: string;
+  /** Whether the job is executing right this moment. */
+  running: boolean;
 }
 
 export interface Schedule {
-  scan_cron: string | null;
   jobs: ScheduledJob[];
 }
 
@@ -1014,8 +1017,8 @@ export const api = {
   setLogLevel: (level: string) => put<LogsPage>("/api/logs/level", { level }),
 
   schedule: () => request<Schedule>("/api/settings/schedule"),
-  saveSchedule: (scan_cron: string | null) =>
-    put<Schedule>("/api/settings/schedule", { scan_cron }),
+  saveJobSchedule: (id: string, cron: string | null) =>
+    put<Schedule>(`/api/settings/jobs/${id}/schedule`, { cron }),
   runJob: (id: string) => post<{ status: string; job: string }>(`/api/settings/jobs/${id}/run`, {}),
 
   safety: () => request<Safety>("/api/settings/safety"),

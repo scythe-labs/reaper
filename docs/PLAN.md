@@ -1300,7 +1300,9 @@ A pass over the operator console fixed six things a real look surfaced:
   safety banner, the scan phases, the why-panel's unknown-signal note. No more "decoupled
   from the scan" or "caps abort a run"; it reads like a person wrote it.
 - **The daily upkeep (IMDb ratings, lists) is stated as fixed** — it runs once a day and the
-  configurable automatic-scan schedule does not touch it.
+  configurable automatic-scan schedule does not touch it. *(Superseded: the upkeep jobs are
+  now individually schedulable and switchable off. See "Jobs page, rebuilt as one job list"
+  below.)*
 
 ---
 
@@ -2628,3 +2630,42 @@ if a WebSocket is ever added it must authenticate the session cookie itself and 
 `Origin` at the handshake (the browser WS API cannot send our `X-Reaper-CSRF` header). Worth
 fixing the guard's non-`http` branch to fail closed regardless, so a future endpoint cannot
 slip through.
+
+---
+
+## Jobs page, rebuilt as one job list
+
+The Jobs settings tab was three stacked sections (a Library scan card, a "Run automatically"
+schedule block, and a bare "Background upkeep" run-now list). It is now **one card, one row
+per job**, each row carrying its own schedule editor (`Edit`) and a run button, the pattern
+operators know from Overseerr/Jellyseerr. Mocked as a self-contained HTML artifact, iterated
+to approval, then built backend-first and driven end-to-end in the real app.
+
+- **Every upkeep job is now individually schedulable, and switchable off.** The three
+  background jobs (`refresh_ratings`, `refresh_curated_lists`, `full_history_sweep`) were
+  hardcoded to a daily cron in `build_scheduler`. They now read a per-job override from a new
+  `app_setting` key (`maintenance_schedules`, `{job_id: cron|null}`): a stored cron wins, a
+  stored `null` turns the job off, and an absent key falls back to the code default
+  (`scheduler.DEFAULT_MAINTENANCE_CRONS`) — the present-null-vs-absent distinction is what
+  lets "off" survive a default-time change. `build_scheduler` wires the defaults; startup
+  reconciles any stored override (a malformed stored cron leaves the default in place). One
+  route, `PUT /api/settings/jobs/{id}/schedule`, edits the scan and the upkeep jobs alike;
+  a bad cron is a 422, an unknown id a 404. `GET /api/settings/schedule` now returns *every*
+  schedulable job (scan first) with `cron`/`default_cron`/`next_run_at`/`running`, so an
+  off job is still listed rather than vanishing.
+- **Run now works even when a job is off.** `run_maintenance_now` nudges a scheduled job in
+  place (cron untouched) or, when it is off, runs it once as a self-removing one-shot — so
+  "run now" never quietly turns the schedule back on.
+- **Honest "running now" feedback.** APScheduler `SUBMITTED`/`EXECUTED`/`ERROR` events are
+  mirrored into a live set (`track_running_jobs`, held on `app.state`); the schedule payload
+  carries `running` per job, and the page polls only while something runs.
+- **Frontend.** The scan keeps its live progress + last-scan line (now with the *time*),
+  every run button is the accent primary with a same-size `Edit` beside it in fixed columns
+  (rule 51), and the schedule editor is one `ModalShell` for all jobs (presets + off +
+  custom cron, with a plain warning when an upkeep job is turned off). The Leaving Soon
+  "Update now" moved here as its own row (with its shelf stats and a link to the Plex toggle
+  that gates it; greyed and disabled when off); its status line stays on the Plex tab.
+- **Copy corrections from the review of the mockup:** "Library scan" → "Update library and
+  apply policy" (a quick diff, not a full re-read); "Full watch-history sweep" → "Full
+  watch-history update". Verified live: render, both modals, custom-cron reveal, a schedule
+  save round-tripping through the API, and the running state.

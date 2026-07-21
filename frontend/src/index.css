@@ -930,21 +930,7 @@ button.link:hover:not(:disabled) {
   flex: 1;
 }
 
-/* ---- scan bar ------------------------------------------------------------ */
-
-.scanbar {
-  margin: 1rem 0;
-}
-.scanbar-main {
-  display: flex;
-  align-items: center;
-  gap: 0.9rem;
-  flex-wrap: wrap;
-}
-.scanbar p {
-  margin: 0;
-  font-size: 0.88rem;
-}
+/* ---- scan progress bar (shared with the policy simulator) --------------- */
 
 .bar {
   height: 5px;
@@ -4770,29 +4756,100 @@ button.danger:hover:not(:disabled) {
   flex: none;
 }
 
-/* schedule: the picker and the hand-written line are a select and a text box in the
-   standard .set-row grammar, so they need no styling of their own. */
-.job-list {
-  list-style: none;
-  padding: 0;
-  margin: 0.5rem 0;
-}
-.job-list li {
+/* The Jobs page: one row per job inside a .set-rows card. Left is what it is, its stats and
+   schedule; right is an Edit column and a run column, both fixed width so they line up down
+   the list whatever a row's labels are (rule 51: the columns hold still). */
+.jobrow {
   display: flex;
+  align-items: flex-start;
   justify-content: space-between;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.55rem 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 0.88rem;
+  gap: 1.5rem;
+  padding: 0.95rem 1.1rem;
 }
-.job-id {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
+.jobrow + .jobrow {
+  border-top: 1px solid var(--border);
 }
-.job-id .muted {
+.jobrow-main {
+  min-width: 0;
+}
+.jobrow-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.jobrow-desc {
+  margin: 0.18rem 0 0;
   font-size: 0.8rem;
+  color: var(--muted);
+  max-width: 70ch;
+}
+.jobrow-meta {
+  margin: 0.4rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.jobrow-meta strong {
+  color: var(--text);
+  font-weight: 650;
+}
+.jobrow-sched {
+  margin: 0.2rem 0 0;
+  font-size: 0.78rem;
+  color: var(--faint);
+}
+.jobrow-run {
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.jobrow-link {
+  margin: 0.3rem 0 0;
+  font-size: 0.78rem;
+}
+.jobrow-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.jobrow-actions .slot-edit,
+.jobrow-actions .slot-act {
+  width: 8rem;
+  flex: none;
+}
+.jobrow-actions .slot-edit button,
+.jobrow-actions .slot-act button {
+  width: 100%;
+}
+/* An off, Plex-gated row reads as unavailable, but its link stays bright enough to act on. */
+.jobrow.dimmed .jobrow-title,
+.jobrow.dimmed .jobrow-desc,
+.jobrow.dimmed .jobrow-meta {
+  opacity: 0.5;
+}
+
+/* The indeterminate "running now" spinner beside a background job that is executing. */
+.spin {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--accent-ring);
+  border-top-color: var(--accent);
+  animation: job-spin 0.7s linear infinite;
+}
+@keyframes job-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
 }
 .scan-freshness {
   font-size: 0.85rem;

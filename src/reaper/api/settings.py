@@ -52,7 +52,16 @@ from reaper.services.plex_link import (
     start_link,
     switch_server,
 )
-from reaper.services.scheduler import SCAN_JOB_ID, apply_scan_schedule
+from reaper.services.scheduler import (
+    DEFAULT_MAINTENANCE_CRONS,
+    MAINTENANCE_JOB_IDS,
+    SCAN_JOB_ID,
+    SCHEDULABLE_JOB_IDS,
+    apply_maintenance_schedule,
+    apply_scan_schedule,
+    effective_maintenance_cron,
+    run_maintenance_now,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -260,18 +269,23 @@ class LeavingSoonSettingsIn(BaseModel):
 
 class ScheduledJobOut(BaseModel):
     id: str
-    label: str
+    #: The schedule the job runs on now, ``null`` when it is off. For the scan this is the
+    #: automatic-scan cron; for an upkeep job, its stored override or built-in default.
+    cron: str | None
+    #: The built-in default cron, for reference in the editor. ``null`` for the scan, which
+    #: has no default (off until the owner sets one).
+    default_cron: str | None
     next_run_at: str | None
-    trigger: str
+    #: Whether the job is executing right this moment.
+    running: bool
 
 
 class ScheduleOut(BaseModel):
-    scan_cron: str | None
     jobs: list[ScheduledJobOut]
 
 
-class ScheduleIn(BaseModel):
-    scan_cron: str | None = None
+class JobScheduleIn(BaseModel):
+    cron: str | None = None
 
 
 class SafetyOut(BaseModel):
@@ -856,84 +870,114 @@ async def set_leaving_soon_settings(
 # Schedule
 # ---------------------------------------------------------------------------
 
-#: Friendly labels for the background jobs, so the schedule page reads in English.
-_JOB_LABELS = {
-    "refresh_ratings": "Refresh IMDb ratings",
-    "refresh_curated_lists": "Refresh curated lists",
-    "full_history_sweep": "Full watch-history sweep",
-    SCAN_JOB_ID: "Automatic library scan",
-}
-
 
 @router.get("/schedule")
 async def get_schedule(request: Request) -> ScheduleOut:
+    """Every schedulable job, in display order: the automatic scan and the upkeep jobs.
+
+    A job the owner turned off is still listed (with ``cron`` null and no next run), so the
+    Jobs page can offer to schedule it again -- it is never dropped from the list just
+    because it is off.
+    """
     scheduler = request.app.state.scheduler
+    running: set[str] = getattr(request.app.state, "running_jobs", set())
     async with _factory(request)() as session:
         scan_cron = await app_settings.get_scan_schedule(session)
+        maintenance = await app_settings.get_maintenance_schedules(session)
 
-    jobs = [
-        ScheduledJobOut(
-            id=job.id,
-            label=_JOB_LABELS.get(job.id, job.id),
-            next_run_at=job.next_run_time.isoformat() if job.next_run_time else None,
-            trigger=str(job.trigger),
+    jobs = []
+    for job_id in SCHEDULABLE_JOB_IDS:
+        if job_id == SCAN_JOB_ID:
+            cron = scan_cron
+            default_cron = None
+        else:
+            cron = effective_maintenance_cron(job_id, maintenance)
+            default_cron = DEFAULT_MAINTENANCE_CRONS[job_id]
+        job = scheduler.get_job(job_id)
+        jobs.append(
+            ScheduledJobOut(
+                id=job_id,
+                cron=cron,
+                default_cron=default_cron,
+                next_run_at=job.next_run_time.isoformat() if job and job.next_run_time else None,
+                running=job_id in running,
+            )
         )
-        for job in scheduler.get_jobs()
-    ]
-    jobs.sort(key=lambda j: j.next_run_at or "9999")
-    return ScheduleOut(scan_cron=scan_cron, jobs=jobs)
+    return ScheduleOut(jobs=jobs)
 
 
-@router.put("/schedule")
-async def set_schedule(request: Request, payload: ScheduleIn) -> ScheduleOut:
-    """Set (or clear) the automatic-scan cron. A scan never deletes, so this is safe.
+@router.put("/jobs/{job_id}/schedule")
+async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn) -> ScheduleOut:
+    """Set (or turn off) one job's schedule. The scan and every upkeep job are read-only, so
+    changing when they run -- or turning one off -- is always safe and never gated.
 
-    A malformed cron is a 422 with the reason -- an owner who thinks they scheduled a
-    nightly scan must not silently get nothing.
+    A malformed cron is a 422 with the reason: an owner who thinks they scheduled a nightly
+    run must not silently get nothing. An unknown job id is a 404.
     """
-    cron = (payload.scan_cron or "").strip() or None
+    cron = (payload.cron or "").strip() or None
     scheduler = request.app.state.scheduler
-    try:
-        apply_scan_schedule(
-            scheduler,
-            cron,
-            settings=_settings(request),
-            session_factory=_factory(request),
-            cache_engine=request.app.state.cache_engine,
-            secret_box=_box(request),
-        )
-    except ValueError as exc:
-        raise HTTPException(
-            422, f"That is not a valid schedule: {exc}. Use cron form, e.g. '30 4 * * *'."
-        ) from exc
+    if job_id == SCAN_JOB_ID:
+        try:
+            apply_scan_schedule(
+                scheduler,
+                cron,
+                settings=_settings(request),
+                session_factory=_factory(request),
+                cache_engine=request.app.state.cache_engine,
+                secret_box=_box(request),
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                422, f"That is not a valid schedule: {exc}. Use cron form, e.g. '30 4 * * *'."
+            ) from exc
+        async with _factory(request)() as session:
+            await app_settings.set_scan_schedule(session, cron)
+            await session.commit()
+    elif job_id in MAINTENANCE_JOB_IDS:
+        try:
+            apply_maintenance_schedule(
+                scheduler,
+                job_id,
+                cron,
+                cache_engine=request.app.state.cache_engine,
+                data_dir=_settings(request).data_dir,
+                session_factory=_factory(request),
+                secret_box=_box(request),
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                422, f"That is not a valid schedule: {exc}. Use cron form, e.g. '30 4 * * *'."
+            ) from exc
+        async with _factory(request)() as session:
+            await app_settings.set_maintenance_schedule(session, job_id, cron)
+            await session.commit()
+    else:
+        raise HTTPException(404, f'No schedulable job named "{job_id}".')
 
-    async with _factory(request)() as session:
-        await app_settings.set_scan_schedule(session, cron)
-        await session.commit()
-    log.info("schedule.updated", scan_cron=cron)
+    log.info("schedule.updated", job=job_id, cron=cron)
     return await get_schedule(request)
-
-
-#: Maintenance jobs the owner may nudge to run now. The library scan is deliberately absent:
-#: it runs through ``/api/scan/start`` as a polled background job, so the UI can show progress.
-_RUNNABLE_JOBS = frozenset({"refresh_ratings", "refresh_curated_lists", "full_history_sweep"})
 
 
 @router.post("/jobs/{job_id}/run")
 async def run_job(request: Request, job_id: str) -> dict[str, str]:
-    """Run a maintenance job now, without touching its schedule.
+    """Run an upkeep job now, whether or not it is on a schedule.
 
-    Nudges APScheduler to fire the job immediately by moving its next run to now; the
-    schedule itself is untouched, so the next regular run still happens as planned. These
+    A scheduled job is nudged to fire immediately; one the owner turned off is run once
+    without turning its schedule back on. Either way the schedule is left as it was. These
     are read-only upkeep jobs (refreshing ratings and lists, sweeping watch history) -- none
-    of them can delete anything.
+    can delete anything. The library scan is deliberately absent: it runs through
+    ``/api/scan/start`` as a polled background job so the UI can show progress.
     """
-    if job_id not in _RUNNABLE_JOBS:
+    if job_id not in MAINTENANCE_JOB_IDS:
         raise HTTPException(404, f'No runnable job named "{job_id}".')
-    job = request.app.state.scheduler.get_job(job_id)
-    if job is None:
-        raise HTTPException(404, f'The "{job_id}" job is not scheduled.')
-    job.modify(next_run_time=utcnow())
+    run_maintenance_now(
+        request.app.state.scheduler,
+        job_id,
+        cache_engine=request.app.state.cache_engine,
+        data_dir=_settings(request).data_dir,
+        session_factory=_factory(request),
+        secret_box=_box(request),
+    )
     log.info("jobs.run_now", job=job_id)
     return {"status": "started", "job": job_id}
 

@@ -32,6 +32,10 @@ from reaper.db.models import AppSetting
 
 DESTRUCTIVE_KEY = "destructive_enabled"
 SCAN_SCHEDULE_KEY = "scan_schedule"
+#: Per-job cron overrides for the background upkeep jobs, ``{job_id: cron|null}``. A job
+#: present with null is turned off; absent falls back to the code default. See
+#: ``scheduler.DEFAULT_MAINTENANCE_CRONS`` and ``get_maintenance_schedules``.
+MAINTENANCE_SCHEDULES_KEY = "maintenance_schedules"
 #: The Discord webhook, stored Fernet-encrypted exactly like an instance API key -- its
 #: token lives in the URL path, so the whole URL is a credential.
 DISCORD_WEBHOOK_KEY = "discord_webhook_enc"
@@ -271,6 +275,30 @@ async def get_scan_schedule(session: AsyncSession) -> str | None:
 
 async def set_scan_schedule(session: AsyncSession, cron: str | None) -> None:
     await _set(session, SCAN_SCHEDULE_KEY, cron or None)
+
+
+# --- background-job schedules ----------------------------------------------
+
+
+async def get_maintenance_schedules(session: AsyncSession) -> dict[str, str | None]:
+    """Per-job cron overrides for the background upkeep jobs.
+
+    A job id present with a cron string runs on that schedule; present with ``null`` is
+    turned off; absent falls back to the built-in default (see
+    ``scheduler.DEFAULT_MAINTENANCE_CRONS``). The present-with-null case is deliberately
+    distinct from absent, so "off" survives a default-time change in the code.
+    """
+    value = await _get(session, MAINTENANCE_SCHEDULES_KEY, default={})
+    if not isinstance(value, dict):
+        return {}
+    return {str(k): (str(v) if v else None) for k, v in value.items()}
+
+
+async def set_maintenance_schedule(session: AsyncSession, job_id: str, cron: str | None) -> None:
+    """Store one upkeep job's schedule. ``None`` turns it off (stored explicitly)."""
+    current = await get_maintenance_schedules(session)
+    current[job_id] = cron or None
+    await _set(session, MAINTENANCE_SCHEDULES_KEY, current)
 
 
 # --- Discord webhook -------------------------------------------------------

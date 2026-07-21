@@ -13,7 +13,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { api, type Snapshot } from "../api";
-import { bytes, count, date, totalBytes } from "../format";
+import { bytes, count, date, time, totalBytes } from "../format";
 
 //: Friendly names for the scan's internal phases, so the status line reads in English.
 //  Exported because the first-run wizard shows the same progress line; one table keeps
@@ -63,7 +63,25 @@ function scanDelta(
   return `Compared with the scan before: ${parts.join(", ")}.`;
 }
 
-export function ScanBar({ snapshot }: { snapshot: Snapshot | undefined }) {
+/** The library-scan row on the Jobs page: the marquee run action, its last-scan stats and
+ *  live progress, and an Edit that opens the scan's schedule. It owns the scan lifecycle
+ *  (start, poll, delta, degraded) exactly as before; the title, description and schedule
+ *  line are handed in so the copy lives in one place with the other jobs. */
+export function ScanRow({
+  snapshot,
+  title,
+  desc,
+  scheduleText,
+  onEdit,
+  canEdit,
+}: {
+  snapshot: Snapshot | undefined;
+  title: string;
+  desc: string;
+  scheduleText: string;
+  onEdit: () => void;
+  canEdit: boolean;
+}) {
   const queryClient = useQueryClient();
 
   const { data: status } = useQuery({
@@ -126,60 +144,80 @@ export function ScanBar({ snapshot }: { snapshot: Snapshot | undefined }) {
     before && snapshot && snapshot.id !== before.id ? scanDelta(before, snapshot) : null;
 
   return (
-    <section className="scanbar">
-      <div className="scanbar-main">
-        <button
-          className="primary"
-          onClick={() => start.mutate()}
-          disabled={scanning || start.isPending}
-        >
-          {scanning ? "Scanning…" : start.isPending ? "Starting…" : "Scan library"}
-        </button>
+    <div className="jobrow">
+      <div className="jobrow-main">
+        <div className="jobrow-title">{title}</div>
+        <div className="jobrow-desc">{desc}</div>
 
         {snapshot && !scanning && (
-          <p className="muted">
-            Last scan {date(snapshot.created_at)} &middot; {count(snapshot.item_count)} items
-            &middot; <strong>{count(snapshot.condemned)}</strong> would be removed, freeing{" "}
+          <div className="jobrow-meta">
+            Last scan {date(snapshot.created_at)} &middot; {time(snapshot.created_at)} &middot;{" "}
+            {count(snapshot.item_count)} items &middot;{" "}
+            <strong>{count(snapshot.condemned)}</strong> would be removed, freeing{" "}
             <strong>{totalBytes(snapshot.reclaimable_bytes, snapshot.unknown_size_items)}</strong>
-          </p>
+          </div>
         )}
-
-        {delta && !scanning && <p className="muted">{delta}</p>}
-
+        {delta && !scanning && <div className="jobrow-meta">{delta}</div>}
         {!snapshot && !scanning && (
-          <p className="muted">No scan has run yet. A scan only reads. It cannot delete.</p>
+          <div className="jobrow-meta">No scan has run yet. A scan only reads. It cannot delete.</div>
         )}
 
         {scanning && (
-          <p className="muted">
+          <div className="jobrow-run">
+            <span className="spin" aria-hidden="true" />
             {phaseLabel(status!.phase)}
             {status!.detail && ` · ${status!.detail}`}
             {pct !== null && ` · ${pct}%`}
-            {" · you can leave this page; it keeps running."}
+          </div>
+        )}
+
+        {scanning ? (
+          <>
+            <div className="bar">
+              <div className="bar-fill" style={{ width: `${pct ?? 0}%` }} />
+            </div>
+            <div className="jobrow-sched">You can leave this page; it keeps running.</div>
+          </>
+        ) : (
+          <div className="jobrow-sched">{scheduleText}</div>
+        )}
+
+        {start.error && (
+          <p className="notice notice-error notice-inline">
+            The scan didn't start: {start.error.message}
+          </p>
+        )}
+        {status?.error && (
+          <p className="notice notice-error notice-inline">
+            The scan hit a problem: {status.error}
+          </p>
+        )}
+
+        {snapshot?.degraded && (
+          <p className="warn">
+            <strong>This scan came back incomplete.</strong> {snapshot.degraded_reason} You can
+            still look at it, but Reaper won't act on it. A scan that missed a source could show a
+            list that looks complete when it isn't.
           </p>
         )}
       </div>
 
-      {scanning && (
-        <div className="bar">
-          <div className="bar-fill" style={{ width: `${pct ?? 0}%` }} />
-        </div>
-      )}
-
-      {start.error && (
-        <p className="notice notice-error">The scan didn't start: {start.error.message}</p>
-      )}
-      {status?.error && (
-        <p className="notice notice-error">The scan hit a problem: {status.error}</p>
-      )}
-
-      {snapshot?.degraded && (
-        <p className="warn">
-          <strong>This scan came back incomplete.</strong> {snapshot.degraded_reason} You can still
-          look at it, but Reaper won't act on it. A scan that missed a source could show a list
-          that looks complete when it isn't.
-        </p>
-      )}
-    </section>
+      <div className="jobrow-actions">
+        <span className="slot-edit">
+          <button className="ghost" onClick={onEdit} disabled={!canEdit}>
+            Edit
+          </button>
+        </span>
+        <span className="slot-act">
+          <button
+            className="primary"
+            onClick={() => start.mutate()}
+            disabled={scanning || start.isPending}
+          >
+            {scanning ? "Scanning…" : start.isPending ? "Starting…" : "Scan library"}
+          </button>
+        </span>
+      </div>
+    </div>
   );
 }

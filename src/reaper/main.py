@@ -44,7 +44,13 @@ from reaper.db.session import create_cache_engine, create_engine, create_session
 from reaper.logging import configure_logging
 from reaper.secrets import resolve_kdf_salt, resolve_old_keys, resolve_secret_key
 from reaper.services import app_settings
-from reaper.services.scheduler import apply_scan_schedule, build_scheduler, catch_up_on_startup
+from reaper.services.scheduler import (
+    apply_maintenance_schedule,
+    apply_scan_schedule,
+    build_scheduler,
+    catch_up_on_startup,
+    track_running_jobs,
+)
 from reaper.services.seeding import seed_instances
 
 log = structlog.get_logger(__name__)
@@ -160,6 +166,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler = build_scheduler(
         cache_engine, settings.data_dir, session_factory=factory, secret_box=box
     )
+    # Track which jobs are executing before the scheduler starts, so the very first firing
+    # is seen. The Jobs page reads this to show an honest "running now" per job.
+    app.state.running_jobs = track_running_jobs(scheduler)
     scheduler.start()
     app.state.scheduler = scheduler
 
@@ -169,6 +178,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # startup.
     async with factory() as session:
         scan_cron = await app_settings.get_scan_schedule(session)
+        maintenance_schedules = await app_settings.get_maintenance_schedules(session)
     if scan_cron:
         try:
             apply_scan_schedule(
@@ -181,6 +191,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             )
         except ValueError:
             log.warning("scheduler.bad_scan_cron", cron=scan_cron)
+
+    # Restore any upkeep-job schedule the owner changed from the built-in default -- a new
+    # cron, or off entirely. build_scheduler already wired the defaults; this overrides only
+    # the jobs with a stored value. A malformed stored cron leaves the default in place.
+    for job_id, cron in maintenance_schedules.items():
+        try:
+            apply_maintenance_schedule(
+                scheduler,
+                job_id,
+                cron,
+                cache_engine=cache_engine,
+                data_dir=settings.data_dir,
+                session_factory=factory,
+                secret_box=box,
+            )
+        except (ValueError, KeyError):
+            log.warning("scheduler.bad_maintenance_cron", job=job_id, cron=cron)
 
     catch_up = asyncio.create_task(catch_up_on_startup(cache_engine, settings.data_dir))
 
