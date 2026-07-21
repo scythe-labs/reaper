@@ -193,6 +193,7 @@ async def list_candidates(
     media_type: str | None = None,
     requested: str = "any",
     genre: str | None = None,
+    library: str | None = None,
     override: str = "any",
     sort: str = "score",
     order: str = "desc",
@@ -218,8 +219,9 @@ async def list_candidates(
     re-decides it: ``search`` matches the title or the show name, ``media_type`` keeps
     movies or seasons, ``requested`` keeps only what someone asked for through Seerr
     (``yes``), only what nobody asked for (``no``), or everything (``any``), ``genre``
-    keeps rows whose stored genre list contains the given term exactly, and ``override``
-    keeps rows by their hand-override state (``spare`` / ``reap`` / ``none`` / ``any``).
+    keeps rows whose stored genre list contains the given term exactly, ``library`` keeps
+    rows in the named Plex library (section), and ``override`` keeps rows by their
+    hand-override state (``spare`` / ``reap`` / ``none`` / ``any``).
     """
     async with _sessions(request)() as session:
         snapshot = await _latest_snapshot(session)
@@ -241,6 +243,9 @@ async def list_candidates(
             )
         if media_type:
             conditions.append(Candidate.media_type == media_type)
+        if library and library.strip():
+            # Exact match on the stored library title (what the operator named the section).
+            conditions.append(Candidate.library_title == library.strip())
         if requested == "yes":
             conditions.append(Candidate.requested_by.is_not(None))
         elif requested == "no":
@@ -697,6 +702,7 @@ def _candidate_out(
         group_condemned_bytes=group_condemned[1] if group_condemned is not None else None,
         group_unknown_size=group_condemned[2] if group_condemned is not None else None,
         video_resolution=r.video_resolution,
+        library=r.library_title,
         dormant_for=_dormant_for(r.explanation_json),
         reason=_primary_reason(r.explanation_json, r.verdict),
         spared=override == "spare",
@@ -909,6 +915,9 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
             size_bytes=sum(c.size_bytes for c in seasons if c.size_bytes is not None),
             unknown_size_seasons=sum(1 for c in seasons if c.size_bytes is None),
             reason=lead.reason,
+            # A show-level fact: every season shares the show's library, so the first row
+            # that carries one answers for the whole show (None if none do).
+            library=next((r.library_title for r in rows if r.library_title), None),
             chip=lead.chip,
             # The show's own decision (the show key), which the panel's whole-show control
             # toggles. Read straight from the whitelist, never rolled up from the seasons'
@@ -1552,7 +1561,11 @@ async def get_vocabulary(lane: Lane) -> VocabularyOut:
 
 #: The fields whose seen-values are worth suggesting, and the candidate column each is
 #: read from. Free-text fields only: numbers and booleans need no suggestions.
-_VALUE_COLUMNS = {"genre": Candidate.genres_json, "quality": Candidate.quality}
+_VALUE_COLUMNS = {
+    "genre": Candidate.genres_json,
+    "quality": Candidate.quality,
+    "library": Candidate.library_title,
+}
 
 
 @router.get("/vocabulary/values")

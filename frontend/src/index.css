@@ -3927,6 +3927,173 @@ button.sm {
   padding: 0 0.2rem;
 }
 
+/* The unified filter bar: one ＋ Filter control adds any dimension, and each active filter is
+   an editable, removable chip. A new filter is a registry entry (ReviewQueue.tsx), never a new
+   toolbar control -- so the toolbar shape never grows. */
+
+/* Positions a menu directly under its chip or the ＋ Filter button: the wrapper is the
+   containing block, so the menu follows the control on scroll instead of floating off (a
+   viewport-anchored popover's failure). Also the outside-click boundary -- a click inside any
+   .filter-anchor is "inside". */
+.filter-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+/* The ＋ Filter button: dashed until hovered or open, to read as "add", set apart from the
+   solid pills it sits beside. Height matches the search box and sort pill so the row is even. */
+.add-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 2.15rem;
+  padding: 0 0.85rem 0 0.7rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.add-filter:hover,
+.add-filter.open {
+  border-style: solid;
+  border-color: var(--accent);
+  color: var(--text);
+}
+.add-filter:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* An editable filter chip: the value is a button that opens the value picker; the × clears the
+   filter. Same accent-soft family as the search chip beside it. The field name rides the
+   button's title (and the picker's heading), so the chip stays as compact as the old ones. */
+.fchip {
+  display: inline-flex;
+  align-items: center;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 999px;
+  padding: 0.06rem 0.15rem 0.06rem 0.5rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.fchip.open {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.fchip-body {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.06rem 0.1rem;
+  border-radius: 999px;
+}
+.fchip-ic {
+  display: inline-flex;
+}
+.fchip-ic svg {
+  width: 12px;
+  height: 12px;
+}
+.fchip-caret {
+  opacity: 0.6;
+}
+.fchip-body:focus-visible,
+.fchip-x:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.fchip-x {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.2rem;
+  border-radius: 999px;
+  opacity: 0.75;
+}
+.fchip-x:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* The add-filter and value popovers: one look for both. Absolutely placed under the anchor. */
+.filter-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  min-width: 190px;
+  max-width: 260px;
+  max-height: 18rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0.3rem;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+}
+.filter-menu-head {
+  padding: 0.35rem 0.55rem 0.25rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--faint);
+}
+.filter-mi {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.86rem;
+  padding: 0.42rem 0.55rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.filter-mi:hover {
+  background: var(--hover);
+}
+.filter-mi.sel {
+  color: var(--accent);
+  font-weight: 600;
+}
+.filter-mi-ic {
+  display: inline-flex;
+  color: var(--muted);
+}
+.filter-mi-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.filter-mi-tick {
+  display: inline-flex;
+  margin-left: auto;
+  color: var(--accent);
+}
+
 /* chips -- one family, one rhythm. Every chip is 1.35rem tall (square chips radius 5px,
    sentence chips a full pill) with one type scale, so mixed rows sit on a single line
    and the same-looking pieces measure the same everywhere they appear. */
@@ -4008,6 +4175,30 @@ button.sm {
 .res-badge .res-detail {
   font-size: 0.62rem;
   opacity: 0.75;
+}
+
+/* The Plex library (section) an item lives in. Quiet, neutral metadata on the facts line --
+   the res-badge family, deliberately not a verdict color: which library a file is in is a
+   fact about where it lives, never an argument for its fate. The leading glyph is sized down
+   to sit inside the chip. */
+.lib-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  height: 1.35rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0 0.5rem 0 0.42rem;
+  border-radius: 5px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.lib-chip svg {
+  width: 12px;
+  height: 12px;
+  color: var(--faint);
 }
 
 /* How long the item has sat unwatched -- the strongest reason most items are here, so it

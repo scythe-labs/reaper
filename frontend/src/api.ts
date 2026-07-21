@@ -82,6 +82,10 @@ export interface Candidate {
   /** Canonical file resolution ("2160", "1080", ..., "sd") for the card's quality badge.
    *  Null hides the badge (TV seasons, unmatched items, rows from older scans). */
   video_resolution: string | null;
+  /** The Plex library (section) this item lives in, as the operator named it -- the show's
+   *  for a season. Drives the card/panel library chip and the library filter. Null when
+   *  unknown (unmatched, or a row from before this shipped); the chip is then hidden. */
+  library: string | null;
   /** How long the item has sat unwatched ("5 years, 9 months"), for the amber pill.
    *  Null hides the pill. */
   dormant_for: string | null;
@@ -140,6 +144,9 @@ export interface Group {
   /** The show-level status line and chip: those of the season that most wants the
    *  owner's attention, else the highest-scoring one. */
   reason: string | null;
+  /** The show's Plex library (section), shared by all its seasons. Null when unknown.
+   *  Drives the show panel's library chip. */
+  library: string | null;
   chip: Chip | null;
   /** The show's own decision (the show key's "spare"/"reap"), or null -- what the panel's
    *  whole-show control toggles and what lights it. Never an aggregate of the seasons' own
@@ -176,6 +183,7 @@ export interface CandidateQuery {
   media_type?: string;
   requested?: RequestedFilter;
   genre?: string;
+  library?: string;
   override?: OverrideFilter;
   sort?: SortKey;
   order?: SortOrder;
@@ -997,6 +1005,7 @@ export const api = {
     if (q.media_type) params.set("media_type", q.media_type);
     if (q.requested && q.requested !== "any") params.set("requested", q.requested);
     if (q.genre) params.set("genre", q.genre);
+    if (q.library) params.set("library", q.library);
     if (q.override && q.override !== "any") params.set("override", q.override);
     if (q.sort) params.set("sort", q.sort);
     if (q.order) params.set("order", q.order);

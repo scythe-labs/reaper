@@ -54,6 +54,7 @@ function detail(
     group_condemned_bytes: null,
     group_unknown_size: null,
     video_resolution: null,
+    library: null,
     dormant_for: null,
     reason: null,
     spared: false,

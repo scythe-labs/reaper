@@ -90,9 +90,13 @@ class TestParseSweepElement:
 
 
 class _FakeSection:
-    def __init__(self, key: int, stype: str) -> None:
+    def __init__(self, key: int, stype: str, title: str | None = None) -> None:
         self.key = key
         self.type = stype
+        # A real Plex section carries the operator's library name; the sweep stamps it onto
+        # every item as its ``library``. Defaulted from the key so existing call sites need
+        # not spell one out.
+        self.title = title if title is not None else f"Section {key}"
 
 
 class _FakeLibrary:

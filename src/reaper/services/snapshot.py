@@ -157,6 +157,8 @@ class RawItem:
     video_resolution: str | None = None
     content_rating: str | None = None
     runtime_minutes: int | None = None
+    # The Plex library (section) the matched item lives in. Display/filter only.
+    library: str | None = None
     plex_ratings: tuple[Rating, ...] = ()
     arr_ratings: tuple[Rating, ...] = ()
 
@@ -778,6 +780,7 @@ async def scan(
                 video_resolution=item.video_resolution,
                 content_rating=item.content_rating,
                 runtime_minutes=item.runtime_minutes,
+                library=item.library,
                 show_status=None,  # a movie is not a series, so the question does not apply
                 # The same dataset entry build_facts froze into the scoring signal, so
                 # the ratings row can never disagree with the signal text beside it.
@@ -844,6 +847,7 @@ async def scan(
                 title_slug=judgment.title_slug,
                 content_rating=judgment.content_rating,
                 runtime_minutes=judgment.runtime_minutes,
+                library=judgment.library,
                 ratings_json=judgment.ratings_json,
                 show_status=judgment.show_status,
             ),
@@ -914,6 +918,8 @@ class Display:
     video_resolution: str | None = None
     content_rating: str | None = None
     runtime_minutes: int | None = None
+    # The Plex library (section) title -- the show's for a season, its own for a movie.
+    library: str | None = None
     ratings_json: str | None = None
     # "ended" / "continuing" / "unknown" for a season row, None for a movie. Built once,
     # by season_scan.show_status_key.
@@ -1027,6 +1033,7 @@ def _judge_item(
             video_resolution=display.video_resolution,
             content_rating=display.content_rating,
             runtime_minutes=display.runtime_minutes,
+            library_title=display.library,
             ratings_json=display.ratings_json,
             show_status=display.show_status,
             verdict=verdict,
@@ -1480,6 +1487,7 @@ def _raw_items(
                 ),
                 content_rating=matched.content_rating if matched is not None else None,
                 runtime_minutes=matched.runtime_minutes if matched is not None else None,
+                library=matched.library if matched is not None else None,
                 plex_ratings=matched.ratings if matched is not None else (),
                 arr_ratings=tuple(from_radarr(movie.get("ratings"))),
             )

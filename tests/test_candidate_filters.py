@@ -63,6 +63,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     summary="A crew is hunted.",
                     requested_by="Alice",
                     genres_json='["Comedy", "Horror"]',
+                    library_title="Movies",
                 ),
                 _candidate(
                     snapshot_id=snap.id,
@@ -73,6 +74,9 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     # "Comedy Special" proves the genre filter matches whole terms, not
                     # substrings; a filter for Comedy must not drag this row along.
                     genres_json='["Comedy Special"]',
+                    # A distinct library whose name contains "Movies": the library filter must
+                    # match the whole name, not drag this in on a filter for "Movies".
+                    library_title="4K Movies",
                 ),
                 _candidate(
                     snapshot_id=snap.id,
@@ -84,6 +88,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     requested_by="Bob",
                     # Malformed on purpose: the genre filter must skip it, never 500.
                     genres_json="not json",
+                    library_title="TV Shows",
                 ),
             ]
         )
@@ -170,6 +175,35 @@ class TestGenreFilter:
         response = client.get("/api/candidates?verdict=condemn&genre=Western")
         assert response.json() == []
         assert response.headers["X-Total-Count"] == "0"
+
+
+class TestLibraryFilter:
+    def test_the_library_rides_along_on_every_row(self, client: TestClient) -> None:
+        rows = client.get("/api/candidates?verdict=condemn").json()
+        by_title = {str(r["title"]): r["library"] for r in rows}
+        assert by_title["Example Alpha"] == "Movies"
+        assert by_title["Example Mid · Season 5"] == "TV Shows"
+
+    def test_library_keeps_only_that_section(self, client: TestClient) -> None:
+        rows = client.get("/api/candidates?verdict=condemn&library=Movies").json()
+        assert _titles(rows) == {"Example Alpha"}
+
+    def test_library_matches_the_whole_name_not_a_substring(self, client: TestClient) -> None:
+        # A filter for "Movies" must not drag in the "4K Movies" library.
+        rows = client.get("/api/candidates", params={"verdict": "condemn", "library": "4K Movies"})
+        assert _titles(rows.json()) == {"Example Zulu"}
+
+    def test_an_unseen_library_matches_nothing(self, client: TestClient) -> None:
+        response = client.get("/api/candidates?verdict=condemn&library=Anime")
+        assert response.json() == []
+        assert response.headers["X-Total-Count"] == "0"
+
+    def test_it_stacks_with_media_type(self, client: TestClient) -> None:
+        rows = client.get(
+            "/api/candidates",
+            params={"verdict": "condemn", "library": "TV Shows", "media_type": "season"},
+        )
+        assert _titles(rows.json()) == {"Example Mid · Season 5"}
 
 
 class TestOverrideFilter:

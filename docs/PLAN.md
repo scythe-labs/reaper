@@ -7,10 +7,37 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-21 (the per-run caps can be switched off; the inert "Ask me before
-every run" toggle is gone)
+Last updated: 2026-07-21 (one filter control replaces the review-queue dropdown row, a Plex
+library label rides every card and panel, and migrations went additive-only now that testers
+have data)
 
-### Newest — the caps are switchable, and a toggle that did nothing is gone
+### Newest — one filter control, a library label, and additive migrations
+
+Two operator asks plus a policy change. **The filter row stopped growing.** The review queue's
+four fixed dropdowns (type, Seerr, genre, override) collapsed into one **＋ Filter** control: a
+menu adds any dimension, each active filter is an editable, removable chip, and adding a future
+filter is one entry in a registry (`FilterDimension` in `ReviewQueue.tsx`), never another toolbar
+button. Sort stays its own control -- it orders, it hides nothing. The popover is a proper
+anchored menu (absolute inside a relative wrapper, so it follows its chip on scroll) that closes on
+outside-click or Escape; the mockup's viewport-anchored version floated on scroll, which the React
+one does not. **The Plex library is now shown.** Every card, season, and info panel carries a quiet
+neutral chip (the res-badge family, never a verdict color) naming the library the file lives in, so
+movies and seasons read the same; it is also one of the filters.
+
+The library title is captured at scan time onto `Candidate.library_title`, riding the same rails as
+`content_rating` -- per-item for movies via `Display`, show-level for seasons via `show_library` --
+sourced from the plexapi sweep's section title with the Tautulli spine's `section_name` as the
+fallback. Exposed as `library` on the candidate/group API with a `library` query filter, plus
+`vocabulary/values?field=library` for the picker.
+
+**Migrations are additive from here.** Testers now run Reaper with real data, so the single-baseline
+"rewrite in place, rebuild the DB" rule is retired. The baseline (`22777b2b5015`) is frozen; every
+schema change is its own additive, non-breaking revision chained onto head. This feature's column
+shipped as the first such revision (`add_candidate_library_title`, a nullable `ADD COLUMN`): an
+existing row reads NULL as "unknown library" and the next scan backfills it, so nobody rebuilds.
+The rule is updated in CLAUDE.md and the migrations row below.
+
+### The caps are switchable, and a toggle that did nothing is gone
 
 Two operator questions in one pass. First: a dry run aborted at "569 over the per-run cap of 10"
 even after the operator thought they had turned limits off. They had not: the only toggle in
@@ -1602,7 +1629,7 @@ doc change.**
 | Kill switch | **One-way**: the UI can disable deletion, never enable it |
 | Backtest | Engine in v1, **surface still unwired** — a `POST /api/policy/backtest` + minimal UI is open work; until then the live simulator is the threshold-tuning surface |
 | Auth | Plex OAuth + `owned == true` check, local fallback that cannot be removed |
-| Migrations | **One baseline until first release.** The dev DB is disposable; after v1 ships, every schema change is additive. |
+| Migrations | **Baseline `22777b2b5015` is frozen** (testers have real data). Every schema change is its own additive, non-breaking revision chained onto head — nullable `ADD COLUMN`, new table, backfill — never an edit to the baseline. `cache.db` stays disposable. |
 
 ---
 

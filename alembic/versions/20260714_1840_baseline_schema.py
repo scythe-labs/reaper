@@ -2,15 +2,16 @@
 
 The whole schema, in one revision.
 
-**Until Reaper's first release this migration is rewritten in place**, not appended
-to: nobody is running the tool yet, so there is no data to preserve and no upgrade
-path to honor. A chain of migrations between schemas that never shipped is pure cost
--- it slows every fresh ``alembic upgrade head`` and each link is somewhere a SQLite
-batch-mode bug can hide. To change the schema: edit the models, delete ``reaper.db``,
-delete this file, regenerate, and upgrade from empty.
+**This baseline is now frozen.** Testers are running Reaper with real data, so the
+schema can no longer be rewritten in place -- doing so would force them to rebuild their
+database. Every schema change from here is its own additive, non-breaking revision (a
+nullable ``ADD COLUMN``, a new table), chained by ``down_revision`` onto this file and
+never an edit to it. See ``add_candidate_library_title`` for the pattern.
 
-**Once a version is tagged, this stops.** From then on the baseline is frozen and every
-schema change is its own additive revision, because someone out there has data.
+(Before the first tester had data this file was rewritten in place -- edit the models,
+delete ``reaper.db``, regenerate -- because there was no data to preserve. That era is
+over: additive revisions only, so ``alembic upgrade head`` on an existing database never
+drops or rewrites what is already there.)
 
 Note what is *not* here: the cache tables (``imdb_rating``, ``watch_event``, ...). They
 live in ``cache.db``, are created by raw DDL, and are never migrated -- they are

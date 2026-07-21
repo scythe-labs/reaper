@@ -32,6 +32,7 @@ import { coverage, itemBytes, since } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import {
   KeptByShowNote,
+  LibraryChip,
   OverrideControls,
   ShowStatusChip,
   useHoldsBackUnmeasured,
@@ -777,6 +778,9 @@ export function WhyPanel({
           </h2>
           <p className="muted why-sub">
             {itemBytes(item.size_bytes)} &middot; {mediaLabel}
+            {/* The Plex library the file lives in -- same quiet chip as the cards, so movies
+                and seasons read the same. */}
+            <LibraryChip library={item.library} />
             {/* All three states here: the panel is where you came to find out. The card
                 stays quiet about a show that is still going. */}
             <ShowStatusChip status={item.show_status} />

@@ -27,7 +27,14 @@ refreshes Plex. Python 3.13 / FastAPI backend + React 19 / Vite frontend, one co
 - **Keep `docs/PLAN.md` current.** It is the living plan — what is done and, more
   importantly, *which assumptions turned out wrong*. Update it as work proceeds. Record
   findings (including negative results) in `docs/LEARNINGS.md` / `docs/SIGNALS.md`.
-- **Pre-release: migrations stay at one Alembic baseline** and the dev DB is disposable.
+- **Ship additive, non-breaking migrations. Never make a tester rebuild their DB.**
+  Testers now run Reaper with real data, so the Alembic baseline (`22777b2b5015`) is
+  **frozen**: never edit it. Every schema change is its own new revision chained onto the
+  current head by `down_revision` — a nullable `ADD COLUMN`, a new table, a backfill — so
+  `alembic upgrade head` on an existing database only ever adds, never drops or rewrites
+  what is already there. New columns are nullable (or carry a server default) and the next
+  scan backfills them; the app must read a not-yet-backfilled `NULL` as "unknown," never as
+  a wrong definite value. `cache.db` stays disposable and unmigrated (raw DDL, rebuildable).
 - **Operator copy is read at a glance, never twice.** A phrase over a sentence, a sentence
   over two; lead with the outcome and leave the explanation to help text bound to the
   control. These surfaces are *scanned* while deciding what to delete, so long copy does

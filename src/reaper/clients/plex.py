@@ -95,8 +95,11 @@ def _parse_rating_children(el: Element) -> list[Rating]:
     return out
 
 
-def _parse_sweep_element(el: Element) -> PlexItem:
+def _parse_sweep_element(el: Element, *, library: str | None = None) -> PlexItem:
     """One listing row (a movie ``Video`` or show ``Directory``) as a :class:`PlexItem`.
+
+    ``library`` is the title of the section this row was listed under -- the caller knows it
+    per section and passes it in, since the listing element itself does not carry it.
 
     Pure attribute/child reads on already-fetched XML -- a field the server omitted is
     ``None``, never a reason for another request. Movies carry ``Media/Part`` children
@@ -163,6 +166,7 @@ def _parse_sweep_element(el: Element) -> PlexItem:
             else None
         ),
         ratings=tuple(plex_ratings),
+        library=library,
     )
 
 
@@ -568,8 +572,9 @@ class PlexClient:
                         f"&X-Plex-Container-Size={SWEEP_PAGE_SIZE}"
                     )
                     elements = [el for el in container if el.get("ratingKey")]
+                    section_title = str(section.title) if section.title else None
                     for el in elements:
-                        item = _parse_sweep_element(el)
+                        item = _parse_sweep_element(el, library=section_title)
                         out[item.rating_key] = item
                         batch_keys.append(item.rating_key)
                     start += len(elements)

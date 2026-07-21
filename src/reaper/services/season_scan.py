@@ -174,6 +174,8 @@ class SeasonJudgment:
     imdb_id: str | None = None
     content_rating: str | None = None
     runtime_minutes: int | None = None
+    # The Plex library (section) the show lives in, stamped on every one of its seasons.
+    library: str | None = None
     ratings_json: str | None = None
     # Whether the show is finished ("ended" / "continuing" / "unknown"), from the same
     # observation the custom-rule field reads. See show_status_key for why "unknown" is
@@ -222,6 +224,7 @@ class _SeriesWork:
     show_content_rating: str | None = None
     show_runtime_minutes: int | None = None
     show_plex_ratings: tuple[Rating, ...] = ()
+    show_library: str | None = None
 
 
 @dataclass
@@ -940,6 +943,7 @@ async def gather(
             item.show_content_rating = resolution.plex_item.content_rating
             item.show_runtime_minutes = resolution.plex_item.runtime_minutes
             item.show_plex_ratings = resolution.plex_item.ratings
+            item.show_library = resolution.plex_item.library
 
     # The per-show reads are independent of each other, so they run concurrently under
     # small bounds: one for Tautulli, one per Sonarr instance (two instances are two
@@ -1256,6 +1260,7 @@ def _judge_series(
                 imdb_id=show_imdb_id,
                 content_rating=item.show_content_rating,
                 runtime_minutes=item.show_runtime_minutes,
+                library=item.show_library,
                 ratings_json=show_ratings_json,
                 show_status=show_status_key(show_ended_obs),
             )

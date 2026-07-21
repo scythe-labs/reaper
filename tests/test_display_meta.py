@@ -287,6 +287,7 @@ _METADATA_XML = """
 class _StrictSection:
     type = "movie"
     key = 1
+    title = "Movies"
 
 
 class _StrictServer:
@@ -329,6 +330,9 @@ async def test_the_sweep_reads_only_listing_attributes() -> None:
     item = swept[100]
     assert item.content_rating == "TV-14"
     assert item.runtime_minutes == 80
+    # The section title rides onto every swept item as its library (read once per section,
+    # not a per-item fetch, so it does not add to the query count asserted below).
+    assert item.library == "Movies"
     # Provenance-parsed, with the audience slot routed to the audience source.
     assert {r.source for r in item.ratings} == {
         RatingSource.ROTTEN_TOMATOES_CRITIC,

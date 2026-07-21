@@ -40,6 +40,7 @@ describe("remembered filters", () => {
       mediaType: "season",
       requested: "yes",
       genre: "Comedy",
+      library: "4K Movies",
       override: "spare",
       sort: "size",
       order: "asc",

@@ -213,6 +213,10 @@ class CandidateOut(BaseModel):
     video_resolution: str | None = None
     """Canonical file resolution ("2160", "1080", ..., "sd") for the card's quality
     badge. None hides the badge (TV seasons, unmatched items, pre-rescan rows)."""
+    library: str | None = None
+    """The Plex library (section) this item lives in, as the operator named it -- the
+    show's for a season row. Powers the card/panel library chip and the library filter.
+    None when unknown (unmatched, or a row from before this shipped); the chip is hidden."""
     dormant_for: str | None = None
     """How long the item has sat unwatched, as the humanized span from the dormancy
     signal ("5 years, 9 months") -- the card's amber pill. None when the signal could
@@ -291,6 +295,9 @@ class GroupOut(BaseModel):
     """How many season rows have no size, and are therefore left out of the total above.
     Hidden at zero."""
     reason: str | None = None
+    library: str | None = None
+    """The show's Plex library (section), taken from its season rows (they all share it).
+    None when no row carries one. Drives the show panel's library chip."""
     chip: ChipOut | None = None
     """The show-level status line and chip: those of its highest-scoring season, the
     same member the collapsed card leads with."""

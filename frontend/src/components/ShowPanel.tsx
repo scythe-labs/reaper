@@ -11,7 +11,13 @@
 import type { Candidate, Group } from "../api";
 import { itemBytes, totalBytes } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
-import { handFate, OverrideControls, showReapIsNoop, ShowStatusChip } from "./ReviewQueue";
+import {
+  handFate,
+  LibraryChip,
+  OverrideControls,
+  showReapIsNoop,
+  ShowStatusChip,
+} from "./ReviewQueue";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
 import { JumpPill, Synopsis, WhyHero } from "./WhyPanel";
 
@@ -82,6 +88,8 @@ export function ShowPanel({
           <p className="muted why-sub">
             TV show &middot; {seasonLabel} &middot;{" "}
             {totalBytes(group.size_bytes, group.unknown_size_seasons)}
+            {/* The Plex library the show lives in -- the same quiet chip the card carries. */}
+            <LibraryChip library={group.library} />
             {/* Named here as well as on the card: the card is where you notice a show has
                 ended, this is where you came to find out. A panel that dropped the status
                 the card just showed would read as a contradiction. */}

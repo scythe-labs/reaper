@@ -457,6 +457,13 @@ class Candidate(Base):
     content_rating: Mapped[str | None] = mapped_column(String(20), default=None)
     """Plex's certification (e.g. a TV or film rating board label). Display only."""
 
+    library_title: Mapped[str | None] = mapped_column(String(200), default=None)
+    """The Plex library (section) the item lives in, as the operator named it -- the show's
+    for a season row, stamped on every season in the same scan. Captured at scan time from
+    the section listing already in hand (services.library_index). Display and filter only;
+    never identity or a verdict input. NULL for an item Plex could not place (unmatched, a
+    sweep that did not list it, or a pre-rescan row) -- the UI then shows no library chip."""
+
     runtime_minutes: Mapped[int | None] = mapped_column(Integer, default=None)
     """Runtime in minutes from Plex (a show row carries its episode runtime). Display
     only."""

@@ -55,6 +55,7 @@ function movie(n: number, extra: Partial<Candidate> = {}): Candidate {
     group_condemned_bytes: null,
     group_unknown_size: null,
     video_resolution: null,
+    library: null,
     dormant_for: null,
     reason: null,
     spared: false,
@@ -632,5 +633,62 @@ describe("keyboard activation of a revealed Spare/Reap button", () => {
     // The key stopped at the control, so the row handler (which would preventDefault and open
     // the panel) never ran.
     expect(rowKeyDown).not.toHaveBeenCalled();
+  });
+});
+
+// One ＋ Filter control replaces the old row of fixed dropdowns: any filter is added from a
+// menu, shows as an editable chip, and is removed from the chip. A new filter is a registry
+// entry, so this one flow covers them all.
+describe("the unified filter bar", () => {
+  it("adds a filter from the ＋ Filter menu, edits its value, then removes it", async () => {
+    apiMock.vocabularyValues.mockImplementation((field: string) =>
+      Promise.resolve({ field, values: field === "library" ? ["Movies", "4K Movies"] : [] }),
+    );
+    apiMock.candidates.mockResolvedValue(page([movie(1)]));
+    const user = userEvent.setup();
+    renderQueue();
+    await screen.findByText("Example Movie 1");
+
+    // Add the Library filter. Its options come from the scan's vocabulary, so the menu entry
+    // appears once that query resolves.
+    await user.click(screen.getByRole("button", { name: "Filter" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Library" }));
+
+    // The candidates query now carries the library, and the filter is a removable chip.
+    await waitFor(() =>
+      expect(apiMock.candidates).toHaveBeenCalledWith(
+        "condemn",
+        expect.objectContaining({ library: "Movies" }),
+        expect.anything(),
+        expect.anything(),
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Remove the Library filter" })).toBeInTheDocument();
+
+    // Clicking the chip opens its value picker; choosing another value re-filters in place.
+    await user.click(screen.getByRole("button", { name: "Movies" }));
+    await user.click(await screen.findByRole("option", { name: "4K Movies" }));
+    await waitFor(() =>
+      expect(apiMock.candidates).toHaveBeenCalledWith(
+        "condemn",
+        expect.objectContaining({ library: "4K Movies" }),
+        expect.anything(),
+        expect.anything(),
+      ),
+    );
+
+    // Removing the chip drops the filter entirely.
+    await user.click(screen.getByRole("button", { name: "Remove the Library filter" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Remove the Library filter" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(apiMock.candidates).toHaveBeenLastCalledWith(
+      "condemn",
+      expect.objectContaining({ library: "" }),
+      expect.anything(),
+      expect.anything(),
+    );
   });
 });

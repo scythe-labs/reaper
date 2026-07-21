@@ -182,6 +182,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     video_resolution="1080",
                     content_rating="PG-13",
                     runtime_minutes=95,
+                    library_title="Movies",
                     ratings_json=json.dumps(
                         {
                             "imdb": 59,
@@ -205,6 +206,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     size_bytes=8_000_000_000,
                     genres_json=json.dumps(["Drama"]),
                     quality="WEBDL-1080p",
+                    library_title="Classics",
                     verdict="protect",
                     score=90,
                     coverage_bp=10_000,
@@ -962,6 +964,13 @@ class TestVocabularyValues:
         body = client.get("/api/vocabulary/values", params={"field": "quality"}).json()
 
         assert body["values"] == ["Bluray-1080p", "WEBDL-1080p"]
+
+    def test_libraries_come_from_the_latest_scan(self, client: TestClient) -> None:
+        body = client.get("/api/vocabulary/values", params={"field": "library"}).json()
+
+        assert body["field"] == "library"
+        # Both matched movies' libraries; the unmatched row has no library and adds nothing.
+        assert set(body["values"]) == {"Movies", "Classics"}
 
     def test_an_unknown_field_is_empty_not_an_error(self, client: TestClient) -> None:
         """A numeric or unheard-of field has nothing to suggest. That is not a fault --

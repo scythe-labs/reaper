@@ -101,6 +101,22 @@ const SORTS: { value: SortKey; label: string }[] = [
   { value: "title", label: "Title" },
 ];
 
+/** One filterable dimension of the review queue: a queue-filter field paired with a value
+ *  list, a label and an icon. The ＋ Filter menu and the active-filter chips are built from
+ *  these, so adding a future filter is one more entry here -- never another toolbar control.
+ *  `defaultValue` is the field's "off" value: a filter is active when its value differs from
+ *  it, and clearing resets to it. Sort is deliberately not a dimension -- it orders the list
+ *  and hides nothing, so it is never a removable chip. */
+interface FilterDimension {
+  id: string;
+  label: string;
+  icon: ReactNode;
+  defaultValue: string;
+  options: { value: string; label: string }[];
+  value: (f: QueueFilters) => string;
+  set: (f: QueueFilters, value: string) => QueueFilters;
+}
+
 // --- remembered filters --------------------------------------------------------------------
 // Each queue tab keeps its own filters and sort, on this device, until changed or cleared.
 
@@ -108,6 +124,7 @@ export interface QueueFilters {
   mediaType: string;
   requested: RequestedFilter;
   genre: string;
+  library: string;
   override: OverrideFilter;
   sort: SortKey;
   order: SortOrder;
@@ -117,6 +134,7 @@ export const DEFAULT_FILTERS: QueueFilters = {
   mediaType: "",
   requested: "any",
   genre: "",
+  library: "",
   override: "any",
   sort: "score",
   order: "desc",
@@ -157,6 +175,7 @@ export function loadFilters(verdict: string): QueueFilters {
       DEFAULT_FILTERS.requested,
     ),
     genre: typeof stored.genre === "string" ? stored.genre : DEFAULT_FILTERS.genre,
+    library: typeof stored.library === "string" ? stored.library : DEFAULT_FILTERS.library,
     override: pick(
       stored.override,
       OVERRIDE_FILTERS.map((f) => f.value),
@@ -222,6 +241,53 @@ function OverrideIcon() {
       <rect x="2" y="5" width="12" height="6" rx="3" stroke="currentColor" strokeWidth="1.3" />
       <circle cx="11" cy="8" r="1.8" stroke="currentColor" strokeWidth="1.3" />
     </svg>
+  );
+}
+/** The Plex library (section) glyph -- a small shelf of spines, distinct from the media-type
+ *  layers icon so a library never reads as a media type. Shared by the library filter and the
+ *  library chip. */
+function LibraryIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
+      <rect x="2.5" y="3" width="2.4" height="10" rx="0.6" stroke="currentColor" strokeWidth="1.2" />
+      <rect x="5.8" y="3" width="2.4" height="10" rx="0.6" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M9.6 4l2.4.6-1.9 8.2-2.4-.6" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
+      <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+function CaretIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" aria-hidden="true" className="fchip-caret">
+      <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function CheckIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+      <path d="M3 8.5l3 3 7-7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** The Plex library an item lives in, as a quiet neutral chip on the facts line -- the same
+ *  placement and weight as the resolution badge, deliberately not a verdict color. Hidden when
+ *  the library is unknown (unmatched, or a row from before this shipped). Shared by movie and
+ *  show cards and both info panels, so movies and seasons read the same. */
+export function LibraryChip({ library }: { library: string | null }) {
+  if (!library) return null;
+  return (
+    <span className="lib-chip" title={`Plex library: ${library}`}>
+      <LibraryIcon />
+      {library}
+    </span>
   );
 }
 
@@ -724,6 +790,9 @@ type Group = {
   /** The first (highest-scoring) season's dormancy span, like `reason` -- the show
    *  card's pill leads with its most condemned season. */
   dormantFor: string | null;
+  /** The Plex library the item lives in -- a show's is shared by all its seasons, so the
+   *  first season sets it for the whole card. Null when unknown; the chip is hidden. */
+  library: string | null;
   items: Candidate[];
   isShow: boolean;
 };
@@ -753,6 +822,7 @@ function toGroups(items: Candidate[]): Group[] {
           reason: item.reason,
           requestedBy: item.requested_by,
           dormantFor: item.dormant_for,
+          library: item.library,
           items: [],
           isShow: true,
         };
@@ -769,6 +839,7 @@ function toGroups(items: Candidate[]): Group[] {
         reason: item.reason,
         requestedBy: item.requested_by,
         dormantFor: item.dormant_for,
+        library: item.library,
         items: [item],
         isShow: false,
       });
@@ -1145,6 +1216,7 @@ function MovieCard({
             never fights a chip for space and the year stays glued to the title. */}
         <div className="card-meta">
           <span className="chip chip-movie">Movie</span>
+          <LibraryChip library={item.library} />
           <span>{itemBytes(item.size_bytes)}</span>
           <ResolutionBadge value={item.video_resolution} />
           <RequestedChip who={item.requested_by} />
@@ -1292,6 +1364,7 @@ function ShowCard({
           </div>
           <div className="card-meta">
             <span className="chip chip-tv">TV</span>
+            <LibraryChip library={group.library} />
             <SeasonExpander count={totalSeasons} open={open} onToggle={() => setOpen((v) => !v)} />
             <span>
               {isReapTab
@@ -1376,6 +1449,9 @@ export function ReviewQueue({
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<QueueFilters>(() => loadFilters(verdict));
+  // Which filter popover is open: a dimension id, "add" for the ＋ Filter menu, or null.
+  // One at a time, so the list only ever renders one menu.
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [visible, setVisible] = useState(PAGE);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selectMode, setSelectMode] = useState(false);
@@ -1396,6 +1472,25 @@ export function ReviewQueue({
     const id = setTimeout(() => setSearch(searchInput.trim()), 250);
     return () => clearTimeout(id);
   }, [searchInput]);
+
+  // Close an open filter menu on an outside click or Escape. Each menu lives inside a
+  // .filter-anchor wrapper (with its chip or button), so a click within any of them counts as
+  // inside; switching to a different chip is handled by that chip's own toggle.
+  useEffect(() => {
+    if (openMenu === null) return;
+    const onDown = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement).closest(".filter-anchor")) setOpenMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpenMenu(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [openMenu]);
 
   // Each tab remembers its own filters. On a tab switch, adopt that tab's remembered set
   // and skip the save below for that render -- otherwise the old tab's filters would be
@@ -1432,6 +1527,7 @@ export function ReviewQueue({
             media_type: filters.mediaType,
             requested: filters.requested,
             genre: filters.genre,
+            library: filters.library,
             override: filters.override,
             sort: filters.sort,
             order: filters.order,
@@ -1598,35 +1694,97 @@ export function ReviewQueue({
 
   const tab = TABS.find((t) => t.verdict === verdict) ?? TABS[0]!;
   const groups = data ? toGroups(data) : [];
-  const filtering = Boolean(
-    search ||
-      filters.mediaType ||
-      filters.requested !== "any" ||
-      filters.genre ||
-      filters.override !== "any",
-  );
-  const clearFilters = () => {
-    setSearchInput("");
-    setSearch("");
-    // Sort survives a clear: it orders the list, it hides nothing.
-    setFilters((f) => ({ ...DEFAULT_FILTERS, sort: f.sort, order: f.order }));
-  };
-
-  // The genre choices are what the latest scan actually saw, most common first -- the
-  // same suggestions the policy rule editors use.
+  // The genre and library choices are what the latest scan actually saw, most common first --
+  // the genre list is the same one the policy rule editors suggest from.
   const { data: genreValues } = useQuery({
     queryKey: ["vocabulary-values", "genre"],
     queryFn: () => api.vocabularyValues("genre"),
     staleTime: 5 * 60 * 1000,
   });
-  // A remembered genre that the newest scan no longer has stays selectable: the row set
-  // it filters is honest (empty), and the option must exist for the pill to display it.
+  const { data: libraryValues } = useQuery({
+    queryKey: ["vocabulary-values", "library"],
+    queryFn: () => api.vocabularyValues("library"),
+    staleTime: 5 * 60 * 1000,
+  });
+  // A remembered value the newest scan no longer has stays selectable: the row set it filters
+  // is honest (empty), and the option must exist for the chip to show it.
   const genreOptions = useMemo(() => {
     const values = genreValues?.values ?? [];
-    return filters.genre && !values.includes(filters.genre)
-      ? [filters.genre, ...values]
-      : values;
+    return filters.genre && !values.includes(filters.genre) ? [filters.genre, ...values] : values;
   }, [genreValues, filters.genre]);
+  const libraryOptions = useMemo(() => {
+    const values = libraryValues?.values ?? [];
+    return filters.library && !values.includes(filters.library)
+      ? [filters.library, ...values]
+      : values;
+  }, [libraryValues, filters.library]);
+
+  const dimensions: FilterDimension[] = useMemo(
+    () => [
+      {
+        id: "mediaType",
+        label: "Type",
+        icon: <LayersIcon />,
+        defaultValue: "",
+        options: MEDIA_FILTERS.filter((f) => f.value !== ""),
+        value: (f) => f.mediaType,
+        set: (f, v) => ({ ...f, mediaType: v }),
+      },
+      {
+        id: "library",
+        label: "Library",
+        icon: <LibraryIcon />,
+        defaultValue: "",
+        options: libraryOptions.map((l) => ({ value: l, label: l })),
+        value: (f) => f.library,
+        set: (f, v) => ({ ...f, library: v }),
+      },
+      {
+        id: "requested",
+        label: "Requested",
+        icon: <FunnelIcon />,
+        defaultValue: "any",
+        options: REQUESTED_FILTERS.filter((f) => f.value !== "any"),
+        value: (f) => f.requested,
+        set: (f, v) => ({ ...f, requested: v as RequestedFilter }),
+      },
+      {
+        id: "genre",
+        label: "Genre",
+        icon: <GenreIcon />,
+        defaultValue: "",
+        options: genreOptions.map((g) => ({ value: g, label: g })),
+        value: (f) => f.genre,
+        set: (f, v) => ({ ...f, genre: v }),
+      },
+      {
+        id: "override",
+        label: "Your decision",
+        icon: <OverrideIcon />,
+        defaultValue: "any",
+        options: OVERRIDE_FILTERS.filter((f) => f.value !== "any"),
+        value: (f) => f.override,
+        set: (f, v) => ({ ...f, override: v as OverrideFilter }),
+      },
+    ],
+    [genreOptions, libraryOptions],
+  );
+
+  const activeDimensions = dimensions.filter((d) => d.value(filters) !== d.defaultValue);
+  // Only offer a filter that has something to pick: an open list (genre, library) with no
+  // values in this scan would add an empty menu.
+  const addableDimensions = dimensions.filter(
+    (d) => d.value(filters) === d.defaultValue && d.options.length > 0,
+  );
+
+  const filtering = Boolean(search) || activeDimensions.length > 0;
+  const clearFilters = () => {
+    setSearchInput("");
+    setSearch("");
+    setOpenMenu(null);
+    // Sort survives a clear: it orders the list, it hides nothing.
+    setFilters((f) => ({ ...DEFAULT_FILTERS, sort: f.sort, order: f.order }));
+  };
 
   // How many items the filters are hiding, for the filtered-empty state. Only asked for
   // when that state is actually on screen: one row, headers only.
@@ -1754,58 +1912,48 @@ export function ReviewQueue({
           />
         </div>
 
-        <Pill
-          icon={<LayersIcon />}
-          value={filters.mediaType}
-          onChange={(v) => setFilters((f) => ({ ...f, mediaType: v }))}
-          title="Movies or TV"
-        >
-          {MEDIA_FILTERS.map((f) => (
-            <option key={f.value} value={f.value}>
-              {f.label}
-            </option>
-          ))}
-        </Pill>
-
-        <Pill
-          icon={<FunnelIcon />}
-          value={filters.requested}
-          onChange={(v) => setFilters((f) => ({ ...f, requested: v as RequestedFilter }))}
-          title="Filter by who asked for it through Seerr"
-        >
-          {REQUESTED_FILTERS.map((f) => (
-            <option key={f.value} value={f.value}>
-              {f.label}
-            </option>
-          ))}
-        </Pill>
-
-        <Pill
-          icon={<GenreIcon />}
-          value={filters.genre}
-          onChange={(v) => setFilters((f) => ({ ...f, genre: v }))}
-          title="Filter by genre"
-        >
-          <option value="">Any genre</option>
-          {genreOptions.map((g) => (
-            <option key={g} value={g}>
-              {g}
-            </option>
-          ))}
-        </Pill>
-
-        <Pill
-          icon={<OverrideIcon />}
-          value={filters.override}
-          onChange={(v) => setFilters((f) => ({ ...f, override: v as OverrideFilter }))}
-          title="Filter by your own spare and reap decisions"
-        >
-          {OVERRIDE_FILTERS.map((f) => (
-            <option key={f.value} value={f.value}>
-              {f.label}
-            </option>
-          ))}
-        </Pill>
+        {/* One control adds any filter, so a new filter never means a new toolbar button.
+            Each filter added here becomes a removable, editable chip below. Hidden once every
+            filter is already applied. */}
+        {addableDimensions.length > 0 && (
+          <span className="filter-anchor">
+            <button
+              type="button"
+              className={`add-filter ${openMenu === "add" ? "open" : ""}`}
+              aria-haspopup="menu"
+              aria-expanded={openMenu === "add"}
+              onClick={() => setOpenMenu((m) => (m === "add" ? null : "add"))}
+            >
+              <PlusIcon />
+              Filter
+            </button>
+            {openMenu === "add" && (
+              <ul className="filter-menu" role="menu" aria-label="Add a filter">
+                <li className="filter-menu-head" aria-hidden="true">
+                  Add a filter
+                </li>
+                {addableDimensions.map((d) => (
+                  <li key={d.id} role="none">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="filter-mi"
+                      onClick={() => {
+                        setFilters((f) => d.set(f, d.options[0]!.value));
+                        setOpenMenu(null);
+                      }}
+                    >
+                      <span className="filter-mi-ic" aria-hidden="true">
+                        {d.icon}
+                      </span>
+                      {d.label}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </span>
+        )}
 
         <div className="sort-group">
           <Pill
@@ -1852,8 +2000,9 @@ export function ReviewQueue({
         </button>
       </div>
 
-      {/* Every active filter as a removable chip, so a stacked combination is visible at a
-          glance and each piece clears with one tap. Sort is not a chip: it hides nothing. */}
+      {/* Every active filter as a chip: the search term (cleared with one tap) and each added
+          dimension (click to change its value, × to remove). A stacked combination is visible
+          at a glance. Sort is not a chip: it hides nothing. */}
       {filtering && (
         <div className="active-filters">
           {search && (
@@ -1866,34 +2015,69 @@ export function ReviewQueue({
               }}
             />
           )}
-          {filters.mediaType && (
-            <FilterChip
-              label={MEDIA_FILTERS.find((f) => f.value === filters.mediaType)?.label}
-              clearLabel="Remove the media type filter"
-              onClear={() => setFilters((f) => ({ ...f, mediaType: "" }))}
-            />
-          )}
-          {filters.requested !== "any" && (
-            <FilterChip
-              label={REQUESTED_FILTERS.find((f) => f.value === filters.requested)?.label}
-              clearLabel="Remove the requested filter"
-              onClear={() => setFilters((f) => ({ ...f, requested: "any" }))}
-            />
-          )}
-          {filters.genre && (
-            <FilterChip
-              label={filters.genre}
-              clearLabel="Remove the genre filter"
-              onClear={() => setFilters((f) => ({ ...f, genre: "" }))}
-            />
-          )}
-          {filters.override !== "any" && (
-            <FilterChip
-              label={OVERRIDE_FILTERS.find((f) => f.value === filters.override)?.label}
-              clearLabel="Remove the override filter"
-              onClear={() => setFilters((f) => ({ ...f, override: "any" }))}
-            />
-          )}
+          {activeDimensions.map((d) => {
+            const current = d.value(filters);
+            const label = d.options.find((o) => o.value === current)?.label ?? current;
+            return (
+              <span className="filter-anchor" key={d.id}>
+                <span className={`fchip ${openMenu === d.id ? "open" : ""}`}>
+                  <button
+                    type="button"
+                    className="fchip-body"
+                    title={`Filter: ${d.label}`}
+                    aria-haspopup="listbox"
+                    aria-expanded={openMenu === d.id}
+                    onClick={() => setOpenMenu((m) => (m === d.id ? null : d.id))}
+                  >
+                    <span className="fchip-ic" aria-hidden="true">
+                      {d.icon}
+                    </span>
+                    <b>{label}</b>
+                    <CaretIcon />
+                  </button>
+                  <button
+                    type="button"
+                    className="fchip-x"
+                    aria-label={`Remove the ${d.label} filter`}
+                    onClick={() => {
+                      setFilters((f) => d.set(f, d.defaultValue));
+                      setOpenMenu((m) => (m === d.id ? null : m));
+                    }}
+                  >
+                    ×
+                  </button>
+                </span>
+                {openMenu === d.id && (
+                  <ul className="filter-menu" role="listbox" aria-label={d.label}>
+                    <li className="filter-menu-head" aria-hidden="true">
+                      {d.label}
+                    </li>
+                    {d.options.map((o) => (
+                      <li key={o.value} role="none">
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={o.value === current}
+                          className={`filter-mi ${o.value === current ? "sel" : ""}`}
+                          onClick={() => {
+                            setFilters((f) => d.set(f, o.value));
+                            setOpenMenu(null);
+                          }}
+                        >
+                          <span className="filter-mi-label">{o.label}</span>
+                          {o.value === current && (
+                            <span className="filter-mi-tick" aria-hidden="true">
+                              <CheckIcon />
+                            </span>
+                          )}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </span>
+            );
+          })}
           <button type="button" className="link-btn" onClick={clearFilters}>
             Clear all
           </button>

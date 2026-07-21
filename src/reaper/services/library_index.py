@@ -51,6 +51,11 @@ from reaper.engine import identity
 
 log = structlog.get_logger(__name__)
 
+#: Where ``_spine`` stashes each row's library (section) title, for the item build loop to
+#: read as the fallback when the plexapi sweep did not enrich the row. Underscore-prefixed so
+#: it cannot collide with a real Tautulli field.
+_SPINE_LIBRARY = "_reaper_library"
+
 
 def _as_year(value: Any) -> int | None:
     """A row's release year, or ``None`` -- used only to disambiguate duplicate titles.
@@ -102,11 +107,14 @@ async def build_index(
             section_id = int(library["section_id"])
             if allowed_sections is not None and section_id not in allowed_sections:
                 continue
+            # The library title, stamped onto each of its rows so the item build loop has a
+            # library even for a row the plexapi sweep did not (or could not) enrich.
+            section_name = str(library.get("section_name") or "") or None
             start = 0
             while True:
                 page = await tautulli.library_media_info(section_id, start=start, length=1000)
                 rows = page.get("data") or []
-                collected.extend(rows)
+                collected.extend({**row, _SPINE_LIBRARY: section_name} for row in rows)
                 if len(rows) < 1000:
                     break
                 start += 1000
@@ -139,6 +147,14 @@ async def build_index(
                 content_rating=enriched.content_rating if enriched is not None else None,
                 runtime_minutes=(enriched.runtime_minutes if enriched is not None else None),
                 ratings=enriched.ratings if enriched is not None else (),
+                # The sweep's section title when it enriched this row, else the one the spine
+                # stamped from Tautulli's own library listing -- so a row the sweep missed (or
+                # a failed sweep) still carries its library.
+                library=(
+                    enriched.library
+                    if (enriched is not None and enriched.library)
+                    else row.get(_SPINE_LIBRARY)
+                ),
             )
         )
 

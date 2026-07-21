@@ -450,6 +450,10 @@ class PlexItem:
     ratings: tuple[Rating, ...] = ()
     """Plex's critic/audience ratings with provenance read from the ``*RatingImage``
     (see reaper.ratings) -- never bare numbers whose meaning was guessed."""
+    library: str | None = None
+    """The library (section) title this item was listed under, as the operator named it.
+    Display and filter only; carried onto the candidate. For a show it is the show's
+    section, inherited by every season row. None when the section is unknown."""
 
 
 @dataclass(frozen=True, slots=True)
