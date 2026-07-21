@@ -42,13 +42,20 @@ async def poster(request: Request, rating_key: int, kind: str = "poster") -> Res
     box: SecretBox = request.app.state.secret_box
 
     async with request.app.state.session_factory() as session:
+        # Tautulli is a singleton (enforced at creation), so there is one. Ordered-first
+        # rather than one-or-none so this read can never raise even if the invariant were
+        # somehow violated -- artwork is not the place to surface a config error.
         row = (
-            await session.execute(
-                select(Instance).where(
-                    Instance.kind == InstanceKind.TAUTULLI, Instance.enabled.is_(True)
+            (
+                await session.execute(
+                    select(Instance)
+                    .where(Instance.kind == InstanceKind.TAUTULLI, Instance.enabled.is_(True))
+                    .order_by(Instance.id)
                 )
             )
-        ).scalar_one_or_none()
+            .scalars()
+            .first()
+        )
 
     if row is None:
         raise HTTPException(404, "No Tautulli configured to fetch artwork from.")

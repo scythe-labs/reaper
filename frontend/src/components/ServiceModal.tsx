@@ -15,7 +15,15 @@ import { api, type Instance, type InstanceTest } from "../api";
 import { ModalShell } from "./ModalShell";
 import { Switch } from "./Switch";
 
-export const KINDS: { value: string; label: string; hint: string; port: string }[] = [
+export const KINDS: {
+  value: string;
+  label: string;
+  hint: string;
+  port: string;
+  // Only one may be added. Tautulli mirrors a single Plex, and Reaper connects to one Plex,
+  // so a second has no working setup. The backend refuses it too; this only hides the add.
+  singleton?: boolean;
+}[] = [
   { value: "radarr", label: "Radarr", hint: "Your movies. At least one is required.", port: "7878" },
   { value: "sonarr", label: "Sonarr", hint: "Your TV shows. Needed for season pruning.", port: "8989" },
   {
@@ -23,6 +31,7 @@ export const KINDS: { value: string; label: string; hint: string; port: string }
     label: "Tautulli",
     hint: "Watch history. Required. It's how Reaper knows what's watched.",
     port: "8181",
+    singleton: true,
   },
   {
     value: "seerr",

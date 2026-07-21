@@ -83,6 +83,58 @@ class TestInstancesCrud:
         clash = client.post("/api/settings/instances", json=payload)
         assert clash.status_code == 409
 
+    def test_a_second_tautulli_is_refused(self, client: TestClient) -> None:
+        """Tautulli is a singleton: it mirrors one Plex's watch history and Reaper connects
+        to one Plex, so a second (even under a different name and URL) is a 409, never a
+        second row the scan would silently ignore."""
+        first = client.post(
+            "/api/settings/instances",
+            json={
+                "kind": "tautulli",
+                "name": "Main",
+                "base_url": "http://t1.local",
+                "api_key": "k1",
+            },
+        )
+        assert first.status_code == 200, first.text
+        second = client.post(
+            "/api/settings/instances",
+            json={
+                "kind": "tautulli",
+                "name": "Other",
+                "base_url": "http://t2.local",
+                "api_key": "k2",
+            },
+        )
+        assert second.status_code == 409, second.text
+        # Only the one survived.
+        listed = client.get("/api/settings/instances").json()
+        assert [i["name"] for i in listed if i["kind"] == "tautulli"] == ["Main"]
+
+    def test_multiple_seerr_and_arr_instances_are_allowed(self, client: TestClient) -> None:
+        """Radarr, Sonarr and Seerr are genuinely multi (HD + 4K servers, two request
+        portals): a second of each, under its own name, is accepted, not refused."""
+        for kind, name in [
+            ("radarr", "HD"),
+            ("radarr", "4K"),
+            ("sonarr", "HD"),
+            ("sonarr", "4K"),
+            ("seerr", "Main"),
+            ("seerr", "Second"),
+        ]:
+            resp = client.post(
+                "/api/settings/instances",
+                json={
+                    "kind": kind,
+                    "name": name,
+                    "base_url": f"http://{kind}-{name}.local",
+                    "api_key": "k",
+                },
+            )
+            assert resp.status_code == 200, resp.text
+        listed = client.get("/api/settings/instances").json()
+        assert sum(1 for i in listed if i["kind"] == "seerr") == 2
+
     def test_a_blank_name_is_a_validation_error_not_a_conflict(self, client: TestClient) -> None:
         """Only a name clash is a 409. A blank required field is the caller's payload
         being wrong, and calling it a conflict misdirects whoever reads the error."""

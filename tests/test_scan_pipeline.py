@@ -716,7 +716,7 @@ class TestRunScanHistorySync:
                 return []
 
         async def fake_sources(factory: Any, settings: Any, box: Any, **kwargs: Any) -> Any:
-            return ([], [], _CmTautulli(), None, None)
+            return ([], [], _CmTautulli(), [], None)
 
         async def fake_policies(session: Any) -> Any:
             return (
@@ -802,7 +802,7 @@ class TestARepairedPolicyCannotBeReapedFrom:
                 [RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")],
                 [],
                 _ScanTautulli(movies=_movie_spine()),
-                None,
+                [],
                 None,
             )
 
@@ -942,7 +942,7 @@ class TestOneScanAtATime:
                 return []
 
         async def fake_sources(factory: Any, settings: Any, box: Any, **kwargs: Any) -> Any:
-            return ([], [], _CmTautulli(), None, None)
+            return ([], [], _CmTautulli(), [], None)
 
         async def fake_policies(session: Any) -> Any:
             return (
@@ -1181,7 +1181,7 @@ class TestKeepHistoryCoverage:
                 return None
 
         async def fake_sources(factory: Any, settings: Any, box: Any, **kwargs: Any) -> Any:
-            return ([], [], _OffTautulli(), None, None)
+            return ([], [], _OffTautulli(), [], None)
 
         async def ok_sync(engine: Any, tautulli: Any, **kwargs: Any) -> Any:
             return SimpleNamespace(rows=0)

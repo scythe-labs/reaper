@@ -28,8 +28,9 @@ on the Seerr side can no longer make a watched title read as never-played.
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import batched
@@ -38,7 +39,8 @@ import structlog
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from reaper.clients.seerr import MediaRequest, SeerrClient
+from reaper.clients.base import IntegrationError
+from reaper.clients.seerr import MediaRequest, QuotaStatus, SeerrClient, UserQuota
 from reaper.db.models import Candidate, Snapshot
 from reaper.engine.requester import WatchEvidence
 from reaper.services import history_sync
@@ -69,6 +71,8 @@ class CandidateInfo:
     group_title: str | None
     tmdb_id: int | None
     imdb_id: str | None
+    year: int | None = None
+    """Display only, for the per-person details drawer's title rows."""
 
 
 @dataclass(frozen=True)
@@ -108,6 +112,15 @@ class RequesterRow:
     co-requesters; the report total dedupes, these per-person figures deliberately do not
     (it is 'disk you asked for that is now expendable', per person)."""
     reclaimable: list[ReclaimableTitle] = field(default_factory=list)
+    seerr_total: int | None = None
+    """Lifetime requests across every portal this person has an account on (Seerr's own
+    ``requestCount``, summed). ``None`` when the user list could not be read. Display only,
+    and deliberately distinct from ``requests_made`` (what the scan still has)."""
+    movie_at_limit: bool = False
+    tv_at_limit: bool = False
+    """Whether this person is at their movie / series request cap on ANY portal right now
+    (Seerr's live ``restricted`` flag, OR-ed across portals). The two are independent: the
+    windows and units differ per type, so they are never merged into one 'quota' state."""
 
 
 @dataclass(frozen=True)
@@ -282,6 +295,147 @@ def roll_up(
     )
 
 
+# ---------------------------------------------------------------------------
+# Per-person detail (the Scales drawer) and Seerr request quota.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class QuotaLine:
+    """One media type's request limit for a person, aggregated across portals.
+
+    Movies and series stay separate: their windows and units differ (movies per N days,
+    seasons per M days), so they are never merged into a single 'quota'. When a person has
+    accounts on several portals the *tightest* finite limit is shown, and ``at_limit`` is
+    true if they are capped on any of them -- the honest 'most constrained' reading.
+    ``limit is None`` is unlimited.
+    """
+
+    limit: int | None
+    days: int | None
+    at_limit: bool
+
+    @property
+    def unlimited(self) -> bool:
+        return self.limit is None
+
+
+@dataclass(frozen=True)
+class PersonQuota:
+    seerr_total: int
+    movie: QuotaLine
+    tv: QuotaLine
+
+
+@dataclass(frozen=True)
+class PersonTitle:
+    """One title a person requested that the scan still has, for the drawer's list."""
+
+    title: str
+    year: int | None
+    media_type: str
+    is_4k: bool
+    size_bytes: int | None
+    """None when nothing about the title is measured; the row says "size unknown"."""
+    requested_at: datetime | None
+    available_at: datetime | None
+    watched_by_them: int
+    verdict: str  # condemn (reclaimable) | protect | abstain
+    item_id: int | None
+    group_key: str | None
+    co_requesters: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PersonDetail:
+    plex_id: int | None
+    name: str
+    seerr_total: int | None
+    requests_in_scan: int
+    gb_granted_bytes: int
+    played_by_them: int
+    reclaimable_items: int
+    reclaimable_bytes: int
+    quota: PersonQuota | None
+    titles: list[PersonTitle]
+    not_in_scan: int
+    """This person's requests the scan has not seen -- shown so the list reads as most of
+    what they asked for, not all."""
+
+
+def _fold_quota(statuses: Iterable[QuotaStatus]) -> QuotaLine:
+    """Aggregate one media type across a person's portals: the tightest finite limit, and
+    at_limit if capped on any. An empty iterable (nothing readable) reads as unlimited and
+    not-at-limit -- the safe display default, never a made-up cap."""
+    limit: int | None = None
+    days: int | None = None
+    at_limit = False
+    for s in statuses:
+        at_limit = at_limit or s.restricted
+        if s.limit is not None and (limit is None or s.limit < limit):
+            limit, days = s.limit, s.days
+    return QuotaLine(limit=limit, days=days, at_limit=at_limit)
+
+
+async def _enrich_accounts(
+    seerrs: Sequence[SeerrClient], targets: set[int | None]
+) -> dict[int, PersonQuota]:
+    """Best-effort Seerr account data for the given people: lifetime request counts and the
+    live per-type caps, aggregated across portals.
+
+    Display-only, so best-effort by design: a portal whose user list or quota cannot be
+    read simply contributes nothing, and the core report (who requested what) is never
+    blocked by it. Only real plex ids are enriched -- an unmatched requester carries no
+    Seerr account to look up.
+    """
+    wanted = {t for t in targets if t is not None}
+    if not wanted or not seerrs:
+        return {}
+
+    # Resolve each wanted person to their (client, seerr_user_id) on every reachable portal,
+    # summing lifetime request counts as we go.
+    resolved: dict[int, list[tuple[SeerrClient, int]]] = defaultdict(list)
+    totals: dict[int, int] = defaultdict(int)
+    for client in seerrs:
+        try:
+            users = await client.users()
+        except IntegrationError as exc:
+            log.warning("fairness.users_unreadable", error=str(exc))
+            continue
+        for u in users:
+            if u.plex_id in wanted:
+                resolved[u.plex_id].append((client, u.seerr_user_id))
+                totals[u.plex_id] += u.request_count
+
+    if not resolved:
+        return {}
+
+    # Fetch every needed quota concurrently; a failed one contributes nothing.
+    calls = [(pid, client, uid) for pid, es in resolved.items() for (client, uid) in es]
+    results = await asyncio.gather(
+        *(client.quota(uid) for _, client, uid in calls), return_exceptions=True
+    )
+    movie_by: dict[int, list[QuotaStatus]] = defaultdict(list)
+    tv_by: dict[int, list[QuotaStatus]] = defaultdict(list)
+    for (pid, _, _), res in zip(calls, results, strict=True):
+        if isinstance(res, UserQuota):
+            movie_by[pid].append(res.movie)
+            tv_by[pid].append(res.tv)
+        elif isinstance(res, IntegrationError):
+            log.warning("fairness.quota_unreadable", error=str(res))
+        elif isinstance(res, BaseException):
+            raise res  # a real bug (or cancellation), never swallowed as "no quota"
+
+    return {
+        pid: PersonQuota(
+            seerr_total=totals[pid],
+            movie=_fold_quota(movie_by.get(pid, [])),
+            tv=_fold_quota(tv_by.get(pid, [])),
+        )
+        for pid in resolved
+    }
+
+
 async def _load_candidates(session: AsyncSession) -> tuple[bool, list[CandidateInfo]]:
     """The latest snapshot's candidates as ``CandidateInfo``. Returns ``(has_snapshot,
     candidates)`` so a never-scanned install (no snapshot at all) is told apart from a scan
@@ -311,6 +465,7 @@ async def _load_candidates(session: AsyncSession) -> tuple[bool, list[CandidateI
             group_title=c.group_title,
             tmdb_id=c.tmdb_id,
             imdb_id=c.imdb_id,
+            year=c.year,
         )
         for c in rows
     ]
@@ -359,11 +514,16 @@ async def _evidence_index(
 async def build_report(
     *,
     session_factory: Callable[[], AsyncSession],
-    seerr: SeerrClient,
+    seerrs: list[SeerrClient],
     cache_engine: AsyncEngine,
 ) -> FairnessReport:
-    """Gather what the roll-up needs -- the last scan's candidates, the available requests,
-    and who played what -- then aggregate."""
+    """Gather what the roll-up needs -- the last scan's candidates, the available requests
+    across *every* Seerr, and who played what -- then aggregate.
+
+    Seerr is multi-instance: every enabled portal is read and its requests merged, so a
+    person who only ever asked through the second portal still appears. Fail-hard: if any
+    Seerr is unreachable the ``IntegrationError`` propagates and the endpoint answers 502,
+    never a leaderboard that looks complete while a portal was silently skipped."""
     async with session_factory() as session:
         has_snapshot, candidates = await _load_candidates(session)
     if not has_snapshot:
@@ -376,15 +536,186 @@ async def build_report(
             no_snapshot=True,
         )
 
-    requests = await seerr.all_requests(filter_="available")
+    requests: list[MediaRequest] = []
+    for seerr in seerrs:
+        requests.extend(await seerr.all_requests(filter_="available"))
     keys = {c.plex_rating_key for c in candidates if c.plex_rating_key is not None}
     evidence = await _evidence_index(cache_engine, keys)
     horizon = await history_sync.horizon(cache_engine)
+
+    report = roll_up(requests, candidates, evidence, horizon=horizon)
+
+    # Enrich the board with Seerr account data (lifetime request counts and live per-type
+    # caps) for the people actually shown -- a bounded set, so the quota calls are bounded
+    # too. Best-effort: if Seerr's user list is unreadable the rows simply carry no totals,
+    # never a blocked page.
+    accounts = await _enrich_accounts(seerrs, {row.plex_id for row in report.rows})
+    for row in report.rows:
+        acct = accounts.get(row.plex_id) if row.plex_id is not None else None
+        if acct is not None:
+            row.seerr_total = acct.seerr_total
+            row.movie_at_limit = acct.movie.at_limit
+            row.tv_at_limit = acct.tv.at_limit
 
     log.info(
         "fairness.built",
         requests=len(requests),
         candidates=len(candidates),
         keys_with_history=len(evidence),
+        accounts=len(accounts),
     )
-    return roll_up(requests, candidates, evidence, horizon=horizon)
+    return report
+
+
+async def build_person_detail(
+    *,
+    session_factory: Callable[[], AsyncSession],
+    seerrs: Sequence[SeerrClient],
+    cache_engine: AsyncEngine,
+    user_id: int,
+) -> PersonDetail | None:
+    """One person's full request breakdown for the Scales drawer: every title they asked
+    for that the scan still has, each with when it was requested and when it arrived,
+    whether they watched it, its fate, and who else asked. Plus their Seerr account totals
+    and caps.
+
+    Keyed on the Seerr ``user_id`` -- the same stable identity the roll-up keys rows on
+    (rule 6/12), never the plex id (an unlinked local user has none) or the name (shared).
+    Returns ``None`` when no one by that id is in the current scan. Fail-hard on an
+    unreachable Seerr, exactly like :func:`build_report`: a partial breakdown that looks
+    complete is worse than an error.
+    """
+    async with session_factory() as session:
+        has_snapshot, candidates = await _load_candidates(session)
+    if not has_snapshot:
+        return None
+
+    requests: list[MediaRequest] = []
+    for seerr in seerrs:
+        requests.extend(await seerr.all_requests(filter_="available"))
+    evidence = await _evidence_index(
+        cache_engine, {c.plex_rating_key for c in candidates if c.plex_rating_key is not None}
+    )
+
+    # The tmdb index is namespaced by media kind, so a TV request never binds a same-numbered
+    # movie candidate -- the same join the roll-up uses (rule 6/29).
+    by_tmdb: dict[ContentKey, list[CandidateInfo]] = defaultdict(list)
+    by_imdb: dict[str, list[CandidateInfo]] = defaultdict(list)
+    for c in candidates:
+        if c.tmdb_id:
+            by_tmdb[(f"tmdb-{_kind(c.media_type)}", c.tmdb_id)].append(c)
+        if c.imdb_id:
+            by_imdb[c.imdb_id].append(c)
+
+    # Group by content so co-requesters are known and the target's request for a title is
+    # judged with everyone else's.
+    groups: dict[ContentKey, list[MediaRequest]] = defaultdict(list)
+    for req in requests:
+        ck = _content_key(req.media_type, req.tmdb_id, req.imdb_id)
+        if ck is not None:
+            groups[ck].append(req)
+
+    titles: list[PersonTitle] = []
+    name = ""
+    plex_id: int | None = None
+    granted = played = recl_items = recl_bytes = not_in_scan = 0
+    matched_any = False
+    for group in groups.values():
+        mine = next((r for r in group if r.requester.seerr_user_id == user_id), None)
+        if mine is None:
+            continue
+        matched_any = True
+        name = _name(mine)
+        plex_id = mine.requester.plex_id
+        rep = group[0]
+        tmdb_key: ContentKey | None = (
+            (f"tmdb-{_kind(rep.media_type)}", rep.tmdb_id) if rep.tmdb_id else None
+        )
+        cands = (
+            (by_tmdb.get(tmdb_key) if tmdb_key else None) or by_imdb.get(rep.imdb_id or "") or []
+        )
+        if not cands:
+            not_in_scan += 1
+            continue
+
+        granted += sum(c.size_bytes or 0 for c in cands)
+        # Nullable, matching the roll-up: None when nothing about the set is measured, so the
+        # row says "size unknown" rather than a false 0 B.
+        measured = [c.size_bytes for c in cands if c.size_bytes is not None]
+        title_size: int | None = sum(measured) if measured else None
+        condemned = [c for c in cands if c.verdict == _CONDEMN]
+
+        plays = 0
+        for c in cands:
+            ev = evidence.get(str(c.plex_rating_key)) if c.plex_rating_key else None
+            if ev and plex_id is not None:
+                plays += ev.plays_by_user.get(plex_id, 0)
+        if plays > 0:
+            played += 1
+
+        # Title-level fate: reclaimable if ANY copy or season is condemned (a show is on the
+        # reap lane if any season is, rule 48); else abstain if any abstains; else protect.
+        if condemned:
+            verdict = _CONDEMN
+            recl_items += 1
+            recl_bytes += sum(c.size_bytes or 0 for c in condemned)
+        elif any(c.verdict == "abstain" for c in cands):
+            verdict = "abstain"
+        else:
+            verdict = "protect"
+
+        display = cands[0].group_title or cands[0].title
+        year = next((c.year for c in cands if c.year), None)
+        if len(cands) == 1:
+            item_id: int | None = cands[0].candidate_id
+            group_key: str | None = None
+        else:
+            item_id = None
+            group_key = next((c.group_key for c in condemned if c.group_key), None) or next(
+                (c.group_key for c in cands if c.group_key), None
+            )
+
+        titles.append(
+            PersonTitle(
+                title=display,
+                year=year,
+                media_type=cands[0].media_type,
+                is_4k=mine.is_4k,
+                size_bytes=title_size,
+                requested_at=mine.requested_at,
+                available_at=mine.available_at,
+                watched_by_them=plays,
+                verdict=verdict,
+                item_id=item_id,
+                group_key=group_key,
+                # Distinct co-requesters, by Seerr id so two people who share a name stay
+                # apart; the target's own requests are excluded.
+                co_requesters=tuple(
+                    sorted({_name(r) for r in group if r.requester.seerr_user_id != user_id})
+                ),
+            )
+        )
+
+    if not matched_any:
+        return None
+
+    # Reclaimable first (most actionable), then abstain, then kept; heaviest first inside each.
+    order = {"condemn": 0, "abstain": 1, "protect": 2}
+    titles.sort(key=lambda t: (order.get(t.verdict, 3), -(t.size_bytes or 0)))
+
+    accounts = await _enrich_accounts(seerrs, {plex_id})
+    quota = accounts.get(plex_id) if plex_id is not None else None
+
+    return PersonDetail(
+        plex_id=plex_id,
+        name=name,
+        seerr_total=quota.seerr_total if quota else None,
+        requests_in_scan=len(titles),
+        gb_granted_bytes=granted,
+        played_by_them=played,
+        reclaimable_items=recl_items,
+        reclaimable_bytes=recl_bytes,
+        quota=quota,
+        titles=titles,
+        not_in_scan=not_in_scan,
+    )

@@ -186,7 +186,7 @@ async def build_sources(
     list[snapshot_service.RadarrSource],
     list[snapshot_service.SonarrSource],
     TautulliClient,
-    SeerrClient | None,
+    list[SeerrClient],
     PlexClient | None,
 ]:
     """Build clients for EVERY enabled instance, each owned by ``stack``.
@@ -198,8 +198,10 @@ async def build_sources(
     Tautulli is required (a scan judges dormancy, and dormancy is watch history), plus
     at least one library source: Radarr, Sonarr, or both. A movie-only deployment runs
     with no Sonarr and produces no season candidates; a TV-only deployment runs with no
-    Radarr and produces no movie candidates. Seerr is optional -- without it, items
-    simply carry no "requested by".
+    Radarr and produces no movie candidates. Seerr is optional and, like Radarr and Sonarr,
+    genuinely multi: EVERY enabled Seerr is read and merged -- without any, items simply
+    carry no "requested by". Tautulli alone is a singleton (it mirrors one Plex), enforced
+    at creation, so taking the first is correct here and not a silent drop.
 
     Every constructed client is entered into the caller's ``stack`` immediately, so
     there is no window in which a raise can leak one (rule 34).
@@ -218,8 +220,10 @@ async def build_sources(
 
     radarr_rows = [r for r in rows if r.kind is InstanceKind.RADARR]
     sonarr_rows = [r for r in rows if r.kind is InstanceKind.SONARR]
+    seerr_rows = [r for r in rows if r.kind is InstanceKind.SEERR]
+    # Tautulli is a singleton (one Plex, one watch mirror), enforced at creation, so first
+    # is the only one. Seerr is multi and is built as a list below, like the *arr.
     tautulli_row = next((r for r in rows if r.kind is InstanceKind.TAUTULLI), None)
-    seerr_row = next((r for r in rows if r.kind is InstanceKind.SEERR), None)
 
     if (not radarr_rows and not sonarr_rows) or tautulli_row is None:
         raise ScanConfigError(
@@ -263,20 +267,21 @@ async def build_sources(
         verify=tautulli_row.verify_tls,
     )
     await stack.enter_async_context(tautulli)
-    seerr: SeerrClient | None = None
-    if seerr_row is not None:
+    seerrs: list[SeerrClient] = []
+    for r in seerr_rows:
         seerr = SeerrClient(
-            seerr_row.base_url,
-            box.decrypt(seerr_row.api_key_enc),
+            r.base_url,
+            box.decrypt(r.api_key_enc),
             safety=safety,
-            verify=seerr_row.verify_tls,
+            verify=r.verify_tls,
         )
         await stack.enter_async_context(seerr)
+        seerrs.append(seerr)
     plex: PlexClient | None = None
     if plex_uri is not None and plex_token is not None:
         plex = PlexClient(plex_uri, plex_token, safety=safety, verify=plex_verify)
         await stack.enter_async_context(plex)
-    return radarrs, sonarrs, tautulli, seerr, plex
+    return radarrs, sonarrs, tautulli, seerrs, plex
 
 
 async def build_reap_gateway(
@@ -499,7 +504,7 @@ async def _run_scan_locked(
         # client the moment it exists -- so a failure constructing a later client, or
         # anything below, can never leak the earlier ones (rule 34). Seerr and Plex are
         # owned by the same stack; they used to be reclaimed only by GC.
-        radarrs, sonarrs, tautulli, seerr, plex = await build_sources(
+        radarrs, sonarrs, tautulli, seerrs, plex = await build_sources(
             session_factory, settings, box, stack=stack
         )
 
@@ -619,14 +624,14 @@ async def _run_scan_locked(
             ),
             # Who requested what, keyed by media_key, so each candidate can carry a
             # "requested by" and the review queue can filter to just-requested media.
-            # Optional and soft: no Seerr, or an unreachable one, means an empty map,
-            # never a failed scan.
-            requested_by.build_map(seerr),
+            # Merged across every Seerr. Optional and soft: no Seerr, or any unreachable
+            # one, just leaves those requests off the map, never a failed scan.
+            requested_by.build_map(seerrs),
             # A separate three-state index used as a scoring FACT (was this requested?),
-            # built from every request and fail-closed to Unknown when Seerr can't be read
-            # -- distinct from the display map above, which is deliberately loose and
-            # available-only.
-            requested_by.build_request_index(seerr),
+            # built from every request in every Seerr and fail-closed to Unknown when ANY
+            # Seerr can't be read -- distinct from the display map above, which is
+            # deliberately loose and available-only.
+            requested_by.build_request_index(seerrs),
         )
         lists_ms = round((time.monotonic() - lists_started) * 1000)
         log.info(

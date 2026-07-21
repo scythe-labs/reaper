@@ -116,6 +116,55 @@ class MediaRequest:
         return self.status in (MediaStatus.AVAILABLE, MediaStatus.PARTIALLY_AVAILABLE)
 
 
+@dataclass(frozen=True)
+class QuotaStatus:
+    """One media type's request limit, from ``GET /user/{id}/quota``.
+
+    Movies and series are **separate** limits with their own window and unit (movies per
+    N days, seasons per M days), so the window is carried per type and never assumed. A
+    missing or zero ``limit`` is unlimited. ``restricted`` is Seerr's own live "at or over
+    the cap right now" flag, computed inside the window -- the one field that says whether
+    a person is currently blocked, which a stored limit alone cannot.
+    """
+
+    limit: int | None
+    """Requests allowed in the window. ``None`` means unlimited."""
+    days: int | None
+    """The rolling window, in days. ``None`` when unlimited."""
+    used: int
+    remaining: int | None
+    restricted: bool
+    """At or over the cap right now."""
+
+    @property
+    def unlimited(self) -> bool:
+        return self.limit is None
+
+
+@dataclass(frozen=True)
+class UserQuota:
+    """A user's live request limits, both types, from ``GET /user/{id}/quota``."""
+
+    movie: QuotaStatus
+    tv: QuotaStatus
+
+
+@dataclass(frozen=True)
+class SeerrUser:
+    """One Seerr account. ``plex_id`` is the join to a requester and to Tautulli; the
+    ``seerr_user_id`` is what the quota endpoint is keyed by (per instance)."""
+
+    seerr_user_id: int
+    plex_id: int | None
+    username: str | None
+    display_name: str | None
+    email: str | None
+    request_count: int
+    """Lifetime requests on THIS instance, all statuses -- Seerr's own ``requestCount``.
+    Distinct from the in-scan count Scales computes: this includes titles the scan no
+    longer has (deleted, unavailable, filtered out)."""
+
+
 def _as_int(value: Any) -> int | None:
     if value is None or value == "":
         return None
@@ -163,6 +212,33 @@ def _parse_request(payload: dict[str, Any]) -> MediaRequest:
             if (n := _as_int(s.get("seasonNumber"))) is not None
         ),
         raw=payload,
+    )
+
+
+def _parse_quota(node: Any) -> QuotaStatus:
+    """One media type's quota block. A zero limit is normalized to unlimited (``None``):
+    Overseerr uses 0 and absent interchangeably for 'no limit', and a false 'zero allowed'
+    would read as an at-cap block that isn't real."""
+    node = node if isinstance(node, dict) else {}
+    limit = _as_int(node.get("limit")) or None
+    return QuotaStatus(
+        limit=limit,
+        days=_as_int(node.get("days")) if limit is not None else None,
+        used=_as_int(node.get("used")) or 0,
+        remaining=_as_int(node.get("remaining")) if limit is not None else None,
+        # Never restricted when there is no limit, whatever the payload says.
+        restricted=bool(node.get("restricted")) and limit is not None,
+    )
+
+
+def _parse_user(payload: dict[str, Any]) -> SeerrUser:
+    return SeerrUser(
+        seerr_user_id=_as_int(payload.get("id")) or 0,
+        plex_id=_as_int(payload.get("plexId")),
+        username=payload.get("plexUsername") or payload.get("username") or None,
+        display_name=payload.get("displayName") or None,
+        email=payload.get("email") or None,
+        request_count=_as_int(payload.get("requestCount")) or 0,
     )
 
 
@@ -232,3 +308,43 @@ class SeerrClient(BaseClient):
                 break
         log.info("seerr.requests_loaded", count=len(out), filter=filter_)
         return out
+
+    async def users(self, *, take: int = DEFAULT_PAGE_SIZE) -> list[SeerrUser]:
+        """Every Seerr account, paged to the end.
+
+        ``take`` is sent explicitly for the same reason as :meth:`requests`: the server
+        default is small, and relying on it would read only the first page of users and
+        report the rest as absent.
+        """
+        out: list[SeerrUser] = []
+        skip = 0
+        while True:
+            payload = await self.get_json("/api/v1/user", params={"take": take, "skip": skip})
+            if not isinstance(payload, dict):
+                raise IntegrationError(self.service, "/user did not return an object")
+            results = payload.get("results") or []
+            total = int((payload.get("pageInfo") or {}).get("results") or 0)
+            if results and total <= 0:
+                # Rows but no total: the envelope shape changed. Refuse rather than stop
+                # after one page and silently undercount, exactly as :meth:`requests` does.
+                raise IntegrationError(self.service, "/user returned rows but no pageInfo total")
+            out.extend(_parse_user(r) for r in results)
+            skip += take
+            if not results or skip >= total:
+                break
+        log.info("seerr.users_loaded", count=len(out))
+        return out
+
+    async def quota(self, user_id: int) -> UserQuota:
+        """One user's live request limits, both types, from ``GET /user/{id}/quota``.
+
+        Read with the admin API key, so it resolves any user's effective quota (their own
+        override, or the global default). The ``restricted`` flag it carries is the only
+        source of truth for "at their cap right now", computed live inside each type's
+        window."""
+        payload = await self.get_json(f"/api/v1/user/{user_id}/quota")
+        if not isinstance(payload, dict):
+            raise IntegrationError(self.service, "/quota did not return an object")
+        return UserQuota(
+            movie=_parse_quota(payload.get("movie")), tv=_parse_quota(payload.get("tv"))
+        )

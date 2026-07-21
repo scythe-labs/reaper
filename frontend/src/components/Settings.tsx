@@ -599,30 +599,36 @@ export function ServicesPanel() {
       {error && <p className="notice notice-error">{(error as Error).message}</p>}
       {isPending && <p className="muted">Loading…</p>}
       {data &&
-        KINDS.map((k) => (
-          <section key={k.value} className="service-section">
-            <h3>{k.label}</h3>
-            <p className="service-hint">{k.hint}</p>
-            <div className="service-grid">
-              {data
-                .filter((i) => i.kind === k.value)
-                .map((i) => (
+        KINDS.map((k) => {
+          const rows = data.filter((i) => i.kind === k.value);
+          // A singleton kind (Tautulli) shows no "Add" once one exists: it mirrors one
+          // Plex, and Reaper connects to one Plex, so a second has no working setup.
+          const canAdd = !k.singleton || rows.length === 0;
+          return (
+            <section key={k.value} className="service-section">
+              <h3>{k.label}</h3>
+              <p className="service-hint">{k.hint}</p>
+              <div className="service-grid">
+                {rows.map((i) => (
                   <ServiceCard
                     key={i.id}
                     instance={i}
                     onEdit={() => setModal({ kind: i.kind, instance: i })}
                   />
                 ))}
-              <button
-                type="button"
-                className="service-add"
-                onClick={() => setModal({ kind: k.value, instance: null })}
-              >
-                <span aria-hidden="true">+</span> Add a {k.label}
-              </button>
-            </div>
-          </section>
-        ))}
+                {canAdd && (
+                  <button
+                    type="button"
+                    className="service-add"
+                    onClick={() => setModal({ kind: k.value, instance: null })}
+                  >
+                    <span aria-hidden="true">+</span> Add a {k.label}
+                  </button>
+                )}
+              </div>
+            </section>
+          );
+        })}
       {modal && (
         <ServiceModal
           key={modal.instance ? modal.instance.id : `add-${modal.kind}`}

@@ -25,6 +25,7 @@ from reaper.clock import utcnow
 from reaper.config import InstanceSeed
 from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind
+from reaper.services.instances import SINGLETON_KINDS
 
 log = structlog.get_logger(__name__)
 
@@ -39,12 +40,24 @@ async def seed_instances(
         return 0, 0
 
     imported = skipped = 0
+    seeded_singletons: set[InstanceKind] = set()
     for seed in seeds:
         try:
             kind = InstanceKind(seed.kind)
         except ValueError:
             log.warning("seed.unknown_kind", kind=seed.kind)
             continue
+
+        if kind in SINGLETON_KINDS:
+            # A singleton kind (Tautulli) allows exactly one, the same invariant the UI
+            # enforces. If one already exists -- from the UI, a prior boot, or earlier in
+            # this batch -- skip the rest rather than seed a second the scan would silently
+            # ignore. The in-batch set covers a session that has not flushed yet.
+            present = await session.scalar(select(Instance).where(Instance.kind == kind))
+            if present is not None or kind in seeded_singletons:
+                log.warning("seed.singleton_skipped", kind=kind.value, name=seed.name)
+                skipped += 1
+                continue
 
         existing = await session.scalar(
             select(Instance).where(Instance.kind == kind, Instance.name == seed.name)
@@ -65,6 +78,8 @@ async def seed_instances(
                 created_at=utcnow(),
             )
         )
+        if kind in SINGLETON_KINDS:
+            seeded_singletons.add(kind)
         imported += 1
         log.info("seed.imported", kind=kind.value, name=seed.name, base_url=seed.base_url)
 

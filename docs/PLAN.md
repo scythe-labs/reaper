@@ -2749,3 +2749,77 @@ surfaced six confirmed issues, each fixed and covered by a test:
   the dry run is skipped entirely when reopening an in-flight or finished run.
 Also fixed a same-diff race I caught first: the slot's check-then-set spanned an `await`, so
 two concurrent executes could both pass — now an atomic synchronous claim.
+
+## Multi-instance correctness (Seerr merge + Tautulli singleton)
+
+A multi-agent audit of every service's multi-instance path, prompted by an operator running
+two Seerr portals who found the second portal's requesters missing from Scales.
+
+**The model, now consistent and enforced:**
+- **Radarr, Sonarr, Seerr are genuinely multi.** Every enabled instance is read and merged.
+  Radarr/Sonarr were already correct (a client per `RadarrSource`/`SonarrSource`, the
+  instance id baked into `media_key = radarr:{id}:{...}` so an HD + 4K split never collides,
+  deletion routed back to the owning instance).
+- **Tautulli and Plex are singletons.** Tautulli mirrors one Plex server's watch history
+  (keyed by that server's rating keys) and Reaper connects to exactly one Plex, so a second
+  Tautulli has no working setup.
+
+**Seerr was silently first-only.** `scan_runner.build_sources` and the Scales endpoint each
+picked the Seerr with `next(...)` — the very anti-pattern the `build_sources` docstring warns
+against for the *arr. Two harms: Scales omitted the second portal's requesters while looking
+complete; and worse, on the scoring path the *reachable* first Seerr made the request index
+`available=True`, so a title requested only in the second portal resolved to a confident
+`Known(value=False)` "not requested" instead of `Unknown` — a fail-open that stripped the
+keep-last "requested" protection and could add condemn pressure. Fix: `build_map` /
+`build_request_index` / `fairness.build_report` now take a **list** of clients and merge.
+Three deliberately different failure policies: the display map is soft (best-effort, a broken
+portal contributes nothing); the Scales report is fail-hard (any unreachable portal → 502,
+never a partial-looking leaderboard); and the **scoring index is fail-closed to the whole
+set** — if *any* one of several Seerr is unreachable, the entire index degrades to
+`available=False` (all `Unknown`), because "requested nowhere" can only be asserted once every
+store has been read (rule 2). Empty list stays `_EMPTY_INDEX`, not `available=True` over empty
+keys.
+
+**Tautulli singleton is now a real invariant, enforced at both creation paths:** the UI
+create route (409, and the "Add a Tautulli" card hides once one exists) and env-seeding
+(`seed_instances` skips a second, in-batch set covers an unflushed session). The poster reader
+became ordered-first instead of `scalar_one_or_none` so it can never 500 even if the invariant
+were violated. The scan's `next(...)` for Tautulli is now correct by that invariant.
+
+The deep-link "View in Seerr" base URL is left as first-only (cosmetic, noted).
+
+## Scales details drawer + Seerr request quota (in progress)
+
+Operator-driven feature: a per-person **details drawer** on Scales (opened from a card),
+plus surfacing Seerr's own **request counts and per-type limits**, plus a copy fix (the
+watched line now names its denominator: "they watched 25% of what they asked for").
+Design settled over a mock-first iteration (self-contained HTML artifact, approved).
+
+**Backend: done and verified (full suite green).**
+- `clients/seerr.py`: new read-only `users()` (paged, requestCount + plexId join) and
+  `quota(user_id)` (`GET /user/{id}/quota`), with `SeerrUser`, `UserQuota`, `QuotaStatus`
+  types. Movies and series are **separate** limits with their own window and unit; a
+  zero/absent limit is unlimited; `restricted` is forced false without a real limit.
+- `services/fairness.py`: `build_person_detail` (a person's whole request breakdown over
+  the last scan — title, year, quality, requested/arrived, watched-by-them, fate,
+  co-requesters, sorted reclaimable → limbo → kept), plus `_enrich_accounts` (best-effort
+  quota fold across portals: **tightest finite limit wins, `at_limit` OR-ed**, per type)
+  and list-row enrichment (`seerr_total`, `movie_at_limit`, `tv_at_limit`). Quota is
+  display-only, so best-effort: an unreadable user list drops the extras, never the report.
+- `api/fairness.py`: enriched `/fairness` rows and a new `GET /fairness/people/{user_id}`
+  route. `api/schemas.py`: `QuotaLineOut`, `PersonQuotaOut`, `PersonTitleOut`,
+  `PersonDetailOut`. Keyed on the Seerr `user_id` (the row identity upstream's review pass
+  moved rows onto, rule 6/12), not a synthesized key; `build_person_detail` and the drawer
+  open by it. Sizes are nullable end to end (a title with no measured size reads "size
+  unknown", never a false 0 B), and the tmdb join is namespaced by media kind.
+
+**Key decision (multi-portal quota):** limits are per portal in Overseerr. Rather than a
+per-portal UI, the aggregate shows the *tightest* finite limit and flags `at_limit` if
+capped on any portal — the honest "most constrained" reading. The list card names only
+*which* type is capped (movie / series / both), never a made-up window; the exact
+"1 per 14 days" numbers live in the drawer.
+
+**Remaining:** frontend (api.ts types, `ScalesDrawer` reusing `ModalShell`, `Fairness.tsx`
+card enrichment + sort control + watched-line reorder, CSS, vitest); the rating-key
+display-join refinement for per-file `requested_by` precision (improvement #1); an
+adversarial-review pass; and an end-to-end browser drive.

@@ -63,13 +63,13 @@ class TestBuildSourcesGate:
         await _add(factory, box, InstanceKind.TAUTULLI, "t")
 
         async with AsyncExitStack() as stack:
-            radarrs, sonarrs, tautulli, seerr, plex = await build_sources(
+            radarrs, sonarrs, tautulli, seerrs, plex = await build_sources(
                 factory, settings, box, stack=stack
             )
             assert radarrs == []
             assert len(sonarrs) == 1
             assert tautulli is not None
-            assert seerr is None and plex is None
+            assert seerrs == [] and plex is None
 
     async def test_radarr_plus_tautulli_is_still_enough(
         self, env: tuple[async_sessionmaker[AsyncSession], Settings, SecretBox]
@@ -84,6 +84,23 @@ class TestBuildSourcesGate:
             )
             assert len(radarrs) == 1
             assert sonarrs == []
+
+    async def test_every_seerr_is_built_not_just_the_first(
+        self, env: tuple[async_sessionmaker[AsyncSession], Settings, SecretBox]
+    ) -> None:
+        """Seerr is multi-instance: two portals must both be built into the list, so the
+        scan reads every request, not just the first portal's."""
+        factory, settings, box = env
+        await _add(factory, box, InstanceKind.RADARR, "hd")
+        await _add(factory, box, InstanceKind.TAUTULLI, "t")
+        await _add(factory, box, InstanceKind.SEERR, "portal-one")
+        await _add(factory, box, InstanceKind.SEERR, "portal-two")
+
+        async with AsyncExitStack() as stack:
+            _radarrs, _sonarrs, _tautulli, seerrs, _plex = await build_sources(
+                factory, settings, box, stack=stack
+            )
+            assert len(seerrs) == 2
 
     async def test_no_library_source_is_refused(
         self, env: tuple[async_sessionmaker[AsyncSession], Settings, SecretBox]

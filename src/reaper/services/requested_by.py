@@ -22,7 +22,7 @@ from dataclasses import dataclass
 import structlog
 
 from reaper.clients.base import IntegrationError
-from reaper.clients.seerr import SeerrClient
+from reaper.clients.seerr import MediaRequest, SeerrClient
 from reaper.engine.observation import Known, Observation, Unknown
 
 log = structlog.get_logger(__name__)
@@ -47,23 +47,41 @@ def _name(request_display: str | None, request_user: str | None) -> str:
     return (request_display or request_user or "a user").strip() or "a user"
 
 
-async def build_map(seerr: SeerrClient | None) -> dict[str, str]:
-    """Build ``external-id-key -> requester name`` from every available Seerr request.
+async def _merge_requests(
+    seerrs: list[SeerrClient], *, filter_: str
+) -> tuple[list[MediaRequest], bool]:
+    """Every request from every Seerr, concatenated, plus whether all reads succeeded.
+
+    Seerr is a genuinely multi-instance kind (two request portals is a supported setup),
+    so a reader must merge them all -- picking the first would hide the second portal's
+    requests entirely. ``all_ok`` is ``False`` if *any* instance could not be read, so a
+    fail-closed caller can degrade rather than trust a partial view (rule 2).
+    """
+    merged: list[MediaRequest] = []
+    all_ok = True
+    for seerr in seerrs:
+        try:
+            merged.extend(await seerr.all_requests(filter_=filter_))
+        except IntegrationError as exc:
+            log.warning("requested_by.seerr_unreachable", error=str(exc))
+            all_ok = False
+    return merged, all_ok
+
+
+async def build_map(seerrs: list[SeerrClient]) -> dict[str, str]:
+    """Build ``external-id-key -> requester name`` from every available request, across
+    *every* configured Seerr.
 
     A movie maps under its tmdb key; a show maps under its show key *and* under a key per
     requested season, so a season can be matched whether the request named specific
     seasons or the whole series. When several people requested the same thing, the map
     keeps a friendly "Name + N others" so the card can say so.
-    """
-    if seerr is None:
-        return {}
 
-    try:
-        requests = await seerr.all_requests(filter_="available")
-    except IntegrationError as exc:
-        # Soft: a missing "requested by" is a blank tag, never a failed scan.
-        log.warning("requested_by.seerr_unreachable", error=str(exc))
-        return {}
+    Soft and best-effort: a missing "requested by" is a blank tag, never a failed scan, so
+    an unreachable Seerr simply contributes nothing and the rest still map. No Seerr at all
+    is an empty map.
+    """
+    requests, _ = await _merge_requests(seerrs, filter_="available")
 
     # key -> ordered list of distinct requester names, so we can render "+ N others".
     names: dict[str, list[str]] = {}
@@ -148,20 +166,23 @@ _EMPTY_INDEX = RequestIndex(
 )
 
 
-async def build_request_index(seerr: SeerrClient | None) -> RequestIndex:
-    """Build a three-state requested-or-not index from *every* Seerr request.
+async def build_request_index(seerrs: list[SeerrClient]) -> RequestIndex:
+    """Build a three-state requested-or-not index from *every* request in *every* Seerr.
 
     Reads ``filter_="all"`` (not just available ones), so a title that was requested but
-    is still processing is not mistaken for "never requested". When Seerr is absent or
-    unreachable, ``available`` is ``False`` and every lookup returns ``Unknown``.
-    """
-    if seerr is None:
-        return _EMPTY_INDEX
+    is still processing is not mistaken for "never requested".
 
-    try:
-        requests = await seerr.all_requests(filter_="all")
-    except IntegrationError as exc:
-        log.warning("requested_by.index_unreachable", error=str(exc))
+    Fail-closed to the whole set (rule 2): ``available`` is ``True`` only when there is at
+    least one Seerr *and* every one of them was read in full. With no Seerr configured, or
+    with any one of several unreachable, ``available`` is ``False`` and every lookup returns
+    ``Unknown`` -- because "requested nowhere" can only be asserted once every request store
+    has actually been read. A confident ``Known(value=False)`` off a partial view would add
+    delete pressure to a title that a blinded portal in fact holds a request for.
+    """
+    if not seerrs:
+        return _EMPTY_INDEX
+    requests, all_ok = await _merge_requests(seerrs, filter_="all")
+    if not all_ok:
         return _EMPTY_INDEX
 
     movie_keys: set[str] = set()

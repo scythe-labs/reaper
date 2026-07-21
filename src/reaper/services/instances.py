@@ -47,6 +47,17 @@ _KIND_LABEL: dict[InstanceKind, str] = {
     InstanceKind.SEERR: "Seerr",
 }
 
+#: Kinds that may only ever have one instance. Radarr, Sonarr and Seerr are genuinely
+#: multi (an HD plus a 4K server, two request portals) and every reader merges them.
+#: Tautulli is not: it mirrors ONE Plex server's watch history keyed by that server's
+#: rating keys, and Reaper connects to exactly one Plex (a single-row invariant). A second
+#: Tautulli could only double-count the same server's history or carry rating keys from a
+#: Plex Reaper never reads, so it is refused at creation rather than silently ignored by the
+#: scan. Enforced in two places that both create instances: :func:`create_instance` (the
+#: UI) and ``services.seeding.seed_instances`` (the environment); the scan then reads the
+#: one Tautulli as a singleton safely.
+SINGLETON_KINDS: frozenset[InstanceKind] = frozenset({InstanceKind.TAUTULLI})
+
 
 class InstanceError(RuntimeError):
     """A configuration change could not be applied (e.g. a duplicate name)."""
@@ -131,6 +142,15 @@ async def create_instance(
     base_url = base_url.strip().rstrip("/")
     if not name or not base_url or not api_key:
         raise InstanceError("A name, a URL and an API key are all required.")
+
+    if kind in SINGLETON_KINDS:
+        existing = await session.scalar(select(Instance).where(Instance.kind == kind))
+        if existing is not None:
+            raise InstanceConflictError(
+                f"Reaper uses one {_KIND_LABEL.get(kind, 'service')}. It reads a single "
+                "Plex server's watch history, and Reaper connects to one Plex. Edit the "
+                "one you have, or remove it and add a different one."
+            )
 
     clash = await session.scalar(
         select(Instance).where(Instance.kind == kind, Instance.name == name)

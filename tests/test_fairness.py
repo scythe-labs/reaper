@@ -17,12 +17,15 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from reaper.clients.seerr import MediaRequest, Requester
+from reaper.clients.base import IntegrationError
+from reaper.clients.seerr import MediaRequest, QuotaStatus, Requester, SeerrUser, UserQuota
 from reaper.clock import utcnow
 from reaper.config import Settings
-from reaper.db.session import create_cache_engine
+from reaper.db.base import Base
+from reaper.db.models import Candidate, Snapshot
+from reaper.db.session import create_cache_engine, create_engine, create_session_factory
 from reaper.engine.requester import WatchEvidence
 from reaper.services import fairness, history_sync
 from reaper.services.fairness import CandidateInfo, ReclaimableTitle, roll_up
@@ -90,6 +93,21 @@ def _cand(
         tmdb_id=tmdb,
         imdb_id=imdb,
     )
+
+
+def _user(*, seerr_id: int, plex_id: int | None, name: str = "U", count: int = 0) -> SeerrUser:
+    return SeerrUser(
+        seerr_user_id=seerr_id,
+        plex_id=plex_id,
+        username=name.lower(),
+        display_name=name,
+        email=None,
+        request_count=count,
+    )
+
+
+def _q(limit: int | None, days: int | None, restricted: bool) -> QuotaStatus:
+    return QuotaStatus(limit=limit, days=days, used=0, remaining=None, restricted=restricted)
 
 
 class TestRollUp:
@@ -392,3 +410,251 @@ class TestEvidenceIndex:
     async def test_a_key_with_no_history_is_absent(self, cache_engine: AsyncEngine) -> None:
         evidence = await fairness._evidence_index(cache_engine, {999})
         assert "999" not in evidence
+
+
+# ---------------------------------------------------------------------------
+# build_report reads every Seerr (the reported "second portal is missing" bug)
+# ---------------------------------------------------------------------------
+
+
+_UNLIMITED = QuotaStatus(limit=None, days=None, used=0, remaining=None, restricted=False)
+
+
+class _FakeSeerr:
+    def __init__(
+        self,
+        requests: list[MediaRequest],
+        users: list[SeerrUser] | None = None,
+        quotas: dict[int, UserQuota] | None = None,
+    ) -> None:
+        self._requests = requests
+        self._users = users or []
+        self._quotas = quotas or {}
+
+    async def all_requests(self, *, filter_: str = "available") -> list[MediaRequest]:
+        return self._requests
+
+    async def users(self, *, take: int = 100) -> list[SeerrUser]:
+        return self._users
+
+    async def quota(self, user_id: int) -> UserQuota:
+        return self._quotas.get(user_id, UserQuota(movie=_UNLIMITED, tv=_UNLIMITED))
+
+
+class _Broken:
+    async def all_requests(self, *, filter_: str = "available") -> list[MediaRequest]:
+        raise IntegrationError("seerr", "down")
+
+    async def users(self, *, take: int = 100) -> list[SeerrUser]:
+        raise IntegrationError("seerr", "down")
+
+    async def quota(self, user_id: int) -> UserQuota:
+        raise IntegrationError("seerr", "down")
+
+
+@pytest.fixture
+async def report_env(
+    tmp_path: Path,
+) -> AsyncIterator[tuple[async_sessionmaker[AsyncSession], AsyncEngine]]:
+    """A session factory holding one snapshot with a single condemned movie at tmdb=1, plus
+    a cache engine, so ``build_report`` has a real scan to sit on."""
+    settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+    main = create_engine(settings)
+    async with main.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    cache = create_cache_engine(settings)
+    await history_sync.ensure_schema(cache)
+    factory = create_session_factory(main)
+    async with factory() as session:
+        snap = Snapshot(
+            created_at=NOW, policy_hash="p" * 64, horizon_at=NOW, item_count=1, degraded=False
+        )
+        session.add(snap)
+        await session.flush()
+        session.add(
+            Candidate(
+                snapshot_id=snap.id,
+                media_key="radarr:1:1",
+                title="A Film",
+                media_type="movie",
+                size_bytes=5 * GB,
+                verdict="condemn",
+                score=80,
+                coverage_bp=10_000,
+                explanation_json="{}",
+                tmdb_id=1,
+                imdb_id="tt1",
+                plex_rating_key=555,
+                created_at=NOW,
+            )
+        )
+        await session.commit()
+    yield factory, cache
+    await main.dispose()
+    await cache.dispose()
+
+
+class TestBuildReportMergesSeerrs:
+    async def test_a_requester_only_in_the_second_portal_still_appears(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        # Alice used portal one, Bob only ever used portal two. Both must land on the board.
+        factory, cache = report_env
+        first = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
+        second = _FakeSeerr([_req(plex_id=2, name="Bob", tmdb=1, request_id=2)])
+        report = await fairness.build_report(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[first, second],  # type: ignore[list-item]
+            cache_engine=cache,
+        )
+        assert {r.name for r in report.rows} == {"Alice", "Bob"}
+        assert report.total_requests == 2
+
+    async def test_one_unreachable_portal_fails_hard_never_partial(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        # A read-only report must 502 (propagate) rather than quietly drop a portal and look
+        # complete: the endpoint maps this IntegrationError to a 502.
+        factory, cache = report_env
+        good = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
+        with pytest.raises(IntegrationError):
+            await fairness.build_report(
+                session_factory=factory,  # type: ignore[arg-type]
+                seerrs=[good, _Broken()],  # type: ignore[list-item]
+                cache_engine=cache,
+            )
+
+
+class TestFoldQuota:
+    def test_no_readable_quota_reads_as_unlimited_never_a_made_up_cap(self) -> None:
+        line = fairness._fold_quota([])
+        assert line.unlimited is True and line.at_limit is False
+
+    def test_tightest_finite_limit_wins_and_at_limit_is_or_ed(self) -> None:
+        line = fairness._fold_quota([_q(5, 30, False), _q(1, 14, True)])
+        assert (line.limit, line.days, line.at_limit) == (1, 14, True)
+
+
+class TestEnrichAccounts:
+    async def test_sums_counts_and_ors_restriction_across_portals(self) -> None:
+        # One person with an account on two portals: counts add, and each type's cap is the
+        # tightest across portals with restriction OR-ed. Movie and TV stay independent.
+        a = _FakeSeerr(
+            [],
+            users=[_user(seerr_id=10, plex_id=1, name="Alex", count=100)],
+            quotas={10: UserQuota(movie=_q(1, 14, True), tv=_UNLIMITED)},
+        )
+        b = _FakeSeerr(
+            [],
+            users=[_user(seerr_id=20, plex_id=1, name="Alex", count=69)],
+            quotas={20: UserQuota(movie=_UNLIMITED, tv=_q(1, 60, False))},
+        )
+        out = await fairness._enrich_accounts([a, b], {1})  # type: ignore[list-item]
+        pq = out[1]
+        assert pq.seerr_total == 169
+        assert (pq.movie.limit, pq.movie.days, pq.movie.at_limit) == (1, 14, True)
+        assert (pq.tv.limit, pq.tv.days, pq.tv.at_limit) == (1, 60, False)
+
+    async def test_a_broken_portal_is_skipped_not_fatal(self) -> None:
+        good = _FakeSeerr([], users=[_user(seerr_id=10, plex_id=1, count=5)])
+        out = await fairness._enrich_accounts([good, _Broken()], {1})  # type: ignore[list-item]
+        assert out[1].seerr_total == 5
+
+    async def test_an_unmatched_requester_has_no_seerr_account(self) -> None:
+        good = _FakeSeerr([], users=[_user(seerr_id=10, plex_id=1, count=5)])
+        out = await fairness._enrich_accounts([good], {None})  # type: ignore[list-item]
+        assert out == {}
+
+
+class TestBuildReportEnriches:
+    async def test_rows_carry_the_seerr_total_and_which_limit_is_hit(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        factory, cache = report_env
+        portal = _FakeSeerr(
+            [_req(plex_id=1, name="Alice", tmdb=1)],
+            users=[_user(seerr_id=1, plex_id=1, name="Alice", count=169)],
+            quotas={1: UserQuota(movie=_q(1, 14, True), tv=_UNLIMITED)},
+        )
+        report = await fairness.build_report(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[portal],  # type: ignore[list-item]
+            cache_engine=cache,
+        )
+        (row,) = report.rows
+        assert row.seerr_total == 169
+        assert row.movie_at_limit is True and row.tv_at_limit is False
+
+    async def test_unreadable_accounts_leave_totals_none_not_a_blocked_page(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        # Requests read fine; the user list does not. The board still renders, minus totals.
+        factory, cache = report_env
+
+        class _RequestsOnly(_FakeSeerr):
+            async def users(self, *, take: int = 100) -> list[SeerrUser]:
+                raise IntegrationError("seerr", "user list down")
+
+        portal = _RequestsOnly([_req(plex_id=1, name="Alice", tmdb=1)])
+        report = await fairness.build_report(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[portal],  # type: ignore[list-item]
+            cache_engine=cache,
+        )
+        (row,) = report.rows
+        assert row.seerr_total is None and row.movie_at_limit is False
+
+
+class TestBuildPersonDetail:
+    async def test_lists_a_persons_titles_with_fate_and_co_requesters(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        factory, cache = report_env
+        portal = _FakeSeerr(
+            [
+                _req(plex_id=1, name="Alice", tmdb=1),
+                _req(plex_id=2, name="Bob", tmdb=1, request_id=2),
+            ],
+            users=[_user(seerr_id=1, plex_id=1, name="Alice", count=169)],
+        )
+        detail = await fairness.build_person_detail(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[portal],  # type: ignore[list-item]
+            cache_engine=cache,
+            user_id=1,
+        )
+        assert detail is not None
+        assert detail.name == "Alice" and detail.seerr_total == 169
+        assert detail.requests_in_scan == 1 and detail.reclaimable_items == 1
+        (title,) = detail.titles
+        assert title.verdict == "condemn" and title.item_id is not None
+        # The co-requester is named, so a shared title is never read as one person's alone.
+        assert title.co_requesters == ("Bob",)
+
+    async def test_an_unknown_key_is_none(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        factory, cache = report_env
+        portal = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
+        detail = await fairness.build_person_detail(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[portal],  # type: ignore[list-item]
+            cache_engine=cache,
+            user_id=999,
+        )
+        assert detail is None
+
+    async def test_a_title_the_person_watched_is_counted(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        factory, cache = report_env
+        await _insert_event(cache, rating_key=555, user_id=1)  # Alice (plex 1) played it
+        portal = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
+        detail = await fairness.build_person_detail(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[portal],  # type: ignore[list-item]
+            cache_engine=cache,
+            user_id=1,
+        )
+        assert detail is not None
+        assert detail.played_by_them == 1 and detail.titles[0].watched_by_them == 1

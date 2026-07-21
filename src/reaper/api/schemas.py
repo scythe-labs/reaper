@@ -730,8 +730,8 @@ class RequesterRowOut(BaseModel):
     """One person's row in Scales."""
 
     user_id: int
-    """The Seerr user id: stable and always present, so the frontend keys cards on it rather
-    than the display name (two people can share a name)."""
+    """The Seerr user id: stable and always present, so the frontend keys cards on it (two
+    people can share a name), and opens the details drawer by it (GET /fairness/people/{id})."""
     name: str
     requests_made: int
     gb_granted_bytes: int
@@ -739,6 +739,13 @@ class RequesterRowOut(BaseModel):
     reclaimable_items: int
     reclaimable_bytes: int
     reclaimable: list[ReclaimableTitleOut]
+    seerr_total: int | None = None
+    """Lifetime requests in Seerr, summed across portals. None when the user list could not
+    be read. Distinct from ``requests_made`` (what the last scan still has)."""
+    movie_at_limit: bool = False
+    tv_at_limit: bool = False
+    """Whether this person is at their movie / series request cap right now (independent:
+    the two limits have their own windows and units, and are never merged)."""
 
 
 class FairnessReportOut(BaseModel):
@@ -752,6 +759,56 @@ class FairnessReportOut(BaseModel):
     horizon_at: str | None = None
     """How far back the watch history reaches; the watched figures read against it."""
     rows: list[RequesterRowOut]
+
+
+class QuotaLineOut(BaseModel):
+    """One media type's request cap for a person. ``limit is None`` is unlimited; the window
+    (``days``) and unit differ per type, so movies and series each carry their own."""
+
+    limit: int | None = None
+    days: int | None = None
+    at_limit: bool = False
+
+
+class PersonQuotaOut(BaseModel):
+    seerr_total: int
+    movie: QuotaLineOut
+    tv: QuotaLineOut
+
+
+class PersonTitleOut(BaseModel):
+    """One title a person requested that the last scan still has, for the details drawer."""
+
+    title: str
+    year: int | None = None
+    media_type: str
+    is_4k: bool
+    size_bytes: int | None = None
+    """None when nothing about the title is measured; the row says "size unknown"."""
+    requested_at: str | None = None
+    available_at: str | None = None
+    watched_by_them: int
+    verdict: str
+    """condemn (reclaimable), protect (kept), or abstain (left to decide)."""
+    item_id: int | None = None
+    group_key: str | None = None
+    co_requesters: list[str]
+
+
+class PersonDetailOut(BaseModel):
+    """One person's full request story, behind a Scales row."""
+
+    plex_id: int | None = None
+    name: str
+    seerr_total: int | None = None
+    requests_in_scan: int
+    gb_granted_bytes: int
+    played_by_them: int
+    reclaimable_items: int
+    reclaimable_bytes: int
+    not_in_scan: int
+    quota: PersonQuotaOut | None = None
+    titles: list[PersonTitleOut]
 
 
 class WhitelistEntryOut(BaseModel):
