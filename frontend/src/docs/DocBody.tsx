@@ -1,0 +1,150 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// The one place a doc's blocks become React. Every visual choice (callout tones, table
+// emphasis, the verdict colors) lives here and reuses the app's tokens, so a doc reads as
+// part of Reaper. Add a block variant in blocks.ts, then a case here; nowhere else.
+
+import { type ReactNode } from "react";
+import type { Block, CalloutTone } from "./blocks";
+
+const INLINE = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+
+/** Parse the tiny inline subset (`**bold**`, `` `code` ``) into React nodes. Never HTML:
+ *  it builds elements, so a doc string cannot inject markup. */
+export function inline(text: string): ReactNode[] {
+  const out: ReactNode[] = [];
+  let last = 0;
+  let key = 0;
+  for (let m = INLINE.exec(text); m !== null; m = INLINE.exec(text)) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    const tok = m[0];
+    if (tok.startsWith("**")) out.push(<strong key={key++}>{tok.slice(2, -2)}</strong>);
+    else out.push(<code key={key++}>{tok.slice(1, -1)}</code>);
+    last = m.index + tok.length;
+  }
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+function CalloutIcon({ tone }: { tone: CalloutTone }) {
+  const common = {
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2.2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+  if (tone === "tip") {
+    return (
+      <svg {...common}>
+        <path d="m9 12 2 2 4-4" />
+        <circle cx="12" cy="12" r="9" />
+      </svg>
+    );
+  }
+  if (tone === "caution") {
+    return (
+      <svg {...common}>
+        <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+        <path d="M12 9v4M12 17h.01" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 16v-4M12 8h.01" />
+    </svg>
+  );
+}
+
+function renderBlock(b: Block, key: number): ReactNode {
+  switch (b.kind) {
+    case "h":
+      return b.sub ? (
+        <h3 key={key} id={b.id}>
+          {b.text}
+        </h3>
+      ) : (
+        <h2 key={key} id={b.id}>
+          {b.text}
+        </h2>
+      );
+    case "p":
+      return <p key={key}>{inline(b.text)}</p>;
+    case "callout":
+      return (
+        <div key={key} className={`doc-callout ${b.tone}`}>
+          <span className="doc-callout-ic">
+            <CalloutIcon tone={b.tone} />
+          </span>
+          <p>{inline(b.text)}</p>
+        </div>
+      );
+    case "list": {
+      const items = b.items.map((it, i) => <li key={i}>{inline(it)}</li>);
+      return b.ordered ? (
+        <ol key={key} className="doc-list">
+          {items}
+        </ol>
+      ) : (
+        <ul key={key} className="doc-list">
+          {items}
+        </ul>
+      );
+    }
+    case "steps":
+      return (
+        <ol key={key} className="doc-steps">
+          {b.items.map((s, i) => (
+            <li key={i}>
+              <b>{s.title}</b>
+              <span>{inline(s.text)}</span>
+            </li>
+          ))}
+        </ol>
+      );
+    case "table":
+      return (
+        <div key={key} className="doc-table">
+          <table>
+            <thead>
+              <tr>
+                {b.head.map((cell, i) => (
+                  <th key={i}>{cell}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {b.rows.map((row, ri) => (
+                <tr key={ri}>
+                  {row.map((cell, ci) => (
+                    <td key={ci} className={ci === b.hi ? "hi" : undefined}>
+                      {inline(cell)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    case "defs":
+      return (
+        <dl key={key} className="doc-defs">
+          {b.items.map((d, i) => (
+            <div key={i}>
+              <dt>{d.term}</dt>
+              <dd>{inline(d.text)}</dd>
+            </div>
+          ))}
+        </dl>
+      );
+  }
+}
+
+export function DocBody({ blocks }: { blocks: Block[] }) {
+  return <>{blocks.map((b, i) => renderBlock(b, i))}</>;
+}

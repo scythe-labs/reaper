@@ -15,6 +15,7 @@ import { Settings, type Panel } from "./components/Settings";
 import { SetupWizard } from "./components/SetupWizard";
 import { ShowPanel } from "./components/ShowPanel";
 import { WhyPanel } from "./components/WhyPanel";
+import { DocsProvider } from "./docs/DocsContext";
 import { bytes, count, date, souls } from "./format";
 
 type View = "review" | "policy" | "reap" | "fairness" | "settings";
@@ -667,7 +668,11 @@ function Authed({ user }: { user: AuthUser }) {
   if (needsSetup && !skipped) {
     return <SetupWizard onSkip={() => setSkipped(true)} />;
   }
-  return <Dashboard user={user} />;
+  return (
+    <DocsProvider>
+      <Dashboard user={user} />
+    </DocsProvider>
+  );
 }
 
 /** The gate. Nothing renders until we know who (if anyone) is signed in. */

@@ -42,6 +42,7 @@ import {
   type SignalSetting,
   type VocabField,
 } from "../api";
+import { useDocs } from "../docs/DocsContext";
 import { bytes, count } from "../format";
 import { DeletionToggle } from "./DeletionToggle";
 import { GATE_META, SIGNAL_META, titleCase } from "./policyMeta";
@@ -1374,6 +1375,28 @@ const SECTIONS = [
 export type PolicySectionId = (typeof SECTIONS)[number]["id"];
 type SectionId = PolicySectionId;
 
+/** A button that opens the in-app docs to a page, and optionally a section within it. The
+ *  header wears it as "Help"; each section wears it as a "Learn more" that lands on the
+ *  matching part of the guide. */
+function DocLink({
+  doc,
+  anchor,
+  className,
+  children,
+}: {
+  doc: string;
+  anchor?: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const { openDoc } = useDocs();
+  return (
+    <button type="button" className={className} onClick={() => openDoc(doc, anchor)}>
+      {children}
+    </button>
+  );
+}
+
 export function PolicyEditor({
   focus,
 }: {
@@ -1680,16 +1703,36 @@ export function PolicyEditor({
       <div className="editor-controls">
         <div className="policy-head">
           <h2>Policy</h2>
-          {/* switchMediaType holds the two-step confirm when the draft has unsaved edits. */}
-          <Segmented
-            value={mediaType}
-            onChange={switchMediaType}
-            label="Which policy"
-            options={[
-              ["movie", "Movies"],
-              ["tv", "TV"],
-            ]}
-          />
+          <div className="policy-head-actions">
+            {/* switchMediaType holds the two-step confirm when the draft has unsaved edits. */}
+            <Segmented
+              value={mediaType}
+              onChange={switchMediaType}
+              label="Which policy"
+              options={[
+                ["movie", "Movies"],
+                ["tv", "TV"],
+              ]}
+            />
+            <DocLink doc="understanding-policy" className="doc-help">
+              <svg
+                viewBox="0 0 24 24"
+                width="15"
+                height="15"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="9" />
+                <path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4" />
+                <path d="M12 17h.01" />
+              </svg>
+              Help
+            </DocLink>
+          </div>
         </div>
         {/* A recovery notice renders on the load it explains, so it hangs off the response
             flag alone and no dirty gate, disclosure or savebar can hide it. */}
@@ -1801,6 +1844,9 @@ export function PolicyEditor({
         {/* ------------------------------------------------------------------ */}
         <h3 ref={sectionRefs.flags} className="policy-section">
           What flags a title
+          <DocLink doc="understanding-policy" anchor="signals" className="doc-learn">
+            Learn more
+          </DocLink>
         </h3>
         <p className="blurb">
           The reasons to believe nobody will watch it again. Nothing here removes a title on its
@@ -1870,6 +1916,9 @@ export function PolicyEditor({
         {/* ------------------------------------------------------------------ */}
         <h3 ref={sectionRefs.kept} className="policy-section">
           What's always kept
+          <DocLink doc="understanding-policy" anchor="protections" className="doc-learn">
+            Learn more
+          </DocLink>
         </h3>
         <p className="blurb">
           Protections. Any one of these keeps a title no matter how it scored, and every one can
@@ -2134,6 +2183,9 @@ export function PolicyEditor({
         {/* ------------------------------------------------------------------ */}
         <h3 ref={sectionRefs.pace} className="policy-section">
           Pace and limits
+          <DocLink doc="understanding-policy" anchor="pace" className="doc-learn">
+            Learn more
+          </DocLink>
         </h3>
         <p className="blurb">
           Ceilings on how much one run and a rolling month may remove, plus the grace countdown.
@@ -2269,6 +2321,9 @@ export function PolicyEditor({
         {/* ------------------------------------------------------------------ */}
         <h3 ref={sectionRefs.deletion} className="policy-section">
           Deletion
+          <DocLink doc="arming" className="doc-learn">
+            Learn more
+          </DocLink>
         </h3>
         <p className="blurb">
           Whether Reaper is allowed to remove anything at all. One switch for all of Reaper,

@@ -9,6 +9,7 @@ import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { CustomCondemn, Policy, PolicyBody, ProfileSettings } from "../api";
+import { DocsProvider } from "../docs/DocsContext";
 import { PolicyEditor } from "./PolicyEditor";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -136,7 +137,9 @@ function renderEditor(
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <PolicyEditor />
+      <DocsProvider>
+        <PolicyEditor />
+      </DocsProvider>
     </QueryClientProvider>,
   );
 }
