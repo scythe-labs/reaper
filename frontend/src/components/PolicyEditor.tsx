@@ -68,7 +68,14 @@ const DEFAULT_WEIGHTS: Record<"movie" | "tv", Record<string, number>> = {
 
 type PresetCaps = Pick<
   ProfileSettings,
-  "max_items_per_run" | "max_bytes_per_run" | "max_items_per_30d" | "max_bytes_per_30d" | "grace_days"
+  | "max_items_per_run"
+  | "max_bytes_per_run"
+  | "max_items_per_30d"
+  | "max_bytes_per_30d"
+  | "grace_days"
+  // Every preset promises enforcement ("removes less per run"), so it must also turn the
+  // caps ON. Staging the numbers while leaving caps off saved an uncapped profile (B-10).
+  | "caps_enabled"
 >;
 
 const PRESETS: { id: PresetId; label: string; help: string; condemn_at: number; caps: PresetCaps }[] = [
@@ -83,6 +90,7 @@ const PRESETS: { id: PresetId; label: string; help: string; condemn_at: number; 
       max_items_per_30d: 50,
       max_bytes_per_30d: 1_000_000_000_000,
       grace_days: 30,
+      caps_enabled: true,
     },
   },
   {
@@ -96,6 +104,7 @@ const PRESETS: { id: PresetId; label: string; help: string; condemn_at: number; 
       max_items_per_30d: 100,
       max_bytes_per_30d: 2_000_000_000_000,
       grace_days: 14,
+      caps_enabled: true,
     },
   },
   {
@@ -109,6 +118,7 @@ const PRESETS: { id: PresetId; label: string; help: string; condemn_at: number; 
       max_items_per_30d: 150,
       max_bytes_per_30d: 4_000_000_000_000,
       grace_days: 7,
+      caps_enabled: true,
     },
   },
 ];
@@ -1413,8 +1423,9 @@ export function PolicyEditor({
     onSuccess: (s) => {
       setPace(s);
       void queryClient.invalidateQueries({ queryKey: ["profile"] });
-      // Reap's read-only grace countdown shows grace_days; keep it in step.
-      void queryClient.invalidateQueries({ queryKey: ["grace"] });
+      // The Reap breakdown reads grace_days (its countdown and unmeasured lines), so a saved
+      // grace or cap change refreshes it.
+      void queryClient.invalidateQueries({ queryKey: ["reap-breakdown"] });
     },
   });
   const paceDirty = useMemo(
@@ -1655,9 +1666,14 @@ export function PolicyEditor({
     popularity ? `watched by ${popularity.threshold || 1}+ people` : null,
     dormancy ? `played in the last ${humanDays(dormancy.threshold)}` : null,
   ].filter(Boolean);
-  const paceClause = pace
-    ? `removes at most ${count(pace.max_items_per_run)} titles or ${bytes(pace.max_bytes_per_run)} per run`
-    : "removes only within your caps";
+  // Branch on the caps switch: with caps off the executor skips the per-run and rolling
+  // checks entirely, so claiming a hard "at most N per run" here would contradict the
+  // caps-off warning below and the run itself (B-2). Grace still binds either way.
+  const paceClause = !pace
+    ? "removes only within your caps"
+    : pace.caps_enabled
+      ? `removes at most ${count(pace.max_items_per_run)} titles or ${bytes(pace.max_bytes_per_run)} per run`
+      : "removes with no per-run limit until you turn limits back on";
 
   return (
     <section className="editor">
@@ -2123,6 +2139,16 @@ export function PolicyEditor({
           Ceilings on how much one run and a rolling month may remove, plus the grace countdown.
           Movies and TV alike.
         </p>
+
+        {/* Recovery notice: hangs off the response flag alone, so no dirty gate or disclosure
+            can hide it (mirrors the policy recovery notice above). */}
+        {savedPace?.settings_recovered && (
+          <p className="notice notice-error">
+            Your saved caps and grace couldn't be read, so these show the starting ones.
+            Nothing has changed on your server, but a scan won't remove anything until you
+            check these and save.
+          </p>
+        )}
 
         {pace === null ? (
           paceFailed ? (

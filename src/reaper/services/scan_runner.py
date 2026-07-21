@@ -510,7 +510,8 @@ async def _run_scan_locked(
             # the grace clock for an item that left the condemned set and returned (see
             # snapshot._record_first_flagged); a longer gap than this means a genuine
             # departure.
-            profile_settings = await profiles.active_profile_settings(policy_session)
+            active_profile = await profiles.active_profile(policy_session)
+            profile_settings = active_profile.settings
             allowed_sections = await _allowed_sections(policy_session)
         movie_gates = build_gates(movie_policy)
         tv_gates = build_gates(tv_policy)
@@ -533,6 +534,17 @@ async def _run_scan_locked(
                     f"your {label} policy needs saving again before anything can be removed: "
                     "open the policy page, check the points, and save"
                 )
+
+        # Same reasoning for the profile's caps and grace: when the stored settings blob was
+        # unreadable, the run is holding the shipped defaults, which can be LOOSER than what
+        # the operator saved (a shorter grace, a higher cap). A run must never execute against
+        # limits nobody saved, so degrade until they re-save (profiles.ActiveProfile.fell_back,
+        # rule 14).
+        if active_profile.fell_back:
+            pre_scan_degradations.append(
+                "your caps and grace need saving again before anything can be removed: open "
+                "the policy page, check Pace and limits, and save"
+            )
 
         # Pull watch history into the local mirror BEFORE scoring reads it. Incremental
         # after the first time, but on a fresh install it is what populates the table at

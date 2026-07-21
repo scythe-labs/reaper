@@ -40,6 +40,7 @@ def _req(
     request_id: int = 1,
     media_type: str = "movie",
     tvdb: int | None = None,
+    seerr_id: int | None = None,
 ) -> MediaRequest:
     return MediaRequest(
         request_id=request_id,
@@ -48,7 +49,7 @@ def _req(
         status=5,
         requested_at=NOW - timedelta(days=500),
         requester=Requester(
-            seerr_user_id=plex_id or 0,
+            seerr_user_id=seerr_id if seerr_id is not None else (plex_id or 0),
             plex_id=plex_id,
             username=name.lower(),
             display_name=name,
@@ -68,7 +69,7 @@ def _cand(
     *,
     cid: int = 1,
     verdict: str = "condemn",
-    size: int = 5 * GB,
+    size: int | None = 5 * GB,
     tmdb: int | None = 1,
     imdb: str | None = "tt1",
     rating_key: int | None = 555,
@@ -233,6 +234,95 @@ class TestRollUp:
         ]
         report = roll_up(reqs, cands, {})
         assert [r.name for r in report.rows] == ["Big", "Small"]
+
+    def test_a_tv_request_does_not_bind_a_same_numbered_movie_candidate(self) -> None:
+        """TMDB movie ids and TV ids overlap numerically. A TV request for tmdb 5 must not be
+        charged a movie candidate that happens to carry movie-tmdb 5 (rule 6/29)."""
+        tv_req = _req(plex_id=100, name="Alice", tmdb=5, imdb=None, media_type="tv")
+        movie_cand = _cand(cid=1, verdict="condemn", tmdb=5, imdb=None, media_type="movie")
+        report = roll_up([tv_req], [movie_cand], {})
+        # No TV candidate with tmdb 5 exists, so the request is simply not in the scan.
+        assert report.not_in_scan == 1
+        assert report.rows == []
+        assert report.total_reclaimable_items == 0
+
+    def test_a_movie_and_a_show_sharing_a_tmdb_number_stay_separate(self) -> None:
+        movie_req = _req(
+            plex_id=100, name="Alice", tmdb=5, imdb=None, media_type="movie", request_id=1
+        )
+        tv_req = _req(plex_id=200, name="Bob", tmdb=5, imdb=None, media_type="tv", request_id=2)
+        movie_cand = _cand(
+            cid=1,
+            verdict="condemn",
+            size=2 * GB,
+            tmdb=5,
+            imdb=None,
+            media_type="movie",
+            rating_key=1,
+        )
+        season_cand = _cand(
+            cid=2,
+            verdict="condemn",
+            size=3 * GB,
+            tmdb=5,
+            imdb=None,
+            media_type="season",
+            group_key="tv:5",
+            group_title="A Show",
+            rating_key=2,
+        )
+        report = roll_up([movie_req, tv_req], [movie_cand, season_cand], {})
+        by_name = {r.name: r for r in report.rows}
+        assert by_name["Alice"].reclaimable_bytes == 2 * GB  # the movie, not the show
+        assert by_name["Bob"].reclaimable_bytes == 3 * GB  # the show, not the movie
+        assert report.total_reclaimable_items == 2
+        assert report.total_reclaimable_bytes == 5 * GB
+
+    def test_two_unlinked_requesters_stay_separate_rows(self) -> None:
+        """Seerr local users not linked to Plex have no plex_id. Keying rows on plex_id folded
+        every such person into one row under the first name; the Seerr id keeps them apart, and
+        each is credited with their own request of a shared title (rule 12)."""
+        reqs = [
+            _req(plex_id=None, seerr_id=11, name="Ada", tmdb=1, imdb=None, request_id=1),
+            _req(plex_id=None, seerr_id=22, name="Bea", tmdb=1, imdb=None, request_id=2),
+        ]
+        report = roll_up(
+            reqs, [_cand(cid=9, verdict="condemn", size=4 * GB, tmdb=1, imdb=None)], {}
+        )
+        assert {r.name for r in report.rows} == {"Ada", "Bea"}
+        assert all(r.requests_made == 1 for r in report.rows)
+        assert all(r.reclaimable_bytes == 4 * GB for r in report.rows)
+        # The file is deleted once, however many unlinked users asked for it.
+        assert report.total_reclaimable_items == 1
+
+    def test_the_same_title_via_a_tmdb_and_an_imdb_request_counts_once(self) -> None:
+        """One request carries tmdb+imdb (groups by tmdb), another only imdb (groups by imdb);
+        both bind the same candidate. The items total dedupes by candidate, like the bytes."""
+        reqs = [
+            _req(plex_id=100, name="Alice", tmdb=1, imdb="tt1", request_id=1),
+            _req(plex_id=200, name="Bob", tmdb=None, imdb="tt1", request_id=2),
+        ]
+        report = roll_up(
+            reqs, [_cand(cid=9, verdict="condemn", size=6 * GB, tmdb=1, imdb="tt1")], {}
+        )
+        assert report.total_reclaimable_items == 1
+        assert report.total_reclaimable_bytes == 6 * GB
+
+    def test_an_unmeasured_reclaimable_title_carries_a_null_size(self) -> None:
+        """A condemned title the arr would not size shows "size unknown" (a null), never a
+        false 0 B, and its bytes stay out of the totals."""
+        report = roll_up(
+            [_req(plex_id=100, name="Alice")],
+            [_cand(cid=7, verdict="condemn", size=None, title="Unsized")],
+            {},
+        )
+        (row,) = report.rows
+        assert row.reclaimable == [
+            ReclaimableTitle(title="Unsized", size_bytes=None, item_id=7, group_key=None)
+        ]
+        assert row.reclaimable_bytes == 0
+        assert report.total_reclaimable_bytes == 0
+        assert report.total_reclaimable_items == 1
 
 
 # ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ const GB = 1024 ** 3;
 
 function row(over: Partial<RequesterRow> = {}): RequesterRow {
   return {
+    user_id: 7,
     name: "marlow",
     requests_made: 52,
     gb_granted_bytes: 549 * GB,
@@ -103,6 +104,22 @@ describe("PersonCard", () => {
     await userEvent.click(screen.getByRole("button", { name: /marlow/i }));
     expect(screen.getByText("+37 more not shown")).toBeInTheDocument();
   });
+
+  it("says 'size unknown' for a reclaimable title the arr would not size", async () => {
+    render(
+      <PersonCard
+        row={row({
+          reclaimable_items: 1,
+          reclaimable_bytes: 0,
+          reclaimable: [{ title: "Unsized", size_bytes: null, item_id: 9, group_key: null }],
+        })}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /marlow/i }));
+    expect(screen.getByText(/Reclaimable · size unknown/)).toBeInTheDocument();
+  });
 });
 
 describe("Fairness", () => {
@@ -139,7 +156,7 @@ describe("Fairness", () => {
     apiMock.fairness.mockResolvedValue(report([row()]));
     renderWithClient(<Fairness />);
     expect(await screen.findByText(/16 titles the scan would remove/i)).toBeInTheDocument();
-    expect(screen.getByText(/across 1 people/i)).toBeInTheDocument();
+    expect(screen.getByText(/across 1 person/i)).toBeInTheDocument();
     expect(screen.getByText("marlow")).toBeInTheDocument();
   });
 });

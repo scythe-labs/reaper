@@ -725,7 +725,7 @@ class TestRunScanHistorySync:
             )
 
         async def fake_profile(session: Any) -> Any:
-            return ProfileSettings()
+            return profiles.ActiveProfile(ProfileSettings())
 
         async def fake_sync_lists(engine: Any, **kwargs: Any) -> dict[str, Any]:
             return {}
@@ -736,7 +736,7 @@ class TestRunScanHistorySync:
         monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
         monkeypatch.setattr(scan_runner.history_sync, "sync", failing_sync)
         monkeypatch.setattr(scan_runner.profiles, "active_policies", fake_policies)
-        monkeypatch.setattr(scan_runner.profiles, "active_profile_settings", fake_profile)
+        monkeypatch.setattr(scan_runner.profiles, "active_profile", fake_profile)
         monkeypatch.setattr(scan_runner.snapshot_service, "scan", fake_scan)
         monkeypatch.setattr(scan_runner.snapshot_service, "sync_protection_lists", fake_sync_lists)
         monkeypatch.setattr(
@@ -816,7 +816,7 @@ class TestARepairedPolicyCannotBeReapedFrom:
             )
 
         async def fake_profile(session: Any) -> Any:
-            return ProfileSettings()
+            return profiles.ActiveProfile(ProfileSettings())
 
         async def fake_sync_lists(engine: Any, **kwargs: Any) -> dict[str, Any]:
             return {}
@@ -827,7 +827,7 @@ class TestARepairedPolicyCannotBeReapedFrom:
         monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
         monkeypatch.setattr(scan_runner.history_sync, "sync", ok_sync)
         monkeypatch.setattr(scan_runner.profiles, "active_policies", fake_policies)
-        monkeypatch.setattr(scan_runner.profiles, "active_profile_settings", fake_profile)
+        monkeypatch.setattr(scan_runner.profiles, "active_profile", fake_profile)
         monkeypatch.setattr(scan_runner.snapshot_service, "sync_protection_lists", fake_sync_lists)
         monkeypatch.setattr(
             scan_runner.snapshot_service, "protection_sync_degradations", fake_sync_degradations
@@ -951,7 +951,7 @@ class TestOneScanAtATime:
             )
 
         async def fake_profile(session: Any) -> Any:
-            return ProfileSettings()
+            return profiles.ActiveProfile(ProfileSettings())
 
         async def ok_sync(engine: Any, tautulli: Any, **kwargs: Any) -> Any:
             return SimpleNamespace(rows=0)
@@ -965,7 +965,7 @@ class TestOneScanAtATime:
         monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
         monkeypatch.setattr(scan_runner.history_sync, "sync", ok_sync)
         monkeypatch.setattr(scan_runner.profiles, "active_policies", fake_policies)
-        monkeypatch.setattr(scan_runner.profiles, "active_profile_settings", fake_profile)
+        monkeypatch.setattr(scan_runner.profiles, "active_profile", fake_profile)
         monkeypatch.setattr(scan_runner.snapshot_service, "scan", parked_scan)
         monkeypatch.setattr(scan_runner.snapshot_service, "sync_protection_lists", fake_sync_lists)
         monkeypatch.setattr(
@@ -1193,7 +1193,7 @@ class TestKeepHistoryCoverage:
             )
 
         async def fake_profile(session: Any) -> Any:
-            return ProfileSettings()
+            return profiles.ActiveProfile(ProfileSettings())
 
         async def fake_sync_lists(engine: Any, **kwargs: Any) -> dict[str, Any]:
             return {}
@@ -1204,7 +1204,7 @@ class TestKeepHistoryCoverage:
         monkeypatch.setattr(scan_runner, "build_sources", fake_sources)
         monkeypatch.setattr(scan_runner.history_sync, "sync", ok_sync)
         monkeypatch.setattr(scan_runner.profiles, "active_policies", fake_policies)
-        monkeypatch.setattr(scan_runner.profiles, "active_profile_settings", fake_profile)
+        monkeypatch.setattr(scan_runner.profiles, "active_profile", fake_profile)
         monkeypatch.setattr(scan_runner.snapshot_service, "scan", fake_scan)
         monkeypatch.setattr(scan_runner.snapshot_service, "sync_protection_lists", fake_sync_lists)
         monkeypatch.setattr(

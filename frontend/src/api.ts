@@ -545,6 +545,10 @@ export interface ProfileSettings {
   /** How many items with no size one run may delete. 0, the default, means never: the GB
    *  caps cannot bound them, so this count is the only bound there is. */
   max_unmeasured_per_run: number;
+  /** Read-only (GET). True when the stored settings couldn't be read and these are the
+   *  shipped defaults, which can be looser than what was saved. The Pace page shows a
+   *  recovery notice; a scan degrades until the operator saves again. Absent/ignored on save. */
+  settings_recovered?: boolean;
 }
 
 export interface WhitelistEntry {
@@ -674,12 +678,15 @@ export interface LogsPage {
  *  `item_id` / `group_key` is set: a movie or season opens its own card, a show its group. */
 export interface ReclaimableTitle {
   title: string;
-  size_bytes: number;
+  /** `null` when nothing about the title is measured; the chip then reads "size unknown". */
+  size_bytes: number | null;
   item_id: number | null;
   group_key: string | null;
 }
 
 export interface RequesterRow {
+  /** The Seerr user id: stable and always present, so cards key on it, not the display name. */
+  user_id: number;
   name: string;
   requests_made: number;
   gb_granted_bytes: number;

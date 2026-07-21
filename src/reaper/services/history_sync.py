@@ -163,7 +163,11 @@ async def _store_tautulli_total(engine: AsyncEngine, total: int) -> None:
 #: ``watched_status`` nullable moved no name and no position, so a name-only comparison
 #: would call an upgraded install's table current and leave the old ``0.0`` rows in place.
 #: ``row_id INTEGER PRIMARY KEY`` is a rowid alias, which sqlite reports as ``notnull=0``.
-#: Keep this and ``SCHEMA`` together.
+#: Keep this and ``SCHEMA`` together. The fast path in ``ensure_schema`` returns as soon as
+#: THIS tuple matches, so it only ever runs the full ``SCHEMA`` (the companion
+#: ``history_sync_state`` table, the three indexes) when the tuple mismatches. Any addition to
+#: ``SCHEMA`` -- a new index, a new companion table -- must therefore also change this tuple
+#: (bump a column, add one), or existing caches will never execute the new DDL.
 _WATCH_EVENT_COLUMNS = (
     ("row_id", "INTEGER", 0),
     ("rating_key", "INTEGER", 1),
@@ -217,8 +221,20 @@ async def ensure_schema(engine: AsyncEngine) -> None:
     # Only here do we take the write transaction: the table is missing (fresh or cleared
     # cache -> create it, and the next sync becomes a full one automatically) or its shape
     # is stale (drop and recreate empty -- rebuild, never migrate; see the docstring).
+    #
+    # Re-read the shape INSIDE the write transaction and decide from THAT, never from the
+    # pre-lock read above. SQLite serializes writers, so the read under the write lock is the
+    # authority. Acting on the stale pre-lock read let two concurrent callers (the scan, the
+    # fairness route, the nightly sync -- all in one process) both see "stale" and the second
+    # DROP the table the first had just rebuilt, losing the newest plays mid-sync (fail-open).
+    # The pre-lock read only decides whether the lock is worth taking at all.
     async with engine.begin() as conn:
-        if cols and live != _WATCH_EVENT_COLUMNS:
+        cols = (await conn.execute(text("PRAGMA table_info(watch_event)"))).all()
+        live = tuple((row[1], str(row[2]).upper(), int(row[3])) for row in cols)
+        if cols and live == _WATCH_EVENT_COLUMNS:
+            # A concurrent caller rebuilt it between our pre-lock read and this lock.
+            return
+        if cols:  # present but stale -> rebuild, never migrate (see the docstring)
             log.info("history.cache.rebuilding", reason="watch_event shape is stale")
             await conn.execute(text("DROP TABLE watch_event"))
         for statement in SCHEMA.strip().split(";"):

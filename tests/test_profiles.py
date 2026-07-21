@@ -26,6 +26,7 @@ from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, ProfileSettings
 from reaper.services.profiles import (
     active_policy,
+    active_profile,
     active_profile_settings,
     save_profile_settings,
 )
@@ -99,6 +100,40 @@ class TestActiveProfileSettings:
         loaded = await active_profile_settings(session)
         assert loaded.max_items_per_run == 10  # cautious default
         assert loaded.caps_enabled is True
+
+    async def test_an_unreadable_blob_is_flagged_fell_back(self, session: AsyncSession) -> None:
+        """The shipped defaults can be LOOSER than what the operator saved (a shorter grace,
+        a higher cap), so the fall-back is flagged: the scan degrades on it and the Pace page
+        shows a recovery notice, never a silent swap (rule 14)."""
+        await save_profile_settings(session, ProfileSettings(max_items_per_run=25, grace_days=30))
+        row = (
+            await session.execute(select(Profile).order_by(Profile.id.asc()).limit(1))
+        ).scalar_one()
+        row.settings_json = "not json at all"
+        await session.flush()
+
+        active = await active_profile(session)
+        assert active.fell_back is True
+        assert active.repaired is True
+        assert active.settings.grace_days == 14  # the shipped default, looser than the saved 30
+
+    async def test_a_key_only_migration_is_not_flagged(self, session: AsyncSession) -> None:
+        """Dropping a departed key keeps the operator's real values, so it is benign and must
+        NOT be flagged -- flagging it would degrade every scan after a routine upgrade."""
+        await save_profile_settings(session, ProfileSettings(max_items_per_run=25, grace_days=30))
+        row = (
+            await session.execute(select(Profile).order_by(Profile.id.asc()).limit(1))
+        ).scalar_one()
+        row.settings_json = (
+            '{"max_items_per_run":25,"max_bytes_per_run":500000000000,'
+            '"max_items_per_30d":100,"max_bytes_per_30d":2000000000000,'
+            '"grace_days":30,"require_approval":false,"max_unmeasured_per_run":0}'
+        )
+        await session.flush()
+
+        active = await active_profile(session)
+        assert active.fell_back is False
+        assert active.settings.grace_days == 30  # the operator's real value survived
 
 
 class TestSavingCreatesTheBackingPolicyRow:

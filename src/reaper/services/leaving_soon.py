@@ -229,7 +229,7 @@ async def sync_section(
                 collection_key = None  # gone now; a re-add below recreates it from target
             elif collection_key is not None and collection_plan.to_remove:
                 await plex.remove_collection_members(
-                    section_title,
+                    section_key,
                     name=LEAVING_SOON_COLLECTION,
                     rating_keys=collection_plan.to_remove,
                 )

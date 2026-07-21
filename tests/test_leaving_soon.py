@@ -102,12 +102,12 @@ class _FakePlex:
         self.collections[collection_key - 9000].update(rating_keys)
 
     async def remove_collection_members(
-        self, section_title: str, *, name: str, rating_keys: list[int]
+        self, section_key: int, *, name: str, rating_keys: list[int]
     ) -> None:
         assert name == LEAVING_SOON_COLLECTION
         self.calls.append(("collection_remove", tuple(rating_keys)))
-        # section_title is loose here (like the real label edit); detach the keys from
-        # whichever section's collection holds them.
+        # The real client resolves the section by key; here we detach the keys from whichever
+        # section's collection holds them.
         for members in self.collections.values():
             members -= set(rating_keys)
 

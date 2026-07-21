@@ -300,3 +300,57 @@ def test_float_or_none_keeps_unknown_apart_from_zero(value: object, expected: fl
 def test_overlap_is_at_least_a_day() -> None:
     # A guard on the constant: any smaller overlap risks losing a same-day play.
     assert timedelta(days=1) <= history_sync.INCREMENTAL_OVERLAP
+
+
+class TestEnsureSchema:
+    """The rebuild path decides DROP/CREATE from the shape read INSIDE the write
+    transaction, not a pre-lock read (B-6). These pin the observable outcomes of that
+    decision: a stale table is rebuilt empty, a current one is untouched."""
+
+    async def _live_columns(self, engine: AsyncEngine) -> tuple[tuple[str, str, int], ...]:
+        async with engine.connect() as conn:
+            cols = (await conn.execute(text("PRAGMA table_info(watch_event)"))).all()
+        return tuple((row[1], str(row[2]).upper(), int(row[3])) for row in cols)
+
+    async def test_a_stale_shaped_table_is_rebuilt_empty_to_the_current_shape(
+        self, engine: AsyncEngine
+    ) -> None:
+        # A table missing the newest column, carrying a row from before the shape change.
+        async with engine.begin() as conn:
+            await conn.execute(text("DROP TABLE IF EXISTS watch_event"))
+            await conn.execute(
+                text(
+                    "CREATE TABLE watch_event ("
+                    "row_id INTEGER PRIMARY KEY, rating_key INTEGER NOT NULL, "
+                    "parent_rating_key INTEGER, grandparent_rating_key INTEGER, "
+                    "user_id INTEGER NOT NULL, watched_at INTEGER NOT NULL, "
+                    "watched_status REAL, percent_complete INTEGER NOT NULL, "
+                    "media_type TEXT NOT NULL)"  # no media_index -> stale
+                )
+            )
+            await conn.execute(
+                text(
+                    "INSERT INTO watch_event (rating_key, user_id, watched_at, "
+                    "percent_complete, media_type) VALUES (1, 1, 1, 100, 'movie')"
+                )
+            )
+
+        await history_sync.ensure_schema(engine)
+
+        # Rebuilt to the current shape, and the untrustworthy pre-change row is gone.
+        assert await self._live_columns(engine) == history_sync._WATCH_EVENT_COLUMNS
+        assert await _count(engine) == 0
+
+    async def test_a_current_table_is_left_untouched(self, engine: AsyncEngine) -> None:
+        await history_sync.ensure_schema(engine)  # creates it at the current shape
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO watch_event (rating_key, user_id, watched_at, "
+                    "percent_complete, media_type) VALUES (1, 1, 1, 100, 'movie')"
+                )
+            )
+
+        await history_sync.ensure_schema(engine)  # no-op: shape already current
+
+        assert await _count(engine) == 1  # the row survived, no rebuild

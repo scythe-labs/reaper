@@ -198,9 +198,20 @@ export function Outcome({
 
       {pace && (
         <p className="help">
-          Your pace: at most {count(pace.max_items_per_run)} titles /{" "}
-          {bytes(pace.max_bytes_per_run)} per run, and nothing is removed until it has waited out
-          the {pace.grace_days}-day grace period.
+          {pace.caps_enabled ? (
+            <>
+              Your pace: at most {count(pace.max_items_per_run)} titles /{" "}
+              {bytes(pace.max_bytes_per_run)} per run, and nothing is removed until it has
+              waited out the {pace.grace_days}-day grace period.
+            </>
+          ) : (
+            // Caps off: the executor skips the per-run and rolling checks, so there is no
+            // size limit to promise here (B-2). Grace still binds.
+            <>
+              Your pace: no per-run limit until you turn limits back on. Nothing is removed
+              until it has waited out the {pace.grace_days}-day grace period.
+            </>
+          )}
         </p>
       )}
 

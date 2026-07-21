@@ -58,7 +58,9 @@ function TitleChip({
       <PosterMark />
       <span className="mc-body">
         <span className="mc-title">{title.title}</span>
-        <span className="mc-state">Reclaimable · {bytes(title.size_bytes)}</span>
+        <span className="mc-state">
+          Reclaimable · {title.size_bytes == null ? "size unknown" : bytes(title.size_bytes)}
+        </span>
       </span>
     </>
   );
@@ -234,7 +236,9 @@ export function Fairness({
             <div className="fair-stat">
               <span className="fair-stat-num">{count(data.total_requests)}</span>
               <span className="fair-stat-lbl">Requests</span>
-              <span className="fair-stat-sub">across {count(data.rows.length)} people</span>
+              <span className="fair-stat-sub">
+                across {count(data.rows.length)} {data.rows.length === 1 ? "person" : "people"}
+              </span>
             </div>
             <div className="fair-stat">
               <span className="fair-stat-num red">{bytes(data.total_reclaimable_bytes)}</span>
@@ -263,7 +267,7 @@ export function Fairness({
           <div className="fair-list">
             {data.rows.map((row) => (
               <PersonCard
-                key={row.name}
+                key={row.user_id}
                 row={row}
                 onOpenItem={onOpenItem}
                 onOpenGroup={onOpenGroup}

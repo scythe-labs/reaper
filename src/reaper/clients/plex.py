@@ -798,6 +798,14 @@ class PlexClient:
         **Raises** ``PlexError`` on any failure rather than returning a partial map: a caller
         reading a truncated season sweep as complete would let a real season's watch history
         go unread and unprotect it. The caller falls back per show for anything absent here.
+
+        The paging math runs on the RAW child count, never the filtered one: advancing or
+        ending the section on the count of children that survived a ``ratingKey`` filter would
+        let one dropped child end the section a page early. A child without a ``ratingKey`` is
+        an anomaly the contract raises on (so every show falls back per show), not a shorter
+        page. ``totalSize`` is the authority on how far to page (a server that clamps the page
+        below the requested size is still followed to the end); a full page with no
+        ``totalSize`` to bound it is an anomaly we fail closed on rather than truncate.
         """
         server = await self._connect()
         code = _PLEX_TYPE_CODES["season"]
@@ -817,7 +825,16 @@ class PlexClient:
                         f"/library/sections/{section.key}/all?type={code}"
                         f"&X-Plex-Container-Start={start}&X-Plex-Container-Size={SWEEP_PAGE_SIZE}"
                     )
-                    elements = [el for el in container if el.get("ratingKey")]
+                    raw = list(container)
+                    elements = [el for el in raw if el.get("ratingKey")]
+                    if len(elements) != len(raw):
+                        # A child we cannot page over (no ratingKey) means this is not the
+                        # container shape the paging math assumes. Raise so the caller falls
+                        # back per show, rather than ending the section on a filtered page.
+                        raise PlexError(
+                            f"season sweep of section {section.key} returned a child with no "
+                            "ratingKey; refusing to read the page as complete"
+                        )
                     for el in elements:
                         parent = el.get("parentRatingKey")
                         if parent is None:
@@ -841,15 +858,28 @@ class PlexClient:
                                 added_at=el.get("addedAt"),
                             )
                         )
-                    start += len(elements)
-                    total = int(container.get("totalSize") or container.get("size") or 0)
-                    # Short page ends the section, total or no total -- never one signal alone.
-                    if (
-                        not elements
-                        or len(elements) < SWEEP_PAGE_SIZE
-                        or (total and start >= total)
-                    ):
+                    start += len(raw)
+                    total_attr = container.get("totalSize")
+                    if total_attr is not None:
+                        # totalSize is the authority: page until we have reached it, even if a
+                        # page came back short (a clamped page is followed, never truncated).
+                        if start >= int(total_attr):
+                            break
+                        if not raw:
+                            # start < total but the page was empty: no progress. Fail closed.
+                            raise PlexError(
+                                f"season sweep of section {section.key} stalled at {start} of "
+                                f"{int(total_attr)}"
+                            )
+                    elif len(raw) < SWEEP_PAGE_SIZE:
+                        # No totalSize to lean on: a short raw page is the last page.
                         break
+                    else:
+                        # A full page with no totalSize -- we cannot tell whether more remains.
+                        raise PlexError(
+                            f"season sweep of section {section.key} returned a full page with "
+                            "no totalSize; refusing to guess it is the last page"
+                        )
             return out
 
         async with self._sweep_lock:
@@ -1063,7 +1093,7 @@ class PlexClient:
             raise PlexError(f"Could not add items to collection {collection_key}: {exc}") from exc
 
     async def remove_collection_members(
-        self, section_title: str, *, name: str, rating_keys: list[int]
+        self, section_key: int, *, name: str, rating_keys: list[int]
     ) -> None:
         """Take items off the named collection in one request per chunk.
 
@@ -1076,6 +1106,23 @@ class PlexClient:
         collections are left in place. The reads batch too: one ``/library/metadata/<ids>``
         per chunk, never one fetch per item.
 
+        The section is addressed by **key** via ``sectionByID``, never by title: two
+        libraries can share a title and plexapi's title lookup returns the last match, so a
+        title-addressed detach would fail against the first twin every pass (rule 6).
+
+        The collection is removed by the **exact spelling Plex stored**, grouped the way
+        :meth:`remove_label` groups labels. A "dumb" collection is a tag, and a
+        case-sensitive removal of a case-variant spelling silently removes nothing -- an item
+        that left grace would then stay on the shelf forever while the outcome claimed it was
+        detached. ``find_collection`` deliberately adopts a case-variant collection, so this
+        path must be ready to remove one.
+
+        plexapi's ``removeCollection`` locks the collection field on every edited item, and
+        that is chosen deliberately here (``locked=True``, stated explicitly): ``locked=False``
+        would not leave the field alone but actively CLEAR an operator's own collection locks,
+        so locking is the smaller change. This is a known delta from the old per-child
+        ``DELETE``, which left the field unlocked.
+
         Only ever called when the collection keeps at least one member afterward; a full
         clear goes through :meth:`delete_collection`, so batch-removing is never asked to
         empty a collection and never depends on Plex's empty-collection cleanup.
@@ -1083,13 +1130,26 @@ class PlexClient:
         if not rating_keys:
             return
         server = await self._connect()
+        wanted = normalize_label(name)
 
         def write() -> None:
-            section = server.library.section(section_title)
+            section = server.library.sectionByID(section_key)
             for start in range(0, len(rating_keys), BATCH_SIZE):
-                items = section.fetchItems(rating_keys[start : start + BATCH_SIZE])
-                if items:
-                    section.batchMultiEdits(items).removeCollection(name).saveMultiEdits()
+                keys = rating_keys[start : start + BATCH_SIZE]
+                # ONE multi-id read for the chunk; the metadata carries each item's collection
+                # tags. Group by the exact stored spelling that casefold-matches the shelf
+                # name, so a case-variant collection is still detached (mirrors remove_label).
+                # An item removed from Plex since the scan does not come back and is skipped.
+                by_spelling: dict[str, list[Any]] = {}
+                for item in section.fetchItems(keys):
+                    for existing in item.collections:
+                        if normalize_label(str(existing.tag)) == wanted:
+                            by_spelling.setdefault(str(existing.tag), []).append(item)
+                            break
+                for actual_tag, group in by_spelling.items():
+                    section.batchMultiEdits(group).removeCollection(
+                        actual_tag, locked=True
+                    ).saveMultiEdits()
 
         try:
             await asyncio.to_thread(write)

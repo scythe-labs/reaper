@@ -78,6 +78,7 @@ async def get_fairness(request: Request) -> FairnessReportOut:
         horizon_at=report.horizon_at.isoformat() if report.horizon_at else None,
         rows=[
             RequesterRowOut(
+                user_id=row.user_id,
                 name=row.name,
                 requests_made=row.requests_made,
                 gb_granted_bytes=row.gb_granted_bytes,

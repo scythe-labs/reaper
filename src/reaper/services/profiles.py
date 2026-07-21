@@ -43,8 +43,31 @@ log = structlog.get_logger(__name__)
 DEFAULT_PROFILE_NAME = "default"
 
 
-async def active_profile_settings(session: AsyncSession) -> ProfileSettings:
-    """The caps, grace, and unknown-size settings a run must obey.
+@dataclass(frozen=True, slots=True)
+class ActiveProfile:
+    """The profile settings in force, and whether they are the ones the operator saved."""
+
+    settings: ProfileSettings
+
+    fell_back: bool = False
+    """The stored settings blob was unreadable, so ``settings`` is the SHIPPED DEFAULT.
+
+    Unlike an upgrade that only drops a departed key (the operator's real caps and grace
+    survive), a full fall-back replaces every value -- and the defaults can be *looser* than
+    what they saved: a grace of 30 becomes 14 (items become deletable 16 days early), a run
+    cap of 5 becomes 10. So this is surfaced on the settings page and degrades the scan,
+    exactly the way ``ActivePolicy.fell_back`` is, never a silent log line (rule 14)."""
+
+    @property
+    def repaired(self) -> bool:
+        """What is in hand is not what is stored. The scan degrades on this, so a run never
+        executes against limits nobody saved -- mirroring ``ActivePolicy.repaired``."""
+        return self.fell_back
+
+
+async def active_profile(session: AsyncSession) -> ActiveProfile:
+    """The caps, grace, and unknown-size settings a run must obey, with a flag for whether
+    the stored blob was recovered.
 
     The single profile's settings, or the built-in defaults if no profile has been saved
     yet. Defaults are the *cautious* ones -- ten items a run, caps on -- so an install
@@ -56,16 +79,18 @@ async def active_profile_settings(session: AsyncSession) -> ProfileSettings:
     was written would otherwise take out all of them at once. Under ``extra="forbid"`` a
     departed key is a hard error, so unknown keys are dropped and the rest re-validated --
     an upgrade keeps the operator's caps and grace, losing only the gone field, and any new
-    field falls back to its cautious default (``caps_enabled`` True). A blob unreadable for
-    any other reason degrades to the built-in defaults rather than crashing every reader.
+    field falls back to its cautious default (``caps_enabled`` True); that salvage keeps the
+    operator's real values, so it is NOT flagged. A blob unreadable for any *other* reason
+    falls back to the built-in defaults and IS flagged (``fell_back``), because those
+    defaults can be looser than what was saved.
     """
     row = (
         await session.execute(select(Profile).order_by(Profile.id.asc()).limit(1))
     ).scalar_one_or_none()
     if row is None:
-        return ProfileSettings()
+        return ActiveProfile(ProfileSettings())
     try:
-        return ProfileSettings.model_validate_json(row.settings_json)
+        return ActiveProfile(ProfileSettings.model_validate_json(row.settings_json))
     except ValidationError:
         try:
             raw = json.loads(row.settings_json)
@@ -80,9 +105,19 @@ async def active_profile_settings(session: AsyncSession) -> ProfileSettings:
             else:
                 dropped = sorted(set(raw) - set(known))
                 log.info("profile.settings_migrated", dropped=dropped)
-                return settings
+                # The operator's real values survived; only a departed key was dropped. Benign.
+                return ActiveProfile(settings)
         log.warning("profile.settings_unreadable")
-        return ProfileSettings()
+        return ActiveProfile(ProfileSettings(), fell_back=True)
+
+
+async def active_profile_settings(session: AsyncSession) -> ProfileSettings:
+    """The caps, grace, and unknown-size settings a run must obey (the settings alone).
+
+    Every reader that just needs the numbers calls this. The scan and the settings GET call
+    :func:`active_profile` instead, to also learn whether the stored blob had to be
+    recovered (which they surface and degrade on -- rule 14)."""
+    return (await active_profile(session)).settings
 
 
 async def active_policy_row(session: AsyncSession, media_type: str) -> PolicyModel | None:

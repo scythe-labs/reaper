@@ -27,9 +27,12 @@ class _Tag:
 
 
 class _Item:
-    def __init__(self, rating_key: int, labels: list[str]) -> None:
+    def __init__(
+        self, rating_key: int, labels: list[str], collections: list[str] | None = None
+    ) -> None:
         self.ratingKey = rating_key
         self.labels = [_Tag(t) for t in labels]
+        self.collections = [_Tag(t) for t in (collections or [])]
 
 
 class _Edit:
@@ -48,7 +51,10 @@ class _Edit:
         self._op = ("remove", label)
         return self
 
-    def removeCollection(self, name: str) -> _Edit:  # noqa: N802 - mirrors plexapi
+    def removeCollection(self, name: str, locked: bool = True) -> _Edit:  # noqa: N802 - plexapi
+        # plexapi locks the collection field on removal; the caller passes locked=True
+        # explicitly (a deliberate, documented delta from the old per-child DELETE).
+        assert locked is True
         self._op = ("remove_collection", name)
         return self
 
@@ -81,6 +87,12 @@ class _FakeLibrary:
     def section(self, title: str) -> _FakeSection:
         return _FakeSection(self._server)
 
+    def sectionByID(self, section_id: int) -> _FakeSection:  # noqa: N802 - mirrors plexapi
+        # Addressed by key, not title: two libraries can share a title, so the collection
+        # detach resolves the section by its stable id.
+        self._server.section_ids.append(section_id)
+        return _FakeSection(self._server)
+
 
 class _FakeLabelServer:
     def __init__(self, items: dict[int, _Item]) -> None:
@@ -88,6 +100,7 @@ class _FakeLabelServer:
         self.library = _FakeLibrary(self)
         self.fetches: list[list[int]] = []
         self.edits: list[tuple[str, str, list[int]]] = []
+        self.section_ids: list[int] = []
 
 
 def _client(server: _FakeLabelServer) -> PlexClient:
@@ -159,10 +172,10 @@ class TestRemoveLabelBatchesReads:
 class TestRemoveCollectionMembersBatchesReads:
     async def test_one_read_and_one_detach_per_chunk(self) -> None:
         keys = list(range(1, 151))  # 150 items -> chunks of 100, 50
-        server = _FakeLabelServer({k: _Item(k, []) for k in keys})
-        await _client(server).remove_collection_members(
-            "Movies", name="Leaving Soon", rating_keys=keys
-        )
+        server = _FakeLabelServer({k: _Item(k, [], collections=["Leaving Soon"]) for k in keys})
+        await _client(server).remove_collection_members(7, name="Leaving Soon", rating_keys=keys)
+        # The section is resolved by key, never by title (once for the whole write).
+        assert server.section_ids == [7]
         # One multi-id read per chunk, and one collection detach per chunk over that chunk's
         # items -- never one DELETE per item.
         assert [len(f) for f in server.fetches] == [BATCH_SIZE, 50]
@@ -171,11 +184,34 @@ class TestRemoveCollectionMembersBatchesReads:
             ("remove_collection", "Leaving Soon", 50),
         ]
 
+    async def test_a_case_variant_collection_is_still_detached_under_its_stored_spelling(
+        self,
+    ) -> None:
+        """find_collection adopts a case-variant shelf, so the detach must too: an item on a
+        "leaving soon" collection is removed under that exact stored spelling, not the
+        constant. A case-sensitive removal of the constant would detach nothing and the item
+        would sit on the shelf forever (B-5)."""
+        server = _FakeLabelServer(
+            {
+                1: _Item(1, [], collections=["Leaving Soon"]),  # canonical case
+                2: _Item(2, [], collections=["Comedy"]),  # not on the shelf at all
+                3: _Item(3, [], collections=["leaving soon"]),  # stale lower-cased spelling
+            }
+        )
+        await _client(server).remove_collection_members(
+            2, name="Leaving Soon", rating_keys=[1, 2, 3]
+        )
+        assert server.fetches == [[1, 2, 3]]
+        # Item 2 is never edited; the two spellings become two detaches under their own text.
+        assert all(op == "remove_collection" for op, _, _ in server.edits)
+        assert {tag: keys for _, tag, keys in server.edits} == {
+            "Leaving Soon": [1],
+            "leaving soon": [3],
+        }
+
     async def test_no_keys_touches_plex_at_all(self) -> None:
         server = _FakeLabelServer({})
-        await _client(server).remove_collection_members(
-            "Movies", name="Leaving Soon", rating_keys=[]
-        )
+        await _client(server).remove_collection_members(2, name="Leaving Soon", rating_keys=[])
         assert server.fetches == [] and server.edits == []
 
 

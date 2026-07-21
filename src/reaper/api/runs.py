@@ -52,7 +52,11 @@ from reaper.services.executor import (
     size_confirmed,
 )
 from reaper.services.planner import PlanError, build_plan, confirmation_phrase, plan_bytes
-from reaper.services.profiles import active_profile_settings, save_profile_settings
+from reaper.services.profiles import (
+    active_profile,
+    active_profile_settings,
+    save_profile_settings,
+)
 from reaper.services.scan_runner import build_reap_gateway
 
 log = structlog.get_logger(__name__)
@@ -552,7 +556,7 @@ def _report_out(report: RunReport) -> RunReportOut:
     )
 
 
-def _settings_out(settings: ProfileSettings) -> ProfileSettingsIO:
+def _settings_out(settings: ProfileSettings, *, recovered: bool = False) -> ProfileSettingsIO:
     return ProfileSettingsIO(
         max_items_per_run=settings.max_items_per_run,
         max_bytes_per_run=settings.max_bytes_per_run,
@@ -561,14 +565,19 @@ def _settings_out(settings: ProfileSettings) -> ProfileSettingsIO:
         caps_enabled=settings.caps_enabled,
         grace_days=settings.grace_days,
         max_unmeasured_per_run=settings.max_unmeasured_per_run,
+        settings_recovered=recovered,
     )
 
 
 @router.get("/profile")
 async def get_profile(request: Request) -> ProfileSettingsIO:
-    """The caps and grace settings a run obeys. Built-in defaults until one is saved."""
+    """The caps and grace settings a run obeys. Built-in defaults until one is saved.
+
+    Reports ``settings_recovered`` when the stored blob was unreadable and these are the
+    shipped defaults, so the Pace page can tell the operator to save again (rule 14)."""
     async with _sessions(request)() as session:
-        return _settings_out(await active_profile_settings(session))
+        profile = await active_profile(session)
+    return _settings_out(profile.settings, recovered=profile.fell_back)
 
 
 @router.put("/profile")

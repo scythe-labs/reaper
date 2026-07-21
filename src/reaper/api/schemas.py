@@ -352,6 +352,11 @@ class ProfileSettingsIO(BaseModel):
     """How many items with no size one run may delete. The GB caps cannot bound them, so
     this count is the only bound there is. Defaults to 0: never."""
 
+    settings_recovered: bool = False
+    """Read-only (GET). True when the stored settings could not be read and these are the
+    shipped defaults, which can be looser than what was saved. The Pace page shows a recovery
+    notice; a scan degrades until the operator saves again. Ignored on save."""
+
 
 class ActionStepOut(BaseModel):
     """One journalled action, exactly as it would be sent. No credentials.
@@ -741,7 +746,8 @@ class ReclaimableTitleOut(BaseModel):
     opens its group."""
 
     title: str
-    size_bytes: int
+    size_bytes: int | None = None
+    """``None`` when nothing about the title is measured; the chip says "size unknown"."""
     item_id: int | None = None
     group_key: str | None = None
 
@@ -749,6 +755,9 @@ class ReclaimableTitleOut(BaseModel):
 class RequesterRowOut(BaseModel):
     """One person's row in Scales."""
 
+    user_id: int
+    """The Seerr user id: stable and always present, so the frontend keys cards on it rather
+    than the display name (two people can share a name)."""
     name: str
     requests_made: int
     gb_granted_bytes: int

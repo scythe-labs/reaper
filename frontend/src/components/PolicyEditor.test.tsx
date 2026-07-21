@@ -82,14 +82,17 @@ const pace: ProfileSettings = {
   max_unmeasured_per_run: 0,
 };
 
-function renderEditor(policy: Partial<Policy> & { body: PolicyBody }) {
+function renderEditor(
+  policy: Partial<Policy> & { body: PolicyBody },
+  paceSettings: ProfileSettings = pace,
+) {
   apiMock.policy.mockResolvedValue({
     policy_hash: "hash",
     name: "default",
     warnings: [],
     ...policy,
   });
-  apiMock.profile.mockResolvedValue(pace);
+  apiMock.profile.mockResolvedValue(paceSettings);
   apiMock.safety.mockResolvedValue({
     destructive_enabled: false,
     has_password: true,
@@ -191,5 +194,44 @@ describe("a preset", () => {
     expect(container.querySelector(".budget-line")?.textContent).toContain("yours");
     expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
     expect(screen.queryByText(/before saving/)).not.toBeInTheDocument();
+  });
+
+  it("turns the caps back on when they were off (its help promises enforcement)", async () => {
+    const { userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    renderEditor({ body: body() }, { ...pace, caps_enabled: false });
+
+    // Caps start off, so the caps-off warning shows.
+    expect(await screen.findByText(/No cap on run size/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cautious" }));
+
+    // Applying a preset re-enables caps (B-10): the warning clears, so the profile it would
+    // save is capped, not uncapped.
+    await waitFor(() =>
+      expect(screen.queryByText(/No cap on run size/)).not.toBeInTheDocument(),
+    );
+  });
+});
+
+describe("the caps switch and the copy that reads it", () => {
+  it("the intent band drops the per-run limit claim when caps are off", async () => {
+    renderEditor({ body: body() }, { ...pace, caps_enabled: false });
+
+    // With caps off the executor skips the per-run checks, so the summary must not assert a
+    // hard bound (B-2); it says the limit is gone until turned back on.
+    expect(
+      await screen.findByText(/no per-run limit until you turn limits back on/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/removes at most/)).not.toBeInTheDocument();
+  });
+
+  it("shows a recovery notice when the stored settings couldn't be read", async () => {
+    renderEditor({ body: body() }, { ...pace, settings_recovered: true });
+
+    // The shipped defaults can be looser than what was saved, so the Pace page says so
+    // rather than silently swapping them (PR-1).
+    expect(
+      await screen.findByText(/Your saved caps and grace couldn't be read/),
+    ).toBeInTheDocument();
   });
 });

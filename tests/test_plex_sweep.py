@@ -16,7 +16,7 @@ from xml.etree.ElementTree import fromstring as _unsafe_fromstring
 
 import pytest
 
-from reaper.clients.plex import PlexClient, _parse_sweep_element
+from reaper.clients.plex import SWEEP_PAGE_SIZE, PlexClient, PlexError, _parse_sweep_element
 from reaper.config import RuntimeSafety
 from reaper.ratings import RatingSource
 
@@ -241,3 +241,53 @@ class TestLibrarySeasonIndex:
         # Section 7 is excluded, so only section 2 was read.
         assert all("/library/sections/2/all" in q for q in server.queries)
         assert set(out) == {900, 950}
+
+    async def test_a_clamped_page_is_followed_to_totalsize(self) -> None:
+        """A server may return fewer rows than the requested page while ``totalSize`` says
+        more remain. The sweep follows the total to the end and never stops on the short
+        page (rule 5) -- else a real season goes unread and loses its watch protection."""
+        page0 = (
+            '<MediaContainer size="1" totalSize="2">'
+            '<Directory ratingKey="901" parentRatingKey="900" index="1"/>'
+            "</MediaContainer>"
+        )
+        page1 = (
+            '<MediaContainer size="1" totalSize="2">'
+            '<Directory ratingKey="902" parentRatingKey="900" index="2"/>'
+            "</MediaContainer>"
+        )
+        server = _FakeServer(
+            [_FakeSection(2, "show")],
+            {
+                "/library/sections/2/all?type=3&X-Plex-Container-Start=0": page0,
+                "/library/sections/2/all?type=3&X-Plex-Container-Start=1": page1,
+            },
+        )
+        out = await _client_with(server).library_season_index()
+        assert {r.rating_key for r in out[900]} == {901, 902}
+        assert len(server.queries) == 2
+
+    async def test_a_child_without_a_rating_key_raises_rather_than_truncating(self) -> None:
+        """A child the paging math cannot advance over (no ratingKey) is an anomaly the
+        complete-or-raise contract raises on, so the caller falls back per show (rule 5)."""
+        listing = (
+            '<MediaContainer size="2" totalSize="2">'
+            '<Directory ratingKey="901" parentRatingKey="900" index="1"/>'
+            '<Directory parentRatingKey="900" index="2"/>'  # no ratingKey
+            "</MediaContainer>"
+        )
+        server = _FakeServer([_FakeSection(2, "show")], {"/library/sections/2/all": listing})
+        with pytest.raises(PlexError):
+            await _client_with(server).library_season_index()
+
+    async def test_a_full_page_with_no_totalsize_raises(self) -> None:
+        """A full page and no ``totalSize`` to bound it: we cannot tell whether more remains,
+        so we fail closed rather than guess it is the last page (rule 5)."""
+        rows = "".join(
+            f'<Directory ratingKey="{9000 + i}" parentRatingKey="900" index="{i}"/>'
+            for i in range(SWEEP_PAGE_SIZE)
+        )
+        listing = f'<MediaContainer size="{SWEEP_PAGE_SIZE}">{rows}</MediaContainer>'  # no total
+        server = _FakeServer([_FakeSection(2, "show")], {"/library/sections/2/all": listing})
+        with pytest.raises(PlexError):
+            await _client_with(server).library_season_index()
