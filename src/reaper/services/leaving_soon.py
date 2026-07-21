@@ -31,6 +31,7 @@ to death without a Plex server in sight.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -38,6 +39,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from reaper.aio import gather_reaped
 from reaper.clients.plex import PlexClient, PlexError, benign_shelf_write
 from reaper.clock import utcnow
 from reaper.config import Settings
@@ -55,6 +57,13 @@ log = structlog.get_logger(__name__)
 #: and the label share the name deliberately -- one shelf, one vocabulary.
 LEAVING_SOON_LABEL = "Leaving Soon"
 LEAVING_SOON_COLLECTION = "Leaving Soon"
+
+#: How many libraries reconcile at once. Libraries are independent shelves, so they run
+#: concurrently rather than one after another -- but under a bound, for the same reason the
+#: season fan-out is bounded: a modest self-hosted Plex should see a handful of parallel
+#: reads, never one per library at once, and the client's shared requests session pools only
+#: ten connections. A setup with many libraries reconciles in waves rather than a stampede.
+SHELF_CONCURRENCY = 4
 
 
 class LeavingSoonDisabledError(RuntimeError):
@@ -186,6 +195,13 @@ async def sync_section(
     add fails partway. A failure anywhere in this section is caught by the caller;
     one unreachable library must not block the rest.
     """
+
+    # The reads run one after another rather than concurrently: the whole-section key dump
+    # dominates a section's time, so overlapping the two small reads with it saves a second
+    # or two while tripling this section's live Plex connections. The libraries run
+    # concurrently instead (sync_shelves), which is where the real overlap is -- and keeping
+    # one section to one connection at a time is what keeps the bounded fan-out there under
+    # the requests session's connection pool.
     section_keys = await plex.section_rating_keys(section_key, kind=kind)
     target = in_grace & section_keys
 
@@ -245,16 +261,22 @@ async def sync_shelves(
 ) -> list[ShelfOutcome]:
     """Reconcile every enabled library, movies in movie libraries and seasons in TV
     libraries. A library that fails records its error and the pass continues; partial
-    honesty beats all-or-nothing silence for a warning feature."""
-    outcomes: list[ShelfOutcome] = []
-    for lib in libraries:
+    honesty beats all-or-nothing silence for a warning feature. The libraries reconcile
+    concurrently -- each is an independent shelf, so nothing is shared but the client, and
+    the whole-section read that dominates one library's time overlaps the others' instead of
+    queuing behind them. Under SHELF_CONCURRENCY, so many libraries reconcile in waves rather
+    than opening one Plex connection each at once. A library's failure is caught inside its
+    own task so it can never cancel a sibling; the results stay in library order."""
+    bound = asyncio.Semaphore(SHELF_CONCURRENCY)
+
+    async def _reconcile(lib: dict[str, Any]) -> ShelfOutcome:
         section_key = int(lib["key"])
         section_title = str(lib["title"])
         kind = str(lib["kind"])
         in_grace = movie_keys if kind == "movie" else season_keys
         try:
-            outcomes.append(
-                await sync_section(
+            async with bound:
+                return await sync_section(
                     plex,
                     section_key=section_key,
                     section_title=section_title,
@@ -262,21 +284,21 @@ async def sync_shelves(
                     in_grace=in_grace,
                     apply=apply,
                 )
-            )
         except PlexError as exc:
-            outcomes.append(
-                ShelfOutcome(
-                    section_key=section_key,
-                    section_title=section_title,
-                    kind=kind,
-                    added=0,
-                    removed=0,
-                    on_shelf=0,
-                    applied=False,
-                    error=str(exc),
-                )
+            # One unreachable library records its error and the pass carries on; caught
+            # here rather than at the gather so a sibling reconcile is never canceled.
+            return ShelfOutcome(
+                section_key=section_key,
+                section_title=section_title,
+                kind=kind,
+                added=0,
+                removed=0,
+                on_shelf=0,
+                applied=False,
+                error=str(exc),
             )
-    return outcomes
+
+    return list(await gather_reaped(*(_reconcile(lib) for lib in libraries)))
 
 
 async def announce_new(
