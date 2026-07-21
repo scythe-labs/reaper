@@ -43,8 +43,12 @@ _PHASE_BANDS: dict[str, tuple[int, int]] = {
     "history": (2, 12),
     "lists": (12, 18),
     "gathering": (18, 45),
-    "scoring": (45, 98),
-    "done": (98, 100),
+    "scoring": (45, 90),
+    "done": (90, 95),
+    # The snapshot is committed by here; "shelves" is the post-scan Leaving Soon reconcile
+    # (a full Plex round-trip). It gets its own band UNDER 100 so the bar honestly shows
+    # "Updating shelves" while it runs, instead of sitting at a false 100%. See scan_runner.
+    "shelves": (95, 99),
     "complete": (100, 100),
 }
 

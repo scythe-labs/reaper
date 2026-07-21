@@ -204,9 +204,20 @@ async def ensure_schema(engine: AsyncEngine) -> None:
     The cost is one full re-sync, and a scan in between degrades loudly rather than
     judging on a thin mirror. That is the right direction to fail.
     """
-    async with engine.begin() as conn:
+    # Common path: the table exists and its shape is current. Check that in a READ
+    # connection -- no write lock, no fsync -- and return. ensure_schema runs several times
+    # per scan (state, watch stats, the liveness read), and each one was opening a write
+    # transaction on cache.db purely to re-run idempotent DDL that changed nothing.
+    async with engine.connect() as conn:
         cols = (await conn.execute(text("PRAGMA table_info(watch_event)"))).all()
-        live = tuple((row[1], str(row[2]).upper(), int(row[3])) for row in cols)
+    live = tuple((row[1], str(row[2]).upper(), int(row[3])) for row in cols)
+    if cols and live == _WATCH_EVENT_COLUMNS:
+        return
+
+    # Only here do we take the write transaction: the table is missing (fresh or cleared
+    # cache -> create it, and the next sync becomes a full one automatically) or its shape
+    # is stale (drop and recreate empty -- rebuild, never migrate; see the docstring).
+    async with engine.begin() as conn:
         if cols and live != _WATCH_EVENT_COLUMNS:
             log.info("history.cache.rebuilding", reason="watch_event shape is stale")
             await conn.execute(text("DROP TABLE watch_event"))

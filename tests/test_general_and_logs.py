@@ -67,6 +67,7 @@ class TestScanProgressPercent:
             ("scoring", 1700, 3446),
             ("scoring", 3446, 3446),
             ("done", 3446, 3446),
+            ("shelves", 0, 0),
             ("complete", 3446, 3446),
         ]
         percents = [_phase_percent(p, d, t) for p, d, t in steps]

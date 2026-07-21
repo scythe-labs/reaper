@@ -25,6 +25,7 @@ export const PHASE_LABELS: Record<string, string> = {
   gathering: "Gathering your library",
   scoring: "Scoring",
   done: "Finishing up",
+  shelves: "Updating shelves",
   complete: "Done",
 };
 

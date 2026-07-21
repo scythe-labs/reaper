@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections import Counter
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -481,12 +482,33 @@ async def scan(
     # exactly as before; only the waiting overlaps.
     emit(Progress("gathering", 2, 5, "movie and TV libraries"))
 
+    # Wall clock of the whole concurrent gather (fan-out to last await). The per-source
+    # self-times above tell which source dominates this wall; this is the wall itself.
+    gather_wall_started = time.monotonic()
+
     # Every task the fan-out creates goes through _spawn, so the reap on failure below
     # covers all of them by construction -- a future branch cannot be forgotten.
     fanned_out: list[asyncio.Task[Any]] = []
 
-    def _spawn[T](coro: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
-        task = asyncio.create_task(coro)
+    # Per-source wall time, so a slow scan can be pinned to ONE source instead of guessing.
+    # Each named task times ITSELF (start when it begins, stop when it finishes), which is
+    # the only honest measure when they all run concurrently: awaiting one that already
+    # finished would read as instant. `radarr` accumulates across instances (they overlap,
+    # so the sum is an upper bound, not the wall). Logged as snapshot.gather_timing below.
+    source_ms: dict[str, int] = {}
+
+    def _spawn[T](coro: Coroutine[Any, Any, T], *, name: str | None = None) -> asyncio.Task[T]:
+        async def _timed() -> T:
+            started = time.monotonic()
+            try:
+                return await coro
+            finally:
+                if name is not None:
+                    source_ms[name] = source_ms.get(name, 0) + round(
+                        (time.monotonic() - started) * 1000
+                    )
+
+        task = asyncio.create_task(_timed())
         fanned_out.append(task)
         return task
 
@@ -520,7 +542,8 @@ async def scan(
                 flag_keep_conflicts=tv_policy.flag_keep_conflicts,
                 membership_index=membership_index,
                 allowed_sections=allowed_sections,
-            )
+            ),
+            name="season",
         )
 
     async def _movies_from(source: RadarrSource) -> list[dict[str, Any]] | None:
@@ -558,9 +581,10 @@ async def scan(
     index_task = _spawn(
         build_movie_index(
             tautulli, plex, degrade=context.degrade, allowed_sections=allowed_sections
-        )
+        ),
+        name="plex_index",
     )
-    movie_tasks = [_spawn(_movies_from(source)) for source in radarrs]
+    movie_tasks = [_spawn(_movies_from(source), name="radarr") for source in radarrs]
     roots_tasks = [_spawn(_roots_from(source)) for source in radarrs]
 
     items: list[RawItem] = []
@@ -582,7 +606,10 @@ async def scan(
         # Look up by BOTH Radarr's imdbId and the matched Plex item's imdb id, so a film
         # whose Radarr record lacks (or has a wrong) imdbId still gets its rating when
         # Plex knows it.
-        imdb_ids = [x for i in items for x in (i.imdb_id, i.plex_imdb_id) if x]
+        # Deduped: an item's Radarr imdbId and its Plex-matched imdb id are usually the
+        # same string, and the dataset lookup returns a keyed map, so passing each id once
+        # changes nothing but the chunk count.
+        imdb_ids = list(dict.fromkeys(x for i in items for x in (i.imdb_id, i.plex_imdb_id) if x))
         try:
             imdb = await ImdbRatings(engine).lookup(imdb_ids)
         except DatasetDegradedError as exc:
@@ -628,6 +655,8 @@ async def scan(
         # every task was created by _spawn.
         await reap(fanned_out)
         raise
+
+    gather_wall_ms = round((time.monotonic() - gather_wall_started) * 1000)
 
     # ---- freeze ------------------------------------------------------------
     snapshot = Snapshot(
@@ -675,6 +704,10 @@ async def scan(
     # not reported? Counts only, never a title or a path.
     size_sources: Counter[str] = Counter()
 
+    # Scoring is pure in-memory now (no per-item I/O), so this measures the CPU cost of
+    # judging every movie and season -- kept apart from the source-read wall above so a
+    # slow scan is attributable to a source or to scoring, never lumped into one number.
+    score_started = time.monotonic()
     for index, item in enumerate(items):
         if index % 100 == 0:
             emit(Progress("scoring", index, total, item.title))
@@ -829,6 +862,7 @@ async def scan(
     await record_first_flagged_bulk(session, condemned_keys, now, grace_days=grace_days)
 
     await session.flush()
+    score_ms = round((time.monotonic() - score_started) * 1000)
     emit(Progress("done", total, total, f"{condemned} candidates"))
 
     log.info(
@@ -844,6 +878,19 @@ async def scan(
         seasons=len(season_judgments),
         condemned=condemned,
         degraded=context.degraded,
+    )
+    # The intra-gather split scan_runner's scan.completed points at: which source owns the
+    # gather wall (plex_index / radarr / season), and how much is pure scoring. A None means
+    # that source did not run (no Sonarr -> no season_ms). Read this to decide which
+    # structural optimization is worth building before writing one.
+    log.info(
+        "snapshot.gather_timing",
+        snapshot=snapshot.id,
+        gather_wall_ms=gather_wall_ms,
+        plex_index_ms=source_ms.get("plex_index"),
+        radarr_ms=source_ms.get("radarr"),
+        season_ms=source_ms.get("season"),
+        score_ms=score_ms,
     )
     return snapshot
 
@@ -1454,48 +1501,40 @@ async def _watch_stats(
 
     window_start = int((utcnow() - timedelta(days=window_days)).timestamp())
 
+    # One pass over the movie rows for all three figures, where three separate GROUP BY
+    # scans of the same table did before. The windowed watcher count rides along as a
+    # conditional distinct-count: watched_at outside the window yields NULL, which COUNT
+    # DISTINCT ignores, so it equals the old `WHERE watched_at >= :since` query exactly.
     async with engine.connect() as conn:
-        last = {
-            int(r.rating_key): from_epoch(r.last)
-            for r in (
-                await conn.execute(
-                    text(
-                        "SELECT rating_key, MAX(watched_at) AS last FROM watch_event "
-                        "WHERE media_type = 'movie' GROUP BY rating_key"
-                    )
-                )
-            ).all()
-        }
-        window = {
-            int(r.rating_key): int(r.n)
-            for r in (
-                await conn.execute(
-                    text(
-                        "SELECT rating_key, COUNT(DISTINCT user_id) AS n FROM watch_event "
-                        "WHERE media_type = 'movie' AND watched_at >= :since "
-                        "GROUP BY rating_key"
-                    ),
-                    {"since": window_start},
-                )
-            ).all()
-        }
-        ever = {
-            int(r.rating_key): int(r.n)
-            for r in (
-                await conn.execute(
-                    text(
-                        "SELECT rating_key, COUNT(DISTINCT user_id) AS n FROM watch_event "
-                        "WHERE media_type = 'movie' GROUP BY rating_key"
-                    )
-                )
-            ).all()
-        }
+        rows = (
+            await conn.execute(
+                text(
+                    "SELECT rating_key, "
+                    "MAX(watched_at) AS last, "
+                    "COUNT(DISTINCT user_id) AS ever, "
+                    "COUNT(DISTINCT CASE WHEN watched_at >= :since THEN user_id END) AS window "
+                    "FROM watch_event WHERE media_type = 'movie' GROUP BY rating_key"
+                ),
+                {"since": window_start},
+            )
+        ).all()
 
-    return (
-        {k: v for k, v in last.items() if v is not None},
-        window,
-        ever,
-    )
+    last: dict[int, datetime] = {}
+    window: dict[int, int] = {}
+    ever: dict[int, int] = {}
+    for r in rows:
+        key = int(r.rating_key)
+        played = from_epoch(r.last)
+        if played is not None:
+            last[key] = played
+        ever[key] = int(r.ever)
+        # Keep only keys with a play INSIDE the window, exactly as the old windowed query
+        # returned: a 0 (has plays, none recent) is dropped so the dict stays byte-identical
+        # to before. Downstream reads it as `.get(key, 0)`, so absent and 0 are the same fact.
+        if r.window:
+            window[key] = int(r.window)
+
+    return last, window, ever
 
 
 async def _fold_merged_watch_stats(

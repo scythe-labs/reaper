@@ -649,29 +649,46 @@ async def _run_scan_locked(
             allowed_sections=allowed_sections,
         )
         gather_ms = round((time.monotonic() - gather_started) * 1000)
+        commit_started = time.monotonic()
         await session.commit()
+        commit_ms = round((time.monotonic() - commit_started) * 1000)
+
+        # The snapshot is committed and safe on disk, so the grace set just changed -- this
+        # is the moment the "Leaving Soon" shelf (and the Discord heads-up) go stale. That
+        # reconcile is a full per-library Plex round-trip, and it is NOT scan work: the run
+        # is not finished until it returns and `running` flips false (api/scan.py). So give
+        # it its own visible phase instead of emitting "complete"/100% here and letting the
+        # bar sit at a false 100% while several more Plex calls run. Best-effort by design:
+        # after_scan swallows and logs its own failures -- the warning layer must never fail
+        # a scan that already landed.
+        emit(Progress("shelves", 0, 0, "updating shelves"))
+        after_scan_started = time.monotonic()
+        await leaving_soon.after_scan(session_factory, settings, box)
+        after_scan_ms = round((time.monotonic() - after_scan_started) * 1000)
+
+        # Only now is the run truly done: bar to 100%, and the browser's next poll sees
+        # `running` flip false right behind it.
         emit(Progress("complete", snapshot.item_count, snapshot.item_count, str(snapshot.id)))
 
         # The one line an operator reads to answer "how long did that take, and where did
-        # the time go?" -- total plus the phase breakdown, all monotonic milliseconds.
-        # scoring is pure in-memory, so gather_ms is dominated by the source reads (the TV
-        # season resolution above all), which is where any tuning effort should go.
+        # the time go?" -- the TRUE end-to-end wall clock (including the shelf reconcile,
+        # which a total measured before after_scan silently hid) plus the phase breakdown,
+        # all monotonic milliseconds. gather_ms is dominated by the source reads; the
+        # intra-gather split (plex_index / radarr / season / score) is logged separately by
+        # snapshot.scan as `snapshot.gather_timing`, so a slow scan can be pinned to one
+        # source without guessing.
         log.info(
             "scan.completed",
             snapshot=snapshot.id,
             items=snapshot.item_count,
             degraded=snapshot.degraded,
-            total_ms=round((time.monotonic() - scan_started) * 1000),
             history_ms=history_ms,
             lists_ms=lists_ms,
             gather_ms=gather_ms,
+            commit_ms=commit_ms,
+            after_scan_ms=after_scan_ms,
+            wall_ms=round((time.monotonic() - scan_started) * 1000),
         )
-
-        # The snapshot is committed, so the grace set just changed -- this is the moment
-        # the "Leaving Soon" shelf (and the Discord heads-up) go stale. Best-effort by
-        # design: after_scan swallows and logs its own failures, because the warning
-        # layer must never fail a scan that already landed.
-        await leaving_soon.after_scan(session_factory, settings, box)
         return snapshot
 
     # AsyncExitStack always yields; this is unreachable but satisfies the type checker,
