@@ -1828,7 +1828,7 @@ export function PolicyEditor({
 
         <label className="field">
           <span className="field-label">
-            Only judge a title Reaper can mostly see
+            Judge a title only when there's enough to go on
             <strong>{Math.round(draft.coverage_floor_bp / 100)}%</strong>
           </span>
           <input
@@ -1840,8 +1840,8 @@ export function PolicyEditor({
             onChange={(e) => update({ coverage_floor_bp: Number(e.target.value) })}
           />
           <span className="help">
-            How much of the evidence Reaper needs before it will judge a title at all. Below
-            this it stays quiet rather than deciding on fragments.
+            Reaper judges a title on the reasons below. If it can't check enough of them, it
+            holds the title in Limbo for you to decide.
           </span>
         </label>
 
