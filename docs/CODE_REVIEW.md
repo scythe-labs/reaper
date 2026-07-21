@@ -1,5 +1,15 @@
 # Diff review — `dev`, changes since `4478aa7`, 2026-07-21
 
+> **Resolution (branch `worktree-unraid-auto-perms`).** All 43 findings below are addressed:
+> the three highs (B-1, B-2, B-3), the thirteen mediums, and the twenty-seven lows, each with
+> a regression test where one was missing. The safety-path fixes carry the most: the Scales
+> tmdb namespace (B-1), the season-sweep complete-or-raise pagination (B-4), the
+> collection-detach spelling/section keying (B-5/B-13), the `ensure_schema` TOCTOU (B-6), and
+> the profile-fallback degradation (PR-1). CI gates are green on this branch — `ruff`,
+> `ruff format`, `mypy`, pytest, `eslint`, vitest, `tsc` + `vite build`, and `alembic upgrade
+> head` + `alembic check`. **`docker build` was again not run** (no Docker daemon on this
+> machine); run it before release. The findings text is preserved below as the record.
+>
 > **Scope.** The 16 commits and 84 files changed since `4478aa7` (the Jobs rebuild with
 > per-job schedules, the switchable per-run caps and the caps matrix, the Reap-page
 > breakdown, the Scales rebuild, the review-queue action-grammar pass across three
