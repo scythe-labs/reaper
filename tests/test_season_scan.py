@@ -1411,9 +1411,11 @@ class TestGatherEndToEnd:
         assert pruned.plex_rating_key is None
         assert isinstance(pruned.facts.days_observed_unwatched, Unknown)
 
-    async def test_a_fully_protected_short_show_yields_nothing(
+    async def test_a_fully_protected_short_show_is_surfaced_as_kept(
         self, cache_engine: AsyncEngine
     ) -> None:
+        """A show with no prunable season is NOT dropped: it is gathered and surfaced as kept,
+        every season protected by its guard, so content is never hidden from the UI."""
         series = [
             {
                 "id": 9,
@@ -1437,7 +1439,9 @@ class TestGatherEndToEnd:
             whitelisted=set(),
             degrade=degrade,
         )
-        assert judgments == []
+        # Both content-bearing seasons appear, each protected by a guard (never condemned).
+        assert {j.media_key for j in judgments} == {"sonarr:1:9:1", "sonarr:1:9:2"}
+        assert all(j.guard_result.outcome is PROTECT for j in judgments)
 
     async def test_a_candidate_show_logs_its_decision(self, cache_engine: AsyncEngine) -> None:
         """Every scanned series emits one greppable decision line. A show with a prunable

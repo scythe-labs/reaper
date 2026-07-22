@@ -19,10 +19,13 @@ keeping the season:
   floor: the last N seasons, the first season, a season someone is part-way through,
   and any currently-airing season are protected outright, whatever they score.
 
-Only seasons that survive the guards as *prunable* are scored. Plex resolution is one
-paged sweep over every season in the allowed show libraries (see below), so it is no
-longer bounded per show; only the per-show fallback (when the sweep cannot resolve a show)
-and the Sonarr episode fan-out stay limited to shows that actually have something prunable.
+Only seasons that survive the guards as *prunable* can ever be condemned; a show whose every
+season is guard-kept is still gathered and surfaced as kept, so content is never hidden from
+the UI (only a show with nothing on disk has no season to show). Plex resolution is one paged
+sweep over every season in the allowed show libraries (see below), so it is no longer bounded
+per show; the per-show fallback (when the sweep cannot resolve a show) covers every show with
+content, and only the Sonarr episode fan-out stays limited to shows that have something
+prunable -- a fully-kept show needs no mid-binge precision.
 
 ## The season -> Plex rating key join (verify against a live server)
 
@@ -214,6 +217,10 @@ class _SeriesWork:
     series: dict[str, Any]
     seasons: list[SeasonStats]
     plan: SeriesPrunePlan
+    # No season is prunable -- every one is kept by a guard. Still gathered and surfaced as
+    # kept (never hide content), but spared the per-show episodes() read, which only feeds
+    # mid-binge precision a fully-kept show cannot use.
+    fully_protected: bool = False
     show_rating_key: int | None = None
     matched_by: identity.MatchedBy | None = None
     match_detail: str | None = None
@@ -897,12 +904,14 @@ async def gather(
     membership_index: lists.MembershipIndex | None = None,
     allowed_sections: set[int] | None = None,
 ) -> list[SeasonJudgment]:
-    """Gather every prunable season across every Sonarr instance, ready to judge.
+    """Gather the seasons of every show with content on disk, ready to judge.
 
     Read-only. Reads Sonarr for series and their season statistics, runs the guards to
-    find prunable seasons, resolves only those shows against Plex, reads their watch
+    find prunable seasons, resolves each show with content against Plex, reads their watch
     history from the local mirror, and returns a ``SeasonJudgment`` per content-bearing
-    season of a show that has something removable.
+    season. A show whose every season is guard-kept is surfaced as kept, not dropped, so
+    content is never hidden from the UI; only a show with nothing on disk (``no_content``)
+    is left out, because it has no season to show.
 
     ``degrade`` is the snapshot's degrade callback: an unreadable Sonarr marks the
     snapshot degraded (no run may execute against it) exactly as a missing Radarr does.
@@ -959,7 +968,8 @@ async def gather(
 
     # First pass, pure and offline: decide prunable/protected per series from Sonarr's own
     # season statistics, logging one decision line per series (season_scan.series_decision,
-    # below). Only shows with a prunable season are resolved against Plex.
+    # below). Every show with content on disk is gathered and resolved against Plex -- one with
+    # no prunable season is surfaced as kept, not dropped, so content is never hidden from the UI.
     work: list[_SeriesWork] = []
     fully_protected: list[str] = []
     no_content: list[str] = []
@@ -993,18 +1003,33 @@ async def gather(
                 flag_keep_conflicts=flag_keep_conflicts,
                 airing_seasons=airing_seasons(series, seasons),
             )
-            if not plan.prunable:
+            fully = not plan.prunable
+            if fully:
+                # No prunable season, but the show has content on disk, so it is NOT dropped:
+                # it is judged and surfaced as kept, every season protected by its guard, so the
+                # operator always sees it (with the reason) instead of it vanishing from the UI.
+                # Never hide content. The flag only spares it the per-show episodes() read below,
+                # which feeds mid-binge precision it does not need (every season is already kept).
                 fully_protected.append(str(series.get("title") or "?"))
-                _log_series_decision(source, series, seasons, outcome="fully_protected", plan=plan)
-                continue
-            _log_series_decision(source, series, seasons, outcome="candidate", plan=plan)
-            work.append(_SeriesWork(source=source, series=series, seasons=seasons, plan=plan))
+            _log_series_decision(
+                source,
+                series,
+                seasons,
+                outcome="fully_protected" if fully else "candidate",
+                plan=plan,
+            )
+            work.append(
+                _SeriesWork(
+                    source=source, series=series, seasons=seasons, plan=plan, fully_protected=fully
+                )
+            )
 
     # Every series above emitted one greppable DEBUG decision line (season_scan.series_decision)
     # naming its outcome and reasons -- that is where "why isn't this specific show in review"
-    # is answered, per title. These INFO counts are the snapshot-level summary on top of it:
-    # a dropped show never becomes a candidate, so the counts tell "no TV candidates" apart
-    # from "TV was skipped" without turning on the per-series debug firehose.
+    # is answered, per title. These INFO counts are the snapshot-level summary on top of it.
+    # A fully-protected show is now GATHERED, not dropped: it is surfaced as kept (never hide
+    # content), so this counts how many shows have no reapable season, not how many vanished.
+    # Only a no-content show (nothing on disk) is left out, because it has nothing to show.
     if no_content:
         log.info("season_scan.shows_without_content", count=len(no_content))
     if fully_protected:
@@ -1190,7 +1215,11 @@ async def gather(
     # whole Sonarr fan-out is skipped. Skipping only ever keeps MORE: with no final-episode map
     # the guard falls back to whole-season protection.
     season_coros = [_seasons_for(rk) for rk in fallback_keys]
-    episode_coros = [_episodes_for(item) for item in work] if keep_in_progress else []
+    episode_coros = (
+        [_episodes_for(item) for item in work if not item.fully_protected]
+        if keep_in_progress
+        else []
+    )
     fanned = await gather_reaped(*season_coros, *episode_coros)
     for rk, seasons in fanned[: len(season_coros)]:
         resolved_shows[rk] = seasons
@@ -1252,7 +1281,12 @@ async def gather(
             )
         )
 
-    log.info("season_scan.gathered", seasons=len(judgments), shows_pruned=len(work))
+    log.info(
+        "season_scan.gathered",
+        seasons=len(judgments),
+        shows_gathered=len(work),
+        shows_fully_kept=sum(1 for item in work if item.fully_protected),
+    )
     return judgments
 
 
