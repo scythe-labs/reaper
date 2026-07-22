@@ -47,6 +47,7 @@ function detail(over: Partial<PersonDetail> = {}): PersonDetail {
     },
     titles: [title()],
     unmatched: [],
+    profile_url: null,
     ...over,
   };
 }
@@ -63,6 +64,33 @@ describe("ScalesPanel", () => {
     );
     expect(screen.getByRole("heading", { name: "marlow" })).toBeInTheDocument();
     expect(screen.getByText(/4 requests in the last scan/i)).toBeInTheDocument();
+  });
+
+  it("links the name to the requester's portal page when there is one", () => {
+    render(
+      <ScalesPanel
+        detail={detail({ profile_url: "https://seerr.example/users/7" })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    const link = screen.getByRole("link", { name: /marlow/i });
+    expect(link).toHaveAttribute("href", "https://seerr.example/users/7");
+    expect(link).toHaveAttribute("target", "_blank");
+  });
+
+  it("shows the name as plain text, never a dead link, without a profile url", () => {
+    render(
+      <ScalesPanel
+        detail={detail({ profile_url: null })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("link", { name: /marlow/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "marlow" })).toBeInTheDocument();
   });
 
   it("reads request limits in plain words, and flags an at-limit type", () => {

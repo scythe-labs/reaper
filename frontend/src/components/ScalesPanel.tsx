@@ -60,10 +60,42 @@ function LimitChip({ label, line }: { label: string; line: QuotaLine }) {
     <span className={`scales-limit${line.at_limit ? " at" : ""}`}>
       <span className="scales-limit-k">{label}</span>
       <span className="scales-limit-v">
-        {limitText(line)}
-        {line.at_limit ? " · at limit" : ""}
+        {line.limit === null ? (
+          <span className="scales-limit-sub">unlimited</span>
+        ) : (
+          limitText(line)
+        )}
+        {line.at_limit && " · at limit"}
       </span>
     </span>
+  );
+}
+
+/** The person's name in the panel head. Links to their page on the request portal when one
+ *  could be built ({base_url}/users/{id}); plain text otherwise, never a dead link. Follows
+ *  the app's title-link idiom: text at rest, an accent underline on hover, a small outbound
+ *  arrow so the link is discoverable. */
+function ProfileName({ name, href }: { name: string; href: string | null }) {
+  if (!href) return <h2>{name}</h2>;
+  return (
+    <a
+      className="scales-name-link"
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      title="Open this person in the request portal"
+    >
+      <h2>{name}</h2>
+      <svg className="scales-ext" viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+        <path
+          d="M6 3h7v7M13 3L4 12"
+          stroke="currentColor"
+          strokeWidth="1.7"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </a>
   );
 }
 
@@ -192,7 +224,7 @@ export function ScalesPanel({
             {initial(detail.name)}
           </span>
           <div>
-            <h2>{detail.name}</h2>
+            <ProfileName name={detail.name} href={detail.profile_url} />
             <p className="why-sub muted">
               {count(detail.requests_in_scan)} requests in the last scan
               {detail.not_in_scan > 0 && `, ${count(detail.not_in_scan)} not in it`}

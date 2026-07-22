@@ -788,6 +788,9 @@ export interface PersonDetail {
   titles: PersonTitle[];
   /** This person's not-in-scan requests, named and grouped by reason, for the panel. */
   unmatched: UnmatchedRequest[];
+  /** The requester's page on their request portal, or `null` when it can't be built. The
+   *  panel links the name to it, and shows plain text otherwise. */
+  profile_url: string | null;
 }
 
 export interface FairnessReport {

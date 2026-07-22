@@ -578,12 +578,14 @@ class _FakeSeerr:
         quotas: dict[int, UserQuota] | None = None,
         titles: dict[int, TitleInfo] | None = None,
         instance_key: str = "",
+        base_url: str = "https://seerr.example",
     ) -> None:
         self._requests = requests
         self._users = users or []
         self._quotas = quotas or {}
         self._titles = titles or {}
         self.instance_key = instance_key
+        self.base_url = base_url
 
     async def all_requests(self, *, filter_: str = "available") -> list[MediaRequest]:
         return self._requests
@@ -831,6 +833,43 @@ class TestBuildPersonDetail:
         # The poster is proxied through our image route, falling back to the item's own key
         # when it has no separate poster key.
         assert title.poster_url == "/api/poster/555"
+
+    async def test_name_links_to_the_requesters_portal_profile(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        """The panel links the name to this person's page on the portal they requested
+        through ({base_url}/users/{id}), built from their own request so it needs no extra
+        Seerr read."""
+        factory, cache = report_env
+        portal = _FakeSeerr(
+            [_req(plex_id=1, name="Alice", tmdb=1, seerr_id=7, portal_key="p1")],
+            base_url="https://seerr.example",
+            instance_key="p1",
+        )
+        detail = await fairness.build_person_detail(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[portal],  # type: ignore[list-item]
+            cache_engine=cache,
+            identity="plex:1",
+        )
+        assert detail is not None
+        assert detail.profile_url == "https://seerr.example/users/7"
+
+    async def test_profile_url_is_none_without_a_user_id(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        """No Seerr user id on the request means no page to link to: the name stays plain
+        text rather than a dead link."""
+        factory, cache = report_env
+        portal = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1, seerr_id=0)])
+        detail = await fairness.build_person_detail(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[portal],  # type: ignore[list-item]
+            cache_engine=cache,
+            identity="plex:1",
+        )
+        assert detail is not None
+        assert detail.profile_url is None
 
     async def test_an_unknown_key_is_none(
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]

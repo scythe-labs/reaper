@@ -229,4 +229,5 @@ async def get_person(request: Request, identity: str) -> PersonDetailOut:
             for t in detail.titles
         ],
         unmatched=[_unmatched_out(u) for u in detail.unmatched],
+        profile_url=detail.profile_url,
     )
