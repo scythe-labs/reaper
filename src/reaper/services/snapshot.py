@@ -1425,8 +1425,10 @@ def _raw_items(
 ) -> list[RawItem]:
     requested = requested or {}
     items: list[RawItem] = []
+    without_file: list[str] = []
     for movie in movies:
         if not movie.get("hasFile"):
+            without_file.append(str(movie.get("title") or "?"))
             continue
         tmdb_id = int(movie["tmdbId"]) if movie.get("tmdbId") else None
         # Bind to Plex through the one shared resolver: external id (tmdb, then imdb) ->
@@ -1449,6 +1451,23 @@ def _raw_items(
             index=plex_index,
         )
         matched = resolution.plex_item
+        if resolution.rating_key is None:
+            # The movie has a file in Radarr but Reaper could not confidently bind it to a
+            # Plex row, so it appears only as "kept to be safe", never on the reap list.
+            # Warned per item so an operator asking "why isn't this in review" finds the
+            # reason in the log, not only on the row's why-panel. UNMATCHED = nothing in Plex
+            # looked like it; AMBIGUOUS = more than one did and we refused to guess.
+            log.warning(
+                "scan.plex_unmatched",
+                media_type="movie",
+                instance_id=instance_id,
+                title=str(movie.get("title") or ""),
+                year=int(movie["year"]) if movie.get("year") else None,
+                imdb_id=movie.get("imdbId") or None,
+                tmdb_id=tmdb_id,
+                match_status=str(resolution.status),
+                detail=resolution.detail,
+            )
         items.append(
             RawItem(
                 # Identity is the *arr's, not Plex's. Plex rating keys are not stable
@@ -1492,6 +1511,12 @@ def _raw_items(
                 arr_ratings=tuple(from_radarr(movie.get("ratings"))),
             )
         )
+    if without_file:
+        # Not unmatched, just nothing to reap yet: monitored in Radarr with no downloaded
+        # file. Counted (names at debug) so "no movie candidates" reads apart from "every
+        # movie was skipped", and a specific missing title can be traced.
+        log.info("scan.movies_without_file", instance_id=instance_id, count=len(without_file))
+        log.debug("scan.movies_without_file_titles", instance_id=instance_id, titles=without_file)
     return items
 
 

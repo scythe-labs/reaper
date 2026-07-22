@@ -12,6 +12,7 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 
 import pytest
+from structlog.testing import capture_logs
 
 from reaper.clock import from_epoch, utcnow
 from reaper.config import Settings
@@ -99,6 +100,30 @@ class TestEveryInstanceIsScanned:
         assert len(items) == 1
         assert items[0].plex_rating_key is None
         assert items[0].added_at is None
+
+    def test_a_movie_plex_has_not_matched_is_warned(self) -> None:
+        """The owner asking "why isn't this in review" must find the answer in the log,
+        not only on the row's why-panel. It appears, but only as kept-to-be-safe, so a
+        warning names it and says Plex could not bind it."""
+        movie = {"id": 7, "title": "Unmatched By Plex", "hasFile": True, "sizeOnDisk": 1}
+
+        with capture_logs() as logs:
+            _raw_items([movie], _plex_index(), instance_id=1)
+
+        warned = [e for e in logs if e["event"] == "scan.plex_unmatched"]
+        assert len(warned) == 1
+        assert warned[0]["log_level"] == "warning"
+        assert warned[0]["media_type"] == "movie"
+        assert warned[0]["match_status"] == "unmatched"
+
+    def test_a_matched_movie_is_not_warned(self) -> None:
+        """A clean bind stays quiet: the warning must fire only on a real match failure."""
+        movie = {"id": 42, "title": "Example Movie", "hasFile": True, "sizeOnDisk": 1}
+
+        with capture_logs() as logs:
+            _raw_items([movie], _plex_index((999, "Example Movie")), instance_id=1)
+
+        assert [e for e in logs if e["event"] == "scan.plex_unmatched"] == []
 
 
 class TestCachesLiveInTheirOwnDatabase:

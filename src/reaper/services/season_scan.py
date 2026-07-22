@@ -875,13 +875,15 @@ async def gather(
     # First pass, pure and offline: decide prunable/protected per series from Sonarr's
     # own season statistics. Only shows with a prunable season are resolved against Plex.
     work: list[_SeriesWork] = []
-    fully_protected = 0
+    fully_protected: list[str] = []
+    no_content: list[str] = []
     for source, series_list in zip(sonarrs, series_lists, strict=True):
         if series_list is None:
             continue
         for series in series_list:
             seasons = parse_seasons(series)
             if not any(s.has_content for s in seasons):
+                no_content.append(str(series.get("title") or "?"))
                 continue
             plan = plan_series_prune(
                 series_title=str(series.get("title") or ""),
@@ -900,15 +902,22 @@ async def gather(
                 airing_seasons=airing_seasons(series, seasons),
             )
             if not plan.prunable:
-                fully_protected += 1
+                fully_protected.append(str(series.get("title") or "?"))
                 continue
             work.append(_SeriesWork(source=source, series=series, seasons=seasons, plan=plan))
 
+    if no_content:
+        # A show whose seasons all report no on-disk episodes in Sonarr: nothing to reap, so
+        # it never becomes a candidate and never appears in review. Counted (names at debug)
+        # so this cause of "my show isn't in the queue" is answerable from the log.
+        log.info("season_scan.shows_without_content", count=len(no_content))
+        log.debug("season_scan.shows_without_content_titles", titles=no_content)
     if fully_protected:
         # Not a silent drop: a fully-protected show has nothing to act on, so it is left
-        # out of the candidate list, and the count is logged so "no TV candidates" can be
-        # told apart from "TV was skipped".
-        log.info("season_scan.fully_protected_shows", count=fully_protected)
+        # out of the candidate list. The count tells "no TV candidates" apart from "TV was
+        # skipped"; the names at debug answer "why isn't this specific show in review".
+        log.info("season_scan.fully_protected_shows", count=len(fully_protected))
+        log.debug("season_scan.fully_protected_show_titles", titles=fully_protected)
 
     # Resolve the shows that made the cut: bind each to its Plex row (pure, in memory),
     # then fetch what the judging needs over the network -- each distinct show's season
@@ -944,6 +953,22 @@ async def gather(
             item.show_runtime_minutes = resolution.plex_item.runtime_minutes
             item.show_plex_ratings = resolution.plex_item.ratings
             item.show_library = resolution.plex_item.library
+        else:
+            # Prunable in Sonarr, but Reaper could not bind the show to a Plex row, so every
+            # season abstains and the show appears only as "kept to be safe", never on the
+            # reap list. Warned per show so "why isn't my show in review" is answerable from
+            # the log. UNMATCHED = nothing in Plex matched; AMBIGUOUS = more than one did.
+            log.warning(
+                "scan.plex_unmatched",
+                media_type="show",
+                instance_id=item.source.instance_id,
+                title=str(series.get("title") or ""),
+                year=_as_year(series.get("year")),
+                imdb_id=series.get("imdbId") or None,
+                tvdb_id=series.get("tvdbId") or None,
+                match_status=str(resolution.status),
+                detail=resolution.detail,
+            )
 
     # The per-show reads are independent of each other, so they run concurrently under
     # small bounds: one for Tautulli, one per Sonarr instance (two instances are two
