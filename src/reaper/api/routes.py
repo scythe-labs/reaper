@@ -32,7 +32,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 if TYPE_CHECKING:
     from sqlalchemy import ColumnElement
 
-from reaper import __version__
 from reaper.api.schemas import (
     AboutOut,
     CandidateDetail,
@@ -58,6 +57,7 @@ from reaper.api.schemas import (
     SnapshotOut,
     VocabularyOut,
 )
+from reaper.buildinfo import build_version
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.models import Candidate, FirstFlagged, Instance, InstanceKind, PlexServer, Snapshot
@@ -1639,7 +1639,7 @@ async def about(request: Request) -> AboutOut:
     settings: Settings = request.app.state.settings
     data_dir = settings.data_dir
     return AboutOut(
-        version=__version__,
+        version=build_version(),
         license="AGPL-3.0",
         data_dir=str(data_dir),
         reaper_db_bytes=_db_bytes(data_dir / "reaper.db"),

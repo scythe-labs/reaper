@@ -77,6 +77,16 @@ EXPOSE 8420
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import os,urllib.request,sys; port=os.environ.get('REAPER_PORT','8420'); sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/api/health', timeout=3).status==200 else 1)"
 
+# Build provenance, shown on the About page. The container has no .git (it is
+# dockerignored), so CI passes the short commit it already computes; REAPER_RELEASE=1
+# marks a release build, which shows the plain version instead. A local `docker build`
+# with neither shows "dev". Kept last so a new commit reuses every layer above; neither
+# value is a secret.
+ARG REAPER_GIT_SHA=""
+ARG REAPER_RELEASE=""
+ENV REAPER_GIT_SHA=${REAPER_GIT_SHA} \
+    REAPER_RELEASE=${REAPER_RELEASE}
+
 COPY docker-entrypoint.sh /usr/local/bin/
 ENTRYPOINT ["docker-entrypoint.sh"]
 # REAPER_HOST/REAPER_PORT are honored here (they also shape the recovery link the app

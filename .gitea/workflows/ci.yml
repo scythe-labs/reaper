@@ -130,8 +130,18 @@ jobs:
           fi
           echo "SHORT_SHA=$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
 
+      # The short commit and a release flag are baked in as build args so the About page
+      # can show which build is running. main is release-only (it shows the plain version);
+      # every other branch and PR shows "dev (<short commit>)". REF_NAME is the PR number on
+      # a pull request, never "main", so a PR is correctly a dev build.
       - name: Build image
-        run: docker build -t "${IMAGE}:${TAG}" -t "${IMAGE}:${SHORT_SHA}" .
+        run: |
+          RELEASE=""
+          if [ "${GITHUB_REF_NAME}" = "main" ]; then RELEASE="1"; fi
+          docker build \
+            --build-arg "REAPER_GIT_SHA=${SHORT_SHA}" \
+            --build-arg "REAPER_RELEASE=${RELEASE}" \
+            -t "${IMAGE}:${TAG}" -t "${IMAGE}:${SHORT_SHA}" .
 
       - name: Tag latest
         if: github.ref_name == 'main'

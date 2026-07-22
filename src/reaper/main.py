@@ -32,6 +32,7 @@ from reaper.api.setup import router as setup_router
 from reaper.api.whitelist import router as whitelist_router
 from reaper.auth.admins import count_local_admins
 from reaper.auth.recovery import mint_recovery_token
+from reaper.buildinfo import build_version
 from reaper.config import (
     Settings,
     get_settings,
@@ -142,7 +143,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     log.info(
         "reaper.started",
-        version=__version__,
+        version=build_version(),
         destructive_actions_enabled=safety.destructive_allowed,
     )
     if safety.destructive_allowed:
