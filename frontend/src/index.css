@@ -6612,6 +6612,204 @@ button.danger:hover:not(:disabled) {
   font-size: 0.92rem;
 }
 
+/* flowcharts (the `diagram` block). Hand-drawn from the app's tokens, no Mermaid dependency:
+ * a fixed-width spine lane (nodes and vertical links centered in it) plus a branch lane to its
+ * right. The flow sizes to its content and centers; when it is wider than the pane it scrolls
+ * sideways inside .doc-diagram rather than clipping. Tone speaks the app's verdict language:
+ * keep = protect (green), stop = condemn (red); endpoints stay neutral. */
+.docs-content .doc-diagram {
+  margin: 1.1rem 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 1.1rem 1rem 1.2rem;
+  overflow-x: auto;
+}
+.docs-content .doc-diagram-cap {
+  margin: 0 0 0.9rem;
+  font-family: var(--mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.docs-content .doc-diagram-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.1rem;
+  margin: 0 0 1rem;
+}
+.docs-content .doc-diagram-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+.doc-diagram .dd-sw {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex: none;
+  border: 1px solid;
+}
+.doc-diagram .dd-sw.dd-keep {
+  background: var(--protect-soft);
+  border-color: var(--protect);
+}
+.doc-diagram .dd-sw.dd-stop {
+  background: var(--condemn-soft);
+  border-color: var(--condemn);
+}
+
+.doc-diagram .dd-flow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: max-content;
+  margin-inline: auto;
+}
+.doc-diagram .dd-row {
+  display: flex;
+  align-items: center;
+}
+.doc-diagram .dd-spine {
+  width: 232px;
+  flex: none;
+  display: flex;
+  justify-content: center;
+}
+.doc-diagram .dd-node {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 0.5rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 560;
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+  line-height: 1.3;
+  text-align: center;
+  max-width: 220px;
+}
+.doc-diagram .dd-sub {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--muted);
+  font-weight: 450;
+  margin-top: 0.12rem;
+}
+.doc-diagram .dd-decision {
+  border-color: var(--accent-ring);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 0.5rem 1.05rem;
+}
+.doc-diagram .dd-term {
+  border-radius: 999px;
+}
+.doc-diagram .dd-keep {
+  background: var(--protect-soft);
+  border-color: color-mix(in srgb, var(--protect) 42%, transparent);
+  color: var(--protect);
+}
+.doc-diagram .dd-stop {
+  background: var(--condemn-soft);
+  border-color: color-mix(in srgb, var(--condemn) 42%, transparent);
+  color: var(--condemn);
+}
+
+.doc-diagram .dd-drop {
+  width: 232px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.18rem;
+  padding: 0.26rem 0;
+}
+.doc-diagram .dd-vline {
+  width: 2px;
+  height: 15px;
+  background: var(--border-strong);
+}
+.doc-diagram .dd-varrow {
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid var(--border-strong);
+}
+.doc-diagram .dd-elabel {
+  font-family: var(--mono);
+  font-size: 0.64rem;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.doc-diagram .dd-branch {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: none;
+  white-space: nowrap;
+}
+.doc-diagram .dd-branch .dd-hline {
+  width: 24px;
+  height: 2px;
+  background: var(--border-strong);
+  flex: none;
+}
+.doc-diagram .dd-branch .dd-harrow {
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 7px solid var(--border-strong);
+  margin-left: -6px;
+}
+.doc-diagram .dd-branch .dd-node {
+  box-shadow: none;
+  padding: 0.38rem 0.7rem;
+  font-size: 0.76rem;
+}
+.doc-diagram .dd-branch.dd-keep .dd-hline {
+  background: color-mix(in srgb, var(--protect) 55%, var(--border-strong));
+}
+.doc-diagram .dd-branch.dd-keep .dd-harrow {
+  border-left-color: color-mix(in srgb, var(--protect) 55%, var(--border-strong));
+}
+.doc-diagram .dd-branch.dd-stop .dd-hline {
+  background: color-mix(in srgb, var(--condemn) 55%, var(--border-strong));
+}
+.doc-diagram .dd-branch.dd-stop .dd-harrow {
+  border-left-color: color-mix(in srgb, var(--condemn) 55%, var(--border-strong));
+}
+.doc-diagram .dd-phase {
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 232px;
+  margin: 0.5rem 0 0.1rem;
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+.doc-diagram .dd-phase::before,
+.doc-diagram .dd-phase::after {
+  content: "";
+  height: 1px;
+  background: var(--border);
+  flex: 1;
+}
+
 @media (max-width: 720px) {
   .docs-body {
     grid-template-columns: 1fr;

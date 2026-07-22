@@ -27,7 +27,26 @@ export type TableBlock = { kind: "table"; head: string[]; rows: string[][]; hi?:
 export type DefItem = { term: string; text: string };
 export type Defs = { kind: "defs"; items: DefItem[] };
 
-export type Block = Heading | Para | Callout | ListBlock | Steps | TableBlock | Defs;
+/** A flowchart, drawn from the app's own tokens (no Mermaid / vendor dependency). It is a
+ *  vertical spine of nodes with optional side branches, so a safety flow reads at a glance
+ *  and re-themes in light/dark like everything else. `tone` speaks Reaper's verdict language:
+ *  `keep` = the file is kept (green), `stop` = the run stops (red). Endpoints stay neutral. */
+export type DiagramTone = "keep" | "stop";
+export type DiagramShape = "process" | "decision" | "terminal";
+export type DiagramNode = { text: string; sub?: string; shape?: DiagramShape; tone?: DiagramTone };
+/** The connector leading INTO a step from the one above: `label` rides the arrow (yes / no /
+ *  ok), `phase` prints a divider first (e.g. "checked once, before any file"). */
+export type DiagramEnter = { label?: string; phase?: string };
+export type DiagramBranch = { label?: string; node: DiagramNode };
+export type DiagramStep = { node: DiagramNode; enter?: DiagramEnter; branch?: DiagramBranch };
+export type DiagramBlock = {
+  kind: "diagram";
+  title?: string;
+  legend?: { tone: DiagramTone; text: string }[];
+  steps: DiagramStep[];
+};
+
+export type Block = Heading | Para | Callout | ListBlock | Steps | TableBlock | Defs | DiagramBlock;
 
 export type Doc = {
   id: string;
@@ -65,6 +84,7 @@ export const table = (head: string[], rows: string[][], hi?: number): TableBlock
   ...(hi !== undefined ? { hi } : {}),
 });
 export const defs = (items: DefItem[]): Defs => ({ kind: "defs", items });
+export const diagram = (spec: Omit<DiagramBlock, "kind">): DiagramBlock => ({ kind: "diagram", ...spec });
 
 /** The h2 headings a doc exposes as jump targets, for the index sub-list and deep links. */
 export function docSections(doc: Doc): { id: string; text: string }[] {

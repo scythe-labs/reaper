@@ -62,6 +62,38 @@ describe("DocBody", () => {
     expect(hi).toHaveLength(1);
     expect(hi[0]?.textContent).toBe("y");
   });
+
+  it("draws a diagram: readable nodes, a toned branch, and a tone-classed connector", () => {
+    const { container } = render(
+      <DocBody
+        blocks={[
+          {
+            kind: "diagram",
+            title: "One file",
+            legend: [{ tone: "keep", text: "the file is kept" }],
+            steps: [
+              { node: { text: "Start", shape: "terminal" } },
+              {
+                node: { text: "Spared?", shape: "decision" },
+                enter: { label: "next", phase: "for each file" },
+                branch: { label: "yes", node: { text: "Keep this file", tone: "keep" } },
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+    // Every node is real text, so the flow is readable, not a baked image.
+    expect(screen.getByText("Spared?")).toBeInTheDocument();
+    expect(screen.getByText("Keep this file")).toBeInTheDocument();
+    // The keep branch and its connector both carry the verdict tone class.
+    const branch = container.querySelector(".dd-branch.dd-keep");
+    expect(branch).not.toBeNull();
+    expect(branch?.querySelector(".dd-node.dd-keep")?.textContent).toContain("Keep this file");
+    // The connector into step two shows its label and its phase divider.
+    expect(screen.getByText("next")).toBeInTheDocument();
+    expect(screen.getByText("for each file")).toBeInTheDocument();
+  });
 });
 
 describe("DocsModal", () => {

@@ -4,8 +4,8 @@
 // emphasis, the verdict colors) lives here and reuses the app's tokens, so a doc reads as
 // part of Reaper. Add a block variant in blocks.ts, then a case here; nowhere else.
 
-import { type ReactNode } from "react";
-import type { Block, CalloutTone } from "./blocks";
+import { Fragment, type ReactNode } from "react";
+import type { Block, CalloutTone, DiagramBlock, DiagramNode } from "./blocks";
 
 const INLINE = /(\*\*[^*]+\*\*|`[^`]+`)/g;
 
@@ -57,6 +57,71 @@ function CalloutIcon({ tone }: { tone: CalloutTone }) {
       <circle cx="12" cy="12" r="9" />
       <path d="M12 16v-4M12 8h.01" />
     </svg>
+  );
+}
+
+/** One flow node. Its class list encodes shape (decision pill, terminal stadium) and tone
+ *  (keep = green, stop = red), so the same node styling serves the spine and the branches. */
+function DiagramNodeBox({ node }: { node: DiagramNode }) {
+  const cls = ["dd-node"];
+  if (node.shape === "decision") cls.push("dd-decision");
+  else if (node.shape === "terminal") cls.push("dd-term");
+  if (node.tone) cls.push(`dd-${node.tone}`);
+  return (
+    <div className={cls.join(" ")}>
+      {node.text}
+      {node.sub && <span className="dd-sub">{node.sub}</span>}
+    </div>
+  );
+}
+
+/** A hand-drawn flowchart (no Mermaid dependency): a centered spine of nodes joined by
+ *  labelled connectors, each decision able to shed a side branch. Every node is real, readable
+ *  text; the container scrolls sideways on a narrow pane rather than clipping. */
+function DocDiagram({ block }: { block: DiagramBlock }) {
+  return (
+    <div className="doc-diagram" role="group" aria-label={block.title ? `Flowchart: ${block.title}` : "Flowchart"}>
+      {block.title && <p className="doc-diagram-cap">{block.title}</p>}
+      {block.legend && block.legend.length > 0 && (
+        <div className="doc-diagram-legend">
+          {block.legend.map((l, i) => (
+            <span key={i}>
+              <span className={`dd-sw dd-${l.tone}`} />
+              {l.text}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="dd-flow">
+        {block.steps.map((s, i) => (
+          <Fragment key={i}>
+            {i > 0 && (
+              <>
+                {s.enter?.phase && <div className="dd-phase">{s.enter.phase}</div>}
+                <div className="dd-drop">
+                  {s.enter?.label && <span className="dd-elabel">{s.enter.label}</span>}
+                  <span className="dd-vline" />
+                  <span className="dd-varrow" />
+                </div>
+              </>
+            )}
+            <div className="dd-row">
+              <div className="dd-spine">
+                <DiagramNodeBox node={s.node} />
+              </div>
+              {s.branch && (
+                <div className={s.branch.node.tone ? `dd-branch dd-${s.branch.node.tone}` : "dd-branch"}>
+                  <span className="dd-hline" />
+                  <span className="dd-harrow" />
+                  {s.branch.label && <span className="dd-elabel">{s.branch.label}</span>}
+                  <DiagramNodeBox node={s.branch.node} />
+                </div>
+              )}
+            </div>
+          </Fragment>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -131,6 +196,8 @@ function renderBlock(b: Block, key: number): ReactNode {
           </table>
         </div>
       );
+    case "diagram":
+      return <DocDiagram key={key} block={b} />;
     case "defs":
       return (
         <dl key={key} className="doc-defs">
