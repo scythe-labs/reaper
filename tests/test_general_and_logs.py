@@ -101,6 +101,7 @@ class TestGeneralSettings:
             "application_url": None,
             "accent_color": "#25c3ff",
             "api_key_set": False,
+            "expand_seasons_default": False,
             "proxy_trust_enabled": False,
             "trusted_proxies": [],
         }
@@ -121,6 +122,16 @@ class TestGeneralSettings:
         client.put("/api/settings/general", json={"accent_color": "#000000"})
         data = client.put("/api/settings/general", json={"accent_color": ""}).json()
         assert data["accent_color"] == "#25c3ff"
+
+    def test_expand_seasons_default_round_trips(self, client: TestClient) -> None:
+        # Off on a fresh install, so an existing library keeps its collapsed cards.
+        assert client.get("/api/settings/general").json()["expand_seasons_default"] is False
+        data = client.put("/api/settings/general", json={"expand_seasons_default": True}).json()
+        assert data["expand_seasons_default"] is True
+        assert client.get("/api/settings/general").json()["expand_seasons_default"] is True
+        # Turning it back off is a real choice and is kept.
+        data = client.put("/api/settings/general", json={"expand_seasons_default": False}).json()
+        assert data["expand_seasons_default"] is False
 
     def test_partial_save_changes_only_what_was_sent(self, client: TestClient) -> None:
         data = client.put("/api/settings/general", json={"application_name": "Media Reaper"}).json()

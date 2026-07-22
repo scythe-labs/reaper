@@ -29,6 +29,7 @@ const { apiMock } = vi.hoisted(() => ({
     clearOverride: vi.fn(),
     vocabularyValues: vi.fn(),
     reapBreakdown: vi.fn(),
+    general: vi.fn(),
   },
 }));
 
@@ -158,6 +159,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   apiMock.vocabularyValues.mockResolvedValue({ values: [] });
   apiMock.group.mockResolvedValue(null);
+  apiMock.general.mockResolvedValue({
+    application_name: "Reaper",
+    application_url: null,
+    accent_color: "#25c3ff",
+    api_key_set: false,
+    expand_seasons_default: false,
+    proxy_trust_enabled: false,
+    trusted_proxies: [],
+  });
   apiMock.reapBreakdown.mockResolvedValue({
     has_snapshot: true,
     will_reap: 0,
@@ -335,6 +345,34 @@ describe("the whole-show override buttons", () => {
     renderQueue("condemn");
     expect(await screen.findByRole("button", { name: "Spare" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Reap$/ })).not.toBeInTheDocument();
+  });
+});
+
+describe("the expand-seasons-by-default preference", () => {
+  it("starts a show's season list collapsed when the preference is off", async () => {
+    // The beforeEach default is off, so the card rests collapsed until the pill is clicked.
+    apiMock.candidates.mockResolvedValue(page([season(1, "condemn"), season(2, "condemn")]));
+    renderQueue("condemn");
+    const expander = await screen.findByRole("button", { name: "2 seasons" });
+    expect(expander).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("opens a show's season list by default when the preference is on", async () => {
+    apiMock.general.mockResolvedValue({
+      application_name: "Reaper",
+      application_url: null,
+      accent_color: "#25c3ff",
+      api_key_set: false,
+      expand_seasons_default: true,
+      proxy_trust_enabled: false,
+      trusted_proxies: [],
+    });
+    apiMock.candidates.mockResolvedValue(page([season(1, "condemn"), season(2, "condemn")]));
+    renderQueue("condemn");
+    // The preference resolves on its own query, so the card may mount collapsed and expand a
+    // tick later; wait for the expanded state rather than asserting the first frame.
+    const expander = await screen.findByRole("button", { name: "2 seasons" });
+    await waitFor(() => expect(expander).toHaveAttribute("aria-expanded", "true"));
   });
 });
 

@@ -1283,6 +1283,9 @@ class GeneralSettingsOut(BaseModel):
     api_key_set: bool
     """Whether a key exists at all -- the value itself only leaves through the
     dedicated reveal route, never rides along on a settings read."""
+    expand_seasons_default: bool
+    """Whether the review queue opens each show with its season list already expanded.
+    A display preference; off until turned on."""
     proxy_trust_enabled: bool
     trusted_proxies: list[str]
 
@@ -1293,6 +1296,7 @@ class GeneralSettingsIn(BaseModel):
     application_name: str | None = Field(default=None, max_length=60)
     application_url: str | None = Field(default=None, max_length=500)
     accent_color: str | None = Field(default=None, max_length=7)
+    expand_seasons_default: bool | None = None
     proxy_trust_enabled: bool | None = None
     trusted_proxies: list[str] | None = Field(default=None, max_length=20)
 
@@ -1307,6 +1311,7 @@ async def _general_out(session: AsyncSession, settings: Settings) -> GeneralSett
         application_url=await app_settings.get_application_url(session),
         accent_color=await app_settings.get_accent_color(session),
         api_key_set=(await session.get(AppSetting, app_settings.API_KEY_KEY)) is not None,
+        expand_seasons_default=await app_settings.get_expand_seasons_default(session),
         proxy_trust_enabled=await app_settings.proxy_trust_enabled(session, settings),
         trusted_proxies=await app_settings.get_trusted_proxies(session, settings),
     )
@@ -1380,6 +1385,10 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
             await app_settings.set_application_url(session, payload.application_url)
         if payload.accent_color is not None:
             await app_settings.set_accent_color(session, payload.accent_color)
+        if payload.expand_seasons_default is not None:
+            await app_settings.set_expand_seasons_default(
+                session, enabled=payload.expand_seasons_default
+            )
         if payload.proxy_trust_enabled is not None:
             await app_settings.set_proxy_trust_enabled(session, enabled=payload.proxy_trust_enabled)
         if payload.trusted_proxies is not None:

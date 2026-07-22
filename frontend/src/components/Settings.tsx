@@ -347,6 +347,26 @@ function GeneralPanel() {
       </div>
 
       <div className="set-group">
+        <h3>Review queue</h3>
+        <div className="set-rows">
+          <div className="set-row">
+            <span className="set-label">Expand seasons by default</span>
+            <p className="help">
+              TV shows in the review queue open with every season showing.
+            </p>
+            <div className="set-control">
+              <Switch
+                checked={data.expand_seasons_default}
+                disabled={save.isPending}
+                ariaLabel="Expand seasons by default"
+                onChange={(enabled) => save.mutate({ expand_seasons_default: enabled })}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="set-group">
         <h3>API access</h3>
         <div className="set-rows">
           <div className="set-row">
