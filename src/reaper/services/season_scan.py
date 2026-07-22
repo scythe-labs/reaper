@@ -1031,7 +1031,18 @@ async def gather(
     # content), so this counts how many shows have no reapable season, not how many vanished.
     # Only a no-content show (nothing on disk) is left out, because it has nothing to show.
     if no_content:
-        log.info("season_scan.shows_without_content", count=len(no_content))
+        # These shows have nothing on disk, so there is no season to put in the queue. Warned
+        # (not INFO) so the operator is aware some monitored shows are absent for a benign
+        # reason; the titles are in the per-show season_scan.series_decision lines
+        # (outcome=no_content) at debug.
+        log.warning(
+            "season_scan.shows_without_content",
+            count=len(no_content),
+            detail=(
+                f"{len(no_content)} TV shows are monitored with no episodes downloaded, so they "
+                "are not in the review queue. There is nothing on disk to remove."
+            ),
+        )
     if fully_protected:
         log.info("season_scan.fully_protected_shows", count=len(fully_protected))
 

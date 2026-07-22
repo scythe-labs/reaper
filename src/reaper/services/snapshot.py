@@ -1625,11 +1625,19 @@ def _raw_items(
             )
         )
     if without_file:
-        # Not unmatched, just nothing to reap yet: monitored in Radarr with no downloaded
-        # file. Each such movie emitted a greppable scan.movie_decision line (outcome=no_file)
-        # naming it; this INFO count is the snapshot-level summary, so "no movie candidates"
-        # reads apart from "every movie was skipped" without the per-item debug firehose.
-        log.info("scan.movies_without_file", instance_id=instance_id, count=len(without_file))
+        # Not unmatched, just nothing to reap yet: monitored in Radarr with no downloaded file,
+        # so there is nothing on disk to put in the queue. Warned (not INFO) so the operator is
+        # aware some monitored movies are absent for a benign reason; each such movie also
+        # emitted a scan.movie_decision line (outcome=no_file) naming it at debug.
+        log.warning(
+            "scan.movies_without_file",
+            instance_id=instance_id,
+            count=len(without_file),
+            detail=(
+                f"{len(without_file)} movies are monitored with no file downloaded, so they are "
+                "not in the review queue. There is nothing on disk to remove."
+            ),
+        )
     # The stale-mapping guard: warn once for a mapped library that never matched a candidate
     # library across this instance's movies (renamed library, or a wrong mapping). Advisory,
     # visible in the in-app Logs beside scan.plex_unmatched; never degrades or changes a verdict.
