@@ -91,6 +91,16 @@ class Instance(Base):
     # which keeps today's abstain-and-keep behavior for a duplicated show.
     plex_library_map: Mapped[str | None] = mapped_column(Text, default=None)
 
+    # Multi-Seerr requester attribution (SEERR rows only). A JSON object mapping this Seerr
+    # portal's own service ids to the Reaper Sonarr/Radarr instance each one adds media to,
+    # e.g. {"2": 7, "3": 8}. A Seerr request carries the *arr's own item id (externalServiceId)
+    # and the portal-local serviceId, so this map resolves serviceId -> Reaper instance, which
+    # lets "requested by" bind the exact copy (main vs restricted library) a person asked for
+    # rather than the loose tmdb/tvdb union across every copy (services.requested_by.build_map).
+    # Display only, never a gate. Nullable and NULL by default, so the additive migration only
+    # ADDs a nullable column and every existing Seerr reads as "no map" -- today's union.
+    service_instance_map: Mapped[str | None] = mapped_column(Text, default=None)
+
     created_at: Mapped[UtcTimestamp]
     last_ok_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
     last_error: Mapped[str | None] = mapped_column(Text, default=None)

@@ -238,6 +238,44 @@ def _parse_quota(node: Any) -> QuotaStatus:
     )
 
 
+@dataclass(frozen=True)
+class SeerrService:
+    """One Sonarr/Radarr service configured on this Seerr portal (from ``/settings/*``).
+
+    ``service_id`` is the portal-local id a request's ``serviceId`` refers to (the join the
+    operator maps to a Reaper instance). ``hostname``/``port``/``use_ssl``/``base_url`` are how
+    THIS Seerr reaches the *arr, used only to *suggest* a matching Reaper instance -- the operator
+    confirms, because Seerr and Reaper may reach the same server at different addresses."""
+
+    service_id: int
+    kind: str  # "sonarr" | "radarr"
+    name: str
+    is_4k: bool
+    hostname: str | None
+    port: int | None
+    use_ssl: bool
+    base_url: str  # the *arr's own base path (e.g. "/sonarr"), NOT a full URL
+
+
+def _parse_service(payload: dict[str, Any], kind: str) -> SeerrService | None:
+    """One service row, or ``None`` when it carries no usable id (never a crash)."""
+    service_id = _as_int(payload.get("id"))
+    if service_id is None:
+        return None
+    return SeerrService(
+        service_id=service_id,
+        kind=kind,
+        name=str(payload.get("name") or "").strip() or f"{kind.capitalize()} {service_id}",
+        is_4k=bool(payload.get("is4k")),
+        hostname=(str(payload.get("hostname")).strip() or None)
+        if payload.get("hostname")
+        else None,
+        port=_as_int(payload.get("port")),
+        use_ssl=bool(payload.get("useSsl")),
+        base_url=str(payload.get("baseUrl") or "").strip(),
+    )
+
+
 def _parse_user(payload: dict[str, Any]) -> SeerrUser:
     return SeerrUser(
         seerr_user_id=_as_int(payload.get("id")) or 0,
@@ -361,3 +399,25 @@ class SeerrClient(BaseClient):
         return UserQuota(
             movie=_parse_quota(payload.get("movie")), tv=_parse_quota(payload.get("tv"))
         )
+
+    async def services(self) -> list[SeerrService]:
+        """Every Sonarr and Radarr service this portal has configured.
+
+        Reads ``/settings/sonarr`` and ``/settings/radarr`` (each a plain JSON array). Used only
+        to build the serviceId -> Reaper-instance mapping UI; a request already carries the
+        ``serviceId`` this list's ids match. Requires the portal's admin API key (settings are
+        admin-scoped); a non-object array element is skipped rather than crashing the list.
+        """
+        out: list[SeerrService] = []
+        for path, kind in (
+            ("/api/v1/settings/sonarr", "sonarr"),
+            ("/api/v1/settings/radarr", "radarr"),
+        ):
+            payload = await self.get_json(path)
+            if not isinstance(payload, list):
+                raise IntegrationError(self.service, f"{path} did not return a list")
+            for row in payload:
+                if isinstance(row, dict) and (svc := _parse_service(row, kind)) is not None:
+                    out.append(svc)
+        log.info("seerr.services_loaded", count=len(out))
+        return out

@@ -7,8 +7,8 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-21 (an operator can map each *arr root folder to a Plex library, so a
-title kept in both an HD and a 4K library is bound to the right copy instead of abstaining)
+Last updated: 2026-07-22 (an operator can map each Seerr service to a Reaper *arr instance, so
+"requested by" names the exact copy a person asked for across a multi-Seerr, multi-library setup)
 
 ### Newest — the HD/4K library map tells a duplicated title's two copies apart
 
@@ -2870,3 +2870,36 @@ capped on any portal — the honest "most constrained" reading. The list card na
 card enrichment + sort control + watched-line reorder, CSS, vitest); the rating-key
 display-join refinement for per-file `requested_by` precision (improvement #1); an
 adversarial-review pass; and an end-to-end browser drive.
+
+## Per-copy "requested by" via a Seerr service -> instance map (done, gates green)
+
+**The problem.** "Requested by" joins Seerr to a candidate on tmdb/tvdb, which is a *union*:
+a title kept in two libraries (a main one and a restricted one for a specific group) shares
+one tmdb, so every copy showed everyone who asked for the title, not who asked for *that* copy.
+The rating-key join can't fix it (Overseerr has one non-4K `ratingKey` slot, so it collapses),
+and Seerr stores no file path. What a request *does* carry is the *arr's own item id
+(`externalServiceId`) and the portal-local `serviceId` -- and `externalServiceId` equals the
+`movie_id`/`series_id` in Reaper's `media_key`. The one missing dimension is *which* Reaper
+instance a portal's `serviceId` points at (serviceId numbering is local to each Seerr).
+
+**The fix (mirrors the HD/4K library map).** A nullable `instance.service_instance_map` JSON on
+the Seerr row (`{serviceId: reaper_instance_id}`, additive migration `4d5e6f708192`, NULL = the
+old union, no rebuild). `build_map` now files each request under **two** keys: the loose tmdb/tvdb
+union (always, the fallback) and -- when the source's map resolves the request's `serviceId` --
+the exact copy's `media_key` (`movie_instance_key`/`season_instance_key`/`show_instance_key`, equal
+by construction to the candidate's own key). `snapshot`/`season_scan` read the precise key first,
+the union second, so an unmapped or dedup-onto-main request is exactly today's behavior. Still
+display-only, never a gate; `build_request_index` (the scoring FACT) is untouched.
+
+**Config UI.** `GET /instances/{id}/seerr-services` lists the portal's Sonarr/Radarr services
+(`/settings/{sonarr,radarr}`, admin key) each with a suggested Reaper instance (host:port match,
+exactly-one-or-none). Edit-Seerr modal grows a "Requested-by instances" section in the library-map
+grammar (per-service instance select, "suggested" tag that clears on pick, save sends what's shown,
+unreadable list -> notice not empty). `SeerrService`/`decode_service_instance_map` treat a bad body
+as `{}` (rule 32). Serves the real 2-Seerr / 2-Sonarr, main-vs-restricted-library setup: the clean
+1:1:1 case where the map is tiny and unambiguous. **Superseded improvement #1** (the rating-key
+join) with the id join, which is immune to both the non-4K `ratingKey` collapse and the
+multi-Plex-server id-space collision.
+
+**Gates:** ruff/mypy clean, 1858 backend tests (+22), 187 frontend tests (+4), alembic upgrade+check
+clean, docker build clean. Not yet driven end-to-end against a live multi-Seerr instance.

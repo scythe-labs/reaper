@@ -23,6 +23,7 @@ import json
 import ssl
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 import httpx
 import structlog
@@ -31,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clients.arr import RadarrClient, SonarrClient
 from reaper.clients.base import BaseClient, IntegrationError
-from reaper.clients.seerr import SeerrClient
+from reaper.clients.seerr import SeerrClient, SeerrService
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import utcnow
 from reaper.config import RuntimeSafety
@@ -87,6 +88,7 @@ class InstanceView:
     verify_tls: bool
     add_import_exclusion: bool
     plex_library_map: dict[str, str]
+    service_instance_map: dict[str, int]
     has_key: bool
     api_path_prefix: str
     detected_version: str | None
@@ -179,6 +181,56 @@ def _encode_library_map(mapping: Mapping[str, str] | None) -> str | None:
     return json.dumps(cleaned, sort_keys=True) if cleaned else None
 
 
+def decode_service_instance_map(raw: str | None) -> dict[str, int]:
+    """The stored map as ``{Seerr service id: Reaper instance id}``, or ``{}``.
+
+    Keys are the Seerr portal's own service ids as strings (JSON object keys are strings);
+    values are the Reaper Sonarr/Radarr instance id each service adds media to. A missing,
+    malformed, or wrong-typed body reads as an empty map -- never a crash, and exactly as
+    harmless as an absent one: ``build_map`` then falls back to the loose tmdb/tvdb union, which
+    is today's behavior (rule 32, a stored config must not be able to crash a scan). A value
+    that is not a positive int is dropped, since it can never match a real instance id.
+    """
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, int] = {}
+    for k, v in data.items():
+        if not (isinstance(k, str) and k.strip()):
+            continue
+        # bool is an int subclass; a JSON true/false is never a real instance id, so exclude it.
+        if isinstance(v, bool) or not isinstance(v, int) or v <= 0:
+            continue
+        out[k.strip()] = v
+    return out
+
+
+def _encode_service_instance_map(mapping: Mapping[str, int] | None) -> str | None:
+    """The map as a stored JSON string, or ``None`` to store SQL NULL (no map).
+
+    Blank keys and non-positive-int values are dropped, and an empty result stores NULL rather
+    than ``"{}"`` so "no mappings" is one state, not two -- :func:`decode_service_instance_map`
+    reads NULL and ``{}`` identically as "no map".
+    """
+    if not mapping:
+        return None
+    cleaned = {
+        k.strip(): v
+        for k, v in mapping.items()
+        if isinstance(k, str)
+        and k.strip()
+        and not isinstance(v, bool)
+        and isinstance(v, int)
+        and v > 0
+    }
+    return json.dumps(cleaned, sort_keys=True) if cleaned else None
+
+
 def _view(row: Instance) -> InstanceView:
     return InstanceView(
         id=row.id,
@@ -189,6 +241,7 @@ def _view(row: Instance) -> InstanceView:
         verify_tls=row.verify_tls,
         add_import_exclusion=row.add_import_exclusion,
         plex_library_map=decode_library_map(row.plex_library_map),
+        service_instance_map=decode_service_instance_map(row.service_instance_map),
         has_key=bool(row.api_key_enc),
         api_path_prefix=row.api_path_prefix,
         detected_version=row.detected_version,
@@ -274,6 +327,7 @@ async def update_instance(
     verify_tls: bool | None = None,
     add_import_exclusion: bool | None = None,
     plex_library_map: Mapping[str, str] | None = None,
+    service_instance_map: Mapping[str, int] | None = None,
 ) -> InstanceView:
     """Update an instance. An omitted (or blank) ``api_key`` keeps the stored one.
 
@@ -312,6 +366,10 @@ async def update_instance(
         # An empty dict clears the map to NULL, so "the operator removed every mapping" and
         # "there was never a map" are the one state the resolver reads as "no library declared".
         row.plex_library_map = _encode_library_map(plex_library_map)
+    if service_instance_map is not None:  # a dict (even empty) replaces; None keeps the stored map
+        # An empty dict clears the map to NULL, so "removed every mapping" and "never had one"
+        # are the one state build_map reads as "no map" (fall back to the tmdb/tvdb union).
+        row.service_instance_map = _encode_service_instance_map(service_instance_map)
 
     await session.flush()
     log.info("instance.updated", kind=row.kind.value, name=row.name)
@@ -584,4 +642,79 @@ async def instance_root_folders(
     return [
         RootFolderSuggestion(path=p, suggested_library=suggest_library(p, section_paths))
         for p in identity.root_folder_paths(payload)
+    ]
+
+
+@dataclass(frozen=True)
+class ServiceInstanceSuggestion:
+    """One Sonarr/Radarr service on a Seerr portal, with a suggested Reaper instance to map to."""
+
+    service_id: int
+    kind: str  # "sonarr" | "radarr"
+    name: str
+    is_4k: bool
+    suggested_instance_id: int | None
+
+
+def _host_port(url: str) -> tuple[str, int]:
+    """A URL's ``(lowercased host, port)`` with the scheme's default port filled in."""
+    parts = urlsplit(url if "://" in url else f"//{url}", scheme="http")
+    host = (parts.hostname or "").strip().lower()
+    port = parts.port if parts.port is not None else (443 if parts.scheme == "https" else 80)
+    return host, port
+
+
+def _suggest_instance(service: SeerrService, arr_rows: Sequence[Instance]) -> int | None:
+    """The Reaper instance whose address matches this Seerr service, or ``None``.
+
+    A prefill only: matched on kind + host + port, and suggested only when EXACTLY ONE Reaper
+    instance matches, so an ambiguous or missing match leaves the operator to pick rather than
+    get a wrong default. Seerr and Reaper often reach the same server at different addresses
+    (a container hostname vs a LAN ip), so a miss here is expected, not an error.
+    """
+    if not service.hostname or service.port is None:
+        return None
+    want_kind = InstanceKind.SONARR if service.kind == "sonarr" else InstanceKind.RADARR
+    svc_host = service.hostname.strip().lower()
+    matches = [
+        r.id
+        for r in arr_rows
+        if r.kind is want_kind and _host_port(r.base_url) == (svc_host, service.port)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+async def seerr_services(
+    session: AsyncSession,
+    box: SecretBox,
+    instance_id: int,
+) -> list[ServiceInstanceSuggestion]:
+    """This Seerr portal's Sonarr/Radarr services, each with a suggested Reaper instance.
+
+    Seerr only. The live ``/settings`` read exercises the stored (admin) key. The suggestion
+    matches the service's own host:port to a Reaper Sonarr/Radarr instance -- a prefill only,
+    since the two apps may reach the same server at different addresses, so the operator
+    confirms. Raises ``InstanceError`` for a wrong kind or a missing instance, and lets the Seerr
+    client's error surface for a connection or non-admin-key failure (the caller maps it).
+    """
+    row = await _get(session, instance_id)
+    if row.kind is not InstanceKind.SEERR:
+        raise InstanceError("Only Seerr portals have request services to map to an instance.")
+    arr_rows = (
+        await session.scalars(
+            select(Instance).where(Instance.kind.in_((InstanceKind.SONARR, InstanceKind.RADARR)))
+        )
+    ).all()
+    client = _client(row.kind, row.base_url, box.decrypt(row.api_key_enc), verify=row.verify_tls)
+    async with client:
+        services = await client.services()  # type: ignore[attr-defined]
+    return [
+        ServiceInstanceSuggestion(
+            service_id=s.service_id,
+            kind=s.kind,
+            name=s.name,
+            is_4k=s.is_4k,
+            suggested_instance_id=_suggest_instance(s, arr_rows),
+        )
+        for s in services
     ]

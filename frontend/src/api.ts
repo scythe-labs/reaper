@@ -870,6 +870,10 @@ export interface Instance {
    *  it lands in. When a title is in two libraries, the copy in the mapped library is bound.
    *  Empty means no mapping, so a duplicated title is kept, not matched. Sonarr/Radarr only. */
   plex_library_map: Record<string, string>;
+  /** Multi-Seerr requester map: each of this portal's service ids, to the Reaper Sonarr/Radarr
+   *  instance id it adds media to. Lets "requested by" name the exact copy a person asked for
+   *  when a title is in more than one library. Empty means the loose union. Seerr only. */
+  service_instance_map: Record<string, number>;
   has_key: boolean;
   api_path_prefix: string;
   detected_version: string | null;
@@ -887,6 +891,15 @@ export interface InstanceTest {
 export interface RootFolder {
   path: string;
   suggested_library: string | null;
+}
+
+/** One Sonarr/Radarr service on a Seerr portal, with a suggested Reaper instance to prefill. */
+export interface SeerrService {
+  service_id: number;
+  kind: "sonarr" | "radarr";
+  name: string;
+  is_4k: boolean;
+  suggested_instance_id: number | null;
 }
 
 export interface PlexStatus {
@@ -1069,12 +1082,16 @@ export const api = {
       verify_tls?: boolean;
       add_import_exclusion?: boolean;
       plex_library_map?: Record<string, string>;
+      service_instance_map?: Record<string, number>;
     },
   ) => put<Instance>(`/api/settings/instances/${id}`, body),
   deleteInstance: (id: number) => del<{ removed: boolean }>(`/api/settings/instances/${id}`),
   /** This instance's root folders, each with a suggested Plex library to prefill the map. */
   instanceRootFolders: (id: number) =>
     request<RootFolder[]>(`/api/settings/instances/${id}/root-folders`),
+  /** This Seerr portal's Sonarr/Radarr services, each with a suggested Reaper instance. */
+  instanceSeerrServices: (id: number) =>
+    request<SeerrService[]>(`/api/settings/instances/${id}/seerr-services`),
   testInstance: (body: { kind: string; base_url: string; api_key: string; verify_tls?: boolean }) =>
     post<InstanceTest>("/api/settings/instances/test", body),
   testSavedInstance: (id: number) =>

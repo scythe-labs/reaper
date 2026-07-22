@@ -193,7 +193,7 @@ async def build_sources(
     list[snapshot_service.RadarrSource],
     list[snapshot_service.SonarrSource],
     TautulliClient,
-    list[SeerrClient],
+    list[requested_by.SeerrSource],
     PlexClient | None,
 ]:
     """Build clients for EVERY enabled instance, each owned by ``stack``.
@@ -288,7 +288,7 @@ async def build_sources(
         verify=tautulli_row.verify_tls,
     )
     await stack.enter_async_context(tautulli)
-    seerrs: list[SeerrClient] = []
+    seerrs: list[requested_by.SeerrSource] = []
     for r in seerr_rows:
         seerr = SeerrClient(
             r.base_url,
@@ -297,7 +297,12 @@ async def build_sources(
             verify=r.verify_tls,
         )
         await stack.enter_async_context(seerr)
-        seerrs.append(seerr)
+        seerrs.append(
+            requested_by.SeerrSource(
+                client=seerr,
+                service_instance_map=instances.decode_service_instance_map(r.service_instance_map),
+            )
+        )
     plex: PlexClient | None = None
     if plex_uri is not None and plex_token is not None:
         plex = PlexClient(plex_uri, plex_token, safety=safety, verify=plex_verify)
@@ -643,16 +648,17 @@ async def _run_scan_locked(
                 tv_keep_match=tv_policy.keep_tags_match,
                 plex_server=plex_server,
             ),
-            # Who requested what, keyed by media_key, so each candidate can carry a
-            # "requested by" and the review queue can filter to just-requested media.
-            # Merged across every Seerr. Optional and soft: no Seerr, or any unreachable
-            # one, just leaves those requests off the map, never a failed scan.
+            # Who requested what: each candidate's "requested by", and the review queue's
+            # just-requested filter. Keyed by the exact copy's media_key where the operator
+            # mapped the Seerr service, else by tmdb/tvdb. Merged across every Seerr. Optional
+            # and soft: no Seerr, or any unreachable one, just leaves those requests off the
+            # map, never a failed scan.
             requested_by.build_map(seerrs),
             # A separate three-state index used as a scoring FACT (was this requested?),
             # built from every request in every Seerr and fail-closed to Unknown when ANY
             # Seerr can't be read -- distinct from the display map above, which is
             # deliberately loose and available-only.
-            requested_by.build_request_index(seerrs),
+            requested_by.build_request_index([s.client for s in seerrs]),
         )
         lists_ms = round((time.monotonic() - lists_started) * 1000)
         log.info(

@@ -1569,7 +1569,14 @@ def _raw_items(
                 summary=_summary(movie.get("overview")),
                 # poster_url is derived from the Plex rating key at read time (api/poster.py),
                 # not stored -- the *arr's art is stale. See routes._candidate_out.
-                requested_by=requested.get(requested_by.movie_key(tmdb_id) or ""),
+                # Precise copy first (this exact media_key, where the operator mapped the Seerr
+                # service), then the loose tmdb union -- see requested_by.build_map.
+                requested_by=(
+                    requested.get(
+                        requested_by.movie_instance_key(instance_id, int(movie["id"])) or ""
+                    )
+                    or requested.get(requested_by.movie_key(tmdb_id) or "")
+                ),
                 matched_by=resolution.matched_by,
                 match_detail=resolution.detail,
                 match_status=resolution.status,

@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The "requested by" join -- built on external ids, and never a gate.
+"""The "requested by" join -- and never a gate.
 
-The map keys on tmdb/tvdb rather than the arr instance id, because Seerr and Reaper number
-their services differently. This is display-only: the worst a wrong match can do is show
-the wrong name, so a loose external-id join is acceptable here in a way it never is on the
-delete path.
+By default the map keys on tmdb/tvdb (a loose union: every copy of a title shows everyone who
+asked for the title). When the operator maps a Seerr service to a Reaper instance, a request
+also files under the exact copy's media_key, so a title kept in two libraries attributes each
+copy to the right person. Either way this is display-only: the worst a wrong match can do is
+show the wrong name, so a loose join is acceptable here in a way it never is on the delete path.
 """
 
 from __future__ import annotations
@@ -54,18 +55,26 @@ class _Broken:
         raise IntegrationError("seerr", "boom")
 
 
+def _src(client: object, service_map: dict[str, int] | None = None) -> requested_by.SeerrSource:
+    """Wrap a fake Seerr client as a source, optionally with a serviceId -> instance map."""
+    return requested_by.SeerrSource(
+        client=client,  # type: ignore[arg-type]
+        service_instance_map=service_map or {},
+    )
+
+
 class TestBuildMap:
     async def test_no_seerr_is_an_empty_map(self) -> None:
         assert await requested_by.build_map([]) == {}
 
     async def test_a_movie_maps_under_its_tmdb_key(self) -> None:
         seerr = _FakeSeerr([_req(media_type="movie", tmdb_id=603)])
-        result = await requested_by.build_map([seerr])  # type: ignore[list-item]
+        result = await requested_by.build_map([_src(seerr)])
         assert result[requested_by.movie_key(603)] == "Alice"
 
     async def test_a_show_maps_under_the_show_and_each_requested_season(self) -> None:
         seerr = _FakeSeerr([_req(media_type="tv", tvdb_id=81189, seasons=(2, 3))])
-        result = await requested_by.build_map([seerr])  # type: ignore[list-item]
+        result = await requested_by.build_map([_src(seerr)])
         assert result[requested_by.show_key(81189)] == "Alice"
         assert result[requested_by.season_key(81189, 2)] == "Alice"
         assert result[requested_by.season_key(81189, 3)] == "Alice"
@@ -79,14 +88,14 @@ class TestBuildMap:
                 _req(tmdb_id=1, requester=Requester(3, 3, "c", "Cara", None)),
             ]
         )
-        result = await requested_by.build_map([seerr])  # type: ignore[list-item]
+        result = await requested_by.build_map([_src(seerr)])
         assert result[requested_by.movie_key(1)] == "Alice + 2 others"
 
     async def test_requests_are_merged_across_every_seerr(self) -> None:
         # The reported bug: a title requested only in the SECOND portal must still map.
         first = _FakeSeerr([_req(tmdb_id=1, requester=Requester(1, 1, "a", "Alice", None))])
         second = _FakeSeerr([_req(tmdb_id=2, requester=Requester(2, 2, "b", "Bob", None))])
-        result = await requested_by.build_map([first, second])  # type: ignore[list-item]
+        result = await requested_by.build_map([_src(first), _src(second)])
         assert result[requested_by.movie_key(1)] == "Alice"
         assert result[requested_by.movie_key(2)] == "Bob"
 
@@ -94,17 +103,94 @@ class TestBuildMap:
         # Alice asked for the same movie on both portals: one name, not "Alice + 1 other".
         first = _FakeSeerr([_req(tmdb_id=1, requester=Requester(1, 1, "a", "Alice", None))])
         second = _FakeSeerr([_req(tmdb_id=1, requester=Requester(1, 1, "a", "Alice", None))])
-        result = await requested_by.build_map([first, second])  # type: ignore[list-item]
+        result = await requested_by.build_map([_src(first), _src(second)])
         assert result[requested_by.movie_key(1)] == "Alice"
 
     async def test_an_unreachable_portal_is_best_effort_not_a_wipe(self) -> None:
         # Soft display map: one broken portal must not blank the reachable one's names.
         good = _FakeSeerr([_req(tmdb_id=1, requester=Requester(1, 1, "a", "Alice", None))])
-        result = await requested_by.build_map([good, _Broken()])  # type: ignore[list-item]
+        result = await requested_by.build_map([_src(good), _src(_Broken())])
         assert result[requested_by.movie_key(1)] == "Alice"
 
     async def test_no_seerr_at_all_is_an_empty_map(self) -> None:
-        assert await requested_by.build_map([_Broken()]) == {}  # type: ignore[list-item]
+        assert await requested_by.build_map([_src(_Broken())]) == {}
+
+
+class TestBuildMapPrecisePerCopy:
+    """The service map: a request also files under the exact copy's media_key.
+
+    The multi-Seerr, multi-library case -- a title kept in a main library (added by one Sonarr)
+    and a restricted one (added by another) -- so each copy attributes to the person who asked
+    for THAT copy, not the union of everyone who asked for the title.
+    """
+
+    async def test_a_mapped_movie_files_under_its_exact_media_key(self) -> None:
+        # serviceId 2 on this portal adds to Reaper instance 7 (a Radarr). The request's
+        # externalServiceId (arr_id) is that Radarr's movie id, so the precise key is the
+        # candidate's own media_key radarr:7:55.
+        seerr = _FakeSeerr([_req(media_type="movie", tmdb_id=603, arr_id=55, arr_instance_id=2)])
+        result = await requested_by.build_map([_src(seerr, {"2": 7})])
+        # The precise key IS the candidate's media_key by construction (radarr:{inst}:{arr id}).
+        assert requested_by.movie_instance_key(7, 55) == "radarr:7:55"
+        assert result["radarr:7:55"] == "Alice"
+        # The loose tmdb union still exists as the fallback for un-mapped copies.
+        assert result[requested_by.movie_key(603)] == "Alice"
+
+    async def test_two_people_two_copies_attribute_to_their_own_copy(self) -> None:
+        # Alice asked on the primary portal (serviceId 1 -> instance 7, the main library);
+        # Bob on the secondary (serviceId 1 -> instance 8, the restricted library). Same tmdb,
+        # different Radarr instances, so different precise media_keys.
+        primary = _FakeSeerr(
+            [
+                _req(
+                    tmdb_id=603,
+                    arr_id=55,
+                    arr_instance_id=1,
+                    requester=Requester(1, 1, "a", "Alice", None),
+                )
+            ]
+        )
+        secondary = _FakeSeerr(
+            [
+                _req(
+                    tmdb_id=603,
+                    arr_id=99,
+                    arr_instance_id=1,
+                    requester=Requester(2, 2, "b", "Bob", None),
+                )
+            ]
+        )
+        result = await requested_by.build_map([_src(primary, {"1": 7}), _src(secondary, {"1": 8})])
+        # Each copy attributes to its own requester...
+        assert result[requested_by.movie_instance_key(7, 55)] == "Alice"
+        assert result[requested_by.movie_instance_key(8, 99)] == "Bob"
+        # ...while the loose union still lists both (the fallback for any un-mapped copy).
+        assert result[requested_by.movie_key(603)] == "Alice + 1 other"
+
+    async def test_a_mapped_show_files_under_group_key_and_each_season_key(self) -> None:
+        seerr = _FakeSeerr(
+            [_req(media_type="tv", tvdb_id=81189, seasons=(2, 3), arr_id=42, arr_instance_id=5)]
+        )
+        result = await requested_by.build_map([_src(seerr, {"5": 9})])
+        assert result[requested_by.show_instance_key(9, 42)] == "Alice"
+        assert result[requested_by.season_instance_key(9, 42, 2)] == "Alice"
+        assert result[requested_by.season_instance_key(9, 42, 3)] == "Alice"
+        assert requested_by.season_instance_key(9, 42, 1) not in result
+
+    async def test_an_unmapped_service_keeps_only_the_loose_key(self) -> None:
+        # serviceId 3 is not in the map, so no precise key is filed -- today's behavior.
+        seerr = _FakeSeerr([_req(media_type="movie", tmdb_id=603, arr_id=55, arr_instance_id=3)])
+        result = await requested_by.build_map([_src(seerr, {"2": 7})])
+        assert result[requested_by.movie_key(603)] == "Alice"
+        assert requested_by.movie_instance_key(7, 55) not in result
+        assert requested_by.movie_instance_key(3, 55) not in result
+
+    async def test_a_request_with_no_arr_id_files_only_the_loose_key(self) -> None:
+        # A manual add / dedup case: mapped service, but no externalServiceId to pin the copy.
+        seerr = _FakeSeerr([_req(media_type="movie", tmdb_id=603, arr_id=None, arr_instance_id=2)])
+        result = await requested_by.build_map([_src(seerr, {"2": 7})])
+        assert result[requested_by.movie_key(603)] == "Alice"
+        assert not any(k.startswith("radarr:") for k in result)
 
 
 class TestRequestIndex:

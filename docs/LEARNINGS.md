@@ -699,6 +699,29 @@ Real request data contains the same title requested by several different people.
 per request, a film Alice requested and watched is still condemned on Bob's row — and
 they share one file, so it is deleted out from under her.
 
+### Seerr models "quality" (HD vs 4K), not "library" — so per-copy "requested by" joins on the *arr id, not the rating key (2026-07-22)
+
+An operator can keep the same title in two Plex libraries — a main one and a restricted one
+for a specific group, fed by two different Sonarr/Radarr instances. Naming *who asked for that
+copy* looks like it should join on the Plex `ratingKey` Seerr already carries. It can't:
+Overseerr's `Media` entity has exactly two rating-key slots, `ratingKey` and `ratingKey4k`,
+selected by an `is4k` flag. Its whole notion of "the same title twice" **is** the HD-vs-4K axis;
+two non-4K copies collapse to one `ratingKey`. And Seerr stores no file path, so the library-map
+trick can't cross over either.
+
+What a request *does* carry is `externalServiceId` (the *arr's own movie/series id) and a
+portal-local `serviceId`. `externalServiceId` equals the `movie_id`/`series_id` in Reaper's
+`media_key`, and two copies in two *arr instances have different ids — so the join key is
+`(instance, externalServiceId)`, i.e. the candidate's own `media_key`. The only missing piece is
+`serviceId -> Reaper instance`, which `serviceId` numbering (local to each Seerr) can't give on
+its own; an operator-declared map supplies it (`instance.service_instance_map`). This join is
+immune to two traps the rating-key join is not: the non-4K `ratingKey` collapse above, and
+multi-Plex-server id-space collisions (Plex rating keys are small ints that repeat across servers).
+
+⇒ For a cross-system join, prefer the id that is stable *and* namespaced to the thing you mean.
+The *arr item id (with its instance) names one file; the Plex rating key names one server's view
+of one *quality tier*, which is a coarser and less portable key than it looks.
+
 ### The IMDb Top 250 mirror carries no rank
 
 `https://api.radarr.video/v1/list/imdb/top250` returns 250 items with `TmdbId` and

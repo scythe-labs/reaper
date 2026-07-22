@@ -107,6 +107,7 @@ class InstanceOut(BaseModel):
     verify_tls: bool
     add_import_exclusion: bool
     plex_library_map: dict[str, str]
+    service_instance_map: dict[str, int]
     has_key: bool
     api_path_prefix: str
     detected_version: str | None = None
@@ -137,6 +138,9 @@ class InstanceUpdateIn(BaseModel):
     # The HD/4K library map: {root folder path: Plex library title}. Omitted keeps the stored
     # map; a dict (even empty) replaces it, and an empty one clears it. Only Sonarr/Radarr.
     plex_library_map: dict[str, str] | None = None
+    # The multi-Seerr requester map: {Seerr service id: Reaper instance id}. Omitted keeps the
+    # stored map; a dict (even empty) replaces it, and an empty one clears it. Only Seerr.
+    service_instance_map: dict[str, int] | None = None
 
 
 class InstanceTestIn(BaseModel):
@@ -149,6 +153,14 @@ class InstanceTestIn(BaseModel):
 class RootFolderOut(BaseModel):
     path: str
     suggested_library: str | None = None
+
+
+class SeerrServiceOut(BaseModel):
+    service_id: int
+    kind: str  # "sonarr" | "radarr"
+    name: str
+    is_4k: bool
+    suggested_instance_id: int | None = None
 
 
 class TestOut(BaseModel):
@@ -425,6 +437,7 @@ async def update_instance(
                 verify_tls=payload.verify_tls,
                 add_import_exclusion=payload.add_import_exclusion,
                 plex_library_map=payload.plex_library_map,
+                service_instance_map=payload.service_instance_map,
             )
         except instances.InstanceConflictError as exc:
             # A rename into an existing name is a conflict, not a missing resource.
@@ -505,6 +518,36 @@ async def instance_root_folders(request: Request, instance_id: int) -> list[Root
         except IntegrationError as exc:
             raise HTTPException(502, f"Could not read the folder list: {exc}") from exc
     return [RootFolderOut(path=f.path, suggested_library=f.suggested_library) for f in folders]
+
+
+@router.get("/instances/{instance_id}/seerr-services")
+async def instance_seerr_services(request: Request, instance_id: int) -> list[SeerrServiceOut]:
+    """This Seerr portal's Sonarr/Radarr services, each with a suggested Reaper instance.
+
+    The suggestion matches the service's own address to a Reaper instance; it only fills a
+    control the operator confirms, never binds. Seerr only. A 502 when the portal cannot be
+    reached (or its key is not admin, so settings are refused), so the modal can say so rather
+    than show an empty list as if the portal had no services.
+    """
+    async with _factory(request)() as session:
+        try:
+            services = await instances.seerr_services(session, _box(request), instance_id)
+        except instances.InstanceNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except instances.InstanceError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except IntegrationError as exc:
+            raise HTTPException(502, f"Could not read the service list: {exc}") from exc
+    return [
+        SeerrServiceOut(
+            service_id=s.service_id,
+            kind=s.kind,
+            name=s.name,
+            is_4k=s.is_4k,
+            suggested_instance_id=s.suggested_instance_id,
+        )
+        for s in services
+    ]
 
 
 # ---------------------------------------------------------------------------

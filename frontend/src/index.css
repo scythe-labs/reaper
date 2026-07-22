@@ -5121,6 +5121,17 @@ button.danger:hover:not(:disabled) {
   border-radius: 999px;
   white-space: nowrap;
 }
+/* A muted 4K marker on a Seerr service, so its HD twin at the same address reads apart. */
+.pl-tag {
+  margin-left: 0.4rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--muted);
+  border: 1px solid var(--border-strong);
+  padding: 0.02rem 0.3rem;
+  border-radius: 999px;
+  vertical-align: middle;
+}
 
 /* plex */
 .plex-status {

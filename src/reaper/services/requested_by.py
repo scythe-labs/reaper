@@ -4,20 +4,29 @@
 The review queue lets you filter to "media someone requested", and each item shows who
 asked. That needs a join from Seerr's requests to the items the scan is judging.
 
-**The join is on external ids (tmdb / tvdb), not on the arr instance id.** It is tempting
-to match Seerr's ``serviceId`` to Reaper's instance id, but they are different numbering
-schemes -- Seerr indexes its own configured services, Reaper its own rows -- so they do
-not line up. The tmdb/tvdb ids do, and they are present on both sides.
+**The join is on external ids (tmdb / tvdb) by default.** Those ids are present on both
+sides and line up; Seerr's ``serviceId`` does not line up with Reaper's instance id on its
+own (different numbering schemes -- Seerr indexes its own configured services, Reaper its own
+rows). The tmdb/tvdb join is a *union*, though: a title kept in two libraries (a main one and
+a restricted one) shares one tmdb, so every copy shows everyone who asked for the title, not
+who asked for that copy.
 
-**This is display-only, and deliberately loose.** "Requested by" is never a gate and
-never condemns anything; the worst a wrong match can do is show the wrong name on a card.
-So a rare cross-edition id collision is acceptable here in a way it never would be on the
-delete path. If Seerr is absent or unreachable, the map is simply empty.
+**The operator's service map makes it per-copy.** When a Seerr portal's serviceId is mapped
+to a Reaper instance (``instance.service_instance_map``, set in Settings), the request's
+``externalServiceId`` -- the *arr's own item id -- rebuilds the exact copy's ``media_key``, and
+the requester lands on that copy alone. Unmapped requests keep the loose union. This resolves
+the multi-Seerr, multi-library case (:func:`build_map`, :class:`SeerrSource`).
+
+**This is display-only, either way.** "Requested by" is never a gate and never condemns
+anything; the worst a wrong match can do is show the wrong name on a card. So a rare
+cross-edition id collision is acceptable here in a way it never would be on the delete path.
+If Seerr is absent or unreachable, the map is simply empty.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 
 import structlog
 
@@ -26,6 +35,21 @@ from reaper.clients.seerr import MediaRequest, SeerrClient
 from reaper.engine.observation import Known, Observation, Unknown
 
 log = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class SeerrSource:
+    """One Seerr portal plus its operator-set serviceId -> Reaper instance map.
+
+    ``service_instance_map`` is ``{Seerr service id (str): Reaper instance id}``. Empty when the
+    operator set none, which keeps every request on the loose tmdb/tvdb union (today's behavior).
+    Set, it lets :func:`build_map` bind the exact copy a person asked for when a title lives in
+    more than one library/instance (a main library and a restricted one) -- see the module
+    docstring on why the join is otherwise on ids alone.
+    """
+
+    client: SeerrClient
+    service_instance_map: Mapping[str, int] = field(default_factory=dict)
 
 
 def movie_key(tmdb_id: int | None) -> str | None:
@@ -41,6 +65,27 @@ def show_key(tvdb_id: int | None) -> str | None:
 def season_key(tvdb_id: int | None, season: int) -> str | None:
     """The requested-map key for one season of a show."""
     return f"tv:tvdb:{tvdb_id}:{season}" if tvdb_id else None
+
+
+def movie_instance_key(instance_id: int, arr_id: int | None) -> str | None:
+    """The precise requested-map key for a movie: its Reaper ``media_key``.
+
+    Equal by construction to snapshot's ``radarr:{instance_id}:{movie_id}`` media_key, because a
+    Seerr request's ``externalServiceId`` IS that Radarr movie id. Keyed this way, "requested by"
+    lands on the exact copy a person asked for when a title is duplicated across instances."""
+    return f"radarr:{instance_id}:{arr_id}" if arr_id else None
+
+
+def show_instance_key(instance_id: int, arr_id: int | None) -> str | None:
+    """The precise requested-map key for a whole show: its Reaper ``group_key``
+    (``sonarr:{instance_id}:{series_id}``, where ``series_id`` is Seerr's ``externalServiceId``)."""
+    return f"sonarr:{instance_id}:{arr_id}" if arr_id else None
+
+
+def season_instance_key(instance_id: int, arr_id: int | None, season: int) -> str | None:
+    """The precise requested-map key for one season: its Reaper season ``media_key``
+    (``sonarr:{instance_id}:{series_id}:{season}``)."""
+    return f"sonarr:{instance_id}:{arr_id}:{season}" if arr_id else None
 
 
 def _name(request_display: str | None, request_user: str | None) -> str:
@@ -68,23 +113,29 @@ async def _merge_requests(
     return merged, all_ok
 
 
-async def build_map(seerrs: list[SeerrClient]) -> dict[str, str]:
-    """Build ``external-id-key -> requester name`` from every available request, across
-    *every* configured Seerr.
+async def build_map(sources: Sequence[SeerrSource]) -> dict[str, str]:
+    """Build ``key -> requester name`` from every available request, across *every* Seerr.
 
-    A movie maps under its tmdb key; a show maps under its show key *and* under a key per
-    requested season, so a season can be matched whether the request named specific
-    seasons or the whole series. When several people requested the same thing, the map
-    keeps a friendly "Name + N others" so the card can say so.
+    Each request is filed under **two** kinds of key, and callers read the precise one first:
 
-    Soft and best-effort: a missing "requested by" is a blank tag, never a failed scan, so
-    an unreachable Seerr simply contributes nothing and the rest still map. No Seerr at all
-    is an empty map.
+    * A **precise** key -- the item's Reaper ``media_key`` -- whenever the source's
+      ``service_instance_map`` resolves the request's ``serviceId`` to a Reaper instance. This
+      binds the exact copy a person asked for, so a title kept in a main library and a restricted
+      one attributes each copy to the right requester (:func:`movie_instance_key`,
+      :func:`season_instance_key`, :func:`show_instance_key`).
+    * The **loose** key -- tmdb (movie) or tvdb (show/season) -- always, as the fallback. A copy
+      with no precise hit (unmapped service, a manual add, or a request Seerr deduped onto another
+      copy) falls back to this union, exactly as before the map existed.
+
+    When several people requested the same thing, the map keeps a friendly "Name + N others".
+
+    Soft and best-effort: a missing "requested by" is a blank tag, never a failed scan, so an
+    unreachable Seerr simply contributes nothing and the rest still map. No Seerr at all is an
+    empty map.
     """
-    requests, _ = await _merge_requests(seerrs, filter_="available")
-
     # key -> ordered list of distinct requester names, so we can render "+ N others".
     names: dict[str, list[str]] = {}
+    request_count = 0
 
     def add(key: str | None, name: str) -> None:
         if key is None:
@@ -93,14 +144,36 @@ async def build_map(seerrs: list[SeerrClient]) -> dict[str, str]:
         if name not in bucket:
             bucket.append(name)
 
-    for req in requests:
-        name = _name(req.requester.display_name, req.requester.username)
-        if req.media_type == "movie":
-            add(movie_key(req.tmdb_id), name)
-        else:
-            add(show_key(req.tvdb_id), name)
-            for season in req.seasons:
-                add(season_key(req.tvdb_id, season), name)
+    for source in sources:
+        # Per source, so each request is resolved against ITS OWN portal's service map: a
+        # serviceId is numbered locally per Seerr and would collide across portals otherwise.
+        try:
+            requests = await source.client.all_requests(filter_="available")
+        except IntegrationError as exc:
+            log.warning("requested_by.seerr_unreachable", error=str(exc))
+            continue
+        request_count += len(requests)
+        service_map = source.service_instance_map
+        for req in requests:
+            name = _name(req.requester.display_name, req.requester.username)
+            # The Reaper instance this request's *arr service adds to, if the operator mapped it.
+            reaper_instance = (
+                service_map.get(str(req.arr_instance_id))
+                if req.arr_instance_id is not None
+                else None
+            )
+            if req.media_type == "movie":
+                add(movie_key(req.tmdb_id), name)  # loose union, always
+                if reaper_instance is not None:
+                    add(movie_instance_key(reaper_instance, req.arr_id), name)  # precise copy
+            else:
+                add(show_key(req.tvdb_id), name)
+                for season in req.seasons:
+                    add(season_key(req.tvdb_id, season), name)
+                if reaper_instance is not None:
+                    add(show_instance_key(reaper_instance, req.arr_id), name)
+                    for season in req.seasons:
+                        add(season_instance_key(reaper_instance, req.arr_id, season), name)
 
     result: dict[str, str] = {}
     for key, bucket in names.items():
@@ -109,7 +182,7 @@ async def build_map(seerrs: list[SeerrClient]) -> dict[str, str]:
         else:
             result[key] = f"{bucket[0]} + {len(bucket) - 1} other{'s' if len(bucket) > 2 else ''}"
 
-    log.info("requested_by.built", keys=len(result), requests=len(requests))
+    log.info("requested_by.built", keys=len(result), requests=request_count)
     return result
 
 

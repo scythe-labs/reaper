@@ -24,12 +24,18 @@ import pytest
 import respx
 
 from reaper.clients.base import IntegrationError
-from reaper.db.models import InstanceKind
+from reaper.clients.seerr import SeerrClient, SeerrService
+from reaper.config import RuntimeSafety
+from reaper.db.models import Instance, InstanceKind
 from reaper.services import instances as instances_service
 from reaper.services.instances import (
     _GENERIC_FAILURE,
     _causes,
+    _encode_service_instance_map,
     _explain_failure,
+    _host_port,
+    _suggest_instance,
+    decode_service_instance_map,
 )
 
 SELF_SIGNED = (
@@ -321,3 +327,130 @@ class TestSeerrConnectionExercisesTheKey:
         )
         result = await instances_service.test_connection(InstanceKind.SEERR, SEERR, "good-key")
         assert result.ok is True
+
+
+class TestServiceInstanceMapCodec:
+    """A stored serviceId -> instance map must be exactly as harmless as an absent one: a bad
+    body reads as {} (build_map then falls back to the loose union), and empty stores as NULL."""
+
+    def test_null_and_garbage_decode_to_empty(self) -> None:
+        assert decode_service_instance_map(None) == {}
+        assert decode_service_instance_map("") == {}
+        assert decode_service_instance_map("not json") == {}
+        assert decode_service_instance_map('["a", "b"]') == {}  # a list is not a map
+
+    def test_decode_keeps_str_key_positive_int_value(self) -> None:
+        assert decode_service_instance_map('{"2": 7, "3": 8}') == {"2": 7, "3": 8}
+
+    def test_decode_drops_every_unusable_pair(self) -> None:
+        # bool (a JSON true), zero, negative, non-int, and a blank key can never name a real
+        # instance, so each is dropped rather than crash a scan (rule 32).
+        raw = '{"2": true, "3": 0, "4": -1, "5": "x", "  ": 9}'
+        assert decode_service_instance_map(raw) == {}
+
+    def test_encode_empty_is_null_not_braces(self) -> None:
+        assert _encode_service_instance_map(None) is None
+        assert _encode_service_instance_map({}) is None
+        assert _encode_service_instance_map({" ": 5}) is None  # blank key -> empty -> NULL
+
+    def test_encode_drops_non_positive_and_bool_values(self) -> None:
+        assert _encode_service_instance_map({"2": 0, "3": -1, "4": True}) is None
+
+    def test_encode_decode_round_trips(self) -> None:
+        raw = _encode_service_instance_map({" 2 ": 7, "3": 8})
+        assert raw is not None
+        assert decode_service_instance_map(raw) == {"2": 7, "3": 8}  # key trimmed
+
+
+def _arr(instance_id: int, kind: InstanceKind, base_url: str) -> Instance:
+    return Instance(
+        id=instance_id, kind=kind, name=f"n{instance_id}", base_url=base_url, api_key_enc=""
+    )
+
+
+def _svc(kind: str, hostname: str | None, port: int | None) -> SeerrService:
+    return SeerrService(
+        service_id=2,
+        kind=kind,
+        name="svc",
+        is_4k=False,
+        hostname=hostname,
+        port=port,
+        use_ssl=False,
+        base_url="",
+    )
+
+
+class TestSuggestInstance:
+    """Prefill only: suggest a Reaper instance when EXACTLY ONE matches by kind + host + port;
+    an ambiguous or missing match leaves the operator to pick (Seerr and Reaper often reach the
+    same server at different addresses, so a miss is expected, not an error)."""
+
+    def test_host_port_fills_scheme_default_and_lowercases(self) -> None:
+        assert _host_port("http://Host:7878") == ("host", 7878)
+        assert _host_port("https://host") == ("host", 443)
+        assert _host_port("http://host") == ("host", 80)
+
+    def test_a_single_match_by_kind_host_port_is_suggested(self) -> None:
+        rows = [
+            _arr(7, InstanceKind.RADARR, "http://10.0.0.5:7878"),
+            _arr(8, InstanceKind.SONARR, "http://10.0.0.5:7878"),  # wrong kind, ignored
+        ]
+        assert _suggest_instance(_svc("radarr", "10.0.0.5", 7878), rows) == 7
+
+    def test_two_instances_at_the_same_address_are_ambiguous(self) -> None:
+        rows = [
+            _arr(7, InstanceKind.RADARR, "http://10.0.0.5:7878"),
+            _arr(9, InstanceKind.RADARR, "http://10.0.0.5:7878"),
+        ]
+        assert _suggest_instance(_svc("radarr", "10.0.0.5", 7878), rows) is None
+
+    def test_a_different_address_does_not_match(self) -> None:
+        # The docker-hostname vs LAN-ip case: no match, so the operator picks.
+        rows = [_arr(7, InstanceKind.RADARR, "http://radarr:7878")]
+        assert _suggest_instance(_svc("radarr", "10.0.0.5", 7878), rows) is None
+
+    def test_a_service_with_no_hostname_suggests_nothing(self) -> None:
+        rows = [_arr(7, InstanceKind.RADARR, "http://x:7878")]
+        assert _suggest_instance(_svc("radarr", None, 7878), rows) is None
+
+
+class TestSeerrServicesListing:
+    @respx.mock
+    async def test_lists_sonarr_then_radarr_services(self) -> None:
+        respx.get(f"{SEERR}/api/v1/settings/sonarr").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {"id": 0, "name": "Sonarr", "hostname": "sonarr", "port": 8989, "is4k": False},
+                    {"id": 1, "name": "Sonarr 4K", "hostname": "s", "port": 8989, "is4k": True},
+                    {"name": "no id -> skipped"},
+                ],
+            )
+        )
+        respx.get(f"{SEERR}/api/v1/settings/radarr").mock(
+            return_value=httpx.Response(
+                200,
+                json=[
+                    {"id": 2, "name": "Radarr", "hostname": "radarr", "port": 7878, "is4k": False}
+                ],
+            )
+        )
+        client = SeerrClient(SEERR, "k", safety=RuntimeSafety(destructive_enabled=False))
+        async with client:
+            services = await client.services()
+        assert [(s.service_id, s.kind, s.is_4k) for s in services] == [
+            (0, "sonarr", False),
+            (1, "sonarr", True),
+            (2, "radarr", False),
+        ]
+
+    @respx.mock
+    async def test_a_non_list_body_is_refused(self) -> None:
+        respx.get(f"{SEERR}/api/v1/settings/sonarr").mock(
+            return_value=httpx.Response(200, json={"message": "forbidden"})
+        )
+        client = SeerrClient(SEERR, "k", safety=RuntimeSafety(destructive_enabled=False))
+        with pytest.raises(IntegrationError):
+            async with client:
+                await client.services()

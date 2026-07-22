@@ -198,6 +198,71 @@ export function ServiceModal({
     });
   };
 
+  // The multi-Seerr requester map: which Reaper Sonarr/Radarr instance each of this portal's
+  // services adds media to. Only for a saved Seerr. `suggestedServices` marks the rows still
+  // holding an auto-suggested value the operator has not confirmed by picking.
+  const [serviceMap, setServiceMap] = useState<Record<string, number>>(
+    instance?.service_instance_map ?? {},
+  );
+  const [suggestedServices, setSuggestedServices] = useState<Set<string>>(new Set());
+  const seerrMapEditable = editing && kind === "seerr";
+
+  const seerrServices = useQuery({
+    queryKey: ["instance-seerr-services", instance?.id],
+    queryFn: () => api.instanceSeerrServices(instance!.id),
+    enabled: seerrMapEditable,
+  });
+  const arrInstances = useQuery({
+    queryKey: ["instances"],
+    queryFn: api.instances,
+    enabled: seerrMapEditable,
+  });
+  const instanceOptions = (svcKind: "sonarr" | "radarr") =>
+    (arrInstances.data ?? []).filter((i) => i.kind === svcKind);
+
+  // Prefill each unmapped service with its suggested instance, marked "suggested" until the
+  // operator confirms it. A service already in the stored map is left as saved, never
+  // overwritten by a suggestion, and never marked. Keyed on the service list's identity.
+  const savedServiceMap = instance?.service_instance_map ?? {};
+  useEffect(() => {
+    const services = seerrServices.data;
+    if (!services) return;
+    setServiceMap((prev) => {
+      const next = { ...prev };
+      for (const s of services) {
+        const key = String(s.service_id);
+        if (!(key in next) && s.suggested_instance_id != null) next[key] = s.suggested_instance_id;
+      }
+      return next;
+    });
+    setSuggestedServices((prev) => {
+      const next = new Set(prev);
+      for (const s of services) {
+        const key = String(s.service_id);
+        if (!(key in savedServiceMap) && s.suggested_instance_id != null) next.add(key);
+      }
+      return next;
+    });
+    // savedServiceMap is derived from the immutable `instance` prop; the service list drives this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seerrServices.data]);
+
+  const setServiceInstance = (serviceId: number, instanceId: string) => {
+    const key = String(serviceId);
+    setServiceMap((m) => {
+      const next = { ...m };
+      if (instanceId) next[key] = Number(instanceId);
+      else delete next[key];
+      return next;
+    });
+    // Picking (even the same value) confirms the row, so the "suggested" tag clears.
+    setSuggestedServices((s) => {
+      const next = new Set(s);
+      next.delete(key);
+      return next;
+    });
+  };
+
   // A full URL pasted into the hostname field is split across the fields instead of
   // being stored as a "hostname" that silently contains a scheme and port.
   const onHostChange = (value: string) => {
@@ -242,6 +307,7 @@ export function ServiceModal({
           verify_tls?: boolean;
           add_import_exclusion?: boolean;
           plex_library_map?: Record<string, string>;
+          service_instance_map?: Record<string, number>;
         } = { name, base_url: baseUrl(), enabled };
         if (apiKey) body.api_key = apiKey; // blank keeps the stored key
         if (ssl) body.verify_tls = verifyCert; // over plain http the setting is moot; keep it stored
@@ -256,6 +322,17 @@ export function ServiceModal({
             if (chosen) map[f.path] = chosen;
           }
           body.plex_library_map = map;
+        }
+        // Same contract for the Seerr service map: send it only when the service list was read,
+        // dropping unset services; omit entirely when it could not be read, so the stored map
+        // is preserved rather than cleared.
+        if (seerrMapEditable && seerrServices.data) {
+          const map: Record<string, number> = {};
+          for (const s of seerrServices.data) {
+            const chosen = serviceMap[String(s.service_id)];
+            if (chosen) map[String(s.service_id)] = chosen;
+          }
+          body.service_instance_map = map;
         }
         return api.updateInstance(instance.id, body);
       }
@@ -433,6 +510,64 @@ export function ServiceModal({
               </>
             ) : (
               <p className="help">This instance reports no root folders to map.</p>
+            )}
+          </div>
+        )}
+        {seerrMapEditable && (
+          <div className="field-sm plex-map">
+            <span className="field-label">Requested-by instances</span>
+            {seerrServices.isPending ? (
+              <p className="help">Reading this portal's services…</p>
+            ) : seerrServices.error ? (
+              <p className="notice notice-warn">
+                Reaper couldn't read this portal's services. Test the connection above (this needs
+                an admin key), then reopen this to map them.
+              </p>
+            ) : seerrServices.data && seerrServices.data.length > 0 ? (
+              <>
+                <div className="plex-map-grid">
+                  {seerrServices.data.map((s) => (
+                    <Fragment key={s.service_id}>
+                      <div className="pl-root">
+                        {s.name}
+                        {s.is_4k && <span className="pl-tag">4K</span>}
+                      </div>
+                      <div className="pl-pick">
+                        <select
+                          className={`pl-select${serviceMap[String(s.service_id)] ? "" : " unset"}`}
+                          value={String(serviceMap[String(s.service_id)] ?? "")}
+                          onChange={(e) => setServiceInstance(s.service_id, e.target.value)}
+                        >
+                          <option value="">Not set</option>
+                          {instanceOptions(s.kind).map((i) => (
+                            <option key={i.id} value={String(i.id)}>
+                              {i.name}
+                            </option>
+                          ))}
+                        </select>
+                        {suggestedServices.has(String(s.service_id)) && (
+                          <span className="pl-suggested">suggested</span>
+                        )}
+                      </div>
+                    </Fragment>
+                  ))}
+                </div>
+                {!arrInstances.isPending &&
+                seerrServices.data.every((s) => instanceOptions(s.kind).length === 0) ? (
+                  <p className="help">
+                    No Sonarr or Radarr connections yet. Add them first, then map each service.
+                  </p>
+                ) : (
+                  <p className="help">
+                    Which Sonarr or Radarr connection each of this portal's services adds to. This
+                    names the exact copy a person asked for when a title is in more than one
+                    library. Matches are suggested from the addresses. Leave a service on "Not set"
+                    to name everyone who asked for the title instead.
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="help">This portal reports no Sonarr or Radarr services to map.</p>
             )}
           </div>
         )}
