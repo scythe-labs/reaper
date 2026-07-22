@@ -68,8 +68,10 @@ uv run alembic upgrade head            # then `alembic check` for model/migratio
 npm --prefix frontend run lint         # eslint; the two react-hooks rules are errors
 npm --prefix frontend run test         # vitest component tests (the execute gate first)
 npm --prefix frontend run build        # tsc --noEmit, then vite build
-docker build -t reaper:ci .            # the shipped artifact must build
 ```
+
+The container image build (`docker build -t reaper:ci .`) is **CI-only**: the pipeline
+builds the shipped artifact, so don't run it locally to satisfy these gates.
 
 Run the relevant subset while iterating; run the full set before a commit. **Always run
 `uv run ruff format .` (not just `--check`) before staging — format failures are the most
@@ -191,9 +193,9 @@ the file* and *failing closed*. Read them before touching the safety, auth, or c
 
 ## Build & configuration
 
-15. **Keep the shipped artifact building in CI** (run `docker build`), and install from the
-    committed lockfile with digest-pinned base images. Never let unpinned `>=` floors
-    resolve fresh at build time.
+15. **Keep the shipped artifact building in CI** (CI runs `docker build`; don't build it
+    locally), and install from the committed lockfile with digest-pinned base images. Never
+    let unpinned `>=` floors resolve fresh at build time.
 16. **Every operator-configurable credential lives in the DB-backed, encrypted, UI-editable
     surface and is documented in `.env.example`.** Never strand a configuration option
     (e.g. the Discord webhook) as an env-only, undocumented setting while the UI advertises
