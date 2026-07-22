@@ -17,6 +17,7 @@ from reaper.engine.identity import (
     PlexFile,
     PlexIndex,
     PlexItem,
+    library_for_path,
     parse_guids,
     resolve_movie,
     resolve_show,
@@ -40,6 +41,7 @@ def _item(
     size: int | None = None,
     files: tuple[PlexFile, ...] | None = None,
     added: datetime | None = None,
+    library: str | None = None,
 ) -> PlexItem:
     return PlexItem(
         rating_key=rk,
@@ -51,6 +53,7 @@ def _item(
         # Mirror the production builders: both file fields derive from one media list, so
         # a single-file item's file set defaults to its one basename (+ optional size).
         files=files if files is not None else ((PlexFile(basename, size),) if basename else ()),
+        library=library,
     )
 
 
@@ -1758,3 +1761,231 @@ class TestTheBindingInvariant:
             index=index,
         )
         assert hd.rating_key == uhd.rating_key == 100
+
+
+# ---------------------------------------------------------------------------
+# The operator's library map -- ground truth that tells two libraries apart, and
+# the only discriminator a show ever gets. Every case is a way a wrong bind could
+# read a stranger's watch history, so each ambiguity resolves toward keeping the file.
+# ---------------------------------------------------------------------------
+
+
+class TestTheLibraryMapTellsTwoListingsApart:
+    """One title kept in an HD library and a 4K one is listed twice in Plex under one tvdb id
+    with an identical show folder. The path cannot split them (measured), but the operator's
+    root-folder -> library map can: it is a declaration, not an inference."""
+
+    @staticmethod
+    def _two_shows() -> PlexIndex:
+        return PlexIndex.build(
+            [
+                _item(300, title="Example Show", tvdb=2001, basename="example show", library="TV"),
+                _item(
+                    400, title="Example Show", tvdb=2001, basename="example show", library="TV 4K"
+                ),
+            ]
+        )
+
+    def test_the_mapped_library_binds_the_right_show(self) -> None:
+        res = resolve_show(
+            ids=ExternalIds.of(tvdb=2001),
+            title="Example Show",
+            year=None,
+            file_basename="/tv/Example Show",
+            file_path="/tv/Example Show",
+            plex_library="TV",
+            index=self._two_shows(),
+        )
+        assert res.rating_key == 300
+        assert res.matched_by is MatchedBy.ID_AND_BASENAME
+        assert "Plex library" in res.detail
+
+    def test_the_other_instance_binds_the_other_show(self) -> None:
+        res = resolve_show(
+            ids=ExternalIds.of(tvdb=2001),
+            title="Example Show",
+            year=None,
+            file_basename="/tv-4k/Example Show",
+            file_path="/tv-4k/Example Show",
+            plex_library="TV 4K",
+            index=self._two_shows(),
+        )
+        assert res.rating_key == 400
+
+    def test_library_match_is_case_and_whitespace_folded(self) -> None:
+        """The mapped value is a stored copy of the title; a re-cased or padded copy still
+        binds, because the operator picked the same library."""
+        res = resolve_show(
+            ids=ExternalIds.of(tvdb=2001),
+            title="Example Show",
+            year=None,
+            file_basename="/tv/Example Show",
+            file_path="/tv/Example Show",
+            plex_library="  tv 4k  ",
+            index=self._two_shows(),
+        )
+        assert res.rating_key == 400
+
+    def test_no_map_keeps_the_old_abstain(self) -> None:
+        """Without a mapping a show has no discriminator at all, so two same-name listings
+        abstain and are kept -- exactly the behavior before the map existed."""
+        res = resolve_show(
+            ids=ExternalIds.of(tvdb=2001),
+            title="Example Show",
+            year=None,
+            file_basename="/tv/Example Show",
+            file_path="/tv/Example Show",
+            plex_library=None,
+            index=self._two_shows(),
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+
+    def test_two_copies_in_the_one_mapped_library_abstain(self) -> None:
+        """Two instances feeding one Plex library: both listings live in it, so the library
+        cannot split them. A show has no size to fall back on -> abstain, keep both."""
+        index = PlexIndex.build(
+            [
+                _item(300, title="Example Show", tvdb=2001, basename="example show", library="TV"),
+                _item(400, title="Example Show", tvdb=2001, basename="example show", library="TV"),
+            ]
+        )
+        res = resolve_show(
+            ids=ExternalIds.of(tvdb=2001),
+            title="Example Show",
+            year=None,
+            file_basename="/tv/Example Show",
+            file_path="/tv/Example Show",
+            plex_library="TV",
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+
+    def test_mapped_library_holds_neither_is_ignored_and_abstains(self) -> None:
+        """A stale or mistaken mapping (points at a library holding none of the copies)
+        narrows to nothing, is ignored, and the show abstains as if unmapped -- never a
+        silent mis-bind into a library the copy is not in."""
+        res = resolve_show(
+            ids=ExternalIds.of(tvdb=2001),
+            title="Example Show",
+            year=None,
+            file_basename="/tv/Example Show",
+            file_path="/tv/Example Show",
+            plex_library="Anime",
+            index=self._two_shows(),
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+
+    def test_an_unknown_library_on_any_candidate_stands_the_step_down(self) -> None:
+        """Could-not-look is never 'different': if any candidate's own library is unknown the
+        partition is untrustworthy, so the map stands down and the show abstains."""
+        index = PlexIndex.build(
+            [
+                _item(300, title="Example Show", tvdb=2001, basename="example show", library="TV"),
+                _item(400, title="Example Show", tvdb=2001, basename="example show", library=None),
+            ]
+        )
+        res = resolve_show(
+            ids=ExternalIds.of(tvdb=2001),
+            title="Example Show",
+            year=None,
+            file_basename="/tv/Example Show",
+            file_path="/tv/Example Show",
+            plex_library="TV",
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+
+
+class TestTheLibraryMapWithMovies:
+    """A movie keeps every corroborator it had; the library is tried first, but a positive
+    size contradiction still vetoes it, and an unconfirmed winner still defers to size."""
+
+    def test_library_and_name_bind_a_movie(self) -> None:
+        index = PlexIndex.build(
+            [
+                _item(100, tmdb=1001, basename="example.mkv", size=111, library="Movies"),
+                _item(200, tmdb=1001, basename="example.mkv", size=222, library="Movies 4K"),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=None,
+            file_basename="example.mkv",
+            file_size=111,
+            file_path="/movies/Example/example.mkv",
+            plex_library="Movies",
+            index=index,
+        )
+        assert res.rating_key == 100
+
+    def test_library_names_one_but_size_contradicts_abstains(self) -> None:
+        """The mapped library names copy 100, but the arr's exact byte count matches copy 200
+        instead. Two corroborators naming different copies is a positive contradiction ->
+        abstain, keep the file."""
+        index = PlexIndex.build(
+            [
+                _item(100, tmdb=1001, basename="example.mkv", size=111, library="Movies"),
+                _item(200, tmdb=1001, basename="example.mkv", size=222, library="Movies 4K"),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=None,
+            file_basename="example.mkv",
+            file_size=222,
+            file_path="/movies/Example/example.mkv",
+            plex_library="Movies",
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+
+    def test_unconfirmed_library_winner_defers_to_size_which_keeps_the_file(self) -> None:
+        """The mapped library's copy has no checkable size, while the OTHER copy matches the
+        arr's byte count exactly. The library step will not bind on the map alone when its
+        winner's size cannot be checked and another copy might match exactly; it stands down
+        and lets size decide. Size, seeing an unknown size in the set, abstains -- so the
+        operator's map and the physical byte count disagreeing keeps the file, never a
+        mis-bind into the mapped library over contradictory bytes."""
+        index = PlexIndex.build(
+            [
+                _item(100, tmdb=1001, basename="example.mkv", size=None, library="Movies"),
+                _item(200, tmdb=1001, basename="example.mkv", size=222, library="Movies 4K"),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title="Example Movie",
+            year=None,
+            file_basename="example.mkv",
+            file_size=222,
+            file_path="/movies/Example/example.mkv",
+            plex_library="Movies",
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.AMBIGUOUS
+
+
+class TestLibraryForPath:
+    """The service-layer helper that turns an item's path + its instance's map into a library."""
+
+    def test_longest_matching_root_wins(self) -> None:
+        m = {"/tv": "TV", "/tv/anime": "Anime"}
+        assert library_for_path("/tv/anime/Example Show", m) == "Anime"
+        assert library_for_path("/tv/Example Show", m) == "TV"
+
+    def test_no_map_or_no_prefix_is_none(self) -> None:
+        assert library_for_path("/tv/Example Show", None) is None
+        assert library_for_path("/tv/Example Show", {}) is None
+        assert library_for_path("/movies/Example", {"/tv": "TV"}) is None
+        assert library_for_path(None, {"/tv": "TV"}) is None
+
+    def test_segment_comparison_ignores_separators_and_case(self) -> None:
+        assert library_for_path("/TV/Example", {"/tv/": "TV"}) == "TV"

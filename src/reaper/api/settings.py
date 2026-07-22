@@ -106,6 +106,7 @@ class InstanceOut(BaseModel):
     enabled: bool
     verify_tls: bool
     add_import_exclusion: bool
+    plex_library_map: dict[str, str]
     has_key: bool
     api_path_prefix: str
     detected_version: str | None = None
@@ -133,6 +134,9 @@ class InstanceUpdateIn(BaseModel):
     enabled: bool | None = None
     verify_tls: bool | None = None  # omitted keeps the stored setting; explicit False sticks
     add_import_exclusion: bool | None = None  # omitted keeps the stored setting
+    # The HD/4K library map: {root folder path: Plex library title}. Omitted keeps the stored
+    # map; a dict (even empty) replaces it, and an empty one clears it. Only Sonarr/Radarr.
+    plex_library_map: dict[str, str] | None = None
 
 
 class InstanceTestIn(BaseModel):
@@ -140,6 +144,11 @@ class InstanceTestIn(BaseModel):
     base_url: str
     api_key: str
     verify_tls: bool = True
+
+
+class RootFolderOut(BaseModel):
+    path: str
+    suggested_library: str | None = None
 
 
 class TestOut(BaseModel):
@@ -415,6 +424,7 @@ async def update_instance(
                 enabled=payload.enabled,
                 verify_tls=payload.verify_tls,
                 add_import_exclusion=payload.add_import_exclusion,
+                plex_library_map=payload.plex_library_map,
             )
         except instances.InstanceConflictError as exc:
             # A rename into an existing name is a conflict, not a missing resource.
@@ -452,6 +462,49 @@ async def test_saved_instance(request: Request, instance_id: int) -> TestOut:
             raise HTTPException(404, str(exc)) from exc
         await session.commit()
     return TestOut(ok=result.ok, detail=result.detail, version=result.version)
+
+
+@router.get("/instances/{instance_id}/root-folders")
+async def instance_root_folders(request: Request, instance_id: int) -> list[RootFolderOut]:
+    """This instance's root folders, each with a suggested Plex library to prefill the map.
+
+    The suggestion compares each root folder to the Plex libraries' own folders; it only fills
+    a control the operator confirms, never binds. Sonarr/Radarr only. A 502 when the instance
+    cannot be reached, so the modal can say so rather than show an empty list as if the
+    instance had no folders.
+    """
+    # The Plex side of the suggestion: {library title: folder paths}. Best-effort -- if Plex is
+    # not linked or is unreachable the folders still come back, just with no suggestions.
+    section_paths: dict[str, list[str]] = {}
+    async with _factory(request)() as session:
+        server = (await session.execute(select(PlexServer))).scalars().first()
+        safety = await app_settings.runtime_safety(session, _settings(request))
+    if server is not None and server.connection_uri:
+        plex = PlexClient(
+            server.connection_uri,
+            _box(request).decrypt(server.token_enc),
+            safety=safety,
+            verify=server.verify_tls,
+        )
+        try:
+            section_paths = await plex.section_paths()
+        except PlexError:
+            section_paths = {}
+        finally:
+            await plex.aclose()
+
+    async with _factory(request)() as session:
+        try:
+            folders = await instances.instance_root_folders(
+                session, _box(request), instance_id, section_paths=section_paths
+            )
+        except instances.InstanceNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except instances.InstanceError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        except IntegrationError as exc:
+            raise HTTPException(502, f"Could not read the folder list: {exc}") from exc
+    return [RootFolderOut(path=f.path, suggested_library=f.suggested_library) for f in folders]
 
 
 # ---------------------------------------------------------------------------

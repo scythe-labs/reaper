@@ -46,7 +46,14 @@ from reaper.engine.gates import (
     WhitelistGate,
 )
 from reaper.engine.policy import PolicyBody
-from reaper.services import app_settings, history_sync, leaving_soon, profiles, requested_by
+from reaper.services import (
+    app_settings,
+    history_sync,
+    instances,
+    leaving_soon,
+    profiles,
+    requested_by,
+)
 from reaper.services import snapshot as snapshot_service
 from reaper.services.snapshot import Progress, ProgressFn
 
@@ -248,7 +255,14 @@ async def build_sources(
             verify=r.verify_tls,
         )
         await stack.enter_async_context(rclient)
-        radarrs.append(snapshot_service.RadarrSource(client=rclient, instance_id=r.id, name=r.name))
+        radarrs.append(
+            snapshot_service.RadarrSource(
+                client=rclient,
+                instance_id=r.id,
+                name=r.name,
+                library_map=instances.decode_library_map(r.plex_library_map),
+            )
+        )
     sonarrs: list[snapshot_service.SonarrSource] = []
     for r in sonarr_rows:
         sclient = SonarrClient(
@@ -259,7 +273,14 @@ async def build_sources(
             verify=r.verify_tls,
         )
         await stack.enter_async_context(sclient)
-        sonarrs.append(snapshot_service.SonarrSource(client=sclient, instance_id=r.id, name=r.name))
+        sonarrs.append(
+            snapshot_service.SonarrSource(
+                client=sclient,
+                instance_id=r.id,
+                name=r.name,
+                library_map=instances.decode_library_map(r.plex_library_map),
+            )
+        )
     tautulli = TautulliClient(
         tautulli_row.base_url,
         box.decrypt(tautulli_row.api_key_enc),

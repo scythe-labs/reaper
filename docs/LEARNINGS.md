@@ -425,6 +425,22 @@ Every one of those losses is an abstain, and an abstain keeps the file. A root-f
 fetch that fails does **not** degrade the snapshot (unlike rule 28's evidence sources):
 it can only stand the corroborator down, and standing down can only ever cost a bind.
 
+**Resolved 2026-07-21: the operator's library map recovers the show case the path never could.**
+The negative result above is about *inference from the path*, and it still holds: nothing
+in a show's path can tell an HD copy from a 4K one. What changed is that the copy no longer
+has to be *inferred*. Each *arr root folder is now mapped, in Settings, to the Plex library
+its content lands in (`instance.plex_library_map`, a nullable JSON column; the UI is the edit
+modal, with suggested matches the operator confirms). When one id names a title in two
+libraries, the copy whose `library` equals the mapping is bound -- the strongest corroborator,
+applied ahead of folder and size in `identity._narrow_among_id_hits`, because it is the
+operator's declaration, not a guess. It only ever *narrows* the id's own candidates and stands
+down (keeping the file) on every untrustworthy shape: a candidate whose library is unknown, a
+byte-identical twins group, or a mapped library holding none of the copies. That last case --
+a stale or renamed mapping -- is surfaced as a `scan.stale_library_map` log warning rather than
+allowed to mis-bind. The path-based folder corroborator is untouched; the map sits above it.
+Two same-name copies in the *one* mapped library (two instances feeding one Plex library) still
+abstain: the library is not a fine enough key to split them, and no finer one is trustworthy.
+
 ### Plex title-cases label tags
 
 Write `leaving-soon`, read back `Leaving-Soon`. So any case-sensitive comparison of

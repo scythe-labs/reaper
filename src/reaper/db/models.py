@@ -82,6 +82,15 @@ class Instance(Base):
         Boolean, default=False, server_default=false()
     )
 
+    # HD/4K split-library disambiguation. A JSON object mapping this instance's root folder
+    # paths to the Plex library each one lands in, e.g. {"/tv": "TV", "/tv-4k": "TV 4K"}. When
+    # one id names the same title in two libraries, the copy in the mapped library is the one
+    # bound; nothing here ever expands a match, only narrows an already-ambiguous id
+    # (engine.identity._narrow_among_id_hits). Nullable and NULL by default, so the additive
+    # migration only ADDs a nullable column and every existing instance reads as "no map" --
+    # which keeps today's abstain-and-keep behavior for a duplicated show.
+    plex_library_map: Mapped[str | None] = mapped_column(Text, default=None)
+
     created_at: Mapped[UtcTimestamp]
     last_ok_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
     last_error: Mapped[str | None] = mapped_column(Text, default=None)

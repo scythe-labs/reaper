@@ -34,6 +34,7 @@ from collections import Counter
 from collections.abc import Callable, Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from types import MappingProxyType
 from typing import Any, Literal
 
 import structlog
@@ -358,6 +359,10 @@ class RadarrSource:
     client: RadarrClient
     instance_id: int
     name: str
+    # This instance's HD/4K library map: {root folder path: Plex library title}. Empty when the
+    # operator has set none, which keeps the resolver on its size/abstain behavior for a movie
+    # listed in two libraries.
+    library_map: Mapping[str, str] = field(default_factory=dict)
 
 
 #: Re-exported so callers wire both media types from one module. The TV gather itself
@@ -614,7 +619,14 @@ async def scan(
             if movies is None:
                 continue
             items.extend(
-                _raw_items(movies, plex_index, source.instance_id, requested, root_folders=roots)
+                _raw_items(
+                    movies,
+                    plex_index,
+                    source.instance_id,
+                    requested,
+                    root_folders=roots,
+                    library_map=source.library_map,
+                )
             )
 
         emit(Progress("gathering", 4, 5, "IMDb ratings"))
@@ -1447,21 +1459,31 @@ def _raw_items(
     instance_id: int,
     requested: dict[str, str] | None = None,
     root_folders: Sequence[str] | None = (),
+    library_map: Mapping[str, str] = MappingProxyType({}),
 ) -> list[RawItem]:
     requested = requested or {}
     items: list[RawItem] = []
     without_file: list[str] = []
+    # Stale-mapping guard, aggregated across this one instance's movies: a mapping that never
+    # once matched a candidate library is warned about after the loop; one that matched even a
+    # single movie is working and stays quiet.
+    mapped_lib_hits: set[str] = set()
+    stale_map_misses: dict[str, str] = {}
     for movie in movies:
         if not movie.get("hasFile"):
             without_file.append(str(movie.get("title") or "?"))
             continue
         tmdb_id = int(movie["tmdbId"]) if movie.get("tmdbId") else None
+        ids = identity.ExternalIds.of(imdb=movie.get("imdbId"), tmdb=movie.get("tmdbId"))
+        # The Plex library the operator mapped this movie's root folder to, if any. Tried ahead
+        # of the folder and size corroborators, but a positive size contradiction still vetoes.
+        plex_library = identity.library_for_path(_movie_file_path(movie), library_map)
         # Bind to Plex through the one shared resolver: external id (tmdb, then imdb) ->
         # file basename -> title+year, abstaining on any ambiguity or cross-tier conflict.
         # An abstain/unmatched leaves plex_rating_key None, which makes the item's facts
         # Unknown -> ABSTAIN, and the executor spares a keyless item.
         resolution = identity.resolve_movie(
-            ids=identity.ExternalIds.of(imdb=movie.get("imdbId"), tmdb=movie.get("tmdbId")),
+            ids=ids,
             title=str(movie.get("title") or ""),
             year=int(movie["year"]) if movie.get("year") else None,
             file_basename=_movie_file_basename(movie),
@@ -1473,8 +1495,16 @@ def _raw_items(
             # refuses the whole id narrowing (identity._narrow_among_id_hits), because a
             # failed read also removes the folder-vs-size contradiction veto.
             root_folders=root_folders,
+            plex_library=plex_library,
             index=plex_index,
         )
+        if plex_library is not None:
+            if plex_library.strip().casefold() in identity.libraries_for_ids(
+                ids, plex_index, ("tmdb", "imdb")
+            ):
+                mapped_lib_hits.add(plex_library)
+            elif resolution.status is identity.MatchStatus.AMBIGUOUS:
+                stale_map_misses.setdefault(plex_library, str(movie.get("title") or ""))
         matched = resolution.plex_item
         if resolution.rating_key is None:
             # The movie has a file in Radarr but Reaper could not confidently bind it to a
@@ -1558,6 +1588,24 @@ def _raw_items(
         # movie was skipped", and a specific missing title can be traced.
         log.info("scan.movies_without_file", instance_id=instance_id, count=len(without_file))
         log.debug("scan.movies_without_file_titles", instance_id=instance_id, titles=without_file)
+    # The stale-mapping guard: warn once for a mapped library that never matched a candidate
+    # library across this instance's movies (renamed library, or a wrong mapping). Advisory,
+    # visible in the in-app Logs beside scan.plex_unmatched; never degrades or changes a verdict.
+    for library, example in stale_map_misses.items():
+        if library in mapped_lib_hits:
+            continue
+        log.warning(
+            "scan.stale_library_map",
+            media_type="movie",
+            instance_id=instance_id,
+            library=library,
+            example_title=example,
+            detail=(
+                f"No movies on this Radarr were found in the Plex library {library!r} that its "
+                "folder is mapped to. The library may have been renamed, or the mapping is "
+                "wrong. Duplicated movies under that folder lean on size, then are kept."
+            ),
+        )
     return items
 
 

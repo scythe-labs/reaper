@@ -128,6 +128,10 @@ class SonarrSource:
     client: Any  # SonarrClient; typed loosely so tests can pass a fake
     instance_id: int
     name: str
+    # This instance's HD/4K library map: {root folder path: Plex library title}. Empty when the
+    # operator has set none, which keeps a show duplicated across two libraries on its old
+    # abstain-and-keep behavior (a show has no size or usable folder to fall back on).
+    library_map: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -951,26 +955,43 @@ async def gather(
     # Resolve the shows that made the cut: bind each to its Plex row (pure, in memory),
     # then fetch what the judging needs over the network -- each distinct show's season
     # keys from Tautulli, and each show's on-disk episode list from Sonarr.
+    # Stale-mapping guard: an operator whose library map points at a library holding none of an
+    # ambiguous show's copies has a wrong or renamed mapping. Collected per (instance, library)
+    # so it warns once, and only for a mapping that never once matched a candidate library.
+    mapped_lib_hits: set[tuple[int, str]] = set()
+    stale_map_misses: dict[tuple[int, str], str] = {}
     for item in work:
         series = item.series
+        series_path = str(series["path"]) if series.get("path") else None
+        ids = identity.ExternalIds.of(imdb=series.get("imdbId"), tvdb=series.get("tvdbId"))
+        # The Plex library the operator mapped this series' root folder to, if any. It is the
+        # ONLY thing that can tell two same-name show listings apart -- a show has no size and
+        # its folder is identical in both an HD and a 4K library, so the path never can.
+        plex_library = identity.library_for_path(series_path, item.source.library_map)
         # The one shared resolver: bind the show by tvdb, then file basename, then
         # title+year -- abstaining on any ambiguity or cross-tier conflict, exactly as the
         # movie path does. A None binding leaves every season's facts Unknown -> abstain.
         resolution = identity.resolve_show(
-            ids=identity.ExternalIds.of(imdb=series.get("imdbId"), tvdb=series.get("tvdbId")),
+            ids=ids,
             title=str(series.get("title") or ""),
             year=_as_year(series.get("year")),
             file_basename=identity.to_basename(series.get("path")),
-            # The full series folder, not just its leaf. Passed for completeness and for
-            # the root check, NOT because it can narrow a show: Sonarr puts a series
-            # directly under its root, so below the root there is only the leaf both copies
-            # already matched on, and a deeper path means the reported root is wrong. Either
-            # way the folder step stands down, so two same-leaf show listings under one id
-            # abstain and are kept (identity._narrow_by_path_depth says why).
-            file_path=str(series["path"]) if series.get("path") else None,
+            # The full series folder, for the root check. Sonarr puts a series directly under
+            # its root, so below the root there is only the leaf both copies already matched on:
+            # the path cannot narrow a show. The operator's library map (plex_library) can.
+            file_path=series_path,
             root_folders=roots_by_instance.get(item.source.instance_id),
+            plex_library=plex_library,
             index=tv_index,
         )
+        if plex_library is not None:
+            key = (item.source.instance_id, plex_library)
+            if plex_library.strip().casefold() in identity.libraries_for_ids(
+                ids, tv_index, ("tvdb", "imdb")
+            ):
+                mapped_lib_hits.add(key)
+            elif resolution.status is identity.MatchStatus.AMBIGUOUS:
+                stale_map_misses.setdefault(key, str(series.get("title") or ""))
         item.show_rating_key = resolution.rating_key
         item.matched_by = resolution.matched_by
         item.match_detail = resolution.detail
@@ -1009,6 +1030,26 @@ async def gather(
                 match_status=str(resolution.status),
                 detail=resolution.detail,
             )
+
+    # The stale-mapping guard fires once per mapping that never once matched a candidate
+    # library across the whole scan: a mapping that hit for even one show is working and is
+    # never warned about. Visible in the in-app Logs, where the operator already reads
+    # scan.plex_unmatched. Advisory only -- it never degrades the scan or changes a verdict.
+    for (instance_id, library), example in stale_map_misses.items():
+        if (instance_id, library) in mapped_lib_hits:
+            continue
+        log.warning(
+            "scan.stale_library_map",
+            media_type="show",
+            instance_id=instance_id,
+            library=library,
+            example_title=example,
+            detail=(
+                f"No shows on this Sonarr were found in the Plex library {library!r} that its "
+                "folder is mapped to. The library may have been renamed, or the mapping is "
+                "wrong. Duplicated shows under that folder are kept, not matched."
+            ),
+        )
 
     # The per-show reads are independent of each other, so they run concurrently under
     # small bounds: one for Tautulli, one per Sonarr instance (two instances are two

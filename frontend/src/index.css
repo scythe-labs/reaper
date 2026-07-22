@@ -5077,6 +5077,51 @@ button.danger:hover:not(:disabled) {
   flex-wrap: wrap;
 }
 
+/* The HD/4K library map inside the service modal: each root folder paired with the Plex
+   library it lands in. One grid with a shared folder column and a library select per row
+   (rule 44). The select rides the .field-sm control standard already; only its width and the
+   suggested pill are new. */
+.plex-map-grid {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0.5rem 0.8rem;
+  align-items: center;
+  margin: 0.15rem 0 0.35rem;
+}
+.pl-root {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.pl-pick {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.pl-pick .pl-select {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.85rem;
+}
+/* "Not set" reads as the quiet, unchosen state. */
+.pl-select.unset {
+  color: var(--muted);
+}
+/* A suggested-but-unconfirmed row: a soft accent pill that clears once the operator picks. */
+.pl-suggested {
+  flex: none;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-ring);
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
 /* plex */
 .plex-status {
   display: flex;

@@ -866,6 +866,10 @@ export interface Instance {
    *  exclusion so a list can't re-add and re-download the title. Off by default. Wired for
    *  Radarr movie deletes; stored-but-inert on Sonarr (it prunes seasons, not whole shows). */
   add_import_exclusion: boolean;
+  /** HD/4K split-library map: each root folder path this instance manages, to the Plex library
+   *  it lands in. When a title is in two libraries, the copy in the mapped library is bound.
+   *  Empty means no mapping, so a duplicated title is kept, not matched. Sonarr/Radarr only. */
+  plex_library_map: Record<string, string>;
   has_key: boolean;
   api_path_prefix: string;
   detected_version: string | null;
@@ -877,6 +881,12 @@ export interface InstanceTest {
   ok: boolean;
   detail: string;
   version: string | null;
+}
+
+/** One of an *arr instance's root folders, with a suggested Plex library to prefill the map. */
+export interface RootFolder {
+  path: string;
+  suggested_library: string | null;
 }
 
 export interface PlexStatus {
@@ -1058,9 +1068,13 @@ export const api = {
       enabled?: boolean;
       verify_tls?: boolean;
       add_import_exclusion?: boolean;
+      plex_library_map?: Record<string, string>;
     },
   ) => put<Instance>(`/api/settings/instances/${id}`, body),
   deleteInstance: (id: number) => del<{ removed: boolean }>(`/api/settings/instances/${id}`),
+  /** This instance's root folders, each with a suggested Plex library to prefill the map. */
+  instanceRootFolders: (id: number) =>
+    request<RootFolder[]>(`/api/settings/instances/${id}/root-folders`),
   testInstance: (body: { kind: string; base_url: string; api_key: string; verify_tls?: boolean }) =>
     post<InstanceTest>("/api/settings/instances/test", body),
   testSavedInstance: (id: number) =>
