@@ -473,8 +473,11 @@ async def after_scan(
             return
         except LeavingSoonDisabledError:
             pass  # shelf off
-        except PlexError:
-            pass  # shelf on, but no server linked or none reachable
+        except PlexError as exc:
+            # Shelf on, but Plex is unlinked or unreachable. Fall through to the Discord
+            # heads-up below, but do not swallow it silently: an operator who enabled the
+            # shelf and sees it not updating has no other trail to this cause.
+            log.warning("leaving_soon.shelf_unreachable", error=str(exc))
 
         # Shelf off, or on with no reachable server: the Discord heads-up still runs
         # whenever a webhook is set. Announcing is a read plus a webhook post, no Plex

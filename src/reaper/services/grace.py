@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +30,8 @@ from reaper.clock import utcnow
 from reaper.db.models import FirstFlagged, Snapshot
 from reaper.services import whitelist
 from reaper.services.condemned import effective_condemned
+
+log = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -114,7 +117,16 @@ async def grace_report(
         # No clock row should be impossible (the scan writes one on every condemn), but if
         # one is missing, treat the item as having *just* entered grace -- the safe reading,
         # since it keeps the file longer rather than shorter.
-        started = flagged.get(candidate.media_key, now)
+        started = flagged.get(candidate.media_key)
+        if started is None:
+            # If this fires, a condemn was written without its grace clock -- a real
+            # integrity bug -- and this item's countdown is now a guess. Surface it.
+            log.warning(
+                "grace.missing_clock",
+                media_key=candidate.media_key,
+                candidate_id=candidate.id,
+            )
+            started = now
         ends = started + window
         remaining = max(0, (ends - now).days)
         item = GraceItem(

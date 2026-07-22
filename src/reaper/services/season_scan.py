@@ -982,6 +982,17 @@ async def gather(
             item.show_runtime_minutes = resolution.plex_item.runtime_minutes
             item.show_plex_ratings = resolution.plex_item.ratings
             item.show_library = resolution.plex_item.library
+            # The matched path, mirroring the movie scan's scan.plex_matched. At debug so a
+            # large show library does not flood the log, but every show's bind is traceable.
+            log.debug(
+                "scan.plex_matched",
+                media_type="show",
+                instance_id=item.source.instance_id,
+                title=str(series.get("title") or ""),
+                rating_key=resolution.rating_key,
+                matched_by=str(resolution.matched_by),
+                detail=resolution.detail,
+            )
         else:
             # Prunable in Sonarr, but Reaper could not bind the show to a Plex row, so every
             # season abstains and the show appears only as "kept to be safe", never on the
@@ -1097,6 +1108,9 @@ async def gather(
     imdb_ids = list(dict.fromkeys(imdb_ids))
     try:
         ratings = await ImdbRatings(engine).lookup(imdb_ids) if imdb_ids else {}
+        # Same coverage signal as the movie path (snapshot.scan): low coverage means the
+        # series rating floor protected little. Per scan, so info.
+        log.info("scan.imdb_coverage", media="tv", requested=len(imdb_ids), resolved=len(ratings))
     except DatasetDegradedError as exc:
         degrade(str(exc))
         ratings = {}

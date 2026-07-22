@@ -28,6 +28,7 @@ from typing import Any, ClassVar, Self
 import httpx
 import structlog
 from tenacity import (
+    RetryCallState,
     retry,
     retry_if_exception_type,
     stop_after_attempt,
@@ -54,6 +55,28 @@ def _origin(url: httpx.URL) -> tuple[str, str, int | None]:
     if port is None:
         port = {"http": 80, "https": 443}.get(url.scheme)
     return (url.scheme, url.host or "", port)
+
+
+def _log_retry(retry_state: RetryCallState) -> None:
+    """Trace a transient transport retry at DEBUG.
+
+    Without this, tenacity retries in silence: an exhausted three-attempt failure reads
+    exactly like a first-try one, and "did this time out three times or die instantly?"
+    has no answer in the log. Fires between attempts, so the two intermediate retries of a
+    failing read become visible only when someone turns Debug on. Logs the service and the
+    attempt number only -- never the path or params, which carry credentials (Tautulli and
+    MDBList put their api key in the query string).
+    """
+    service = getattr(retry_state.args[0], "service", "http") if retry_state.args else "http"
+    sleep = getattr(retry_state.next_action, "sleep", None)
+    exc = retry_state.outcome.exception() if retry_state.outcome is not None else None
+    log.debug(
+        "client.retry",
+        service=service,
+        attempt=retry_state.attempt_number,
+        wait=round(sleep, 2) if sleep is not None else None,
+        error=type(exc).__name__ if exc is not None else None,
+    )
 
 
 def _retry_after_seconds(response: httpx.Response) -> float | None:
@@ -203,6 +226,7 @@ class BaseClient:
         retry=retry_if_exception_type((httpx.TransportError, httpx.TimeoutException)),
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=0.5, max=4),
+        before_sleep=_log_retry,
         reraise=True,
     )
     async def _request(

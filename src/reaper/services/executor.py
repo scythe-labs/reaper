@@ -1029,6 +1029,17 @@ class Executor:
                 # the record of files that are already gone.
                 await self._session.commit()
             report.record(outcome)
+            # A per-item trace of the run's decisions -- verified, skipped or failed -- so a
+            # reap can be followed line by line with Debug on. At debug, not info: a capped
+            # run is bounded, but a big first cleanup still lists many items, and the failures
+            # and the run summary carry their own louder lines.
+            log.debug(
+                "reap.item",
+                media_key=delete.candidate.media_key,
+                title=delete.candidate.title,
+                state=outcome.state.value,
+                dry_run=self._dry_run,
+            )
 
             if outcome.state == StepState.SKIPPED:
                 report.skipped += 1
@@ -1060,6 +1071,12 @@ class Executor:
                 # The canary -- the first real deletion -- misbehaved. Halt the whole run:
                 # a plan whose first, smallest, safest delete does not behave as predicted
                 # is a plan we do not understand.
+                log.warning(
+                    "reap.canary_failed",
+                    media_key=delete.candidate.media_key,
+                    title=delete.candidate.title,
+                    detail=outcome.detail,
+                )
                 raise ExecutionError(
                     f'The first item, the test item ("{delete.candidate.title}"), did not '
                     f"finish the way Reaper expected: {outcome.detail}. Stopping now, "
@@ -1626,6 +1643,15 @@ class Executor:
         if not monitored_off:
             # Do NOT proceed to the delete: the dangerous half-state is files-gone-while-
             # -monitored. Mark the unmonitor sent, the verify failed, the delete un-run.
+            # Warn: Sonarr returned 200 for the season-pass edit but it did not take -- the
+            # exact 200-means-nothing footgun this sequence exists to catch -- so the season
+            # is kept. This path returns its own outcome (not via _fail), so it warns here.
+            log.warning(
+                "reap.unmonitor_unverified",
+                media_key=candidate.media_key,
+                series_id=ref.arr_id,
+                season=ref.season,
+            )
             await self._mark_verified(unmonitor, {"unmonitor_sent": True})
             self._mark_step_failed(
                 verify, "the season is still monitored after the unmonitor; not deleting files"
@@ -1897,6 +1923,16 @@ class Executor:
         after-action checklist (what got done, and which check failed); when absent, the
         reason itself is the single failed line.
         """
+        # Every hard item failure -- a delete that could not be confirmed, a routing error,
+        # an *arr call that raised -- funnels through here, so this is the one place to
+        # surface it. At warning: during a real reap, a delete Reaper cannot confirm is
+        # operator-actionable ("did it delete or not?"). The reason is already plain copy.
+        log.warning(
+            "reap.item_failed",
+            media_key=delete.candidate.media_key,
+            title=delete.candidate.title,
+            detail=reason,
+        )
         for step in delete.steps:
             if step.state not in (StepState.VERIFIED, StepState.SKIPPED):
                 step.state = StepState.FAILED

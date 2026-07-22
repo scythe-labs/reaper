@@ -103,12 +103,23 @@ def _take_batch(rows: Iterator[tuple[str, float, int]], size: int) -> list[dict[
     ]
 
 
-def parse_rows(stream: IO[bytes]) -> Iterator[tuple[str, float, int]]:
+def parse_rows(
+    stream: IO[bytes], counters: dict[str, int] | None = None
+) -> Iterator[tuple[str, float, int]]:
     """Parse the gzipped TSV without holding it in memory.
 
     Rows with ``\\N`` (IMDb's null) or malformed numbers are skipped rather than
     coerced: a rating of 0.0 would read as "terrible film, delete it".
+
+    ``counters`` (optional) accumulates a ``skipped`` count of the dropped rows, so the
+    caller can surface format drift: a large skip fraction quietly shrinks rating coverage
+    while staying above the zero-row tripwire that would otherwise catch it.
     """
+
+    def _skip() -> None:
+        if counters is not None:
+            counters["skipped"] = counters.get("skipped", 0) + 1
+
     with gzip.open(stream, "rt", encoding="utf-8") as handle:
         header = handle.readline()
         if not header.startswith("tconst"):
@@ -117,13 +128,16 @@ def parse_rows(stream: IO[bytes]) -> Iterator[tuple[str, float, int]]:
         for line in handle:
             parts = line.rstrip("\n").split("\t")
             if len(parts) != 3:
+                _skip()
                 continue
             tconst, rating, votes = parts
             if not tconst.startswith("tt"):
+                _skip()
                 continue
             try:
                 yield tconst, float(rating), int(votes)
             except ValueError:
+                _skip()
                 continue  # \N or junk -- absent, not zero
 
 
@@ -183,8 +197,9 @@ async def load(engine: AsyncEngine, archive: Path) -> int:
 
     # -- populate staging: one short transaction per batch, no lock held across the parse --
     rows = 0
+    counters: dict[str, int] = {"skipped": 0}
     with archive.open("rb") as handle:
-        parsed = parse_rows(handle)
+        parsed = parse_rows(handle, counters)
         while True:
             # The 1.7M-row gunzip + parse is CPU-bound; producing each batch in a worker
             # thread keeps the event loop serving requests through the refresh.
@@ -227,7 +242,9 @@ async def load(engine: AsyncEngine, archive: Path) -> int:
             {"synced_at": int(utcnow().timestamp()), "row_count": rows},
         )
 
-    log.info("imdb.loaded", rows=rows)
+    # ``skipped`` counts rows dropped as null or malformed. A sudden jump against a steady
+    # ``rows`` is the signature of an upstream format change silently shrinking coverage.
+    log.info("imdb.loaded", rows=rows, skipped=counters["skipped"])
     return rows
 
 

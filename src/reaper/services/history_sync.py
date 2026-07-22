@@ -291,6 +291,8 @@ async def sync(
     inserted = 0
     start = 0
     total: int | None = None
+    skipped_live = 0
+    skipped_malformed = 0
 
     while True:
         page = await client.history(length=PAGE_SIZE, start=start, after=after)
@@ -308,11 +310,13 @@ async def sync(
             # row_id is null only for live/in-progress sessions (verified against a real
             # instance); those are not history yet, so skipping them is correct.
             if row_id is None:
+                skipped_live += 1
                 continue
             watched_at = from_epoch(row.get("date") or row.get("started"))
             user_id = row.get("user_id")
             rating_key = row.get("rating_key")
             if watched_at is None or user_id is None or rating_key is None:
+                skipped_malformed += 1
                 continue
 
             batch.append(
@@ -365,6 +369,14 @@ async def sync(
         incremental=after is not None,
         horizon=after_state.earliest.date().isoformat() if after_state.earliest else None,
     )
+    # Malformed rows (missing timestamp, user, or rating key) are dropped plays: they
+    # overstate dormancy and push items toward condemnation, so a nonzero count is a
+    # data-quality signal worth a warning. Live/in-progress skips are expected and stay
+    # at debug.
+    if skipped_malformed:
+        log.warning("history.rows_malformed", malformed=skipped_malformed, live=skipped_live)
+    elif skipped_live:
+        log.debug("history.rows_skipped", live=skipped_live)
     return after_state
 
 
@@ -384,6 +396,15 @@ async def _check_regression(engine: AsyncEngine, client: TautulliClient) -> None
 
     previous_total = await _last_tautulli_total(engine)
     if previous_total is not None and current_total < previous_total * REGRESSION_THRESHOLD:
+        # A safety halt: this stops all judgment. HistoryRegressionError is a RuntimeError,
+        # not an IntegrationError, so the scan's `except IntegrationError` does not catch it
+        # and the whole scan aborts on the exception string alone. Warn here so the reason
+        # is in the structured log regardless of how the top-level handler renders it.
+        log.warning(
+            "history.regression_detected",
+            previous_total=previous_total,
+            current_total=current_total,
+        )
         raise HistoryRegressionError(
             f"Tautulli's history shrank from {previous_total:,} rows to {current_total:,}. "
             "Someone has reset, pruned or restored its database. Reaper will not judge "

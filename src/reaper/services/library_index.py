@@ -160,5 +160,31 @@ async def build_index(
 
     # Items Plex has that the Tautulli cache has not listed yet (fresh additions).
     spine_keys = {item.rating_key for item in items}
-    items.extend(row for rk, row in plex_items.items() if rk not in spine_keys)
+    fresh = [row for rk, row in plex_items.items() if rk not in spine_keys]
+    items.extend(fresh)
+
+    if not items:
+        # An empty index makes every downstream item resolve unmatched, flooding the log
+        # with per-item "Plex has not matched this" warnings and no cause. Almost always a
+        # section-scope that excluded every library of this type, or a wrong section_type.
+        # One line here names the real reason.
+        log.warning(
+            "library_index.empty",
+            section_type=section_type,
+            allowed_sections=sorted(allowed_sections) if allowed_sections else None,
+            spine_rows=len(spine_rows),
+            swept=len(plex_items),
+        )
+    else:
+        # The denominator for every "why didn't my item match" question, and per scan (once
+        # or twice), not per item, so it is safe at info. A large ``fresh`` count means the
+        # Tautulli spine is lagging Plex -- items present in Plex it has not listed yet.
+        log.info(
+            "library_index.built",
+            section_type=section_type,
+            spine_rows=len(spine_rows),
+            swept=len(plex_items),
+            items=len(items),
+            fresh=len(fresh),
+        )
     return identity.PlexIndex.build(items)

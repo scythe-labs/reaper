@@ -627,6 +627,11 @@ async def scan(
         imdb_ids = list(dict.fromkeys(x for i in items for x in (i.imdb_id, i.plex_imdb_id) if x))
         try:
             imdb = await ImdbRatings(engine).lookup(imdb_ids)
+            # The first thing to check for "why did the rating floor protect nothing": low
+            # coverage means most items had no dataset rating to keep them. Per scan, so info.
+            log.info(
+                "scan.imdb_coverage", media="movie", requested=len(imdb_ids), resolved=len(imdb)
+            )
         except DatasetDegradedError as exc:
             # The inverted failure: a missing rating REMOVES protection. Degrade loudly.
             context.degrade(str(exc))
@@ -1239,6 +1244,13 @@ def _apply_first_flag(
         # this is a new condemnation, so it earns a new window. Keying on the gap exceeding
         # the window (not a single missed snapshot) keeps a transient outage from resetting
         # a clock that was legitimately still running.
+        # Trace it: this fresh window is why a returned item has a full countdown again, and
+        # was historically the actual gap. At debug, occasional per item.
+        log.debug(
+            "scan.grace_clock_restarted",
+            media_key=media_key,
+            gap_days=(now - last_seen).days if last_seen is not None else None,
+        )
         existing.first_flagged_at = now
     existing.last_seen_condemned_at = now
     return None
@@ -1480,6 +1492,22 @@ def _raw_items(
                 tmdb_id=tmdb_id,
                 match_status=str(resolution.status),
                 detail=resolution.detail,
+            )
+        else:
+            # The matched path -- the common case, and the only place the tricky binds
+            # (a shared id narrowed by file name/size/folder, or several Plex listings of
+            # one file merged) are decided and recorded. At debug so a large library does
+            # not flood the log, but every bind is traceable when checking "why did this
+            # match that Plex row".
+            log.debug(
+                "scan.plex_matched",
+                media_type="movie",
+                media_key=f"radarr:{instance_id}:{movie['id']}",
+                title=str(movie.get("title") or ""),
+                rating_key=resolution.rating_key,
+                matched_by=str(resolution.matched_by),
+                detail=resolution.detail,
+                merged_rating_keys=resolution.merged_rating_keys or None,
             )
         items.append(
             RawItem(

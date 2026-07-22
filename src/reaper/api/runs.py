@@ -458,6 +458,10 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                     stop_recheck=_stop_now,
                     progress=on_progress,
                 )
+                # Bracket the run: a real deletion takes minutes and, until now, logged
+                # nothing until it finished. This is the "a real reap began" line, so the
+                # log shows the start even if the process dies mid-run.
+                log.info("reap.started", run_id=run_id, planned=status.total)
                 report = await executor.execute(run_id)
                 await run_session.commit()
             status.report = _report_out(report)
@@ -473,6 +477,10 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                 deleted_bytes=report.deleted_bytes,
                 deleted_unmeasured=report.deleted_unmeasured,
                 skipped=report.skipped,
+                # Why an aborted run stopped (a cap breach, a failed canary, a changed
+                # manifest) lived only in the UI report; carry it here too, or the log
+                # cannot tell one abort from another.
+                aborted_reason=report.aborted_reason,
             )
             # Removing files leaves the last snapshot's queue and policy preview stale, so
             # kick a fresh scan -- on a completed OR a stopped run alike, as long as at least

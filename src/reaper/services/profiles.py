@@ -91,7 +91,7 @@ async def active_profile(session: AsyncSession) -> ActiveProfile:
         return ActiveProfile(ProfileSettings())
     try:
         return ActiveProfile(ProfileSettings.model_validate_json(row.settings_json))
-    except ValidationError:
+    except ValidationError as exc:
         try:
             raw = json.loads(row.settings_json)
         except ValueError:
@@ -107,7 +107,11 @@ async def active_profile(session: AsyncSession) -> ActiveProfile:
                 log.info("profile.settings_migrated", dropped=dropped)
                 # The operator's real values survived; only a departed key was dropped. Benign.
                 return ActiveProfile(settings)
-        log.warning("profile.settings_unreadable")
+        # The stored policy could not be read and Reaper is falling back to DEFAULT caps and
+        # grace, which changes deletion behavior. Carry the validation error so which field
+        # broke is answerable. A policy holds no secrets (caps, grace, thresholds), so the
+        # detail is safe to log.
+        log.warning("profile.settings_unreadable", error=str(exc))
         return ActiveProfile(ProfileSettings(), fell_back=True)
 
 
