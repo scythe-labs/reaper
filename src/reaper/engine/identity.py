@@ -331,6 +331,29 @@ def library_for_path(file_path: str | None, library_map: Mapping[str, str] | Non
     return library_map[best_root] if best_root is not None else None
 
 
+def candidate_libraries(
+    ids: ExternalIds, index: PlexIndex, id_priority: Sequence[str]
+) -> list[str]:
+    """The distinct Plex library titles an item's ids name across *all* their hits, raw-cased.
+
+    Diagnostics only: the unmatched-item warning (services.season_scan / snapshot) prints these
+    beside the mapped library so an operator can see, from the log alone, whether a duplicated
+    title's copies sit in two libraries they never mapped, or the mapping's spelling missed.
+    Raw titles (not folded) so the operator reads the exact section names Plex reports. Sorted
+    for a stable line. Never used to bind -- that is :func:`_narrow_among_id_hits`.
+    """
+    seen: dict[str, None] = {}
+    for kind in id_priority:
+        value = ids.get(kind)
+        if value is None:
+            continue
+        for rk in index._by_id(kind).get(value, []):
+            lib = index.by_rating_key[rk].library
+            if lib:
+                seen.setdefault(lib, None)
+    return sorted(seen)
+
+
 def libraries_for_ids(ids: ExternalIds, index: PlexIndex, id_priority: Sequence[str]) -> set[str]:
     """The case-folded Plex library titles an item's ids name across *all* their hits.
 
@@ -340,16 +363,7 @@ def libraries_for_ids(ids: ExternalIds, index: PlexIndex, id_priority: Sequence[
     Case-folded to match :func:`_same_library`. Never used to bind -- that is
     :func:`_narrow_among_id_hits`.
     """
-    libs: set[str] = set()
-    for kind in id_priority:
-        value = ids.get(kind)
-        if value is None:
-            continue
-        for rk in index._by_id(kind).get(value, []):
-            lib = index.by_rating_key[rk].library
-            if lib:
-                libs.add(lib.strip().casefold())
-    return libs
+    return {lib.strip().casefold() for lib in candidate_libraries(ids, index, id_priority)}
 
 
 def _plex_size_of(rating_key: int, basename: str, index: PlexIndex) -> int | None:

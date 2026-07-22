@@ -17,6 +17,7 @@ from reaper.engine.identity import (
     PlexFile,
     PlexIndex,
     PlexItem,
+    candidate_libraries,
     library_for_path,
     parse_guids,
     resolve_movie,
@@ -1768,6 +1769,47 @@ class TestTheBindingInvariant:
 # the only discriminator a show ever gets. Every case is a way a wrong bind could
 # read a stranger's watch history, so each ambiguity resolves toward keeping the file.
 # ---------------------------------------------------------------------------
+
+
+class TestCandidateLibrariesForDiagnostics:
+    """The raw library titles a duplicated title's copies live in -- printed in the unmatched
+    warning so an operator sees, from the log, whether to map the folder or fix its spelling."""
+
+    def test_lists_each_distinct_library_raw_cased_and_sorted(self) -> None:
+        index = PlexIndex.build(
+            [
+                _item(300, title="Example Show", tvdb=2001, basename="s", library="TV 4K"),
+                _item(400, title="Example Show", tvdb=2001, basename="s", library="TV"),
+            ]
+        )
+        assert candidate_libraries(ExternalIds.of(tvdb=2001), index, ("tvdb", "imdb")) == [
+            "TV",
+            "TV 4K",
+        ]
+
+    def test_collapses_two_copies_in_one_library_to_a_single_entry(self) -> None:
+        """Both copies in one library is the genuine can't-split case; the operator sees one
+        library, not two, so the log tells that apart from an unmapped-but-splittable title."""
+        index = PlexIndex.build(
+            [
+                _item(300, title="Example Show", tvdb=2001, basename="s", library="TV"),
+                _item(400, title="Example Show", tvdb=2001, basename="s", library="TV"),
+            ]
+        )
+        assert candidate_libraries(ExternalIds.of(tvdb=2001), index, ("tvdb", "imdb")) == ["TV"]
+
+    def test_an_unknown_library_is_skipped_not_rendered_as_blank(self) -> None:
+        index = PlexIndex.build(
+            [
+                _item(300, title="Example Show", tvdb=2001, basename="s", library="TV"),
+                _item(400, title="Example Show", tvdb=2001, basename="s", library=None),
+            ]
+        )
+        assert candidate_libraries(ExternalIds.of(tvdb=2001), index, ("tvdb", "imdb")) == ["TV"]
+
+    def test_no_hits_is_an_empty_list(self) -> None:
+        index = PlexIndex.build([_item(300, title="Example Show", tvdb=2001, library="TV")])
+        assert candidate_libraries(ExternalIds.of(tvdb=9999), index, ("tvdb", "imdb")) == []
 
 
 class TestTheLibraryMapTellsTwoListingsApart:

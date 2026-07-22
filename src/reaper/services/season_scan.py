@@ -1019,6 +1019,11 @@ async def gather(
             # season abstains and the show appears only as "kept to be safe", never on the
             # reap list. Warned per show so "why isn't my show in review" is answerable from
             # the log. UNMATCHED = nothing in Plex matched; AMBIGUOUS = more than one did.
+            # For an AMBIGUOUS show the fix is almost always the library map: two same-name
+            # listings a show has no size or folder to split need the operator's declaration
+            # of which library each root folder lands in. So the log names what was mapped for
+            # this item (None = nothing mapped for its folder) and the libraries the copies
+            # actually live in, so "no file size to tell them apart" is not a dead end.
             log.warning(
                 "scan.plex_unmatched",
                 media_type="show",
@@ -1029,6 +1034,9 @@ async def gather(
                 tvdb_id=series.get("tvdbId") or None,
                 match_status=str(resolution.status),
                 detail=resolution.detail,
+                mapped_library=plex_library,
+                candidate_libraries=identity.candidate_libraries(ids, tv_index, ("tvdb", "imdb"))
+                or None,
             )
 
     # The stale-mapping guard fires once per mapping that never once matched a candidate

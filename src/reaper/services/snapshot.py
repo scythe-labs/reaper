@@ -1512,6 +1512,11 @@ def _raw_items(
             # Warned per item so an operator asking "why isn't this in review" finds the
             # reason in the log, not only on the row's why-panel. UNMATCHED = nothing in Plex
             # looked like it; AMBIGUOUS = more than one did and we refused to guess.
+            # For an AMBIGUOUS movie the library map is the operator's declaration of which
+            # library each root folder lands in; a movie still leans on size after, but the
+            # map is tried first. Naming what was mapped for this item (None = nothing mapped)
+            # and the libraries the copies live in makes "no file size to tell them apart"
+            # actionable from the log rather than a dead end.
             log.warning(
                 "scan.plex_unmatched",
                 media_type="movie",
@@ -1522,6 +1527,9 @@ def _raw_items(
                 tmdb_id=tmdb_id,
                 match_status=str(resolution.status),
                 detail=resolution.detail,
+                mapped_library=plex_library,
+                candidate_libraries=identity.candidate_libraries(ids, plex_index, ("tmdb", "imdb"))
+                or None,
             )
         else:
             # The matched path -- the common case, and the only place the tricky binds
