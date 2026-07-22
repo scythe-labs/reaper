@@ -88,6 +88,24 @@ def season_instance_key(instance_id: int, arr_id: int | None, season: int) -> st
     return f"sonarr:{instance_id}:{arr_id}:{season}" if arr_id else None
 
 
+def rating_key_key(rating_key: object) -> str | None:
+    """The requested-map key for a Plex rating key: the zero-config middle tier.
+
+    A movie request's Plex ``ratingKey`` -- or a show request's, which Seerr stores at the show
+    level -- equals Reaper's ``plex_rating_key`` for the same item on the same Plex server, so a
+    portal that scans only its own library gives per-copy attribution with no operator setup.
+    It can only mis-point when a portal scans SEVERAL libraries and Overseerr's one non-4K slot
+    kept a different copy; the operator's service map (the precise tier) overrides those. Assumes
+    the portal shares Reaper's Plex server -- rating keys are unique per server, not across them,
+    so a portal pointed at a *different* Plex could collide (rare, display-only, and the reason
+    this sits above only the tmdb/tvdb union, never above the declared map). Takes ``object`` so
+    a Seerr string and a Reaper int normalize to the one text form."""
+    if rating_key is None:
+        return None
+    text = str(rating_key).strip()
+    return f"plex:rk:{text}" if text else None
+
+
 def _name(request_display: str | None, request_user: str | None) -> str:
     return (request_display or request_user or "a user").strip() or "a user"
 
@@ -116,16 +134,19 @@ async def _merge_requests(
 async def build_map(sources: Sequence[SeerrSource]) -> dict[str, str]:
     """Build ``key -> requester name`` from every available request, across *every* Seerr.
 
-    Each request is filed under **two** kinds of key, and callers read the precise one first:
+    Each request is filed under up to **three** kinds of key, and callers read them best-first:
 
-    * A **precise** key -- the item's Reaper ``media_key`` -- whenever the source's
-      ``service_instance_map`` resolves the request's ``serviceId`` to a Reaper instance. This
-      binds the exact copy a person asked for, so a title kept in a main library and a restricted
-      one attributes each copy to the right requester (:func:`movie_instance_key`,
-      :func:`season_instance_key`, :func:`show_instance_key`).
-    * The **loose** key -- tmdb (movie) or tvdb (show/season) -- always, as the fallback. A copy
-      with no precise hit (unmapped service, a manual add, or a request Seerr deduped onto another
-      copy) falls back to this union, exactly as before the map existed.
+    1. A **precise** key -- the item's Reaper ``media_key`` -- whenever the source's
+       ``service_instance_map`` resolves the request's ``serviceId`` to a Reaper instance. This
+       binds the exact copy a person asked for from the *arr the request was routed to, so it is
+       copy-true whatever a portal's Plex sync saw (:func:`movie_instance_key`,
+       :func:`season_instance_key`, :func:`show_instance_key`).
+    2. A **rating-key** key -- the request's Plex ``ratingKey`` (:func:`rating_key_key`). Zero
+       setup, and copy-true whenever a portal scans only its own library; it can mis-point only
+       when a portal scans several libraries (Overseerr's one non-4K slot then kept a different
+       copy), which is exactly what tier 1 overrides.
+    3. The **loose** key -- tmdb (movie) or tvdb (show/season). Always, as the last fallback, so a
+       request the first two cannot place still names everyone who asked for the title.
 
     When several people requested the same thing, the map keeps a friendly "Name + N others".
 
@@ -156,6 +177,9 @@ async def build_map(sources: Sequence[SeerrSource]) -> dict[str, str]:
         service_map = source.service_instance_map
         for req in requests:
             name = _name(req.requester.display_name, req.requester.username)
+            # Tier 2, zero-config: the request's own Plex rating key. Filed for both media types
+            # (Seerr stores a show's at the show level, which is what season lookups match on).
+            add(rating_key_key(req.plex_rating_key), name)
             # The Reaper instance this request's *arr service adds to, if the operator mapped it.
             reaper_instance = (
                 service_map.get(str(req.arr_instance_id))

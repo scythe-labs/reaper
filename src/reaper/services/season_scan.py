@@ -1338,14 +1338,16 @@ def _judge_series(
             genres=show_genres_obs,
             show_match_status=item.match_status,
         )
-        # Requested-by, display only, never a gate. Prefer the EXACT copy where the operator
-        # mapped the Seerr service: this season's own `media_key`, then the whole-show
-        # `group_key` -- which are by construction the keys build_map files a precise request
-        # under (season_instance_key / show_instance_key). Else fall back to the loose tvdb
-        # union: a request that named this season, then a whole-show request.
+        # Requested-by, display only, never a gate. Three tiers, best-first (build_map): the
+        # EXACT copy where the operator mapped the Seerr service (this season's own `media_key`,
+        # then the whole-show `group_key`, which are by construction the precise keys); then the
+        # show's Plex rating key (zero-config -- Seerr stores a TV request's ratingKey at the show
+        # level, so it matches the show, not the season); then the loose tvdb union (this season,
+        # then the whole show).
         season_requester = (
             requested.get(media_key)
             or requested.get(group_key)
+            or requested.get(requested_by.rating_key_key(item.show_rating_key) or "")
             or requested.get(requested_by.season_key(tvdb_id, n) or "")
             or requested.get(requested_by.show_key(tvdb_id) or "")
         )

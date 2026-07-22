@@ -193,6 +193,57 @@ class TestBuildMapPrecisePerCopy:
         assert not any(k.startswith("radarr:") for k in result)
 
 
+class TestBuildMapRatingKey:
+    """Tier 2, zero-config: a request also files under its Plex rating key, which equals the
+    candidate's plex_rating_key on the same Plex server. A portal scanning only its own library
+    gets per-copy attribution with no service map; the union still lists everyone as the last
+    fallback."""
+
+    def test_rating_key_key_normalizes_str_and_int(self) -> None:
+        assert requested_by.rating_key_key("100") == "plex:rk:100"
+        assert requested_by.rating_key_key(100) == "plex:rk:100"  # Seerr sends str, Reaper int
+        assert requested_by.rating_key_key(None) is None
+        assert requested_by.rating_key_key("  ") is None
+
+    async def test_a_movie_files_under_its_rating_key(self) -> None:
+        seerr = _FakeSeerr([_req(media_type="movie", tmdb_id=603, plex_rating_key="100")])
+        result = await requested_by.build_map([_src(seerr)])
+        assert result[requested_by.rating_key_key("100")] == "Alice"
+        assert result[requested_by.movie_key(603)] == "Alice"  # union still there
+
+    async def test_two_copies_two_rating_keys_attribute_apart(self) -> None:
+        # Two portals, each scanning its own library, so each request carries its own copy's key.
+        primary = _FakeSeerr(
+            [
+                _req(
+                    tmdb_id=603,
+                    plex_rating_key="100",
+                    requester=Requester(1, 1, "a", "Alice", None),
+                )
+            ]
+        )
+        secondary = _FakeSeerr(
+            [_req(tmdb_id=603, plex_rating_key="200", requester=Requester(2, 2, "b", "Bob", None))]
+        )
+        result = await requested_by.build_map([_src(primary), _src(secondary)])
+        assert result[requested_by.rating_key_key(100)] == "Alice"
+        assert result[requested_by.rating_key_key(200)] == "Bob"
+        assert result[requested_by.movie_key(603)] == "Alice + 1 other"  # union lists both
+
+    async def test_a_show_files_under_its_show_rating_key(self) -> None:
+        # Seerr stores a TV request's ratingKey at the show level, so season lookups match on it.
+        seerr = _FakeSeerr(
+            [_req(media_type="tv", tvdb_id=81189, seasons=(2,), plex_rating_key="500")]
+        )
+        result = await requested_by.build_map([_src(seerr)])
+        assert result[requested_by.rating_key_key("500")] == "Alice"
+
+    async def test_a_request_with_no_rating_key_files_none(self) -> None:
+        seerr = _FakeSeerr([_req(media_type="movie", tmdb_id=603, plex_rating_key=None)])
+        result = await requested_by.build_map([_src(seerr)])
+        assert not any(k.startswith("plex:rk:") for k in result)
+
+
 class TestRequestIndex:
     """The three-state fact index -- the fail-closed side, used to score, not to display."""
 

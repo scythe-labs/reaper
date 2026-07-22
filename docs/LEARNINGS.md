@@ -699,7 +699,7 @@ Real request data contains the same title requested by several different people.
 per request, a film Alice requested and watched is still condemned on Bob's row — and
 they share one file, so it is deleted out from under her.
 
-### Seerr models "quality" (HD vs 4K), not "library" — so per-copy "requested by" joins on the *arr id, not the rating key (2026-07-22)
+### Seerr models "quality" (HD vs 4K), not "library" — so per-copy "requested by" layers the rating key under the *arr id (2026-07-22)
 
 An operator can keep the same title in two Plex libraries — a main one and a restricted one
 for a specific group, fed by two different Sonarr/Radarr instances. Naming *who asked for that
@@ -717,20 +717,26 @@ copy's `ratingKey`, and the join mis-attributes. (Where each portal sees only it
 ratingKey would name the right copy zero-config; it is specifically the see-both case that breaks
 it. Seerr also stores no file path, so the library-map trick can't cross over.)
 
-What a request *does* carry that is copy-true is `externalServiceId` — the id of the *arr the
-request was **routed to**, so a portal adding to its own dedicated *arr always points at its own
-copy, whatever Plex sync saw. It equals the `movie_id`/`series_id` in Reaper's `media_key`, and
-two copies in two *arr instances have different ids, so the join key is `(instance,
-externalServiceId)` = the candidate's own `media_key`. The only missing piece is `serviceId ->
-Reaper instance` (serviceId numbering is local to each Seerr); an operator-declared map supplies
-it (`instance.service_instance_map`). (A second, rarer trap the *arr-id join also avoids: across
-*different* Plex servers, rating keys are small ints that repeat, so a ratingKey join would have
-to be server-scoped. Irrelevant on one Plex, but real in a multi-server setup.)
+So the ratingKey earns a place, just not the only one. Reaper uses it as a **zero-config tier**:
+a portal scanning only its own library records the right ratingKey, so most setups get per-copy
+attribution with no operator action. The failure mode above — a portal that scans several
+libraries collapsing to one slot — is covered by a higher tier that does not depend on Plex sync
+at all: `externalServiceId`, the id of the *arr the request was **routed to**. A portal adding to
+its own dedicated *arr always points at its own copy, whatever Plex saw. It equals the
+`movie_id`/`series_id` in Reaper's `media_key`, so the join key is `(instance, externalServiceId)`
+= the candidate's own `media_key`; the one missing piece, `serviceId -> Reaper instance` (serviceId
+numbering is local to each Seerr), is an operator-declared map (`instance.service_instance_map`).
 
-⇒ For a cross-system join, prefer the id that names *the specific thing you mean*, not a pointer
-that happens to be unique. The Plex ratingKey is unique yet names "this portal's current view of
-the title," collapsing two copies to one; the *arr item id (with its instance) names one file the
-request was actually routed to.
+Final order, best-first: **declared service map → ratingKey → tmdb/tvdb union.** (A second, rarer
+reason the ratingKey sits below the declared map: across *different* Plex servers rating keys are
+small ints that repeat, so a bare ratingKey join could collide. Irrelevant on one Plex, real in a
+multi-server setup — another reason to let the declared, server-independent id win when present.)
+
+⇒ For a cross-system join, a pointer that is merely *unique* is not the same as one that names
+*the specific thing you mean*. The Plex ratingKey is unique yet names "this portal's current view
+of the title," so it is a good cheap default but collapses two copies to one; the *arr item id
+(with its instance) names one file the request was actually routed to, so it is the reliable
+override. Layer them: cheap-and-usually-right under declared-and-always-right.
 
 ### The IMDb Top 250 mirror carries no rank
 

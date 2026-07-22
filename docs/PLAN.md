@@ -2882,14 +2882,24 @@ and Seerr stores no file path. What a request *does* carry is the *arr's own ite
 `movie_id`/`series_id` in Reaper's `media_key`. The one missing dimension is *which* Reaper
 instance a portal's `serviceId` points at (serviceId numbering is local to each Seerr).
 
-**The fix (mirrors the HD/4K library map).** A nullable `instance.service_instance_map` JSON on
-the Seerr row (`{serviceId: reaper_instance_id}`, additive migration `4d5e6f708192`, NULL = the
-old union, no rebuild). `build_map` now files each request under **two** keys: the loose tmdb/tvdb
-union (always, the fallback) and -- when the source's map resolves the request's `serviceId` --
-the exact copy's `media_key` (`movie_instance_key`/`season_instance_key`/`show_instance_key`, equal
-by construction to the candidate's own key). `snapshot`/`season_scan` read the precise key first,
-the union second, so an unmapped or dedup-onto-main request is exactly today's behavior. Still
-display-only, never a gate; `build_request_index` (the scoring FACT) is untouched.
+**The fix: three tiers, best-first.** `build_map` files each request under up to three keys and
+`snapshot`/`season_scan` read them in order:
+1. **Service map** (declared) -- the exact copy's `media_key`, when a nullable
+   `instance.service_instance_map` JSON (`{serviceId: reaper_instance_id}`, additive migration
+   `4d5e6f708192`, NULL = no map, no rebuild) resolves the request's `serviceId`. Copy-true
+   whatever Plex sync saw, because `externalServiceId` names the *arr the request was routed to
+   (`movie_instance_key`/`season_instance_key`/`show_instance_key`, equal by construction to the
+   candidate's own key).
+2. **Rating key** (zero-config) -- the request's Plex `ratingKey` (`rating_key_key`), which equals
+   the candidate's `plex_rating_key` on the same Plex server. Correct with no setup whenever a
+   portal scans only its own library; mis-points only when a portal scans several libraries
+   (Overseerr's one non-4K slot then kept a different copy), which tier 1 overrides. Movies match
+   the movie key; TV matches the *show* key (Seerr stores a TV request's ratingKey show-level).
+3. **tmdb/tvdb union** -- today's behavior, the last fallback.
+
+So a scoped setup just works from tier 2 with no mapping; the service map is the escape hatch for
+a portal whose ratingKey collapses. Still display-only, never a gate; `build_request_index` (the
+scoring FACT) is untouched.
 
 **Config UI.** `GET /instances/{id}/seerr-services` lists the portal's Sonarr/Radarr services
 (`/settings/{sonarr,radarr}`, admin key) each with a suggested Reaper instance (host:port match,
@@ -2897,12 +2907,13 @@ exactly-one-or-none). Edit-Seerr modal grows a "Requested-by instances" section 
 grammar (per-service instance select, "suggested" tag that clears on pick, save sends what's shown,
 unreadable list -> notice not empty). `SeerrService`/`decode_service_instance_map` treat a bad body
 as `{}` (rule 32). Serves the real 2-Seerr / 2-Sonarr, main-vs-restricted-library setup: the clean
-1:1:1 case where the map is tiny and unambiguous. **Superseded improvement #1** (the rating-key
-join): the Plex `ratingKey` is unique per server, but Overseerr keeps one non-4K slot per
-title per portal, so a portal that can see both libraries collapses them to whichever copy it
-synced last, not the copy the request was routed to (see LEARNINGS). The `externalServiceId`
-join is copy-true because it names the *arr the request went to; it also sidesteps the rarer
-multi-Plex-server ratingKey id-space collision.
+1:1:1 case where the map is tiny and unambiguous. **Incorporated improvement #1** (the rating-key
+join) as tier 2 rather than discarding it: the Plex `ratingKey` is unique per server and copy-true
+for a portal scanning only its own library, so it earns the zero-config default; it fails only
+when a portal scans several libraries (Overseerr keeps one non-4K slot per title per portal, so it
+collapses to whichever copy it synced last -- see LEARNINGS), which is exactly the case the
+declared service map overrides. The rarer multi-Plex-server ratingKey id-space collision keeps the
+rating-key tier below the declared map and above only the union.
 
 **Gates:** ruff/mypy clean, 1858 backend tests (+22), 187 frontend tests (+4), alembic upgrade+check
 clean, docker build clean. Not yet driven end-to-end against a live multi-Seerr instance.
