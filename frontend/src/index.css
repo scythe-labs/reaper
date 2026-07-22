@@ -665,6 +665,15 @@ button.link:hover:not(:disabled) {
   height: 34px;
   border-width: 3px;
 }
+/* A step up from -lg for a screen whose whole body is the wait (Scales' first load): larger,
+   with a thicker, more visibly accent track so the spin reads as the app's color, not gray. */
+.spinner-xl {
+  width: 46px;
+  height: 46px;
+  border-width: 4px;
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  border-top-color: var(--accent);
+}
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -2967,6 +2976,28 @@ a.rating-chip:hover {
    signal, kept on the side so the two never blur. */
 .fair-head h2 {
   margin-bottom: 0.15rem;
+}
+/* Title on the left, a Refresh action on the right: Scales reads live requests, so a way to
+   pull the latest without a full scan belongs at the top of its own screen. */
+.fair-head-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+.fair-refresh {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.fair-refresh .ico {
+  width: 14px;
+  height: 14px;
+}
+/* The glyph spins only while a refresh is in flight, echoing the loading spinner's motion. */
+.fair-refresh.busy .ico {
+  animation: spin 0.7s linear infinite;
 }
 
 /* Summary strip: SPACE leads (the reclaimable tile shows bytes, the count is its caption). */
@@ -6209,7 +6240,11 @@ button.danger:hover:not(:disabled) {
 .reap-running.stopping {
   color: var(--muted);
 }
-.spinner {
+/* The reap indicator's own spinner: it rides the parent's currentColor (red while deleting,
+   gray while stopping), so it is SCOPED to .reap-running. An unscoped `.spinner` here would
+   redefine the shared spinner (top of file) and silently clobber .spinner-lg / .spinner-xl
+   everywhere -- a naming collision, not a second spinner. */
+.reap-running .spinner {
   flex: none;
   width: 14px;
   height: 14px;
@@ -6315,7 +6350,8 @@ button.danger:hover:not(:disabled) {
   transition: width 0.4s var(--ease);
 }
 @media (prefers-reduced-motion: reduce) {
-  .spinner {
+  .spinner,
+  .reap-running .spinner {
     animation: none;
   }
   .prog-fill,

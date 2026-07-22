@@ -14,10 +14,32 @@
 //
 // It deletes nothing. It reads the last scan, so it can never disagree with Review.
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type KeyboardEvent } from "react";
 import { api, type RequesterRow } from "../api";
 import { bytes, count, date } from "../format";
+
+/** The circular-arrow refresh glyph, in the app's 16-grid inline-SVG house style. */
+function RefreshIcon() {
+  return (
+    <svg className="ico" viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
+      <path
+        d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M13.5 2.5v3h-3"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 /** Share of their OWN requests this person has watched at least once. A behavioral signal
  *  (did the asker use what they asked for), kept apart from the disk balance below. */
@@ -139,13 +161,33 @@ export function Fairness({
   /** Whether that panel is the one open, so the tile wears the selection bar. */
   unmatchedSelected?: boolean;
 }) {
-  const { data, isPending, error } = useQuery({ queryKey: ["fairness"], queryFn: api.fairness });
+  const { data, isPending, isFetching, error } = useQuery({
+    queryKey: ["fairness"],
+    queryFn: api.fairness,
+  });
+  const queryClient = useQueryClient();
   const select = onSelectPerson ?? (() => {});
+
+  // Scales reads live requests and watch history, so a refresh pulls the latest without a full
+  // scan. Invalidating the "fairness" prefix refetches the board and any open person panel.
+  const refresh = () => void queryClient.invalidateQueries({ queryKey: ["fairness"] });
 
   return (
     <section className="fair">
       <div className="fair-head">
-        <h2>Scales</h2>
+        <div className="fair-head-top">
+          <h2>Scales</h2>
+          <button
+            type="button"
+            className={`ghost sm fair-refresh${isFetching ? " busy" : ""}`}
+            onClick={refresh}
+            disabled={isFetching}
+            title="Reload requests and watch history"
+          >
+            <RefreshIcon />
+            {isFetching ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
         <p className="blurb">
           Who asked for what, and who actually watched it. Read only: nothing here removes
           anything.
@@ -155,7 +197,7 @@ export function Fairness({
       {error && <p className="notice notice-error">Couldn't load Scales: {error.message}</p>}
       {isPending && (
         <div className="fair-loading" role="status" aria-live="polite">
-          <span className="spinner spinner-lg" aria-hidden="true" />
+          <span className="spinner spinner-xl" aria-hidden="true" />
           <p className="fair-loading-lead">Gathering requests…</p>
           <p className="fair-loading-sub muted">
             Reading every request and matching it to your last scan. This can take a moment.
