@@ -32,6 +32,8 @@ from reaper.db.base import Base
 from reaper.db.models import (
     ActionStep,
     Candidate,
+    Instance,
+    InstanceKind,
     ReapRun,
     RunState,
     SizeSource,
@@ -1736,6 +1738,51 @@ class TestMovieLiveSend:
         assert report.deleted_items == 0
         assert report.state is RunState.ABORTED  # the sole item is the canary
 
+    async def test_a_radarr_with_the_exclusion_off_deletes_without_it(
+        self, session: AsyncSession
+    ) -> None:
+        """When this Radarr's re-download switch is off, the plan body carries
+        ``addImportExclusion: false``, the delete is sent without it, and the after-check
+        says so plainly instead of trying (and failing) to verify an exclusion that was
+        never asked for. The delete itself still has to be proven."""
+        await _seed_radarr(session, exclusion=False)
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+
+        # The plan the operator approves shows the exclusion off.
+        terminal = (await _steps(session, run.id))[-1]
+        assert json.loads(terminal.body_json or "{}")["addImportExclusion"] is False
+
+        radarr = FakeRadarr()
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert report.state is RunState.COMPLETED
+        assert report.deleted_items == 1
+        assert radarr.delete_calls == [1]
+        assert radarr.exclusion_args == [False]  # the delete was sent without the exclusion
+        labels = [c.label.lower() for c in report.outcomes[0].checks]
+        # The file-removed check still ran; the exclusion line reads "off", never "confirmed".
+        assert any("removed the file" in label for label in labels)
+        assert any("off" in label for label in labels if "exclusion" in label)
+        assert not any("confirmed" in label for label in labels)
+
+    async def test_the_exclusion_off_lets_a_movie_with_no_tmdb_id_delete(
+        self, session: AsyncSession
+    ) -> None:
+        """The no-TMDB-id fail-closed exists only so an armed exclusion can be verified.
+        With the exclusion off there is nothing to verify, so a movie Radarr lists without
+        a TMDB id is deleted rather than refused."""
+        await _seed_radarr(session, exclusion=False)
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+        radarr = FakeRadarr(tmdb_id=None)  # no tmdbId on the movie payload
+
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert report.state is RunState.COMPLETED
+        assert report.deleted_items == 1
+        assert radarr.delete_calls == [1]
+
     async def test_a_movie_still_present_after_the_delete_fails(
         self, session: AsyncSession
     ) -> None:
@@ -2411,6 +2458,26 @@ async def _snapshot_many(
     return snapshot.id
 
 
+async def _seed_radarr(session: AsyncSession, *, exclusion: bool, instance_id: int = 1) -> None:
+    """Seed the Radarr instance row a plan reads its import-exclusion setting from.
+
+    The reap-loop tests otherwise leave the instance table empty, in which case build_plan
+    falls back to adding the exclusion. A test that cares about the OFF path must create the
+    row so the setting is read rather than defaulted."""
+    session.add(
+        Instance(
+            id=instance_id,
+            kind=InstanceKind.RADARR,
+            name=f"r{instance_id}",
+            base_url="https://radarr.test",
+            api_key_enc="enc",
+            add_import_exclusion=exclusion,
+            created_at=utcnow(),
+        )
+    )
+    await session.flush()
+
+
 async def _plan(session: AsyncSession, snapshot_id: int) -> ReapRun:
     return await build_plan(
         session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
@@ -2482,7 +2549,7 @@ class FakeRadarr:
     def __init__(
         self,
         *,
-        tmdb_id: int = 555,
+        tmdb_id: int | None = 555,
         land_exclusion: bool = True,
         become_gone: bool = True,
         path: str = "/movies/Worthless",
@@ -2491,6 +2558,8 @@ class FakeRadarr:
         root_accessible: bool = True,
         size_on_disk: int | None = 256 * 1024**2,
     ) -> None:
+        # None models a movie Radarr lists with no TMDB id -- used to prove that the
+        # no-id fail-closed applies only when the exclusion is armed.
         self._tmdb_id = tmdb_id
         self._land_exclusion = land_exclusion
         self._become_gone = become_gone
@@ -2507,11 +2576,14 @@ class FakeRadarr:
         self._exclusions: list[dict[str, Any]] = []  # each {"tmdbId", "_visible_at"}
         self._deleted: set[int] = set()
         self.delete_calls: list[int] = []
+        self.exclusion_args: list[bool] = []  # the add_exclusion value each delete was sent
 
     async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
         if movie_id in self._deleted and self._become_gone:
             raise IntegrationError("radarr", "movie not found", status=404)
-        movie = {"id": movie_id, "tmdbId": self._tmdb_id + movie_id, "path": self._path}
+        movie: dict[str, Any] = {"id": movie_id, "path": self._path}
+        if self._tmdb_id is not None:
+            movie["tmdbId"] = self._tmdb_id + movie_id
         if self._size_on_disk is not None:
             movie["sizeOnDisk"] = self._size_on_disk
         return movie
@@ -2520,9 +2592,10 @@ class FakeRadarr:
         self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True
     ) -> None:
         self.delete_calls.append(movie_id)
+        self.exclusion_args.append(add_exclusion)
         self._deleted.add(movie_id)
         lands = self._land_exclusion and movie_id not in self._fail_ids
-        if add_exclusion and lands:
+        if add_exclusion and lands and self._tmdb_id is not None:
             self._exclusions.append(
                 {
                     "tmdbId": self._tmdb_id + movie_id,

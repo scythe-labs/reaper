@@ -227,6 +227,28 @@ def _gb(value: int) -> str:
     return f"{value / 1024**3:.1f} GB"
 
 
+def _planned_add_exclusion(step: ActionStep) -> bool:
+    """The import-exclusion decision the planner froze into this delete step, read back
+    from the approved journal so the send honors exactly what the operator previewed --
+    never a setting re-read that could have changed since approval.
+
+    Defaults to True (add the exclusion and verify it) when the body is missing or
+    unparseable: the exclusion is protective, not destructive, so an unreadable plan
+    resolves toward keeping a deleted title from re-downloading. Fails closed.
+    """
+    raw = step.body_json
+    if not raw:
+        return True
+    try:
+        body = json.loads(raw)
+    except (ValueError, TypeError):
+        return True
+    if not isinstance(body, dict):
+        return True
+    value = body.get("addImportExclusion")
+    return True if value is None else bool(value)
+
+
 # ---------------------------------------------------------------------------
 # The clients the executor drives, as narrow Protocols.
 # ---------------------------------------------------------------------------
@@ -1354,12 +1376,16 @@ class Executor:
         )
 
     async def _send_movie(self, delete: _Delete, ref: MediaRef, *, is_canary: bool) -> StepOutcome:
-        """Delete a movie with an import exclusion, then PROVE the exclusion landed.
+        """Delete a movie and, when the operator armed it, PROVE the import exclusion landed.
 
-        The tmdbId is read *before* the delete -- it cannot be read after, the movie is
-        gone -- and the exclusion list is re-read after, because Radarr returns 200 for the
-        delete whether or not the exclusion took. A missing exclusion is a verification
-        failure, not a success: re-requesting the title would silently re-download it.
+        Whether to add the exclusion is the target Radarr's own setting, frozen into the
+        plan the operator approved and read back here (:func:`_planned_add_exclusion`) so the
+        send matches the preview. When it is ON, the tmdbId is read *before* the delete (it
+        cannot be read after, the movie is gone) and the exclusion list is re-read after,
+        because Radarr returns 200 for the delete whether or not the exclusion took -- a
+        missing exclusion is a verification failure, not a success, since re-requesting the
+        title would silently re-download it. When it is OFF, there is no exclusion to add or
+        prove: the delete needs no tmdbId and the item is done once the file is gone.
         """
         radarr = self._gateway.radarr_for(ref.instance_id)  # type: ignore[union-attr]
         step = delete.terminal  # the sole radarr_delete step
@@ -1412,11 +1438,19 @@ class Executor:
                 check="It grew since you approved it. Kept.",
             )
 
+        # The exclusion decision was frozen into the plan the operator approved
+        # (planner._movie_steps) and is read back from the journal here, so the send matches
+        # the preview even if this Radarr's setting changed since approval. OFF skips both
+        # the exclusion itself and the checks that police it.
+        add_exclusion = _planned_add_exclusion(step)
+
         tmdb_id = int(movie.get("tmdbId") or 0)
-        if tmdb_id == 0:
-            # Fail CLOSED before anything is sent: with no tmdbId, _exclusion_landed can
-            # never verify, so the delete would always end "not fully confirmed" -- and by
-            # then the file would already be gone (worse when this item is the canary).
+        if add_exclusion and tmdb_id == 0:
+            # Fail CLOSED before anything is sent: with the exclusion armed but no tmdbId,
+            # _exclusion_landed can never verify, so the delete would always end "not fully
+            # confirmed" -- and by then the file would already be gone (worse when this item
+            # is the canary). Only a concern when the exclusion is on; off, there is nothing
+            # to verify, so a missing id does not block the delete.
             return self._fail(
                 delete,
                 "Radarr lists no TMDB id for this movie, so the import exclusion could "
@@ -1426,15 +1460,25 @@ class Executor:
             )
 
         await self._mark_sent(step)
-        await radarr.delete_movie(ref.arr_id, delete_files=True, add_exclusion=True)
+        await radarr.delete_movie(ref.arr_id, delete_files=True, add_exclusion=add_exclusion)
 
-        # Verify: the movie is actually gone AND the exclusion is present. The gone check is
-        # immediate; the exclusion is polled, because Radarr adds it a moment after the
-        # delete returns 200 -- a single immediate read is a false negative.
+        # Verify the movie is actually gone -- always, and immediately (a deleted movie 404s).
         gone = await self._movie_is_gone(radarr, ref.arr_id)
-        excluded = await self._exclusion_landed(radarr, tmdb_id)
         checks.append(StepCheck("Removed the file through Radarr", gone))
-        checks.append(StepCheck("Import exclusion confirmed. It won't re-download", excluded))
+
+        # The exclusion is polled only when it was armed: Radarr adds it a moment after the
+        # delete returns 200, so a single immediate read is a false negative. With it off,
+        # there is no exclusion to prove and the item is done once the file is gone -- so
+        # ``excluded`` is vacuously True and the after-check says the exclusion was skipped
+        # by the operator's own choice rather than leaving a silent gap.
+        if add_exclusion:
+            excluded = await self._exclusion_landed(radarr, tmdb_id)
+            checks.append(StepCheck("Import exclusion confirmed. It won't re-download", excluded))
+        else:
+            excluded = True
+            checks.append(
+                StepCheck("Import exclusion off for this Radarr, so none was added", True)
+            )
 
         # Once the file is gone, tell Plex -- whatever the exclusion result. This is what
         # stops a stale entry lingering, and it must fire even when the exclusion check
@@ -1450,7 +1494,8 @@ class Executor:
         if not (excluded and gone):
             # The file is already gone once ``gone`` is True; a missing exclusion is the
             # remaining risk (a re-request could re-download), so say which failed and that
-            # the file itself is removed either way.
+            # the file itself is removed either way. With the exclusion off ``excluded`` is
+            # always True, so this branch only fires on a movie that would not delete.
             return self._fail(
                 delete,
                 f"delete not fully confirmed (gone={gone}, exclusion_verified={excluded}). "
@@ -1463,13 +1508,17 @@ class Executor:
                 checks=checks,
             )
 
-        await self._mark_verified(step, {"tmdb_id": tmdb_id, "excluded": True, "gone": True})
+        await self._mark_verified(step, {"tmdb_id": tmdb_id, "excluded": excluded, "gone": True})
+        detail = (
+            "deleted; import exclusion verified present"
+            if add_exclusion
+            else "deleted; import exclusion off for this Radarr"
+        )
         return StepOutcome(
             media_key=step.media_key,
             kind=step.kind,
             state=StepState.VERIFIED,
-            detail="deleted; import exclusion verified present"
-            + (" [canary]" if is_canary else ""),
+            detail=detail + (" [canary]" if is_canary else ""),
             title=delete.candidate.title,
             checks=checks,
         )

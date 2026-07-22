@@ -44,7 +44,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clock import utcnow
-from reaper.db.models import ActionStep, Candidate, ReapRun, RunState, Snapshot, StepState
+from reaper.db.models import (
+    ActionStep,
+    Candidate,
+    Instance,
+    ReapRun,
+    RunState,
+    Snapshot,
+    StepState,
+)
 from reaper.services import whitelist
 from reaper.services.condemned import effective_condemned
 
@@ -159,7 +167,7 @@ def confirmation_phrase(candidates: Sequence[Candidate]) -> str:
 
 
 def _movie_steps(
-    run_id: int, candidate: Candidate, ref: MediaRef, ordinal: int
+    run_id: int, candidate: Candidate, ref: MediaRef, ordinal: int, *, add_exclusion: bool
 ) -> list[ActionStep]:
     """The steps to remove one movie: delete-with-exclusion, then verify, then refresh.
 
@@ -169,6 +177,11 @@ def _movie_steps(
     recovery pass; it is NOT yet consumed to de-duplicate a resumed step (a
     partially-completed run is re-planned, not resumed), so nothing today relies on it to
     prevent a double delete -- the "executes once" guard and the un-repeatable delete do.
+
+    ``add_exclusion`` is the target Radarr's ``add_import_exclusion`` setting, frozen into
+    the body here so the preview the operator approves is exactly what is sent -- and so the
+    executor reads the approved value back from the journal (``executor._send_movie``)
+    rather than re-reading a setting that could have changed since approval.
     """
     now = utcnow()
     idem = f"{run_id}:{candidate.media_key}"
@@ -182,7 +195,7 @@ def _movie_steps(
         kind="radarr_delete",
         method="DELETE",
         path=f"/api/v3/movie/{ref.arr_id}",
-        body_json=json.dumps({"deleteFiles": True, "addImportExclusion": True}),
+        body_json=json.dumps({"deleteFiles": True, "addImportExclusion": add_exclusion}),
         idempotency_key=f"{idem}:delete",
         state=StepState.PENDING,
         created_at=now,
@@ -531,11 +544,22 @@ async def build_plan(
     session.add(run)
     await session.flush()  # assigns run.id
 
+    # Each Radarr's own import-exclusion choice, frozen into the delete body below so the
+    # preview matches the send. Missing (an instance removed between scan and plan) falls
+    # back to the safe, historical default of adding the exclusion: the exclusion is
+    # protective, not destructive, so an unknown setting resolves toward keeping a deleted
+    # title from re-downloading.
+    exclusion_by_instance: dict[int, bool] = {
+        row.id: row.add_import_exclusion
+        for row in (await session.execute(select(Instance.id, Instance.add_import_exclusion))).all()
+    }
+
     ordinal = 0
     for candidate in plannable:
         ref = MediaRef.parse(candidate.media_key)
         if ref.kind == "radarr":
-            steps = _movie_steps(run.id, candidate, ref, ordinal)
+            add_exclusion = exclusion_by_instance.get(ref.instance_id, True)
+            steps = _movie_steps(run.id, candidate, ref, ordinal, add_exclusion=add_exclusion)
         elif ref.kind == "sonarr" and ref.season is not None:
             steps = _season_steps(run.id, candidate, ref, ordinal)
         else:

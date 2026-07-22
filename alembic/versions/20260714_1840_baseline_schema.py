@@ -76,6 +76,7 @@ def upgrade() -> None:
     sa.Column('detected_version', sa.String(length=50), nullable=True),
     sa.Column('enabled', sa.Boolean(), nullable=False),
     sa.Column('verify_tls', sa.Boolean(), nullable=False),
+    sa.Column('add_import_exclusion', sa.Boolean(), nullable=False),
     sa.Column('created_at', sa.Integer(), nullable=False),
     sa.Column('last_ok_at', sa.Integer(), nullable=True),
     sa.Column('last_error', sa.Text(), nullable=True),

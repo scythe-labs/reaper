@@ -82,6 +82,7 @@ class InstanceView:
     base_url: str
     enabled: bool
     verify_tls: bool
+    add_import_exclusion: bool
     has_key: bool
     api_path_prefix: str
     detected_version: str | None
@@ -104,6 +105,7 @@ def _view(row: Instance) -> InstanceView:
         base_url=row.base_url,
         enabled=row.enabled,
         verify_tls=row.verify_tls,
+        add_import_exclusion=row.add_import_exclusion,
         has_key=bool(row.api_key_enc),
         api_path_prefix=row.api_path_prefix,
         detected_version=row.detected_version,
@@ -137,6 +139,7 @@ async def create_instance(
     base_url: str,
     api_key: str,
     verify_tls: bool = True,
+    add_import_exclusion: bool = False,
 ) -> InstanceView:
     name = name.strip()
     base_url = base_url.strip().rstrip("/")
@@ -167,6 +170,7 @@ async def create_instance(
         api_key_enc=box.encrypt(api_key),
         enabled=True,
         verify_tls=verify_tls,
+        add_import_exclusion=add_import_exclusion,
         created_at=utcnow(),
     )
     session.add(row)
@@ -185,6 +189,7 @@ async def update_instance(
     api_key: str | None = None,
     enabled: bool | None = None,
     verify_tls: bool | None = None,
+    add_import_exclusion: bool | None = None,
 ) -> InstanceView:
     """Update an instance. An omitted (or blank) ``api_key`` keeps the stored one.
 
@@ -217,6 +222,8 @@ async def update_instance(
         row.enabled = enabled
     if verify_tls is not None:  # None means "leave it as it is"; an explicit False sticks
         row.verify_tls = verify_tls
+    if add_import_exclusion is not None:  # None keeps the stored value; explicit False sticks
+        row.add_import_exclusion = add_import_exclusion
 
     await session.flush()
     log.info("instance.updated", kind=row.kind.value, name=row.name)
