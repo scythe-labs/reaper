@@ -182,10 +182,11 @@ def _encode_library_map(mapping: Mapping[str, str] | None) -> str | None:
 
 
 def decode_service_instance_map(raw: str | None) -> dict[str, int]:
-    """The stored map as ``{Seerr service id: Reaper instance id}``, or ``{}``.
+    """The stored map as ``{"{kind}:{serviceId}": Reaper instance id}``, or ``{}``.
 
-    Keys are the Seerr portal's own service ids as strings (JSON object keys are strings);
-    values are the Reaper Sonarr/Radarr instance id each service adds media to. A missing,
+    Keys are ``"sonarr:0"`` / ``"radarr:0"`` style -- Seerr numbers its Sonarr and Radarr services
+    in separate lists (both from 0), so the kind is part of the key; values are the Reaper instance
+    id each service adds media to. A missing,
     malformed, or wrong-typed body reads as an empty map -- never a crash, and exactly as
     harmless as an absent one: ``build_map`` then falls back to the loose tmdb/tvdb union, which
     is today's behavior (rule 32, a stored config must not be able to crash a scan). A value

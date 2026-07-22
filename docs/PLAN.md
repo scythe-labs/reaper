@@ -2885,7 +2885,8 @@ instance a portal's `serviceId` points at (serviceId numbering is local to each 
 **The fix: three tiers, best-first.** `build_map` files each request under up to three keys and
 `snapshot`/`season_scan` read them in order:
 1. **Service map** (declared) -- the exact copy's `media_key`, when a nullable
-   `instance.service_instance_map` JSON (`{serviceId: reaper_instance_id}`, additive migration
+   `instance.service_instance_map` JSON (`{"{kind}:{serviceId}": reaper_instance_id}` -- kind
+   namespaced because Seerr numbers Sonarr and Radarr services separately, additive migration
    `4d5e6f708192`, NULL = no map, no rebuild) resolves the request's `serviceId`. Copy-true
    whatever Plex sync saw, because `externalServiceId` names the *arr the request was routed to
    (`movie_instance_key`/`season_instance_key`/`show_instance_key`, equal by construction to the

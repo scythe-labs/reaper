@@ -92,8 +92,10 @@ class Instance(Base):
     plex_library_map: Mapped[str | None] = mapped_column(Text, default=None)
 
     # Multi-Seerr requester attribution (SEERR rows only). A JSON object mapping this Seerr
-    # portal's own service ids to the Reaper Sonarr/Radarr instance each one adds media to,
-    # e.g. {"2": 7, "3": 8}. A Seerr request carries the *arr's own item id (externalServiceId)
+    # portal's own services to the Reaper Sonarr/Radarr instance each one adds media to, keyed
+    # "{kind}:{serviceId}" because Seerr numbers Sonarr and Radarr services separately (both from
+    # 0), e.g. {"sonarr:0": 7, "radarr:0": 8}. A Seerr request carries the *arr's item id
+    # (externalServiceId)
     # and the portal-local serviceId, so this map resolves serviceId -> Reaper instance, which
     # lets "requested by" bind the exact copy (main vs restricted library) a person asked for
     # rather than the loose tmdb/tvdb union across every copy (services.requested_by.build_map).

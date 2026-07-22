@@ -202,8 +202,26 @@ describe("ServiceModal multi-Seerr service map", () => {
     const body = apiMock.updateInstance.mock.calls[0]![1] as {
       service_instance_map?: Record<string, number>;
     };
-    // The mapped service is sent as {serviceId: instanceId}; the unset one is dropped.
-    expect(body.service_instance_map).toEqual({ "2": 3 });
+    // The mapped service is sent keyed by "{kind}:{serviceId}"; the unset one is dropped.
+    expect(body.service_instance_map).toEqual({ "sonarr:2": 3 });
+  });
+
+  it("does not collide a Sonarr and a Radarr service that share a serviceId", async () => {
+    // Seerr numbers Sonarr and Radarr services separately, so both have a serviceId 0. Each row
+    // must prefill its OWN suggestion; the movie row must not read the tv row's value.
+    renderSeerrModal(seerr(), [
+      { service_id: 0, kind: "sonarr", name: "HD TV", is_4k: false, suggested_instance_id: 3 },
+      { service_id: 0, kind: "radarr", name: "HD Movies", is_4k: false, suggested_instance_id: 7 },
+    ]);
+    await waitFor(() => expect(selectForService("HD TV").value).toBe("3"));
+    expect(selectForService("HD Movies").value).toBe("7"); // not "Not set", not "3"
+    expect(screen.getAllByText("suggested")).toHaveLength(2);
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(apiMock.updateInstance).toHaveBeenCalled());
+    const body = apiMock.updateInstance.mock.calls[0]![1] as {
+      service_instance_map?: Record<string, number>;
+    };
+    expect(body.service_instance_map).toEqual({ "sonarr:0": 3, "radarr:0": 7 });
   });
 
   it("shows a notice, not an empty list, when the services can't be read", async () => {

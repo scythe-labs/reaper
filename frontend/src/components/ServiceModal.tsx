@@ -16,7 +16,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fragment, useEffect, useState } from "react";
-import { api, type Instance, type InstanceTest } from "../api";
+import { api, type Instance, type InstanceTest, type SeerrService } from "../api";
 import { ModalShell } from "./ModalShell";
 import { Switch } from "./Switch";
 
@@ -219,6 +219,9 @@ export function ServiceModal({
   });
   const instanceOptions = (svcKind: "sonarr" | "radarr") =>
     (arrInstances.data ?? []).filter((i) => i.kind === svcKind);
+  // Seerr numbers Sonarr and Radarr services in SEPARATE lists (both from 0), so the map key
+  // must be kind + id, not the id alone -- else a sonarr and a radarr service collide.
+  const svcKey = (s: SeerrService) => `${s.kind}:${s.service_id}`;
 
   // Prefill each unmapped service with its suggested instance, marked "suggested" until the
   // operator confirms it. A service already in the stored map is left as saved, never
@@ -230,7 +233,7 @@ export function ServiceModal({
     setServiceMap((prev) => {
       const next = { ...prev };
       for (const s of services) {
-        const key = String(s.service_id);
+        const key = svcKey(s);
         if (!(key in next) && s.suggested_instance_id != null) next[key] = s.suggested_instance_id;
       }
       return next;
@@ -238,7 +241,7 @@ export function ServiceModal({
     setSuggestedServices((prev) => {
       const next = new Set(prev);
       for (const s of services) {
-        const key = String(s.service_id);
+        const key = svcKey(s);
         if (!(key in savedServiceMap) && s.suggested_instance_id != null) next.add(key);
       }
       return next;
@@ -247,8 +250,7 @@ export function ServiceModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seerrServices.data]);
 
-  const setServiceInstance = (serviceId: number, instanceId: string) => {
-    const key = String(serviceId);
+  const setServiceInstance = (key: string, instanceId: string) => {
     setServiceMap((m) => {
       const next = { ...m };
       if (instanceId) next[key] = Number(instanceId);
@@ -329,8 +331,8 @@ export function ServiceModal({
         if (seerrMapEditable && seerrServices.data) {
           const map: Record<string, number> = {};
           for (const s of seerrServices.data) {
-            const chosen = serviceMap[String(s.service_id)];
-            if (chosen) map[String(s.service_id)] = chosen;
+            const chosen = serviceMap[svcKey(s)];
+            if (chosen) map[svcKey(s)] = chosen;
           }
           body.service_instance_map = map;
         }
@@ -527,16 +529,16 @@ export function ServiceModal({
               <>
                 <div className="plex-map-grid">
                   {seerrServices.data.map((s) => (
-                    <Fragment key={s.service_id}>
+                    <Fragment key={svcKey(s)}>
                       <div className="pl-root">
                         {s.name}
                         {s.is_4k && <span className="pl-tag">4K</span>}
                       </div>
                       <div className="pl-pick">
                         <select
-                          className={`pl-select${serviceMap[String(s.service_id)] ? "" : " unset"}`}
-                          value={String(serviceMap[String(s.service_id)] ?? "")}
-                          onChange={(e) => setServiceInstance(s.service_id, e.target.value)}
+                          className={`pl-select${serviceMap[svcKey(s)] ? "" : " unset"}`}
+                          value={String(serviceMap[svcKey(s)] ?? "")}
+                          onChange={(e) => setServiceInstance(svcKey(s), e.target.value)}
                         >
                           <option value="">Not set</option>
                           {instanceOptions(s.kind).map((i) => (
@@ -545,7 +547,7 @@ export function ServiceModal({
                             </option>
                           ))}
                         </select>
-                        {suggestedServices.has(String(s.service_id)) && (
+                        {suggestedServices.has(svcKey(s)) && (
                           <span className="pl-suggested">suggested</span>
                         )}
                       </div>

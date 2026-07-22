@@ -1,7 +1,8 @@
 """add instance.service_instance_map
 
-The multi-Seerr requester-attribution map: a JSON object mapping a Seerr portal's own service
-ids to the Reaper Sonarr/Radarr instance each one adds media to, e.g. {"2": 7, "3": 8}. A Seerr
+The multi-Seerr requester-attribution map: a JSON object mapping a Seerr portal's own services
+to the Reaper Sonarr/Radarr instance each one adds media to, keyed "{kind}:{serviceId}" (Seerr
+numbers Sonarr and Radarr services separately), e.g. {"sonarr:0": 7, "radarr:0": 8}. A Seerr
 request carries the *arr's own item id (externalServiceId) plus the portal-local serviceId, so
 this map resolves serviceId -> Reaper instance and lets "requested by" bind the exact copy a
 person asked for (the main vs a restricted library) instead of the loose tmdb/tvdb union across

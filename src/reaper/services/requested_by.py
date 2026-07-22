@@ -41,8 +41,9 @@ log = structlog.get_logger(__name__)
 class SeerrSource:
     """One Seerr portal plus its operator-set serviceId -> Reaper instance map.
 
-    ``service_instance_map`` is ``{Seerr service id (str): Reaper instance id}``. Empty when the
-    operator set none, which keeps every request on the loose tmdb/tvdb union (today's behavior).
+    ``service_instance_map`` is ``{"{kind}:{serviceId}": Reaper instance id}`` (``service_key``);
+    the kind is in the key because Seerr numbers Sonarr and Radarr services separately. Empty when
+    the operator set none, which keeps every request on the loose tmdb/tvdb union (today's).
     Set, it lets :func:`build_map` bind the exact copy a person asked for when a title lives in
     more than one library/instance (a main library and a restricted one) -- see the module
     docstring on why the join is otherwise on ids alone.
@@ -65,6 +66,16 @@ def show_key(tvdb_id: int | None) -> str | None:
 def season_key(tvdb_id: int | None, season: int) -> str | None:
     """The requested-map key for one season of a show."""
     return f"tv:tvdb:{tvdb_id}:{season}" if tvdb_id else None
+
+
+def service_key(media_type: str, service_id: object) -> str:
+    """The ``service_instance_map`` key for a request's *arr service: ``"{kind}:{serviceId}"``.
+
+    Seerr numbers its Sonarr and Radarr services in SEPARATE lists (each starting at 0), so a
+    serviceId collides across kinds. A movie request routes through a Radarr service, a tv one
+    through Sonarr, so the map (and the Settings UI) key both by kind + id, not id alone."""
+    kind = "radarr" if media_type == "movie" else "sonarr"
+    return f"{kind}:{service_id}"
 
 
 def movie_instance_key(instance_id: int, arr_id: int | None) -> str | None:
@@ -181,8 +192,11 @@ async def build_map(sources: Sequence[SeerrSource]) -> dict[str, str]:
             # (Seerr stores a show's at the show level, which is what season lookups match on).
             add(rating_key_key(req.plex_rating_key), name)
             # The Reaper instance this request's *arr service adds to, if the operator mapped it.
+            # Seerr numbers Sonarr and Radarr services in SEPARATE lists (both start at 0), so the
+            # serviceId is unique only within its kind -- the map is keyed by "{kind}:{serviceId}",
+            # and a movie request reads a radarr service, a tv request a sonarr one.
             reaper_instance = (
-                service_map.get(str(req.arr_instance_id))
+                service_map.get(service_key(req.media_type, req.arr_instance_id))
                 if req.arr_instance_id is not None
                 else None
             )

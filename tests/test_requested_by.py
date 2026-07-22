@@ -129,7 +129,8 @@ class TestBuildMapPrecisePerCopy:
         # externalServiceId (arr_id) is that Radarr's movie id, so the precise key is the
         # candidate's own media_key radarr:7:55.
         seerr = _FakeSeerr([_req(media_type="movie", tmdb_id=603, arr_id=55, arr_instance_id=2)])
-        result = await requested_by.build_map([_src(seerr, {"2": 7})])
+        # A movie request reads a Radarr service, so the map key is "radarr:{serviceId}".
+        result = await requested_by.build_map([_src(seerr, {"radarr:2": 7})])
         # The precise key IS the candidate's media_key by construction (radarr:{inst}:{arr id}).
         assert requested_by.movie_instance_key(7, 55) == "radarr:7:55"
         assert result["radarr:7:55"] == "Alice"
@@ -160,7 +161,9 @@ class TestBuildMapPrecisePerCopy:
                 )
             ]
         )
-        result = await requested_by.build_map([_src(primary, {"1": 7}), _src(secondary, {"1": 8})])
+        result = await requested_by.build_map(
+            [_src(primary, {"radarr:1": 7}), _src(secondary, {"radarr:1": 8})]
+        )
         # Each copy attributes to its own requester...
         assert result[requested_by.movie_instance_key(7, 55)] == "Alice"
         assert result[requested_by.movie_instance_key(8, 99)] == "Bob"
@@ -171,16 +174,17 @@ class TestBuildMapPrecisePerCopy:
         seerr = _FakeSeerr(
             [_req(media_type="tv", tvdb_id=81189, seasons=(2, 3), arr_id=42, arr_instance_id=5)]
         )
-        result = await requested_by.build_map([_src(seerr, {"5": 9})])
+        # A tv request reads a Sonarr service, so the map key is "sonarr:{serviceId}".
+        result = await requested_by.build_map([_src(seerr, {"sonarr:5": 9})])
         assert result[requested_by.show_instance_key(9, 42)] == "Alice"
         assert result[requested_by.season_instance_key(9, 42, 2)] == "Alice"
         assert result[requested_by.season_instance_key(9, 42, 3)] == "Alice"
         assert requested_by.season_instance_key(9, 42, 1) not in result
 
     async def test_an_unmapped_service_keeps_only_the_loose_key(self) -> None:
-        # serviceId 3 is not in the map, so no precise key is filed -- today's behavior.
+        # radarr serviceId 3 is not in the map, so no precise key is filed -- today's behavior.
         seerr = _FakeSeerr([_req(media_type="movie", tmdb_id=603, arr_id=55, arr_instance_id=3)])
-        result = await requested_by.build_map([_src(seerr, {"2": 7})])
+        result = await requested_by.build_map([_src(seerr, {"radarr:2": 7})])
         assert result[requested_by.movie_key(603)] == "Alice"
         assert requested_by.movie_instance_key(7, 55) not in result
         assert requested_by.movie_instance_key(3, 55) not in result
@@ -188,9 +192,26 @@ class TestBuildMapPrecisePerCopy:
     async def test_a_request_with_no_arr_id_files_only_the_loose_key(self) -> None:
         # A manual add / dedup case: mapped service, but no externalServiceId to pin the copy.
         seerr = _FakeSeerr([_req(media_type="movie", tmdb_id=603, arr_id=None, arr_instance_id=2)])
-        result = await requested_by.build_map([_src(seerr, {"2": 7})])
+        result = await requested_by.build_map([_src(seerr, {"radarr:2": 7})])
         assert result[requested_by.movie_key(603)] == "Alice"
         assert not any(k.startswith("radarr:") for k in result)
+
+    async def test_sonarr_and_radarr_service_ids_do_not_collide(self) -> None:
+        # THE bug this keying prevents: Seerr numbers Sonarr and Radarr services separately, so
+        # both have a serviceId 0. A movie request (radarr 0 -> instance 7) and a tv request
+        # (sonarr 0 -> instance 9) must resolve to their OWN instance, not clobber each other.
+        seerr = _FakeSeerr(
+            [
+                _req(media_type="movie", tmdb_id=603, arr_id=55, arr_instance_id=0),
+                _req(media_type="tv", tvdb_id=81189, seasons=(1,), arr_id=42, arr_instance_id=0),
+            ]
+        )
+        result = await requested_by.build_map([_src(seerr, {"radarr:0": 7, "sonarr:0": 9})])
+        assert result[requested_by.movie_instance_key(7, 55)] == "Alice"  # radarr 0 -> 7
+        assert result[requested_by.season_instance_key(9, 42, 1)] == "Alice"  # sonarr 0 -> 9
+        # Never crossed: no movie key under the sonarr instance, no season under the radarr one.
+        assert requested_by.movie_instance_key(9, 55) not in result
+        assert requested_by.season_instance_key(7, 42, 1) not in result
 
 
 class TestBuildMapRatingKey:
