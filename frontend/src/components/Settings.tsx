@@ -1378,8 +1378,8 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
     };
 
   return (
-    <div className="safety-row">
-      <div>
+    <div className="safety-row pw-row">
+      <div className="pw-head">
         <strong>{needed ? "Set an admin password" : "Change the admin password"}</strong>
         <p className="help">
           {needed
@@ -1387,48 +1387,60 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
             : "Changing it needs the current password first."}
         </p>
       </div>
-      <form
-        className="pw-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          setMsg(null);
-          save.mutate();
-        }}
-      >
-        {!needed && (
-          <input
-            type="password"
-            value={current}
-            onChange={onEdit(setCurrent)}
-            placeholder="current password"
-            aria-label="Current password"
-            autoComplete="current-password"
-          />
-        )}
-        {/* The placeholder is a hint, not a name: it says how long the password must be
-            and disappears the moment you type. The label names the field either way. */}
-        <input
-          type="password"
-          value={pw}
-          onChange={onEdit(setPw)}
-          placeholder="at least 12 characters"
-          aria-label="New password"
-          autoComplete="new-password"
-        />
-        <input
-          type="password"
-          value={confirm}
-          onChange={onEdit(setConfirm)}
-          placeholder="confirm new password"
-          aria-label="Confirm new password"
-          autoComplete="new-password"
-        />
-        <button type="submit" className="primary sm" disabled={!valid || save.isPending}>
-          Save
-        </button>
-        {msg && <span className="muted">{msg}</span>}
-      </form>
-      {errorNode && <p className="notice notice-error">{errorNode}</p>}
+      <div className="pw-col">
+        <form
+          className="pw-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setMsg(null);
+            save.mutate();
+          }}
+        >
+          {/* The current password proves who you are; a divider sets it apart from the new
+              one below. First-time setup has no current password, so neither is shown. */}
+          {!needed && (
+            <>
+              <label className="field-sm">
+                <span className="field-label">Current password</span>
+                <input
+                  type="password"
+                  value={current}
+                  onChange={onEdit(setCurrent)}
+                  autoComplete="current-password"
+                />
+              </label>
+              <hr className="pw-sep" />
+            </>
+          )}
+          <label className="field-sm">
+            <span className="field-label">New password</span>
+            {/* The placeholder states the length up front; the label names the field. */}
+            <input
+              type="password"
+              value={pw}
+              onChange={onEdit(setPw)}
+              placeholder="at least 12 characters"
+              autoComplete="new-password"
+            />
+          </label>
+          <label className="field-sm">
+            <span className="field-label">Confirm new password</span>
+            <input
+              type="password"
+              value={confirm}
+              onChange={onEdit(setConfirm)}
+              autoComplete="new-password"
+            />
+          </label>
+          <div className="add-actions">
+            <button type="submit" className="primary" disabled={!valid || save.isPending}>
+              Save
+            </button>
+            {msg && <span className="muted">{msg}</span>}
+          </div>
+        </form>
+        {errorNode && <p className="notice notice-error">{errorNode}</p>}
+      </div>
     </div>
   );
 }
