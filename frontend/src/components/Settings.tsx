@@ -23,7 +23,9 @@ import { bytes, count, since } from "../format";
 import { LogsPanel } from "./LogsPanel";
 import { ModalShell } from "./ModalShell";
 import { PlexPanel } from "./PlexPanel";
+import { FixedQuantity } from "./QuantityInput";
 import { ScanRow } from "./ScanBar";
+import { Segmented } from "./Segmented";
 import { KINDS, kindLabel, ServiceModal, TestBadge } from "./ServiceModal";
 import { Switch } from "./Switch";
 
@@ -103,6 +105,11 @@ function GeneralPanel() {
   const [url, setUrl] = useState("");
   const [proxies, setProxies] = useState("");
   const [accent, setAccent] = useState(DEFAULT_ACCENT);
+  // The days a plain Spare keeps an item, while the operator is editing it. The stored value
+  // (0 = forever) is the source of truth for which mode is on; this is the box's live number,
+  // seeded to a sensible 30 when the stored default is Forever so switching to a length starts
+  // somewhere reasonable.
+  const [spareDays, setSpareDays] = useState(30);
   const [theme, setTheme] = useState<ThemeChoice>(readTheme);
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -118,6 +125,7 @@ function GeneralPanel() {
     setUrl(general.data.application_url ?? "");
     setProxies(general.data.trusted_proxies.join(", "));
     setAccent(general.data.accent_color);
+    if (general.data.default_spare_days > 0) setSpareDays(general.data.default_spare_days);
   }, [general.data]);
 
   const save = useMutation({
@@ -361,6 +369,51 @@ function GeneralPanel() {
                 ariaLabel="Expand seasons by default"
                 onChange={(enabled) => save.mutate({ expand_seasons_default: enabled })}
               />
+            </div>
+          </div>
+          <div className="set-row">
+            <span className="set-label">Default spare length</span>
+            <p className="help">
+              How long a plain Spare keeps a title before Reaper judges it again. Set a different
+              length for any single title from its Spare menu.
+            </p>
+            <div className="set-control">
+              <Segmented
+                value={data.default_spare_days > 0 ? "days" : "forever"}
+                options={[
+                  ["days", "Days"],
+                  ["forever", "Forever"],
+                ]}
+                label="Default spare length"
+                onChange={(mode) =>
+                  save.mutate({ default_spare_days: mode === "forever" ? 0 : spareDays })
+                }
+              />
+              {/* Only while a length is in force -- Forever hides the box, matching how a
+                  group's sub-controls disappear when its toggle is off. */}
+              {data.default_spare_days > 0 && (
+                <>
+                  <FixedQuantity
+                    value={spareDays}
+                    suffix="days"
+                    min={1}
+                    max={3650}
+                    width="narrow"
+                    ariaLabel="Default spare length in days"
+                    disabled={save.isPending}
+                    onChange={(n) => setSpareDays(Math.max(1, Math.min(3650, n)))}
+                  />
+                  {spareDays !== data.default_spare_days && (
+                    <button
+                      className="primary"
+                      disabled={save.isPending}
+                      onClick={() => save.mutate({ default_spare_days: spareDays })}
+                    >
+                      Save
+                    </button>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>

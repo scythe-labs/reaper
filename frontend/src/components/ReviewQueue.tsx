@@ -39,7 +39,7 @@ import {
   type SortOrder,
   type Verdict,
 } from "../api";
-import { bytes, count, itemBytes, totalBytes } from "../format";
+import { bytes, count, itemBytes, spareRemaining, totalBytes } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { ReapConfirm } from "./ReapConfirm";
 import { ScytheGlyph } from "./ScytheGlyph";
@@ -480,9 +480,79 @@ function DormantPill({ dormantFor }: { dormantFor: string | null }) {
   );
 }
 
-/** The hand-overrides, as a toggle: **Spare** (∞ keep forever) and **Reap** (force onto the
- *  list). The active one is lit; clicking it again clears the override and lets Reaper judge
- *  the item again. Clicking the other switches. Stops the click from opening the panel.
+/** How long a plain Spare press keeps an item: the operator's General preference (0 = forever,
+ *  N = N days). Read from the shared general-settings cache, so flipping it in Settings takes
+ *  effect here without a reload. Unknown/error reads as 0 -- forever, the safe, unchanged
+ *  default. One query key, deduped, so every control on screen costs one request. */
+function useDefaultSpareDays(): number {
+  const { data } = useQuery({ queryKey: ["general-settings"], queryFn: api.general });
+  return data?.default_spare_days ?? 0;
+}
+
+/** A small clock, the dormancy pill's shape reused -- here in the spare's green to mean "kept,
+ *  for now". It marks a TIMED spare, where ∞ marks a forever one. */
+function ClockGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+      <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.4" />
+      <path d="M8 4.6V8l2.4 1.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** The Spare button's leading glyph: ∞ when a plain press keeps forever, the clock when it
+ *  keeps for a set time -- so the button says what it will do before you open the menu. */
+function SpareGlyph({ days }: { days: number }) {
+  return days > 0 ? (
+    <ClockGlyph />
+  ) : (
+    <span className="infinity" aria-hidden="true">
+      ∞
+    </span>
+  );
+}
+
+function CaretDownGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" aria-hidden="true">
+      <path
+        d="M4 6l4 4 4-4"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function PenGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+      <path
+        d="M11 2.5l2.5 2.5L6 12.5 3 13l.5-3z"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+//: The quick day-lengths the Spare menu always offers, above Forever and a Custom entry. The
+//  operator's own default is added to (and tagged in) this list when it is a different number.
+const SPARE_PRESETS = [30, 90];
+
+/** The hand-overrides, as a toggle: **Spare** (keep) and **Reap** (force onto the list). The
+ *  active one is lit; clicking it again clears the override and lets Reaper judge the item
+ *  again. Clicking the other switches. Stops the click from opening the panel.
+ *
+ *  Spare is a SPLIT button: the main press keeps the item for the operator's default length
+ *  (Settings → General), and the chevron opens the other lengths -- a set number of days, or
+ *  forever -- so a one-off choice is one click, never a settings trip. The leading glyph (∞ or
+ *  a clock) says which the default is. On a spared item the chevron stays live, so the same
+ *  menu extends or shortens the spare; the main button still toggles it off.
  *
  *  On the Condemned lane the item is already on the block, so Reap would change nothing:
  *  `hideReap` drops it there and leaves Spare (rescue) on its own. */
@@ -494,18 +564,47 @@ export function OverrideControls({
   hideReap = false,
 }: {
   override: Override | null;
-  onSet: (decision: Override) => void;
+  onSet: (decision: Override, spareDays?: number) => void;
   onClear: () => void;
   pending: boolean;
   hideReap?: boolean;
 }) {
-  const click = (e: ReactMouseEvent, decision: Override) => {
+  const defaultDays = useDefaultSpareDays();
+  const [menuAt, setMenuAt] = useState<{ top: number; left: number } | null>(null);
+  const caretRef = useRef<HTMLButtonElement>(null);
+
+  // The menu is position:fixed so the card's overflow:hidden can't clip it. Anchor it under the
+  // chevron, right-aligned, and flip above when it would run off the bottom of the viewport.
+  const toggleMenu = (e: ReactMouseEvent) => {
     e.stopPropagation();
-    override === decision ? onClear() : onSet(decision);
+    if (menuAt) {
+      setMenuAt(null);
+      return;
+    }
+    const btn = caretRef.current;
+    if (!btn) return;
+    const r = btn.getBoundingClientRect();
+    const WIDTH = 224;
+    const HEIGHT = 250;
+    const below = r.bottom + HEIGHT <= window.innerHeight;
+    setMenuAt({
+      top: below ? r.bottom + 4 : Math.max(8, r.top - HEIGHT - 4),
+      left: Math.max(8, Math.min(r.right - WIDTH, window.innerWidth - WIDTH - 8)),
+    });
   };
+
+  const clickSpare = (e: ReactMouseEvent) => {
+    e.stopPropagation();
+    override === "spare" ? onClear() : onSet("spare", defaultDays);
+  };
+  const clickReap = (e: ReactMouseEvent) => {
+    e.stopPropagation();
+    override === "reap" ? onClear() : onSet("reap");
+  };
+
   return (
     <div
-      className="override-controls"
+      className={`override-controls ${menuAt ? "menu-open" : ""}`}
       role="group"
       aria-label="Spare or reap this item"
       // The buttons activate on Enter/Space natively; stop the key from bubbling to a row or
@@ -515,30 +614,55 @@ export function OverrideControls({
         if (e.key === "Enter" || e.key === " ") e.stopPropagation();
       }}
     >
-      <button
-        type="button"
-        className={`ov-btn ov-spare ${override === "spare" ? "active" : ""}`}
-        disabled={pending}
-        aria-pressed={override === "spare"}
-        onClick={(e) => click(e, "spare")}
-        title={
-          override === "spare"
-            ? "Spared. Click to let Reaper judge it again"
-            : "Never reap this. Keep it forever"
-        }
-      >
-        <span className="infinity" aria-hidden="true">
-          ∞
-        </span>{" "}
-        {override === "spare" ? "Spared" : "Spare"}
-      </button>
+      <span className="ov-split">
+        <button
+          type="button"
+          className={`ov-btn ov-spare split-main ${override === "spare" ? "active" : ""}`}
+          disabled={pending}
+          aria-pressed={override === "spare"}
+          onClick={clickSpare}
+          title={
+            override === "spare"
+              ? "Spared. Click to let Reaper judge it again"
+              : defaultDays > 0
+                ? `Spare for ${defaultDays} days. Use the arrow for another length`
+                : "Spare forever. Use the arrow for a set time"
+          }
+        >
+          <SpareGlyph days={defaultDays} /> {override === "spare" ? "Spared" : "Spare"}
+        </button>
+        <button
+          ref={caretRef}
+          type="button"
+          className={`ov-btn ov-spare split-caret ${override === "spare" ? "active" : ""}`}
+          disabled={pending}
+          aria-haspopup="menu"
+          aria-expanded={menuAt !== null}
+          aria-label="Choose how long to keep it"
+          onClick={toggleMenu}
+        >
+          <CaretDownGlyph />
+        </button>
+      </span>
+      {menuAt && (
+        <SpareMenu
+          at={menuAt}
+          defaultDays={defaultDays}
+          triggerRef={caretRef}
+          onPick={(spareDays) => {
+            setMenuAt(null);
+            onSet("spare", spareDays);
+          }}
+          onClose={() => setMenuAt(null)}
+        />
+      )}
       {!hideReap && (
         <button
           type="button"
           className={`ov-btn ov-reap ${override === "reap" ? "active" : ""}`}
           disabled={pending}
           aria-pressed={override === "reap"}
-          onClick={(e) => click(e, "reap")}
+          onClick={clickReap}
           title={
             override === "reap"
               ? "Marked for reaping. Click to undo"
@@ -546,6 +670,123 @@ export function OverrideControls({
           }
         >
           <ScytheIcon /> {override === "reap" ? "Reaping" : "Reap"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** The length menu behind the Spare chevron: quick day-presets, Forever, and a Custom entry
+ *  that expands to a days box. The operator's default is tagged. Picking a length spares the
+ *  item at once -- the menu is the action, not a form. Rendered position:fixed at `at` (the
+ *  card clips its overflow), and closed on an outside click, Escape, or a scroll that would
+ *  strand it off its anchor. */
+function SpareMenu({
+  at,
+  defaultDays,
+  triggerRef,
+  onPick,
+  onClose,
+}: {
+  at: { top: number; left: number };
+  defaultDays: number;
+  triggerRef: RefObject<HTMLButtonElement | null>;
+  onPick: (days: number) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [custom, setCustom] = useState(false);
+  // Held as free text so the box types and clears naturally; clamped to [1, 3650] only when
+  // Spare is pressed, never mid-keystroke (which would snap a half-typed number).
+  const [customText, setCustomText] = useState(String(defaultDays > 0 ? defaultDays : 30));
+  const spareCustom = () =>
+    onPick(Math.max(1, Math.min(3650, Math.floor(Number(customText) || 1))));
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      // The chevron is its own toggle; leave it out of the outside-close so a click there
+      // doesn't close-then-reopen the menu.
+      if (!ref.current?.contains(t) && !triggerRef.current?.contains(t)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    const onScroll = () => onClose();
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [onClose, triggerRef]);
+
+  // The day-rows: the presets, plus the operator's default when it is a custom number not
+  // already among them, sorted so the ladder reads low to high.
+  const dayRows = Array.from(
+    new Set([...(defaultDays > 0 ? [defaultDays] : []), ...SPARE_PRESETS]),
+  ).sort((a, b) => a - b);
+
+  return (
+    <div
+      ref={ref}
+      className="dur-menu"
+      role="menu"
+      aria-label="Spare this item for"
+      style={{ position: "fixed", top: at.top, left: at.left }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="dur-head">Spare for…</div>
+      {dayRows.map((d) => (
+        <button key={d} type="button" role="menuitem" className="dur-mi" onClick={() => onPick(d)}>
+          <span className="mi-glyph">
+            <ClockGlyph />
+          </span>
+          <span className="mi-label">{d} days</span>
+          {d === defaultDays && <span className="mi-tag">Default</span>}
+        </button>
+      ))}
+      <button type="button" role="menuitem" className="dur-mi" onClick={() => onPick(0)}>
+        <span className="mi-glyph">
+          <span className="infinity" aria-hidden="true">
+            ∞
+          </span>
+        </span>
+        <span className="mi-label">Forever</span>
+        {defaultDays === 0 && <span className="mi-tag">Default</span>}
+      </button>
+      <div className="dur-div" />
+      {custom ? (
+        <div className="dur-custom">
+          <span className="qty qty-narrow">
+            <input
+              type="number"
+              min={1}
+              max={3650}
+              value={customText}
+              autoFocus
+              aria-label="Custom spare length in days"
+              onChange={(e) => setCustomText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") spareCustom();
+              }}
+            />
+            <span className="qty-suffix" aria-hidden="true">
+              days
+            </span>
+          </span>
+          <button type="button" className="dur-spare-go" onClick={spareCustom}>
+            Spare
+          </button>
+        </div>
+      ) : (
+        <button type="button" role="menuitem" className="dur-mi" onClick={() => setCustom(true)}>
+          <span className="mi-glyph mi-pen">
+            <PenGlyph />
+          </span>
+          <span className="mi-label">Custom length…</span>
         </button>
       )}
     </div>
@@ -639,11 +880,34 @@ export function KeptByShowNote({
  *  icon of that decision (∞ spared, scythe reaped) where the buttons sit, bottom-right. The
  *  hover rules fade it out as the buttons arrive, so the two never show together. Decorative:
  *  the same decision is named by the card's override chip and by the buttons themselves. */
-function OverrideMark({ override }: { override: Override | null }) {
+function OverrideMark({
+  override,
+  spareExpiresAt = null,
+}: {
+  override: Override | null;
+  /** For a spare, when it stops keeping the item (ISO), or null for forever. A forever spare
+   *  rests as ∞; a timed one rests as the clock plus its days left ("27d"). */
+  spareExpiresAt?: string | null;
+}) {
   if (!override) return null;
+  if (override !== "spare") {
+    return (
+      <span className="override-mark reap" aria-hidden="true">
+        <ScytheIcon />
+      </span>
+    );
+  }
+  const remaining = spareRemaining(spareExpiresAt);
   return (
-    <span className={`override-mark ${override}`} aria-hidden="true">
-      {override === "spare" ? <span className="mk-inf">∞</span> : <ScytheIcon />}
+    <span className="override-mark spare" aria-hidden="true">
+      {remaining.forever ? (
+        <span className="mk-inf">∞</span>
+      ) : (
+        <>
+          <ClockGlyph />
+          <span className="mk-count">{remaining.short}</span>
+        </>
+      )}
     </span>
   );
 }
@@ -1053,7 +1317,7 @@ function SeasonList({
   groupKey: string;
   selectedId: number | null;
   onOpen: (id: number) => void;
-  onSet: (key: string, decision: Override) => void;
+  onSet: (key: string, decision: Override, spareDays?: number) => void;
   onClear: (key: string) => void;
   pending: boolean;
 }) {
@@ -1122,6 +1386,7 @@ function SeasonList({
                 override={season.override}
                 effective={season.override_effective}
                 keptWhy={chipWhy(season.chip)}
+                spareExpiresAt={season.spare_expires_at}
               />
             ) : season.verdict === "condemn" ? (
               <CondemnedChip />
@@ -1135,7 +1400,7 @@ function SeasonList({
               dropped. The note below says when the whole show is what keeps it. */}
           <OverrideControls
             override={season.override_own}
-            onSet={(d) => onSet(season.media_key, d)}
+            onSet={(d, sd) => onSet(season.media_key, d, sd)}
             onClear={() => onClear(season.media_key)}
             pending={pending}
             hideReap={isCondemned(season)}
@@ -1167,7 +1432,7 @@ function MovieCard({
   selected: boolean;
   select: CardSelect;
   onOpen: (id: number) => void;
-  onSet: (key: string, decision: Override) => void;
+  onSet: (key: string, decision: Override, spareDays?: number) => void;
   onClear: (key: string) => void;
   pending: boolean;
   hideReap: boolean;
@@ -1210,6 +1475,7 @@ function MovieCard({
             override={item.override}
             effective={item.override_effective}
             keptWhy={chipWhy(item.chip)}
+            spareExpiresAt={item.spare_expires_at}
           />
         </div>
         {/* The type chip lives on the meta line, not the title row, so a long title
@@ -1236,12 +1502,12 @@ function MovieCard({
             you hover, when the buttons take its place. */}
         {!selectMode && (
           <>
-            <OverrideMark override={item.override} />
+            <OverrideMark override={item.override} spareExpiresAt={item.spare_expires_at} />
             {/* A movie has no show to inherit from, so its own decision is its effective one;
                 the control toggles override_own for the same contract every row now follows. */}
             <OverrideControls
               override={item.override_own}
-              onSet={(d) => onSet(item.media_key, d)}
+              onSet={(d, sd) => onSet(item.media_key, d, sd)}
               onClear={() => onClear(item.media_key)}
               pending={pending}
               hideReap={hideReap}
@@ -1274,7 +1540,7 @@ function ShowCard({
   select: CardSelect;
   onOpen: (id: number) => void;
   onOpenGroup: (key: string) => void;
-  onSet: (key: string, decision: Override) => void;
+  onSet: (key: string, decision: Override, spareDays?: number) => void;
   onClear: (key: string) => void;
   pending: boolean;
 }) {
@@ -1372,6 +1638,7 @@ function ShowCard({
                       .length
                   : 0
               }
+              spareExpiresAt={first.show_spare_expires_at}
             />
           </div>
           <div className="card-meta">
@@ -1413,10 +1680,10 @@ function ShowCard({
               Otherwise the decision icon rests here until hover reveals the buttons. */}
           {!selectMode && (
             <>
-              <OverrideMark override={showOverride} />
+              <OverrideMark override={showOverride} spareExpiresAt={first.show_spare_expires_at} />
               <OverrideControls
                 override={showOverride}
-                onSet={(d) => onSet(group.key, d)}
+                onSet={(d, sd) => onSet(group.key, d, sd)}
                 onClear={() => onClear(group.key)}
                 pending={pending}
                 // Not the movie's tab-based `hideReap`: a whole-show Reap still takes the
@@ -1601,9 +1868,21 @@ export function ReviewQueue({
     // instead let every request settle, then always refresh, and report which ones failed.
     // Zipped back onto their keys, not counted: "3 failed" is useless in a list of hundreds
     // if you cannot tell which three.
-    mutationFn: async ({ keys, decision }: { keys: string[]; decision: Override | null }) => {
+    mutationFn: async ({
+      keys,
+      decision,
+      spareDays = 0,
+    }: {
+      keys: string[];
+      decision: Override | null;
+      spareDays?: number;
+    }) => {
       const results = await Promise.allSettled(
-        keys.map((key) => (decision === null ? api.clearOverride(key) : api.override(key, decision))),
+        keys.map((key) =>
+          decision === null
+            ? api.clearOverride(key)
+            : api.override(key, decision, undefined, spareDays),
+        ),
       );
       return keys.filter((_, i) => results[i]!.status === "rejected");
     },
@@ -1660,7 +1939,8 @@ export function ReviewQueue({
     // operator asked for, under a button that says "everything matching".
     selectEverything.isPending;
 
-  const onSet = (key: string, decision: Override) => setOverride.mutate({ key, decision });
+  const onSet = (key: string, decision: Override, spareDays?: number) =>
+    setOverride.mutate({ key, decision, spareDays: spareDays ?? 0 });
   const onClear = (key: string) => clearOverride.mutate(key);
 
   // --- Select mode: tap to toggle, or press-and-drag to paint a run of cards ------------------
@@ -1735,6 +2015,10 @@ export function ReviewQueue({
     staleTime: 5 * 60 * 1000,
   });
   const expandSeasonsByDefault = generalSettings?.expand_seasons_default ?? false;
+  // What a bulk Spare keeps items for: the operator's default length (0 = forever). The
+  // per-card menu offers other lengths; the bulk bar acts on the whole selection at once, so
+  // it uses the default and its glyph (∞ or a clock) shows which that is.
+  const defaultSpareDays = generalSettings?.default_spare_days ?? 0;
   // A remembered value the newest scan no longer has stays selectable: the row set it filters
   // is honest (empty), and the option must exist for the chip to show it.
   const genreOptions = useMemo(() => {
@@ -2256,12 +2540,16 @@ export function ReviewQueue({
               type="button"
               className="sm ov-btn ov-spare"
               disabled={pending || selected.size === 0}
-              onClick={() => bulk.mutate({ keys: [...selected], decision: "spare" })}
+              onClick={() =>
+                bulk.mutate({ keys: [...selected], decision: "spare", spareDays: defaultSpareDays })
+              }
+              title={
+                defaultSpareDays > 0
+                  ? `Spare the selected items for ${defaultSpareDays} days`
+                  : "Spare the selected items forever"
+              }
             >
-              <span className="infinity" aria-hidden="true">
-                ∞
-              </span>{" "}
-              Spare
+              <SpareGlyph days={defaultSpareDays} /> Spare
             </button>
             {/* On Condemned the items are already on the block, so a bulk Reap override does
                 nothing: drop it there, exactly as the per-card and panel buttons do. The real

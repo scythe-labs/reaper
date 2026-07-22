@@ -9,6 +9,7 @@
 // show panel say the same words about a spare or a reap.
 
 import type { Chip, Override } from "../api";
+import { spareRemaining } from "../format";
 
 export function StatusChip({ chip }: { chip: Chip | null }) {
   if (!chip) return null;
@@ -82,6 +83,7 @@ export function OverrideChip({
   effective,
   keptWhy,
   exceptions = 0,
+  spareExpiresAt = null,
   family = "chip",
 }: {
   override: Override | null;
@@ -91,13 +93,24 @@ export function OverrideChip({
    *  the chip drops its unqualified "will be kept/removed" claim, since a season inside goes
    *  the other way (U-3). Zero for movies and single seasons. */
   exceptions?: number;
+  /** When a *timed* spare stops keeping this item (ISO), or null for a forever spare. Read only
+   *  on a spare chip: it turns "will be kept" into a countdown ("27 days left", "expired"). */
+  spareExpiresAt?: string | null;
   family?: ChipFamily;
 }) {
   const classes = OVERRIDE_CLASSES[family];
   const except =
     exceptions > 0 ? `except ${exceptions} ${exceptions === 1 ? "season" : "seasons"}` : null;
   if (override === "spare") {
-    return <span className={classes.spare}>Spared by hand · {except ?? "will be kept"}</span>;
+    // A forever spare keeps "will be kept"; a timed one counts down. The exceptions clause,
+    // when present, still wins -- a mixed whole-show claim needs qualifying first.
+    const remaining = spareRemaining(spareExpiresAt);
+    const suffix = except ?? (remaining.forever ? "will be kept" : remaining.phrase);
+    return (
+      <span className={classes.spare} title={remaining.until || undefined}>
+        Spared by hand · {suffix}
+      </span>
+    );
   }
   if (override !== "reap") return null;
   if (effective === false) {

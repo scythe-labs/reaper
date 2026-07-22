@@ -22,8 +22,17 @@ export function useOverrideMutations() {
   };
 
   const setOverride = useMutation({
-    mutationFn: ({ key, decision }: { key: string; decision: Override }) =>
-      api.override(key, decision),
+    // `spareDays` is how long a spare keeps the item: 0 (or omitted) = forever, a positive
+    // count that many days. Ignored by the server for a reap.
+    mutationFn: ({
+      key,
+      decision,
+      spareDays = 0,
+    }: {
+      key: string;
+      decision: Override;
+      spareDays?: number;
+    }) => api.override(key, decision, undefined, spareDays),
     onSuccess: refresh,
   });
   const clearOverride = useMutation({

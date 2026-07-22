@@ -102,6 +102,7 @@ class TestGeneralSettings:
             "accent_color": "#25c3ff",
             "api_key_set": False,
             "expand_seasons_default": False,
+            "default_spare_days": 0,
             "proxy_trust_enabled": False,
             "trusted_proxies": [],
         }
@@ -132,6 +133,21 @@ class TestGeneralSettings:
         # Turning it back off is a real choice and is kept.
         data = client.put("/api/settings/general", json={"expand_seasons_default": False}).json()
         assert data["expand_seasons_default"] is False
+
+    def test_default_spare_days_round_trips(self, client: TestClient) -> None:
+        # Zero on a fresh install: a plain Spare keeps forever, exactly as before.
+        assert client.get("/api/settings/general").json()["default_spare_days"] == 0
+        data = client.put("/api/settings/general", json={"default_spare_days": 30}).json()
+        assert data["default_spare_days"] == 30
+        assert client.get("/api/settings/general").json()["default_spare_days"] == 30
+        # Back to forever is a real choice and is kept.
+        data = client.put("/api/settings/general", json={"default_spare_days": 0}).json()
+        assert data["default_spare_days"] == 0
+
+    def test_a_negative_default_spare_days_is_refused(self, client: TestClient) -> None:
+        assert (
+            client.put("/api/settings/general", json={"default_spare_days": -5}).status_code == 422
+        )
 
     def test_partial_save_changes_only_what_was_sent(self, client: TestClient) -> None:
         data = client.put("/api/settings/general", json={"application_name": "Media Reaper"}).json()

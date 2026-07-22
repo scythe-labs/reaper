@@ -18,6 +18,8 @@ the owner just told us to keep. Belt, and separately, suspenders.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,9 +53,67 @@ def effective_override(media_key: str, decisions: dict[str, str]) -> str | None:
     return None
 
 
+def effective_spare_expiry(
+    media_key: str, decisions: dict[str, str], expiries: dict[str, datetime | None]
+) -> datetime | None:
+    """When the spare in effect on this item stops protecting -- own key first, then its show.
+
+    Mirrors :func:`effective_override`'s precedence, so the countdown a row shows belongs to the
+    same spare that keeps it. ``None`` means the effective spare is forever (or the item is not
+    spared at all): call this only when :func:`effective_override` already returned ``"spare"``,
+    and then ``None`` reads as "kept forever".
+    """
+    if media_key in decisions:
+        return expiries.get(media_key)
+    show = show_key(media_key)
+    if show is not None and show in decisions:
+        return expiries.get(show)
+    return None
+
+
 async def overrides(session: AsyncSession) -> dict[str, str]:
-    """``media_key -> decision`` for every manual override -- what the scan reads once."""
+    """``media_key -> decision`` for every manual override -- what live consumers read once.
+
+    A timed spare stays in force here until the next scan realizes its expiry
+    (:func:`overrides_effective_at`). That is deliberate: between scans an expired spare keeps
+    protecting the file, failing toward keeping it rather than reaping it early on a clock tick
+    that no scan has yet re-anchored a grace window for.
+    """
     rows = await session.execute(select(WhitelistEntry.media_key, WhitelistEntry.decision))
+    return dict(rows.tuples().all())
+
+
+async def overrides_effective_at(session: AsyncSession, now: datetime) -> dict[str, str]:
+    """Manual overrides with EXPIRED hand-spares dropped as of ``now`` -- what the scan judges on.
+
+    This is the ONE place a timed spare's clock is realized. A spare whose ``spare_expires_at``
+    has passed no longer protects, so the scan re-judges the item exactly as if it were never
+    spared -- which re-condemns it if the policy still would, and (because the spare took its
+    grace clock off the list when it was set) writes a FRESH first-flagged timestamp, so it
+    re-enters on a full grace window, never a spent one (rule 4). Reaps never expire.
+    """
+    rows = await session.execute(
+        select(WhitelistEntry.media_key, WhitelistEntry.decision, WhitelistEntry.spare_expires_at)
+    )
+    out: dict[str, str] = {}
+    for media_key, decision, expires_at in rows.tuples().all():
+        if decision == "spare" and expires_at is not None and expires_at <= now:
+            continue
+        out[media_key] = decision
+    return out
+
+
+async def spare_expiries(session: AsyncSession) -> dict[str, datetime | None]:
+    """``media_key -> spare_expires_at`` for every SPARE row (``None`` = kept forever).
+
+    Reaps are omitted -- they never expire. Feeds the review queue's countdown alongside
+    :func:`overrides`, so the card can say how long a spare has left.
+    """
+    rows = await session.execute(
+        select(WhitelistEntry.media_key, WhitelistEntry.spare_expires_at).where(
+            WhitelistEntry.decision == "spare"
+        )
+    )
     return dict(rows.tuples().all())
 
 
@@ -75,34 +135,72 @@ async def list_spared(session: AsyncSession) -> list[WhitelistEntry]:
 
 
 async def set_override(
-    session: AsyncSession, *, media_key: str, title: str, decision: str, note: str | None
+    session: AsyncSession,
+    *,
+    media_key: str,
+    title: str,
+    decision: str,
+    note: str | None,
+    spare_days: int = 0,
+    now: datetime | None = None,
 ) -> WhitelistEntry:
     """Record a manual override -- ``"spare"`` (keep) or ``"reap"`` (force onto the reap list).
 
-    Idempotent, and switches decision in place: reaping an already-spared item flips it to
-    reap. Flushes so the override is visible to any read later in the same unit of work; the
-    caller owns the commit. ``title`` is denormalized in for display; the media_key is identity.
+    ``spare_days`` is how long a *spare* keeps the item: ``0`` (the default) means forever, the
+    original behavior; a positive count means keep it for that many days from ``now``, after
+    which the next scan re-judges it. It is ignored for a reap, which never expires -- and
+    setting a reap clears any prior expiry, so flipping a timed spare to reap and back does not
+    resurrect a stale clock.
+
+    Idempotent, and switches decision in place: reaping an already-spared item flips it to reap.
+    Flushes so the override is visible to any read later in the same unit of work; the caller
+    owns the commit. ``title`` is denormalized in for display; the media_key is identity.
     """
+    now = now or utcnow()
+    expires_at = (
+        now + timedelta(days=spare_days) if decision == "spare" and spare_days > 0 else None
+    )
     entry = await session.get(WhitelistEntry, media_key)
     if entry is None:
         entry = WhitelistEntry(
-            media_key=media_key, title=title, note=note, decision=decision, created_at=utcnow()
+            media_key=media_key,
+            title=title,
+            note=note,
+            decision=decision,
+            spare_expires_at=expires_at,
+            created_at=now,
         )
         session.add(entry)
     else:
         entry.title = title
         entry.note = note
         entry.decision = decision
+        entry.spare_expires_at = expires_at
     await session.flush()
     return entry
 
 
 async def spare(
-    session: AsyncSession, *, media_key: str, title: str, note: str | None
+    session: AsyncSession,
+    *,
+    media_key: str,
+    title: str,
+    note: str | None,
+    spare_days: int = 0,
+    now: datetime | None = None,
 ) -> WhitelistEntry:
-    """Record a spare -- a ``"spare"`` override. Kept as the common-case shorthand."""
+    """Record a spare -- a ``"spare"`` override. Kept as the common-case shorthand.
+
+    ``spare_days`` is the keep length (``0`` = forever); see :func:`set_override`.
+    """
     return await set_override(
-        session, media_key=media_key, title=title, decision="spare", note=note
+        session,
+        media_key=media_key,
+        title=title,
+        decision="spare",
+        note=note,
+        spare_days=spare_days,
+        now=now,
     )
 
 

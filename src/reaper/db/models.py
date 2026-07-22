@@ -607,6 +607,16 @@ class WhitelistEntry(Base):
     safety gate (something streaming now, or a file no *arr manages), which still wins. For a
     TV show the key can be the show's (``sonarr:i:series``), which applies to all its seasons."""
 
+    spare_expires_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
+    """When a *timed* hand-spare stops protecting. ``NULL`` means kept forever -- the original
+    behavior, and what every pre-existing row carries -- so an omitted expiry is never an early
+    reap. Only meaningful for a ``"spare"`` decision; a ``"reap"`` never expires and clears it.
+
+    The clock is realized in exactly ONE place: the scan drops a spare whose expiry has passed
+    (``whitelist.overrides_effective_at``) so the item is re-judged from scratch and re-enters
+    the reap flow on a FRESH grace window. Every live consumer keeps the spare in force until
+    that next scan runs -- failing toward keeping the file, never toward deleting it early."""
+
     created_at: Mapped[UtcTimestamp]
 
 

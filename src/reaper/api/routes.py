@@ -342,6 +342,7 @@ async def list_candidates(
             .all()
         }
         decisions = await whitelist.overrides(session)
+        expiries = await whitelist.spare_expiries(session)
         group_totals, group_marks = await _group_rollups(
             session, snapshot.id, {r.group_key for r in rows if r.group_key}, decisions
         )
@@ -353,6 +354,7 @@ async def list_candidates(
                 decisions,
                 group_condemned=group_totals.get(r.group_key) if r.group_key else None,
                 group_seasons=group_marks.get(r.group_key) if r.group_key else None,
+                expiries=expiries,
             )
             for r in rows
         ]
@@ -665,16 +667,27 @@ def _candidate_out(
     *,
     group_condemned: tuple[int, int, int] | None = None,
     group_seasons: list[GroupSeasonMarkOut] | None = None,
+    expiries: dict[str, datetime | None] | None = None,
 ) -> CandidateOut:
     # Three views of the one whitelist: the decision in EFFECT (own, or inherited from the
     # show) colors the row; the item's OWN decision is what a control on this row can toggle;
     # the SHOW's decision is what still keeps a season the operator did not touch. Computed in
     # one place so a season row and its show card can never disagree about what is spared.
     decisions = decisions or {}
+    expiries = expiries or {}
     override = whitelist.effective_override(r.media_key, decisions)
     override_own = decisions.get(r.media_key)
     _show_key = whitelist.show_key(r.media_key)
     show_override = decisions.get(_show_key) if _show_key else None
+    # The expiry belongs to whichever spare is in force: the effective one colors this row's
+    # countdown, the show one drives the whole-show card. Both are None for a forever spare
+    # (and for no spare -- read them only alongside the matching "spare" decision above).
+    spare_exp = (
+        whitelist.effective_spare_expiry(r.media_key, decisions, expiries)
+        if override == "spare"
+        else None
+    )
+    show_spare_exp = expiries.get(_show_key) if (_show_key and show_override == "spare") else None
     return CandidateOut(
         id=r.id,
         media_key=r.media_key,
@@ -714,6 +727,8 @@ def _candidate_out(
         # colors the row red only when this is True, so it never promises a removal
         # the engine will refuse.
         override_effective=reap_is_effective(r) if override == "reap" else None,
+        spare_expires_at=spare_exp.isoformat() if spare_exp is not None else None,
+        show_spare_expires_at=show_spare_exp.isoformat() if show_spare_exp is not None else None,
         chip=_chip(r.explanation_json, r.verdict, r.score),
         season_number=_season_number(r.media_key),
         group_seasons=group_seasons,
@@ -831,11 +846,13 @@ async def candidate_detail(request: Request, candidate_id: int) -> CandidateDeta
 
         flagged = await session.get(FirstFlagged, row.media_key)
         decisions = await whitelist.overrides(session)
+        expiries = await whitelist.spare_expiries(session)
 
         base = _candidate_out(
             row,
             flagged.first_flagged_at if flagged else None,
             decisions,
+            expiries=expiries,
         )
         return CandidateDetail(
             **base.model_dump(),
@@ -888,12 +905,14 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
             .all()
         }
         decisions = await whitelist.overrides(session)
+        expiries = await whitelist.spare_expiries(session)
 
         seasons = [
             _candidate_out(
                 r,
                 flagged.get(r.media_key),
                 decisions,
+                expiries=expiries,
             )
             for r in rows
         ]
@@ -907,6 +926,10 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
             max(seasons, key=lambda c: c.score),
         )
         lead_row = next(r for r in rows if r.id == lead.id)
+        # The whole-show spare's countdown, when a show-level spare is what's set. None for a
+        # forever show-spare (or none at all); the panel reads it only when show_override is
+        # "spare". Same key, same source as the decision below.
+        _show_spare_exp = expiries.get(group_key) if decisions.get(group_key) == "spare" else None
 
         return GroupOut(
             group_key=group_key,
@@ -926,6 +949,7 @@ async def group_detail(request: Request, group_key: str) -> GroupOut:
             # own marks -- the control clears only this key, so lighting it from an aggregate
             # it cannot clear is the very bug this replaced.
             show_override=decisions.get(group_key),
+            show_spare_expires_at=_show_spare_exp.isoformat() if _show_spare_exp else None,
             links=await _deep_links(session, lead_row),
             # A show-level fact, so any season carrying it answers for the whole show:
             # one reading of the series is stamped onto every one of its seasons in the

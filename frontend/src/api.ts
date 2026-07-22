@@ -110,6 +110,13 @@ export interface Candidate {
    *  grace countdown and the next plan -- or refuses it (someone is watching right now,
    *  or the file isn't managed). Null when there is no reap override. Red only on true. */
   override_effective: boolean | null;
+  /** When the spare *in effect* on this item stops keeping it (ISO-8601). Read only when
+   *  `override` is "spare": null then means "kept for good", a value drives the "N days left"
+   *  countdown. A season with no spare of its own carries the show spare's expiry. */
+  spare_expires_at: string | null;
+  /** When the whole-show spare covering this season stops keeping it (ISO-8601). Read only
+   *  when `show_override` is "spare"; null means a forever show-spare. Always null for a movie. */
+  show_spare_expires_at: string | null;
   /** The card's one status chip (Sanctuary and Limbo). Null on condemned rows, whose
    *  card leads with the amber dormancy pill instead. */
   chip: Chip | null;
@@ -152,6 +159,9 @@ export interface Group {
    *  whole-show control toggles and what lights it. Never an aggregate of the seasons' own
    *  decisions, which that control cannot clear. Null until the whole show is decided. */
   show_override: Override | null;
+  /** When the whole-show spare stops keeping the show (ISO-8601), or null for a forever
+   *  spare. Read only when `show_override` is "spare" -- the panel's whole-show countdown. */
+  show_spare_expires_at: string | null;
   links: Links;
   /** Whether the show has finished, taken from whichever season rows carry it -- one
    *  reading of the series is stamped onto every season in the same scan, so they cannot
@@ -564,6 +574,9 @@ export interface WhitelistEntry {
   title: string;
   note: string | null;
   decision: Override;
+  /** When a timed spare stops keeping the item (ISO-8601). Null means kept forever, and
+   *  always null for a reap. */
+  spare_expires_at: string | null;
   created_at: string;
 }
 
@@ -667,6 +680,9 @@ export interface GeneralSettings {
   api_key_set: boolean;
   /** Whether the review queue opens each show with its season list already expanded. */
   expand_seasons_default: boolean;
+  /** How long a plain Spare press keeps an item, in days. 0 means forever (the shipped
+   *  default). A single title can still be spared for a different length from its menu. */
+  default_spare_days: number;
   proxy_trust_enabled: boolean;
   trusted_proxies: string[];
 }
@@ -1177,6 +1193,7 @@ export const api = {
     application_url?: string;
     accent_color?: string;
     expand_seasons_default?: boolean;
+    default_spare_days?: number;
     proxy_trust_enabled?: boolean;
     trusted_proxies?: string[];
   }) => put<GeneralSettings>("/api/settings/general", body),
@@ -1292,12 +1309,18 @@ export const api = {
   syncLeavingSoon: () => post<LeavingSoonResult>("/api/leaving-soon/sync", {}),
 
   whitelist: () => request<WhitelistEntry[]>("/api/whitelist"),
-  spare: (media_key: string, note?: string) =>
-    post<WhitelistEntry>("/api/whitelist", { media_key, note: note ?? null }),
+  spare: (media_key: string, note?: string, spareDays = 0) =>
+    post<WhitelistEntry>("/api/whitelist", { media_key, note: note ?? null, spare_days: spareDays }),
   /** Override a verdict by hand -- spare (keep) or reap (force onto the list). A show's
-   *  media_key covers all its seasons. */
-  override: (media_key: string, decision: Override, note?: string) =>
-    post<WhitelistEntry>("/api/override", { media_key, decision, note: note ?? null }),
+   *  media_key covers all its seasons. `spareDays` is how long a spare keeps it: 0 = forever,
+   *  a positive count that many days; ignored for a reap. */
+  override: (media_key: string, decision: Override, note?: string, spareDays = 0) =>
+    post<WhitelistEntry>("/api/override", {
+      media_key,
+      decision,
+      note: note ?? null,
+      spare_days: spareDays,
+    }),
   /** Clear any override (spare or reap). Does not delete anything -- the item is judged by
    *  the policy again on the next scan. */
   clearOverride: (media_key: string) =>
