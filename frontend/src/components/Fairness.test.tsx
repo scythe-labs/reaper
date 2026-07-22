@@ -24,7 +24,7 @@ const GB = 1024 ** 3;
 
 function row(over: Partial<RequesterRow> = {}): RequesterRow {
   return {
-    user_id: 7,
+    identity: "plex:7",
     name: "marlow",
     requests_made: 52,
     gb_granted_bytes: 549 * GB,
@@ -57,7 +57,7 @@ describe("PersonCard", () => {
     expect(screen.getByText(/to reclaim · 3 titles/i)).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /marlow/i }));
-    expect(onSelect).toHaveBeenCalledWith(7);
+    expect(onSelect).toHaveBeenCalledWith("plex:7");
   });
 
   // The bug this whole change fixes: a requester with nothing reclaimable must still open.
@@ -75,7 +75,7 @@ describe("PersonCard", () => {
     const card = screen.getByRole("button", { name: /marlow/i });
     expect(card).toBeInTheDocument();
     await userEvent.click(card);
-    expect(onSelect).toHaveBeenCalledWith(7);
+    expect(onSelect).toHaveBeenCalledWith("plex:7");
   });
 
   it("opens on Enter and Space, for keyboard users", async () => {
@@ -137,6 +137,6 @@ describe("Fairness", () => {
     apiMock.fairness.mockResolvedValue(report([row()]));
     renderWithClient(<Fairness onSelectPerson={onSelectPerson} />);
     await userEvent.click(await screen.findByRole("button", { name: /marlow/i }));
-    expect(onSelectPerson).toHaveBeenCalledWith(7);
+    expect(onSelectPerson).toHaveBeenCalledWith("plex:7");
   });
 });

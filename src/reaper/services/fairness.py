@@ -99,10 +99,11 @@ class ReclaimableTitle:
 class RequesterRow:
     """One person's row. Mutated during aggregation, then frozen into the report."""
 
-    user_id: int
-    """The Seerr user id: always present, and the stable identity every roll-up keys on. A
-    Seerr local user not linked to Plex has no ``plex_id``, so keying on ``plex_id`` merged
-    every such person into one row -- this is the id that keeps them apart (rule 6/12)."""
+    identity: str
+    """The stable person key (see :func:`_identity`): ``plex:{id}`` for a Plex-linked
+    account, ``local:{portal}:{seerr_id}`` for an unlinked one. Unique across portals, so two
+    people who share a Seerr id on two portals never merge (rule 6/12). The frontend keys
+    cards on it and opens the drawer by it."""
     plex_id: int | None
     """Only the watch join uses this (plays are keyed by Plex id); never the row identity."""
     name: str
@@ -147,6 +148,22 @@ class FairnessReport:
 def _name(request: MediaRequest) -> str:
     r = request.requester
     return r.display_name or r.username or f"user:{r.seerr_user_id}"
+
+
+def _identity(request: MediaRequest) -> str:
+    """The stable person key every roll-up keys on, unique across portals.
+
+    A Seerr user id is unique only *within* one portal, so keying on it alone merges two
+    different people who share an id on two portals (the exact bug this exists to prevent).
+
+    A Plex-linked account is one human across every portal -- their watches and quota already
+    fold by Plex id -- so it keys on that. An unlinked local account has no Plex id (keying
+    those on Plex id folded them all into one row, rule 6/12), and its Seerr id is unique only
+    on its own portal, so it carries the portal too."""
+    r = request.requester
+    if r.plex_id is not None:
+        return f"plex:{r.plex_id}"
+    return f"local:{request.portal_key}:{r.seerr_user_id}"
 
 
 ContentKey = tuple[str, str | int]
@@ -209,20 +226,21 @@ def roll_up(
             continue
         groups[key].append(req)
 
-    # Keyed on the Seerr user id, always present: an unlinked local user has no plex_id, and
-    # keying on plex_id folded every such person into one row under the first name (rule 12).
-    rows: dict[int, RequesterRow] = {}
+    # Keyed on the cross-portal person identity (see _identity), never a bare Seerr user id:
+    # that id is unique only within one portal, so keying on it merged two different people
+    # who share an id across two portals (rule 6/12).
+    rows: dict[str, RequesterRow] = {}
     # Deduped by the condemned candidate set, so the same title reached via a tmdb group and
     # an imdb group counts once -- the way the bytes total already dedupes by candidate id.
     reclaimable_titles: set[frozenset[int]] = set()
     condemned_size_by_candidate: dict[int, int] = {}
 
     def _row(req: MediaRequest) -> RequesterRow:
-        r = req.requester
-        row = rows.get(r.seerr_user_id)
+        ident = _identity(req)
+        row = rows.get(ident)
         if row is None:
-            row = RequesterRow(user_id=r.seerr_user_id, plex_id=r.plex_id, name=_name(req))
-            rows[r.seerr_user_id] = row
+            row = RequesterRow(identity=ident, plex_id=req.requester.plex_id, name=_name(req))
+            rows[ident] = row
         return row
 
     for group in groups.values():
@@ -267,13 +285,13 @@ def roll_up(
                 for uid, n in ev.plays_by_user.items():
                     plays_here[uid] += n
 
-        # One row per distinct requester of this title (distinct by Seerr id, not plex_id).
-        seen: set[int] = set()
+        # One row per distinct requester of this title (distinct by cross-portal identity).
+        seen: set[str] = set()
         for req in group:
-            uid = req.requester.seerr_user_id
-            if uid in seen:
+            ident = _identity(req)
+            if ident in seen:
                 continue
-            seen.add(uid)
+            seen.add(ident)
             row = _row(req)
             row.requests_made += 1
             row.gb_granted_bytes += title_size
@@ -607,17 +625,17 @@ async def build_person_detail(
     session_factory: Callable[[], AsyncSession],
     seerrs: Sequence[SeerrClient],
     cache_engine: AsyncEngine,
-    user_id: int,
+    identity: str,
 ) -> PersonDetail | None:
     """One person's full request breakdown for the Scales drawer: every title they asked
     for that the scan still has, each with when it was requested and when it arrived,
     whether they watched it, its fate, and who else asked. Plus their Seerr account totals
     and caps.
 
-    Keyed on the Seerr ``user_id`` -- the same stable identity the roll-up keys rows on
-    (rule 6/12), never the plex id (an unlinked local user has none) or the name (shared).
-    Returns ``None`` when no one by that id is in the current scan. Fail-hard on an
-    unreachable Seerr, exactly like :func:`build_report`: a partial breakdown that looks
+    Keyed on the cross-portal ``identity`` the roll-up assigns each row (see :func:`_identity`)
+    -- never a bare Seerr user id, which collides across portals (rule 6/12), nor the name
+    (shared). Returns ``None`` when no one by that identity is in the current scan. Fail-hard
+    on an unreachable Seerr, exactly like :func:`build_report`: a partial breakdown that looks
     complete is worse than an error.
     """
     async with session_factory() as session:
@@ -633,9 +651,7 @@ async def build_person_detail(
     )
     # Distinct episodes this person watched, per season, so a series row can show episodes
     # watched (not inflated raw plays). Keyed on the target's plex id, gathered once.
-    target_plex_id = next(
-        (r.requester.plex_id for r in requests if r.requester.seerr_user_id == user_id), None
-    )
+    target_plex_id = next((r.requester.plex_id for r in requests if _identity(r) == identity), None)
     season_keys = {
         c.plex_rating_key
         for c in candidates
@@ -667,7 +683,7 @@ async def build_person_detail(
     granted = played = recl_items = recl_bytes = not_in_scan = 0
     matched_any = False
     for group in groups.values():
-        mine = next((r for r in group if r.requester.seerr_user_id == user_id), None)
+        mine = next((r for r in group if _identity(r) == identity), None)
         if mine is None:
             continue
         matched_any = True
@@ -749,11 +765,9 @@ async def build_person_detail(
                 verdict=verdict,
                 item_id=item_id,
                 group_key=group_key,
-                # Distinct co-requesters, by Seerr id so two people who share a name stay
-                # apart; the target's own requests are excluded.
-                co_requesters=tuple(
-                    sorted({_name(r) for r in group if r.requester.seerr_user_id != user_id})
-                ),
+                # Distinct co-requesters, by cross-portal identity so two people who share a
+                # name (or a Seerr id across portals) stay apart; the target's own are excluded.
+                co_requesters=tuple(sorted({_name(r) for r in group if _identity(r) != identity})),
                 poster_url=poster_url,
             )
         )

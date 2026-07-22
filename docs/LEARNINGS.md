@@ -867,6 +867,27 @@ can only lower a score") survived adversarial permutation, including the blackou
   refusal. The docstring was right and the code was wrong — rule 24's failure mode, found
   by testing the docstring's claim as an invariant.
 
+### A Seerr user id is unique only within one portal (cross-instance collision)
+
+Scales rolled every requester up under their bare Seerr user id. That id is minted **per
+instance** -- each portal numbers its own users from 1 -- so on a two-portal setup (a
+primary and a secondary for a specific group), user id 5 on one portal and user id 5 on
+the other are different people. They collapsed into one row: one person's name over
+another's combined requests, granted disk, plays, and reclaimable set. The per-person
+drawer had the same flaw, matching an id across every portal at once.
+
+The fix is a cross-portal person identity (`services.fairness._identity`): `plex:{id}` for
+a Plex-linked account (one human across every portal -- watches and quota already fold by
+Plex id), else `local:{portal}:{seerr_id}` for an unlinked local account (unique only on
+its own portal, so it carries the portal). This is strictly better than both prior keys:
+the original `plex_id` keying merged every unlinked local into one row, and the `seerr_id`
+keying that replaced it merged across portals. The portal is stamped onto each request as
+it is read (`SeerrClient.instance_key` -> `MediaRequest.portal_key`), so the pure roll-up
+never needs a live client to tell them apart. General lesson (rule 6/29): an external id is
+only a stable join key **within the system that mints it**; a multi-instance source needs
+the instance folded into the key. The *arr side already knew this -- `requested_by` refuses
+to bind on Seerr's `serviceId` for exactly this reason; the requester side had missed it.
+
 ### The ingest is faithful to the sources (validated outside Reaper)
 
 The permutation sweep validated the engine against Reaper's own mirrors; a second pass

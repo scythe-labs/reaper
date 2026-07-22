@@ -72,7 +72,13 @@ async def _open_seerrs(
     seerrs: list[SeerrClient] = []
     for row in rows:
         seerr = SeerrClient(
-            row.base_url, box.decrypt(row.api_key_enc), safety=safety, verify=row.verify_tls
+            row.base_url,
+            box.decrypt(row.api_key_enc),
+            safety=safety,
+            verify=row.verify_tls,
+            # The stable per-portal id, stamped onto every request this client reads, so a
+            # Seerr user id (unique only within a portal) can be told apart across portals.
+            instance_key=str(row.id),
         )
         await stack.enter_async_context(seerr)
         seerrs.append(seerr)
@@ -109,7 +115,7 @@ async def get_fairness(request: Request) -> FairnessReportOut:
         horizon_at=report.horizon_at.isoformat() if report.horizon_at else None,
         rows=[
             RequesterRowOut(
-                user_id=row.user_id,
+                identity=row.identity,
                 name=row.name,
                 requests_made=row.requests_made,
                 gb_granted_bytes=row.gb_granted_bytes,
@@ -136,11 +142,12 @@ async def get_fairness(request: Request) -> FairnessReportOut:
     )
 
 
-@router.get("/fairness/people/{user_id}")
-async def get_person(request: Request, user_id: int) -> PersonDetailOut:
+@router.get("/fairness/people/{identity}")
+async def get_person(request: Request, identity: str) -> PersonDetailOut:
     """One person's full request story: every title they asked for that the scan still has,
     when it arrived, whether they watched it, its fate, who else asked, and their Seerr
-    account totals and caps. ``user_id`` is a Scales row's ``user_id`` (the Seerr user id)."""
+    account totals and caps. ``identity`` is a Scales row's ``identity`` -- the cross-portal
+    person key, not a bare Seerr user id (which collides across portals)."""
     box: SecretBox = request.app.state.secret_box
     safety = RuntimeSafety(destructive_enabled=False)
     seerr_rows = await _seerr_rows(request)
@@ -152,7 +159,7 @@ async def get_person(request: Request, user_id: int) -> PersonDetailOut:
                 session_factory=request.app.state.session_factory,
                 seerrs=seerrs,
                 cache_engine=request.app.state.cache_engine,
-                user_id=user_id,
+                identity=identity,
             )
     except IntegrationError as exc:
         raise HTTPException(502, f"Could not build Scales: {exc}") from exc

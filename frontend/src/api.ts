@@ -696,8 +696,9 @@ export interface ReclaimableTitle {
 }
 
 export interface RequesterRow {
-  /** The Seerr user id: stable and always present, so cards key on it, not the display name. */
-  user_id: number;
+  /** The cross-portal person key (`plex:{id}` when linked, else `local:{portal}:{id}`):
+   *  stable, always present, and unique across portals, so cards key on it, not the name. */
+  identity: string;
   name: string;
   requests_made: number;
   gb_granted_bytes: number;
@@ -1189,8 +1190,10 @@ export const api = {
 
   fairness: () => request<FairnessReport>("/api/fairness"),
   /** One requester's full breakdown for the Scales panel: everything they asked for that
-   *  the last scan still has, plus their request limits. Keyed on the Seerr user id. */
-  person: (userId: number) => request<PersonDetail>(`/api/fairness/people/${userId}`),
+   *  the last scan still has, plus their request limits. Keyed on the cross-portal identity
+   *  (which carries a `:`, so it is encoded into the path). */
+  person: (identity: string) =>
+    request<PersonDetail>(`/api/fairness/people/${encodeURIComponent(identity)}`),
   reapBreakdown: () => request<ReapBreakdown>("/api/reap/breakdown"),
   syncLeavingSoon: () => post<LeavingSoonResult>("/api/leaving-soon/sync", {}),
 

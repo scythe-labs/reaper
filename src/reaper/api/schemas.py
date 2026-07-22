@@ -736,9 +736,10 @@ class ReclaimableTitleOut(BaseModel):
 class RequesterRowOut(BaseModel):
     """One person's row in Scales."""
 
-    user_id: int
-    """The Seerr user id: stable and always present, so the frontend keys cards on it (two
-    people can share a name), and opens the details drawer by it (GET /fairness/people/{id})."""
+    identity: str
+    """The cross-portal person key: ``plex:{id}`` when linked, else ``local:{portal}:{id}``.
+    Stable and always present, unique across portals (a bare Seerr id collides), so the
+    frontend keys cards on it and opens the drawer by it (GET /fairness/people/{identity})."""
     name: str
     requests_made: int
     gb_granted_bytes: int

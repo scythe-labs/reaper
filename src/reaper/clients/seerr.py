@@ -105,6 +105,12 @@ class MediaRequest:
     available_at: datetime | None
     """media.mediaAddedAt -- when it actually arrived. The clock for the requester rule."""
 
+    portal_key: str = ""
+    """Which Seerr instance this request came from -- stamped by the client that read it. A
+    Seerr user id is unique only *within* one portal (each instance numbers its own users
+    from 1), so two portals reuse the same ids for different people. Anything that keys a
+    person on their Seerr id must pair it with this, or two people collide across portals."""
+
     seasons: tuple[int, ...] = ()
 
     raw: dict[str, Any] | None = None
@@ -174,7 +180,7 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
-def _parse_request(payload: dict[str, Any]) -> MediaRequest:
+def _parse_request(payload: dict[str, Any], portal_key: str = "") -> MediaRequest:
     media = payload.get("media") or {}
     user = payload.get("requestedBy") or {}
     is_4k = bool(payload.get("is4k"))
@@ -206,6 +212,7 @@ def _parse_request(payload: dict[str, Any]) -> MediaRequest:
         ),
         arr_instance_id=_as_int(media.get("serviceId4k") if is_4k else media.get("serviceId")),
         available_at=from_iso(media.get("mediaAddedAt")),
+        portal_key=portal_key,
         seasons=tuple(
             n
             for s in (payload.get("seasons") or [])
@@ -252,6 +259,7 @@ class SeerrClient(BaseClient):
         *,
         safety: RuntimeSafety,
         verify: bool = True,
+        instance_key: str | None = None,
     ) -> None:
         super().__init__(
             base_url,
@@ -259,6 +267,11 @@ class SeerrClient(BaseClient):
             headers={"X-Api-Key": api_key, "Accept": "application/json"},
             verify=verify,
         )
+        # A stable id for this portal, stamped onto every request so a per-portal Seerr user
+        # id can be paired with it (each instance numbers its users independently, so the id
+        # alone collides across portals). Defaults to the base url when a caller does not pass
+        # one -- distinct per portal, which is all the pairing needs.
+        self.instance_key = instance_key or self.base_url
 
     async def status(self) -> dict[str, Any]:
         data = await self.get_json("/api/v1/status")
@@ -288,7 +301,7 @@ class SeerrClient(BaseClient):
             raise IntegrationError(self.service, "/request did not return an object")
 
         total = int((payload.get("pageInfo") or {}).get("results") or 0)
-        results = [_parse_request(r) for r in (payload.get("results") or [])]
+        results = [_parse_request(r, self.instance_key) for r in (payload.get("results") or [])]
         if results and total <= 0:
             # Rows came back but no total did: the envelope shape changed (pageInfo moved
             # or was renamed). Treating that as total=0 would stop after one page and

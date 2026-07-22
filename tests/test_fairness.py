@@ -44,6 +44,7 @@ def _req(
     media_type: str = "movie",
     tvdb: int | None = None,
     seerr_id: int | None = None,
+    portal_key: str = "",
 ) -> MediaRequest:
     return MediaRequest(
         request_id=request_id,
@@ -65,6 +66,7 @@ def _req(
         arr_id=1,
         arr_instance_id=0,
         available_at=NOW - timedelta(days=400),
+        portal_key=portal_key,
     )
 
 
@@ -312,6 +314,35 @@ class TestRollUp:
         assert all(r.reclaimable_bytes == 4 * GB for r in report.rows)
         # The file is deleted once, however many unlinked users asked for it.
         assert report.total_reclaimable_items == 1
+
+    def test_two_portals_reusing_one_seerr_id_stay_separate_rows(self) -> None:
+        """Each Seerr numbers its own users, so a user id is unique only within one portal:
+        id 5 on the primary and id 5 on the secondary are different people. Two unlinked local
+        users who share an id across portals must not merge into one row (the reported bug).
+        The portal each request came from keeps them apart."""
+        reqs = [
+            _req(plex_id=None, seerr_id=5, name="Primary Pat", portal_key="1", request_id=1),
+            _req(plex_id=None, seerr_id=5, name="Secondary Sam", portal_key="2", request_id=2),
+        ]
+        report = roll_up(reqs, [_cand(cid=9, verdict="condemn", size=4 * GB)], {})
+        assert {r.name for r in report.rows} == {"Primary Pat", "Secondary Sam"}
+        assert all(r.requests_made == 1 for r in report.rows)
+
+    def test_one_plex_person_across_two_portals_is_one_row(self) -> None:
+        """The same Plex account requesting through both portals is one human, so it folds into
+        one row even though the two portals gave it different Seerr ids. A Plex-linked account
+        keys on its Plex id, which is the same everywhere it appears."""
+        reqs = [
+            _req(plex_id=42, seerr_id=3, name="Dana", portal_key="1", request_id=1, tmdb=1),
+            _req(plex_id=42, seerr_id=8, name="Dana", portal_key="2", request_id=2, tmdb=2),
+        ]
+        cands = [
+            _cand(cid=1, verdict="condemn", size=4 * GB, tmdb=1, imdb="tt1"),
+            _cand(cid=2, verdict="condemn", size=6 * GB, tmdb=2, imdb="tt2"),
+        ]
+        report = roll_up(reqs, cands, {})
+        (row,) = report.rows
+        assert row.name == "Dana" and row.requests_made == 2
 
     def test_the_same_title_via_a_tmdb_and_an_imdb_request_counts_once(self) -> None:
         """One request carries tmdb+imdb (groups by tmdb), another only imdb (groups by imdb);
@@ -621,7 +652,7 @@ class TestBuildPersonDetail:
             session_factory=factory,  # type: ignore[arg-type]
             seerrs=[portal],  # type: ignore[list-item]
             cache_engine=cache,
-            user_id=1,
+            identity="plex:1",
         )
         assert detail is not None
         assert detail.name == "Alice" and detail.seerr_total == 169
@@ -643,7 +674,7 @@ class TestBuildPersonDetail:
             session_factory=factory,  # type: ignore[arg-type]
             seerrs=[portal],  # type: ignore[list-item]
             cache_engine=cache,
-            user_id=999,
+            identity="plex:999",
         )
         assert detail is None
 
@@ -657,7 +688,7 @@ class TestBuildPersonDetail:
             session_factory=factory,  # type: ignore[arg-type]
             seerrs=[portal],  # type: ignore[list-item]
             cache_engine=cache,
-            user_id=1,
+            identity="plex:1",
         )
         assert detail is not None
         assert detail.played_by_them == 1 and detail.titles[0].watched_by_them == 1

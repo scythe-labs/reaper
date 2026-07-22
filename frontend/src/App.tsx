@@ -406,7 +406,7 @@ function Dashboard({ user }: { user: AuthUser }) {
   const [selected, setSelected] = useState<Selection>(null);
   // Which Scales person has their panel open. Kept here (not in Fairness) so the panel is a
   // sibling of the list inside `main.split`, exactly as the why-panel sits beside the queue.
-  const [scalesUser, setScalesUser] = useState<number | null>(null);
+  const [scalesUser, setScalesUser] = useState<string | null>(null);
   // The reap sheet reopened from the app-wide bar's View, by run id, on any screen.
   const [reapSheetRun, setReapSheetRun] = useState<number | null>(null);
 
@@ -648,7 +648,7 @@ function Dashboard({ user }: { user: AuthUser }) {
           />
         ) : view === "fairness" ? (
           <>
-            <Fairness selectedUserId={scalesUser} onSelectPerson={setScalesUser} />
+            <Fairness selectedIdentity={scalesUser} onSelectPerson={setScalesUser} />
             {scalesUser !== null &&
               (personDetail ? (
                 <ScalesPanel

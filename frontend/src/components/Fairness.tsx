@@ -40,7 +40,7 @@ export function PersonCard({
 }: {
   row: RequesterRow;
   selected: boolean;
-  onSelect: (userId: number) => void;
+  onSelect: (identity: string) => void;
 }) {
   const watched = watchedPct(row);
   const granted = row.gb_granted_bytes;
@@ -52,7 +52,7 @@ export function PersonCard({
   const reclaimPct = granted > 0 ? (100 * reclaim) / granted : 0;
   const hasReclaim = row.reclaimable_items > 0;
 
-  const open = () => onSelect(row.user_id);
+  const open = () => onSelect(row.identity);
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -125,13 +125,13 @@ export function PersonCard({
 }
 
 export function Fairness({
-  selectedUserId,
+  selectedIdentity,
   onSelectPerson,
 }: {
   /** The person whose panel is open, so their card wears the selection bar. */
-  selectedUserId?: number | null;
+  selectedIdentity?: string | null;
   /** Open a person's panel. App owns the selection and renders the panel beside this list. */
-  onSelectPerson?: (userId: number) => void;
+  onSelectPerson?: (identity: string) => void;
 }) {
   const { data, isPending, error } = useQuery({ queryKey: ["fairness"], queryFn: api.fairness });
   const select = onSelectPerson ?? (() => {});
@@ -194,9 +194,9 @@ export function Fairness({
           <div className="fair-list">
             {data.rows.map((row) => (
               <PersonCard
-                key={row.user_id}
+                key={row.identity}
                 row={row}
-                selected={row.user_id === selectedUserId}
+                selected={row.identity === selectedIdentity}
                 onSelect={select}
               />
             ))}
