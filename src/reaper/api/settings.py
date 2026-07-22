@@ -1286,6 +1286,10 @@ class GeneralSettingsOut(BaseModel):
     expand_seasons_default: bool
     """Whether the review queue opens each show with its season list already expanded.
     A display preference; off until turned on."""
+    default_spare_days: int
+    """How long a plain Spare press keeps an item, in days. ``0`` means forever -- the shipped
+    default and the original behavior. A single title can still be spared for a different length
+    from its Spare menu; this is only what the button does by default."""
     proxy_trust_enabled: bool
     trusted_proxies: list[str]
 
@@ -1297,6 +1301,8 @@ class GeneralSettingsIn(BaseModel):
     application_url: str | None = Field(default=None, max_length=500)
     accent_color: str | None = Field(default=None, max_length=7)
     expand_seasons_default: bool | None = None
+    default_spare_days: int | None = Field(default=None, ge=0, le=3650)
+    """Days a plain Spare keeps an item; ``0`` = forever. ``None`` leaves it unchanged."""
     proxy_trust_enabled: bool | None = None
     trusted_proxies: list[str] | None = Field(default=None, max_length=20)
 
@@ -1312,6 +1318,7 @@ async def _general_out(session: AsyncSession, settings: Settings) -> GeneralSett
         accent_color=await app_settings.get_accent_color(session),
         api_key_set=(await session.get(AppSetting, app_settings.API_KEY_KEY)) is not None,
         expand_seasons_default=await app_settings.get_expand_seasons_default(session),
+        default_spare_days=await app_settings.get_default_spare_days(session),
         proxy_trust_enabled=await app_settings.proxy_trust_enabled(session, settings),
         trusted_proxies=await app_settings.get_trusted_proxies(session, settings),
     )
@@ -1389,6 +1396,8 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
             await app_settings.set_expand_seasons_default(
                 session, enabled=payload.expand_seasons_default
             )
+        if payload.default_spare_days is not None:
+            await app_settings.set_default_spare_days(session, days=payload.default_spare_days)
         if payload.proxy_trust_enabled is not None:
             await app_settings.set_proxy_trust_enabled(session, enabled=payload.proxy_trust_enabled)
         if payload.trusted_proxies is not None:

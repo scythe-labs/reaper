@@ -10,6 +10,7 @@ directly, not just the service.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -117,6 +118,87 @@ class TestOverrideService:
         )
         assert await whitelist.remove_override(session, media_key="radarr:1:9") is True
         assert await whitelist.overrides(session) == {}
+
+
+class TestTimedSpare:
+    async def test_a_forever_spare_stores_no_expiry(self, session: AsyncSession) -> None:
+        # spare_days defaults to 0 -- forever, the original behavior -- so the column stays NULL.
+        entry = await whitelist.spare(session, media_key="radarr:1:7", title="Kept", note=None)
+        assert entry.spare_expires_at is None
+
+    async def test_a_timed_spare_stores_an_expiry_that_many_days_out(
+        self, session: AsyncSession
+    ) -> None:
+        # Timestamps are stored as whole epoch seconds, so anchor the clock at second precision.
+        t0 = utcnow().replace(microsecond=0)
+        entry = await whitelist.spare(
+            session, media_key="radarr:1:7", title="Kept", note=None, spare_days=30, now=t0
+        )
+        assert entry.spare_expires_at == t0 + timedelta(days=30)
+        # It is still an active spare everywhere live -- the clock is realized only at scan.
+        assert await whitelist.overrides(session) == {"radarr:1:7": "spare"}
+        assert await whitelist.spare_expiries(session) == {"radarr:1:7": t0 + timedelta(days=30)}
+
+    async def test_overrides_effective_at_drops_an_expired_spare_but_keeps_a_live_one(
+        self, session: AsyncSession
+    ) -> None:
+        t0 = utcnow()
+        await whitelist.spare(
+            session, media_key="radarr:1:7", title="Short", note=None, spare_days=1, now=t0
+        )
+        await whitelist.spare(
+            session, media_key="radarr:1:8", title="Long", note=None, spare_days=90, now=t0
+        )
+        after = t0 + timedelta(days=2)
+        # Live: both still spared (fail toward keeping). At-scan: the 1-day spare is gone.
+        assert await whitelist.overrides(session) == {
+            "radarr:1:7": "spare",
+            "radarr:1:8": "spare",
+        }
+        assert await whitelist.overrides_effective_at(session, after) == {"radarr:1:8": "spare"}
+
+    async def test_a_forever_spare_never_expires_at_scan(self, session: AsyncSession) -> None:
+        t0 = utcnow()
+        await whitelist.spare(session, media_key="radarr:1:7", title="Kept", note=None, now=t0)
+        far_future = t0 + timedelta(days=10_000)
+        assert await whitelist.overrides_effective_at(session, far_future) == {
+            "radarr:1:7": "spare"
+        }
+
+    async def test_flipping_a_timed_spare_to_reap_clears_the_expiry(
+        self, session: AsyncSession
+    ) -> None:
+        await whitelist.spare(
+            session, media_key="radarr:1:7", title="Kept", note=None, spare_days=30
+        )
+        entry = await whitelist.set_override(
+            session, media_key="radarr:1:7", title="Kept", decision="reap", note=None
+        )
+        # A reap never expires, and must not inherit the spare's stale clock.
+        assert entry.spare_expires_at is None
+        assert await whitelist.spare_expiries(session) == {}
+
+    async def test_spare_expiries_excludes_reaps(self, session: AsyncSession) -> None:
+        await whitelist.set_override(
+            session, media_key="radarr:1:9", title="Gone", decision="reap", note=None
+        )
+        assert await whitelist.spare_expiries(session) == {}
+
+    async def test_effective_spare_expiry_follows_override_precedence(self) -> None:
+        t_show = utcnow() + timedelta(days=10)
+        t_season = utcnow() + timedelta(days=3)
+        decisions = {"sonarr:1:88": "spare", "sonarr:1:88:3": "spare"}
+        expiries = {"sonarr:1:88": t_show, "sonarr:1:88:3": t_season}
+        # A season's own spare wins over its show's, expiry and all.
+        assert whitelist.effective_spare_expiry("sonarr:1:88:3", decisions, expiries) == t_season
+        # A season with no spare of its own inherits the show spare's expiry.
+        assert whitelist.effective_spare_expiry("sonarr:1:88:2", decisions, expiries) == t_show
+
+    async def test_effective_spare_expiry_is_none_for_a_forever_spare(self) -> None:
+        decisions = {"radarr:1:7": "spare"}
+        assert (
+            whitelist.effective_spare_expiry("radarr:1:7", decisions, {"radarr:1:7": None}) is None
+        )
 
 
 class TestEffectiveOverride:

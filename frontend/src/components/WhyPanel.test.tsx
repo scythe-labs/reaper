@@ -62,6 +62,8 @@ function detail(
     override_own: null,
     show_override: null,
     override_effective: null,
+    spare_expires_at: null,
+    show_spare_expires_at: null,
     chip: null,
     season_number: 3,
     group_seasons: null,

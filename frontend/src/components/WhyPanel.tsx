@@ -897,7 +897,9 @@ export function WhyPanel({
         <div className="why-actions-row">
           <OverrideControls
             override={item.override_own}
-            onSet={(decision) => setOverride.mutate({ key: item.media_key, decision })}
+            onSet={(decision, spareDays) =>
+              setOverride.mutate({ key: item.media_key, decision, spareDays: spareDays ?? 0 })
+            }
             onClear={() => clearOverride.mutate(item.media_key)}
             pending={setOverride.isPending || clearOverride.isPending}
             // Same rule as the queue: a condemned item is already on the block, so Reap here

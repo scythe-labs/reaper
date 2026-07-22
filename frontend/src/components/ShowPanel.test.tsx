@@ -57,6 +57,8 @@ function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Ca
     override_own: null,
     show_override: null,
     override_effective: null,
+    spare_expires_at: null,
+    show_spare_expires_at: null,
     chip: null,
     show_status: null,
     season_number: n,
@@ -80,6 +82,7 @@ function group(seasons: Candidate[]): Group {
     library: null,
     chip: null,
     show_override: null,
+    show_spare_expires_at: null,
     links: NO_LINKS,
     show_status: "ended",
     seasons,
@@ -121,7 +124,10 @@ describe("the show panel's whole-show buttons", () => {
     renderPanel(group([season(1, "condemn"), season(2, "protect")]));
 
     await user.click(screen.getByRole("button", { name: "Reap" }));
-    await waitFor(() => expect(apiMock.override).toHaveBeenCalledWith("sonarr:show:1", "reap"));
+    // A reap carries no length (spareDays 0, ignored server-side for a reap).
+    await waitFor(() =>
+      expect(apiMock.override).toHaveBeenCalledWith("sonarr:show:1", "reap", undefined, 0),
+    );
   });
 
   it("says so when the save fails", async () => {

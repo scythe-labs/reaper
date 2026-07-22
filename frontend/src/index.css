@@ -4670,6 +4670,7 @@ button.sm {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 0.16rem;
   min-width: 2rem;
   height: 1.9rem;
   pointer-events: none;
@@ -4684,6 +4685,14 @@ button.sm {
 .override-mark .mk-inf {
   font-weight: 700;
   font-size: 1.2rem;
+  line-height: 1;
+}
+/* A timed spare rests as the clock plus its days left ("27d") -- the forever spare's ∞ made
+   finite. Same protect green: still "kept", just for now. */
+.override-mark .mk-count {
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 .override-mark .scythe {
@@ -4772,6 +4781,146 @@ button.sm {
   background: var(--condemn);
   border-color: var(--condemn);
   color: var(--condemn-soft);
+}
+
+/* Spare is a split button: the main action, plus a chevron that opens the length menu. The
+   pair occupies exactly one --ov-btn-w so the season-list columns (rule 51) never drift; the
+   caret is a fixed sliver to the main button's right, divided by a hairline in the spare green.
+   The per-button min-width from `.override-controls .ov-btn` is undone here so the two share the
+   one slot instead of each claiming a full width. */
+.ov-split {
+  display: inline-flex;
+  position: relative;
+}
+.override-controls .ov-split {
+  width: var(--ov-btn-w);
+}
+.override-controls .ov-split .ov-btn {
+  min-width: 0;
+}
+.ov-split .split-main {
+  flex: 1 1 auto;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right-width: 0;
+  padding-left: 0.4rem;
+  padding-right: 0.3rem;
+}
+.ov-split .split-caret {
+  flex: 0 0 auto;
+  width: 1.5rem;
+  padding: 0.28rem 0;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid color-mix(in srgb, var(--protect) 40%, transparent);
+}
+.ov-split .split-caret.active {
+  border-left-color: color-mix(in srgb, var(--protect-soft) 45%, transparent);
+}
+.ov-split .split-caret svg {
+  display: block;
+}
+/* While the length menu is open the controls stay revealed even if the pointer has left the
+   row -- otherwise the menu's own anchor would vanish under it. Beats the at-rest hide
+   (`.card-side .override-controls`, same two-class weight) by adding the .menu-open class. */
+.card-side .override-controls.menu-open,
+.season-row .override-controls.menu-open {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* The length menu behind the Spare chevron. position:fixed (set inline) so the card's
+   overflow:hidden cannot clip it; styled on the filter-menu pattern so it reads as one of the
+   app's own popovers. */
+.dur-menu {
+  z-index: 100;
+  width: 224px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: 0.3rem;
+  font-size: 0.88rem;
+}
+.dur-head {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 0.4rem 0.55rem 0.3rem;
+}
+.dur-mi {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text);
+  font: inherit;
+  padding: 0.44rem 0.55rem;
+  border-radius: var(--radius-sm);
+}
+.dur-mi:hover {
+  background: var(--hover);
+}
+.dur-mi:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.dur-mi .mi-glyph {
+  display: inline-flex;
+  justify-content: center;
+  width: 15px;
+  color: var(--protect);
+}
+.dur-mi .mi-glyph .infinity {
+  font-size: 0.95rem;
+}
+.dur-mi .mi-pen {
+  color: var(--muted);
+}
+.dur-mi .mi-label {
+  flex: 1 1 auto;
+}
+.dur-mi .mi-tag {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-ring);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+}
+.dur-div {
+  height: 1px;
+  background: var(--border);
+  margin: 0.3rem 0.2rem;
+}
+.dur-custom {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.55rem 0.45rem;
+}
+.dur-spare-go {
+  border: 1px solid var(--protect);
+  background: var(--protect);
+  color: var(--protect-soft);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.34rem 0.7rem;
+  cursor: pointer;
+}
+.dur-spare-go:hover {
+  background: color-mix(in srgb, var(--protect), #000 8%);
 }
 
 /* A card the owner marked for reaping: a red-tinted border, the mirror of card-spared's dim. */

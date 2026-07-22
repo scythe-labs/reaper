@@ -79,3 +79,33 @@ export function since(iso: string): string {
   if (days < 730) return `${Math.floor(days / 30)} months ago`;
   return `${(days / 365).toFixed(1)} years ago`;
 }
+
+/** How a timed hand-spare's remaining life reads on a card. `iso` is when the spare stops
+ *  keeping the item; null means it never does (kept forever). `days` floors at 0, and the
+ *  clock is only truly realized at the next scan -- so a past expiry reads "expired" here,
+ *  the item still shown as spared until that scan re-judges it (fail toward keeping). */
+export function spareRemaining(iso: string | null): {
+  forever: boolean;
+  days: number;
+  expired: boolean;
+  /** The compact count the resting clock mark wears: "27d", or "" for a forever spare. */
+  short: string;
+  /** The chip's clause: "27 days left", "1 day left", or "expired". */
+  phrase: string;
+  /** "Kept until Aug 18", for a tooltip or a fuller line. Empty for a forever spare. */
+  until: string;
+} {
+  if (!iso) return { forever: true, days: 0, expired: false, short: "", phrase: "", until: "" };
+  const ms = new Date(iso).getTime() - Date.now();
+  const days = Math.max(0, Math.ceil(ms / 86_400_000));
+  const until = `Kept until ${date(iso)}`;
+  if (ms <= 0) return { forever: false, days: 0, expired: true, short: "0d", phrase: "expired", until };
+  return {
+    forever: false,
+    days,
+    expired: false,
+    short: `${days}d`,
+    phrase: days === 1 ? "1 day left" : `${days} days left`,
+    until,
+  };
+}

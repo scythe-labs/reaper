@@ -248,6 +248,16 @@ class CandidateOut(BaseModel):
     """For a ``"reap"`` override: whether the engine honors it (it joins the counts, the
     grace countdown and the next plan), or refuses it for a safety stop or an unchecked
     protection. None when there is no reap override. The UI shows red only on True."""
+    spare_expires_at: str | None = None
+    """When the spare *in effect* on this item stops keeping it, ISO-8601. ``None`` means the
+    spare is forever -- read it only when ``override`` is ``"spare"``, where ``None`` is "kept
+    for good" and a value drives the "N days left" countdown on the card. Mirrors ``override``:
+    a season with no spare of its own carries the expiry of the show spare that keeps it."""
+    show_spare_expires_at: str | None = None
+    """When the whole-show spare covering this season stops keeping it, ISO-8601, or ``None``
+    for a forever show-spare (or none at all). The show-level twin of ``spare_expires_at``,
+    read only when ``show_override`` is ``"spare"`` -- the show card's countdown. Always ``None``
+    for a movie."""
     chip: ChipOut | None = None
     """The card's one short status chip (Sanctuary and Limbo lanes). None on condemned
     rows, whose card leads with the amber dormancy pill instead."""
@@ -306,6 +316,9 @@ class GroupOut(BaseModel):
     What the panel's whole-show control toggles, and what lights it -- never an aggregate of
     the seasons' own decisions, which the control cannot clear. Seasons overridden one by one
     keep their marks in the strip; this stays ``None`` until the whole show is decided."""
+    show_spare_expires_at: str | None = None
+    """When the whole-show spare stops keeping the show, ISO-8601, or ``None`` for a forever
+    spare (read only when ``show_override`` is ``"spare"``). The panel's whole-show countdown."""
     links: LinksOut = Field(default_factory=LinksOut)
     show_status: str | None = None
     """Whether the show is finished, for the show card: ``"ended"``, ``"continuing"`` or
@@ -861,7 +874,15 @@ class WhitelistEntryOut(BaseModel):
     note: str | None
     decision: str
     """``"spare"`` (never reap) or ``"reap"`` (force onto the reap list)."""
+    spare_expires_at: str | None = None
+    """When a timed spare stops keeping the item, ISO-8601. ``None`` means kept forever (and
+    always ``None`` for a reap)."""
     created_at: str
+
+
+#: The most days a hand-spare may be set for -- ten years, a floor-and-ceiling so a typo can
+#: neither reap the file tomorrow (``ge=1``, below) nor set a nonsense century-long clock.
+_MAX_SPARE_DAYS = 3650
 
 
 class SpareIn(BaseModel):
@@ -870,6 +891,9 @@ class SpareIn(BaseModel):
 
     media_key: str
     note: str | None = Field(default=None, max_length=500)
+    spare_days: int = Field(default=0, ge=0, le=_MAX_SPARE_DAYS)
+    """How long to keep it: ``0`` (default) keeps it forever, a positive count keeps it that
+    many days and then the next scan re-judges it."""
 
 
 class OverrideIn(BaseModel):
@@ -882,6 +906,9 @@ class OverrideIn(BaseModel):
     media_key: str
     decision: Literal["spare", "reap"]
     note: str | None = Field(default=None, max_length=500)
+    spare_days: int = Field(default=0, ge=0, le=_MAX_SPARE_DAYS)
+    """For a spare, how long to keep it: ``0`` (default) forever, a positive count that many
+    days. Ignored for a reap, which never expires."""
 
 
 class HealthOut(BaseModel):

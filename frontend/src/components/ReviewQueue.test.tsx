@@ -64,6 +64,8 @@ function movie(n: number, extra: Partial<Candidate> = {}): Candidate {
     override_own: null,
     show_override: null,
     override_effective: null,
+    spare_expires_at: null,
+    show_spare_expires_at: null,
     chip: null,
     show_status: null,
     season_number: null,
@@ -659,18 +661,68 @@ describe("keyboard activation of a revealed Spare/Reap button", () => {
   it("saves the override and does not bubble to the row's key handler (B-7)", async () => {
     const onSet = vi.fn();
     const rowKeyDown = vi.fn();
+    // OverrideControls reads the default spare length from the general-settings query, so it
+    // needs a client even in isolation; unresolved, the default reads as 0 (forever).
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
-      <div onKeyDown={rowKeyDown}>
-        <OverrideControls override={null} onSet={onSet} onClear={vi.fn()} pending={false} />
-      </div>,
+      <QueryClientProvider client={queryClient}>
+        <div onKeyDown={rowKeyDown}>
+          <OverrideControls override={null} onSet={onSet} onClear={vi.fn()} pending={false} />
+        </div>
+      </QueryClientProvider>,
     );
-    screen.getByRole("button", { name: /spare/i }).focus();
+    screen.getByRole("button", { name: "Spare" }).focus();
     await userEvent.keyboard("{Enter}");
 
-    expect(onSet).toHaveBeenCalledWith("spare");
+    // A plain Spare press carries the operator's default length; unknown settings read as 0
+    // (forever), the safe default.
+    expect(onSet).toHaveBeenCalledWith("spare", 0);
     // The key stopped at the control, so the row handler (which would preventDefault and open
     // the panel) never ran.
     expect(rowKeyDown).not.toHaveBeenCalled();
+  });
+});
+
+// The Spare chevron opens a length menu: quick day-presets, Forever, and a Custom entry. Each
+// pick spares at that length, so the menu is the action, not a form.
+describe("the Spare length menu", () => {
+  function renderControls(onSet = vi.fn()) {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <OverrideControls override={null} onSet={onSet} onClear={vi.fn()} pending={false} />
+      </QueryClientProvider>,
+    );
+    return onSet;
+  }
+
+  it("spares for a chosen preset length", async () => {
+    const user = userEvent.setup();
+    const onSet = renderControls();
+    await user.click(screen.getByRole("button", { name: "Choose how long to keep it" }));
+    await user.click(screen.getByRole("menuitem", { name: /90 days/ }));
+    expect(onSet).toHaveBeenCalledWith("spare", 90);
+  });
+
+  it("spares forever when Forever is picked", async () => {
+    const user = userEvent.setup();
+    const onSet = renderControls();
+    await user.click(screen.getByRole("button", { name: "Choose how long to keep it" }));
+    await user.click(screen.getByRole("menuitem", { name: /Forever/ }));
+    expect(onSet).toHaveBeenCalledWith("spare", 0);
+  });
+
+  it("spares for a custom number of days", async () => {
+    const user = userEvent.setup();
+    const onSet = renderControls();
+    await user.click(screen.getByRole("button", { name: "Choose how long to keep it" }));
+    await user.click(screen.getByRole("menuitem", { name: /Custom length/ }));
+    const box = screen.getByLabelText("Custom spare length in days");
+    await user.clear(box);
+    await user.type(box, "45");
+    // Scope to the menu: the row's own split Spare button is also named "Spare".
+    await user.click(within(screen.getByRole("menu")).getByRole("button", { name: "Spare" }));
+    expect(onSet).toHaveBeenCalledWith("spare", 45);
   });
 });
 

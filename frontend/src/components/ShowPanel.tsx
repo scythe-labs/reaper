@@ -32,6 +32,7 @@ function SeasonPill({ season }: { season: Candidate }) {
         override={season.override}
         effective={season.override_effective}
         keptWhy={chipWhy(season.chip)}
+        spareExpiresAt={season.spare_expires_at}
         family="status-chip"
       />
     );
@@ -144,7 +145,9 @@ export function ShowPanel({
         <div className="why-actions-row">
           <OverrideControls
             override={showOverride}
-            onSet={(decision) => setOverride.mutate({ key: group.group_key, decision })}
+            onSet={(decision, spareDays) =>
+              setOverride.mutate({ key: group.group_key, decision, spareDays: spareDays ?? 0 })
+            }
             onClear={() => clearOverride.mutate(group.group_key)}
             pending={setOverride.isPending || clearOverride.isPending}
             hideReap={showReapIsNoop(group.seasons)}

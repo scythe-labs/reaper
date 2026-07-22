@@ -3,7 +3,7 @@
 // conventions are pinned: binary units with the unit named honestly (GiB, not GB),
 // one decimal below 100, none above, and nothing negative ever rendered.
 import { describe, expect, it } from "vitest";
-import { bytes, count, coverage, itemBytes, totalBytes } from "./format";
+import { bytes, count, coverage, itemBytes, spareRemaining, totalBytes } from "./format";
 
 describe("bytes", () => {
   it("renders binary units with honest labels", () => {
@@ -75,5 +75,35 @@ describe("coverage", () => {
   it("turns basis points into a rounded percentage", () => {
     expect(coverage(10_000)).toBe("100%");
     expect(coverage(7_550)).toBe("76%");
+  });
+});
+
+describe("spareRemaining", () => {
+  const inDays = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString();
+
+  it("reads a null expiry as a forever spare", () => {
+    const r = spareRemaining(null);
+    expect(r.forever).toBe(true);
+    expect(r.short).toBe("");
+    expect(r.phrase).toBe("");
+  });
+
+  it("counts whole days left, rounding up so a partial day still shows", () => {
+    const r = spareRemaining(inDays(26.4));
+    expect(r.forever).toBe(false);
+    expect(r.days).toBe(27);
+    expect(r.short).toBe("27d");
+    expect(r.phrase).toBe("27 days left");
+  });
+
+  it("says a single day in the singular", () => {
+    expect(spareRemaining(inDays(0.5)).phrase).toBe("1 day left");
+  });
+
+  it("reads a past expiry as expired, floored at zero (realized only at the next scan)", () => {
+    const r = spareRemaining(inDays(-3));
+    expect(r.expired).toBe(true);
+    expect(r.days).toBe(0);
+    expect(r.phrase).toBe("expired");
   });
 });

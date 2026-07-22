@@ -79,6 +79,11 @@ ACCENT_COLOR_KEY = "accent_color"
 #: never a deletion behavior. Stored on the server like the accent, so every browser
 #: that opens this install starts the same way. Off by default.
 EXPAND_SEASONS_DEFAULT_KEY = "expand_seasons_default"
+#: How long a plain Spare press keeps an item, in days. ``0`` means forever -- the shipped
+#: default and the original behavior, so an existing install's Spare button keeps items for
+#: good until the operator sets a length. A single title can still be spared for a different
+#: length from its Spare menu; this is only the default the button uses.
+DEFAULT_SPARE_DAYS_KEY = "default_spare_days"
 #: The one instance API key, Fernet-encrypted like every stored credential. Sent by
 #: callers as ``X-Api-Key``; the middleware compares a SHA-256 of it (see main.py's
 #: startup, which caches the digest on app.state).
@@ -211,6 +216,19 @@ async def get_expand_seasons_default(session: AsyncSession) -> bool:
 
 async def set_expand_seasons_default(session: AsyncSession, *, enabled: bool) -> None:
     await _set(session, EXPAND_SEASONS_DEFAULT_KEY, bool(enabled))
+
+
+async def get_default_spare_days(session: AsyncSession) -> int:
+    """Days a plain Spare press keeps an item; ``0`` = forever. Forever until the operator sets
+    a length, so an existing install's Spare button keeps items for good exactly as before.
+
+    A stored value below zero (only reachable by hand-editing the DB) clamps to ``0`` rather
+    than becoming a negative timedelta that would expire a spare in the past."""
+    return max(0, int(await _get(session, DEFAULT_SPARE_DAYS_KEY, default=0)))
+
+
+async def set_default_spare_days(session: AsyncSession, *, days: int) -> None:
+    await _set(session, DEFAULT_SPARE_DAYS_KEY, max(0, int(days)))
 
 
 # --- the instance API key ----------------------------------------------------

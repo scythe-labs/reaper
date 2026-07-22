@@ -42,6 +42,9 @@ def _out(entry: WhitelistEntry) -> WhitelistEntryOut:
         title=entry.title,
         note=entry.note,
         decision=entry.decision,
+        spare_expires_at=(
+            entry.spare_expires_at.isoformat() if entry.spare_expires_at is not None else None
+        ),
         created_at=entry.created_at.isoformat(),
     )
 
@@ -147,7 +150,11 @@ async def spare_item(request: Request, payload: SpareIn) -> WhitelistEntryOut:
     async with _sessions(request)() as session:
         title = await _resolve_title(session, payload.media_key)
         entry = await whitelist.spare(
-            session, media_key=payload.media_key, title=title, note=payload.note
+            session,
+            media_key=payload.media_key,
+            title=title,
+            note=payload.note,
+            spare_days=payload.spare_days,
         )
         await _sync_grace_clocks(session, payload.media_key)
         out = _out(entry)
@@ -170,6 +177,7 @@ async def set_override(request: Request, payload: OverrideIn) -> WhitelistEntryO
             title=title,
             decision=payload.decision,
             note=payload.note,
+            spare_days=payload.spare_days,
         )
         await _sync_grace_clocks(session, payload.media_key)
         out = _out(entry)

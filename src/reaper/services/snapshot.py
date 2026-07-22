@@ -669,13 +669,6 @@ async def scan(
             watchers_window=watchers_window,
             watchers_all_time=watchers_all_time,
         )
-        # The owner's manual overrides -- ``media_key -> "spare" | "reap"`` -- loaded once
-        # and applied to every item's verdict. A spared file is judged PROTECT rather than
-        # surfacing in "would delete" again; a reaped one is forced onto the list (short
-        # of a hard safety gate). Keys may be a show's, in which case the decision applies
-        # to all of its seasons.
-        override_map = await whitelist.overrides(session)
-
         if season_task is not None:
             emit(Progress("gathering", 4, 5, "TV seasons from Sonarr"))
             season_judgments = await season_task
@@ -727,6 +720,14 @@ async def scan(
     tv_custom = tv_policy.custom_signal_configs()
     tv_keeps = tv_policy.keep_configs()
     now = utcnow()
+    # The owner's manual overrides -- ``media_key -> "spare" | "reap"`` -- applied to every
+    # item's verdict: a spared file is judged PROTECT rather than surfacing in "would delete";
+    # a reaped one is forced onto the list (short of a hard safety gate). Keys may be a show's,
+    # covering all its seasons. Read *as of the scan's `now`* so an EXPIRED timed spare is
+    # dropped here -- the one place a spare's clock is realized -- and the item is re-judged
+    # from scratch, re-entering the reap flow on a fresh grace window (record_first_flagged_bulk
+    # below). Live consumers keep an expired spare in force until this runs, failing to keep.
+    override_map = await whitelist.overrides_effective_at(session, now)
     condemned = 0
     total = len(items) + len(season_judgments)
 
