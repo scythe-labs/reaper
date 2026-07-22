@@ -1153,6 +1153,31 @@ export const api = {
   logs: (after: number) => request<LogsPage>(`/api/logs?after=${after}`),
   setLogLevel: (level: string) => put<LogsPage>("/api/logs/level", { level }),
 
+  /** Fetch the full on-disk log and hand it to the browser as a file download.
+   *  Bypasses `request` (which JSON-parses every body) to read a binary blob, and takes
+   *  the filename the server offers so it carries a timestamp. */
+  downloadLogs: async (): Promise<void> => {
+    const response = await fetch("/api/logs/download", { headers: { ...CSRF_HEADER } });
+    if (!response.ok) {
+      const errorBody: unknown = await response.json().catch(() => null);
+      throw new ApiError(response.status, reason(response.status, errorBody));
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? "reaper-logs.log";
+    const url = URL.createObjectURL(blob);
+    try {
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = name;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  },
+
   schedule: () => request<Schedule>("/api/settings/schedule"),
   saveJobSchedule: (id: string, cron: string | null) =>
     put<Schedule>(`/api/settings/jobs/${id}/schedule`, { cron }),

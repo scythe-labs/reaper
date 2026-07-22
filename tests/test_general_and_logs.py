@@ -446,3 +446,30 @@ class TestTheLogsRoutes:
     def test_only_the_offered_levels_are_accepted(self, client: TestClient) -> None:
         response = client.put("/api/logs/level", json={"level": "CRITICAL"})
         assert response.status_code == 422
+
+
+class TestTheLogDownload:
+    """The full log downloads as one timestamped text file, behind the session, and the
+    on-disk copy is redacted exactly as the ring is (it is fed from the same place)."""
+
+    def test_downloading_needs_a_session(self, client: TestClient) -> None:
+        assert _bare(client).get("/api/logs/download").status_code == 401
+
+    def test_the_download_is_an_attachment_carrying_the_trail(self, client: TestClient) -> None:
+        marker = f"download.marker_{time.time_ns()}"
+        structlog.get_logger("test").info(marker)
+
+        response = client.get("/api/logs/download")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/plain")
+        disposition = response.headers["content-disposition"]
+        assert disposition.startswith("attachment;")
+        assert ".log" in disposition
+        assert marker in response.text  # the line we just logged is on disk and served back
+
+    def test_secrets_never_reach_the_download(self, client: TestClient) -> None:
+        structlog.get_logger("test").warning("download.secret_probe", apikey="super-secret")
+        body = client.get("/api/logs/download").text
+        assert "download.secret_probe" in body
+        assert "super-secret" not in body
+        assert "[redacted]" in body

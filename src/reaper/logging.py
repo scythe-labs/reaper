@@ -17,6 +17,7 @@ import logging
 import re
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -161,7 +162,9 @@ class _RingHandler(logging.Handler):
             self.handleError(record)
 
 
-def configure_logging(*, level: str = "INFO", json_logs: bool = False) -> None:
+def configure_logging(
+    *, level: str = "INFO", json_logs: bool = False, data_dir: Path | None = None
+) -> None:
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,
@@ -202,3 +205,8 @@ def configure_logging(*, level: str = "INFO", json_logs: bool = False) -> None:
         wrapper_class=structlog.make_filtering_bound_logger(logging.DEBUG),
         cache_logger_on_first_use=True,
     )
+
+    # Mirror the ring to rotating files on disk when we have a data dir (the running app
+    # always does; a bare configure_logging in a test does not, so it stays stdout-only).
+    if data_dir is not None:
+        logbuffer.configure_file_logging(data_dir)

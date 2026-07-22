@@ -238,7 +238,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    configure_logging(level=settings.log_level, json_logs=settings.log_json)
+    configure_logging(
+        level=settings.log_level, json_logs=settings.log_json, data_dir=settings.data_dir
+    )
 
     app = FastAPI(
         title="Reaper",

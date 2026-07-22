@@ -102,6 +102,8 @@ export function LogsPanel() {
     onSuccess: (page) => setRecordLevel(page.level),
   });
 
+  const download = useMutation({ mutationFn: api.downloadLogs });
+
   return (
     <div className="panel">
       <h2>Logs</h2>
@@ -230,8 +232,29 @@ export function LogsPanel() {
               </select>
             </div>
           </div>
+          <div className="set-row">
+            <span className="set-label">Log files</span>
+            <p className="help">
+              Save the whole log to your computer, handy for a bug report. Reaper keeps the
+              newest {count(3)} files on the server, a fuller trail than the window above.
+            </p>
+            <div className="set-control">
+              <button
+                className="primary"
+                onClick={() => download.mutate()}
+                disabled={download.isPending}
+              >
+                {download.isPending ? "Preparing…" : "Download logs"}
+              </button>
+            </div>
+          </div>
         </div>
         {setLevel.error && <p className="notice notice-error">{setLevel.error.message}</p>}
+        {download.error && (
+          <p className="notice notice-error">
+            The download didn't start: {download.error.message}
+          </p>
+        )}
       </div>
     </div>
   );

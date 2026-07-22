@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LogsPanel } from "./LogsPanel";
 
 const { apiMock } = vi.hoisted(() => ({
-  apiMock: { logs: vi.fn(), setLogLevel: vi.fn() },
+  apiMock: { logs: vi.fn(), setLogLevel: vi.fn(), downloadLogs: vi.fn() },
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -41,6 +41,8 @@ describe("LogsPanel", () => {
   beforeEach(() => {
     apiMock.logs.mockReset();
     apiMock.logs.mockResolvedValue(page(1));
+    apiMock.downloadLogs.mockReset();
+    apiMock.downloadLogs.mockResolvedValue(undefined);
   });
 
   it("offers no level that filters exactly what the one above it does", () => {
@@ -72,5 +74,18 @@ describe("LogsPanel", () => {
 
     expect(await screen.findByText(/reaper is trying again/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /try again/i })).not.toBeInTheDocument();
+  });
+
+  it("downloads the full log on demand", async () => {
+    const { person } = renderPanel();
+    await person.click(screen.getByRole("button", { name: /download logs/i }));
+    expect(apiMock.downloadLogs).toHaveBeenCalledOnce();
+  });
+
+  it("shows a plain error when the download won't start", async () => {
+    apiMock.downloadLogs.mockRejectedValue(new Error("Couldn't reach the server."));
+    const { person } = renderPanel();
+    await person.click(screen.getByRole("button", { name: /download logs/i }));
+    expect(await screen.findByText(/the download didn't start/i)).toBeInTheDocument();
   });
 });

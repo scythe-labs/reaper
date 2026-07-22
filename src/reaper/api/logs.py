@@ -13,13 +13,21 @@ event (see ``reaper.logbuffer``).
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from reaper import logbuffer
 from reaper.services import app_settings
 
 router = APIRouter(prefix="/api")
+
+#: Read the on-disk log files in modest chunks rather than loading up to three 20 MiB
+#: files into memory at once.
+_DOWNLOAD_CHUNK = 64 * 1024
 
 
 class LogLineOut(BaseModel):
@@ -59,6 +67,45 @@ async def get_logs(
         ],
         last_seq=logbuffer.RING.last_seq(),
         level=logbuffer.level_name(),
+    )
+
+
+@router.get("/logs/download")
+async def download_logs(request: Request) -> StreamingResponse:
+    """The full log as one downloadable text file.
+
+    Concatenates the rotating files on disk oldest-first, so the operator gets a fuller
+    trail than the in-memory window keeps -- the right thing to attach to a bug report.
+    Before anything has been written to disk (or if file logging could not start), it
+    falls back to the in-memory ring so the download is never empty. Streamed file by
+    file, so three 20 MiB files never sit in memory at once.
+    """
+    files = logbuffer.log_files()
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    filename = f"reaper-logs-{stamp}.log"
+
+    def body() -> Iterator[bytes]:
+        if files:
+            for path in files:
+                try:
+                    with path.open("rb") as handle:
+                        while chunk := handle.read(_DOWNLOAD_CHUNK):
+                            yield chunk
+                except OSError:
+                    # A file rotated away mid-read is gone, not an error worth failing the
+                    # whole download over; skip it and stream what remains.
+                    continue
+        else:
+            for line in logbuffer.dump_lines():
+                yield f"{line.ts} {line.level:<7} {line.text}\n".encode()
+
+    return StreamingResponse(
+        body(),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 
