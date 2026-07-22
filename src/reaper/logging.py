@@ -93,16 +93,26 @@ def redact_secrets(_logger: WrappedLogger, _method: str, event_dict: EventDict) 
     return event_dict
 
 
-# Third-party loggers that log request URLs verbatim through the stdlib -- which the
-# structlog redaction processor never sees, because it only runs on structlog events.
-# httpx logs every request at INFO as "HTTP Request: GET https://host/...?apikey=SECRET",
-# and Tautulli, Plex and MDBList all carry their credential in the query string. So an
-# unquieted httpx logger writes those keys straight to the log in cleartext.
+# Third-party loggers pinned to WARNING, so Reaper's own DEBUG level shows Reaper's events,
+# never a library's firehose. Two distinct harms, both cured at the source:
 #
-# We do not need httpx's request log: Reaper emits its own structured, redacted event for
-# anything that matters. Lifting these to WARNING removes the leak at the source rather
-# than trying to scrub it after the fact.
-_NOISY_HTTP_LOGGERS = ("httpx", "httpcore", "urllib3", "plexapi")
+# * The HTTP clients log request URLs verbatim through the stdlib -- which the structlog
+#   redaction processor never sees, because it only runs on structlog events. httpx logs
+#   every request at INFO as "HTTP Request: GET https://host/...?apikey=SECRET", and
+#   Tautulli, Plex and MDBList all carry their credential in the query string, so an
+#   unquieted httpx logger writes those keys straight to the log in cleartext.
+# * aiosqlite (and SQLAlchemy's engine) log one DEBUG line per SQL cursor operation. A single
+#   scan inserts thousands of candidate rows, so at DEBUG those tens of thousands of lines
+#   flood the ring and the on-disk file and EVICT every diagnostic that matters -- the
+#   per-item scan decisions, the Plex-match lines -- before the operator can read them,
+#   turning DEBUG mode against itself. (Observed live: a downloaded DEBUG log was 99.98%
+#   aiosqlite, with zero decision lines left.)
+#
+# Reaper emits its own structured, redacted event for anything that matters, so none of these
+# libraries' own logs are needed. WARNING is an EXPLICIT level, so it survives a runtime root
+# switch to DEBUG (logbuffer.set_level only moves the root); genuine SQL/HTTP errors still
+# surface, because WARNING and above pass.
+_NOISY_LOGGERS = ("httpx", "httpcore", "urllib3", "plexapi", "aiosqlite", "sqlalchemy")
 
 # Keys the ring's plain-text line should not repeat: they are carried as their own
 # columns (or are rendering internals), not payload.
@@ -179,7 +189,7 @@ def configure_logging(
 
     logbuffer.set_level(level)
 
-    for name in _NOISY_HTTP_LOGGERS:
+    for name in _NOISY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
 
     renderer: Any = (

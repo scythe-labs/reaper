@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""Noisy library loggers stay quiet even when the operator turns Reaper up to DEBUG.
+
+The regression this guards: aiosqlite logs one line per SQL cursor operation, so at DEBUG a
+single scan's thousands of candidate inserts flooded the ring and the on-disk file and
+evicted every diagnostic that matters (the per-item scan decisions, the Plex-match lines) --
+a downloaded DEBUG log came back 99.98% aiosqlite with zero decision lines. Pinning these
+loggers to WARNING with an EXPLICIT level keeps them quiet through a runtime switch to DEBUG,
+because logbuffer.set_level only moves the root level.
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Iterator
+
+import pytest
+
+from reaper import logbuffer
+from reaper.logging import _NOISY_LOGGERS, configure_logging
+
+
+@pytest.fixture
+def _restore_logging() -> Iterator[None]:
+    """Save and restore the global logger levels this test mutates, so calling
+    configure_logging / set_level here does not leak into the rest of the suite."""
+    root = logging.getLogger()
+    saved_root = root.level
+    saved = {name: logging.getLogger(name).level for name in _NOISY_LOGGERS}
+    saved_ring = logbuffer.level_name()
+    try:
+        yield
+    finally:
+        root.setLevel(saved_root)
+        for name, level in saved.items():
+            logging.getLogger(name).setLevel(level)
+        logbuffer.set_level(saved_ring)
+
+
+def test_aiosqlite_and_sql_stay_at_warning(_restore_logging: None) -> None:
+    assert "aiosqlite" in _NOISY_LOGGERS  # the whole point of the fix
+    configure_logging(level="DEBUG")
+    # Even booted at DEBUG, the SQL firehose is capped, so it cannot drown the diagnostics.
+    for name in ("aiosqlite", "sqlalchemy", "httpx"):
+        assert logging.getLogger(name).getEffectiveLevel() == logging.WARNING, name
+
+
+def test_it_survives_a_runtime_switch_to_debug(_restore_logging: None) -> None:
+    """The Settings -> Logs toggle moves the root level; the explicit WARNING must hold."""
+    configure_logging(level="INFO")
+    logbuffer.set_level("DEBUG")
+    assert logging.getLogger().getEffectiveLevel() == logging.DEBUG  # Reaper is at DEBUG
+    assert logging.getLogger("aiosqlite").getEffectiveLevel() == logging.WARNING  # SQL is not
