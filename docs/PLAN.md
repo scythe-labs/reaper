@@ -2898,8 +2898,11 @@ grammar (per-service instance select, "suggested" tag that clears on pick, save 
 unreadable list -> notice not empty). `SeerrService`/`decode_service_instance_map` treat a bad body
 as `{}` (rule 32). Serves the real 2-Seerr / 2-Sonarr, main-vs-restricted-library setup: the clean
 1:1:1 case where the map is tiny and unambiguous. **Superseded improvement #1** (the rating-key
-join) with the id join, which is immune to both the non-4K `ratingKey` collapse and the
-multi-Plex-server id-space collision.
+join): the Plex `ratingKey` is unique per server, but Overseerr keeps one non-4K slot per
+title per portal, so a portal that can see both libraries collapses them to whichever copy it
+synced last, not the copy the request was routed to (see LEARNINGS). The `externalServiceId`
+join is copy-true because it names the *arr the request went to; it also sidesteps the rarer
+multi-Plex-server ratingKey id-space collision.
 
 **Gates:** ruff/mypy clean, 1858 backend tests (+22), 187 frontend tests (+4), alembic upgrade+check
 clean, docker build clean. Not yet driven end-to-end against a live multi-Seerr instance.

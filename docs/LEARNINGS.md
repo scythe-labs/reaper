@@ -703,24 +703,34 @@ they share one file, so it is deleted out from under her.
 
 An operator can keep the same title in two Plex libraries — a main one and a restricted one
 for a specific group, fed by two different Sonarr/Radarr instances. Naming *who asked for that
-copy* looks like it should join on the Plex `ratingKey` Seerr already carries. It can't:
-Overseerr's `Media` entity has exactly two rating-key slots, `ratingKey` and `ratingKey4k`,
-selected by an `is4k` flag. Its whole notion of "the same title twice" **is** the HD-vs-4K axis;
-two non-4K copies collapse to one `ratingKey`. And Seerr stores no file path, so the library-map
-trick can't cross over either.
+copy* looks like it should join on the Plex `ratingKey` Seerr already carries.
 
-What a request *does* carry is `externalServiceId` (the *arr's own movie/series id) and a
-portal-local `serviceId`. `externalServiceId` equals the `movie_id`/`series_id` in Reaper's
-`media_key`, and two copies in two *arr instances have different ids — so the join key is
-`(instance, externalServiceId)`, i.e. the candidate's own `media_key`. The only missing piece is
-`serviceId -> Reaper instance`, which `serviceId` numbering (local to each Seerr) can't give on
-its own; an operator-declared map supplies it (`instance.service_instance_map`). This join is
-immune to two traps the rating-key join is not: the non-4K `ratingKey` collapse above, and
-multi-Plex-server id-space collisions (Plex rating keys are small ints that repeat across servers).
+The `ratingKey` **is** unique — it is Plex's own metadata id, the same id space Reaper resolves
+against — so on a single Plex server it is a real, matchable key. That is not where it fails. It
+fails because Overseerr stores **one** `Media` row per tmdb per portal, with a single non-4K
+`ratingKey` slot (`ratingKey4k` is the only other, selected by `is4k`). So the ratingKey is a
+*per-title-per-portal* pointer — "where is this title in Plex" — **not a per-request, per-copy
+one.** When a portal's Plex sync can see the title in *both* libraries (the restricted-access
+group's portal sees the main library too), its one slot holds whichever copy it synced **last**,
+which need not be the copy the request was routed to. So a restricted request can carry the main
+copy's `ratingKey`, and the join mis-attributes. (Where each portal sees only its own library the
+ratingKey would name the right copy zero-config; it is specifically the see-both case that breaks
+it. Seerr also stores no file path, so the library-map trick can't cross over.)
 
-⇒ For a cross-system join, prefer the id that is stable *and* namespaced to the thing you mean.
-The *arr item id (with its instance) names one file; the Plex rating key names one server's view
-of one *quality tier*, which is a coarser and less portable key than it looks.
+What a request *does* carry that is copy-true is `externalServiceId` — the id of the *arr the
+request was **routed to**, so a portal adding to its own dedicated *arr always points at its own
+copy, whatever Plex sync saw. It equals the `movie_id`/`series_id` in Reaper's `media_key`, and
+two copies in two *arr instances have different ids, so the join key is `(instance,
+externalServiceId)` = the candidate's own `media_key`. The only missing piece is `serviceId ->
+Reaper instance` (serviceId numbering is local to each Seerr); an operator-declared map supplies
+it (`instance.service_instance_map`). (A second, rarer trap the *arr-id join also avoids: across
+*different* Plex servers, rating keys are small ints that repeat, so a ratingKey join would have
+to be server-scoped. Irrelevant on one Plex, but real in a multi-server setup.)
+
+⇒ For a cross-system join, prefer the id that names *the specific thing you mean*, not a pointer
+that happens to be unique. The Plex ratingKey is unique yet names "this portal's current view of
+the title," collapsing two copies to one; the *arr item id (with its instance) names one file the
+request was actually routed to.
 
 ### The IMDb Top 250 mirror carries no rank
 
