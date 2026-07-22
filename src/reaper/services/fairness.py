@@ -223,6 +223,21 @@ def _identity(request: MediaRequest) -> str:
     return f"local:{request.portal_key}:{r.seerr_user_id}"
 
 
+def _profile_url(seerrs: Sequence[SeerrClient], request: MediaRequest) -> str | None:
+    """The requester's page on the portal their request came through
+    (``{base_url}/users/{seerr_user_id}``). Built from the request itself, so it works for a
+    Plex-linked and an unlinked local account alike and needs no extra Seerr read. ``None``
+    when the request carries no user id, or its portal is not among the open clients -- the
+    panel then shows the name as plain text, never a dead link."""
+    uid = request.requester.seerr_user_id
+    if not uid:
+        return None
+    client = next((c for c in seerrs if c.instance_key == request.portal_key), None)
+    if client is None:
+        return None
+    return f"{client.base_url}/users/{uid}"
+
+
 ContentKey = tuple[str, str | int]
 
 
@@ -580,6 +595,10 @@ class PersonDetail:
     unmatched: list[UnmatchedTitle] = field(default_factory=list)
     """This person's not-in-scan requests, merged by title and classified by reason, with
     names filled in -- the same panel the board shows, scoped to them."""
+    profile_url: str | None = None
+    """The requester's page on the portal their request came through
+    (``{base_url}/users/{seerr_user_id}``), or ``None`` when it cannot be built. Display only;
+    the panel opens it in a new tab, and shows the name as plain text when it is ``None``."""
 
 
 def _fold_quota(statuses: Iterable[QuotaStatus]) -> QuotaLine:
@@ -1015,6 +1034,12 @@ async def build_person_detail(
     accounts = await _enrich_accounts(seerrs, {plex_id})
     quota = accounts.get(plex_id) if plex_id is not None else None
 
+    # A link to this person on the portal they requested through. Built from any one of their
+    # requests (all carry their user id and portal), so it does not depend on the best-effort
+    # account read above and survives an unreadable user list.
+    own_request = next((r for r in requests if _identity(r) == identity), None)
+    profile_url = _profile_url(seerrs, own_request) if own_request is not None else None
+
     return PersonDetail(
         plex_id=plex_id,
         name=name,
@@ -1028,4 +1053,5 @@ async def build_person_detail(
         titles=titles,
         not_in_scan=not_in_scan,
         unmatched=unmatched,
+        profile_url=profile_url,
     )

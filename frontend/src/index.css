@@ -3269,6 +3269,33 @@ a.rating-chip:hover {
   margin: 0;
 }
 
+/* The name as a link to the requester's portal page. Text at rest (the title-link idiom, so
+   it doesn't shout), accent underline on hover, with a small outbound arrow to mark it. */
+.scales-name-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  color: inherit;
+  text-decoration: none;
+}
+.scales-ext {
+  flex: none;
+  color: var(--faint);
+}
+.scales-name-link:hover h2 {
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-underline-offset: 2px;
+}
+.scales-name-link:hover .scales-ext {
+  color: var(--accent);
+}
+.scales-name-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
 /* The four summary tiles, reusing .fair-stat chrome in a tight 2-up grid. */
 .scales-tiles {
   display: grid;
@@ -3280,21 +3307,25 @@ a.rating-chip:hover {
   color: var(--protect);
 }
 
-/* Request limits: quiet chips, amber when the person is capped there right now. */
+/* Request limits: one full-width chip per line (label left, value right), amber when the
+   person is capped there right now. Stacked, not wrapped: the set is always the same three
+   (movies, series, lifetime), so a fixed one-per-row order keeps them from shifting position
+   between people the way content-width pills in a wrapping row did. */
 .scales-limits {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: 0.35rem;
 }
 .scales-limit {
-  display: inline-flex;
+  display: flex;
   align-items: baseline;
-  gap: 0.4rem;
-  font-size: 0.78rem;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-size: 0.8rem;
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0.26rem 0.7rem;
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.7rem;
 }
 .scales-limit-k {
   color: var(--muted);
@@ -3303,9 +3334,12 @@ a.rating-chip:hover {
 .scales-limit-v {
   color: var(--text);
   font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.scales-limit-sub {
+  color: var(--faint);
 }
 .scales-limit.at {
-  color: var(--unknown);
   border-color: color-mix(in srgb, var(--unknown) 45%, var(--border));
   background: var(--unknown-soft);
 }
@@ -3417,6 +3451,13 @@ a.rating-chip:hover {
   align-items: flex-end;
   gap: 0.24rem;
   text-align: right;
+}
+/* The fate marker hugs the right rail with the size and watched line beneath it. .status-chip
+   left-aligns itself (align-self: flex-start) for the review card and season lists; here that
+   floated the pill off the right edge whenever the watched line was wider, so the markers read
+   as shifting row to row. Pin it to flex-end so fate, size, and watched share one right edge. */
+.scales-title-side .status-chip {
+  align-self: flex-end;
 }
 .scales-size {
   font-size: 0.8rem;

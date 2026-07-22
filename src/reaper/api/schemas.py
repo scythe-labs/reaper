@@ -848,6 +848,9 @@ class PersonDetailOut(BaseModel):
     titles: list[PersonTitleOut]
     unmatched: list[UnmatchedRequestOut] = []
     """This person's not-in-scan requests, named and grouped by reason, for the panel."""
+    profile_url: str | None = None
+    """The requester's page on their request portal, or null when it can't be built. The
+    panel links the name to it, and shows plain text otherwise."""
 
 
 class WhitelistEntryOut(BaseModel):
