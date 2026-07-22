@@ -1097,7 +1097,7 @@ class TestPolicyPersistence:
         assert active["body"]["condemn_at"] == 55
 
     def test_an_invalid_policy_is_never_persisted(self, client: TestClient) -> None:
-        """A dormancy floor under a year is refused by the domain, and the refusal must
+        """A dormancy floor under 5 days is refused by the domain, and the refusal must
         happen before the row is written -- not after."""
         response = client.post("/api/policy", json=_policy(gates=[{"gate": "min_dormancy"}]))
 

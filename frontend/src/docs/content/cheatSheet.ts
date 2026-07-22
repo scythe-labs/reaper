@@ -27,7 +27,7 @@ export const cheatSheet: Doc = {
     table(
       ["Protection", "Default"],
       [
-        ["Give every title time to be rewatched", "3 years (min 1)"],
+        ["Give every title time to be rewatched", "3 years (min 5 days)"],
         ["Keep what your users actually watch", "3 people, last year"],
         ["Keep well-rated titles", "IMDb 7.5, 1,000 votes"],
         ["Spare titles you've tagged", "`reaper-keep`"],

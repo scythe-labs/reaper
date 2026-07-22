@@ -107,12 +107,11 @@ class GateSetting(Frozen):
                 "Keeping anything watched by 0 people would protect your whole library. "
                 "Set it to at least 1, or switch this protection off instead."
             )
-        if self.gate is GateId.MIN_DORMANCY and self.threshold < 365:
+        if self.gate is GateId.MIN_DORMANCY and self.threshold < 5:
             raise ValueError(
-                "Give titles at least a year before removing them. Anything left alone for "
-                "only a year or two still gets watched again a lot of the time, so removing it "
-                "then is close to a coin-flip against your users. If you really mean to, switch "
-                "this protection off with its toggle rather than setting it this low."
+                "Give titles at least 5 days before removing them. To remove things faster "
+                "than that, switch this protection off with its toggle rather than setting "
+                "it this low."
             )
         return self
 

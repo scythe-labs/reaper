@@ -128,7 +128,7 @@ export const understandingPolicy: Doc = {
     table(
       ["Protection", "What it keeps", "Default"],
       [
-        ["Give every title time to be rewatched", "Anything younger than the age line", "3 years (cannot go below 1 year)"],
+        ["Give every title time to be rewatched", "Anything younger than the age line", "3 years (cannot go below 5 days)"],
         ["Keep what your users actually watch", "Anything enough people played recently", "3 people, within the last year"],
         ["Keep well-rated titles", "Anything clearing your rating bar", "IMDb 7.5, at least 1,000 votes"],
         ["Spare titles you've tagged", "Anything with your keep tag", "Tag `reaper-keep`, plus a Never Reap collection"],

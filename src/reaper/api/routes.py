@@ -943,7 +943,7 @@ def _to_body(payload: PolicyIn) -> PolicyBody:
     """Build the domain policy, translating its refusals into a 422.
 
     The wire schema deliberately does NOT re-implement the domain rules -- a vote floor
-    of 0, a dormancy floor under a year, a run cap above the rolling cap. Those live in
+    of 0, a dormancy floor under 5 days, a run cap above the rolling cap. Those live in
     ``engine.policy``, where they are enforced for every caller including the CLI and
     the scheduler.
 
