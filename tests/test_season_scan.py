@@ -1439,6 +1439,117 @@ class TestGatherEndToEnd:
         )
         assert judgments == []
 
+    async def test_a_candidate_show_logs_its_decision(self, cache_engine: AsyncEngine) -> None:
+        """Every scanned series emits one greppable decision line. A show with a prunable
+        season records outcome=candidate, the prunable season numbers, and the raw per-season
+        file counts Sonarr reported -- the record an operator greps by title."""
+        series = [
+            {
+                "id": 42,
+                "title": "Long Show",
+                "year": 2005,
+                "status": "ended",
+                "ended": True,
+                "tvdbId": 700,
+                "seasons": [_season_payload(n) for n in range(1, 6)],
+            }
+        ]
+        _reasons, degrade = _degrade_sink()
+        with capture_logs() as logs:
+            await season_scan.gather(
+                cache_engine,
+                sonarrs=[_source(_FakeSonarr(series))],
+                tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+                horizon=utcnow() - timedelta(days=4000),
+                active_rating_keys=set(),
+                activity_degraded=False,
+                keep_last_seasons=2,
+                keep_first_season=True,
+                window_days=365,
+                whitelisted=set(),
+                degrade=degrade,
+            )
+        decisions = [e for e in logs if e["event"] == "season_scan.series_decision"]
+        assert len(decisions) == 1
+        d = decisions[0]
+        assert d["outcome"] == "candidate"
+        assert d["title"] == "Long Show"
+        assert d["tvdb_id"] == 700
+        assert sorted(d["prunable"]) == [2, 3]  # outside keep-last 2, not the first
+        assert {s["n"] for s in d["seasons"]} == {1, 2, 3, 4, 5}
+
+    async def test_a_fully_protected_show_logs_the_keep_reasons(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """A show with nothing prunable is dropped from the queue, but its decision line names
+        outcome=fully_protected and why each on-disk season is kept -- so "why isn't my show in
+        review" is answerable without re-running the scan."""
+        series = [
+            {
+                "id": 9,
+                "title": "Two Seasons",
+                "status": "ended",
+                "ended": True,
+                "seasons": [_season_payload(1), _season_payload(2)],
+            }
+        ]
+        _reasons, degrade = _degrade_sink()
+        with capture_logs() as logs:
+            await season_scan.gather(
+                cache_engine,
+                sonarrs=[_source(_FakeSonarr(series))],
+                tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+                horizon=utcnow(),
+                active_rating_keys=set(),
+                activity_degraded=False,
+                keep_last_seasons=2,
+                keep_first_season=True,
+                window_days=365,
+                whitelisted=set(),
+                degrade=degrade,
+            )
+        decisions = [e for e in logs if e["event"] == "season_scan.series_decision"]
+        assert len(decisions) == 1
+        d = decisions[0]
+        assert d["outcome"] == "fully_protected"
+        assert d["prunable"] == []
+        assert {p["season"] for p in d["protected"]} == {1, 2}
+        assert all(p["reason"] for p in d["protected"])
+
+    async def test_a_show_without_files_logs_no_content(self, cache_engine: AsyncEngine) -> None:
+        """A show Sonarr has no downloaded episodes for is dropped as no_content, and its
+        decision line says so with the zero file counts, so it is not mistaken for a bug."""
+        series = [
+            {
+                "id": 5,
+                "title": "Nothing Downloaded",
+                "status": "continuing",
+                "seasons": [_season_payload(1, files=0), _season_payload(2, files=0)],
+            }
+        ]
+        _reasons, degrade = _degrade_sink()
+        with capture_logs() as logs:
+            await season_scan.gather(
+                cache_engine,
+                sonarrs=[_source(_FakeSonarr(series))],
+                tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+                horizon=utcnow(),
+                active_rating_keys=set(),
+                activity_degraded=False,
+                keep_last_seasons=2,
+                keep_first_season=True,
+                window_days=365,
+                whitelisted=set(),
+                degrade=degrade,
+            )
+        decisions = [e for e in logs if e["event"] == "season_scan.series_decision"]
+        assert len(decisions) == 1
+        d = decisions[0]
+        assert d["outcome"] == "no_content"
+        assert d["prunable"] == []
+        assert d["protected"] == []
+        assert [s["files"] for s in d["seasons"]] == [0, 0]
+
     async def test_an_unreachable_sonarr_degrades_the_snapshot(
         self, cache_engine: AsyncEngine
     ) -> None:

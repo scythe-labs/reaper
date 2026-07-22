@@ -820,6 +820,58 @@ def _keep_last_applies(
     return not (isinstance(requested, Known) and requested.value is False)
 
 
+def _season_digest(seasons: list[SeasonStats]) -> list[dict[str, Any]]:
+    """A compact per-season view of what Sonarr reported -- the raw facts behind the prune
+    decision. One entry per season: its number, how many episodes are on disk, and whether
+    Sonarr is still filling it. Read straight off the ``season_scan.series_decision`` line so
+    "why is this show kept" is answerable without re-reading Sonarr."""
+    return [
+        {"n": s.season_number, "files": s.episode_file_count, "incomplete": s.is_incomplete}
+        for s in sorted(seasons, key=lambda s: s.season_number)
+    ]
+
+
+def _log_series_decision(
+    source: SonarrSource,
+    series: Mapping[str, Any],
+    seasons: list[SeasonStats],
+    *,
+    outcome: str,
+    plan: SeriesPrunePlan | None,
+) -> None:
+    """One greppable DEBUG line per series: what Sonarr reported, and why the show did or did
+    not become a candidate.
+
+    The single record to grep by title when a show is not in the queue. ``outcome`` is
+    ``candidate`` (has a prunable season, so it is judged), ``no_content`` (no season holds
+    files, nothing to reap) or ``fully_protected`` (every on-disk season is kept by a guard).
+    When a prune plan ran, every prunable and protected season is named with its reason, so
+    "why is this season kept" is answerable without re-running the scan. Plex binding happens
+    after this offline decision, so match status is logged separately (``scan.plex_matched`` /
+    ``scan.plex_unmatched``); an unmatched show still becomes a candidate and is never dropped
+    here.
+    """
+    log.debug(
+        "season_scan.series_decision",
+        instance_id=source.instance_id,
+        instance=source.name,
+        title=str(series.get("title") or "?"),
+        sonarr_id=series.get("id"),
+        tvdb_id=series.get("tvdbId") or None,
+        imdb_id=series.get("imdbId") or None,
+        status=series.get("status") or None,
+        ended=series.get("ended"),
+        outcome=outcome,
+        seasons=_season_digest(seasons),
+        prunable=list(plan.prunable) if plan is not None else [],
+        protected=(
+            [{"season": p.season_number, "reason": p.reason} for p in plan.protected]
+            if plan is not None
+            else []
+        ),
+    )
+
+
 async def gather(
     engine: AsyncEngine,
     *,
@@ -905,8 +957,9 @@ async def gather(
         for source, roots in zip(sonarrs, per_source[len(sonarrs) :], strict=True)
     }
 
-    # First pass, pure and offline: decide prunable/protected per series from Sonarr's
-    # own season statistics. Only shows with a prunable season are resolved against Plex.
+    # First pass, pure and offline: decide prunable/protected per series from Sonarr's own
+    # season statistics, logging one decision line per series (season_scan.series_decision,
+    # below). Only shows with a prunable season are resolved against Plex.
     work: list[_SeriesWork] = []
     fully_protected: list[str] = []
     no_content: list[str] = []
@@ -917,6 +970,7 @@ async def gather(
             seasons = parse_seasons(series)
             if not any(s.has_content for s in seasons):
                 no_content.append(str(series.get("title") or "?"))
+                _log_series_decision(source, series, seasons, outcome="no_content", plan=None)
                 continue
             plan = plan_series_prune(
                 series_title=str(series.get("title") or ""),
@@ -936,21 +990,20 @@ async def gather(
             )
             if not plan.prunable:
                 fully_protected.append(str(series.get("title") or "?"))
+                _log_series_decision(source, series, seasons, outcome="fully_protected", plan=plan)
                 continue
+            _log_series_decision(source, series, seasons, outcome="candidate", plan=plan)
             work.append(_SeriesWork(source=source, series=series, seasons=seasons, plan=plan))
 
+    # Every series above emitted one greppable DEBUG decision line (season_scan.series_decision)
+    # naming its outcome and reasons -- that is where "why isn't this specific show in review"
+    # is answered, per title. These INFO counts are the snapshot-level summary on top of it:
+    # a dropped show never becomes a candidate, so the counts tell "no TV candidates" apart
+    # from "TV was skipped" without turning on the per-series debug firehose.
     if no_content:
-        # A show whose seasons all report no on-disk episodes in Sonarr: nothing to reap, so
-        # it never becomes a candidate and never appears in review. Counted (names at debug)
-        # so this cause of "my show isn't in the queue" is answerable from the log.
         log.info("season_scan.shows_without_content", count=len(no_content))
-        log.debug("season_scan.shows_without_content_titles", titles=no_content)
     if fully_protected:
-        # Not a silent drop: a fully-protected show has nothing to act on, so it is left
-        # out of the candidate list. The count tells "no TV candidates" apart from "TV was
-        # skipped"; the names at debug answer "why isn't this specific show in review".
         log.info("season_scan.fully_protected_shows", count=len(fully_protected))
-        log.debug("season_scan.fully_protected_show_titles", titles=fully_protected)
 
     # Resolve the shows that made the cut: bind each to its Plex row (pure, in memory),
     # then fetch what the judging needs over the network -- each distinct show's season
