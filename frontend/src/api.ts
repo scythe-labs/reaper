@@ -753,6 +753,26 @@ export interface PersonTitle {
   poster_url: string | null;
 }
 
+/** One requested title the last scan didn't include, for the "not in the last scan" panel.
+ *  Merged by title across co-requesters, and classified so the panel can say why. */
+export interface UnmatchedRequest {
+  /** The display name. `null` when it couldn't be looked up (no id, or the lookup failed);
+   *  the row then shows a generic label from the type and date, never an id. */
+  title: string | null;
+  year: number | null;
+  /** `movie` | `tv`. The row reads it as "Movie" / "Series". */
+  media_type: string;
+  is_4k: boolean;
+  requested_at: string | null;
+  available_at: string | null;
+  /** `after_scan` (added since the scan ran), `set_aside` (present but not judged), or
+   *  `no_id` (no id to line it up with). */
+  reason: string;
+  requested_by: string[];
+  /** How many requests this row stands for, so the panel and the card's count agree. */
+  request_count: number;
+}
+
 /** One person's full request story, behind a Scales row. */
 export interface PersonDetail {
   plex_id: number | null;
@@ -766,6 +786,8 @@ export interface PersonDetail {
   not_in_scan: number;
   quota: PersonQuota | null;
   titles: PersonTitle[];
+  /** This person's not-in-scan requests, named and grouped by reason, for the panel. */
+  unmatched: UnmatchedRequest[];
 }
 
 export interface FairnessReport {
@@ -774,6 +796,8 @@ export interface FairnessReport {
   total_reclaimable_items: number;
   /** Requests the last scan has not seen, so the numbers read as most of the requests. */
   not_in_scan: number;
+  /** The not-in-scan requests themselves, named and grouped by reason, for the panel. */
+  unmatched: UnmatchedRequest[];
   /** True when no scan has ever run; Scales has nothing to sit on. */
   no_snapshot: boolean;
   /** How far back the watch history reaches; older plays are invisible to this view. */

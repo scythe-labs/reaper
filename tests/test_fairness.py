@@ -20,7 +20,14 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from reaper.clients.base import IntegrationError
-from reaper.clients.seerr import MediaRequest, QuotaStatus, Requester, SeerrUser, UserQuota
+from reaper.clients.seerr import (
+    MediaRequest,
+    QuotaStatus,
+    Requester,
+    SeerrUser,
+    TitleInfo,
+    UserQuota,
+)
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -28,7 +35,14 @@ from reaper.db.models import Candidate, Snapshot
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
 from reaper.engine.requester import WatchEvidence
 from reaper.services import fairness, history_sync
-from reaper.services.fairness import CandidateInfo, ReclaimableTitle, roll_up
+from reaper.services.fairness import (
+    UNMATCHED_AFTER_SCAN,
+    UNMATCHED_NO_ID,
+    UNMATCHED_SET_ASIDE,
+    CandidateInfo,
+    ReclaimableTitle,
+    roll_up,
+)
 
 GB = 1024**3
 NOW = utcnow()
@@ -374,6 +388,77 @@ class TestRollUp:
         assert report.total_reclaimable_items == 1
 
 
+class TestUnmatched:
+    """The "not in the last scan" list: what each unmatched request is, and why. The count
+    stays exactly the requests behind the list, so the card and the panel never disagree."""
+
+    def test_no_id_request_is_listed_and_reasoned(self) -> None:
+        report = roll_up([_req(plex_id=100, name="Alice", tmdb=None, imdb=None)], [], {})
+        assert report.not_in_scan == 1
+        (u,) = report.unmatched
+        assert u.reason == UNMATCHED_NO_ID
+        assert u.requested_by == ["Alice"]
+        assert u.request_count == 1
+        # The name is filled in later (by _enrich_titles), never guessed in the pure roll-up.
+        assert u.title is None
+
+    def test_media_that_arrived_after_the_scan_is_added_since(self) -> None:
+        """available_at (NOW-400d) is AFTER the scan clock (NOW-450d), so the scan could not
+        have seen it: added since, not set aside."""
+        req = _req(plex_id=100, name="Alice", tmdb=999, imdb=None)
+        report = roll_up([req], [], {}, snapshot_at=NOW - timedelta(days=450))
+        (u,) = report.unmatched
+        assert u.reason == UNMATCHED_AFTER_SCAN
+
+    def test_media_present_at_scan_time_is_set_aside(self) -> None:
+        """available_at (NOW-400d) is BEFORE the scan clock (NOW-300d): it was on the server
+        during the scan but produced no candidate, so it was set aside, not added since."""
+        req = _req(plex_id=100, name="Alice", tmdb=999, imdb=None)
+        report = roll_up([req], [], {}, snapshot_at=NOW - timedelta(days=300))
+        (u,) = report.unmatched
+        assert u.reason == UNMATCHED_SET_ASIDE
+
+    def test_without_a_scan_clock_the_reason_stays_set_aside(self) -> None:
+        """No snapshot time to compare against rounds toward the honest catch-all, never a
+        reassuring "added since" that cannot be proven."""
+        req = _req(plex_id=100, name="Alice", tmdb=999, imdb=None)
+        report = roll_up([req], [], {})
+        (u,) = report.unmatched
+        assert u.reason == UNMATCHED_SET_ASIDE
+
+    def test_co_requesters_merge_into_one_titled_row_the_count_still_totals_requests(
+        self,
+    ) -> None:
+        """Two people asking for the same not-in-scan title is one panel row (one title) but
+        two requests, so not_in_scan stays 2 and the row names both."""
+        reqs = [
+            _req(plex_id=100, name="Alice", tmdb=999, imdb=None, request_id=1),
+            _req(plex_id=200, name="Bob", tmdb=999, imdb=None, request_id=2),
+        ]
+        report = roll_up(reqs, [], {})
+        (u,) = report.unmatched
+        assert u.request_count == 2
+        assert u.requested_by == ["Alice", "Bob"]
+        assert report.not_in_scan == sum(x.request_count for x in report.unmatched) == 2
+
+    def test_a_4k_request_marks_the_row_4k_and_the_type_is_tv(self) -> None:
+        req = _req(plex_id=100, name="Alice", tmdb=999, imdb=None, media_type="tv")
+        object.__setattr__(req, "is_4k", True)  # frozen dataclass; flip just this field
+        report = roll_up([req], [], {})
+        (u,) = report.unmatched
+        assert u.is_4k is True
+        assert u.media_type == "tv"
+
+    def test_a_matched_title_never_appears_in_the_unmatched_list(self) -> None:
+        report = roll_up(
+            [_req(plex_id=100, name="Alice", tmdb=1, imdb="tt1")],
+            [_cand(cid=1, verdict="protect", tmdb=1, imdb="tt1")],
+            {},
+        )
+        assert report.unmatched == []
+        assert report.not_in_scan == 0
+
+
 # ---------------------------------------------------------------------------
 # The evidence query, against a real cache table.
 # ---------------------------------------------------------------------------
@@ -457,10 +542,14 @@ class _FakeSeerr:
         requests: list[MediaRequest],
         users: list[SeerrUser] | None = None,
         quotas: dict[int, UserQuota] | None = None,
+        titles: dict[int, TitleInfo] | None = None,
+        instance_key: str = "",
     ) -> None:
         self._requests = requests
         self._users = users or []
         self._quotas = quotas or {}
+        self._titles = titles or {}
+        self.instance_key = instance_key
 
     async def all_requests(self, *, filter_: str = "available") -> list[MediaRequest]:
         return self._requests
@@ -470,6 +559,12 @@ class _FakeSeerr:
 
     async def quota(self, user_id: int) -> UserQuota:
         return self._quotas.get(user_id, UserQuota(movie=_UNLIMITED, tv=_UNLIMITED))
+
+    async def title(self, *, tmdb_id: int, media_type: str) -> TitleInfo:
+        info = self._titles.get(tmdb_id)
+        if info is None:
+            raise IntegrationError("seerr", f"no title for {tmdb_id}")
+        return info
 
 
 class _Broken:
@@ -540,6 +635,44 @@ class TestBuildReportMergesSeerrs:
         )
         assert {r.name for r in report.rows} == {"Alice", "Bob"}
         assert report.total_requests == 2
+
+    async def test_a_not_in_scan_request_is_named_from_seerr_and_classified(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        """A request whose title the scan never saw is listed, named from Seerr's TMDB proxy,
+        and reasoned. The snapshot clock here is NOW, and this request arrived NOW-400d, so it
+        was present at scan time: set aside, not added since."""
+        factory, cache = report_env
+        seerr = _FakeSeerr(
+            [_req(plex_id=1, name="Alice", tmdb=42, imdb=None)],
+            titles={42: TitleInfo(title="Some Requested Film", year=2021)},
+        )
+        report = await fairness.build_report(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[seerr],  # type: ignore[list-item]
+            cache_engine=cache,
+        )
+        assert report.not_in_scan == 1
+        (u,) = report.unmatched
+        assert u.title == "Some Requested Film"
+        assert u.year == 2021
+        assert u.reason == UNMATCHED_SET_ASIDE
+
+    async def test_an_unnamed_title_falls_back_gracefully_never_blocks_the_report(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        """A title lookup that fails leaves the row unnamed (the view shows a generic label),
+        and the report is still built: naming is best-effort, exactly like quota enrichment."""
+        factory, cache = report_env
+        seerr = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=77, imdb=None)])  # no titles
+        report = await fairness.build_report(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[seerr],  # type: ignore[list-item]
+            cache_engine=cache,
+        )
+        (u,) = report.unmatched
+        assert u.title is None
+        assert report.not_in_scan == 1
 
     async def test_one_unreachable_portal_fails_hard_never_partial(
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
@@ -692,6 +825,34 @@ class TestBuildPersonDetail:
         )
         assert detail is not None
         assert detail.played_by_them == 1 and detail.titles[0].watched_by_them == 1
+
+    async def test_a_persons_not_in_scan_request_is_listed_and_named(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        """Alice asked for one title the scan has (tmdb=1) and one it never saw (tmdb=2). The
+        drawer lists the in-scan one as a title and the other in her not-in-scan panel, named
+        from Seerr and counted -- so her panel reads as most of what she asked for, not all."""
+        factory, cache = report_env
+        portal = _FakeSeerr(
+            [
+                _req(plex_id=1, name="Alice", tmdb=1, imdb="tt1", request_id=1),
+                _req(plex_id=1, name="Alice", tmdb=2, imdb=None, request_id=2),
+            ],
+            titles={2: TitleInfo(title="A Title The Scan Missed", year=2020)},
+        )
+        detail = await fairness.build_person_detail(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[portal],  # type: ignore[list-item]
+            cache_engine=cache,
+            identity="plex:1",
+        )
+        assert detail is not None
+        assert detail.requests_in_scan == 1
+        assert detail.not_in_scan == 1
+        (u,) = detail.unmatched
+        assert u.title == "A Title The Scan Missed"
+        assert u.reason == UNMATCHED_SET_ASIDE
+        assert u.request_count == 1
 
     async def test_distinct_episodes_counts_episodes_not_replays(
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]

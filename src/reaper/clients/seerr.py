@@ -156,6 +156,16 @@ class UserQuota:
 
 
 @dataclass(frozen=True)
+class TitleInfo:
+    """The human name and year for a tmdb id, from Seerr's TMDB proxy. A request payload
+    carries only ids, so this is how a requested item the scan never saw gets a name to
+    show. Display only -- never a join key."""
+
+    title: str
+    year: int | None
+
+
+@dataclass(frozen=True)
 class SeerrUser:
     """One Seerr account. ``plex_id`` is the join to a requester and to Tautulli; the
     ``seerr_user_id`` is what the quota endpoint is keyed by (per instance)."""
@@ -399,6 +409,30 @@ class SeerrClient(BaseClient):
         return UserQuota(
             movie=_parse_quota(payload.get("movie")), tv=_parse_quota(payload.get("tv"))
         )
+
+    async def title(self, *, tmdb_id: int, media_type: str) -> TitleInfo:
+        """The human title and year for a tmdb id, from Seerr's TMDB proxy
+        (``/movie/{id}`` or ``/tv/{id}``). A request carries only ids, so this is how Scales
+        names a requested item the last scan never saw. Best-effort by design: the caller
+        gathers these and lets a failed lookup fall back to a generic label, never blocking
+        the page. The kind (movie vs tv) picks the endpoint and the title field, since the
+        two id spaces overlap and each endpoint names the field differently."""
+        kind = "movie" if media_type == "movie" else "tv"
+        payload = await self.get_json(f"/api/v1/{kind}/{tmdb_id}")
+        if not isinstance(payload, dict):
+            raise IntegrationError(self.service, f"/{kind}/{tmdb_id} did not return an object")
+        if kind == "movie":
+            name = payload.get("title") or payload.get("originalTitle")
+            released = payload.get("releaseDate")
+        else:
+            name = payload.get("name") or payload.get("originalName")
+            released = payload.get("firstAirDate")
+        if not name:
+            raise IntegrationError(self.service, f"/{kind}/{tmdb_id} carried no title")
+        # A TMDB date is "YYYY-MM-DD"; the year is its first four chars. Absent or malformed
+        # dates leave the year unknown rather than guessed.
+        year = _as_int(str(released)[:4]) if released else None
+        return TitleInfo(title=str(name), year=year)
 
     async def services(self) -> list[SeerrService]:
         """Every Sonarr and Radarr service this portal has configured.

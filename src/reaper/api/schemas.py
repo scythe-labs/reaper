@@ -756,12 +756,37 @@ class RequesterRowOut(BaseModel):
     the two limits have their own windows and units, and are never merged)."""
 
 
+class UnmatchedRequestOut(BaseModel):
+    """One requested title the last scan didn't include, for the "not in the last scan"
+    panel. Merged by title across co-requesters, and classified so the panel can say why."""
+
+    title: str | None = None
+    """The display name. Null when it couldn't be looked up (no id, or the lookup failed);
+    the row then shows a generic label from the type and date, never an id."""
+    year: int | None = None
+    media_type: str
+    """movie | tv. The row reads it as "Movie" / "Series"."""
+    is_4k: bool = False
+    requested_at: str | None = None
+    available_at: str | None = None
+    reason: str
+    """Why it isn't in the scan: ``after_scan`` (added since the scan ran), ``set_aside``
+    (present but not judged), or ``no_id`` (no id to line it up with)."""
+    requested_by: list[str]
+    """Distinct requester names behind this title."""
+    request_count: int
+    """How many requests this row stands for, so the panel and the card's count agree."""
+
+
 class FairnessReportOut(BaseModel):
     total_requests: int
     total_reclaimable_bytes: int
     total_reclaimable_items: int
     not_in_scan: int
-    """Requests the last scan has not seen, so the numbers read as most of the requests."""
+    """Requests the last scan has not seen, so the numbers read as most of the requests.
+    Exactly the requests behind ``unmatched`` (sum of their ``request_count``)."""
+    unmatched: list[UnmatchedRequestOut] = []
+    """The not-in-scan requests themselves, named and grouped by reason, for the panel."""
     no_snapshot: bool = False
     """True when no scan has ever run; Scales has nothing to sit on."""
     horizon_at: str | None = None
@@ -821,6 +846,8 @@ class PersonDetailOut(BaseModel):
     not_in_scan: int
     quota: PersonQuotaOut | None = None
     titles: list[PersonTitleOut]
+    unmatched: list[UnmatchedRequestOut] = []
+    """This person's not-in-scan requests, named and grouped by reason, for the panel."""
 
 
 class WhitelistEntryOut(BaseModel):

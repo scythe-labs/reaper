@@ -11,6 +11,7 @@
 import { useEffect, useState } from "react";
 import type { PersonDetail, PersonTitle, QuotaLine } from "../api";
 import { bytes, count, date, itemBytes } from "../format";
+import { UnmatchedList } from "./UnmatchedList";
 
 function initial(name: string): string {
   const c = name.trim()[0];
@@ -18,7 +19,7 @@ function initial(name: string): string {
 }
 
 /** The film-strip mark a title falls back to when it has no poster, or the image fails. */
-function PosterFallback() {
+export function PosterFallback() {
   return (
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
       <path d="M4 5h16v14H4z" stroke="currentColor" strokeWidth="1.6" />
@@ -289,13 +290,20 @@ export function ScalesPanel({
             ))}
           </div>
         )}
-        {detail.not_in_scan > 0 && detail.titles.length > 0 && (
-          <p className="scales-foot">
-            {count(detail.not_in_scan)} of their requests aren't in the last scan (added since, or
-            filtered out), so they aren't listed here.
-          </p>
-        )}
       </section>
+
+      {detail.unmatched.length > 0 && (
+        <section className="block">
+          <div className="scales-h3row">
+            <h3>Not in the last scan</h3>
+            <span className="scales-count">
+              {count(detail.not_in_scan)}{" "}
+              {detail.not_in_scan === 1 ? "request" : "requests"}
+            </span>
+          </div>
+          <UnmatchedList items={detail.unmatched} excludeName={detail.name} />
+        </section>
+      )}
     </aside>
   );
 }

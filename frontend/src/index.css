@@ -3014,6 +3014,70 @@ a.rating-chip:hover {
   color: color-mix(in srgb, var(--condemn) 82%, var(--muted));
 }
 
+/* The not-in-scan tile is a button: it keeps the exact .fair-stat chrome and only adds the
+   clickable grammar the person cards already use (accent hover, focus ring, the accent
+   selection bar when its panel is open), so it reads as interactive without a new look. */
+.fair-stat-btn {
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  transition:
+    box-shadow 0.15s var(--ease),
+    border-color 0.15s var(--ease),
+    background 0.15s var(--ease);
+}
+.fair-stat-btn:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.fair-stat-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.fair-stat-btn.selected {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent), var(--shadow-sm);
+}
+.fair-stat-btn.selected:hover {
+  box-shadow: inset 3px 0 0 var(--accent), var(--shadow-md);
+}
+/* The "open me" affordance, so the tile doesn't rely on hover alone to read as a control. */
+.fair-stat-more {
+  margin-top: 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+.fair-stat-btn:hover .fair-stat-more {
+  text-decoration: underline;
+}
+
+/* Scales gathers every request and matches it to the last scan, so its first load can take a
+   moment. A prominent, self-explaining wait (spinner + what it's doing) beats a bare "Loading". */
+.fair-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.7rem;
+  text-align: center;
+  padding: 2.5rem 1rem;
+  color: var(--muted);
+}
+.fair-loading-lead {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.fair-loading-sub {
+  margin: 0;
+  font-size: 0.83rem;
+  max-width: 42ch;
+}
+
 .fair-horizon {
   font-size: 0.82rem;
   margin: 0 0 0.9rem;
@@ -3351,6 +3415,53 @@ a.rating-chip:hover {
   color: var(--muted);
   border-top: 1px dashed var(--border-strong);
   padding-top: 0.7rem;
+}
+
+/* The "not in the last scan" list, in the board panel and inside a person's drawer alike.
+   A group per reason, each with a colored left stripe that encodes the reason at a glance,
+   its heading + count, and one bound help line. Rows reuse the requested-title chrome. */
+.nis-group {
+  border-left: 3px solid var(--stripe, var(--border-strong));
+  padding-left: 0.75rem;
+  margin-top: 1.15rem;
+}
+.nis-group:first-child {
+  margin-top: 0.3rem;
+}
+.nis-group--new {
+  --stripe: var(--accent);
+}
+.nis-group--aside {
+  --stripe: var(--protect);
+}
+.nis-group--nomatch {
+  --stripe: var(--unknown);
+}
+.nis-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.nis-group-head h3 {
+  margin: 0;
+}
+.nis-count {
+  font-size: 0.75rem;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.nis-why {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: 0.3rem 0 0.6rem;
+  max-width: 54ch;
+}
+/* A row that names nothing (no id, or the lookup failed): the label reads as absent, not as a
+   real title, so it is never mistaken for a film called "Name unavailable". */
+.nis-noname {
+  color: var(--faint);
+  font-style: italic;
+  font-weight: 500;
 }
 
 .dryrun-outcomes {

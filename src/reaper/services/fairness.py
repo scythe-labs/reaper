@@ -95,6 +95,52 @@ class ReclaimableTitle:
     group_key: str | None
 
 
+#: Why a requested title is not in the last scan. Each is a distinct thing to tell the
+#: operator, so they are separated rather than lumped under one "not in scan" count.
+UNMATCHED_AFTER_SCAN = "after_scan"
+"""Its media arrived, or it was asked for, AFTER the scan ran -- the scan could not have
+seen it. Reassuring: the next scan includes it. Chosen only when provable from the clock."""
+UNMATCHED_SET_ASIDE = "set_aside"
+"""On the server at scan time, but never judged: a show the keep rules fully protect, a
+title not fully downloaded, or the server holding it was offline. The honest catch-all when
+the clock does not prove "added since"."""
+UNMATCHED_NO_ID = "no_id"
+"""The request carries no tmdb or imdb id at all, so it cannot be lined up with anything."""
+
+
+@dataclass
+class UnmatchedTitle:
+    """One requested title the last scan did not include, for the "not in the last scan"
+    panel. Mutated only to fill in the display name once (see :func:`_enrich_titles`), which
+    the request payload never carries; everything else is set at construction.
+
+    Merged by content across co-requesters -- one row per title, ``request_count`` requests
+    behind it -- so the panel reads as titles while the card still counts requests. A no-id
+    request cannot be merged (no key) and stands alone."""
+
+    title: str | None
+    """The display name, filled from Seerr's TMDB proxy. ``None`` until enriched, and left
+    ``None`` when the lookup is impossible (no tmdb id) or fails; the row then shows a generic
+    label built from the type and date, never an id."""
+    year: int | None
+    media_type: str  # "movie" | "tv"
+    is_4k: bool
+    """True when ANY request behind this title asked for the 4K copy."""
+    requested_at: datetime | None
+    """Earliest request across the co-requesters."""
+    available_at: datetime | None
+    """When the media arrived, if Seerr reported it -- the clock the reason is judged on."""
+    reason: str  # UNMATCHED_AFTER_SCAN | UNMATCHED_SET_ASIDE | UNMATCHED_NO_ID
+    requested_by: list[str]
+    """Distinct requester display names behind this title, sorted."""
+    request_count: int
+    """How many requests this one row stands for, so the panel and the card's count agree."""
+    tmdb_id: int | None
+    """Internal, for the title lookup; never serialized to the client (no ids in the UI)."""
+    portal_key: str
+    """Internal: which portal to resolve the title on. Never serialized."""
+
+
 @dataclass
 class RequesterRow:
     """One person's row. Mutated during aggregation, then frozen into the report."""
@@ -137,7 +183,12 @@ class FairnessReport:
     total_reclaimable_items: int
     not_in_scan: int
     """Requests the last scan has not seen, counted PER REQUEST: no external id to join on,
-    or no matching candidate. Shown so the numbers read as *most* of the requests, not all."""
+    or no matching candidate. Shown so the numbers read as *most* of the requests, not all.
+    Kept exactly equal to ``sum(u.request_count for u in unmatched)`` so the card's count and
+    the panel's list can never disagree (rule 30)."""
+    unmatched: list[UnmatchedTitle] = field(default_factory=list)
+    """The not-in-scan requests themselves, merged by title and classified by reason, so the
+    panel can name each one and say why. Titles are filled in by :func:`build_report`."""
     no_snapshot: bool = False
     """True when no scan has ever run: Scales has nothing to sit on, and says so."""
     horizon_at: datetime | None = None
@@ -191,17 +242,118 @@ def _content_key(media_type: str, tmdb_id: int | None, imdb_id: str | None) -> C
     return None
 
 
+def _unmatched_reason(group: list[MediaRequest], snapshot_at: datetime | None) -> str:
+    """Why a joinable title produced no candidate: added since the scan, or set aside. Rounds
+    toward SET-ASIDE whenever the clock does not *prove* "added since," so a title is never
+    reassuringly labeled "new" when it might in fact be present and skipped.
+
+    ``available_at`` (when the media arrived) is the honest clock: media that arrived after
+    the scan ran cannot have been in it. Only when arrival is entirely unknown does it fall
+    back to ``requested_at`` -- if it is available now and was asked for after the scan, it
+    must have arrived after the scan too."""
+    if snapshot_at is None:
+        return UNMATCHED_SET_ASIDE
+    if any(r.available_at and r.available_at > snapshot_at for r in group):
+        return UNMATCHED_AFTER_SCAN
+    if all(r.available_at is None for r in group) and any(
+        r.requested_at and r.requested_at > snapshot_at for r in group
+    ):
+        return UNMATCHED_AFTER_SCAN
+    return UNMATCHED_SET_ASIDE
+
+
+def _unmatched_row(
+    group: list[MediaRequest], reason: str, *, identity: str | None = None
+) -> UnmatchedTitle:
+    """One panel row from a group of co-requests for the same not-in-scan title.
+
+    ``request_count`` counts every request behind the title for the board (``identity`` None),
+    matching the card's per-request count; for one person's drawer (``identity`` set) it counts
+    only that person's own requests, matching "this person's requests the scan has not seen.\""""
+    rep = group[0]
+    count = (
+        sum(1 for r in group if _identity(r) == identity) if identity is not None else len(group)
+    )
+    return UnmatchedTitle(
+        title=None,
+        year=None,
+        media_type=_kind(rep.media_type),
+        is_4k=any(r.is_4k for r in group),
+        requested_at=min((r.requested_at for r in group if r.requested_at), default=None),
+        available_at=next((r.available_at for r in group if r.available_at), None),
+        reason=reason,
+        requested_by=sorted({_name(r) for r in group}),
+        request_count=count,
+        tmdb_id=rep.tmdb_id,
+        portal_key=rep.portal_key,
+    )
+
+
+def _collect_unmatched(
+    requests: list[MediaRequest],
+    candidates: list[CandidateInfo],
+    snapshot_at: datetime | None,
+    *,
+    identity: str | None = None,
+) -> list[UnmatchedTitle]:
+    """Every available request the last scan did not include, merged by title and classified
+    by why. The one place that decision lives, shared by the board (``identity`` None -- all
+    people) and the person drawer (``identity`` set -- only titles that person asked for), so
+    the two surfaces can never disagree on what "not in scan" means.
+
+    A request is unmatched when it carries no joinable id (NO-ID, and unmergeable so it stands
+    alone) or when its title produced no candidate (ADDED-since vs SET-aside, by the clock)."""
+    by_tmdb: dict[ContentKey, list[CandidateInfo]] = defaultdict(list)
+    by_imdb: dict[str, list[CandidateInfo]] = defaultdict(list)
+    for c in candidates:
+        if c.tmdb_id:
+            by_tmdb[(f"tmdb-{_kind(c.media_type)}", c.tmdb_id)].append(c)
+        if c.imdb_id:
+            by_imdb[c.imdb_id].append(c)
+
+    out: list[UnmatchedTitle] = []
+    groups: dict[ContentKey, list[MediaRequest]] = defaultdict(list)
+    for req in requests:
+        key = _content_key(req.media_type, req.tmdb_id, req.imdb_id)
+        if key is None:
+            if identity is not None and _identity(req) != identity:
+                continue
+            out.append(_unmatched_row([req], UNMATCHED_NO_ID, identity=identity))
+            continue
+        groups[key].append(req)
+
+    for group in groups.values():
+        rep = group[0]
+        tmdb_key: ContentKey | None = (
+            (f"tmdb-{_kind(rep.media_type)}", rep.tmdb_id) if rep.tmdb_id else None
+        )
+        cands = (
+            (by_tmdb.get(tmdb_key) if tmdb_key else None) or by_imdb.get(rep.imdb_id or "") or []
+        )
+        if cands:
+            continue  # the scan has it -- not our concern here
+        if identity is not None and not any(_identity(r) == identity for r in group):
+            continue
+        out.append(_unmatched_row(group, _unmatched_reason(group, snapshot_at), identity=identity))
+
+    return out
+
+
 def roll_up(
     requests: list[MediaRequest],
     candidates: list[CandidateInfo],
     evidence_by_key: dict[str, WatchEvidence],
     *,
     horizon: datetime | None = None,
+    snapshot_at: datetime | None = None,
 ) -> FairnessReport:
     """Pure aggregation: given available requests, the scan's candidates, and who played
     what, roll up per requester. Split from the gathering so the correctness that matters --
     the id join, the condemn-only reclaimable gate, the deduped totals -- is testable with
     no live instance and no database.
+
+    ``snapshot_at`` (the scan's own timestamp) only classifies the not-in-scan requests into
+    "added since" vs "set aside"; it never touches a score or a verdict.
     """
     # Candidates indexed by every id they carry, so a request keyed by tmdb OR imdb finds
     # them. A show contributes several season rows under one id (rule 29: pass every id). The
@@ -218,11 +370,9 @@ def roll_up(
     # Group requests by the content they point at, so co-requesters of one title are judged
     # together. A request with no joinable id is not-in-scan straight away.
     groups: dict[ContentKey, list[MediaRequest]] = defaultdict(list)
-    not_in_scan = 0
     for req in requests:
         key = _content_key(req.media_type, req.tmdb_id, req.imdb_id)
         if key is None:
-            not_in_scan += 1
             continue
         groups[key].append(req)
 
@@ -252,8 +402,8 @@ def roll_up(
             (by_tmdb.get(tmdb_key) if tmdb_key else None) or by_imdb.get(rep.imdb_id or "") or []
         )
         if not cands:
-            # The scan has not seen this title (added since the scan, or filtered out).
-            not_in_scan += len(group)
+            # The scan has not seen this title; it is collected (and counted) below by
+            # _collect_unmatched, the one place that classifies not-in-scan.
             continue
 
         title_size = sum(c.size_bytes or 0 for c in cands)
@@ -307,12 +457,18 @@ def roll_up(
     for row in ordered:
         row.reclaimable.sort(key=lambda t: t.size_bytes or 0, reverse=True)
 
+    # The not-in-scan list and its count come from the one shared classifier, so the card's
+    # count is exactly the requests behind the panel's rows (rule 30).
+    unmatched = _collect_unmatched(requests, candidates, snapshot_at)
+    not_in_scan = sum(u.request_count for u in unmatched)
+
     return FairnessReport(
         rows=ordered,
         total_requests=len(requests),
         total_reclaimable_bytes=sum(condemned_size_by_candidate.values()),
         total_reclaimable_items=len(reclaimable_titles),
         not_in_scan=not_in_scan,
+        unmatched=unmatched,
         horizon_at=horizon,
     )
 
@@ -387,7 +543,10 @@ class PersonDetail:
     titles: list[PersonTitle]
     not_in_scan: int
     """This person's requests the scan has not seen -- shown so the list reads as most of
-    what they asked for, not all."""
+    what they asked for, not all. Equals ``sum(u.request_count for u in unmatched)``."""
+    unmatched: list[UnmatchedTitle] = field(default_factory=list)
+    """This person's not-in-scan requests, merged by title and classified by reason, with
+    names filled in -- the same panel the board shows, scoped to them."""
 
 
 def _fold_quota(statuses: Iterable[QuotaStatus]) -> QuotaLine:
@@ -463,21 +622,61 @@ async def _enrich_accounts(
     }
 
 
-async def _load_candidates(session: AsyncSession) -> tuple[bool, list[CandidateInfo]]:
-    """The latest snapshot's candidates as ``CandidateInfo``. Returns ``(has_snapshot,
-    candidates)`` so a never-scanned install (no snapshot at all) is told apart from a scan
-    that legitimately found nothing."""
+#: Cap on how many not-in-scan titles get a live name lookup per report, so a library with a
+#: huge backlog cannot turn one Scales load into hundreds of Seerr calls. Rows past the cap
+#: still appear, named by their type and date instead -- the count is never truncated.
+_TITLE_LOOKUP_CAP = 80
+
+
+async def _enrich_titles(
+    seerrs: Sequence[SeerrClient], unmatched: Sequence[UnmatchedTitle]
+) -> None:
+    """Fill in each not-in-scan title's display name from Seerr's TMDB proxy, in place.
+
+    Best-effort, exactly like :func:`_enrich_accounts`: a request payload carries only ids, so
+    the name is looked up live; a lookup that fails (or a title with no tmdb id, or one past
+    the per-report cap) simply keeps ``title=None`` and the row shows a generic label. Titles
+    are resolved on the portal the request came from, since that portal certainly has TMDB
+    access configured; any other reachable portal is an acceptable fallback (all proxy the
+    same TMDB). Bounded by the not-in-scan count and the cap, so the added calls are bounded."""
+    targets = [u for u in unmatched if u.tmdb_id is not None][:_TITLE_LOOKUP_CAP]
+    if not targets or not seerrs:
+        return
+    by_portal = {c.instance_key: c for c in seerrs}
+
+    async def _one(u: UnmatchedTitle) -> None:
+        client = by_portal.get(u.portal_key) or seerrs[0]
+        try:
+            info = await client.title(tmdb_id=u.tmdb_id or 0, media_type=u.media_type)
+        except IntegrationError as exc:
+            log.warning("fairness.title_unreadable", tmdb=u.tmdb_id, error=str(exc))
+            return
+        u.title = info.title
+        # Prefer the looked-up year; the request itself never carried one.
+        u.year = info.year
+
+    await asyncio.gather(*(_one(u) for u in targets))
+
+
+async def _load_candidates(
+    session: AsyncSession,
+) -> tuple[datetime | None, list[CandidateInfo]]:
+    """The latest snapshot's timestamp and its candidates as ``CandidateInfo``. Returns
+    ``(snapshot_at, candidates)``; ``snapshot_at`` is ``None`` only when no scan has ever run
+    (a snapshot always carries a ``created_at``), which tells a never-scanned install apart
+    from a scan that legitimately found nothing. The timestamp classifies not-in-scan
+    requests into "added since" vs "set aside"."""
     snapshot = (
         await session.execute(select(Snapshot).order_by(Snapshot.id.desc()).limit(1))
     ).scalar_one_or_none()
     if snapshot is None:
-        return False, []
+        return None, []
     rows = (
         (await session.execute(select(Candidate).where(Candidate.snapshot_id == snapshot.id)))
         .scalars()
         .all()
     )
-    return True, [
+    return snapshot.created_at, [
         CandidateInfo(
             candidate_id=c.id,
             plex_rating_key=c.plex_rating_key,
@@ -578,8 +777,8 @@ async def build_report(
     Seerr is unreachable the ``IntegrationError`` propagates and the endpoint answers 502,
     never a leaderboard that looks complete while a portal was silently skipped."""
     async with session_factory() as session:
-        has_snapshot, candidates = await _load_candidates(session)
-    if not has_snapshot:
+        snapshot_at, candidates = await _load_candidates(session)
+    if snapshot_at is None:
         return FairnessReport(
             rows=[],
             total_requests=0,
@@ -596,7 +795,7 @@ async def build_report(
     evidence = await _evidence_index(cache_engine, keys)
     horizon = await history_sync.horizon(cache_engine)
 
-    report = roll_up(requests, candidates, evidence, horizon=horizon)
+    report = roll_up(requests, candidates, evidence, horizon=horizon, snapshot_at=snapshot_at)
 
     # Enrich the board with Seerr account data (lifetime request counts and live per-type
     # caps) for the people actually shown -- a bounded set, so the quota calls are bounded
@@ -610,12 +809,17 @@ async def build_report(
             row.movie_at_limit = acct.movie.at_limit
             row.tv_at_limit = acct.tv.at_limit
 
+    # Name the not-in-scan titles for the panel. Bounded by the not-in-scan count, and only
+    # paid on a report that has some -- most loads pay nothing.
+    await _enrich_titles(seerrs, report.unmatched)
+
     log.info(
         "fairness.built",
         requests=len(requests),
         candidates=len(candidates),
         keys_with_history=len(evidence),
         accounts=len(accounts),
+        not_in_scan=report.not_in_scan,
     )
     return report
 
@@ -639,8 +843,8 @@ async def build_person_detail(
     complete is worse than an error.
     """
     async with session_factory() as session:
-        has_snapshot, candidates = await _load_candidates(session)
-    if not has_snapshot:
+        snapshot_at, candidates = await _load_candidates(session)
+    if snapshot_at is None:
         return None
 
     requests: list[MediaRequest] = []
@@ -680,13 +884,12 @@ async def build_person_detail(
     titles: list[PersonTitle] = []
     name = ""
     plex_id: int | None = None
-    granted = played = recl_items = recl_bytes = not_in_scan = 0
+    granted = played = recl_items = recl_bytes = 0
     matched_any = False
     for group in groups.values():
         mine = next((r for r in group if _identity(r) == identity), None)
         if mine is None:
             continue
-        matched_any = True
         name = _name(mine)
         plex_id = mine.requester.plex_id
         rep = group[0]
@@ -697,8 +900,9 @@ async def build_person_detail(
             (by_tmdb.get(tmdb_key) if tmdb_key else None) or by_imdb.get(rep.imdb_id or "") or []
         )
         if not cands:
-            not_in_scan += 1
+            # Not in the scan: collected (and named) below by the shared classifier.
             continue
+        matched_any = True
 
         granted += sum(c.size_bytes or 0 for c in cands)
         # Nullable, matching the roll-up: None when nothing about the set is measured, so the
@@ -779,6 +983,12 @@ async def build_person_detail(
     order = {"condemn": 0, "abstain": 1, "protect": 2}
     titles.sort(key=lambda t: (order.get(t.verdict, 3), -(t.size_bytes or 0)))
 
+    # This person's not-in-scan requests, from the one shared classifier and named for the
+    # panel -- the same list the board shows, scoped to them.
+    unmatched = _collect_unmatched(requests, candidates, snapshot_at, identity=identity)
+    await _enrich_titles(seerrs, unmatched)
+    not_in_scan = sum(u.request_count for u in unmatched)
+
     accounts = await _enrich_accounts(seerrs, {plex_id})
     quota = accounts.get(plex_id) if plex_id is not None else None
 
@@ -794,4 +1004,5 @@ async def build_person_detail(
         quota=quota,
         titles=titles,
         not_in_scan=not_in_scan,
+        unmatched=unmatched,
     )

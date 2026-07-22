@@ -31,6 +31,7 @@ from reaper.api.schemas import (
     QuotaLineOut,
     ReclaimableTitleOut,
     RequesterRowOut,
+    UnmatchedRequestOut,
 )
 from reaper.clients.base import IntegrationError
 from reaper.clients.seerr import SeerrClient
@@ -40,6 +41,23 @@ from reaper.db.models import Instance, InstanceKind
 from reaper.services import fairness
 
 router = APIRouter(prefix="/api")
+
+
+def _unmatched_out(u: fairness.UnmatchedTitle) -> UnmatchedRequestOut:
+    """Map one not-in-scan title to its wire shape, dropping the internal join keys (tmdb id,
+    portal) so no id ever reaches the UI."""
+    return UnmatchedRequestOut(
+        title=u.title,
+        year=u.year,
+        media_type=u.media_type,
+        is_4k=u.is_4k,
+        requested_at=u.requested_at.isoformat() if u.requested_at else None,
+        available_at=u.available_at.isoformat() if u.available_at else None,
+        reason=u.reason,
+        requested_by=u.requested_by,
+        request_count=u.request_count,
+    )
+
 
 _NEEDS_BOTH = (
     "Scales needs a Seerr and a Tautulli instance: Seerr for who requested what, Tautulli "
@@ -111,6 +129,7 @@ async def get_fairness(request: Request) -> FairnessReportOut:
         total_reclaimable_bytes=report.total_reclaimable_bytes,
         total_reclaimable_items=report.total_reclaimable_items,
         not_in_scan=report.not_in_scan,
+        unmatched=[_unmatched_out(u) for u in report.unmatched],
         no_snapshot=report.no_snapshot,
         horizon_at=report.horizon_at.isoformat() if report.horizon_at else None,
         rows=[
@@ -209,4 +228,5 @@ async def get_person(request: Request, identity: str) -> PersonDetailOut:
             )
             for t in detail.titles
         ],
+        unmatched=[_unmatched_out(u) for u in detail.unmatched],
     )

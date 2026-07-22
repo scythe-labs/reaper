@@ -6,6 +6,7 @@ import { applyAccent } from "./accent";
 import { api, ApiError, type AuthUser, type Snapshot, type Verdict } from "./api";
 import { Fairness } from "./components/Fairness";
 import { Login } from "./components/Login";
+import { NotInScanPanel } from "./components/NotInScanPanel";
 import { PolicyEditor, type PolicySectionId } from "./components/PolicyEditor";
 import { ReapConfirm } from "./components/ReapConfirm";
 import { ReapPlan } from "./components/ReapPlan";
@@ -407,6 +408,17 @@ function Dashboard({ user }: { user: AuthUser }) {
   // Which Scales person has their panel open. Kept here (not in Fairness) so the panel is a
   // sibling of the list inside `main.split`, exactly as the why-panel sits beside the queue.
   const [scalesUser, setScalesUser] = useState<string | null>(null);
+  // Whether the board's "not in the last scan" panel is open. Only one Scales panel shows at
+  // a time, so opening either closes the other.
+  const [scalesUnmatched, setScalesUnmatched] = useState(false);
+  const openScalesPerson = (identity: string) => {
+    setScalesUnmatched(false);
+    setScalesUser(identity);
+  };
+  const openScalesUnmatched = () => {
+    setScalesUser(null);
+    setScalesUnmatched(true);
+  };
   // The reap sheet reopened from the app-wide bar's View, by run id, on any screen.
   const [reapSheetRun, setReapSheetRun] = useState<number | null>(null);
 
@@ -508,6 +520,15 @@ function Dashboard({ user }: { user: AuthUser }) {
     enabled: scalesUser !== null,
   });
 
+  // The board report, for the "not in the last scan" panel. Same query key as the Fairness
+  // list, so React Query serves it from one fetch -- no second network call. Only fetched on
+  // the Scales screen, where the list already needs it.
+  const { data: fairnessReport } = useQuery({
+    queryKey: ["fairness"],
+    queryFn: api.fairness,
+    enabled: view === "fairness",
+  });
+
   // Reviewing is a loop: read the reasoning, decide, move to the next one. The queue owns
   // the order the cards are actually in (this tab, these filters, this sort), so it hands
   // back a way to walk that order instead of this component guessing at it.
@@ -595,7 +616,7 @@ function Dashboard({ user }: { user: AuthUser }) {
       <main
         className={
           (selected !== null && view === "review") ||
-          (scalesUser !== null && view === "fairness")
+          ((scalesUser !== null || scalesUnmatched) && view === "fairness")
             ? "split"
             : ""
         }
@@ -648,7 +669,12 @@ function Dashboard({ user }: { user: AuthUser }) {
           />
         ) : view === "fairness" ? (
           <>
-            <Fairness selectedIdentity={scalesUser} onSelectPerson={setScalesUser} />
+            <Fairness
+              selectedIdentity={scalesUser}
+              onSelectPerson={openScalesPerson}
+              onOpenUnmatched={openScalesUnmatched}
+              unmatchedSelected={scalesUnmatched}
+            />
             {scalesUser !== null &&
               (personDetail ? (
                 <ScalesPanel
@@ -660,6 +686,12 @@ function Dashboard({ user }: { user: AuthUser }) {
               ) : (
                 <ScalesPanelFallback error={personError} onClose={() => setScalesUser(null)} />
               ))}
+            {scalesUnmatched && (
+              <NotInScanPanel
+                items={fairnessReport?.unmatched ?? []}
+                onClose={() => setScalesUnmatched(false)}
+              />
+            )}
           </>
         ) : (
           <Settings

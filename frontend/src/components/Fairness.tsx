@@ -127,11 +127,17 @@ export function PersonCard({
 export function Fairness({
   selectedIdentity,
   onSelectPerson,
+  onOpenUnmatched,
+  unmatchedSelected,
 }: {
   /** The person whose panel is open, so their card wears the selection bar. */
   selectedIdentity?: string | null;
   /** Open a person's panel. App owns the selection and renders the panel beside this list. */
   onSelectPerson?: (identity: string) => void;
+  /** Open the "not in the last scan" panel. App owns which panel is open. */
+  onOpenUnmatched?: () => void;
+  /** Whether that panel is the one open, so the tile wears the selection bar. */
+  unmatchedSelected?: boolean;
 }) {
   const { data, isPending, error } = useQuery({ queryKey: ["fairness"], queryFn: api.fairness });
   const select = onSelectPerson ?? (() => {});
@@ -147,7 +153,15 @@ export function Fairness({
       </div>
 
       {error && <p className="notice notice-error">Couldn't load Scales: {error.message}</p>}
-      {isPending && <p className="muted">Loading…</p>}
+      {isPending && (
+        <div className="fair-loading" role="status" aria-live="polite">
+          <span className="spinner spinner-lg" aria-hidden="true" />
+          <p className="fair-loading-lead">Gathering requests…</p>
+          <p className="fair-loading-sub muted">
+            Reading every request and matching it to your last scan. This can take a moment.
+          </p>
+        </div>
+      )}
 
       {data?.no_snapshot && (
         <p className="empty">Run a scan first. Scales reads your last library scan.</p>
@@ -176,11 +190,17 @@ export function Fairness({
               </span>
             </div>
             {data.not_in_scan > 0 && (
-              <div className="fair-stat">
+              <button
+                type="button"
+                className={`fair-stat fair-stat-btn${unmatchedSelected ? " selected" : ""}`}
+                onClick={() => onOpenUnmatched?.()}
+                aria-expanded={unmatchedSelected ?? false}
+              >
                 <span className="fair-stat-num amber">{count(data.not_in_scan)}</span>
                 <span className="fair-stat-lbl">Not in the last scan</span>
                 <span className="fair-stat-sub">requested since, or filtered out</span>
-              </div>
+                <span className="fair-stat-more">See what these are ›</span>
+              </button>
             )}
           </div>
 

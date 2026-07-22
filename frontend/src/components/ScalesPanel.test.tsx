@@ -46,6 +46,7 @@ function detail(over: Partial<PersonDetail> = {}): PersonDetail {
       tv: { limit: null, days: null, at_limit: false },
     },
     titles: [title()],
+    unmatched: [],
     ...over,
   };
 }
@@ -185,16 +186,33 @@ describe("ScalesPanel", () => {
     expect(screen.queryByText(/\(2019\) \(2019\)/)).not.toBeInTheDocument();
   });
 
-  it("names how many of their requests the scan has not seen", () => {
+  it("lists their not-in-scan requests, grouped by reason", () => {
     render(
       <ScalesPanel
-        detail={detail({ not_in_scan: 2 })}
+        detail={detail({
+          not_in_scan: 1,
+          unmatched: [
+            {
+              title: "A Missed Film",
+              year: 2021,
+              media_type: "movie",
+              is_4k: false,
+              requested_at: null,
+              available_at: null,
+              reason: "set_aside",
+              requested_by: ["marlow"],
+              request_count: 1,
+            },
+          ],
+        })}
         onClose={vi.fn()}
         onOpenItem={vi.fn()}
         onOpenGroup={vi.fn()}
       />,
     );
-    expect(screen.getByText(/2 of their requests aren't in the last scan/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /not in the last scan/i })).toBeInTheDocument();
+    expect(screen.getByText(/on your server, but set aside/i)).toBeInTheDocument();
+    expect(screen.getByText(/A Missed Film/)).toBeInTheDocument();
   });
 
   it("closes on Escape and on the close button", async () => {

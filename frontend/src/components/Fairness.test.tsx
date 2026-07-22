@@ -100,6 +100,7 @@ describe("Fairness", () => {
     total_reclaimable_bytes: 211 * GB,
     total_reclaimable_items: 16,
     not_in_scan: 7,
+    unmatched: [],
     no_snapshot: false,
     horizon_at: "2018-01-11T00:00:00+00:00",
     rows,
@@ -109,7 +110,7 @@ describe("Fairness", () => {
   it("says it is loading rather than rendering nothing", () => {
     apiMock.fairness.mockReturnValue(new Promise(() => {}));
     renderWithClient(<Fairness />);
-    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(/gathering requests/i);
   });
 
   it("surfaces a load failure explicitly", async () => {
