@@ -91,6 +91,7 @@ def _cand(
     size: int | None = 5 * GB,
     tmdb: int | None = 1,
     imdb: str | None = "tt1",
+    tvdb: int | None = None,
     rating_key: int | None = 555,
     media_type: str = "movie",
     group_key: str | None = None,
@@ -108,6 +109,7 @@ def _cand(
         group_title=group_title,
         tmdb_id=tmdb,
         imdb_id=imdb,
+        tvdb_id=tvdb,
     )
 
 
@@ -279,6 +281,38 @@ class TestRollUp:
         assert report.not_in_scan == 1
         assert report.rows == []
         assert report.total_reclaimable_items == 0
+
+    def test_a_tv_show_binds_its_request_by_tvdb_when_the_candidate_has_no_tmdb(self) -> None:
+        """Sonarr is tvdb-native and does not always carry a tmdb id, so a season candidate can
+        store only imdb + tvdb. Its Seerr request is tmdb-keyed and often has no imdb, leaving
+        tvdb the only id both sides share. The join must bind on it, or a show that WAS scanned
+        reads as "not in the last scan" (rule 29)."""
+        tv_req = _req(plex_id=100, name="Alice", media_type="tv", tmdb=77, tvdb=9001, imdb=None)
+        season_cand = _cand(
+            cid=1,
+            verdict="condemn",
+            size=5 * GB,
+            media_type="season",
+            tmdb=None,
+            tvdb=9001,
+            imdb="tt55",
+            group_key="tv:9001",
+            group_title="A Show",
+        )
+        report = roll_up([tv_req], [season_cand], {})
+        assert report.not_in_scan == 0
+        assert report.total_reclaimable_items == 1
+        assert report.total_reclaimable_bytes == 5 * GB
+
+    def test_a_request_carrying_only_a_tvdb_id_is_joinable_not_no_id(self) -> None:
+        """A tvdb id is a joinable id. A request with only tvdb (no tmdb, no imdb) whose show
+        the scan has not seen is set-aside like any other joinable miss, never lumped into the
+        truly id-less no-id bucket."""
+        req = _req(plex_id=100, name="Alice", media_type="tv", tmdb=None, tvdb=9001, imdb=None)
+        report = roll_up([req], [], {}, snapshot_at=NOW)
+        assert report.not_in_scan == 1
+        (u,) = report.unmatched
+        assert u.reason == UNMATCHED_SET_ASIDE
 
     def test_a_movie_and_a_show_sharing_a_tmdb_number_stay_separate(self) -> None:
         movie_req = _req(

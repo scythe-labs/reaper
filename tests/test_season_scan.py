@@ -1309,6 +1309,9 @@ class TestGatherEndToEnd:
         # same way the rating was (Sonarr had none, so the Plex-matched one serves).
         assert pruned.tmdb_id == 999
         assert pruned.imdb_id == "tt7777"
+        # Sonarr's native tvdb id rides onto every season row too, so Scales can join a
+        # request to this show even when it has no tmdb id (services.fairness; rule 29).
+        assert pruned.tvdb_id == 4242
         assert pruned.content_rating == "TV-PG"
         assert pruned.runtime_minutes == 50
         # The show's ended-ness is a show-level fact too: one reading of the series,

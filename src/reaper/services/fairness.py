@@ -71,6 +71,10 @@ class CandidateInfo:
     group_title: str | None
     tmdb_id: int | None
     imdb_id: str | None
+    tvdb_id: int | None = None
+    """The show's TVDb id for a season row (Sonarr's native id); None for a movie and for
+    rows scanned before the column existed. Sonarr is tvdb-native, so a show often shares
+    only this id with its Seerr request; the join binds on it when tmdb is absent (rule 29)."""
     year: int | None = None
     """Display only, for the per-person details drawer's title rows."""
     poster_rating_key: int | None = None
@@ -101,11 +105,13 @@ UNMATCHED_AFTER_SCAN = "after_scan"
 """Its media arrived, or it was asked for, AFTER the scan ran -- the scan could not have
 seen it. Reassuring: the next scan includes it. Chosen only when provable from the clock."""
 UNMATCHED_SET_ASIDE = "set_aside"
-"""On the server at scan time, but never judged: a show the keep rules fully protect, a
-title not fully downloaded, or the server holding it was offline. The honest catch-all when
-the clock does not prove "added since"."""
+"""Had a joinable id at scan time, but no candidate matched it. The honest catch-all when the
+clock does not prove "added since": nothing is downloaded to disk yet, the copy on the server
+is a different edition than the request (a different id), it is not tracked by any enabled
+Sonarr/Radarr, or the server holding it was offline. Not "a show the keep rules fully
+protect" -- since de8882f such a show is scanned and shows as Kept, not set aside."""
 UNMATCHED_NO_ID = "no_id"
-"""The request carries no tmdb or imdb id at all, so it cannot be lined up with anything."""
+"""The request carries no tmdb, tvdb, or imdb id at all, so it cannot be lined up."""
 
 
 @dataclass
@@ -229,17 +235,69 @@ def _kind(media_type: str) -> str:
     return "movie" if media_type == "movie" else "tv"
 
 
-def _content_key(media_type: str, tmdb_id: int | None, imdb_id: str | None) -> ContentKey | None:
-    """The id Scales joins a request and a candidate on: tmdb first, then imdb. ``None`` when
-    the item carries neither -- unjoinable, and surfaced as not-in-scan rather than guessed.
+def _content_key(
+    media_type: str, tmdb_id: int | None, imdb_id: str | None, tvdb_id: int | None
+) -> ContentKey | None:
+    """The id a request groups under: tmdb first, then tvdb, then imdb. ``None`` when the item
+    carries none -- unjoinable, and surfaced as not-in-scan rather than guessed.
 
     The tmdb key is namespaced by media kind (``tmdb-movie`` / ``tmdb-tv``) so the movie and
-    TV id spaces cannot collide; imdb ids are globally unique, so that branch needs no kind."""
+    TV id spaces cannot collide. TVDb ids are a TV-only space and IMDb ids are globally
+    unique, so neither needs a kind (rule 6/29). This only groups co-requesters of one title;
+    binding a request to the scan's candidates is _match_candidates, which tries every id."""
     if tmdb_id:
         return (f"tmdb-{_kind(media_type)}", tmdb_id)
+    if tvdb_id:
+        return ("tvdb", tvdb_id)
     if imdb_id:
         return ("imdb", imdb_id)
     return None
+
+
+@dataclass(frozen=True)
+class _CandidateIndex:
+    """The last scan's candidates indexed by every id kind they carry, so a request keyed by
+    any one of tmdb / tvdb / imdb finds them. Built once per join site and shared by the board
+    roll-up, the not-in-scan classifier, and the person drawer, so the three can never drift
+    on what "the scan has this title" means (rule 3/22)."""
+
+    by_tmdb: dict[ContentKey, list[CandidateInfo]]
+    by_tvdb: dict[int, list[CandidateInfo]]
+    by_imdb: dict[str, list[CandidateInfo]]
+
+
+def _index_candidates(candidates: list[CandidateInfo]) -> _CandidateIndex:
+    """Index candidates by every id they carry. A show contributes several season rows under
+    one id. The tmdb index is namespaced by media kind (movie/tv ids overlap); tvdb is a
+    TV-only space and imdb is globally unique, so neither is namespaced. Passing every id is
+    what lets a show Sonarr knows only by tvdb still bind its tmdb-keyed request (rule 29)."""
+    by_tmdb: dict[ContentKey, list[CandidateInfo]] = defaultdict(list)
+    by_tvdb: dict[int, list[CandidateInfo]] = defaultdict(list)
+    by_imdb: dict[str, list[CandidateInfo]] = defaultdict(list)
+    for c in candidates:
+        if c.tmdb_id:
+            by_tmdb[(f"tmdb-{_kind(c.media_type)}", c.tmdb_id)].append(c)
+        if c.tvdb_id:
+            by_tvdb[c.tvdb_id].append(c)
+        if c.imdb_id:
+            by_imdb[c.imdb_id].append(c)
+    return _CandidateIndex(by_tmdb, by_tvdb, by_imdb)
+
+
+def _match_candidates(index: _CandidateIndex, req: MediaRequest) -> list[CandidateInfo]:
+    """The candidates a request binds, trying every id it carries in turn: tmdb (kind-
+    namespaced), then tvdb, then imdb. The first id that resolves wins; a candidate is indexed
+    under all of its own ids, so the sets agree and the order only picks which non-empty one
+    is read. Empty exactly when the scan has no candidate for this request."""
+    tmdb_key: ContentKey | None = (
+        (f"tmdb-{_kind(req.media_type)}", req.tmdb_id) if req.tmdb_id else None
+    )
+    return (
+        (index.by_tmdb.get(tmdb_key) if tmdb_key else None)
+        or (index.by_tvdb.get(req.tvdb_id) if req.tvdb_id else None)
+        or index.by_imdb.get(req.imdb_id or "")
+        or []
+    )
 
 
 def _unmatched_reason(group: list[MediaRequest], snapshot_at: datetime | None) -> str:
@@ -303,18 +361,12 @@ def _collect_unmatched(
 
     A request is unmatched when it carries no joinable id (NO-ID, and unmergeable so it stands
     alone) or when its title produced no candidate (ADDED-since vs SET-aside, by the clock)."""
-    by_tmdb: dict[ContentKey, list[CandidateInfo]] = defaultdict(list)
-    by_imdb: dict[str, list[CandidateInfo]] = defaultdict(list)
-    for c in candidates:
-        if c.tmdb_id:
-            by_tmdb[(f"tmdb-{_kind(c.media_type)}", c.tmdb_id)].append(c)
-        if c.imdb_id:
-            by_imdb[c.imdb_id].append(c)
+    index = _index_candidates(candidates)
 
     out: list[UnmatchedTitle] = []
     groups: dict[ContentKey, list[MediaRequest]] = defaultdict(list)
     for req in requests:
-        key = _content_key(req.media_type, req.tmdb_id, req.imdb_id)
+        key = _content_key(req.media_type, req.tmdb_id, req.imdb_id, req.tvdb_id)
         if key is None:
             if identity is not None and _identity(req) != identity:
                 continue
@@ -324,13 +376,7 @@ def _collect_unmatched(
 
     for group in groups.values():
         rep = group[0]
-        tmdb_key: ContentKey | None = (
-            (f"tmdb-{_kind(rep.media_type)}", rep.tmdb_id) if rep.tmdb_id else None
-        )
-        cands = (
-            (by_tmdb.get(tmdb_key) if tmdb_key else None) or by_imdb.get(rep.imdb_id or "") or []
-        )
-        if cands:
+        if _match_candidates(index, rep):
             continue  # the scan has it -- not our concern here
         if identity is not None and not any(_identity(r) == identity for r in group):
             continue
@@ -355,23 +401,15 @@ def roll_up(
     ``snapshot_at`` (the scan's own timestamp) only classifies the not-in-scan requests into
     "added since" vs "set aside"; it never touches a score or a verdict.
     """
-    # Candidates indexed by every id they carry, so a request keyed by tmdb OR imdb finds
-    # them. A show contributes several season rows under one id (rule 29: pass every id). The
-    # tmdb index is namespaced by media kind, matching the request's content key, so a TV
-    # request cannot bind a same-numbered movie candidate (rule 6/29).
-    by_tmdb: dict[ContentKey, list[CandidateInfo]] = defaultdict(list)
-    by_imdb: dict[str, list[CandidateInfo]] = defaultdict(list)
-    for c in candidates:
-        if c.tmdb_id:
-            by_tmdb[(f"tmdb-{_kind(c.media_type)}", c.tmdb_id)].append(c)
-        if c.imdb_id:
-            by_imdb[c.imdb_id].append(c)
+    # Candidates indexed by every id they carry, so a request keyed by tmdb, tvdb OR imdb
+    # finds them (see _index_candidates; rule 29: pass every id).
+    index = _index_candidates(candidates)
 
     # Group requests by the content they point at, so co-requesters of one title are judged
     # together. A request with no joinable id is not-in-scan straight away.
     groups: dict[ContentKey, list[MediaRequest]] = defaultdict(list)
     for req in requests:
-        key = _content_key(req.media_type, req.tmdb_id, req.imdb_id)
+        key = _content_key(req.media_type, req.tmdb_id, req.imdb_id, req.tvdb_id)
         if key is None:
             continue
         groups[key].append(req)
@@ -395,12 +433,7 @@ def roll_up(
 
     for group in groups.values():
         rep = group[0]
-        tmdb_key: ContentKey | None = (
-            (f"tmdb-{_kind(rep.media_type)}", rep.tmdb_id) if rep.tmdb_id else None
-        )
-        cands = (
-            (by_tmdb.get(tmdb_key) if tmdb_key else None) or by_imdb.get(rep.imdb_id or "") or []
-        )
+        cands = _match_candidates(index, rep)
         if not cands:
             # The scan has not seen this title; it is collected (and counted) below by
             # _collect_unmatched, the one place that classifies not-in-scan.
@@ -691,6 +724,7 @@ async def _load_candidates(
             group_title=c.group_title,
             tmdb_id=c.tmdb_id,
             imdb_id=c.imdb_id,
+            tvdb_id=c.tvdb_id,
             year=c.year,
             poster_rating_key=c.poster_rating_key,
         )
@@ -863,21 +897,15 @@ async def build_person_detail(
     }
     episodes_by_season = await _distinct_episodes(cache_engine, target_plex_id, season_keys)
 
-    # The tmdb index is namespaced by media kind, so a TV request never binds a same-numbered
-    # movie candidate -- the same join the roll-up uses (rule 6/29).
-    by_tmdb: dict[ContentKey, list[CandidateInfo]] = defaultdict(list)
-    by_imdb: dict[str, list[CandidateInfo]] = defaultdict(list)
-    for c in candidates:
-        if c.tmdb_id:
-            by_tmdb[(f"tmdb-{_kind(c.media_type)}", c.tmdb_id)].append(c)
-        if c.imdb_id:
-            by_imdb[c.imdb_id].append(c)
+    # The same index the roll-up and classifier use, so all three agree on what the scan has
+    # (rule 3/22): a request binds by tmdb, tvdb OR imdb (rule 6/29).
+    index = _index_candidates(candidates)
 
     # Group by content so co-requesters are known and the target's request for a title is
     # judged with everyone else's.
     groups: dict[ContentKey, list[MediaRequest]] = defaultdict(list)
     for req in requests:
-        ck = _content_key(req.media_type, req.tmdb_id, req.imdb_id)
+        ck = _content_key(req.media_type, req.tmdb_id, req.imdb_id, req.tvdb_id)
         if ck is not None:
             groups[ck].append(req)
 
@@ -893,12 +921,7 @@ async def build_person_detail(
         name = _name(mine)
         plex_id = mine.requester.plex_id
         rep = group[0]
-        tmdb_key: ContentKey | None = (
-            (f"tmdb-{_kind(rep.media_type)}", rep.tmdb_id) if rep.tmdb_id else None
-        )
-        cands = (
-            (by_tmdb.get(tmdb_key) if tmdb_key else None) or by_imdb.get(rep.imdb_id or "") or []
-        )
+        cands = _match_candidates(index, rep)
         if not cands:
             # Not in the scan: collected (and named) below by the shared classifier.
             continue

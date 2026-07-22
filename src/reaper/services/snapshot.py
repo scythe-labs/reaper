@@ -807,6 +807,9 @@ async def scan(
                 # Radarr's id first, the Plex-matched one as fallback -- the same
                 # precedence the dataset lookup uses.
                 imdb_id=item.imdb_id or item.plex_imdb_id,
+                # A movie has no TVDb id (Radarr is tmdb-native); left None, so the Scales
+                # join binds a movie request by tmdb/imdb as before.
+                tvdb_id=None,
                 video_resolution=item.video_resolution,
                 content_rating=item.content_rating,
                 runtime_minutes=item.runtime_minutes,
@@ -874,6 +877,7 @@ async def scan(
                 group_title=judgment.group_title,
                 tmdb_id=judgment.tmdb_id,
                 imdb_id=judgment.imdb_id,
+                tvdb_id=judgment.tvdb_id,
                 title_slug=judgment.title_slug,
                 content_rating=judgment.content_rating,
                 runtime_minutes=judgment.runtime_minutes,
@@ -944,6 +948,10 @@ class Display:
     # and the frozen display metadata. See services.display_meta and deep_links.
     tmdb_id: int | None = None
     imdb_id: str | None = None
+    # The show's TVDb id for a season row; None for a movie (Radarr is tmdb-native). Sonarr
+    # is tvdb-native, so this is what Scales joins a TV request to its candidate on when the
+    # show carries no tmdb id (services.fairness). Join/link only, never a verdict input.
+    tvdb_id: int | None = None
     title_slug: str | None = None
     video_resolution: str | None = None
     content_rating: str | None = None
@@ -1059,6 +1067,7 @@ def _judge_item(
             group_title=display.group_title,
             tmdb_id=display.tmdb_id,
             imdb_id=display.imdb_id,
+            tvdb_id=display.tvdb_id,
             title_slug=display.title_slug,
             video_resolution=display.video_resolution,
             content_rating=display.content_rating,

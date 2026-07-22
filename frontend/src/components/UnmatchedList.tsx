@@ -26,9 +26,9 @@ const REASONS: { key: string; heading: string; cls: string; why: string }[] = [
   },
   {
     key: "set_aside",
-    heading: "On your server, but set aside",
+    heading: "Skipped by the last scan",
     cls: "nis-group--aside",
-    why: "The last scan didn't weigh these. Usually your keep rules protect the whole show, it isn't fully downloaded, or the server holding it was offline during the scan.",
+    why: "The last scan didn't weigh these. Usually nothing is downloaded to disk yet, what's on your server is a different edition than the one requested, or the server holding it was offline during the scan.",
   },
   {
     key: "no_id",
