@@ -145,10 +145,12 @@ class TestTheMinDormancyGate:
         assert result.outcome == ABSTAIN
         assert result.blocked is True
 
-    def test_the_floor_cannot_be_set_below_the_measured_safe_line(self) -> None:
-        """Not a stylistic bound. Under a year, ~30% of dormant films come back."""
-        with pytest.raises(ValidationError, match="coin-flip"):
-            GateSetting(gate=GateId.MIN_DORMANCY, threshold=90)
+    def test_the_floor_refuses_a_value_below_five_days(self) -> None:
+        """A small fat-finger guard: to remove things faster than 5 days, turn the
+        protection off rather than setting the threshold near zero."""
+        with pytest.raises(ValidationError, match="at least 5 days"):
+            GateSetting(gate=GateId.MIN_DORMANCY, threshold=4)
+        assert GateSetting(gate=GateId.MIN_DORMANCY, threshold=5)
 
     def test_disabling_it_is_allowed_but_must_be_explicit(self) -> None:
         """A decision, not a slip: you may turn the protection off, but you may not

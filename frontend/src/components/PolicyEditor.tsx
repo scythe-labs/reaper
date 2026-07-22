@@ -284,7 +284,7 @@ function GateRow({ gate, onChange }: { gate: GateSetting; onChange: (g: GateSett
           <QuantityInput
             value={gate.threshold}
             units={TIME_UNITS}
-            min={365}
+            min={5}
             ariaLabel={`${meta.label} threshold`}
             onChange={(v) => onChange({ ...gate, threshold: v })}
           />
@@ -1472,8 +1472,8 @@ export function PolicyEditor({
     placeholderData: keepPreviousData, // keep the last result visible while refetching
   });
 
-  // validatePolicy 422s when the policy is *provably* invalid (e.g. a dormancy floor under a
-  // year); that error is what "you can't save this" means, and it is shown near the controls,
+  // validatePolicy 422s when the policy is *provably* invalid (e.g. a dormancy floor under
+  // 5 days); that error is what "you can't save this" means, and it is shown near the controls,
   // not dressed up as a simulation result.
   const { data: validation, error: invalidError } = useQuery({
     queryKey: ["validate", debounced],
