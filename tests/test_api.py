@@ -672,6 +672,39 @@ class TestPanelHeadFields:
         assert detail["runtime_minutes"] == 95
         assert detail["genres"] == ["Documentary", "Drama"]
 
+    def test_an_external_url_redirects_the_service_links_but_not_plex(
+        self, client: TestClient
+    ) -> None:
+        """A service's external URL, when set, is the address its jump link opens; a service
+        left blank still uses its connect address, and Plex (its own web address) is
+        untouched."""
+        # Radarr and Tautulli get a public address; Seerr is deliberately left blank.
+        assert (
+            client.put(
+                "/api/settings/instances/1",
+                json={"external_url": "https://movies.example.com/"},
+            ).status_code
+            == 200
+        )
+        assert (
+            client.put(
+                "/api/settings/instances/2",
+                json={"external_url": "https://history.example.com"},
+            ).status_code
+            == 200
+        )
+
+        candidates = client.get("/api/candidates?verdict=condemn").json()
+        links = client.get(f"/api/candidates/{candidates[0]['id']}").json()["links"]
+
+        # The link opens at the external address (trailing slash stripped), not base_url.
+        assert links["radarr"] == "https://movies.example.com/movie/603"
+        assert links["tautulli"] == "https://history.example.com/info?rating_key=555"
+        # Seerr had no external URL, so it still uses the connect address.
+        assert links["seerr"] == "https://seerr.example/movie/603"
+        # Plex keeps its own web address, unaffected by the instance external URLs.
+        assert links["plex"].startswith("https://app.plex.tv/desktop/")
+
     def test_an_unmatched_pre_rescan_row_offers_no_links_and_no_ratings(
         self, client: TestClient
     ) -> None:

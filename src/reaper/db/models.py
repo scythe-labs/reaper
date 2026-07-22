@@ -59,6 +59,16 @@ class Instance(Base):
     base_url: Mapped[str] = mapped_column(String(500))
     api_key_enc: Mapped[str] = mapped_column(Text)
 
+    # The address the UI's jump links open, when it differs from the one Reaper connects to:
+    # an operator reaches this service in the browser at a public address (a reverse proxy,
+    # a domain) while Reaper talks to it over a LAN IP. Display only -- never used to connect,
+    # never sent a request, so it does not need TLS verification or a key. Nullable and NULL by
+    # default: the additive migration only ADDs a nullable column, and NULL means "no external
+    # address", so links fall back to base_url and nothing changes for an operator who leaves it
+    # blank (services.deep_links via api.routes._deep_links). Plex has its own web_url and is
+    # not an Instance, so it is untouched here.
+    external_url: Mapped[str | None] = mapped_column(String(500), default=None)
+
     # Discovered from GET /api/v3/system/status, never hardcoded: Sonarr's
     # v5-develop ships a real /api/v5 with a different SeriesResource shape.
     api_path_prefix: Mapped[str] = mapped_column(String(20), default="/api/v3")

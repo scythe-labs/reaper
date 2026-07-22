@@ -103,6 +103,7 @@ class InstanceOut(BaseModel):
     kind: str
     name: str
     base_url: str
+    external_url: str | None = None
     enabled: bool
     verify_tls: bool
     add_import_exclusion: bool
@@ -126,6 +127,8 @@ class InstanceCreateIn(BaseModel):
     api_key: str
     verify_tls: bool = True
     add_import_exclusion: bool = False
+    # The address links open; blank/omitted means links use base_url. Display only.
+    external_url: str | None = None
 
 
 class InstanceUpdateIn(BaseModel):
@@ -135,6 +138,9 @@ class InstanceUpdateIn(BaseModel):
     enabled: bool | None = None
     verify_tls: bool | None = None  # omitted keeps the stored setting; explicit False sticks
     add_import_exclusion: bool | None = None  # omitted keeps the stored setting
+    # The address links open. Omitted (None) keeps the stored value; a blank string clears it to
+    # NULL (links fall back to base_url); a value sets it.
+    external_url: str | None = None
     # The HD/4K library map: {root folder path: Plex library title}. Omitted keeps the stored
     # map; a dict (even empty) replaces it, and an empty one clears it. Only Sonarr/Radarr.
     plex_library_map: dict[str, str] | None = None
@@ -409,6 +415,7 @@ async def create_instance(request: Request, payload: InstanceCreateIn) -> Instan
                 api_key=payload.api_key,
                 verify_tls=payload.verify_tls,
                 add_import_exclusion=payload.add_import_exclusion,
+                external_url=payload.external_url,
             )
         except instances.InstanceConflictError as exc:
             # A duplicate name is a conflict; anything else the service refused (a blank
@@ -436,6 +443,7 @@ async def update_instance(
                 enabled=payload.enabled,
                 verify_tls=payload.verify_tls,
                 add_import_exclusion=payload.add_import_exclusion,
+                external_url=payload.external_url,
                 plex_library_map=payload.plex_library_map,
                 service_instance_map=payload.service_instance_map,
             )

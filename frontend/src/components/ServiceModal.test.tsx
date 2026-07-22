@@ -38,6 +38,7 @@ function sonarr(overrides: Partial<Instance> = {}): Instance {
     kind: "sonarr",
     name: "Main",
     base_url: "http://10.0.0.5:8989",
+    external_url: null,
     enabled: true,
     verify_tls: true,
     add_import_exclusion: false,
@@ -136,6 +137,30 @@ describe("ServiceModal HD/4K library map", () => {
     expect(
       await screen.findByText(/couldn't read this instance's folders/i),
     ).toBeInTheDocument();
+  });
+});
+
+describe("ServiceModal external URL", () => {
+  it("seeds the field from the instance and sends it, trimmed, on save", async () => {
+    renderModal(sonarr({ external_url: "https://tv.example.com" }), []);
+    const field = screen.getByLabelText("External URL") as HTMLInputElement;
+    expect(field.value).toBe("https://tv.example.com");
+
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(apiMock.updateInstance).toHaveBeenCalled());
+    const body = apiMock.updateInstance.mock.calls[0]![1] as { external_url?: string };
+    expect(body.external_url).toBe("https://tv.example.com");
+  });
+
+  it("sends a blank string when cleared, so the stored external URL is removed", async () => {
+    renderModal(sonarr({ external_url: "https://tv.example.com" }), []);
+    await userEvent.clear(screen.getByLabelText("External URL"));
+
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(apiMock.updateInstance).toHaveBeenCalled());
+    const body = apiMock.updateInstance.mock.calls[0]![1] as { external_url?: string };
+    // A blank value clears the stored one back to null, so links fall back to base_url.
+    expect(body.external_url).toBe("");
   });
 });
 

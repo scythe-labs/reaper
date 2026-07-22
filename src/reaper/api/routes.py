@@ -735,7 +735,8 @@ async def _deep_links(session: AsyncSession, row: Candidate) -> LinksOut:
         # THE instance the key routes to -- by id and kind, never "the first Radarr".
         instance = await session.get(Instance, ref.instance_id)
         if instance is not None and instance.kind == ref.kind and instance.enabled:
-            arr_base = instance.base_url
+            # The operator's external address for links when set, else the connect address.
+            arr_base = instance.external_url or instance.base_url
 
     async def first_enabled(kind: InstanceKind) -> Instance | None:
         # Ordered by id so "the first enabled" is deterministic: the longest-standing
@@ -762,10 +763,11 @@ async def _deep_links(session: AsyncSession, row: Candidate) -> LinksOut:
         tmdb_id=row.tmdb_id,
         title_slug=row.title_slug,
         arr_base_url=arr_base,
-        tautulli_base_url=tautulli.base_url if tautulli else None,
+        # The external address for links when the operator set one, else the connect address.
+        tautulli_base_url=(tautulli.external_url or tautulli.base_url) if tautulli else None,
         machine_identifier=plex_server.machine_identifier if plex_server else None,
         plex_web_url=await app_settings.get_plex_web_url(session),
-        seerr_base_url=seerr.base_url if seerr else None,
+        seerr_base_url=(seerr.external_url or seerr.base_url) if seerr else None,
         imdb_id=row.imdb_id,
         media_type=row.media_type,
         # A season row searches by its SHOW's title ("Example Show", not

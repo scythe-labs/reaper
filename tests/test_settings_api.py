@@ -262,6 +262,42 @@ class TestInstancesCrud:
         ).json()
         assert back_off["add_import_exclusion"] is False
 
+    def test_external_url_is_optional_normalized_and_clearable(self, client: TestClient) -> None:
+        """The link address is null unless set, is normalized like base_url, survives an
+        unrelated update, and a blank string clears it back to null (links fall back to
+        base_url) -- while omitting it leaves the stored value alone."""
+        bare = client.post(
+            "/api/settings/instances",
+            json={"kind": "radarr", "name": "HD", "base_url": "http://a.local", "api_key": "k"},
+        ).json()
+        assert bare["external_url"] is None  # unset by default
+
+        made = client.post(
+            "/api/settings/instances",
+            json={
+                "kind": "radarr",
+                "name": "UHD",
+                "base_url": "http://b.local",
+                "api_key": "k",
+                "external_url": "https://radarr.example.com/",
+            },
+        ).json()
+        assert made["external_url"] == "https://radarr.example.com"  # trailing slash stripped
+
+        renamed = client.put(f"/api/settings/instances/{made['id']}", json={"name": "4K"}).json()
+        assert renamed["external_url"] == "https://radarr.example.com"  # untouched
+
+        moved = client.put(
+            f"/api/settings/instances/{made['id']}",
+            json={"external_url": "https://movies.example.com"},
+        ).json()
+        assert moved["external_url"] == "https://movies.example.com"
+
+        cleared = client.put(
+            f"/api/settings/instances/{made['id']}", json={"external_url": "  "}
+        ).json()
+        assert cleared["external_url"] is None  # blank clears to null
+
 
 class TestConnectionTestsHonorTheTlsChoice:
     """The TLS choice must reach the client that actually dials out -- the stored

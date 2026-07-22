@@ -887,6 +887,9 @@ export interface Instance {
   kind: string;
   name: string;
   base_url: string;
+  /** The address the UI's jump links open, or null to fall back to base_url. Display only,
+   *  never connected to. Blank in the edit form clears it back to null. */
+  external_url: string | null;
   enabled: boolean;
   verify_tls: boolean;
   /** When Reaper deletes through this instance, ask the *arr to add an import (list)
@@ -1098,6 +1101,7 @@ export const api = {
     api_key: string;
     verify_tls?: boolean;
     add_import_exclusion?: boolean;
+    external_url?: string;
   }) => post<Instance>("/api/settings/instances", body),
   updateInstance: (
     id: number,
@@ -1108,6 +1112,8 @@ export const api = {
       enabled?: boolean;
       verify_tls?: boolean;
       add_import_exclusion?: boolean;
+      // Blank clears the stored value to null; a value sets it; omitted keeps it.
+      external_url?: string;
       plex_library_map?: Record<string, string>;
       service_instance_map?: Record<string, number>;
     },

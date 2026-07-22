@@ -136,6 +136,9 @@ export function ServiceModal({
   const [addExclusion, setAddExclusion] = useState(instance?.add_import_exclusion ?? false);
   const [enabled, setEnabled] = useState(instance?.enabled ?? true);
   const [apiKey, setApiKey] = useState("");
+  // The address links open, when it differs from the one Reaper connects to. Blank means
+  // "use the address above": on save a blank value clears the stored one back to null.
+  const [externalUrl, setExternalUrl] = useState(instance?.external_url ?? "");
   const [test, setTest] = useState<InstanceTest | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -308,9 +311,12 @@ export function ServiceModal({
           api_key?: string;
           verify_tls?: boolean;
           add_import_exclusion?: boolean;
+          external_url?: string;
           plex_library_map?: Record<string, string>;
           service_instance_map?: Record<string, number>;
-        } = { name, base_url: baseUrl(), enabled };
+          // Always sent (trimmed): a blank value clears the stored external URL back to null,
+          // so links fall back to the address above.
+        } = { name, base_url: baseUrl(), enabled, external_url: externalUrl.trim() };
         if (apiKey) body.api_key = apiKey; // blank keeps the stored key
         if (ssl) body.verify_tls = verifyCert; // over plain http the setting is moot; keep it stored
         if (isArr) body.add_import_exclusion = addExclusion;
@@ -345,8 +351,10 @@ export function ServiceModal({
         api_key: string;
         verify_tls?: boolean;
         add_import_exclusion?: boolean;
+        external_url?: string;
       } = { kind, name, base_url: baseUrl(), api_key: apiKey, verify_tls: ssl ? verifyCert : true };
       if (isArr) createBody.add_import_exclusion = addExclusion;
+      if (externalUrl.trim()) createBody.external_url = externalUrl.trim();
       return api.createInstance(createBody);
     },
     onSuccess: () => {
@@ -463,6 +471,19 @@ export function ServiceModal({
             autoComplete="off"
           />
         </label>
+        <label className="field-sm">
+          <span className="field-label">External URL</span>
+          <input
+            type="url"
+            value={externalUrl}
+            onChange={(e) => setExternalUrl(e.target.value)}
+            placeholder={`https://${kind}.example.com`}
+            autoComplete="off"
+          />
+        </label>
+        <p className="help">
+          Where links to {kindLabel(kind)} open. Leave blank to use the address above.
+        </p>
         {mapEditable && (
           <div className="field-sm plex-map">
             <span className="field-label">Plex libraries</span>

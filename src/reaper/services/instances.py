@@ -84,6 +84,8 @@ class InstanceView:
     kind: str
     name: str
     base_url: str
+    # The address links open, or None to fall back to base_url. Display only, never connected to.
+    external_url: str | None
     enabled: bool
     verify_tls: bool
     add_import_exclusion: bool
@@ -238,6 +240,7 @@ def _view(row: Instance) -> InstanceView:
         kind=str(row.kind),
         name=row.name,
         base_url=row.base_url,
+        external_url=row.external_url,
         enabled=row.enabled,
         verify_tls=row.verify_tls,
         add_import_exclusion=row.add_import_exclusion,
@@ -277,9 +280,13 @@ async def create_instance(
     api_key: str,
     verify_tls: bool = True,
     add_import_exclusion: bool = False,
+    external_url: str | None = None,
 ) -> InstanceView:
     name = name.strip()
     base_url = base_url.strip().rstrip("/")
+    # Blank (or whitespace) is stored as NULL, so links fall back to base_url. Normalized like
+    # base_url so the two round-trip the same way when links are built.
+    external = (external_url or "").strip().rstrip("/") or None
     if not name or not base_url or not api_key:
         raise InstanceError("A name, a URL and an API key are all required.")
 
@@ -304,6 +311,7 @@ async def create_instance(
         kind=kind,
         name=name,
         base_url=base_url,
+        external_url=external,
         api_key_enc=box.encrypt(api_key),
         enabled=True,
         verify_tls=verify_tls,
@@ -327,6 +335,7 @@ async def update_instance(
     enabled: bool | None = None,
     verify_tls: bool | None = None,
     add_import_exclusion: bool | None = None,
+    external_url: str | None = None,
     plex_library_map: Mapping[str, str] | None = None,
     service_instance_map: Mapping[str, int] | None = None,
 ) -> InstanceView:
@@ -355,6 +364,11 @@ async def update_instance(
         row.name = new_name
     if base_url is not None and base_url.strip():
         row.base_url = base_url.strip().rstrip("/")
+    if external_url is not None:
+        # Unlike base_url (blank keeps, since it is required), a blank external_url CLEARS it to
+        # NULL -- that is how the operator turns off a custom link address and falls back to
+        # base_url. Omitting the field (None) still keeps the stored value.
+        row.external_url = external_url.strip().rstrip("/") or None
     if api_key:  # a blank/omitted key means "keep the existing one"
         row.api_key_enc = box.encrypt(api_key)
     if enabled is not None:
