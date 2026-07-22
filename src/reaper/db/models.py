@@ -23,6 +23,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -75,7 +76,11 @@ class Instance(Base):
     # planner._movie_steps and executor._send_movie); a Sonarr prune removes seasons, not a
     # whole series, so no Sonarr call carries the exclusion and the setting is stored-but-
     # inert there -- the edit form says so.
-    add_import_exclusion: Mapped[bool] = mapped_column(Boolean, default=False)
+    # server_default so the additive migration can ADD this NOT NULL column to an existing
+    # populated table (SQLite requires a default), and existing rows backfill to "off".
+    add_import_exclusion: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false()
+    )
 
     created_at: Mapped[UtcTimestamp]
     last_ok_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
