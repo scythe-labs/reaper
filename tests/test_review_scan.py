@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+from structlog.testing import capture_logs
 
 from reaper.clients.plex import PlexError
 from reaper.clock import from_epoch, utcnow
@@ -50,6 +51,49 @@ from reaper.services.snapshot import (
 # Second precision: the timestamp columns round-trip through SQLite at whole-second
 # precision, so a microsecond-bearing utcnow() would not compare equal after a fetch.
 NOW = utcnow().replace(microsecond=0)
+
+
+class TestMovieDecisionLog:
+    """Every movie Radarr returns emits one greppable decision line, so "why isn't my movie
+    in the queue" is answerable from the log -- the movie twin of season_scan.series_decision."""
+
+    def _index(self) -> identity.PlexIndex:
+        return identity.PlexIndex.build(
+            [identity.PlexItem(rating_key=1, title="A Film", year=2020, added_at=NOW)]
+        )
+
+    def test_a_movie_with_a_file_logs_candidate(self) -> None:
+        movie = {
+            "id": 7,
+            "title": "A Film",
+            "year": 2020,
+            "tmdbId": 500,
+            "hasFile": True,
+            "sizeOnDisk": 1234,
+        }
+        with capture_logs() as logs:
+            _raw_items([movie], self._index(), instance_id=3)
+        decisions = [e for e in logs if e["event"] == "scan.movie_decision"]
+        assert len(decisions) == 1
+        d = decisions[0]
+        assert d["outcome"] == "candidate"
+        assert d["title"] == "A Film"
+        assert d["tmdb_id"] == 500
+        assert d["has_file"] is True
+        assert d["size_bytes"] == 1234
+        assert d["instance_id"] == 3
+
+    def test_a_movie_without_a_file_logs_no_file(self) -> None:
+        movie = {"id": 8, "title": "Not Downloaded", "year": 2021, "hasFile": False}
+        with capture_logs() as logs:
+            items = _raw_items([movie], self._index(), instance_id=3)
+        assert items == []  # dropped: nothing on disk to reap
+        decisions = [e for e in logs if e["event"] == "scan.movie_decision"]
+        assert len(decisions) == 1
+        d = decisions[0]
+        assert d["outcome"] == "no_file"
+        assert d["has_file"] is False
+        assert d["size_bytes"] is None
 
 
 # ---------------------------------------------------------------------------

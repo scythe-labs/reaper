@@ -1477,6 +1477,10 @@ class TestGatherEndToEnd:
         assert d["tvdb_id"] == 700
         assert sorted(d["prunable"]) == [2, 3]  # outside keep-last 2, not the first
         assert {s["n"] for s in d["seasons"]} == {1, 2, 3, 4, 5}
+        # The per-instance read count, the twin of snapshot.radarr's movie count.
+        sonarr = [e for e in logs if e["event"] == "season_scan.sonarr"]
+        assert len(sonarr) == 1
+        assert sonarr[0]["series"] == 1
 
     async def test_a_fully_protected_show_logs_the_keep_reasons(
         self, cache_engine: AsyncEngine

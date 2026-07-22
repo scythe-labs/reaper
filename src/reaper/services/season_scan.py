@@ -965,7 +965,12 @@ async def gather(
     no_content: list[str] = []
     for source, series_list in zip(sonarrs, series_lists, strict=True):
         if series_list is None:
-            continue
+            continue  # unreachable instance -- already degraded above, with the reason
+        # How many series this Sonarr returned, the twin of snapshot.radarr's movie count. A
+        # show absent from this instance's per-series decision lines but present in Sonarr means
+        # the read was short; a show in neither means it is not on this instance at all -- the
+        # line that tells "not in the queue" apart from "not in this Sonarr / not scanned".
+        log.info("season_scan.sonarr", instance=source.name, series=len(series_list))
         for series in series_list:
             seasons = parse_seasons(series)
             if not any(s.has_content for s in seasons):

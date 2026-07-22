@@ -1453,6 +1453,29 @@ def _release_age_days(year: int | None) -> Observation[float]:
     return Known(value=float(max(0, age)), source="radarr")
 
 
+def _log_movie_decision(instance_id: int, movie: Mapping[str, Any], *, outcome: str) -> None:
+    """One greppable DEBUG line per movie: what Radarr reported, and why the film did or did
+    not become a candidate. The movie twin of ``season_scan.series_decision``.
+
+    ``outcome`` is ``candidate`` (Radarr holds a file, so it is judged) or ``no_file`` (no
+    downloaded file, nothing to reap). Grepping a title answers "why isn't my movie in the
+    queue" without re-running the scan. Plex match status is logged separately
+    (``scan.plex_matched`` / ``scan.plex_unmatched``); an unmatched movie still becomes a
+    candidate and is never dropped here.
+    """
+    log.debug(
+        "scan.movie_decision",
+        instance_id=instance_id,
+        title=str(movie.get("title") or "?"),
+        tmdb_id=movie.get("tmdbId") or None,
+        imdb_id=movie.get("imdbId") or None,
+        year=int(movie["year"]) if movie.get("year") else None,
+        outcome=outcome,
+        has_file=bool(movie.get("hasFile")),
+        size_bytes=_reported_size(movie),
+    )
+
+
 def _raw_items(
     movies: list[dict[str, Any]],
     plex_index: identity.PlexIndex,
@@ -1472,7 +1495,9 @@ def _raw_items(
     for movie in movies:
         if not movie.get("hasFile"):
             without_file.append(str(movie.get("title") or "?"))
+            _log_movie_decision(instance_id, movie, outcome="no_file")
             continue
+        _log_movie_decision(instance_id, movie, outcome="candidate")
         tmdb_id = int(movie["tmdbId"]) if movie.get("tmdbId") else None
         ids = identity.ExternalIds.of(imdb=movie.get("imdbId"), tmdb=movie.get("tmdbId"))
         # The Plex library the operator mapped this movie's root folder to, if any. Tried ahead
@@ -1601,10 +1626,10 @@ def _raw_items(
         )
     if without_file:
         # Not unmatched, just nothing to reap yet: monitored in Radarr with no downloaded
-        # file. Counted (names at debug) so "no movie candidates" reads apart from "every
-        # movie was skipped", and a specific missing title can be traced.
+        # file. Each such movie emitted a greppable scan.movie_decision line (outcome=no_file)
+        # naming it; this INFO count is the snapshot-level summary, so "no movie candidates"
+        # reads apart from "every movie was skipped" without the per-item debug firehose.
         log.info("scan.movies_without_file", instance_id=instance_id, count=len(without_file))
-        log.debug("scan.movies_without_file_titles", instance_id=instance_id, titles=without_file)
     # The stale-mapping guard: warn once for a mapped library that never matched a candidate
     # library across this instance's movies (renamed library, or a wrong mapping). Advisory,
     # visible in the in-app Logs beside scan.plex_unmatched; never degrades or changes a verdict.
