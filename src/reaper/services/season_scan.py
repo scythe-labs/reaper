@@ -432,6 +432,24 @@ def build_season_facts(
         recent = Unknown(reason=no_key_reason, source="plex")
         all_time = Unknown(reason=no_key_reason, source="plex")
         streaming = Unknown(reason=no_key_reason, source="plex")
+        if show_match_status is identity.MatchStatus.MATCHED:
+            # The show bound to Plex, but this content-bearing season did not: Plex has no
+            # matching season (one it has not scanned yet, or a split/duplicate "Season n"
+            # that seasons_from_rows dropped as ambiguous). Its facts are Unknown, so it
+            # abstains and appears only as "kept to be safe", never on the reap list. The
+            # whole-show miss is warned once at resolve time (scan.plex_unmatched, above);
+            # this names the per-season gap so "why is this season kept" is answerable from
+            # the log. Same event, keyed by media_type. Only a MATCHED show warns here: an
+            # unmatched or ambiguous show already logged its miss once, and re-logging it
+            # per season would flood the log for one unresolved show.
+            log.warning(
+                "scan.plex_unmatched",
+                media_type="season",
+                title=title,
+                season=season.season_number,
+                match_status="unmatched",
+                detail=no_key_reason,
+            )
     else:
         # Dormancy is measured from THIS SEASON's own arrival date, never the show's -- a
         # season backfilled into an old show arrived recently even though the show is old,
@@ -446,6 +464,17 @@ def build_season_facts(
             reference = max(season_added_at, horizon)
             dormancy = Known(value=(utcnow() - reference).days, source="tautulli")
         else:
+            # Matched to a Plex season, but no arrival date and no play history, so dormancy
+            # cannot be measured and the season abstains: kept to be safe, never reaped. Warn
+            # so "why isn't this season reapable" is answerable from the log, the same as the
+            # movie path. Rare: a matched Plex season almost always carries an added_at.
+            log.warning(
+                "scan.no_added_at",
+                media_type="season",
+                title=title,
+                season=season.season_number,
+                plex_rating_key=plex_rating_key,
+            )
             dormancy = Unknown(reason="no added-at date for this season", source="tautulli")
         recent = Known(value=watchers_window or 0, source="tautulli")
         all_time = Known(value=watchers_all_time or 0, source="tautulli")

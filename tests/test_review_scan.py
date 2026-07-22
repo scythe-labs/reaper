@@ -743,11 +743,39 @@ class TestProtectionSyncDegradations:
         reasons = await protection_sync_degradations(cache_engine, {"reaper-keep": "error: boom"})
         assert any("reaper-keep" in r for r in reasons)
 
-    async def test_a_failed_curated_list_does_not_degrade(self, cache_engine: AsyncEngine) -> None:
-        """A soft curated list failing only loses a scoring nudge; it never unprotects a
-        kept title, so it does not make the snapshot un-executable."""
+    async def test_a_failed_curated_hard_list_with_no_members_degrades(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """A curated list feeds a HARD gate: its members are PROTECTED outright, so an empty
+        one fails OPEN exactly as an empty whitelist does. The gate protects nothing and a
+        scan could reap the very titles the list exists to save. The first sync of the IMDb
+        Top 250 failing must degrade the snapshot, not pass silently."""
         await _seed_list(cache_engine, slug="imdb-top-250", kind="curated", members=0)
         reasons = await protection_sync_degradations(cache_engine, {"imdb-top-250": "error: 503"})
+        assert any("imdb-top-250" in r for r in reasons)
+
+    async def test_a_failed_curated_hard_list_with_members_does_not_degrade_on_staleness(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """Recency is a keep-list concern. A curated external list churns slowly and its
+        stored copy keeps protecting, so a stale-but-populated one does not degrade: only
+        the whitelist applies the staleness bound."""
+        await _seed_list(
+            cache_engine,
+            slug="imdb-top-250",
+            kind="curated",
+            members=250,
+            last_synced_at=int((NOW - timedelta(days=30)).timestamp()),
+        )
+        reasons = await protection_sync_degradations(cache_engine, {"imdb-top-250": "error: 503"})
+        assert reasons == []
+
+    async def test_a_failed_soft_list_does_not_degrade(self, cache_engine: AsyncEngine) -> None:
+        """A SOFT-mode list only feeds a scoring nudge; losing it never unprotects a kept
+        title, so even an empty one does not make the snapshot un-executable. This is the
+        real axis: degrade on mode=hard, never on mode=soft."""
+        await _seed_list(cache_engine, slug="soft-list", kind="curated", mode="soft", members=0)
+        reasons = await protection_sync_degradations(cache_engine, {"soft-list": "error: 503"})
         assert reasons == []
 
     async def test_a_successful_sync_never_degrades(self, cache_engine: AsyncEngine) -> None:
@@ -756,9 +784,15 @@ class TestProtectionSyncDegradations:
 
 
 async def _seed_list(
-    engine: AsyncEngine, *, slug: str, kind: str, members: int, last_synced_at: int | None = None
+    engine: AsyncEngine,
+    *,
+    slug: str,
+    kind: str,
+    members: int,
+    mode: str = "hard",
+    last_synced_at: int | None = None,
 ) -> None:
-    """Write a protection_list row (with kind) and ``members`` membership rows."""
+    """Write a protection_list row (with mode + kind) and ``members`` membership rows."""
     from reaper.services import lists
 
     await lists.ensure_schema(engine)
@@ -767,10 +801,11 @@ async def _seed_list(
             text(
                 "INSERT INTO protection_list "
                 "(slug, display_name, mode, kind, weight, last_error, last_synced_at) "
-                "VALUES (:slug, :slug, 'hard', :kind, 0, 'error: boom', :synced) "
-                "ON CONFLICT(slug) DO UPDATE SET kind = :kind, last_synced_at = :synced"
+                "VALUES (:slug, :slug, :mode, :kind, 0, 'error: boom', :synced) "
+                "ON CONFLICT(slug) DO UPDATE SET mode = :mode, kind = :kind, "
+                "last_synced_at = :synced"
             ),
-            {"slug": slug, "kind": kind, "synced": last_synced_at},
+            {"slug": slug, "kind": kind, "mode": mode, "synced": last_synced_at},
         )
         for i in range(members):
             await conn.execute(

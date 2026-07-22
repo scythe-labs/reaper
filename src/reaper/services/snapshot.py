@@ -201,6 +201,19 @@ def build_facts(
     if rating_key is None:
         dormancy = Unknown(reason=no_key_reason, source="plex")
     elif item.added_at is None:
+        # Matched to Plex, but Plex reports no arrival date, so dormancy cannot be measured
+        # and the item abstains: it appears only as "kept to be safe", never on the reap
+        # list. Warn so "why isn't this reapable" is answerable from the log, the same as an
+        # unmatched item. Rare: a matched Plex item almost always carries an added_at.
+        log.warning(
+            "scan.no_added_at",
+            media_type="movie",
+            media_key=item.media_key,
+            title=item.title,
+            imdb_id=item.imdb_id or None,
+            tmdb_id=item.tmdb_id,
+            plex_rating_key=rating_key,
+        )
         dormancy = Unknown(reason="no added-at date", source="tautulli")
     else:
         played = last_played.get(rating_key)
@@ -1653,16 +1666,18 @@ async def sync_protection_lists(
 
     Three sources, each optional and each failing *soft*:
 
-    * **IMDb Top 250** -- no auth, always available. A curated (soft) hard-gate list.
+    * **IMDb Top 250** -- no auth, always available. A curated hard-gate list: its
+      membership protects outright, so an empty one must fail closed.
     * **``reaper-keep`` tag** -- one per Radarr instance. A whitelist.
     * **"Never Reap" Plex collection** -- curated in the Plex app itself. A whitelist.
 
     A provider that finds nothing is not an error (the owner may not have made the tag
     or collection yet). A provider that *fails* is recorded against its slug and does not
     abort the others -- but the caller can see which lists are stale, and a scan that
-    relied on a failed whitelist should treat itself as degraded rather than delete
-    something the list would have saved. The atomic-swap in ``lists.sync`` guarantees a
-    failed refresh leaves the previous membership intact rather than emptying it.
+    relied on a failed hard-gate list left with no stored copy should treat itself as
+    degraded rather than delete something the list would have protected. The atomic-swap
+    in ``lists.sync`` guarantees a failed refresh leaves the previous membership intact
+    rather than emptying it.
     """
     synced: dict[str, int | str] = {}
 
@@ -1765,22 +1780,29 @@ async def protection_sync_degradations(
 ) -> list[str]:
     """Which failed protection-list syncs must degrade the snapshot.
 
-    ``sync_protection_lists`` records a failed provider as ``"error: ..."`` and then only
-    the caller can decide what to do about it. Only **whitelist**-kind lists can fail
-    *open* (a curated soft-list that fails merely loses a scoring nudge; it never
-    unprotects a kept title), and a failed whitelist degrades the snapshot in three
-    cases, each resolving toward keeping files:
+    ``sync_protection_lists`` records a failed provider as ``"error: ..."`` and leaves the
+    caller to decide what to do about it. A list that feeds a **HARD** gate (it can PROTECT
+    a title outright) fails *open* when its stored copy is empty: the gate reads no members,
+    protects nothing, and an executable snapshot would reap the very titles the list exists
+    to save. So any failed HARD-mode list with no stored members degrades the snapshot,
+    whether it is a keep-list (whitelist) or a curated protected list such as the IMDb Top
+    250. A **SOFT** list only feeds a scoring nudge and never unprotects a kept title, so a
+    failure of one does not degrade.
 
-    * **No membership to fall back on.** A first scan, or a newly-added keep-list that
-      has never synced once: the WhitelistGate reads an empty keep-list and fails to
-      fire, so an executable snapshot would reap the very titles the list was meant to
-      save.
-    * **Stored membership older than ``WHITELIST_STALE_AFTER``.** The atomic swap in
-      ``lists.sync`` keeps the prior membership on a failed refresh, so a *fresh-enough*
-      copy still protects and a transient failure need not stop the scan -- but every
-      hour of staleness is an hour in which a newly keep-tagged title is unprotected, so
-      past the bound the snapshot degrades until a sync succeeds.
-    * **No record of a successful sync at all** (members present but no
+    Beyond the empty case, recency is a keep-list concern. The atomic swap in ``lists.sync``
+    keeps the prior membership on a failed refresh, so a populated list still protects -- but
+    a whitelist the owner actively adds to must reflect a title tagged since the last good
+    sync, so a stale or never-confirmed whitelist degrades too. Each case resolves toward
+    keeping files:
+
+    * **No membership to fall back on** (any HARD list). A first scan, or a newly-added
+      keep-list or curated list that has never synced once: the gate reads an empty list and
+      fails to fire, so an executable snapshot would reap titles the list was meant to save.
+    * **Stored membership older than ``WHITELIST_STALE_AFTER``** (whitelist only). Every hour
+      of staleness is an hour a newly keep-tagged title is unprotected, so past the bound the
+      snapshot degrades until a sync succeeds. A curated external list churns slowly and keeps
+      protecting from its stored copy; its staleness bound is a separate policy, not here.
+    * **No record of a successful sync at all** (whitelist only, members present but no
       ``last_synced_at``): recency cannot be confirmed, so it is not assumed.
     """
     await lists.ensure_schema(engine)
@@ -1792,15 +1814,20 @@ async def protection_sync_degradations(
                 continue
             row = (
                 await conn.execute(
-                    text("SELECT kind, last_synced_at FROM protection_list WHERE slug = :slug"),
+                    text(
+                        "SELECT mode, kind, last_synced_at FROM protection_list WHERE slug = :slug"
+                    ),
                     {"slug": slug},
                 )
             ).one_or_none()
-            kind = row[0] if row is not None else None
-            last_synced_at = row[1] if row is not None else None
-            # Only whitelist-kind lists fail *open* when empty. A missing row (never synced
-            # even once) is treated as whitelist-shaped -- fail closed rather than guess.
-            if kind is not None and str(kind) != lists.ListKind.WHITELIST.value:
+            mode = row[0] if row is not None else None
+            kind = row[1] if row is not None else None
+            last_synced_at = row[2] if row is not None else None
+            # Only a HARD-mode list feeds a PROTECT gate, so only it can fail *open* when its
+            # stored copy is empty. A SOFT list merely feeds a scoring nudge, and losing that
+            # never unprotects a kept title. A missing row (never synced even once) is treated
+            # as hard-shaped: fail closed rather than guess.
+            if mode is not None and str(mode) != lists.ListMode.HARD.value:
                 continue
             members = (
                 await conn.execute(
@@ -1809,14 +1836,23 @@ async def protection_sync_degradations(
                 )
             ).scalar_one()
             if int(members or 0) == 0:
+                # No stored members: the hard gate protects nothing, so the list fails OPEN,
+                # whether it is a keep-list (whitelist) or a curated protected list (e.g. the
+                # IMDb Top 250 whose first sync never landed). Either way a scan would reap
+                # the titles the list exists to protect, so degrade regardless of kind.
                 reasons.append(
-                    f"protection list '{slug}' failed to sync and its keep-list is empty: "
-                    "a scan must not reap titles the list would have saved"
+                    f"protection list '{slug}' failed to sync and its stored copy is empty: "
+                    "a scan must not reap titles the list would have protected"
                 )
                 continue
-            # Members exist, so the stored copy still protects -- but only a fresh-enough
-            # copy. last_synced_at is written only on success (lists.sync), so it IS the
-            # last successful sync; from_epoch returns None for a null or zero stamp.
+            # Members exist, so the stored copy still protects. Recency, though, is a keep-list
+            # concern: a title keep-tagged since the last good sync is unprotected until the
+            # whitelist refreshes. A curated external list churns slowly and keeps protecting
+            # from its stored copy, so the recency checks below apply to the whitelist only.
+            if kind is not None and str(kind) != lists.ListKind.WHITELIST.value:
+                continue
+            # last_synced_at is written only on success (lists.sync), so it IS the last
+            # successful sync; from_epoch returns None for a null or zero stamp.
             last_success = from_epoch(last_synced_at)
             if last_success is None:
                 reasons.append(

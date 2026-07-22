@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
+from structlog.testing import capture_logs
 
 from reaper.clients.plex import PlexError, PlexSeasonRow
 from reaper.clients.sonarr_stats import SeasonStats
@@ -319,6 +320,47 @@ class TestBuildSeasonFacts:
         unmatched = _facts(plex_rating_key=None, show_match_status=identity.MatchStatus.UNMATCHED)
         assert isinstance(unmatched.days_observed_unwatched, Unknown)
         assert unmatched.days_observed_unwatched.reason == "Plex has not matched this season"
+
+    def test_a_season_unmatched_within_a_matched_show_is_warned(self) -> None:
+        """The show bound to Plex but this season did not, so it abstains and shows only
+        as kept-to-be-safe. A warning names it so "why is this season kept" is answerable
+        from the log: the season-level twin of the movie and show miss."""
+        with capture_logs() as logs:
+            _facts(plex_rating_key=None, show_match_status=identity.MatchStatus.MATCHED)
+
+        warned = [e for e in logs if e["event"] == "scan.plex_unmatched"]
+        assert len(warned) == 1
+        assert warned[0]["log_level"] == "warning"
+        assert warned[0]["media_type"] == "season"
+
+    def test_a_season_of_an_unmatched_show_is_not_warned_again(self) -> None:
+        """When the whole show failed to bind, every season is Unknown too, but that miss
+        is already warned once at the show level. The per-season path stays quiet so one
+        unresolved show is not re-logged once per season."""
+        for status in (identity.MatchStatus.UNMATCHED, identity.MatchStatus.AMBIGUOUS, None):
+            with capture_logs() as logs:
+                _facts(plex_rating_key=None, show_match_status=status)
+            assert [e for e in logs if e["event"] == "scan.plex_unmatched"] == []
+
+    def test_a_matched_season_is_not_warned(self) -> None:
+        """A season that binds to Plex is silent: the warning fires only on a real miss."""
+        with capture_logs() as logs:
+            _facts(plex_rating_key=700, show_match_status=identity.MatchStatus.MATCHED)
+
+        assert [e for e in logs if e["event"] == "scan.plex_unmatched"] == []
+
+    def test_a_matched_season_with_no_arrival_date_is_warned(self) -> None:
+        """Matched to a Plex season, but no added-at and no plays: dormancy is Unknown, so
+        it abstains and shows only as kept-to-be-safe. A warning names it, the same as the
+        movie path. A distinct event from the unmatched case: this season DID bind."""
+        with capture_logs() as logs:
+            facts = _facts(plex_rating_key=700, last_played=None, season_added_at=None)
+
+        assert isinstance(facts.days_observed_unwatched, Unknown)
+        warned = [e for e in logs if e["event"] == "scan.no_added_at"]
+        assert len(warned) == 1
+        assert warned[0]["log_level"] == "warning"
+        assert warned[0]["media_type"] == "season"
 
     def test_a_resolved_season_has_known_dormancy(self) -> None:
         facts = _facts(plex_rating_key=700)

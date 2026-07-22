@@ -19,6 +19,7 @@ test that starts the app lifespan seeds instances from ``.env.local`` and kicks 
 """
 
 import pytest
+import structlog
 from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
 
@@ -36,6 +37,24 @@ _passwords._hasher = PasswordHash((Argon2Hasher(time_cost=1, memory_cost=8, para
 
 async def _no_catch_up(*_args: object, **_kwargs: object) -> None:
     return None
+
+
+@pytest.fixture(autouse=True)
+def _capturable_logs() -> None:
+    """Keep ``structlog.testing.capture_logs`` working across the whole suite.
+
+    ``configure_logging`` (called by ``test_foundations`` and by every ``create_app``
+    boot) sets ``cache_logger_on_first_use=True``. The first time a module logger is used
+    while that flag is live, structlog PERMANENTLY replaces that logger proxy's ``bind``
+    with a closure holding the then-current processors -- after which ``capture_logs``
+    can never intercept it, and even ``reset_defaults`` will not undo it. Left alone, the
+    flag persists across tests, so a scan logger materialized after one of those tests is
+    deaf to every later ``capture_logs`` assertion (an ordering-dependent failure in the
+    full suite that a single-file run never shows). Clearing the flag before each test
+    keeps capturable loggers from ever caching. Tests that assert on ``configure_logging``
+    itself call it inside their own body, so this starting state does not affect them.
+    """
+    structlog.configure(cache_logger_on_first_use=False)
 
 
 @pytest.fixture(autouse=True)

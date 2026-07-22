@@ -18,6 +18,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from structlog.testing import capture_logs
 
 from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
@@ -80,6 +81,29 @@ class TestARatingWeCouldNotLookUpIsUnknown:
         facts = _facts(_raw(imdb_id="tt0000001"), imdb={})
 
         assert isinstance(facts.imdb_rating_tenths, Absent)
+
+
+class TestAMatchedItemWithNoArrivalDateIsWarned:
+    """Matched to Plex but no ``added_at``: dormancy cannot be measured, so the item
+    abstains and shows only as kept-to-be-safe, never on the reap list. A warning names
+    it so "why isn't this reapable" is answerable from the log, the same as an unmatched
+    item."""
+
+    def test_a_matched_movie_with_no_added_at_is_warned(self) -> None:
+        with capture_logs() as logs:
+            facts = _facts(_raw(added_at=None))
+
+        assert isinstance(facts.days_observed_unwatched, Unknown)
+        warned = [e for e in logs if e["event"] == "scan.no_added_at"]
+        assert len(warned) == 1
+        assert warned[0]["log_level"] == "warning"
+        assert warned[0]["media_type"] == "movie"
+
+    def test_a_matched_movie_with_an_added_at_is_not_warned(self) -> None:
+        with capture_logs() as logs:
+            _facts(_raw())
+
+        assert [e for e in logs if e["event"] == "scan.no_added_at"] == []
 
 
 class TestASizeWeCouldNotReadIsUnknown:
