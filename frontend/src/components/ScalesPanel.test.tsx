@@ -211,7 +211,7 @@ describe("ScalesPanel", () => {
       />,
     );
     expect(screen.getByRole("heading", { name: /not in the last scan/i })).toBeInTheDocument();
-    expect(screen.getByText(/on your server, but set aside/i)).toBeInTheDocument();
+    expect(screen.getByText(/skipped by the last scan/i)).toBeInTheDocument();
     expect(screen.getByText(/A Missed Film/)).toBeInTheDocument();
   });
 

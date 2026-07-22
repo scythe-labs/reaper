@@ -179,6 +179,9 @@ class SeasonJudgment:
     title_slug: str | None = None
     tmdb_id: int | None = None
     imdb_id: str | None = None
+    # The show's TVDb id (Sonarr's native id), stamped on every season row. Often the only
+    # id a show and its Seerr request reliably share, so Scales joins on it (fairness).
+    tvdb_id: int | None = None
     content_rating: str | None = None
     runtime_minutes: int | None = None
     # The Plex library (section) the show lives in, stamped on every one of its seasons.
@@ -1486,6 +1489,7 @@ def _judge_series(
                 title_slug=title_slug,
                 tmdb_id=show_tmdb_id,
                 imdb_id=show_imdb_id,
+                tvdb_id=tvdb_id,
                 content_rating=item.show_content_rating,
                 runtime_minutes=item.show_runtime_minutes,
                 library=item.show_library,

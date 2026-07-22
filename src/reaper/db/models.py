@@ -469,6 +469,13 @@ class Candidate(Base):
     """The IMDb id at scan time (the *arr's, else the Plex-matched one) -- the show's for
     a season row. What the "open on IMDb" link needs. Display/link only."""
 
+    tvdb_id: Mapped[int | None] = mapped_column(Integer, default=None)
+    """The TVDb id at scan time: the SHOW's, stamped on every season row. NULL for a movie
+    (Radarr is tmdb-native) and for older rows scanned before this column existed. Sonarr is
+    tvdb-native, so this is often the only id a show and its Seerr request reliably share;
+    Scales joins requests to candidates on it (see services.fairness). Display/join, not a
+    verdict input; identity stays media_key."""
+
     title_slug: Mapped[str | None] = mapped_column(String(200), default=None)
     """Sonarr's titleSlug for the show, the coordinate its web routes key on. The show's
     value is stamped on every season row. Display/link only."""

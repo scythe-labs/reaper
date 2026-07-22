@@ -36,7 +36,7 @@ describe("NotInScanPanel", () => {
       />,
     );
     expect(screen.getByText(/added since the last scan/i)).toBeInTheDocument();
-    expect(screen.getByText(/on your server, but set aside/i)).toBeInTheDocument();
+    expect(screen.getByText(/skipped by the last scan/i)).toBeInTheDocument();
     expect(screen.getByText(/couldn't be matched/i)).toBeInTheDocument();
     expect(screen.getByText("New Arrival")).toBeInTheDocument();
     expect(screen.getByText("Kept Show")).toBeInTheDocument();
