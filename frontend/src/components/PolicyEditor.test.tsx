@@ -167,7 +167,7 @@ describe("a policy that couldn't be read", () => {
   it("stays quiet on an ordinary load", async () => {
     renderEditor({ body: body() });
 
-    await screen.findByText("Policy");
+    await screen.findByText("Movies policy");
     expect(screen.queryByText(/Your saved policy couldn't be read/)).not.toBeInTheDocument();
   });
 });

@@ -63,7 +63,7 @@ from reaper.config import Settings
 from reaper.db.models import Candidate, FirstFlagged, Instance, InstanceKind, PlexServer, Snapshot
 from reaper.db.models import Policy as PolicyModel
 from reaper.engine import facts_codec
-from reaper.engine.fields import Lane, vocabulary
+from reaper.engine.fields import Lane, MediaType, vocabulary
 from reaper.engine.gates import PROTECT, Evaluation, GateId, GateResult, evaluate_all
 from reaper.engine.policy import (
     ConditionSpec,
@@ -1536,12 +1536,14 @@ def _has_blocked_protections(explanation_json: str) -> bool:
 
 
 @router.get("/vocabulary")
-async def get_vocabulary(lane: Lane) -> VocabularyOut:
-    """The fields available in one lane.
+async def get_vocabulary(lane: Lane, media_type: MediaType | None = None) -> VocabularyOut:
+    """The fields available in one lane, for one policy's media type.
 
     Filtered **server-side, before serialization**. ``?lane=condemn`` never returns a
     protect-only field, so the browser is not even shown one -- a dangerous condition is
-    not merely rejected, it is unconstructable.
+    not merely rejected, it is unconstructable. ``&media_type=movie`` narrows it further:
+    a TV-only field like "the show has ended" is not offered on a movie policy. Omitting
+    ``media_type`` keeps every field, so older callers are unchanged.
     """
     return VocabularyOut(
         lane=lane,
@@ -1554,7 +1556,7 @@ async def get_vocabulary(lane: Lane) -> VocabularyOut:
                 unit_suffix=spec.unit_suffix,
                 ops=list(spec.ops),
             )
-            for spec in vocabulary(lane)
+            for spec in vocabulary(lane, media_type)
         ],
     )
 

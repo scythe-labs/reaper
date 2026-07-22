@@ -1232,8 +1232,10 @@ export const api = {
 
   policy: (mediaType: "movie" | "tv" = "movie") =>
     request<Policy>(`/api/policy?media_type=${mediaType}`),
-  vocabulary: (lane: "protect" | "condemn") =>
-    request<Vocabulary>(`/api/vocabulary?lane=${lane}`),
+  vocabulary: (lane: "protect" | "condemn", mediaType?: "movie" | "tv") =>
+    request<Vocabulary>(
+      `/api/vocabulary?lane=${lane}${mediaType ? `&media_type=${mediaType}` : ""}`,
+    ),
   /** Seen values for one field's input suggestions. Empty when nothing to suggest. */
   vocabularyValues: (field: string) =>
     request<FieldValues>(`/api/vocabulary/values?field=${encodeURIComponent(field)}`),

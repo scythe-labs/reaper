@@ -42,6 +42,13 @@ class Lane(enum.StrEnum):
     PROTECT = "protect"
 
 
+#: A policy governs one media type, and the two are tuned separately. A field may not
+#: apply to both: "the show has ended" is meaningless for a movie. Season scoring is
+#: derived from the TV policy, so the policy-level type is always "movie" or "tv".
+MediaType = Literal["movie", "tv"]
+ALL_MEDIA: tuple[MediaType, ...] = ("movie", "tv")
+
+
 class Op(enum.StrEnum):
     """Operators. Deliberately few, and typed.
 
@@ -204,6 +211,14 @@ class FieldSpec:
     ops: tuple[Op, ...]
     read: Callable[[Facts], Observation[object]]
 
+    media_types: tuple[MediaType, ...] = ALL_MEDIA
+    """Which policy this field applies to. Both by default. A TV-only field
+    (``show_ended``, ``season_rank``) is not offered on a movie policy: a movie has no
+    show and no season, so the rule would silently never fire. The API filters on this
+    before serializing, the same as ``lanes`` -- a movie policy cannot even build the
+    rule. A stale rule saved before this filter still reads Absent and only ever leans
+    toward keeping, so scoring is unaffected."""
+
     unit_suffix: str = ""
     """Rendered inside the input, so the unit cannot be misread."""
 
@@ -352,6 +367,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         ),
         type=FieldType.COUNT,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
+        media_types=("tv",),
         ops=NUMERIC_OPS,
         read=lambda f: f.season_rank,
         value_phrase="The {}",
@@ -457,6 +473,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         ),
         type=FieldType.BOOL,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
+        media_types=("tv",),
         ops=BOOL_OPS,
         read=lambda f: f.show_ended,
         true_phrase="The show has ended",
@@ -469,14 +486,21 @@ REGISTRY: tuple[FieldSpec, ...] = (
 BY_KEY: dict[str, FieldSpec] = {spec.key: spec for spec in REGISTRY}
 
 
-def vocabulary(lane: Lane) -> list[FieldSpec]:
-    """The fields available in one lane.
+def vocabulary(lane: Lane, media_type: MediaType | None = None) -> list[FieldSpec]:
+    """The fields available in one lane, optionally narrowed to one media type.
 
     The API calls this before serializing, so a protect-only field is never even
     offered to the condemn editor. A condemn rule referencing ``watchers_all_time``
-    is not rejected -- it cannot be built.
+    is not rejected -- it cannot be built. When ``media_type`` is given, a field that
+    does not apply to it (``show_ended`` on a movie policy) is dropped the same way, so
+    the editor only ever offers reasons that fit the policy being tuned. ``None`` keeps
+    every field, for callers that are not editing one media type in particular.
     """
-    return [spec for spec in REGISTRY if lane in spec.lanes]
+    return [
+        spec
+        for spec in REGISTRY
+        if lane in spec.lanes and (media_type is None or media_type in spec.media_types)
+    ]
 
 
 # ---------------------------------------------------------------------------

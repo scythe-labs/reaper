@@ -1260,6 +1260,26 @@ class TestVocabularyIsFilteredServerSide:
             assert field["label"]
             assert field["help_text"]
 
+    def test_a_movie_policy_is_not_offered_a_tv_only_field(self, client: TestClient) -> None:
+        """The editor asks with the policy's media type; a TV-only reason ("the show has
+        ended") is filtered server-side, so a movie policy cannot even build it."""
+        movie = {
+            f["key"]
+            for f in client.get("/api/vocabulary?lane=condemn&media_type=movie").json()["fields"]
+        }
+        tv = {
+            f["key"]
+            for f in client.get("/api/vocabulary?lane=condemn&media_type=tv").json()["fields"]
+        }
+
+        assert "show_ended" not in movie
+        assert "show_ended" in tv
+
+    def test_omitting_media_type_keeps_every_lane_field(self, client: TestClient) -> None:
+        unfiltered = {f["key"] for f in client.get("/api/vocabulary?lane=condemn").json()["fields"]}
+
+        assert "show_ended" in unfiltered
+
 
 class TestNothingCanDelete:
     def test_there_is_no_execution_route(self, client: TestClient) -> None:

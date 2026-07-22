@@ -573,6 +573,14 @@ button.link:hover:not(:disabled) {
   box-shadow: var(--shadow-sm);
   font-weight: 600;
 }
+/* The `fill` variant (Segmented `fill` prop): equal-width segments, so a short label
+   ("TV") and a long one ("Movies") both center in the track instead of the active pill
+   hogging its side. */
+.segmented.fill .seg {
+  flex: 1 1 0;
+  min-width: 5.25rem;
+  text-align: center;
+}
 
 /* ---- user menu ----------------------------------------------------------- */
 
@@ -1909,12 +1917,57 @@ a.rating-chip:hover {
   }
 }
 
-.policy-head {
+/* The policy context band: which media type you're tuning, colored by the arr that runs
+   it -- Radarr gold for movies, Sonarr blue for TV (the same brand tokens the Settings
+   kind badges wear). The two policies must never blur together, and the color doubles as
+   a pointer at the tool Reaper deletes through. The Movies/TV switch and the one-line
+   blurb both live inside, so the switch's context is never in doubt. */
+.policy-context {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
   flex-wrap: wrap;
+  padding: 0.8rem 1rem 0.85rem 1.05rem;
+  border: 1px solid var(--pc-edge);
+  border-left: 4px solid var(--pc-brand);
+  border-radius: var(--radius);
+  background: var(--pc-tint);
+  margin-bottom: 1.1rem;
+}
+/* Movies -> Radarr, TV -> Sonarr. The wash stays light (13%) so a gold band never reads
+   as the amber "we could not look" warning; the badge and left edge carry the brand at
+   full strength. */
+.policy-context.movie {
+  --pc-brand: var(--radarr);
+  --pc-tint: color-mix(in srgb, var(--radarr) 13%, var(--surface));
+  --pc-edge: color-mix(in srgb, var(--radarr) 50%, transparent);
+}
+.policy-context.tv {
+  --pc-brand: var(--sonarr);
+  --pc-tint: color-mix(in srgb, var(--sonarr) 13%, var(--surface));
+  --pc-edge: color-mix(in srgb, var(--sonarr) 50%, transparent);
+}
+.pc-left {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.pc-title {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+.policy-context h2 {
+  font-size: 1.15rem;
+  margin: 0;
+}
+/* The blurb, moved under the title inside the band: only top spacing, no big trailing
+   margin the standalone .blurb carries. */
+.pc-sub {
+  margin: 0.25rem 0 0;
 }
 
 .field {

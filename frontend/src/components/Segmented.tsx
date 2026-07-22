@@ -9,15 +9,19 @@ export function Segmented<T extends string>({
   options,
   onChange,
   label,
+  fill = false,
 }: {
   value: T;
   /** [value, visible text] pairs, in display order. */
   options: readonly (readonly [T, string])[];
   onChange: (next: T) => void;
   label: string;
+  /** Give every segment equal width, so short and long labels center in the track
+   *  instead of the active pill hogging its side. Off by default. */
+  fill?: boolean;
 }) {
   return (
-    <div className="segmented" role="group" aria-label={label}>
+    <div className={fill ? "segmented fill" : "segmented"} role="group" aria-label={label}>
       {options.map(([v, text]) => (
         <button
           key={v}

@@ -82,6 +82,39 @@ class TestTheLaneAsymmetry:
 
         assert condemn < protect
 
+    def test_a_tv_only_field_is_not_offered_on_a_movie_policy(self) -> None:
+        """A movie has no show and no season, so a rule on one would silently never
+        fire. The editor is narrowed by media type the same way it is by lane, so the
+        field cannot even be picked."""
+        movie_condemn = {s.key for s in vocabulary(Lane.CONDEMN, "movie")}
+        movie_protect = {s.key for s in vocabulary(Lane.PROTECT, "movie")}
+
+        assert "show_ended" not in movie_condemn
+        assert "season_rank" not in movie_condemn
+        assert "show_ended" not in movie_protect
+        assert "season_rank" not in movie_protect
+
+    def test_a_tv_only_field_is_offered_on_a_tv_policy(self) -> None:
+        tv_condemn = {s.key for s in vocabulary(Lane.CONDEMN, "tv")}
+
+        assert "show_ended" in tv_condemn
+        # season_rank stays a condemn field for TV, even though a built-in signal covers
+        # it in the editor -- the vocabulary offers it; the frontend hides the duplicate.
+        assert "season_rank" in tv_condemn
+
+    def test_a_field_that_applies_to_both_is_offered_either_way(self) -> None:
+        for media in ("movie", "tv"):
+            keys = {s.key for s in vocabulary(Lane.CONDEMN, media)}
+            assert "genre" in keys
+            assert "requested" in keys
+
+    def test_omitting_media_type_keeps_every_field(self) -> None:
+        """The default is unchanged behavior: no media filter, every lane field."""
+        assert {s.key for s in vocabulary(Lane.CONDEMN)} == {
+            s.key for s in vocabulary(Lane.CONDEMN, None)
+        }
+        assert "show_ended" in {s.key for s in vocabulary(Lane.CONDEMN)}
+
     def test_a_ruleset_validates_its_lane_on_construction(self) -> None:
         with pytest.raises(ValueError, match="cannot be used to remove things"):
             RuleSet(

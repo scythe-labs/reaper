@@ -882,13 +882,17 @@ function SuggestInput({
 function RemoveRulesEditor({
   condemn,
   onCondemn,
+  mediaType,
 }: {
   condemn: CustomCondemn[];
   onCondemn: (r: CustomCondemn[]) => void;
+  mediaType: "movie" | "tv";
 }) {
+  // Narrowed to the policy's media type, so a TV-only reason ("the show has ended")
+  // is never offered while tuning movies.
   const { data: condemnVocab } = useQuery({
-    queryKey: ["vocabulary", "condemn"],
-    queryFn: () => api.vocabulary("condemn"),
+    queryKey: ["vocabulary", "condemn", mediaType],
+    queryFn: () => api.vocabulary("condemn", mediaType),
   });
   const condemnAll = condemnVocab?.fields ?? [];
   // Only the new metadata fields, not those a built-in signal already scores.
@@ -1100,18 +1104,22 @@ function KeepRulesEditor({
   conditions,
   keeps,
   gateIds,
+  mediaType,
   onConditions,
   onKeeps,
 }: {
   conditions: Condition[];
   keeps: GradedKeep[];
   gateIds: string[];
+  mediaType: "movie" | "tv";
   onConditions: (c: Condition[]) => void;
   onKeeps: (k: GradedKeep[]) => void;
 }) {
+  // Same media-type narrowing as the remove editor, so a movie policy is never offered
+  // a keep rule on a field a movie does not have.
   const { data: vocab } = useQuery({
-    queryKey: ["vocabulary", "protect"],
-    queryFn: () => api.vocabulary("protect"),
+    queryKey: ["vocabulary", "protect", mediaType],
+    queryFn: () => api.vocabulary("protect", mediaType),
   });
   const allFields = vocab?.fields ?? [];
   // Only offer fields that aren't already a built-in protection above.
@@ -1701,11 +1709,28 @@ export function PolicyEditor({
   return (
     <section className="editor">
       <div className="editor-controls">
-        <div className="policy-head">
-          <h2>Policy</h2>
+        {/* The context band: which policy you're editing, colored by the arr that runs
+            it -- Radarr (gold) for movies, Sonarr (blue) for TV, reusing the Settings
+            service-badge tokens. The switch lives inside it so there's never any doubt
+            which policy the controls below belong to, and the blurb sits under the title. */}
+        <div className={`policy-context ${mediaType === "tv" ? "tv" : "movie"}`}>
+          <div className="pc-left">
+            <div className="pc-title">
+              <span className={`kind-badge kind-${mediaType === "tv" ? "sonarr" : "radarr"}`}>
+                {mediaType === "tv" ? "Sonarr" : "Radarr"}
+              </span>
+              <h2>{mediaType === "tv" ? "TV policy" : "Movies policy"}</h2>
+            </div>
+            <p className="blurb pc-sub">
+              {mediaType === "tv"
+                ? "How Reaper judges TV: seasons, not whole shows. Tuned separately from movies."
+                : "How Reaper judges your movies. TV is tuned separately, with the toggle."}
+            </p>
+          </div>
           <div className="policy-head-actions">
             {/* switchMediaType holds the two-step confirm when the draft has unsaved edits. */}
             <Segmented
+              fill
               value={mediaType}
               onChange={switchMediaType}
               label="Which policy"
@@ -1762,11 +1787,6 @@ export function PolicyEditor({
             </button>
           </div>
         )}
-        <p className="blurb">
-          {mediaType === "tv"
-            ? "How Reaper judges TV: seasons, not whole shows. Tuned separately from movies."
-            : "How Reaper judges your movies. TV is tuned separately, with the toggle."}
-        </p>
 
         <nav className="settings-nav policy-rail" aria-label="Policy sections">
           {SECTIONS.map((s) => (
@@ -1907,6 +1927,7 @@ export function PolicyEditor({
 
         <RemoveRulesEditor
           condemn={draft.custom_condemn}
+          mediaType={mediaType}
           onCondemn={(custom_condemn) => update({ custom_condemn })}
         />
         <WarnBlock warnings={warningsFor((f) => f === "custom_condemn")} />
@@ -2147,6 +2168,7 @@ export function PolicyEditor({
           // Only protections that are ON hide their field from custom keeps: a disabled
           // gate protects nothing, so its field must stay authorable here.
           gateIds={draft.gates.filter((g) => g.enabled).map((g) => g.gate)}
+          mediaType={mediaType}
           onConditions={(protect_conditions) => update({ protect_conditions })}
           onKeeps={(graded_keeps) => update({ graded_keeps })}
         />
