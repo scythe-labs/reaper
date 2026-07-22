@@ -6057,25 +6057,38 @@ button.danger:hover:not(:disabled) {
   gap: 0.6rem;
 }
 
-/* password form (safety) + quantity input (units) + lazy sentinel */
+/* The Security panel's admin-password form. It rides the same .safety-row grammar as the rest
+   of Settings -- heading on the left, control on the right -- with the fields in a labeled
+   .field-sm column pinned right and capped at a quarter width so it isn't one long box across
+   the panel. `align-items: flex-start` keeps the heading at the top beside a tall form; on a
+   phone the row wraps and the column goes full width (a quarter would be unreadably narrow). */
+.safety-row.pw-row {
+  align-items: flex-start;
+}
+.pw-col {
+  width: 25%;
+  min-width: 15rem;
+  max-width: 100%;
+}
 .pw-form {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 0.7rem;
 }
-.pw-form input {
-  padding: 0.42rem 0.6rem;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--bg);
-  color: var(--text);
-  font: inherit;
-  min-width: 12rem;
+.pw-form .field-sm input {
+  width: 100%;
 }
-.pw-form input:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
+/* The line between "prove who you are" (current password) and "set the new one". */
+.pw-sep {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 0.15rem 0;
+}
+@media (max-width: 640px) {
+  .pw-col {
+    width: 100%;
+    min-width: 0;
+  }
 }
 
 /* THE quantity control: one bordered box holding the number and its unit, whether the
