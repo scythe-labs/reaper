@@ -14,8 +14,8 @@
 // wired for Radarr movie deletes; on Sonarr it is stored but inert (Reaper prunes seasons,
 // not whole series), and the help text says so rather than pretending otherwise.
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Fragment, useEffect, useState } from "react";
 import { api, type Instance, type InstanceTest } from "../api";
 import { ModalShell } from "./ModalShell";
 import { Switch } from "./Switch";
@@ -143,6 +143,61 @@ export function ServiceModal({
   // Only Sonarr and Radarr delete, so only they carry the re-download switch.
   const isArr = kind === "radarr" || kind === "sonarr";
 
+  // The HD/4K library map: which Plex library each of this instance's root folders lands in.
+  // Only for a saved *arr, whose folders we can read. `suggestedRoots` marks the rows still
+  // holding an auto-suggested value the operator has not yet confirmed by picking.
+  const [libMap, setLibMap] = useState<Record<string, string>>(instance?.plex_library_map ?? {});
+  const [suggestedRoots, setSuggestedRoots] = useState<Set<string>>(new Set());
+  const mapEditable = editing && isArr;
+  const libKind = kind === "sonarr" ? "show" : "movie";
+
+  const rootFolders = useQuery({
+    queryKey: ["instance-root-folders", instance?.id],
+    queryFn: () => api.instanceRootFolders(instance!.id),
+    enabled: mapEditable,
+  });
+  const plexLibraries = useQuery({
+    queryKey: ["plexLibraries"],
+    queryFn: api.plexLibraries,
+    enabled: mapEditable,
+  });
+  const libOptions = (plexLibraries.data ?? []).filter((l) => l.kind === libKind);
+
+  // Prefill each unmapped folder with its suggested library, marked "suggested" until the
+  // operator confirms it. A folder already in the stored map is left as saved, never
+  // overwritten by a suggestion, and never marked. Keyed on the folder list's identity.
+  const savedMap = instance?.plex_library_map ?? {};
+  useEffect(() => {
+    const folders = rootFolders.data;
+    if (!folders) return;
+    setLibMap((prev) => {
+      const next = { ...prev };
+      for (const f of folders) {
+        if (!(f.path in next) && f.suggested_library) next[f.path] = f.suggested_library;
+      }
+      return next;
+    });
+    setSuggestedRoots((prev) => {
+      const next = new Set(prev);
+      for (const f of folders) {
+        if (!(f.path in savedMap) && f.suggested_library) next.add(f.path);
+      }
+      return next;
+    });
+    // savedMap is derived from the immutable `instance` prop, so the folder data drives this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rootFolders.data]);
+
+  const setFolderLibrary = (path: string, library: string) => {
+    setLibMap((m) => ({ ...m, [path]: library }));
+    // Picking (even the same value) confirms the row, so the "suggested" tag clears.
+    setSuggestedRoots((s) => {
+      const next = new Set(s);
+      next.delete(path);
+      return next;
+    });
+  };
+
   // A full URL pasted into the hostname field is split across the fields instead of
   // being stored as a "hostname" that silently contains a scheme and port.
   const onHostChange = (value: string) => {
@@ -186,10 +241,22 @@ export function ServiceModal({
           api_key?: string;
           verify_tls?: boolean;
           add_import_exclusion?: boolean;
+          plex_library_map?: Record<string, string>;
         } = { name, base_url: baseUrl(), enabled };
         if (apiKey) body.api_key = apiKey; // blank keeps the stored key
         if (ssl) body.verify_tls = verifyCert; // over plain http the setting is moot; keep it stored
         if (isArr) body.add_import_exclusion = addExclusion;
+        // Only send the map when we have the authoritative folder list: build it from the
+        // current folders (dropping any stale ones) and their non-empty picks. If the folders
+        // could not be read, omit it entirely so the stored map is preserved, never cleared.
+        if (mapEditable && rootFolders.data) {
+          const map: Record<string, string> = {};
+          for (const f of rootFolders.data) {
+            const chosen = libMap[f.path];
+            if (chosen) map[f.path] = chosen;
+          }
+          body.plex_library_map = map;
+        }
         return api.updateInstance(instance.id, body);
       }
       const createBody: {
@@ -317,6 +384,58 @@ export function ServiceModal({
             autoComplete="off"
           />
         </label>
+        {mapEditable && (
+          <div className="field-sm plex-map">
+            <span className="field-label">Plex libraries</span>
+            {rootFolders.isPending ? (
+              <p className="help">Reading this instance's folders…</p>
+            ) : rootFolders.error ? (
+              <p className="notice notice-warn">
+                Reaper couldn't read this instance's folders. Test the connection above, then
+                reopen this to map them.
+              </p>
+            ) : rootFolders.data && rootFolders.data.length > 0 ? (
+              <>
+                <div className="plex-map-grid">
+                  {rootFolders.data.map((f) => (
+                    <Fragment key={f.path}>
+                      <div className="pl-root">{f.path}</div>
+                      <div className="pl-pick">
+                        <select
+                          className={`pl-select${libMap[f.path] ? "" : " unset"}`}
+                          value={libMap[f.path] ?? ""}
+                          onChange={(e) => setFolderLibrary(f.path, e.target.value)}
+                        >
+                          <option value="">Not set</option>
+                          {libOptions.map((l) => (
+                            <option key={l.key} value={l.title}>
+                              {l.title}
+                            </option>
+                          ))}
+                        </select>
+                        {suggestedRoots.has(f.path) && <span className="pl-suggested">suggested</span>}
+                      </div>
+                    </Fragment>
+                  ))}
+                </div>
+                {!plexLibraries.isPending && libOptions.length === 0 ? (
+                  <p className="help">
+                    No Plex libraries yet. Sync them in Plex settings first, then pick one per folder.
+                  </p>
+                ) : (
+                  <p className="help">
+                    Which Plex library each folder lands in. This tells an HD copy from a 4K one
+                    when the same title is in two libraries. Matches are suggested from your
+                    folders. Leave a folder on "Not set" to keep both copies when they can't be
+                    told apart.
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="help">This instance reports no root folders to map.</p>
+            )}
+          </div>
+        )}
         {editing && (
           <label className="toggle">
             <Switch checked={enabled} onChange={setEnabled} />

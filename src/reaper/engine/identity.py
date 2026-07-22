@@ -29,7 +29,18 @@ regional titles). The ladder, top to bottom:
    copies (split HD/4K sections, a curated section re-listing a title); the *arr item's
    own file name may then pick the copy -- compared only among that id's candidates, with
    every candidate's file names known. A name matching exactly one candidate binds it. A
-   name matching *several* gets a second corroborator, the folder the copy sits in. The
+   name matching *several* is first narrowed by the **operator's library map**, the one
+   corroborator that is ground truth rather than inference: in Settings each *arr root folder
+   is mapped to the Plex library its content lands in, so a listing in any *other* library is
+   not this instance's copy and is dropped. It only narrows this id's own candidates, never
+   looks wider, and stands down (changing nothing, keeping the file) wherever the partition is
+   not trustworthy -- no library mapped for this item, a candidate whose own library Plex did
+   not report, a byte-identical twins group the size step must merge whole, or a mapped library
+   holding none of the candidates (a stale or mistaken mapping, which the scan warns about
+   rather than mis-binding). It is what tells one title kept in both an HD and a 4K library
+   apart when nothing in the path can: a show has no size and its folder is identical in both,
+   so the map is the only discriminator a show ever gets.
+   A name still matching *several* gets a second corroborator, the folder the copy sits in. The
    *arr's own root is read from that instance's root folder list and passed in, never
    guessed at a fixed depth, which turns its path into the item's path *relative to its
    library*; the one candidate whose Plex path **ends with** those exact segments is the
@@ -290,6 +301,57 @@ def root_folder_paths(payload: object) -> tuple[str, ...]:
     return tuple(paths)
 
 
+def library_for_path(file_path: str | None, library_map: Mapping[str, str] | None) -> str | None:
+    """The Plex library the operator mapped this item's root folder to, or ``None``.
+
+    ``library_map`` is one *arr instance's ``{root folder path: Plex library title}`` map. The
+    item's root is the *longest* mapped root whose segments prefix the item's path (compared as
+    normalized segments via :func:`to_segments`, so a trailing slash, doubled separator or case
+    difference cannot make a real root miss), and its mapped library is returned. ``None`` when
+    there is no map, the path is empty, or no mapped root prefixes it -- all of which leave the
+    item unmapped, which the resolver reads as "no library declared" and keeps today's behavior.
+    Longest-match, so an instance mapping both ``/tv`` and ``/tv/anime`` sends a series under the
+    latter to the anime library, not the general one.
+    """
+    if not library_map:
+        return None
+    segments = to_segments(file_path)
+    if not segments:
+        return None
+    best_root: str | None = None
+    best_depth = 0
+    for root in library_map:
+        root_segments = to_segments(root)
+        depth = len(root_segments)
+        if depth == 0 or depth > len(segments):
+            continue
+        if segments[:depth] == root_segments and depth > best_depth:
+            best_depth = depth
+            best_root = root
+    return library_map[best_root] if best_root is not None else None
+
+
+def libraries_for_ids(ids: ExternalIds, index: PlexIndex, id_priority: Sequence[str]) -> set[str]:
+    """The case-folded Plex library titles an item's ids name across *all* their hits.
+
+    For the stale-mapping guard only: if the operator mapped an item's folder to a library that
+    appears nowhere among that item's candidate listings, the scan warns the mapping is likely
+    wrong or renamed (services.season_scan / snapshot) rather than let it silently mis-bind.
+    Case-folded to match :func:`_same_library`. Never used to bind -- that is
+    :func:`_narrow_among_id_hits`.
+    """
+    libs: set[str] = set()
+    for kind in id_priority:
+        value = ids.get(kind)
+        if value is None:
+            continue
+        for rk in index._by_id(kind).get(value, []):
+            lib = index.by_rating_key[rk].library
+            if lib:
+                libs.add(lib.strip().casefold())
+    return libs
+
+
 def _plex_size_of(rating_key: int, basename: str, index: PlexIndex) -> int | None:
     """This listing's byte size for the file with this name, or ``None`` if unknowable.
 
@@ -333,6 +395,19 @@ def _size_unconfirmed(
     twice is correctly read as unknown and abstains.
     """
     return file_size is not None and _plex_size_of(rating_key, basename, index) is None
+
+
+def _same_library(candidate: str | None, mapped: str) -> bool:
+    """Whether a Plex listing's own library is the one the operator mapped this folder to.
+
+    Compared case- and whitespace-folded: the mapped value is a stored copy of the library's
+    own title (Plex library names are unique per server, so the title is a stable key), and an
+    operator may have re-cased or padded it. A listing whose library is unknown never matches
+    here, but the caller requires *every* candidate's library to be known before the map is
+    consulted at all -- so unknown is handled there, deliberately, never silently as
+    "different".
+    """
+    return candidate is not None and candidate.strip().casefold() == mapped.strip().casefold()
 
 
 def _ends_with(path_segments: Sequence[str], suffix: Sequence[str]) -> bool:
@@ -452,8 +527,12 @@ class PlexItem:
     (see reaper.ratings) -- never bare numbers whose meaning was guessed."""
     library: str | None = None
     """The library (section) title this item was listed under, as the operator named it.
-    Display and filter only; carried onto the candidate. For a show it is the show's
-    section, inherited by every season row. None when the section is unknown."""
+    Carried onto the candidate for display, and -- since the operator's library map landed --
+    consulted in matching: when an id names copies in two libraries, the one whose ``library``
+    equals the operator's mapping for this item's root folder is bound (:func:`_same_library`,
+    :func:`_narrow_among_id_hits`). For a show it is the show's section, inherited by every
+    season row. None when the section is unknown, which stands the library step down rather than
+    counting as a mismatch."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -713,6 +792,7 @@ def _narrow_among_id_hits(
     file_path: str | None = None,
     arr_roots: Sequence[str] | None = (),
     arr_layout_depth: int = 2,
+    plex_library: str | None = None,
 ) -> tuple[tuple[int, ...], str]:
     """The Tier-1 candidates provably holding this *arr item's file, or why none could be.
 
@@ -725,7 +805,22 @@ def _narrow_among_id_hits(
     whose files we could not see might be the very file this item manages, so "could not
     look" abstains rather than counting as "looked and it was different".
 
-    A name matching SEVERAL candidates gets one more corroborator before size: the folder
+    A name matching SEVERAL candidates is first narrowed by ``plex_library`` when the operator
+    set one: the Plex library this item's root folder is mapped to (Settings). Unlike the
+    folder and size corroborators, which infer the copy from evidence, this is the operator's
+    own declaration of where an instance's content lives, so a candidate in any *other* library
+    is not this instance's copy and is dropped. It only ever narrows this id's candidates and
+    stands down (changing nothing) wherever the partition is untrustworthy: any candidate whose
+    own library Plex did not report (``_same_library`` never treats unknown as different), or a
+    byte-identical twins group among the matches (the size branch must merge those whole rather
+    than fragment one file by library). A single survivor binds it, unless its own size cannot
+    be checked (stand down, let size decide) or its size positively contradicts the *arr's byte
+    count (abstain, corroborate-or-silent). A mapped library holding *none* of the candidates is
+    a stale or mistaken mapping: the map narrows to nothing and is simply ignored here, and the
+    caller warns separately -- never a silent mis-bind. A show has no size and no usable folder,
+    so this is the only thing that ever tells two same-name show listings apart.
+
+    A name still matching SEVERAL candidates gets one more corroborator before size: the folder
     the copy lives *under* (:func:`_narrow_by_path_depth`). Comparing whole paths would be
     wrong -- the mount roots differ (:func:`to_basename` exists for that reason) -- so the
     *arr side is cut back to what sits below **that instance's own reported root folder**
@@ -801,6 +896,45 @@ def _narrow_among_id_hits(
         return (matched[0],), f"file name {basename!r}"
     if not matched:
         return (), "this item's file name matches none of them"
+
+    # The operator's library map is ground truth about which library this instance's copies
+    # live in, so it is applied before the inferred corroborators (folder, then size). It only
+    # ever NARROWS this id's own name-matched candidates -- a listing in another library is not
+    # this instance's copy -- and never looks wider. It stands down in every shape where the
+    # partition cannot be trusted: any candidate whose own library is unknown (could-not-look
+    # is never "different"), or a byte-identical twins group the size branch must merge whole.
+    # A mapped library holding none of the candidates narrows to nothing and is ignored here;
+    # the scan warns about that stale mapping separately (season_scan / snapshot), never a
+    # silent mis-bind.
+    if (
+        plex_library is not None
+        and len(matched) > 1
+        and all(index.by_rating_key[rk].library is not None for rk in matched)
+        and not _twin_group(matched, basename, file_size, index)
+    ):
+        in_library = [
+            rk for rk in matched if _same_library(index.by_rating_key[rk].library, plex_library)
+        ]
+        if len(in_library) == 1:
+            winner = in_library[0]
+            if not _size_unconfirmed(winner, basename, file_size, index):
+                # The library named one copy; where a byte size can be checked it must agree.
+                if _size_contradicts(winner, basename, file_size, index):
+                    # Library names one copy, the exact size names another: a positive
+                    # contradiction. Corroborate-or-silent, never contradict -- keep the file.
+                    return (), (
+                        "the Plex library set for its folder and its file size "
+                        "point at different copies"
+                    )
+                return (winner,), f"file name {basename!r} and the Plex library set for its folder"
+            # else: the winner's size cannot be checked while another copy might match the byte
+            # count exactly. Stand the library step down and let size decide, exactly as the
+            # folder step does -- a show, having no size, is never unconfirmed and binds above.
+        elif len(in_library) >= 2:
+            # Several same-name copies in the one mapped library: the library cannot split them.
+            # Narrow to just those and let the folder/size ladder try. A show has neither, so
+            # two same-name listings in one mapped library abstain and are kept.
+            matched = in_library
 
     # Several listings hold a file with this very name. Before size, try the folder each
     # copy lives under: the one listing whose path ends with this item's library-relative
@@ -898,6 +1032,7 @@ def resolve(
     file_path: str | None = None,
     root_folders: Sequence[str] | None = (),
     arr_layout_depth: int,
+    plex_library: str | None = None,
     index: PlexIndex,
     id_priority: Sequence[str],
 ) -> Resolution:
@@ -913,7 +1048,10 @@ def resolve(
     strictly below the instance's own root folder. ``root_folders`` is that instance's real
     root folder paths, read from its ``/rootfolder`` list; without them the path evidence
     is unusable (nothing in a path says where a mount root ends) and the folder step stands
-    down, leaving size, and failing that an abstain.
+    down, leaving size, and failing that an abstain. ``plex_library`` is the Plex library the
+    operator mapped this item's root folder to (Settings); when set it narrows an ambiguous id
+    to that library *before* the folder and size corroborators, since it is the operator's own
+    declaration rather than inference (see :func:`_narrow_among_id_hits`).
     All of these are corroborators *inside* an id's own answer set; none is ever a lookup
     into the wider library.
     """
@@ -965,7 +1103,14 @@ def resolve(
             # _narrow_among_id_hits). The wider library is never consulted to break the
             # tie, and any residual ambiguity abstains.
             narrowed, text = _narrow_among_id_hits(
-                hits, basename, file_size, index, file_path, root_folders, arr_layout_depth
+                hits,
+                basename,
+                file_size,
+                index,
+                file_path,
+                root_folders,
+                arr_layout_depth,
+                plex_library,
             )
             if not narrowed:
                 return Resolution.abstain(
@@ -1053,6 +1198,7 @@ def resolve_movie(
     file_size: int | None = None,
     file_path: str | None = None,
     root_folders: Sequence[str] | None = (),
+    plex_library: str | None = None,
     index: PlexIndex,
 ) -> Resolution:
     """Bind a movie: id priority tmdb then imdb.
@@ -1065,7 +1211,10 @@ def resolve_movie(
     movie at ``<root>/<Title>/<file>``, so the root is what tells the real folder apart
     from the container's mount point. Supply none and the folder step stands down: a movie
     then leans on its exact byte size, and where that cannot separate the copies either,
-    the item abstains and is kept.
+    the item abstains and is kept. ``plex_library`` is the Plex library the operator mapped
+    this movie's root folder to; when set it narrows an ambiguous id to that library ahead of
+    folder and size, but a positive size contradiction still vetoes it (a movie keeps every
+    corroborator it had).
     """
     return resolve(
         ids=ids,
@@ -1075,6 +1224,7 @@ def resolve_movie(
         file_size=file_size,
         file_path=file_path,
         root_folders=root_folders,
+        plex_library=plex_library,
         # Radarr writes <root>/<Title>/<file>: two segments below the root.
         arr_layout_depth=2,
         index=index,
@@ -1090,25 +1240,28 @@ def resolve_show(
     file_basename: str | None,
     file_path: str | None = None,
     root_folders: Sequence[str] | None = (),
+    plex_library: str | None = None,
     index: PlexIndex,
 ) -> Resolution:
     """Bind a show: id priority tvdb (Sonarr's primary key).
 
     No ``file_size``: a show is bound by its folder, and a folder has no one size -- so
     two same-name folder listings under one id can never be told apart by size, and never
-    merge. ``file_path`` is the folder's full path and is the *only* corroborator a show
-    has once the leaf ties; ``root_folders`` is this Sonarr instance's own root folder
-    paths, without which that path cannot be read (:func:`_below_arr_root`).
+    merge. ``file_path`` is the folder's full path; ``root_folders`` is this Sonarr instance's
+    own root folder paths, without which that path cannot be read (:func:`_below_arr_root`).
 
-    Be clear about the reach this leaves a show: **none.** Sonarr reports a series at
+    The *path* leaves a show no reach, and that is deliberate: Sonarr reports a series at
     ``<root>/<Show>``, so below the root there is only the show name -- the leaf both copies
-    already matched on -- and a *deeper* path means the reported root is not this item's
-    real root, which stands the step down too (``arr_layout_depth`` is 1 here). A show
-    narrows in no layout, nested or flat. Every ambiguous show abstains and is kept,
-    including the case where the two libraries are told apart by their root paths alone:
-    that distinction is not in the part of the path we can trust, and inventing a rule from
-    the roots' own names would mis-bind two instances that mount alike. See
-    :func:`_narrow_by_path_depth`.
+    already matched on -- and a *deeper* path means the reported root is not this item's real
+    root, which stands the folder step down too (``arr_layout_depth`` is 1 here). A show
+    narrows by path in no layout, nested or flat, and inferring the copy from the roots' own
+    names would mis-bind two instances that mount alike (see :func:`_narrow_by_path_depth`).
+
+    ``plex_library`` is what changes that. It is not inference from the path but the operator's
+    own declaration -- each root folder mapped, in Settings, to the Plex library its content
+    lands in -- so it can tell one title kept in both an HD and a 4K library apart where the
+    path never could. When it is not set, a show falls back to the old behavior: every
+    ambiguous show abstains and is kept.
     """
     return resolve(
         ids=ids,
@@ -1118,9 +1271,12 @@ def resolve_show(
         file_size=None,
         file_path=file_path,
         root_folders=root_folders,
+        plex_library=plex_library,
         # Sonarr writes <root>/<Show>: one segment below the root, which is the folder leaf
         # both sides already matched on. So the folder step has no new evidence for a show
-        # and always stands down -- see _narrow_by_path_depth.
+        # and always stands down -- see _narrow_by_path_depth. The library map (plex_library)
+        # is the one thing that can narrow a show, and it is the operator's declaration, not
+        # the path.
         arr_layout_depth=1,
         index=index,
         id_priority=_SHOW_ID_PRIORITY,

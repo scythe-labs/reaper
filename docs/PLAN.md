@@ -7,11 +7,31 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-21 (one filter control replaces the review-queue dropdown row, a Plex
-library label rides every card and panel, and migrations went additive-only now that testers
-have data)
+Last updated: 2026-07-21 (an operator can map each *arr root folder to a Plex library, so a
+title kept in both an HD and a 4K library is bound to the right copy instead of abstaining)
 
-### Newest — one filter control, a library label, and additive migrations
+### Newest — the HD/4K library map tells a duplicated title's two copies apart
+
+The reported regression turned out not to be one: the third review pass (`4a52576`) deliberately
+removed the path-based show disambiguation after 60k randomized cases showed it bound the *wrong*
+copy, and documented that a duplicated show must abstain. The scanner optimization was not
+involved. The fix is a new signal, not a revert: each Sonarr/Radarr **root folder** is mapped, in
+the edit-instance modal, to the **Plex library** its content lands in (suggested from the folder
+paths, operator confirms). Keyed on the root folder, not the instance, so one instance feeding many
+libraries just maps each folder; many instances feeding one library is many-to-one.
+
+Stored as `instance.plex_library_map` (a nullable JSON column, additive revision
+`add_instance_plex_library_map`; NULL reads as "no map" and keeps the old abstain-and-keep). At
+resolve time the map narrows an ambiguous id to the mapped library **before** the folder and size
+corroborators (`identity._narrow_among_id_hits`), because it is the operator's declaration, not an
+inference. It only ever narrows the id's own candidates and stands down -- keeping the file -- on
+every untrustworthy shape (a candidate whose library is unknown, byte-identical twins, or a mapped
+library holding none of the copies); a movie's size still vetoes a contradicting map. A stale or
+renamed mapping is surfaced as a `scan.stale_library_map` log warning, never a silent mis-bind. Two
+copies in the *one* mapped library still abstain. Endpoint `GET /instances/{id}/root-folders`
+returns the folders with a suggested library each; the map rides `updateInstance`.
+
+### One filter control, a library label, and additive migrations
 
 Two operator asks plus a policy change. **The filter row stopped growing.** The review queue's
 four fixed dropdowns (type, Seerr, genre, override) collapsed into one **＋ Filter** control: a

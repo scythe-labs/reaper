@@ -19,7 +19,9 @@ Two rules run through everything below:
 
 from __future__ import annotations
 
+import json
 import ssl
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import httpx
@@ -35,6 +37,7 @@ from reaper.clock import utcnow
 from reaper.config import RuntimeSafety
 from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind
+from reaper.engine import identity
 
 log = structlog.get_logger(__name__)
 
@@ -83,6 +86,7 @@ class InstanceView:
     enabled: bool
     verify_tls: bool
     add_import_exclusion: bool
+    plex_library_map: dict[str, str]
     has_key: bool
     api_path_prefix: str
     detected_version: str | None
@@ -97,6 +101,84 @@ class TestResult:
     version: str | None = None
 
 
+def decode_library_map(raw: str | None) -> dict[str, str]:
+    """The stored HD/4K library map as a ``{root folder: Plex library}`` dict, or ``{}``.
+
+    A missing, malformed, or wrong-typed body reads as an empty map -- never a crash, and
+    never a partial guess. A bad map must be exactly as harmless as an absent one: the
+    resolver reads ``{}`` as "no library declared" and keeps a duplicated title (rule 32,
+    a stored config must not be able to crash a scan).
+    """
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {
+        k.strip(): v.strip()
+        for k, v in data.items()
+        if isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip()
+    }
+
+
+def _shared_suffix(left: Sequence[str], right: Sequence[str]) -> int:
+    """How many trailing path segments two paths share, compared from the leaf back."""
+    depth = 0
+    for a, b in zip(reversed(left), reversed(right), strict=False):
+        if a != b:
+            break
+        depth += 1
+    return depth
+
+
+def suggest_library(root_path: str, section_paths: Mapping[str, Sequence[str]]) -> str | None:
+    """The Plex library a root folder most likely lands in, or ``None`` for "cannot tell".
+
+    A *prefill only* -- the operator confirms it in Settings, so this may guess where the
+    resolver never would. ``section_paths`` is ``{library title: [that library's folder paths]}``.
+    Each library is scored by the deepest trailing-segment overlap between the root folder and
+    any of its folders (the same mount-root-agnostic comparison the resolver uses: ``/tv-4k``
+    and Plex's ``/media/tv-4k`` share the ``tv-4k`` leaf). The strictly-deepest library wins; a
+    tie or no overlap suggests nothing, so the operator picks rather than get a coin-flip.
+    """
+    root_segs = identity.to_segments(root_path)
+    if not root_segs:
+        return None
+    best_title: str | None = None
+    best_depth = 0
+    tie = False
+    for title, folders in section_paths.items():
+        depth = max(
+            (_shared_suffix(root_segs, identity.to_segments(folder)) for folder in folders),
+            default=0,
+        )
+        if depth > best_depth:
+            best_depth, best_title, tie = depth, title, False
+        elif depth == best_depth and depth > 0:
+            tie = True
+    return None if best_depth == 0 or tie else best_title
+
+
+def _encode_library_map(mapping: Mapping[str, str] | None) -> str | None:
+    """The map as a stored JSON string, or ``None`` to store SQL NULL (no map).
+
+    Blank keys and values are dropped, and an empty result stores NULL rather than ``"{}"``
+    so "no mappings" is one state, not two -- the resolver and :func:`decode_library_map`
+    both read NULL and ``{}`` identically as "no map".
+    """
+    if not mapping:
+        return None
+    cleaned = {
+        k.strip(): v.strip()
+        for k, v in mapping.items()
+        if isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip()
+    }
+    return json.dumps(cleaned, sort_keys=True) if cleaned else None
+
+
 def _view(row: Instance) -> InstanceView:
     return InstanceView(
         id=row.id,
@@ -106,6 +188,7 @@ def _view(row: Instance) -> InstanceView:
         enabled=row.enabled,
         verify_tls=row.verify_tls,
         add_import_exclusion=row.add_import_exclusion,
+        plex_library_map=decode_library_map(row.plex_library_map),
         has_key=bool(row.api_key_enc),
         api_path_prefix=row.api_path_prefix,
         detected_version=row.detected_version,
@@ -190,6 +273,7 @@ async def update_instance(
     enabled: bool | None = None,
     verify_tls: bool | None = None,
     add_import_exclusion: bool | None = None,
+    plex_library_map: Mapping[str, str] | None = None,
 ) -> InstanceView:
     """Update an instance. An omitted (or blank) ``api_key`` keeps the stored one.
 
@@ -224,6 +308,10 @@ async def update_instance(
         row.verify_tls = verify_tls
     if add_import_exclusion is not None:  # None keeps the stored value; explicit False sticks
         row.add_import_exclusion = add_import_exclusion
+    if plex_library_map is not None:  # a dict (even empty) replaces; None keeps the stored map
+        # An empty dict clears the map to NULL, so "the operator removed every mapping" and
+        # "there was never a map" are the one state the resolver reads as "no library declared".
+        row.plex_library_map = _encode_library_map(plex_library_map)
 
     await session.flush()
     log.info("instance.updated", kind=row.kind.value, name=row.name)
@@ -462,3 +550,38 @@ async def test_saved_instance(
         row.last_error = result.detail
     await session.flush()
     return result
+
+
+@dataclass(frozen=True)
+class RootFolderSuggestion:
+    """One of an *arr instance's root folders, with a suggested Plex library to prefill."""
+
+    path: str
+    suggested_library: str | None
+
+
+async def instance_root_folders(
+    session: AsyncSession,
+    box: SecretBox,
+    instance_id: int,
+    *,
+    section_paths: Mapping[str, Sequence[str]],
+) -> list[RootFolderSuggestion]:
+    """This instance's root folders, each with a suggested Plex library (a prefill only).
+
+    Sonarr/Radarr only -- Tautulli and Seerr have no root folders and no library map.
+    The live ``/rootfolder`` read exercises the stored key; ``section_paths`` is the Plex side
+    (``{library title: folder paths}``), passed in by the caller so this function needs no
+    Plex client of its own. Raises ``InstanceError`` for a wrong kind or a missing instance,
+    and lets the arr client's error surface for a connection failure (the caller maps it).
+    """
+    row = await _get(session, instance_id)
+    if row.kind not in (InstanceKind.SONARR, InstanceKind.RADARR):
+        raise InstanceError("Only Sonarr and Radarr have root folders to map to a Plex library.")
+    client = _client(row.kind, row.base_url, box.decrypt(row.api_key_enc), verify=row.verify_tls)
+    async with client:
+        payload = await client.root_folders()  # type: ignore[attr-defined]
+    return [
+        RootFolderSuggestion(path=p, suggested_library=suggest_library(p, section_paths))
+        for p in identity.root_folder_paths(payload)
+    ]
