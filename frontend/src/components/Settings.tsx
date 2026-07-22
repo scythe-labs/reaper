@@ -9,7 +9,14 @@
 // confirms it.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type CSSProperties, useEffect, useRef, useState } from "react";
+import {
+  type ChangeEvent,
+  type CSSProperties,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { accentInk, DEFAULT_ACCENT, isHexColor } from "../accent";
 import { api, type Instance, type InstanceTest, type ScheduledJob } from "../api";
 import { bytes, count, since } from "../format";
@@ -1313,16 +1320,25 @@ function NotificationsPanel() {
 
 // --- Safety ----------------------------------------------------------------
 
+// The same floor the server applies (MIN_PASSWORD_LENGTH in
+// reaper/services/admin_password.py), so the placeholder, the live message, and the server
+// rule all state one number.
+const MIN_ADMIN_PASSWORD = 12;
+
 function AdminPasswordForm({ needed }: { needed: boolean }) {
   const queryClient = useQueryClient();
   const [current, setCurrent] = useState("");
   const [pw, setPw] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const save = useMutation({
+    // Only the new password is sent: the confirm field exists so a typo can't lock the
+    // operator out of the key that arms deletion, and it never leaves the browser.
     mutationFn: () => api.setAdminPassword(pw, needed ? undefined : current),
     onSuccess: () => {
       setCurrent("");
       setPw("");
+      setConfirm("");
       setMsg("Password saved.");
       void queryClient.invalidateQueries({ queryKey: ["safety"] });
     },
@@ -1330,6 +1346,37 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
     // This password is what confirms turning deletion on, so "saved" and "wrong password"
     // must not look alike here.
   });
+
+  const tooShort = pw.length > 0 && pw.length < MIN_ADMIN_PASSWORD;
+  const mismatch = confirm.length > 0 && confirm !== pw;
+  const needCurrent = !needed && current.length === 0;
+  const valid =
+    pw.length >= MIN_ADMIN_PASSWORD && confirm.length > 0 && confirm === pw && !needCurrent;
+
+  // One red error region under the row. Live validation (too short, then mismatch) explains
+  // why Save is off while typing; a failed submit reuses the same box. Validation wins over a
+  // stale submit error so the operator sees the thing they can fix right now.
+  const errorNode: ReactNode = tooShort ? (
+    <>
+      Use at least {MIN_ADMIN_PASSWORD} characters. <b>{pw.length} so far.</b>
+    </>
+  ) : mismatch ? (
+    "The passwords don't match."
+  ) : save.error ? (
+    needed
+      ? `The password wasn't set: ${save.error.message}`
+      : `The password wasn't changed: ${save.error.message}`
+  ) : null;
+
+  // Typing clears the "saved" note and any stale failure, so neither lingers over a form the
+  // operator is now re-editing.
+  const onEdit =
+    (set: (v: string) => void) => (e: ChangeEvent<HTMLInputElement>) => {
+      setMsg(null);
+      if (save.isError) save.reset();
+      set(e.target.value);
+    };
+
   return (
     <div className="safety-row">
       <div>
@@ -1352,7 +1399,7 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
           <input
             type="password"
             value={current}
-            onChange={(e) => setCurrent(e.target.value)}
+            onChange={onEdit(setCurrent)}
             placeholder="current password"
             aria-label="Current password"
             autoComplete="current-password"
@@ -1363,35 +1410,30 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
         <input
           type="password"
           value={pw}
-          onChange={(e) => setPw(e.target.value)}
+          onChange={onEdit(setPw)}
           placeholder="at least 12 characters"
           aria-label="New password"
           autoComplete="new-password"
         />
-        {/* The same floor the server applies (MIN_PASSWORD_LENGTH in
-            reaper/services/admin_password.py), so the button, the hint above, and the
-            server rule all state one number. */}
-        <button
-          type="submit"
-          className="primary sm"
-          disabled={pw.length < 12 || (!needed && current.length === 0) || save.isPending}
-        >
+        <input
+          type="password"
+          value={confirm}
+          onChange={onEdit(setConfirm)}
+          placeholder="confirm new password"
+          aria-label="Confirm new password"
+          autoComplete="new-password"
+        />
+        <button type="submit" className="primary sm" disabled={!valid || save.isPending}>
           Save
         </button>
         {msg && <span className="muted">{msg}</span>}
       </form>
-      {save.error && (
-        <p className="notice notice-error">
-          {needed
-            ? `The password wasn't set: ${save.error.message}`
-            : `The password wasn't changed: ${save.error.message}`}
-        </p>
-      )}
+      {errorNode && <p className="notice notice-error">{errorNode}</p>}
     </div>
   );
 }
 
-function SecurityPanel() {
+export function SecurityPanel() {
   const { data, isLoading, isError } = useQuery({ queryKey: ["safety"], queryFn: api.safety });
 
   if (isLoading) {
