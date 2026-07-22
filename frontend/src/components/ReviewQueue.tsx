@@ -1255,6 +1255,7 @@ function MovieCard({
 
 function ShowCard({
   group,
+  defaultOpen,
   selectedId,
   selectedGroupKey,
   select,
@@ -1265,6 +1266,9 @@ function ShowCard({
   pending,
 }: {
   group: Group;
+  /** Whether the season list starts expanded, from the operator's General preference.
+   *  Only the STARTING state -- a click on this card's season pill still wins. */
+  defaultOpen: boolean;
   selectedId: number | null;
   selectedGroupKey: string | null;
   select: CardSelect;
@@ -1274,7 +1278,15 @@ function ShowCard({
   onClear: (key: string) => void;
   pending: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
+  // The operator's "expand by default" preference may resolve a tick after this card first
+  // mounts (it rides its own query), so apply it once known -- but never stomp a toggle the
+  // user already made on THIS card. `touched` is the cross-render "the user has decided" flag
+  // (rule 19); once set, the preference stops seeding this card's state.
+  const touched = useRef(false);
+  useEffect(() => {
+    if (!touched.current) setOpen(defaultOpen);
+  }, [defaultOpen]);
   const first = group.items[0]!;
   // The whole show's shape, across every lane of the snapshot -- what the strip and the
   // season count draw from. Null only on rows from before this field existed.
@@ -1365,7 +1377,14 @@ function ShowCard({
           <div className="card-meta">
             <span className="chip chip-tv">TV</span>
             <LibraryChip library={group.library} />
-            <SeasonExpander count={totalSeasons} open={open} onToggle={() => setOpen((v) => !v)} />
+            <SeasonExpander
+              count={totalSeasons}
+              open={open}
+              onToggle={() => {
+                touched.current = true;
+                setOpen((v) => !v);
+              }}
+            />
             <span>
               {isReapTab
                 ? `${condemnedCount} of ${totalSeasons} would be removed · ${totalBytes(condemnedBytes, condemnedUnknown)}`
@@ -1706,6 +1725,16 @@ export function ReviewQueue({
     queryFn: () => api.vocabularyValues("library"),
     staleTime: 5 * 60 * 1000,
   });
+  // The operator's "expand seasons by default" preference (Settings -> General). It only
+  // seeds each show card's starting state; a click on a card still wins for that card.
+  // Shares the query key the settings panel writes, so flipping it there and returning here
+  // takes effect. Unknown/error reads as off -- the safe, unchanged default.
+  const { data: generalSettings } = useQuery({
+    queryKey: ["general-settings"],
+    queryFn: api.general,
+    staleTime: 5 * 60 * 1000,
+  });
+  const expandSeasonsByDefault = generalSettings?.expand_seasons_default ?? false;
   // A remembered value the newest scan no longer has stays selectable: the row set it filters
   // is honest (empty), and the option must exist for the chip to show it.
   const genreOptions = useMemo(() => {
@@ -2136,6 +2165,7 @@ export function ReviewQueue({
                 <ShowCard
                   key={group.key}
                   group={group}
+                  defaultOpen={expandSeasonsByDefault}
                   selectedId={selectedId}
                   selectedGroupKey={selectedGroupKey}
                   select={cardSelect}

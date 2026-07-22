@@ -74,6 +74,11 @@ APPLICATION_URL_KEY = "application_url"
 #: A ``#rrggbb`` string, purely cosmetic. Unlike the per-browser theme it is stored on the
 #: server, so every browser that opens this install sees it. Validated at the API edge.
 ACCENT_COLOR_KEY = "accent_color"
+#: Whether the review queue opens each TV show with its season list already expanded.
+#: A display preference only -- it sets the starting state of the queue's show cards,
+#: never a deletion behavior. Stored on the server like the accent, so every browser
+#: that opens this install starts the same way. Off by default.
+EXPAND_SEASONS_DEFAULT_KEY = "expand_seasons_default"
 #: The one instance API key, Fernet-encrypted like every stored credential. Sent by
 #: callers as ``X-Api-Key``; the middleware compares a SHA-256 of it (see main.py's
 #: startup, which caches the digest on app.state).
@@ -196,6 +201,16 @@ async def set_accent_color(session: AsyncSession, color: str | None) -> None:
     validated to ``#rrggbb`` at the API edge, so a malformed color never reaches here."""
     cleaned = (color or "").strip().lower()
     await _set(session, ACCENT_COLOR_KEY, cleaned or None)
+
+
+async def get_expand_seasons_default(session: AsyncSession) -> bool:
+    """Whether the review queue starts each show's season list expanded. Off until the
+    operator turns it on, so an existing install keeps its collapsed cards."""
+    return bool(await _get(session, EXPAND_SEASONS_DEFAULT_KEY, default=False))
+
+
+async def set_expand_seasons_default(session: AsyncSession, *, enabled: bool) -> None:
+    await _set(session, EXPAND_SEASONS_DEFAULT_KEY, bool(enabled))
 
 
 # --- the instance API key ----------------------------------------------------
