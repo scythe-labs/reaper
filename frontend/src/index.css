@@ -3889,10 +3889,26 @@ a.rating-chip:hover {
     justify-content: flex-end;
     align-items: center;
   }
+  /* In the fold card-side is a full-width actions row. Keep the score in flow and push it to the
+     row's left with an auto margin, so it sits opposite the right-aligned Spare/Reap buttons
+     instead of on top of them. It was absolutely positioned to card-side's top-right corner,
+     which in the fold IS the buttons' corner (card-side is now a row at the card's bottom) -- that
+     was the "60" landing on the Reap button. In flow it can't overlap them. */
   .card-side .score {
-    position: absolute;
-    top: 0.7rem;
-    right: 0.7rem;
+    margin-right: auto;
+  }
+  /* The fold turns card-side into a full-width row, so the absolutely-positioned resting mark
+     (bottom-right) lands on top of the now-inline Reap button. This is the fold's geometry, not
+     a pointer question, so fix it here rather than only under (hover: none): show the actions at
+     rest and drop the mark. The decision still reads from the card's override chip. */
+  .card > .card-side .override-controls,
+  .card-head > .card-side .override-controls {
+    opacity: 1;
+    visibility: visible;
+  }
+  .card > .card-side .override-mark,
+  .card-head > .card-side .override-mark {
+    display: none;
   }
   /* An expanded season row folds the same way the card above it does. Its four tracks plus
      the list's indent leave the title about 25px on a 375px phone, which wraps season names
@@ -4722,6 +4738,28 @@ button.sm {
 .card-head:hover > .card-side .override-mark,
 .card-head:focus-within > .card-side .override-mark {
   opacity: 0;
+}
+/* Opening the length menu portals it to the body, so the pointer leaves the card and the card
+   is no longer :hover -- the resting mark would fade back in on top of the buttons, which
+   `.menu-open` holds visible. Keep the mark hidden while the menu is open so the mark and the
+   buttons never show at once (the overlap that put the clock count over the Reap button). */
+.card-side:has(> .override-controls.menu-open) .override-mark {
+  opacity: 0;
+}
+/* Touch has no hover, so the reveal-on-hover grammar (rule 46) has no trigger: the Spare/Reap
+   buttons must be present at rest, and the resting decision mark -- which shares their bottom-right
+   corner -- must step aside, or it lands on top of the Reap button (it did, on phones). Show the
+   controls, drop the mark; the decision still reads from the card's override chip and its panel.
+   Scoped to (hover: none) so a desktop with a mouse keeps the hover reveal untouched. */
+@media (hover: none) {
+  .card-side .override-controls,
+  .season-row .override-controls {
+    opacity: 1;
+    visibility: visible;
+  }
+  .card-side .override-mark {
+    display: none;
+  }
 }
 .ov-btn {
   display: inline-flex;
@@ -5629,6 +5667,25 @@ button.danger:hover:not(:disabled) {
 .jobrow.dimmed .jobrow-desc,
 .jobrow.dimmed .jobrow-meta {
   opacity: 0.5;
+}
+/* On a phone the two fixed 8rem action buttons eat the width and crush the text column to
+   nothing, wrapping the title and description one word per line. Below phone width the row
+   stacks: text full width, then Edit and Run as one equal-split button row. The desktop
+   columns (rule 51: they hold still) are untouched above the breakpoint. */
+@media (max-width: 640px) {
+  .jobrow {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.7rem;
+  }
+  .jobrow-actions {
+    width: 100%;
+  }
+  .jobrow-actions .slot-edit,
+  .jobrow-actions .slot-act {
+    flex: 1 1 0;
+    width: auto;
+  }
 }
 
 /* The indeterminate "running now" spinner beside a background job that is executing. */
