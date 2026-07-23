@@ -465,3 +465,77 @@ Safari alone. New variants are blockers, like the rules above.
     `OverrideControls` keyed to `override_own` (rule 50) and `hideReap` from that season's own
     verdict (rule 48). A per-tab `hideReap` on a list row, a read-only season row, or an `auto`
     button/size track that lets the columns drift is a regression.
+
+## Blockers from the third review pass
+
+Direct constraints from the diff review of the 16 commits since `4478aa7`
+(`docs/CODE_REVIEW.md`, dev, 2026-07-21) — all 43 findings it reports are already fixed on
+`dev`; these rules are what stops them recurring. Written as blockers, not suggestions. They
+extend the rules above; where one sharpens an earlier rule (52 → 6/29, 53 → 7/25, 56 → 27,
+61 → 49, 62 → 23/30, 65 → 2, 68 → 24), the newer, more specific obligation governs.
+
+52. **A bare tmdb id is not a stable key across media kinds.** Movie and TV tmdb ids share
+    the same integer space, so every map, index, or lookup keyed on a tmdb id carries the
+    media kind alongside the number, on both the write and the read side (sharpens rules
+    6/29 — B-1).
+53. **A rendered limit checks its enable switch.** Any UI string, summary clause, or
+    simulator note that states a cap, budget, or bound must branch on the setting that
+    enables enforcement; showing the stored figure while the switch is off is a blocker
+    (sharpens rules 7/25 — B-2).
+54. **A preset that promises enforcement stages the enabling switch too.** Applying a preset
+    sets every switch its help text implies, not just the values behind the switch (B-10).
+55. **A job's off switch governs every path that runs the job.** Startup catch-ups, recovery
+    paths, and other side entrances honor the stored off value, or the off-warning copy
+    explicitly names the exception; off-warning copy states the real, code-verified
+    consequence of turning the job off, including degradation that blocks runs, never a
+    guessed softer one (B-3, U-2).
+56. **Pagination advances and terminates on the raw page count, never a filtered one.** A
+    defensive filter that can shrink a page must raise on anomaly rather than silently
+    resize the page, and a total-size fallback must never default to the page size. A
+    complete-or-raise docstring is a contract: violating input raises, it never returns a
+    partial result (sharpens rule 27 — B-4).
+57. **Plex tag-style removals address the stored spelling and resolve sections by key.**
+    Group items by the exact stored tag spelling (casefold-matched, following
+    `remove_label`) and resolve sections via `sectionByID`, never by title (B-5, B-13).
+58. **A check-then-write re-reads inside the write transaction.** Splitting a state check
+    into a read connection is fine only if the write transaction re-reads the state it acts
+    on; DDL or destructive writes driven by pre-lock reads are a blocker (B-6).
+59. **Multi-key JSON settings update per key or under a guarded merge.** A read-modify-write
+    of a whole settings dict across an `await` is a blocker (B-12).
+60. **Interactive children of a keyboard-handling row stop Enter/Space propagation.** Any
+    control nested inside a row or card that has its own Enter/Space handler either stops
+    propagation (the `SeasonStrip` guard is the model) or the container checks
+    `e.target === e.currentTarget`; adding a control to a row without this check is a
+    blocker (B-7).
+61. **Prose about a removal consults the effective decision, not just the scan verdict.**
+    Any note, chip, or sentence asserting an item "will be removed" or "will be kept" must
+    branch on `override_effective`, including held reaps and opposing season-level decisions
+    (extends rule 49 from color to wording — U-1, U-3).
+62. **Every number on the Reap page derives from the planner's exact set.** Headline,
+    ledger, and per-line counts consult the same branches the planner does, including the
+    unknown-size allowance via `useHoldsBackUnmeasured()`, and every stored override state
+    (held reaps included) appears in the ledger or is explicitly summarized (sharpens rules
+    23/30 — B-8, PR-2).
+63. **Rows are keyed and aggregated by a stable server id, never a display name.** If the
+    schema lacks an id, add one in the same change; user-level roll-ups key on the
+    always-present per-user id, not an optional linked-account id (B-9, U-8).
+64. **Removing a surface removes its whole supply chain in the same change.** Route,
+    schemas, client method, props, query-key invalidations, and comments naming it; grep for
+    the query key and prop name before closing (R-1, R-2, R-3).
+65. **Silent recovery on operator-configured safety values is forbidden.** A fallback that
+    replaces saved profile/policy values must surface a flag the UI renders and degrade the
+    scan, following the `ActivePolicy` pattern; a log line alone is a blocker (sharpens
+    rule 2 — PR-1).
+66. **Server-defined lists render from the server response.** A hardcoded frontend copy of a
+    backend id list (jobs, phases, states) is a blocker when the server already returns the
+    list; fallback copy handles unknown ids only (R-5).
+67. **Values coupled across TSX and CSS are derived from one declaration.** A width, gap, or
+    count that must agree between a component and a stylesheet lives in one custom property
+    both read, or both sites carry a cross-reference comment; the `--btns` track (rule 51)
+    is the model, not the only case this applies to (H-1).
+68. **Generated assets ship with their generator.** A comment saying an asset is generated
+    must name a committed, runnable script, and a drift test covers every generated
+    artifact, not just one (extends rule 24 to assets — PR-6).
+69. **The icon link the app rewrites at runtime is declared last in `index.html`.** Static
+    fallback icons precede the dynamic one; adding an icon link after `#favicon` is a
+    blocker (B-11).
