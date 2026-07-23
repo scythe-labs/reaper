@@ -8,6 +8,15 @@ description: Boot Reaper locally against a real data dir and drive the UI headle
 Runtime observation, not tests. Boot the app against a `data/` dir (the dev DB is
 disposable), drive the real UI, capture what you see.
 
+## Quick boot
+
+`scripts/dev-local.sh` does the whole Boot section below in one step: migrates, starts both
+auto-reloading servers against the shared real `data/` (derived from git), waits for health,
+prints the URLs. `scripts/dev-local.sh down | status | logs` manage it. Both servers
+auto-update — backend edits reload the API, frontend edits hot-swap — so you rarely restart.
+Use it, then skip to "Log in" and "Drive headlessly". The manual Boot below is the fallback
+when you need a non-default data dir or want to watch startup by hand.
+
 ## Boot
 
 Backup/real data goes in `data/` (needs `reaper.db`, `cache.db`, **`secret.key` + `secret.salt`**

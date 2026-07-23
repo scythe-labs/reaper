@@ -215,6 +215,9 @@ cython_debug/
 # Runtime data (SQLite DB, IMDb dataset cache, logs)
 /data/
 
+# Dev-server logs from scripts/dev-local.sh
+/.dev-logs/
+
 # The auto-generated encryption key. Normally inside /data/, but named
 # explicitly so a custom REAPER_DATA_DIR cannot cause it to be committed.
 secret.key
