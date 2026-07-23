@@ -308,6 +308,7 @@ class SeerrClient(BaseClient):
         safety: RuntimeSafety,
         verify: bool = True,
         instance_key: str | None = None,
+        link_base_url: str | None = None,
     ) -> None:
         super().__init__(
             base_url,
@@ -320,6 +321,11 @@ class SeerrClient(BaseClient):
         # alone collides across portals). Defaults to the base url when a caller does not pass
         # one -- distinct per portal, which is all the pairing needs.
         self.instance_key = instance_key or self.base_url
+        # The operator's external address for BROWSER links (the instance's external_url), when
+        # they reach Seerr at a public address while Reaper connects over a LAN ip. Never used
+        # for API calls -- those always ride ``base_url``, the connect address. ``None`` falls
+        # back to ``base_url`` at the link, so nothing changes when it is unset.
+        self.link_base_url = link_base_url
 
     async def status(self) -> dict[str, Any]:
         data = await self.get_json("/api/v1/status")

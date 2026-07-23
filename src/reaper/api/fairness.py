@@ -97,6 +97,10 @@ async def _open_seerrs(
             # The stable per-portal id, stamped onto every request this client reads, so a
             # Seerr user id (unique only within a portal) can be told apart across portals.
             instance_key=str(row.id),
+            # The operator's external address for the panel's profile link, when set -- the
+            # same external_url the why-panel jump links use. Blank leaves the link on the
+            # connect address (``base_url``).
+            link_base_url=row.external_url,
         )
         await stack.enter_async_context(seerr)
         seerrs.append(seerr)

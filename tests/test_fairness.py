@@ -579,6 +579,7 @@ class _FakeSeerr:
         titles: dict[int, TitleInfo] | None = None,
         instance_key: str = "",
         base_url: str = "https://seerr.example",
+        link_base_url: str | None = None,
     ) -> None:
         self._requests = requests
         self._users = users or []
@@ -586,6 +587,7 @@ class _FakeSeerr:
         self._titles = titles or {}
         self.instance_key = instance_key
         self.base_url = base_url
+        self.link_base_url = link_base_url
 
     async def all_requests(self, *, filter_: str = "available") -> list[MediaRequest]:
         return self._requests
@@ -854,6 +856,28 @@ class TestBuildPersonDetail:
         )
         assert detail is not None
         assert detail.profile_url == "https://seerr.example/users/7"
+
+    async def test_name_link_uses_the_portals_external_url_when_set(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        """When the operator gave the portal an external URL (they reach Seerr at a public
+        address while Reaper connects over a LAN ip), the profile link opens that address, not
+        the connect one, matching the why-panel jump links."""
+        factory, cache = report_env
+        portal = _FakeSeerr(
+            [_req(plex_id=1, name="Alice", tmdb=1, seerr_id=7, portal_key="p1")],
+            base_url="https://seerr.lan",
+            link_base_url="https://requests.example.com",
+            instance_key="p1",
+        )
+        detail = await fairness.build_person_detail(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[portal],  # type: ignore[list-item]
+            cache_engine=cache,
+            identity="plex:1",
+        )
+        assert detail is not None
+        assert detail.profile_url == "https://requests.example.com/users/7"
 
     async def test_profile_url_is_none_without_a_user_id(
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]

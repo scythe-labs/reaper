@@ -225,17 +225,19 @@ def _identity(request: MediaRequest) -> str:
 
 def _profile_url(seerrs: Sequence[SeerrClient], request: MediaRequest) -> str | None:
     """The requester's page on the portal their request came through
-    (``{base_url}/users/{seerr_user_id}``). Built from the request itself, so it works for a
-    Plex-linked and an unlinked local account alike and needs no extra Seerr read. ``None``
-    when the request carries no user id, or its portal is not among the open clients -- the
-    panel then shows the name as plain text, never a dead link."""
+    (``{link_base}/users/{seerr_user_id}``). Built from the request itself, so it works for a
+    Plex-linked and an unlinked local account alike and needs no extra Seerr read. The link
+    opens the operator's external address for the portal when they set one, else its connect
+    address -- the same fallback the why-panel jump links use. ``None`` when the request
+    carries no user id, or its portal is not among the open clients -- the panel then shows
+    the name as plain text, never a dead link."""
     uid = request.requester.seerr_user_id
     if not uid:
         return None
     client = next((c for c in seerrs if c.instance_key == request.portal_key), None)
     if client is None:
         return None
-    return f"{client.base_url}/users/{uid}"
+    return f"{client.link_base_url or client.base_url}/users/{uid}"
 
 
 ContentKey = tuple[str, str | int]
