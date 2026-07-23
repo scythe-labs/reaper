@@ -51,7 +51,7 @@ jobs:
         run: uv run mypy src/reaper
 
       - name: Test
-        run: uv run pytest --cov --cov-report=term-missing
+        run: uv run pytest -n auto --cov --cov-report=term-missing
 
       # A model change without a migration is the classic way to ship a schema
       # that only exists on the developer's laptop.

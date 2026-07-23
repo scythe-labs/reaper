@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Session-wide test configuration.
 
-Two hermeticity guarantees, applied to every test:
+Three hermeticity guarantees, applied to every test:
 
 **Cheap Argon2.** The hasher is patched to minimal cost parameters before any test
 runs. Production defaults (time_cost=3, memory_cost=65536) are intentionally slow; on a
@@ -16,7 +16,13 @@ boots the app. Without it, any test that constructs ``Settings`` silently reads 
 repo-root ``.env`` (copying real service keys into throwaway test databases), and any
 test that starts the app lifespan seeds instances from ``.env.local`` and kicks off the
 ~280 MB IMDb dataset download -- slow, flaky, and different from CI.
+
+**No real backoff.** ``asyncio.sleep`` is collapsed to a single event-loop tick before
+any test runs (see below). Nothing in the suite asserts on real elapsed time, so paying
+the real delay for a client retry or a poll loop only burns wall clock for no signal.
 """
+
+import asyncio
 
 import pytest
 import structlog
@@ -33,6 +39,23 @@ from reaper.auth.ratelimit import (
 from reaper.config import Settings
 
 _passwords._hasher = PasswordHash((Argon2Hasher(time_cost=1, memory_cost=8, parallelism=1),))
+
+_real_async_sleep = asyncio.sleep
+
+
+async def _instant_async_sleep(delay: float, result: object = None) -> object:
+    """Stand in for ``asyncio.sleep`` everywhere: real duration, one real tick.
+
+    Production code really waits out retry backoff (``clients/base.py``'s ``@retry``),
+    the plex.tv pin-poll loop, and Discord's ``Retry-After``. A test that provokes two
+    retries pays ~1.5s of pure idle time for a delay no assertion reads. Still awaits the
+    real ``sleep(0)`` (rather than returning immediately) so code that relies on
+    ``asyncio.sleep`` to yield to the event loop keeps working unchanged.
+    """
+    return await _real_async_sleep(0, result)
+
+
+asyncio.sleep = _instant_async_sleep  # type: ignore[assignment]
 
 
 async def _no_catch_up(*_args: object, **_kwargs: object) -> None:
