@@ -155,7 +155,7 @@ class TestRatingsRefreshFreshnessGuard:
 
 
 class TestTheSchedulerIsUpkeepOnly:
-    def test_it_schedules_only_refresh_jobs_never_a_deletion(self, tmp_path: Path) -> None:
+    async def test_it_schedules_only_refresh_jobs_never_a_deletion(self, tmp_path: Path) -> None:
         """A timer must never be able to trigger a reap. Automated deletion is gated
         behind an earned autonomy grant, not a cron entry -- so the scheduler's whole job
         list is refreshes."""
@@ -183,3 +183,4 @@ class TestTheSchedulerIsUpkeepOnly:
                 or "refresh" in job.func.__name__
                 or ("sweep" in job.func.__name__)
             )
+        await engine.dispose()

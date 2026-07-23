@@ -9,6 +9,7 @@ fix is rewriting the entire migration history.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -47,8 +48,10 @@ _HEAL_HEAD = "708192a3b4c5"
 
 
 @pytest.fixture
-def sqlite_engine(tmp_path: Path) -> Engine:
-    return create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+def sqlite_engine(tmp_path: Path) -> Iterator[Engine]:
+    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
+    yield engine
+    engine.dispose()
 
 
 def test_exactly_one_migration_head() -> None:
@@ -255,6 +258,8 @@ def test_heal_migration_relaxes_old_not_null_size_bytes(
         conn.commit()
         assert conn.execute(text("SELECT COUNT(*) FROM candidate")).scalar() == 2
 
+    engine.dispose()
+
 
 def test_heal_migration_is_noop_on_corrected_schema(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -279,3 +284,5 @@ def test_heal_migration_is_noop_on_corrected_schema(
     with engine.connect() as conn:
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
     assert version == _HEAL_HEAD
+
+    engine.dispose()
