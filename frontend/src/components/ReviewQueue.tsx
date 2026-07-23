@@ -1323,6 +1323,82 @@ function seasonName(title: string, showTitle: string): string {
   return title.replace(`${showTitle} · `, "").replace(`${showTitle} — `, "");
 }
 
+/** Capitalize the first letter and end the clause as a sentence -- turns a lowercase "why"
+ *  clause ("it couldn't be found in Plex") into a standalone reason line. */
+function capitalizeSentence(text: string): string {
+  const t = text.charAt(0).toUpperCase() + text.slice(1);
+  return /[.!?]$/.test(t) ? t : `${t}.`;
+}
+
+/** The one-time banner atop an expanded show whose WHOLE-SHOW decision (spare or reap) drives
+ *  its seasons. It states that decision once so the rows below no longer each repeat it -- every
+ *  inheriting season used to carry an identical `KeptByShowNote`, which read as a wall of the
+ *  same red sentence. The mark and tint track the inherited fate (green spare, red reap) so the
+ *  banner never disagrees with the scores beneath it. Shown only when `show_override` is set. */
+function ShowInheritBanner({ override }: { override: Override }) {
+  const reap = override === "reap";
+  return (
+    <div className={`show-inherit ${reap ? "show-inherit-reap" : "show-inherit-spare"}`}>
+      <span className="show-inherit-mark" aria-hidden="true">
+        {reap ? <ScytheIcon /> : <span className="mk-inf">∞</span>}
+      </span>
+      <span>
+        {reap ? (
+          <>
+            <b>The whole show is set to reap.</b> Every season below is removed unless you spare it
+            here.
+          </>
+        ) : (
+          <>
+            <b>The whole show is spared.</b> Every season below is kept unless you reap it here.
+          </>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/** What a season row says for ITSELF inside a show the header already explains. The banner states
+ *  the inherited fate once, so a plain-inheriting season -- or one whose own decision agrees with
+ *  its show -- carries nothing here and reads from its score's color alone. Only a season that
+ *  goes its own way earns words:
+ *    - a HELD reap (the engine can't honor it yet, own or inherited): a dashed-red "Kept for now"
+ *      chip plus the reason it is held (the same "why" the refused OverrideChip would carry);
+ *    - a season the owner decided AGAINST its show: a solid chip and a one-line "kept / removed
+ *      anyway".
+ *  The chips reuse the shared `.status-chip` tones (rule 18) and the score's color still comes
+ *  from `handFate`, so the two can't disagree (rule 49). Only reached when the show has an
+ *  override; a season with no whole-show decision keeps its own scan chip back in SeasonList. */
+function seasonDivergence(
+  season: Candidate,
+  showOverride: Override,
+): { chip: ReactNode; reason: string | null } {
+  // A held reap is noted but the file is still kept -- dashed red, never the solid red of a
+  // removal. Judged by the item's own fate, so an inherited held reap reads the same as an own one.
+  if (handFate(season) === "refused") {
+    const why = chipWhy(season.chip) ?? "Reaper couldn't confirm it's safe to remove";
+    return {
+      chip: <span className="status-chip status-reap-held">Kept for now</span>,
+      reason: capitalizeSentence(why),
+    };
+  }
+  const own = season.override_own;
+  // No own decision, or one that agrees with the show: the header covers it, and the control's
+  // own lit/unlit state is the only extra signal an agreeing own decision needs (rule 50).
+  if (own == null || own === showOverride) return { chip: null, reason: null };
+  // Decided against the show: it goes the opposite way, and says so beside its control.
+  if (own === "spare") {
+    return {
+      chip: <span className="status-chip status-hand-spare">Spared</span>,
+      reason: "Kept even though the whole show is set to reap.",
+    };
+  }
+  return {
+    chip: <span className="status-chip status-hand-reap">Reaped</span>,
+    reason: "Removed even though the whole show is spared.",
+  };
+}
+
 /** The expanded show: EVERY season in the latest snapshot, whatever its lane, so kept
  *  and condemned read side by side. Every row is actable from here, not just the ones on
  *  the tab you opened: each carries its own Spare/Reap, judged by that season's OWN verdict
@@ -1366,77 +1442,91 @@ function SeasonList({
   // every row and leaves no empty Reap slot, so the size sits flush without a gap. Every
   // row in one list uses the same width, so Spare and Reap line up straight down it.
   const anyReapable = data.seasons.some((s) => !isCondemned(s));
+  // A whole-show decision covers every season here. When set, the header states it once and each
+  // row only speaks up if it diverges (seasonDivergence); when null, every row wears its own scan
+  // or hand chip as before. `show_override` is a property of the show, so all seasons share it.
+  const showOverride = data.show_override;
   return (
-    <ul
-      className="season-list"
-      style={
-        {
-          // Both widths derive from --ov-btn-w / --ov-btn-gap (index.css), so a button-width
-          // change lands in one place and the columns can't drift (H-1, rule 16).
-          "--btns": anyReapable
-            ? "calc(2 * var(--ov-btn-w) + var(--ov-btn-gap))"
-            : "var(--ov-btn-w)",
-        } as CSSProperties
-      }
-    >
-      {data.seasons.map((season) => (
-        <li
-          key={season.id}
-          className={`season-row clickable ${
-            season.override === "spare"
-              ? "card-spared"
-              : season.override === "reap"
-                ? "card-reaped"
-                : ""
-          } ${season.id === selectedId ? "card-selected" : ""}`}
-          onClick={() => onOpen(season.id)}
-          role="button"
-          tabIndex={0}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              onOpen(season.id);
-            }
-          }}
-        >
-          <Score item={season} />
-          <span className="season-title">
-            {seasonName(season.title, data.title)}
-            {/* The owner's decision replaces the scan chip: one pill, the truth. */}
-            {season.override !== null ? (
+    <>
+      {showOverride && <ShowInheritBanner override={showOverride} />}
+      <ul
+        className="season-list"
+        style={
+          {
+            // Both widths derive from --ov-btn-w / --ov-btn-gap (index.css), so a button-width
+            // change lands in one place and the columns can't drift (H-1, rule 16).
+            "--btns": anyReapable
+              ? "calc(2 * var(--ov-btn-w) + var(--ov-btn-gap))"
+              : "var(--ov-btn-w)",
+          } as CSSProperties
+        }
+      >
+        {data.seasons.map((season) => {
+          const divergence = showOverride ? seasonDivergence(season, showOverride) : null;
+          const reason = divergence?.reason ?? null;
+          // With a whole-show decision the header explains the inherited fate, so a row's chip is
+          // whatever `seasonDivergence` returns (often nothing). Without one, the row wears its own
+          // decision, the condemned mark, or its scan chip -- one pill, the truth.
+          let chip: ReactNode;
+          if (divergence) {
+            chip = divergence.chip;
+          } else if (season.override !== null) {
+            chip = (
               <OverrideChip
                 override={season.override}
                 effective={season.override_effective}
                 keptWhy={chipWhy(season.chip)}
                 spareExpiresAt={season.spare_expires_at}
               />
-            ) : season.verdict === "condemn" ? (
-              <CondemnedChip />
-            ) : (
-              <StatusChip chip={season.chip} />
-            )}
-          </span>
-          {/* The control toggles the season's OWN decision (override_own), never the one it
-              inherits from its show (rule 50). Reap is dropped only when this season's own
-              verdict is condemn -- reaping it changes nothing (rule 51); Spare is never
-              dropped. The note below says when the whole show is what keeps it. */}
-          <OverrideControls
-            override={season.override_own}
-            onSet={(d, sd) => onSet(season.media_key, d, sd)}
-            onClear={() => onClear(season.media_key)}
-            pending={pending}
-            hideReap={isCondemned(season)}
-          />
-          <span className="season-size num">{itemBytes(season.size_bytes)}</span>
-          <KeptByShowNote
-            own={season.override_own}
-            showOverride={season.show_override}
-            effective={season.override_effective}
-            className="season-row-note"
-          />
-        </li>
-      ))}
-    </ul>
+            );
+          } else if (season.verdict === "condemn") {
+            chip = <CondemnedChip />;
+          } else {
+            chip = <StatusChip chip={season.chip} />;
+          }
+          return (
+            <li
+              key={season.id}
+              className={`season-row clickable ${
+                season.override === "spare"
+                  ? "card-spared"
+                  : season.override === "reap"
+                    ? "card-reaped"
+                    : ""
+              } ${season.id === selectedId ? "card-selected" : ""} ${reason ? "has-reason" : ""}`}
+              onClick={() => onOpen(season.id)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onOpen(season.id);
+                }
+              }}
+            >
+              <Score item={season} />
+              <span className="season-title">
+                {seasonName(season.title, data.title)}
+                {chip}
+              </span>
+              {/* The control toggles the season's OWN decision (override_own), never the one it
+                  inherits from its show (rule 50). Reap is dropped only when this season's own
+                  verdict is condemn -- reaping it changes nothing (rule 51); Spare is never
+                  dropped. A divergent season's reason line below says how it goes its own way. */}
+              <OverrideControls
+                override={season.override_own}
+                onSet={(d, sd) => onSet(season.media_key, d, sd)}
+                onClear={() => onClear(season.media_key)}
+                pending={pending}
+                hideReap={isCondemned(season)}
+              />
+              <span className="season-size num">{itemBytes(season.size_bytes)}</span>
+              {reason && <p className="season-reason">{reason}</p>}
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }
 

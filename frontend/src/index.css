@@ -1276,11 +1276,6 @@ tbody tr.selected {
 }
 /* Under an expanded season row (a 4-column grid): span every column on a fresh line so the
    note reads as belonging to the row above it, not squeezed into a cell. */
-.season-row-note {
-  grid-column: 1 / -1;
-  margin-top: 0.15rem;
-}
-
 /* The way back up from a season's reasoning to its show. */
 .back-to-show {
   display: inline-block;
@@ -3922,26 +3917,37 @@ a.rating-chip:hover {
   }
   .card .season-row {
     grid-template-columns: 2.6rem minmax(0, 1fr) auto;
+    align-items: start;
     row-gap: 0.35rem;
   }
+  /* Score top-aligned with the name, not floated to the row's vertical center -- a wrapping
+     title used to leave the badge stranded below the first line. */
   .card .season-row > .score {
-    grid-area: 1 / 1 / 3 / 2;
+    grid-area: 1 / 1 / 2 / 2;
+    align-self: start;
+    margin-top: 2px;
   }
   .card .season-row > .season-title {
-    grid-area: 1 / 2 / 2 / 4;
+    grid-area: 1 / 2 / 2 / 3;
   }
+  /* Size stays top-right on the name line, aligned to the name's baseline. */
   .card .season-row > .season-size {
-    grid-area: 2 / 2 / 3 / 3;
+    grid-area: 1 / 3 / 2 / 4;
+    align-self: baseline;
   }
-  /* Placed by class, not `:last-child`: every row now carries its own buttons, and a
-     KeptByShowNote can follow them as the real last child. Size and buttons share the second
-     row; the note, when present, drops to a full-width third row. */
+  /* A divergent/held season's reason drops to its own full-width line and WRAPS -- it can never
+     run off the right edge the way the old inline chip did. */
+  .card .season-row.has-reason > .season-reason {
+    grid-area: 2 / 2 / 3 / 4;
+  }
+  /* Buttons on their own row, right-aligned: row 2 by default, row 3 when a reason sits above
+     them (placed by the `.has-reason` class so an empty reason track never doubles the gap). */
   .card .season-row > .override-controls {
-    grid-area: 2 / 3 / 3 / 4;
+    grid-area: 2 / 2 / 3 / 4;
     justify-self: end;
   }
-  .card .season-row > .season-row-note {
-    grid-area: 3 / 1 / 4 / 4;
+  .card .season-row.has-reason > .override-controls {
+    grid-area: 3 / 2 / 4 / 4;
   }
 }
 
@@ -5185,6 +5191,53 @@ button.sm {
   transform: rotate(90deg);
 }
 
+/* The banner atop an expanded show whose whole-show decision drives its seasons: the sentence
+   the rows used to each repeat, said once. A reap tints faint red, a spare faint green, matching
+   the fate the seasons below inherit; the tint is a soft wash + hairline, never a loud fill. */
+.show-inherit {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0.5rem 0.7rem 0.3rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.82rem;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.show-inherit b {
+  color: var(--text);
+  font-weight: 650;
+}
+.show-inherit-reap {
+  background: color-mix(in srgb, var(--condemn) 9%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--condemn) 26%, transparent);
+}
+.show-inherit-spare {
+  background: color-mix(in srgb, var(--protect) 9%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--protect) 26%, transparent);
+}
+.show-inherit-mark {
+  flex: none;
+  line-height: 1.2;
+  margin-top: 1px;
+}
+.show-inherit-reap .show-inherit-mark {
+  color: var(--condemn);
+}
+.show-inherit-spare .show-inherit-mark {
+  color: var(--protect);
+}
+.show-inherit-mark .mk-inf {
+  font-weight: 700;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+.show-inherit-mark .scythe {
+  width: 13px;
+  height: 13px;
+}
+
 .season-list {
   list-style: none;
   margin: 0;
@@ -5201,11 +5254,38 @@ button.sm {
   grid-template-columns: 2.6rem 1fr var(--btns, calc(2 * var(--ov-btn-w) + var(--ov-btn-gap)))
     4.75rem;
   align-items: center;
-  gap: 0.7rem;
+  column-gap: 0.7rem;
+  row-gap: 0.25rem;
   padding: 0.4rem 0.5rem;
   margin: 0 -0.5rem;
   border-radius: 6px;
   border-bottom: 1px solid var(--border);
+}
+.season-row > .score {
+  grid-column: 1;
+  grid-row: 1;
+}
+.season-row > .season-title {
+  grid-column: 2;
+  grid-row: 1;
+}
+.season-row > .override-controls {
+  grid-column: 3;
+  grid-row: 1;
+}
+.season-row > .season-size {
+  grid-column: 4;
+  grid-row: 1;
+}
+/* A divergent or held season's one-line reason (only on `.has-reason` rows): under the title,
+   spanning across to the size, so rule 51's fixed button and size columns stay put above it. */
+.season-row > .season-reason {
+  grid-column: 2 / 5;
+  grid-row: 2;
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--muted);
 }
 .season-row.clickable {
   cursor: pointer;
@@ -5228,7 +5308,8 @@ button.sm {
 .season-title {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
   font-size: 0.88rem;
   min-width: 0;
 }

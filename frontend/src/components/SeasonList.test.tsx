@@ -242,4 +242,62 @@ describe("the all-seasons list", () => {
     // The season that did report one still reads as a size.
     expect(within(list).getByText("1.0 GiB")).toBeInTheDocument();
   });
+
+  it("states a whole-show reap once and lets only divergent seasons speak", async () => {
+    // A whole-show reap covers every season. The header says so once; a plainly-inheriting
+    // season then carries no per-row note at all (the wall of repeated sentences is gone), and
+    // only a held or against-the-show season adds a chip and a reason.
+    const withShow = (id: number, n: number, extra: Partial<Candidate>): Candidate => ({
+      ...season(id, n, "abstain", 80, null),
+      show_override: "reap",
+      ...extra,
+    });
+    const inherited = withShow(21, 1, {
+      override: "reap",
+      override_own: null,
+      override_effective: true,
+    });
+    const held = withShow(22, 2, {
+      override: "reap",
+      override_own: null,
+      override_effective: false,
+      chip: { tone: "look", text: "Some checks couldn't run" },
+    });
+    const sparedAgainst = withShow(23, 3, {
+      override: "spare",
+      override_own: "spare",
+      override_effective: null,
+    });
+    apiMock.group.mockResolvedValue({
+      group_key: "sonarr:5:42",
+      title: "Example Show",
+      year: 2012,
+      poster_url: null,
+      summary: null,
+      size_bytes: 3 * 1024 ** 3,
+      unknown_size_seasons: 0,
+      reason: null,
+      library: null,
+      chip: null,
+      show_override: "reap",
+      show_spare_expires_at: null,
+      links: {} as Group["links"],
+      show_status: null,
+      seasons: [inherited, held, sparedAgainst],
+    } as Group);
+    renderQueue();
+    await expandSeasons();
+
+    // The inherited fate is stated once, at the top of the list.
+    expect(await screen.findByText(/The whole show is set to reap\./)).toBeInTheDocument();
+    // A plainly-inheriting season says nothing extra: no per-row "Reaped by hand" pill.
+    expect(screen.queryByText(/Reaped by hand/)).not.toBeInTheDocument();
+    // The held season says it is kept for now, and why.
+    expect(screen.getByText("Kept for now")).toBeInTheDocument();
+    expect(screen.getByText("Some checks couldn't run.")).toBeInTheDocument();
+    // The season spared against the show says it goes its own way. ("Spared" is also the active
+    // Spare button's label, so target the chip.)
+    expect(screen.getByText("Spared", { selector: ".status-chip" })).toBeInTheDocument();
+    expect(screen.getByText("Kept even though the whole show is set to reap.")).toBeInTheDocument();
+  });
 });
