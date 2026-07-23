@@ -25,6 +25,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   api,
   type Candidate,
@@ -556,6 +557,11 @@ const SPARE_PRESETS = [30, 90];
  *
  *  On the Condemned lane the item is already on the block, so Reap would change nothing:
  *  `hideReap` drops it there and leaves Spare (rescue) on its own. */
+/** Where the Spare length menu is pinned (fixed, viewport coords). Always `left`, plus exactly
+ *  one vertical anchor: `top` when it opens below the caret, `bottom` when it flips above -- the
+ *  bottom anchor keeps it snug to the caret whatever the menu's rendered height. */
+type MenuPos = { left: number; top?: number; bottom?: number };
+
 export function OverrideControls({
   override,
   onSet,
@@ -570,11 +576,15 @@ export function OverrideControls({
   hideReap?: boolean;
 }) {
   const defaultDays = useDefaultSpareDays();
-  const [menuAt, setMenuAt] = useState<{ top: number; left: number } | null>(null);
+  const [menuAt, setMenuAt] = useState<MenuPos | null>(null);
   const caretRef = useRef<HTMLButtonElement>(null);
 
-  // The menu is position:fixed so the card's overflow:hidden can't clip it. Anchor it under the
+  // The menu is position:fixed so the card's overflow:hidden can't clip it. Anchor it to the
   // chevron, right-aligned, and flip above when it would run off the bottom of the viewport.
+  // Below: pin the menu's TOP under the caret. Above: pin its BOTTOM just over the caret with the
+  // `bottom` property -- never a `top` computed from a guessed height, which floated the menu off
+  // the button when the real menu was shorter than the guess. HEIGHT is only the flip decision's
+  // upper bound now, not a coordinate.
   const toggleMenu = (e: ReactMouseEvent) => {
     e.stopPropagation();
     if (menuAt) {
@@ -586,11 +596,11 @@ export function OverrideControls({
     const r = btn.getBoundingClientRect();
     const WIDTH = 224;
     const HEIGHT = 250;
+    const left = Math.max(8, Math.min(r.right - WIDTH, window.innerWidth - WIDTH - 8));
     const below = r.bottom + HEIGHT <= window.innerHeight;
-    setMenuAt({
-      top: below ? r.bottom + 4 : Math.max(8, r.top - HEIGHT - 4),
-      left: Math.max(8, Math.min(r.right - WIDTH, window.innerWidth - WIDTH - 8)),
-    });
+    setMenuAt(
+      below ? { left, top: r.bottom + 4 } : { left, bottom: window.innerHeight - r.top + 4 },
+    );
   };
 
   const clickSpare = (e: ReactMouseEvent) => {
@@ -678,9 +688,12 @@ export function OverrideControls({
 
 /** The length menu behind the Spare chevron: quick day-presets, Forever, and a Custom entry
  *  that expands to a days box. The operator's default is tagged. Picking a length spares the
- *  item at once -- the menu is the action, not a form. Rendered position:fixed at `at` (the
- *  card clips its overflow), and closed on an outside click, Escape, or a scroll that would
- *  strand it off its anchor. */
+ *  item at once -- the menu is the action, not a form. Portaled to <body> and rendered
+ *  position:fixed at `at`: the card clips its overflow AND its `.card-side` is a z-index:2
+ *  stacking context (`.card > *`), which a fixed child alone can't escape -- so a later card's
+ *  score badge, spare button, or tooltip paints over an in-card menu. The portal lifts it to the
+ *  root stacking context so its own z-index wins. Closed on an outside click, Escape, or a
+ *  scroll that would strand it off its anchor. */
 function SpareMenu({
   at,
   defaultDays,
@@ -688,7 +701,7 @@ function SpareMenu({
   onPick,
   onClose,
 }: {
-  at: { top: number; left: number };
+  at: MenuPos;
   defaultDays: number;
   triggerRef: RefObject<HTMLButtonElement | null>;
   onPick: (days: number) => void;
@@ -729,13 +742,17 @@ function SpareMenu({
     new Set([...(defaultDays > 0 ? [defaultDays] : []), ...SPARE_PRESETS]),
   ).sort((a, b) => a - b);
 
-  return (
+  return createPortal(
     <div
       ref={ref}
       className="dur-menu"
       role="menu"
       aria-label="Spare this item for"
-      style={{ position: "fixed", top: at.top, left: at.left }}
+      style={{
+        position: "fixed",
+        left: at.left,
+        ...(at.top !== undefined ? { top: at.top } : { bottom: at.bottom }),
+      }}
       onClick={(e) => e.stopPropagation()}
     >
       <div className="dur-head">Spare for…</div>
@@ -789,7 +806,8 @@ function SpareMenu({
           <span className="mi-label">Custom length…</span>
         </button>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -2195,6 +2213,8 @@ export function ReviewQueue({
           <button
             key={t.verdict}
             className={t.verdict === verdict ? "tab active" : "tab"}
+            // Reserve the bold (active) width so switching lists never shifts the tab row.
+            data-label={t.label}
             // The list you are on is stated, not just colored, the same as the masthead
             // and the settings rail. Plain buttons, not the tabs pattern: these switch a
             // whole list rather than swapping panels, and none of that pattern's keyboard

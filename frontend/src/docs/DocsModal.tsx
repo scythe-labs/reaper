@@ -63,6 +63,8 @@ export function DocsModal({
                     <button
                       type="button"
                       className={active ? "docs-index-item active" : "docs-index-item"}
+                      // Reserve the bold (active) width so selecting an entry never shifts it.
+                      data-label={d.title}
                       aria-current={active ? "page" : undefined}
                       onClick={() => onNavigate(d.id)}
                     >

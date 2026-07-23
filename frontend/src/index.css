@@ -108,7 +108,7 @@
      the button track derives from these two: the button min-width, the season list's --btns
      track (set in ReviewQueue.tsx), and its grid fallback. Change the width here alone, never
      the derived literals (H-1, rule 16). */
-  --ov-btn-w: 5.75rem;
+  --ov-btn-w: 6.25rem;
   --ov-btn-gap: 0.3rem;
 }
 
@@ -571,6 +571,24 @@ button.link:hover:not(:disabled) {
   color: var(--text);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
+  font-weight: 600;
+}
+/* Reserve the ACTIVE (600) width at every weight, so selecting an item -- which bumps 500 -> 600
+   -- never widens it and shoves its neighbors sideways (the tab/nav "wiggle"). A hidden,
+   zero-height copy of the label at the bold weight sets the width; the visible text rides above
+   it. `visibility: hidden` keeps the strut out of the accessibility tree. Applied to every
+   control that bolds when active (masthead nav + queue tabs `.tab`, policy toggle `.seg`, the
+   settings/policy rails `.settings-tab`, the docs index `.docs-index-item`); each needs a
+   `data-label` of its visible text, and one without simply keeps the old behavior. */
+.tab[data-label]::after,
+.seg[data-label]::after,
+.settings-tab[data-label]::after,
+.docs-index-item[data-label]::after {
+  content: attr(data-label);
+  display: block;
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
   font-weight: 600;
 }
 /* The `fill` variant (Segmented `fill` prop): equal-width segments, so a short label

@@ -1562,6 +1562,8 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
           <button
             key={p.id}
             className={panel === p.id ? "settings-tab active" : "settings-tab"}
+            // Reserve the bold (active) width so switching panels never shifts the rail.
+            data-label={p.label}
             // The active panel is stated, not just colored, the same as the masthead.
             aria-current={panel === p.id ? "page" : undefined}
             onClick={() => setPanel(p.id)}

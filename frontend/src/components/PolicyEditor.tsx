@@ -1793,6 +1793,8 @@ export function PolicyEditor({
             <button
               key={s.id}
               className={activeSection === s.id ? "settings-tab active" : "settings-tab"}
+              // Reserve the bold (active) width so switching sections never shifts the rail.
+              data-label={s.label}
               // The section being read is stated, not just colored, the same as the
               // masthead and the settings rail.
               aria-current={activeSection === s.id ? "page" : undefined}

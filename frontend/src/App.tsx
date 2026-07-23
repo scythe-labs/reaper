@@ -582,6 +582,8 @@ function Dashboard({ user }: { user: AuthUser }) {
             <button
               key={n.id}
               className={view === n.id ? "tab active" : "tab"}
+              // Reserve the bold (active) width so switching sections never shifts the nav.
+              data-label={n.label}
               // The view you are on is stated, not just colored.
               aria-current={view === n.id ? "page" : undefined}
               onClick={() => {

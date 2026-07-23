@@ -27,6 +27,8 @@ export function Segmented<T extends string>({
           key={v}
           type="button"
           className={value === v ? "seg active" : "seg"}
+          // Reserve the bold (active) width so choosing a segment never shifts the track.
+          data-label={text}
           aria-pressed={value === v}
           onClick={() => onChange(v)}
         >
