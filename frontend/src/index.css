@@ -1214,6 +1214,50 @@ main.split {
   animation: none;
 }
 
+/* The silent path's one acknowledgment. A scan landed while the reviewer was idle at the top,
+   so the list refreshed under them; this brief toast confirms it moved to the newest scan, then
+   clears itself. Fixed to the bottom of the viewport. The mid-review case gets the nudge above. */
+.scan-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 1.1rem;
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.42rem 0.85rem 0.42rem 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.84rem;
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+  animation: scan-toast 2.6s var(--ease) forwards;
+}
+.scan-toast-check {
+  display: inline-flex;
+  color: var(--protect);
+}
+@keyframes scan-toast {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  6% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  92% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+}
+
 @keyframes nudge-pulse {
   0% {
     transform: scale(0.6);
@@ -1227,6 +1271,11 @@ main.split {
 @media (prefers-reduced-motion: reduce) {
   .nudge-dot::after {
     animation: none;
+  }
+  .scan-toast {
+    animation: none;
+    opacity: 1;
+    transform: translate(-50%, 0);
   }
 }
 

@@ -2091,11 +2091,27 @@ export function ReviewQueue({
       pending,
     [selectedId, selectedGroupKey, selected, pending],
   );
+  // A quiet refresh still says so. When a newer scan lands while the reviewer is idle at the
+  // top, the list swaps under them; a brief toast confirms it moved to the newest scan, so the
+  // numbers never change with no acknowledgment. It is the silent path's only signal -- the
+  // nudge covers the mid-review one. A tick re-arms the fade on every refresh, then it clears.
+  const [toastTick, setToastTick] = useState(0);
+  const [toastOn, setToastOn] = useState(false);
+  const onSilentRefresh = useCallback(() => {
+    refreshReview();
+    setToastTick((n) => n + 1);
+  }, [refreshReview]);
+  useEffect(() => {
+    if (toastTick === 0) return;
+    setToastOn(true);
+    const id = window.setTimeout(() => setToastOn(false), 2600);
+    return () => window.clearTimeout(id);
+  }, [toastTick]);
   const freshness = useReviewFreshness({
     viewSnapshotId: pages?.pages[0]?.snapshotId ?? null,
     latestSnapshotId: latestScanSnapshotId,
     isBusy,
-    onSilentRefresh: refreshReview,
+    onSilentRefresh,
   });
   const showLatest = () => {
     refreshReview();
@@ -2408,6 +2424,23 @@ export function ReviewQueue({
           <span className="nudge-dot" aria-hidden="true" />
           One scan behind. <span className="scan-behind-cta">Show latest</span>
         </button>
+      )}
+      {toastOn && (
+        <div className="scan-toast" role="status">
+          <span className="scan-toast-check" aria-hidden="true">
+            <svg viewBox="0 0 16 16" width="15" height="15">
+              <path
+                d="M3.5 8.5l3 3 6-7"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+          <span className="scan-toast-msg">Updated to the latest scan.</span>
+        </div>
       )}
 
       <div className="queue-toolbar">

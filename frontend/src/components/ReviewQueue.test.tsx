@@ -111,7 +111,7 @@ function BreakdownProbe() {
   return null;
 }
 
-function renderQueue(verdict: Verdict = "condemn") {
+function renderQueue(verdict: Verdict = "condemn", latestScanSnapshotId: number | null = null) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
@@ -125,6 +125,7 @@ function renderQueue(verdict: Verdict = "condemn") {
         selectedGroupKey={null}
         onSelect={() => {}}
         onSelectGroup={() => {}}
+        latestScanSnapshotId={latestScanSnapshotId}
       />
     </QueryClientProvider>,
   );
@@ -175,6 +176,20 @@ beforeEach(() => {
     has_snapshot: true,
     will_reap: 0,
     condemned_by: [],
+  });
+});
+
+describe("keeping the list in step with the latest scan", () => {
+  it("confirms a quiet refresh with a toast when a newer scan lands while idle", async () => {
+    // This view is snapshot 1; the newest completed scan is snapshot 2, so the list is a scan
+    // behind. Idle at the top (jsdom scrollY 0, nothing open or selected): it refreshes quietly
+    // and a toast says so, rather than swapping the numbers with no acknowledgment.
+    apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)]));
+    renderQueue("condemn", 2);
+    expect(await screen.findByText("Updated to the latest scan.")).toBeInTheDocument();
+    // Quiet means quiet: no mid-review nudge, no "one scan behind" marker.
+    expect(screen.queryByText("A newer scan just finished")).not.toBeInTheDocument();
+    expect(screen.queryByText(/One scan behind/)).not.toBeInTheDocument();
   });
 });
 

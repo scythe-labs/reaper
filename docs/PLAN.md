@@ -3006,16 +3006,28 @@ as `latestScanSnapshotId`) in one derived hook, `useReviewFreshness`: the whole 
 hangs off one fact -- *the list is behind* -- so ANY refetch that pulls the latest snapshot (a
 hand override, a filter change, Show latest) clears it on its own, with no dismiss flag the app
 has to remember to reset. Decided once per newer snapshot, from the busy state at that instant:
-idle at the top refreshes quietly; mid-review (scrolled, a panel open, a selection or write in
-flight) holds the reviewer's place and raises a sticky nudge built from the app's own accent
-tokens. Dismiss defers to a slim "one scan behind" marker rather than a silent stale list --
-resolving toward never leaving the operator unknowingly on an old scan. An override applied on a
-stale row was already safe (keyed on the durable `media_key`, snapshot-independent) and already
-refetched the queue, so "defer, then decide anyway" lands correctly and pulls the view current in
-one action; the nudge derivation makes that fall out for free.
+idle at the top refreshes quietly and a brief bottom-center toast ("Updated to the latest scan.")
+confirms the swap, so the numbers never change with no acknowledgment; mid-review (scrolled, a
+panel open, a selection or write in flight) holds the reviewer's place and raises a sticky nudge
+built from the app's own accent tokens. Dismiss defers to a slim "one scan behind" marker rather
+than a silent stale list -- resolving toward never leaving the operator unknowingly on an old
+scan. An override applied on a stale row was already safe (keyed on the durable `media_key`,
+snapshot-independent) and already refetched the queue, so "defer, then decide anyway" lands
+correctly and pulls the view current in one action; the nudge derivation makes that fall out for
+free.
 
-**Gates:** ruff/mypy clean, 1973 backend tests (+1), 227 frontend tests (+7, a hook unit test),
+**The toast that got left out (dev @ 2026-07-23).** The approved mockup had *two* silent-path
+signals -- the mid-review nudge and, on the idle path, a bottom-center confirmation toast -- but
+the first cut shipped only the nudge and made the idle refresh fully silent, so an operator idle
+at the top saw the list's numbers change with nothing to say a scan had landed. Restored the
+toast: a `.scan-toast` pill (`position: fixed`, viewport bottom, self-clearing after 2.6s) raised
+by a tick the queue bumps whenever `useReviewFreshness` fires its silent refresh. The hook stayed
+pure -- the toast is a rendering concern on the component, so its unit contract ("idle refreshes
+quietly, no nudge/marker") is unchanged; "quietly" now means "without moving the reviewer's
+place," not "without a word."
+
+**Gates:** ruff/mypy clean, 1973 backend tests (+1), frontend tests +1 (a queue toast test),
 alembic upgrade+check clean (no drift), frontend lint/build clean. Driven end-to-end in a real
 browser against real data (snapshot 26, 193 condemned): baseline quiet, nudge on a mid-review
-scan, Show latest clears it, idle-at-top refreshes silently, dismiss to the marker -- all verified,
-no console errors attributable to the change.
+scan, Show latest clears it, idle-at-top refreshes silently *with the toast* (pinned 18px off the
+viewport bottom, centered, self-clearing), dismiss to the marker -- all verified.
