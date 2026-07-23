@@ -1044,7 +1044,8 @@ class TestPolicyPersistence:
         stored = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
         stored["signals"] = [{"signal": "unwatched", "weight": 42, "saturate_at": 1825, "floor": 0}]
         settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
-        with Session(sa_create_engine(settings.sync_database_url)) as session:
+        engine = sa_create_engine(settings.sync_database_url)
+        with Session(engine) as session:
             session.add(
                 PolicyModel(
                     name="stale",
@@ -1055,6 +1056,7 @@ class TestPolicyPersistence:
                 )
             )
             session.commit()
+        engine.dispose()
 
         response = client.get("/api/policy")
 
@@ -1075,7 +1077,8 @@ class TestPolicyPersistence:
         which must announce itself: a silent default reads as "this is what you configured"
         and is the one way this fallback could cause a deletion nobody chose."""
         settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
-        with Session(sa_create_engine(settings.sync_database_url)) as session:
+        engine = sa_create_engine(settings.sync_database_url)
+        with Session(engine) as session:
             session.add(
                 PolicyModel(
                     name="broken",
@@ -1086,6 +1089,7 @@ class TestPolicyPersistence:
                 )
             )
             session.commit()
+        engine.dispose()
 
         out = client.get("/api/policy").json()
 
