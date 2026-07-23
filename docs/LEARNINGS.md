@@ -152,6 +152,30 @@ magnitude larger**, reconstructible, and **never migrated**. The separation also
 the invariant out loud: *nothing in the cache is a source of truth.* There is now a test
 asserting no migration ever creates a cache table.
 
+### Editing the baseline's `CREATE TABLE` in place cannot heal a database that already ran it
+
+Before the baseline was frozen, one commit corrected two columns by editing the baseline's
+`CREATE TABLE` directly: `candidate.size_bytes` went NOT NULL → nullable, and
+`reap_run.held_back_unknown_size` lost its `DEFAULT 0`, both to match the models. A
+`CREATE TABLE` only ever runs against an **empty** database, so a fresh install picks up the
+fix while any database built from the earlier baseline keeps the old shape — and there is no
+ALTER anywhere to reconcile it. `alembic upgrade head` is a no-op on it (already at head), so
+the drift is invisible until something reads it.
+
+The size half was **correctness, not cosmetics**: the scan now writes `size_bytes = NULL`
+for an item whose size can't be determined (the held-back-unknown-size path), which a
+NOT NULL column rejects with an `IntegrityError` mid-scan. `alembic check` passed the whole
+time — it compares the *models* against a *fresh* build, and both were correct; it never sees
+the shape an old database is actually carrying.
+
+⇒ **A schema correction is an additive ALTER migration, never a baseline edit** — the same
+rule that freezes the baseline, learned the hard way. The heal (`708192a3b4c5`) reflects each
+column first and only rewrites it when it's still the old shape, so a corrected database isn't
+copied for nothing and an old one self-heals on the next `upgrade head`. And: **a green
+`alembic check` proves models-vs-fresh agreement, not that any existing database matches** —
+to catch a divergent old shape you have to migrate a database that carries it, which is what
+the new test does.
+
 ### An unused argument is invisible to the type checker
 
 `run(..., prior=prior)` accepted the argument and then never passed it into the result.

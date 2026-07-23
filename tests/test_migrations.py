@@ -13,17 +13,37 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from alembic import op  # noqa: F401  # imported so op.f is resolvable in migrations
+from alembic import (
+    command,
+    op,  # noqa: F401  # imported so op.f is resolvable in migrations
+)
 from alembic.config import Config
 from alembic.runtime.environment import EnvironmentContext
 from alembic.script import ScriptDirectory
-from sqlalchemy import Column, Integer, MetaData, String, Table, UniqueConstraint, create_engine
+from sqlalchemy import (
+    Column,
+    ForeignKey,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    UniqueConstraint,
+    create_engine,
+    inspect,
+    text,
+)
 from sqlalchemy.engine import Engine
 
 from reaper.config import Settings
 from reaper.db.base import NAMING_CONVENTION
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# The revision just before the size_bytes-nullability heal, and the heal itself. A database
+# built from the earlier baseline (size_bytes NOT NULL, held_back_unknown_size DEFAULT 0) sits
+# at the former; upgrading it must reach the latter with the columns reshaped and rows intact.
+_PRIOR_HEAD = "6f708192a3b4"
+_HEAL_HEAD = "708192a3b4c5"
 
 
 @pytest.fixture
@@ -145,3 +165,117 @@ def test_env_py_configures_batch_mode(
     # The other half of the pair: the convention only helps if the metadata carrying
     # it is the metadata env.py hands to Alembic.
     assert kwargs["target_metadata"].naming_convention == NAMING_CONVENTION
+
+
+def _alembic_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Config:
+    """An alembic Config whose env.py resolves the DB URL to ``tmp_path/reaper.db``."""
+    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    monkeypatch.setattr("reaper.config.get_settings", lambda: settings)
+    monkeypatch.setattr("logging.config.fileConfig", lambda *a, **kw: None)
+    return Config(str(PROJECT_ROOT / "alembic.ini"))
+
+
+def _size_bytes_nullable(engine: Engine) -> bool:
+    col = next(c for c in inspect(engine).get_columns("candidate") if c["name"] == "size_bytes")
+    return bool(col["nullable"])
+
+
+def _held_back_default(engine: Engine) -> object:
+    col = next(
+        c for c in inspect(engine).get_columns("reap_run") if c["name"] == "held_back_unknown_size"
+    )
+    return col["default"]
+
+
+def test_heal_migration_relaxes_old_not_null_size_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The heal reshapes a database built from the pre-freeze baseline, preserving its rows.
+
+    A database created before the baseline was corrected has ``candidate.size_bytes`` NOT NULL
+    and ``reap_run.held_back_unknown_size`` DEFAULT 0, and no ALTER ever ran to fix it. Stamp
+    such a shape at the prior head, upgrade, and both columns must reach the model shape while
+    the existing row survives and a NULL size (an unknown-size item) now inserts.
+    """
+    config = _alembic_config(tmp_path, monkeypatch)
+    engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+    md = MetaData(naming_convention=NAMING_CONVENTION)
+    Table("snapshot", md, Column("id", Integer, primary_key=True))
+    Table(
+        "candidate",
+        md,
+        Column("id", Integer, primary_key=True),
+        Column(
+            "snapshot_id", Integer, ForeignKey("snapshot.id", ondelete="CASCADE"), nullable=False
+        ),
+        Column("media_key", String(100), nullable=False),
+        Column("size_bytes", Integer, nullable=False),  # the old, un-healed shape
+        UniqueConstraint("snapshot_id", "media_key"),
+    )
+    Table(
+        "reap_run",
+        md,
+        Column("id", Integer, primary_key=True),
+        Column(
+            "snapshot_id", Integer, ForeignKey("snapshot.id", ondelete="RESTRICT"), nullable=False
+        ),
+        Column("held_back_unknown_size", Integer, nullable=False, server_default="0"),  # old shape
+    )
+    md.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO snapshot (id) VALUES (1)"))
+        conn.execute(
+            text(
+                "INSERT INTO candidate (id, snapshot_id, media_key, size_bytes) VALUES "
+                "(1, 1, 'k1', 123)"
+            )
+        )
+        conn.execute(text("INSERT INTO reap_run (id, snapshot_id) VALUES (1, 1)"))
+
+    assert _size_bytes_nullable(engine) is False  # precondition: the broken shape
+    assert _held_back_default(engine) is not None
+
+    command.stamp(config, _PRIOR_HEAD)
+    command.upgrade(config, "head")
+
+    # Healed to the model shape.
+    assert _size_bytes_nullable(engine) is True
+    assert _held_back_default(engine) is None
+    # The existing row survived the table copy unchanged.
+    with engine.connect() as conn:
+        assert conn.execute(text("SELECT size_bytes FROM candidate WHERE id = 1")).scalar() == 123
+        # A NULL size (an item Radarr could not size) now inserts, where before it raised.
+        conn.execute(
+            text(
+                "INSERT INTO candidate (id, snapshot_id, media_key, size_bytes) VALUES "
+                "(2, 1, 'k2', NULL)"
+            )
+        )
+        conn.commit()
+        assert conn.execute(text("SELECT COUNT(*) FROM candidate")).scalar() == 2
+
+
+def test_heal_migration_is_noop_on_corrected_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On a database already at the corrected shape, the heal changes nothing and never rebuilds.
+
+    A fresh install reaches ``_PRIOR_HEAD`` with size_bytes already nullable, so both guards in
+    the migration are false and it is a pure version bump. The upgrade must succeed and leave the
+    model shape in place (a rebuild that dropped data or a guard that fired would fail here).
+    """
+    config = _alembic_config(tmp_path, monkeypatch)
+    command.upgrade(config, _PRIOR_HEAD)
+    engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+    assert _size_bytes_nullable(engine) is True  # the baseline already ships the corrected shape
+    assert _held_back_default(engine) is None
+
+    command.upgrade(config, "head")
+
+    assert _size_bytes_nullable(engine) is True
+    assert _held_back_default(engine) is None
+    with engine.connect() as conn:
+        version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+    assert version == _HEAL_HEAD
