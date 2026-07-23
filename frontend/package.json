@@ -15,27 +15,27 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@tanstack/react-query": "5.101.2",
-    "react": "19.2.7",
-    "react-dom": "19.2.7"
+    "@tanstack/react-query": "5.101.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@scalar/api-reference": "^1.62.9",
+    "@scalar/api-reference": "^1.63.0",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "6.0.3",
+    "@vitejs/plugin-react": "6.0.4",
     "eslint": "^10.7.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.7.0",
     "jsdom": "^29.1.1",
     "typescript": "5.9.3",
-    "typescript-eslint": "^8.64.0",
-    "vite": "8.1.4",
+    "typescript-eslint": "^8.65.0",
+    "vite": "8.1.5",
     "vitest": "^4.1.10"
   }
 }
