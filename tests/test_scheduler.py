@@ -12,6 +12,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import text
@@ -165,6 +166,7 @@ class TestTheSchedulerIsUpkeepOnly:
             tmp_path,
             session_factory=create_session_factory(engine),
             secret_box=SecretBox(resolve_secret_key(settings)),
+            timezone=ZoneInfo("UTC"),
         )
         # build_scheduler returns an unstarted scheduler; jobs are inspectable without
         # starting it, and there is nothing to shut down.

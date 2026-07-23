@@ -21,6 +21,7 @@ from __future__ import annotations
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 import structlog
@@ -96,6 +97,11 @@ def _bare(client: TestClient) -> TestClient:
 class TestGeneralSettings:
     def test_fresh_install_defaults(self, client: TestClient) -> None:
         data = client.get("/api/settings/general").json()
+        # The fresh-install time zone is the host's own zone (no stored value, no env seed),
+        # so it varies by machine -- assert only that it is a real IANA name, then hold the
+        # rest to their fixed defaults.
+        tz = data.pop("timezone")
+        assert ZoneInfo(tz)
         assert data == {
             "application_name": "Reaper",
             "application_url": None,

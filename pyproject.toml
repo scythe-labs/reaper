@@ -31,6 +31,7 @@ dependencies = [
     "tenacity>=9.1.4",
     # Scheduling — 3.x, NOT 4.x (still alpha: 4.0.0a6, 14 months stale)
     "apscheduler>=3.11.3,<4.0.0",
+    "tzlocal>=5.0",              # imported directly (app_settings host-zone detection), not only via apscheduler
     # Secrets & auth
     "cryptography>=49.0.0",      # Fernet, for API keys at rest
     "pwdlib[argon2]>=0.3.0",     # NOT passlib (dead since 2020-10-08)

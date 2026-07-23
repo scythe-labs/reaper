@@ -677,6 +677,9 @@ export interface About {
 export interface GeneralSettings {
   application_name: string;
   application_url: string | null;
+  /** The server time zone every timed job runs on, as an IANA name (e.g. America/New_York).
+   *  The effective value: the stored setting, else the env seed, else the host's own zone. */
+  timezone: string;
   /** The UI accent as #rrggbb; the built-in sky blue until changed. */
   accent_color: string;
   /** Whether a key exists at all; the value only leaves through the reveal call. */
@@ -1194,6 +1197,7 @@ export const api = {
   saveGeneral: (body: {
     application_name?: string;
     application_url?: string;
+    timezone?: string;
     accent_color?: string;
     expand_seasons_default?: boolean;
     default_spare_days?: number;

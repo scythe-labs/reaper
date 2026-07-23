@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import structlog
 from fastapi import FastAPI
@@ -163,8 +164,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # runs in a task rather than inline so a first-boot 280 MB dataset download does not
     # block the app from serving; the first scan degrades until it lands, which is the
     # correct, loud behavior, not a broken one.
+    # The server time zone every timed job runs on: the stored setting, else the
+    # REAPER_TIMEZONE seed, else the host's own zone (see app_settings.get_timezone). A cron
+    # set for 2 AM fires at 2 AM here; without a pinned zone APScheduler would use the
+    # container's own, which is UTC in most images. get_timezone only ever returns a
+    # validated IANA name, so ZoneInfo cannot raise on it.
+    async with factory() as session:
+        scheduler_tz = ZoneInfo(await app_settings.get_timezone(session, settings))
+        scan_cron = await app_settings.get_scan_schedule(session)
+        maintenance_schedules = await app_settings.get_maintenance_schedules(session)
+
     scheduler = build_scheduler(
-        cache_engine, settings.data_dir, session_factory=factory, secret_box=box
+        cache_engine,
+        settings.data_dir,
+        session_factory=factory,
+        secret_box=box,
+        timezone=scheduler_tz,
     )
     # Track which jobs are executing before the scheduler starts, so the very first firing
     # is seen. The Jobs page reads this to show an honest "running now" per job.
@@ -176,9 +191,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # so this is the one scheduled job that produces new review candidates; the rest is
     # cache upkeep. A stored-but-malformed cron is logged and skipped rather than crashing
     # startup.
-    async with factory() as session:
-        scan_cron = await app_settings.get_scan_schedule(session)
-        maintenance_schedules = await app_settings.get_maintenance_schedules(session)
     if scan_cron:
         try:
             apply_scan_schedule(
@@ -188,6 +200,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 session_factory=factory,
                 cache_engine=cache_engine,
                 secret_box=box,
+                timezone=scheduler_tz,
             )
         except ValueError:
             log.warning("scheduler.bad_scan_cron", cron=scan_cron)
@@ -205,6 +218,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 data_dir=settings.data_dir,
                 session_factory=factory,
                 secret_box=box,
+                timezone=scheduler_tz,
             )
         except (ValueError, KeyError):
             log.warning("scheduler.bad_maintenance_cron", job=job_id, cron=cron)

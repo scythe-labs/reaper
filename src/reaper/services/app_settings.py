@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import json
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import tzlocal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -96,9 +98,17 @@ TRUSTED_PROXIES_KEY = "trusted_proxies"
 #: The logging level (DEBUG/INFO/WARNING). Stored value wins; ``REAPER_LOG_LEVEL`` is
 #: only the first-boot seed, like every other env-seeded switch.
 LOG_LEVEL_KEY = "log_level"
+#: The server time zone the scheduler's timed jobs run on -- the nightly scan and the upkeep
+#: jobs. An IANA name like ``America/New_York``, so a cron set for 2 AM fires at 2 AM here,
+#: not in the container's own zone. Stored value wins; ``REAPER_TIMEZONE`` is only the
+#: first-boot seed, and an unset seed falls back to the host's own zone. See ``get_timezone``.
+TIMEZONE_KEY = "timezone"
 
 DEFAULT_PLEX_WEB_URL = "https://app.plex.tv"
 DEFAULT_APPLICATION_NAME = "Reaper"
+#: The last-resort time zone: what APScheduler would fall back to if the host's own zone
+#: cannot be read either. UTC is the safe, universal choice.
+DEFAULT_TIMEZONE = "UTC"
 #: The built-in accent, a sky blue. The default the UI ships with and resets to.
 DEFAULT_ACCENT_COLOR = "#25c3ff"
 
@@ -192,6 +202,49 @@ async def get_application_url(session: AsyncSession) -> str | None:
 async def set_application_url(session: AsyncSession, url: str | None) -> None:
     cleaned = (url or "").strip().rstrip("/")
     await _set(session, APPLICATION_URL_KEY, cleaned or None)
+
+
+def is_valid_timezone(name: str) -> bool:
+    """Whether ``name`` is a known IANA zone. The one check the API edge and the resolver
+    share, so a value that would fail to build a ``ZoneInfo`` never reaches the scheduler."""
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        return False
+    return True
+
+
+def _detect_host_timezone() -> str:
+    """The host's own IANA zone name (from the standard TZ / /etc/localtime), or UTC if it
+    can't be read. This is the last fallback, matching what APScheduler used implicitly
+    before the setting existed -- so an install whose container zone was already correct
+    keeps firing at the same wall-clock time after the upgrade."""
+    try:
+        name = tzlocal.get_localzone_name()
+    except Exception:
+        return DEFAULT_TIMEZONE
+    return name if name and is_valid_timezone(name) else DEFAULT_TIMEZONE
+
+
+async def get_timezone(session: AsyncSession, settings: Settings) -> str:
+    """The effective server time zone, as an IANA name.
+
+    Stored value wins (Settings -> General); then the ``REAPER_TIMEZONE`` first-boot seed;
+    then the host's own zone; then UTC. Every layer is validated, so a corrupt stored value
+    or a typo in the env falls through to the next source rather than raising -- the
+    scheduler can always build a zone from what this returns.
+    """
+    stored = await _get(session, TIMEZONE_KEY, default=None)
+    if stored and is_valid_timezone(str(stored)):
+        return str(stored)
+    if settings.timezone and is_valid_timezone(settings.timezone):
+        return settings.timezone
+    return _detect_host_timezone()
+
+
+async def set_timezone(session: AsyncSession, name: str) -> None:
+    """Store the server time zone. Validated to a real IANA name at the API edge."""
+    await _set(session, TIMEZONE_KEY, name)
 
 
 async def get_accent_color(session: AsyncSession) -> str:

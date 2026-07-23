@@ -23,6 +23,7 @@ import secrets
 from ipaddress import ip_network
 from typing import Any
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 import structlog
 from fastapi import APIRouter, HTTPException, Request
@@ -60,6 +61,7 @@ from reaper.services.scheduler import (
     apply_maintenance_schedule,
     apply_scan_schedule,
     effective_maintenance_cron,
+    reschedule_timezone,
     run_maintenance_now,
 )
 
@@ -1033,6 +1035,9 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
     """
     cron = (payload.cron or "").strip() or None
     scheduler = request.app.state.scheduler
+    # Read the cron in the current server zone, so a job set for 2 AM fires at 2 AM there.
+    async with _factory(request)() as session:
+        job_tz = ZoneInfo(await app_settings.get_timezone(session, _settings(request)))
     if job_id == SCAN_JOB_ID:
         try:
             apply_scan_schedule(
@@ -1042,6 +1047,7 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
                 session_factory=_factory(request),
                 cache_engine=request.app.state.cache_engine,
                 secret_box=_box(request),
+                timezone=job_tz,
             )
         except ValueError as exc:
             raise HTTPException(
@@ -1060,6 +1066,7 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
                 data_dir=_settings(request).data_dir,
                 session_factory=_factory(request),
                 secret_box=_box(request),
+                timezone=job_tz,
             )
         except ValueError as exc:
             raise HTTPException(
@@ -1294,6 +1301,10 @@ _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 class GeneralSettingsOut(BaseModel):
     application_name: str
     application_url: str | None = None
+    timezone: str
+    """The server time zone every timed job runs on, as an IANA name (e.g.
+    ``America/New_York``). The effective value: the stored setting, else the env seed, else
+    the host's own zone."""
     accent_color: str
     """The UI accent as ``#rrggbb``; the built-in sky blue until changed."""
     api_key_set: bool
@@ -1315,6 +1326,9 @@ class GeneralSettingsIn(BaseModel):
 
     application_name: str | None = Field(default=None, max_length=60)
     application_url: str | None = Field(default=None, max_length=500)
+    timezone: str | None = Field(default=None, max_length=64)
+    """An IANA time-zone name, validated to a real zone at the edge. ``None`` leaves it
+    unchanged."""
     accent_color: str | None = Field(default=None, max_length=7)
     expand_seasons_default: bool | None = None
     default_spare_days: int | None = Field(default=None, ge=0, le=3650)
@@ -1331,6 +1345,7 @@ async def _general_out(session: AsyncSession, settings: Settings) -> GeneralSett
     return GeneralSettingsOut(
         application_name=await app_settings.get_application_name(session),
         application_url=await app_settings.get_application_url(session),
+        timezone=await app_settings.get_timezone(session, settings),
         accent_color=await app_settings.get_accent_color(session),
         api_key_set=(await session.get(AppSetting, app_settings.API_KEY_KEY)) is not None,
         expand_seasons_default=await app_settings.get_expand_seasons_default(session),
@@ -1353,6 +1368,32 @@ async def _refresh_proxy_state(request: Request, session: AsyncSession) -> None:
         request.app.state.trusted_proxies = parse_proxy_networks(entries)
     else:
         request.app.state.trusted_proxies = ()
+
+
+async def _apply_timezone_to_scheduler(request: Request, name: str) -> None:
+    """Move the live scheduler's timed jobs onto a new server time zone, so a change in
+    Settings -> General takes effect now, not at the next restart. ``name`` is already
+    validated to a real zone by the caller.
+
+    A test app may run without a scheduler; if so there is nothing to move.
+    """
+    scheduler = getattr(request.app.state, "scheduler", None)
+    if scheduler is None:
+        return
+    async with _factory(request)() as session:
+        scan_cron = await app_settings.get_scan_schedule(session)
+        maintenance = await app_settings.get_maintenance_schedules(session)
+    reschedule_timezone(
+        scheduler,
+        ZoneInfo(name),
+        settings=_settings(request),
+        session_factory=_factory(request),
+        cache_engine=request.app.state.cache_engine,
+        secret_box=_box(request),
+        data_dir=_settings(request).data_dir,
+        scan_cron=scan_cron,
+        maintenance=maintenance,
+    )
 
 
 @router.get("/general")
@@ -1402,10 +1443,21 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
                     "The accent color must be a hex code like #25c3ff.",
                 )
 
+        cleaned_timezone: str | None = None
+        if payload.timezone is not None:
+            cleaned_timezone = payload.timezone.strip()
+            if not cleaned_timezone or not app_settings.is_valid_timezone(cleaned_timezone):
+                raise HTTPException(
+                    422,
+                    "That is not a known time zone. Pick one from the list.",
+                )
+
         if payload.application_name is not None:
             await app_settings.set_application_name(session, payload.application_name)
         if payload.application_url is not None:
             await app_settings.set_application_url(session, payload.application_url)
+        if cleaned_timezone is not None:
+            await app_settings.set_timezone(session, cleaned_timezone)
         if payload.accent_color is not None:
             await app_settings.set_accent_color(session, payload.accent_color)
         if payload.expand_seasons_default is not None:
@@ -1420,6 +1472,8 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
             await app_settings.set_trusted_proxies(session, payload.trusted_proxies)
         await session.commit()
         await _refresh_proxy_state(request, session)
+        if cleaned_timezone is not None:
+            await _apply_timezone_to_scheduler(request, cleaned_timezone)
         result = await _general_out(session, _settings(request))
     log.info("settings.general_saved")
     return result

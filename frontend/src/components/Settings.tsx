@@ -98,12 +98,31 @@ const ACCENT_PRESETS = [
   "#ec4899",
 ];
 
+// The browser's full IANA zone list, fetched once and cached: it never changes within a
+// session, so recomputing it per render would be waste. Falls back to just UTC on an engine
+// without Intl.supportedValuesOf, so the control still works.
+let _zoneCache: string[] | null = null;
+function allTimeZones(): string[] {
+  if (_zoneCache) return _zoneCache;
+  let zones: string[] = [];
+  try {
+    const supported = (Intl as { supportedValuesOf?: (key: string) => string[] })
+      .supportedValuesOf;
+    if (supported) zones = supported("timeZone");
+  } catch {
+    zones = [];
+  }
+  _zoneCache = zones.length ? zones : ["UTC"];
+  return _zoneCache;
+}
+
 function GeneralPanel() {
   const queryClient = useQueryClient();
   const general = useQuery({ queryKey: ["general-settings"], queryFn: api.general });
 
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
+  const [tz, setTz] = useState("");
   const [proxies, setProxies] = useState("");
   const [accent, setAccent] = useState(DEFAULT_ACCENT);
   // The days a plain Spare keeps an item, while the operator is editing it. The stored value
@@ -124,6 +143,7 @@ function GeneralPanel() {
     seeded.current = true;
     setName(general.data.application_name);
     setUrl(general.data.application_url ?? "");
+    setTz(general.data.timezone);
     setProxies(general.data.trusted_proxies.join(", "));
     setAccent(general.data.accent_color);
     if (general.data.default_spare_days > 0) setSpareDays(general.data.default_spare_days);
@@ -137,6 +157,7 @@ function GeneralPanel() {
       queryClient.setQueryData(["general-settings"], data);
       setName(data.application_name);
       setUrl(data.application_url ?? "");
+      setTz(data.timezone);
       setProxies(data.trusted_proxies.join(", "));
       setAccent(data.accent_color);
     },
@@ -182,6 +203,13 @@ function GeneralPanel() {
 
   const nameDirty = name.trim() !== data.application_name;
   const urlDirty = url.trim() !== (data.application_url ?? "");
+  const tzDirty = tz !== data.timezone;
+  // The current zone may not be in the browser's list (an older engine, or a server-only
+  // zone); keep it selectable so a save never silently drops it.
+  const zoneOptions =
+    data.timezone && !allTimeZones().includes(data.timezone)
+      ? [data.timezone, ...allTimeZones()]
+      : allTimeZones();
   const accentValid = isHexColor(accent);
   const accentDirty = accent.trim().toLowerCase() !== data.accent_color.toLowerCase();
   const proxiesDirty =
@@ -242,6 +270,32 @@ function GeneralPanel() {
                   className="primary"
                   disabled={save.isPending}
                   onClick={() => save.mutate({ application_url: url.trim() })}
+                >
+                  Save
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="set-row">
+            <span className="set-label">Time zone</span>
+            <p className="help">The server's time zone.</p>
+            <div className="set-control">
+              <select
+                value={tz}
+                aria-label="Time zone"
+                onChange={(e) => setTz(e.target.value)}
+              >
+                {zoneOptions.map((z) => (
+                  <option key={z} value={z}>
+                    {z}
+                  </option>
+                ))}
+              </select>
+              {tzDirty && (
+                <button
+                  className="primary"
+                  disabled={save.isPending}
+                  onClick={() => save.mutate({ timezone: tz })}
                 >
                   Save
                 </button>

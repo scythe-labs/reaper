@@ -104,6 +104,15 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_json: bool = False
 
+    # First-boot seed for the server time zone the scheduler's timed jobs run on -- the
+    # nightly scan and the upkeep jobs. An IANA name like "America/New_York"; empty means
+    # detect from the host (the standard TZ / /etc/localtime). A cron such as "0 2 * * *"
+    # then fires at 2 AM in THIS zone. Without it APScheduler falls back to the container's
+    # own zone (UTC in most images), so a nightly scan set for 2 AM would silently run at
+    # 2 AM UTC. Only the first-run default; after that the stored value (Settings ->
+    # General) wins, like every other env-seeded setting. See app_settings.get_timezone.
+    timezone: str = ""
+
     host: str = "0.0.0.0"  # noqa: S104 -- a container must bind all interfaces
     port: int = 8420
 

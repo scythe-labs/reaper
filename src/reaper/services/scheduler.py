@@ -25,7 +25,7 @@ first ratings load can take a while -- never stacks a second copy on top of itse
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import timedelta, tzinfo
 from pathlib import Path
 
 import structlog
@@ -188,19 +188,22 @@ def apply_scan_schedule(
     session_factory: async_sessionmaker[AsyncSession],
     cache_engine: AsyncEngine,
     secret_box: SecretBox,
+    timezone: tzinfo,
 ) -> None:
     """Reconcile the automatic-scan job to a cron string (or remove it if ``None``).
 
-    ``cron`` is a standard 5-field crontab expression. A malformed one raises
-    ``ValueError`` (surfaced to the caller as a 422) rather than being silently dropped --
-    an owner who thinks they scheduled a nightly scan should not find nothing ran.
+    ``cron`` is a standard 5-field crontab expression, read in ``timezone`` -- the server
+    zone from ``app_settings.get_timezone`` -- so "0 2 * * *" fires at 2 AM there, not in
+    the container's own zone. A malformed cron raises ``ValueError`` (surfaced to the caller
+    as a 422) rather than being silently dropped -- an owner who thinks they scheduled a
+    nightly scan should not find nothing ran.
     """
     if cron is None:
         if scheduler.get_job(SCAN_JOB_ID) is not None:
             scheduler.remove_job(SCAN_JOB_ID)
         return
 
-    trigger = CronTrigger.from_crontab(cron)  # ValueError on a bad expression
+    trigger = CronTrigger.from_crontab(cron, timezone=timezone)  # ValueError on a bad expression
     scheduler.add_job(
         scheduled_scan,
         trigger,
@@ -244,12 +247,14 @@ def apply_maintenance_schedule(
     data_dir: Path,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
+    timezone: tzinfo,
 ) -> None:
     """Reconcile one upkeep job to a cron string, or remove it when ``cron`` is ``None``.
 
-    ``None`` means the owner turned the job off; the job is dropped from the scheduler but
-    can still be run once by hand (see :func:`run_maintenance_now`). A malformed cron raises
-    ``ValueError`` (surfaced as a 422) rather than being silently dropped.
+    ``cron`` is read in ``timezone`` (the server zone), so every timed job shares one clock
+    with the scan. ``None`` means the owner turned the job off; the job is dropped from the
+    scheduler but can still be run once by hand (see :func:`run_maintenance_now`). A malformed
+    cron raises ``ValueError`` (surfaced as a 422) rather than being silently dropped.
     """
     specs = _maintenance_specs(
         cache_engine, data_dir, session_factory=session_factory, secret_box=secret_box
@@ -262,7 +267,7 @@ def apply_maintenance_schedule(
             scheduler.remove_job(job_id)
         log.info("scheduler.maintenance_off", job=job_id)
         return
-    trigger = CronTrigger.from_crontab(cron)  # ValueError on a bad expression
+    trigger = CronTrigger.from_crontab(cron, timezone=timezone)  # ValueError on a bad expression
     scheduler.add_job(func, trigger, args=args, id=job_id, replace_existing=True)
     log.info("scheduler.maintenance_scheduled", job=job_id, cron=cron)
 
@@ -332,15 +337,19 @@ def build_scheduler(
     *,
     session_factory: async_sessionmaker[AsyncSession],
     secret_box: SecretBox,
+    timezone: tzinfo,
 ) -> AsyncIOScheduler:
     """Wire the nightly jobs. The caller starts it and holds it on app state.
 
-    Times are staggered and in UTC. IMDb publishes the dataset once a day; there is no
-    value in hammering it, and 03:30 keeps the heavy download off peak viewing hours. The
-    history sweep runs a little later still, since it is a full re-walk of Tautulli.
+    Times are staggered and run in ``timezone`` -- the server zone from
+    ``app_settings.get_timezone`` -- so 03:30 means 03:30 there, the same clock the scan
+    uses. IMDb publishes the dataset once a day; there is no value in hammering it, and 03:30
+    keeps the heavy download off peak viewing hours. The history sweep runs a little later
+    still, since it is a full re-walk of Tautulli.
     """
     scheduler = AsyncIOScheduler(
-        job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600}
+        timezone=timezone,
+        job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 3600},
     )
 
     specs = _maintenance_specs(
@@ -350,9 +359,51 @@ def build_scheduler(
         func, args = specs[job_id]
         scheduler.add_job(
             func,
-            CronTrigger.from_crontab(cron),
+            CronTrigger.from_crontab(cron, timezone=timezone),
             args=args,
             id=job_id,
             replace_existing=True,
         )
     return scheduler
+
+
+def reschedule_timezone(
+    scheduler: AsyncIOScheduler,
+    timezone: tzinfo,
+    *,
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+    cache_engine: AsyncEngine,
+    secret_box: SecretBox,
+    data_dir: Path,
+    scan_cron: str | None,
+    maintenance: dict[str, str | None],
+) -> None:
+    """Re-apply every timed job under a new server time zone, in place.
+
+    Each cron trigger carries its own zone, so moving the clock means rebuilding every
+    trigger -- the scan and all upkeep jobs -- with the new one. The stored crons decide what
+    to rebuild: a job the owner turned off stays off, an overridden one keeps its override,
+    and an untouched one falls back to its default. Called when the time zone changes in the
+    UI so every "next run" recomputes immediately; startup wires the same jobs directly.
+    """
+    apply_scan_schedule(
+        scheduler,
+        scan_cron,
+        settings=settings,
+        session_factory=session_factory,
+        cache_engine=cache_engine,
+        secret_box=secret_box,
+        timezone=timezone,
+    )
+    for job_id in MAINTENANCE_JOB_IDS:
+        apply_maintenance_schedule(
+            scheduler,
+            job_id,
+            effective_maintenance_cron(job_id, maintenance),
+            cache_engine=cache_engine,
+            data_dir=data_dir,
+            session_factory=session_factory,
+            secret_box=secret_box,
+            timezone=timezone,
+        )
