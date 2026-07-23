@@ -77,7 +77,7 @@ from reaper.engine.policy import (
 from reaper.engine.signals import SignalConfig
 from reaper.engine.signals import score as score_facts
 from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict
-from reaper.services import app_settings, whitelist
+from reaper.services import app_settings, backup, whitelist
 from reaper.services.condemned import reap_is_effective, reap_override_verdict
 from reaper.services.deep_links import build_links
 from reaper.services.display_meta import parse_ratings_json
@@ -1657,16 +1657,10 @@ async def vocabulary_values(request: Request, field: str) -> FieldValuesOut:
 def _db_bytes(base: Path) -> int:
     """The size of one SQLite database on disk, including its live WAL.
 
-    The -wal file holds committed writes that have not been checkpointed yet, so
-    counting the bare .db alone under-reports what the operator's disk is holding.
+    The one implementation lives with the backup service, which weighs the same files
+    to size a download; the About page and the Backup panel must not drift apart.
     """
-    total = 0
-    for path in (base, base.with_name(base.name + "-wal")):
-        try:
-            total += path.stat().st_size
-        except OSError:
-            continue
-    return total
+    return backup.db_size_on_disk(base)
 
 
 @router.get("/about")

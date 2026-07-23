@@ -103,6 +103,9 @@ LOG_LEVEL_KEY = "log_level"
 #: not in the container's own zone. Stored value wins; ``REAPER_TIMEZONE`` is only the
 #: first-boot seed, and an unset seed falls back to the host's own zone. See ``get_timezone``.
 TIMEZONE_KEY = "timezone"
+#: When a backup was last downloaded (ISO 8601, UTC). Only ever surfaced as "last backup"
+#: on the Backup panel, so a losable copy on someone else's schedule is not a source of truth.
+BACKUP_LAST_AT_KEY = "backup_last_at"
 
 DEFAULT_PLEX_WEB_URL = "https://app.plex.tv"
 DEFAULT_APPLICATION_NAME = "Reaper"
@@ -282,6 +285,19 @@ async def get_default_spare_days(session: AsyncSession) -> int:
 
 async def set_default_spare_days(session: AsyncSession, *, days: int) -> None:
     await _set(session, DEFAULT_SPARE_DAYS_KEY, max(0, int(days)))
+
+
+# --- backup ------------------------------------------------------------------
+
+
+async def get_last_backup_at(session: AsyncSession) -> str | None:
+    """When a backup was last downloaded (ISO 8601, UTC), or ``None`` if never."""
+    value = await _get(session, BACKUP_LAST_AT_KEY, default=None)
+    return str(value) if value else None
+
+
+async def set_last_backup_at(session: AsyncSession, when: str) -> None:
+    await _set(session, BACKUP_LAST_AT_KEY, when)
 
 
 # --- the instance API key ----------------------------------------------------

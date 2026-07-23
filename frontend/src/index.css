@@ -6200,6 +6200,143 @@ button.danger:hover:not(:disabled) {
   }
 }
 
+/* The facts grid inside the Backup card: the About page's key/value list, minus the
+   set-rows padding, since here it sits directly inside a .rules-card. */
+.backup-facts {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  gap: 0.45rem 1.1rem;
+  font-size: 0.9rem;
+  margin: 0.9rem 0 0;
+}
+.backup-facts dt {
+  color: var(--muted);
+}
+.backup-facts dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.backup-actions {
+  margin-top: 0.9rem;
+}
+@media (max-width: 560px) {
+  .backup-facts {
+    grid-template-columns: 1fr;
+    gap: 0.1rem 1.1rem;
+  }
+  .backup-facts dd {
+    margin-bottom: 0.4rem;
+  }
+}
+
+/* The restore card: choose-a-file dropzone, the validated summary, and the armed prompt. */
+.dropzone {
+  margin-top: 0.9rem;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 1.1rem 1rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+.dropzone-over {
+  border-color: var(--accent);
+  border-style: solid;
+}
+.dropzone .dz-hint {
+  font-size: 0.78rem;
+  color: var(--faint);
+}
+
+.chosen {
+  margin-top: 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+.chosen-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.7rem 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+.chosen-file {
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+.chosen-x {
+  margin-left: auto;
+}
+.chosen-body {
+  padding: 0.75rem 0.85rem;
+  display: grid;
+  gap: 0.5rem;
+}
+.kv2 {
+  display: grid;
+  grid-template-columns: 8rem 1fr;
+  gap: 0.3rem 1rem;
+  font-size: 0.85rem;
+}
+.kv2 span:first-child {
+  color: var(--muted);
+}
+.verdict-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--protect);
+  font-size: 0.85rem;
+  font-weight: 550;
+}
+.verdict-ok .dot {
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  background: var(--protect);
+  color: var(--protect-soft);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 800;
+  flex: none;
+}
+
+/* The password field rides the shared control standard (.field-sm); only its width differs. */
+.restore-pw {
+  margin-top: 0.85rem;
+  max-width: 22rem;
+}
+.restore-when {
+  margin-top: 0.5rem;
+}
+
+/* The armed prompt is a warn notice that carries its Cancel affordance on the right. */
+.restore-armed {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 560px) {
+  .kv2 {
+    grid-template-columns: 1fr;
+    gap: 0.1rem;
+  }
+}
+
 /* ==========================================================================
    Settings · General and Logs
    ========================================================================== */

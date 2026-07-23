@@ -1007,6 +1007,37 @@ export interface Notifications {
   has_webhook: boolean;
 }
 
+export interface BackupInfo {
+  /** The live database size: roughly what the download weighs before compression. */
+  reaper_db_bytes: number;
+  /** When a backup was last downloaded (ISO 8601, UTC), or null if never. */
+  last_backup_at: string | null;
+  /** Whether the encryption key travels inside the backup. False when the key comes from
+   *  the environment, so a restore needs that same value set on the target machine. */
+  key_in_backup: boolean;
+  app_version: string;
+  /** Whether a confirmed restore is staged and waiting for a container restart. */
+  restore_armed: boolean;
+}
+
+/** What an uploaded backup turned out to be, once Reaper accepted it. Shown so the
+ *  operator can confirm before restoring. */
+export interface RestoreSummary {
+  /** The Reaper version that wrote the backup, or null if the file didn't say. */
+  app_version: string | null;
+  /** When the backup was taken (ISO 8601, UTC), or null. */
+  created_at: string | null;
+  /** The schema revision the backup sits at. */
+  revision: string | null;
+  /** "current" when it matches this server, "older" when this server will update it on
+   *  restart. Both are safe to restore. */
+  verdict: string;
+  /** Whether the encryption key is inside the backup. False for an env-supplied key, so
+   *  the target must have REAPER_SECRET_KEY set to the same value. */
+  key_in_backup: boolean;
+  reaper_db_bytes: number;
+}
+
 // ---------------------------------------------------------------------------
 
 /** A header our own frontend sends on every request. It is the load-bearing half
@@ -1238,6 +1269,53 @@ export const api = {
       URL.revokeObjectURL(url);
     }
   },
+
+  // Backup: what a backup would contain, and the download itself. Like the log download,
+  // the file comes back as a binary blob (not JSON), and the server names it with a stamp.
+  backupInfo: () => request<BackupInfo>("/api/settings/backup"),
+  downloadBackup: async (): Promise<void> => {
+    const response = await fetch("/api/settings/backup/download", { headers: { ...CSRF_HEADER } });
+    if (!response.ok) {
+      const errorBody: unknown = await response.json().catch(() => null);
+      throw new ApiError(response.status, reason(response.status, errorBody));
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? "reaper-backup.reaper";
+    const url = URL.createObjectURL(blob);
+    try {
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = name;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  },
+
+  /** Upload a backup file for restore. The bytes go up as the raw request body (not a
+   *  multipart form), so the server streams them straight to disk. On success the file is
+   *  staged, un-armed; `restoreConfirm` then verifies the password and arms the swap. */
+  restorePrepare: async (file: File): Promise<RestoreSummary> => {
+    const response = await fetch("/api/settings/backup/restore/prepare", {
+      method: "POST",
+      headers: { ...CSRF_HEADER },
+      body: file,
+    });
+    if (!response.ok) {
+      const body: unknown = await response.json().catch(() => null);
+      throw new ApiError(response.status, reason(response.status, body));
+    }
+    return (await response.json()) as RestoreSummary;
+  },
+  /** Confirm a staged restore with the admin password. Arms the swap; the operator then
+   *  restarts the container to finish. */
+  restoreConfirm: (password: string) =>
+    post<{ ok: boolean }>("/api/settings/backup/restore/confirm", { password }),
+  /** Discard a staged or armed restore. */
+  restoreCancel: () => post<{ ok: boolean }>("/api/settings/backup/restore/cancel", {}),
 
   schedule: () => request<Schedule>("/api/settings/schedule"),
   saveJobSchedule: (id: string, cron: string | null) =>

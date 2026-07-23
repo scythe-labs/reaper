@@ -71,8 +71,10 @@ _OPEN_PREFIX = "/api/auth/"
 api_key_throttle = Throttle(threshold=5, base_delay=2.0, max_delay=300.0, decay=900.0)
 
 #: Reads an API key must never see: they hand back a stored secret in the clear. Every
-#: other read is open to the key (it is for scripts), so this stays a tiny denylist.
-_API_KEY_READ_DENY = frozenset({"/api/settings/general/api-key"})
+#: other read is open to the key (it is for scripts), so this stays a tiny denylist. The
+#: backup download is here because it is the crown jewels -- the whole database plus the
+#: master key that decrypts every credential -- so a leaked automation key cannot pull it.
+_API_KEY_READ_DENY = frozenset({"/api/settings/general/api-key", "/api/settings/backup/download"})
 
 #: The only writes an API key may drive: scanning, planning, and editing the policy and
 #: reap profile. Everything else that changes state stays behind the signed-in browser --

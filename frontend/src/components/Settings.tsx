@@ -12,13 +12,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type ChangeEvent,
   type CSSProperties,
+  type DragEvent,
   type ReactNode,
   useEffect,
   useRef,
   useState,
 } from "react";
 import { accentInk, DEFAULT_ACCENT, isHexColor } from "../accent";
-import { api, type Instance, type InstanceTest, type ScheduledJob } from "../api";
+import {
+  api,
+  type Instance,
+  type InstanceTest,
+  type RestoreSummary,
+  type ScheduledJob,
+} from "../api";
 import { useBackGuard } from "../backnav";
 import { bytes, count, since } from "../format";
 import { LogsPanel } from "./LogsPanel";
@@ -41,6 +48,7 @@ export type Panel =
   | "jobs"
   | "notifications"
   | "security"
+  | "backup"
   | "logs"
   | "about";
 
@@ -51,6 +59,7 @@ const PANELS: { id: Panel; label: string }[] = [
   { id: "jobs", label: "Jobs" },
   { id: "notifications", label: "Notifications" },
   { id: "security", label: "Security" },
+  { id: "backup", label: "Backup" },
   { id: "logs", label: "Logs" },
   { id: "about", label: "About" },
 ];
@@ -780,6 +789,308 @@ export function ServicesPanel() {
         />
       )}
     </div>
+  );
+}
+
+// --- Backup ------------------------------------------------------------------
+
+function BackupPanel() {
+  const qc = useQueryClient();
+  const { data, isPending, isError } = useQuery({
+    queryKey: ["backup-info"],
+    queryFn: api.backupInfo,
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const download = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      await api.downloadBackup();
+      // The server stamps "last backup" as the file goes out; pick it up.
+      await qc.invalidateQueries({ queryKey: ["backup-info"] });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="panel">
+      <h2>Backup &amp; Restore</h2>
+      <p className="blurb">
+        Save everything Reaper knows to one file, and put it all back if you ever need to.
+      </p>
+      {isPending && <p className="muted">Loading…</p>}
+      {isError && (
+        <p className="notice notice-error">Couldn't load this page. Reload to try again.</p>
+      )}
+      {data && (
+        <>
+          <section className="rules-card">
+            <h3>Download a backup</h3>
+            <p className="help">
+              One file with everything Reaper decided and everything you set up, plus the keys
+              that unlock your saved credentials. The rebuildable cache is left out to keep the
+              file small.
+            </p>
+            <dl className="backup-facts">
+              <dt>Inside</dt>
+              <dd>Decisions, settings, credentials</dd>
+              <dt>Last backup</dt>
+              <dd>{data.last_backup_at ? since(data.last_backup_at) : "Never"}</dd>
+            </dl>
+            <div className="backup-actions">
+              <button className="primary" onClick={download} disabled={busy}>
+                {busy ? "Preparing…" : "Download backup"}
+              </button>
+            </div>
+            {error && <p className="notice notice-error">The download didn't start: {error}</p>}
+            {!data.key_in_backup && (
+              <p className="notice notice-warn">
+                Your encryption key is set through the environment, so it is not inside this
+                backup. Keep that key with the file, or a restore cannot read your saved
+                credentials.
+              </p>
+            )}
+            <p className="notice notice-warn">
+              This file can unlock your Plex and Sonarr/Radarr credentials. Keep it as safe as a
+              password.
+            </p>
+          </section>
+
+          <RestoreCard armed={data.restore_armed} />
+        </>
+      )}
+    </div>
+  );
+}
+
+// The restore card: choose a backup file, confirm with the admin password, then restart the
+// container to finish. A restore never happens live -- the upload is validated and staged, the
+// password arms the swap, and the entrypoint does the swap on the next boot before migrations.
+// Three states: idle (choose a file), chosen (a validated summary + password), and armed (a
+// restore is staged and waiting for a restart). `armed` is server state (the READY marker), so
+// it survives a reload and shows even if this browser never did the confirm.
+function RestoreCard({ armed }: { armed: boolean }) {
+  const qc = useQueryClient();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [summary, setSummary] = useState<RestoreSummary | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+
+  const refreshInfo = () => qc.invalidateQueries({ queryKey: ["backup-info"] });
+
+  const reset = () => {
+    setSummary(null);
+    setFileName(null);
+    setPassword("");
+    setError(null);
+  };
+
+  const choose = async (file: File) => {
+    setError(null);
+    setSummary(null);
+    setFileName(file.name);
+    setBusy(true);
+    try {
+      setSummary(await api.restorePrepare(file));
+    } catch (err) {
+      setFileName(null);
+      setError(err instanceof Error ? err.message : "That file couldn't be read.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const onPick = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    // Clear the input so choosing the same file name twice still fires a change.
+    e.target.value = "";
+    if (file) void choose(file);
+  };
+
+  const onDrop = (e: DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) void choose(file);
+  };
+
+  const restore = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      await api.restoreConfirm(password);
+      // The confirm armed the swap; refetch so `armed` flips on and this card shows the
+      // restart prompt. Drop the staged summary from local state either way.
+      reset();
+      await refreshInfo();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "The restore couldn't be confirmed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancel = async () => {
+    setBusy(true);
+    try {
+      await api.restoreCancel();
+      reset();
+      await refreshInfo();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (armed) {
+    return (
+      <section className="rules-card">
+        <h3>Restore from a backup</h3>
+        <div className="notice notice-warn restore-armed">
+          <span>
+            <strong>A restore is ready.</strong> Restart Reaper's container to finish. Nothing
+            has changed yet.
+          </span>
+          <button type="button" className="link" onClick={() => void cancel()} disabled={busy}>
+            Cancel restore
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="rules-card">
+      <h3>Restore from a backup</h3>
+      <p className="help">
+        Replace everything here with a saved backup. Deletion stays off after a restore until you
+        turn it back on.
+      </p>
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".reaper"
+        hidden
+        onChange={onPick}
+      />
+
+      {!summary && (
+        <div
+          className={`dropzone${dragging ? " dropzone-over" : ""}`}
+          onDragOver={(e) => {
+            e.preventDefault();
+            setDragging(true);
+          }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+        >
+          {busy && fileName ? (
+            <div className="muted">Checking {fileName}…</div>
+          ) : (
+            <>
+              <div>
+                Drop a backup file here, or{" "}
+                <button
+                  type="button"
+                  className="link"
+                  onClick={() => inputRef.current?.click()}
+                  disabled={busy}
+                >
+                  choose one
+                </button>
+                .
+              </div>
+              <div className="dz-hint">Reaper backup file (.reaper)</div>
+            </>
+          )}
+        </div>
+      )}
+
+      {summary && (
+        <>
+          <div className="chosen">
+            <div className="chosen-head">
+              <span className="chosen-file">{fileName}</span>
+              <button type="button" className="link chosen-x" onClick={() => void cancel()} disabled={busy}>
+                Remove
+              </button>
+            </div>
+            <div className="chosen-body">
+              <div className="kv2">
+                <span>From</span>
+                <span>
+                  {summary.app_version ? `Reaper ${summary.app_version}` : "an earlier setup"}
+                  {summary.created_at ? `, saved ${since(summary.created_at)}` : ""}
+                </span>
+              </div>
+              <div className="kv2">
+                <span>Inside</span>
+                <span>Decisions, settings, credentials</span>
+              </div>
+              <div className="verdict-ok">
+                <span className="dot">✓</span>
+                {summary.verdict === "current"
+                  ? "Matches this server. Safe to restore."
+                  : "Saved on an older version. Reaper will update it when it restarts."}
+              </div>
+            </div>
+          </div>
+
+          {!summary.key_in_backup && (
+            <p className="notice notice-warn">
+              This backup doesn't include the encryption key. Set REAPER_SECRET_KEY on this server
+              to the value it was saved with, or your saved credentials can't be read after the
+              restore.
+            </p>
+          )}
+
+          <label className="field-sm restore-pw">
+            <span className="field-label">Admin password</span>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => {
+                setError(null);
+                setPassword(e.target.value);
+              }}
+              autoComplete="current-password"
+              placeholder="Confirm to restore"
+            />
+          </label>
+
+          <div className="backup-actions">
+            <button
+              type="button"
+              className="danger"
+              onClick={() => void restore()}
+              disabled={busy || !password}
+            >
+              {busy ? "Restoring…" : "Restore"}
+            </button>
+          </div>
+          <p className="help restore-when">
+            Restoring takes effect the next time the container restarts. Nothing changes until then.
+          </p>
+
+          <p className="notice notice-warn">
+            Restoring replaces your current decisions and settings. There is no undo, so download a
+            backup first.
+          </p>
+        </>
+      )}
+
+      {error && <p className="notice notice-error">The restore didn't start: {error}</p>}
+    </section>
   );
 }
 
@@ -1643,6 +1954,7 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
         {panel === "jobs" && <JobsPanel onGoToPlex={() => setPanel("plex")} />}
         {panel === "notifications" && <NotificationsPanel />}
         {panel === "security" && <SecurityPanel />}
+        {panel === "backup" && <BackupPanel />}
         {panel === "logs" && <LogsPanel />}
         {panel === "about" && <AboutPanel />}
       </div>

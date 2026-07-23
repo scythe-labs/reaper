@@ -7,10 +7,81 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-22 (an operator can map each Seerr service to a Reaper *arr instance, so
-"requested by" names the exact copy a person asked for across a multi-Seerr, multi-library setup)
+Last updated: 2026-07-23 (Settings -> Backup & Restore: download AND restore both shipped -- a
+backup rebuilds an install anywhere because the key material travels with the database, and restore
+stages the file then swaps it in on the next container restart)
 
-### Newest — the HD/4K library map tells a duplicated title's two copies apart
+### Newest — Backup & Restore, phase 2: restore + install-from-backup (shipped)
+
+Restore is a deliberate **stage-and-restart**, never a live swap. `POST .../restore/prepare` streams
+the uploaded archive to disk (raw request body, not multipart, so no new dependency and it never
+buffers whole in memory), unpacks only the four known members to fixed names (a crafted tar can't
+escape the staging dir; a decompression bomb hits a per-member cap), and runs the **schema gate**:
+the backup's Alembic revision must be one this binary ships (walked from `alembic/versions` via
+`ScriptDirectory`), else it is refused 409 as "made by a newer Reaper" -- fail closed, because this
+build could not serve a schema it doesn't have. An accepted upload is staged **un-armed** (no READY
+marker). `POST .../restore/confirm` verifies the admin password behind the *same* lockout + Argon2
+gate as arming deletion, then forces `destructive_enabled=false` inside the staged DB and writes the
+READY marker **last** (the marker is the arm; a crash before it leaves the staging inert). The swap
+runs in `preflight` (before `alembic upgrade head`): if READY is present and the staged DB reads as
+SQLite, the live DB + WAL + key + salt move into a timestamped `pre-restore-*` recovery dir and the
+staged files take their place; `alembic upgrade head` then brings an older backup current. The
+operator restarts the container to finish -- true for every install type, so the copy just says so.
+Every ambiguity keeps the live data: an unreadable staged DB is discarded, not swapped.
+
+The whole chain was driven end-to-end in throwaway dirs: a credential encrypted on a *source* host
+decrypted on a *different target* host after restore (the portability claim, proven, not assumed),
+the target's own key could not read it beforehand, deletion came back OFF, and the old data survived
+in the recovery dir. Then driven in a real browser against a real backup: upload -> validated
+summary ("Matches this server") -> password -> armed banner -> cancel clears the staging. Restore
+routes are off the API-key lane (unsafe methods outside the automation allowlist). New:
+`services/restore.py`, three routes in `api/backup.py`, the `preflight` swap, `RestoreCard` in
+`BackupPanel`, `restorePrepare/Confirm/Cancel` in `api.ts`. No schema change: the last-backup time
+is still a value row in `app_setting`, so `alembic check` stays clean.
+
+**Restart decision (resolved):** manual container restart, not auto-exit. Reaper is one container
+with no assumption about the operator's restart policy; "restart to finish" is honest and works for
+any future install type. An auto-restart button relying on `restart: unless-stopped` was considered
+and declined.
+
+### Newest — Backup & Restore, phase 1: the download that is actually restorable
+
+The ask was backup *and* restore, and the feasibility hinge was encryption: if the at-rest key were
+machine-bound, a restored database on a new host could not decrypt a single credential. It is not.
+The key is two portable files (`data/secret.key` + `data/secret.salt`, see `reaper.secrets`) with no
+hostname or fingerprint, so a backup that carries them decrypts anywhere. That makes restore worth
+building, and shaped the bundle.
+
+**Phase 1 (shipped): the download.** `GET /api/settings/backup/download` streams one gzip tar --
+`manifest.json`, a `reaper.db` snapshot, and `secret.key`/`secret.salt` when they exist as files
+(absent when `REAPER_SECRET_KEY` is env-supplied; the manifest records `key_source` and the panel
+warns). The cache database is left out: it is not a source of truth and rebuilds on the next scan.
+The snapshot is `VACUUM INTO` -- a consistent read inside one transaction, so a scan writing
+mid-backup cannot tear it, and it compacts: a real live DB became an archive roughly **11x**
+(~11x), which is why the panel shows no size number (the honest compressed size is not knowable
+without building, and showing the uncompressed one misleads by 10x). The manifest stamps the Alembic
+revision (`alembic_version`) for the restore side to gate on. `manifest.json` is written first in the
+tar so a restore can read it from the front of the stream without unpacking the database behind it.
+
+Fenced hard: the download hands over the whole database **and** the master key, so it is on the
+API-key read-denylist (`api.middleware._API_KEY_READ_DENY`) -- a leaked automation key can read
+plenty but never pull the keys to everything -- and, like every `/api` route, needs a session.
+Built off the event loop (`asyncio.to_thread`); the archive streams from a temp dir removed when the
+stream ends; downloading records `last_backup_at` for the panel. New UI: a `Backup` settings tab and
+`BackupPanel`, mocked as an artifact and approved before code, then driven end-to-end (real [redacted]
+DB -> valid [redacted] archive, all four members, manifest revision == head, key+salt bundled, light +
+dark). New: `services/backup.py`, `api/backup.py`, `app_settings.get/set_last_backup_at`. The About
+page's DB sizing now delegates to the one `backup.db_size_on_disk` so the two never drift.
+
+**Phase 2 (shipped):** see the entry above. Restore now stages an uploaded backup and swaps it in on
+the next restart, gated behind the admin password. The "same path serves first-time setup" idea
+holds -- the routes are install-state-agnostic -- but the setup-wizard entry point is not yet wired;
+today restore lives on the Backup tab. Follow-up if setup-time restore is wanted.
+
+**Gates:** ruff/mypy clean, 1965 backend tests (+23 restore), 220 frontend tests, alembic check
+clean, frontend lint/build clean. Both phases driven end-to-end in a real browser.
+
+### Earlier — the HD/4K library map tells a duplicated title's two copies apart
 
 The reported regression turned out not to be one: the third review pass (`4a52576`) deliberately
 removed the path-based show disambiguation after 60k randomized cases showed it bound the *wrong*
