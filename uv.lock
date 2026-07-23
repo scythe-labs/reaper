@@ -1086,7 +1086,7 @@ dependencies = [
     { name = "cryptography" },
     { name = "fastapi" },
     { name = "greenlet" },
-    { name = "httpx" },
+    { name = "httpx2" },
     { name = "plexapi" },
     { name = "pwdlib", extra = ["argon2"] },
     { name = "pydantic" },
@@ -1103,7 +1103,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
-    { name = "httpx2" },
+    { name = "httpx" },
     { name = "hypothesis" },
     { name = "mypy" },
     { name = "pytest" },
@@ -1123,8 +1123,8 @@ requires-dist = [
     { name = "cryptography", specifier = ">=49.0.0" },
     { name = "fastapi", specifier = ">=0.139.2" },
     { name = "greenlet", specifier = ">=3.5.4" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "httpx2", marker = "extra == 'dev'", specifier = ">=2.9.0" },
+    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28.1" },
+    { name = "httpx2", specifier = ">=2.9.0" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.161.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=2.3.0" },
     { name = "plexapi", specifier = ">=4.18.2" },

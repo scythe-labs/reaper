@@ -2,12 +2,12 @@
 """Transport-subclass parity for the httpx -> httpx2 migration.
 
 ``GuardedTransport`` (clients/base.py) is the safety linchpin: it subclasses
-``httpx.AsyncBaseTransport``, inspects each request's method / path / extensions, and
-either refuses a mutation or delegates to an inner transport. That class is NOT ported
-yet -- the whole BaseClient stack and its respx tests move together, deliberately, in a
-later pass (see docs/PLAN.md). What this file pins first is the one library contract that
-port depends on: that httpx2's ``AsyncBaseTransport`` extension point behaves identically
-to httpx's.
+``httpx2.AsyncBaseTransport``, inspects each request's method / path / extensions, and
+either refuses a mutation or delegates to an inner transport. It is now ported, alongside
+the whole BaseClient stack and its respx tests (see docs/PLAN.md). This file pinned the one
+library contract that port depended on before it landed -- that httpx2's
+``AsyncBaseTransport`` extension point behaves identically to httpx's -- and stays as a
+permanent regression pin on that contract now that the port is done.
 
 Three properties, each the exact shape base.py uses:
   * an override of ``handle_async_request`` is invoked for every request,
