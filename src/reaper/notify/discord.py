@@ -13,7 +13,7 @@ Two rules run through everything here:
   broken webhook can do is not send a message.
 * **The URL is a credential.** A Discord webhook token lives in the path, so the whole URL
   is a secret -- it is never logged, never echoed, never put in an error surfaced to the
-  UI. This is not a managed integration, so it uses a plain httpx client, *not* the
+  UI. This is not a managed integration, so it uses a plain httpx2 client, *not* the
   GuardedTransport: it posts to Discord, it does not mutate anyone's library.
 """
 
@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 
-import httpx
+import httpx2
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,7 +35,7 @@ log = structlog.get_logger(__name__)
 # Discord's embed limits, the ones we can actually hit: 4096 chars of description, 25
 # fields. We stay well under by capping the list of titles we enumerate.
 _MAX_TITLES = 20
-_TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
+_TIMEOUT = httpx2.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
 
 # Discord rate-limits per webhook and returns 429 with a Retry-After. We honor it once,
 # but a notification is a courtesy, not a gate -- so the wait is bounded: a webhook that
@@ -73,7 +73,7 @@ class DiscordNotifier:
         self,
         webhook_url: str,
         *,
-        client: httpx.AsyncClient | None = None,
+        client: httpx2.AsyncClient | None = None,
         app_name: str = "Reaper",
         app_url: str | None = None,
     ) -> None:
@@ -88,7 +88,7 @@ class DiscordNotifier:
         The URL is not logged on success or failure -- only the outcome and the status
         code, which carry everything useful without carrying the token.
         """
-        client = self._client or httpx.AsyncClient(timeout=_TIMEOUT)
+        client = self._client or httpx2.AsyncClient(timeout=_TIMEOUT)
         payload = embed.to_payload()
         payload["username"] = self._app_name
         try:
@@ -100,15 +100,15 @@ class DiscordNotifier:
             response.raise_for_status()
             log.info("discord.posted", status=response.status_code, title=embed.title)
             return True
-        except httpx.HTTPStatusError as exc:
+        except httpx2.HTTPStatusError as exc:
             log.warning("discord.rejected", status=exc.response.status_code, title=embed.title)
             return False
         except Exception as exc:
             # Broad on purpose. The module's guarantee is that *nothing here raises into a
-            # scan, a plan, or a run*, and httpx.InvalidURL is NOT an HTTPError -- it
+            # scan, a plan, or a run*, and httpx2.InvalidURL is NOT an HTTPError -- it
             # subclasses Exception directly -- so a malformed webhook (an embedded newline,
             # a control char, a bad IPv6 host) would slip past a narrower ``except
-            # httpx.HTTPError``. We log the type name only: str(exc) can carry the request
+            # httpx2.HTTPError``. We log the type name only: str(exc) can carry the request
             # URL, and the URL is the credential.
             log.warning("discord.unreachable", error=type(exc).__name__, title=embed.title)
             return False
@@ -118,11 +118,11 @@ class DiscordNotifier:
 
     async def _retry_after_429(
         self,
-        client: httpx.AsyncClient,
+        client: httpx2.AsyncClient,
         payload: dict[str, object],
         title: str,
-        response: httpx.Response,
-    ) -> httpx.Response:
+        response: httpx2.Response,
+    ) -> httpx2.Response:
         """Wait out one rate-limit and re-post the same payload. Returns the retry's
         response, or the original 429 unchanged when there is nothing useful to wait on
         -- either way the caller runs ``raise_for_status`` next, so a still-failing 429
@@ -177,14 +177,14 @@ async def build_notifier(
     box: SecretBox,
     settings: Settings,
     *,
-    client: httpx.AsyncClient | None = None,
+    client: httpx2.AsyncClient | None = None,
 ) -> DiscordNotifier | None:
     """A notifier if a webhook is configured, else ``None`` (notifications off).
 
     The webhook lives in the database (Fernet-encrypted, edited in the web UI), so it is
     read through ``app_settings`` from a live session rather than off ``Settings`` --
     ``REAPER_DISCORD_WEBHOOK`` is only a first-boot seed. ``client`` is injectable so tests
-    can drive it with respx without a real network.
+    can drive it with pytest-httpx2 without a real network.
     """
     webhook = await app_settings.get_discord_webhook(session, box, settings)
     if webhook is None:

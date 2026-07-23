@@ -7,9 +7,10 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-23 (Scoped the httpx -> httpx2 migration -- not started, tracked below)
+Last updated: 2026-07-23 (httpx -> httpx2 migration STARTED: first isolated slice shipped,
+scope corrected against the real code, sequencing rethought)
 
-### Newest — httpx is unmaintained; httpx2 migration scoped, not started
+### Newest — httpx is unmaintained; httpx2 migration started (first slice shipped)
 
 Test-suite CI work (sleep-patched tests, xdist, a sqlite-engine-leak fix) surfaced a
 `StarletteDeprecationWarning` pointing at `httpx2`. Checked it out: upstream `httpx` (encode/httpx)
@@ -21,27 +22,56 @@ Starlette itself migrated in 2026-05; that migration is what put the warning in 
 cheaply: `httpx2` is now a **dev-only** dependency so Starlette's `TestClient` stops falling back to
 the deprecated path (`pyproject.toml`, `dev` extra) -- that part is done and shipped.
 
-**Not done: migrating Reaper's own HTTP layer off `httpx` onto `httpx2`.** Scoped, not started,
-because it touches the safety-critical transport boundary and deserves its own pass rather than
-riding in on a test-speed cleanup. What the scope looks like:
+**Shipped (first slice): `notify/discord.py` moved to `httpx2`.** It is the one production HTTP
+client that is genuinely isolable (see the decomposition finding below), so it is the safe place to
+prove the whole round trip -- production on `httpx2`, tests on `pytest-httpx2` -- without touching
+the deletion path. In the same change: `logging.py`'s `_NOISY_LOGGERS` gained `"httpx2"` and
+`"httpcore2"` (this is a **security fix, not a cleanup** -- see below), `pytest-httpx2>=1.0.0` was
+added to the `dev` extra, `test_discord.py` was rewritten onto the `httpx2_mock` fixture, and a new
+`tests/test_transport_httpx2_parity.py` pins that httpx2's `AsyncBaseTransport` extension point (the
+mechanism `GuardedTransport` depends on) behaves identically -- proved before the guard itself is
+ported. `discord.py` does NOT go through `GuardedTransport` (it posts to Discord, it mutates no
+library), which is exactly why migrating it first is safe.
 
-- **Production files touching `httpx` directly** (six, not just `clients/`):
-  `clients/base.py` (`GuardedTransport(httpx.AsyncBaseTransport)`, `AsyncHTTPTransport`,
-  `AsyncClient`, `Request`, `Response`, `Timeout`, `TimeoutException`, `TransportError`, `URL` -- the
-  one that matters most, since every mutating call is mediated through here), `clients/public.py`,
-  `clients/plextv.py`, `notify/discord.py`, `services/imdb_dataset.py`, `services/instances.py`
-  (the last one alone touches eight distinct `httpx` exception types used to classify a
-  connectivity check). `GuardedSession`, the plexapi twin named in this file's Architecture section,
-  is **not** in scope -- plexapi sits on `requests`, untouched by any of this.
-- **What httpx2 itself documents as breaking:** the import path (`httpx` -> `httpx2`, mechanical but
-  touches every file above), `httpcore` -> `httpcore2` (nothing here imports it directly today, but
-  worth grepping again at migration time), the default User-Agent string, and logger names
-  (`httpx`/`httpcore.*` -> `httpx2`/`httpcore2.*`). That last one is a real, silent gotcha:
-  `logging.py`'s `_NOISY_LOGGERS` tuple hardcodes `"httpx", "httpcore"` to suppress verbose
-  third-party logs -- migrate the client layer without updating that tuple and the suppression
-  silently stops working, not fails loudly.
-- **TLS verification default changes** from certifi's bundled CA list to the OS trust store (via
-  `truststore`). Checked how exposed we are: every client's `verify` parameter
+**Findings that corrected the earlier scope (verified against the installed packages and the code):**
+
+- **The client layer does NOT decompose the way the first scoping assumed.** `clients/base.py`'s
+  `BaseClient` is the shared transport for **seven** client classes (`PublicClient`, `TautulliClient`,
+  `PlexTvClient`, `ArrClient` -> `SonarrClient`/`RadarrClient`, `SeerrClient`), so the moment
+  `base.py` builds an `httpx2.AsyncClient`, every one of those clients is on httpx2 at once -- and
+  respx, which speaks only httpx, can no longer intercept any of them, so **every respx test that
+  touches any client breaks simultaneously.** `services/instances.py` must move in lockstep: its
+  connectivity classifier walks the exception `__cause__` chain with `isinstance(e, httpx.*)` over
+  eight httpx exception types, and an httpx2 exception matches none of them, silently misclassifying
+  every failure into the wrong operator message. And `test_guarded_transport.py` -- the test that
+  proves the safety model -- constructs `RadarrClient`/`SonarrClient`/`TautulliClient` directly, so
+  it cannot be rewritten onto httpx2 in isolation either. **Net: `base.py` + the six client files it
+  backs + `instances.py` + ~10 of the 11 respx test files are ONE atomic unit**, not the
+  "base.py first, then the other five, then the tests" sequence first written here. The only
+  production files that migrate independently are `notify/discord.py` (its own client, shipped) and
+  `services/imdb_dataset.py` (its own client, its own test).
+- **`_NOISY_LOGGERS` is a cleartext-secret-leak control, not noise suppression.** `logging.py`
+  pins the HTTP libraries' stdlib loggers to WARNING because at INFO httpx logs
+  `HTTP Request: GET https://host/...?apikey=SECRET`, and Tautulli/Plex/MDBList carry their key in
+  the query string while a **Discord webhook carries its token in the URL path**. httpx2 renames its
+  loggers to `httpx2`/`httpcore2`; move a client to httpx2 without adding those names to the tuple
+  and the operator's credentials start writing to the log in cleartext. So the tuple update is a
+  same-commit obligation for **every** client that crosses over, not a follow-up. Done for the two
+  httpx2 names now; pinned by `test_logging_quiet.py`.
+- **`pytest-httpx2` is respx-flavored, as the earlier scope said.** Its `httpx2_mock` fixture is a
+  real `respx.Router` (`.post(url).mock(...)`, `.calls.last.request`, `side_effect=`), wired to
+  httpx2/httpcore2 by a plugin-provided transport mocker. One sharp edge learned by doing it: the
+  mocked `return_value` must still be an **`httpx.Response`** (respx's own currency, which the plugin
+  hands to the httpx2 client), while a `side_effect` exception must be an **`httpx2`** one (so the
+  client raises the type the code under test catches), and the request recorded in `route.calls` is
+  an `httpx.Request`. So per file the rewrite is lighter than "port to a different mocking library":
+  mostly `@respx.mock` decorator -> `httpx2_mock` fixture param, plus swapping exception types. Still
+  11 files touched, but the Router API itself is unchanged.
+- **`clients/plex.py` is not a code site.** Its three `httpx` mentions are all in comments
+  explaining that `GuardedSession`/plexapi does *not* speak httpx; the file imports no httpx symbol.
+  `GuardedSession` stays out of scope -- plexapi sits on `requests`, untouched by any of this.
+- **TLS verification default changes** from certifi's bundled CA list to the OS trust store: httpx2
+  hard-depends on `truststore>=0.10` (and `httpcore2==2.9.0`). Every client's `verify` parameter
   (`clients/arr.py`, `clients/plex.py`, `clients/base.py`, ...) is a plain `bool`, never a
   custom-CA-bundle path, so the only two states an operator can be in today are "verify against
   public CAs" or "don't verify at all" (the self-signed-instance escape hatch, `verify_tls=False`).
@@ -49,23 +79,17 @@ riding in on a test-speed cleanup. What the scope looks like:
   OS-installed but not in certifi's bundle -- for them the OS-trust-store default is arguably *more*
   correct, but it is a real behavior change and needs a real end-to-end check against a live
   self-hosted instance before it ships, not just a reading of the docs.
-- **The test-mocking migration is the biggest surface, not the client code.** Eleven files mock
-  `httpx` calls via `@respx.mock`: `test_discord.py`, `test_guarded_transport.py`,
-  `test_instances.py`, `test_plex_auth.py`, `test_lists.py`, `test_protection_sync.py`,
-  `test_reap_loop.py`, `test_review_backend_core_b.py`, `test_review_clients.py`, `test_sessions.py`,
-  `test_settings_api.py`. respx does support `httpx2`, but only through a separate plugin,
-  `pytest-httpx2`, with a **different, fixture-based API** (`httpx2_mock: respx.Router`) rather than
-  the `@respx.mock` decorator every one of these files uses today -- this is an eleven-file rewrite,
-  not a dependency bump. `test_guarded_transport.py` is the one that must not regress silently: it
-  proves the safety model, so its httpx2 rewrite needs to demonstrate the equivalent transport
-  extension point (`handle_async_request` override) behaves identically before anything is trusted.
 
-**Not urgent, deliberately deferred:** `httpx` 0.28.1 still installs and runs correctly today; this
-is about closing off future security-update coverage, not an active break. Sequencing when this
-starts: migrate `clients/base.py` + `GuardedTransport` first with its own focused test pass, prove
-transport-subclass parity explicitly, then the remaining five client-adjacent files, then the eleven
-respx-based test files, then `logging.py`'s noisy-logger tuple, then a real end-to-end TLS check
-against a live instance -- and only then drop `httpx`/`respx` once nothing imports them.
+**Corrected sequencing for the rest (the big, atomic piece):** the `TestTlsVerificationReachesTheTransport`
+test in `test_guarded_transport.py` monkeypatches `reaper.clients.base.httpx.AsyncHTTPTransport`, so
+it also moves in lockstep. When the BaseClient cluster is done in one pass: port `base.py` +
+`instances.py` + the six client files together; rewrite all their respx tests onto `httpx2_mock` in
+the same change (the parity probe already shipped proves the transport subclass holds); the
+`_NOISY_LOGGERS` names are already in place; then `services/imdb_dataset.py` can go on its own; then
+a real end-to-end TLS check against a live self-hosted instance; and only then drop `httpx`/`respx`
+once nothing imports them. `httpx` 0.28.1 still installs and runs correctly today, so the remaining
+work is about closing off future security-update coverage, not an active break -- there is no
+deadline pressure to rush the atomic cluster.
 
 ### Newest — Backup & Restore, phase 2: restore + install-from-backup (shipped)
 

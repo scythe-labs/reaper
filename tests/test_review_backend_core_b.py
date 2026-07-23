@@ -6,7 +6,7 @@ Two clusters of behavior the review pinned:
 * **Discord is DB-backed and unbreakable.** The webhook lives in the database,
   Fernet-encrypted like an instance API key, seeded once from the environment; and the
   notifier's guarantee -- *nothing here raises into a scan, a plan, or a run* -- must hold
-  even for a malformed URL (``httpx.InvalidURL`` is not an ``HTTPError``) and must honor a
+  even for a malformed URL (``httpx2.InvalidURL`` is not an ``HTTPError``) and must honor a
   429 rather than dropping the warning.
 * **The Leaving Soon heads-up is idempotent.** In the default read-only install the Plex
   label is never written, so the label diff cannot be the "what is new" signal -- a
@@ -167,16 +167,20 @@ class TestNotifierNeverRaises:
     async def test_a_malformed_url_returns_false_and_does_not_raise(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """An embedded newline makes httpx raise InvalidURL, which is NOT an HTTPError. It
+        """An embedded newline makes httpx2 raise InvalidURL, which is NOT an HTTPError. It
         must still be swallowed, and the URL must not be logged."""
         notifier = DiscordNotifier("https://discord.com/api/webhooks/1/tok\nen-is-secret")
         assert await notifier.post(Embed(title="hi", description="x")) is False
         out = capsys.readouterr()
         assert "en-is-secret" not in (out.out + out.err)
 
-    @respx.mock
-    async def test_a_429_with_retry_after_is_retried_and_can_succeed(self) -> None:
-        route = respx.post(WEBHOOK).mock(
+    async def test_a_429_with_retry_after_is_retried_and_can_succeed(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        # discord.py is on httpx2; its mock is the httpx2_mock Router (respx cannot see an
+        # httpx2 client). The mocked responses stay httpx.Response -- respx's own currency,
+        # which the plugin hands to the httpx2 client.
+        route = httpx2_mock.post(WEBHOOK).mock(
             side_effect=[
                 httpx.Response(429, headers={"Retry-After": "0"}),
                 httpx.Response(204),
@@ -186,9 +190,10 @@ class TestNotifierNeverRaises:
         assert await notifier.post(Embed(title="hi", description="x")) is True
         assert route.call_count == 2  # first 429, then the honored retry
 
-    @respx.mock
-    async def test_a_429_without_retry_after_is_a_quiet_failure(self) -> None:
-        route = respx.post(WEBHOOK).mock(return_value=httpx.Response(429))
+    async def test_a_429_without_retry_after_is_a_quiet_failure(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        route = httpx2_mock.post(WEBHOOK).mock(return_value=httpx.Response(429))
         notifier = DiscordNotifier(WEBHOOK)
         # Nothing useful to wait on -> fall through to the ordinary rejected path, no retry.
         assert await notifier.post(Embed(title="hi", description="x")) is False

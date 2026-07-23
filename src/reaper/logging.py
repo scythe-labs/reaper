@@ -99,8 +99,13 @@ def redact_secrets(_logger: WrappedLogger, _method: str, event_dict: EventDict) 
 # * The HTTP clients log request URLs verbatim through the stdlib -- which the structlog
 #   redaction processor never sees, because it only runs on structlog events. httpx logs
 #   every request at INFO as "HTTP Request: GET https://host/...?apikey=SECRET", and
-#   Tautulli, Plex and MDBList all carry their credential in the query string, so an
-#   unquieted httpx logger writes those keys straight to the log in cleartext.
+#   Tautulli, Plex and MDBList all carry their credential in the query string -- while a
+#   Discord webhook carries its token in the PATH -- so an unquieted HTTP logger writes
+#   those secrets straight to the log in cleartext. Both httpx and httpx2 are pinned here:
+#   Reaper is mid-migration off the unmaintained httpx onto httpx2 (see docs/PLAN.md), and
+#   httpx2 renames its loggers to "httpx2"/"httpcore2" -- quiet only "httpx" and the secret
+#   leak silently returns the moment a client moves over. (notify/discord.py is already on
+#   httpx2.)
 # * aiosqlite (and SQLAlchemy's engine) log one DEBUG line per SQL cursor operation. A single
 #   scan inserts thousands of candidate rows, so at DEBUG those tens of thousands of lines
 #   flood the ring and the on-disk file and EVICT every diagnostic that matters -- the
@@ -112,7 +117,16 @@ def redact_secrets(_logger: WrappedLogger, _method: str, event_dict: EventDict) 
 # libraries' own logs are needed. WARNING is an EXPLICIT level, so it survives a runtime root
 # switch to DEBUG (logbuffer.set_level only moves the root); genuine SQL/HTTP errors still
 # surface, because WARNING and above pass.
-_NOISY_LOGGERS = ("httpx", "httpcore", "urllib3", "plexapi", "aiosqlite", "sqlalchemy")
+_NOISY_LOGGERS = (
+    "httpx",
+    "httpcore",
+    "httpx2",
+    "httpcore2",
+    "urllib3",
+    "plexapi",
+    "aiosqlite",
+    "sqlalchemy",
+)
 
 # Keys the ring's plain-text line should not repeat: they are carried as their own
 # columns (or are rendering internals), not payload.

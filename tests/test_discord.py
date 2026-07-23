@@ -4,11 +4,19 @@
 The behavior that matters is not "does it send a nice embed" -- it is "can a broken
 webhook ever break Reaper". So the failure paths get the most attention: every one must
 return False and stay silent, never raise, and never log the URL.
+
+notify/discord.py is on httpx2 (Reaper is mid-migration off the unmaintained httpx; see
+docs/PLAN.md). respx cannot intercept an httpx2 client, so these use the ``httpx2_mock``
+fixture from pytest-httpx2, which is a ``respx.Router`` wired to httpx2. The Router API is
+respx's: the mocked ``return_value`` is an ``httpx.Response`` (respx's own currency, which
+the plugin hands to the httpx2 client), while a ``side_effect`` exception is an httpx2 one
+(so the client raises the type discord.py actually catches).
 """
 
 from __future__ import annotations
 
 import httpx
+import httpx2
 import pytest
 import respx
 
@@ -25,9 +33,8 @@ def _notifier() -> DiscordNotifier:
 
 
 class TestPost:
-    @respx.mock
-    async def test_a_2xx_is_success(self) -> None:
-        route = respx.post(WEBHOOK).mock(return_value=httpx.Response(204))
+    async def test_a_2xx_is_success(self, httpx2_mock: respx.Router) -> None:
+        route = httpx2_mock.post(WEBHOOK).mock(return_value=httpx.Response(204))
         notifier = _notifier()
         assert await notifier.post(Embed(title="hi", description="there")) is True
         assert route.called
@@ -35,24 +42,21 @@ class TestPost:
         sent = route.calls.last.request
         assert b'"embeds"' in sent.content
 
-    @respx.mock
-    async def test_a_4xx_is_a_quiet_failure(self) -> None:
-        respx.post(WEBHOOK).mock(return_value=httpx.Response(400, json={"message": "bad"}))
+    async def test_a_4xx_is_a_quiet_failure(self, httpx2_mock: respx.Router) -> None:
+        httpx2_mock.post(WEBHOOK).mock(return_value=httpx.Response(400, json={"message": "bad"}))
         notifier = _notifier()
         assert await notifier.post(Embed(title="hi", description="x")) is False
 
-    @respx.mock
-    async def test_a_network_error_never_raises(self) -> None:
-        respx.post(WEBHOOK).mock(side_effect=httpx.ConnectError("down"))
+    async def test_a_network_error_never_raises(self, httpx2_mock: respx.Router) -> None:
+        httpx2_mock.post(WEBHOOK).mock(side_effect=httpx2.ConnectError("down"))
         notifier = _notifier()
         # The whole point: a dead webhook returns False, it does not blow up the caller.
         assert await notifier.post(Embed(title="hi", description="x")) is False
 
 
 class TestLeavingSoon:
-    @respx.mock
-    async def test_it_counts_and_lists_titles(self) -> None:
-        route = respx.post(WEBHOOK).mock(return_value=httpx.Response(204))
+    async def test_it_counts_and_lists_titles(self, httpx2_mock: respx.Router) -> None:
+        route = httpx2_mock.post(WEBHOOK).mock(return_value=httpx.Response(204))
         notifier = _notifier()
         ok = await notifier.announce_leaving_soon(["A", "B", "C"], grace_days=14)
         assert ok is True
@@ -60,16 +64,16 @@ class TestLeavingSoon:
         assert "3 titles are leaving soon" in body
         assert "14-day grace" in body
 
-    @respx.mock
-    async def test_a_single_title_is_singular(self) -> None:
-        route = respx.post(WEBHOOK).mock(return_value=httpx.Response(204))
+    async def test_a_single_title_is_singular(self, httpx2_mock: respx.Router) -> None:
+        route = httpx2_mock.post(WEBHOOK).mock(return_value=httpx.Response(204))
         notifier = _notifier()
         await notifier.announce_leaving_soon(["Solo"], grace_days=14)
         assert "1 title is leaving soon" in route.calls.last.request.content.decode()
 
-    @respx.mock
-    async def test_a_long_list_is_truncated_but_the_count_is_whole(self) -> None:
-        route = respx.post(WEBHOOK).mock(return_value=httpx.Response(204))
+    async def test_a_long_list_is_truncated_but_the_count_is_whole(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        route = httpx2_mock.post(WEBHOOK).mock(return_value=httpx.Response(204))
         notifier = _notifier()
         titles = [f"Film {i}" for i in range(50)]
         await notifier.announce_leaving_soon(titles, grace_days=14)
@@ -77,18 +81,18 @@ class TestLeavingSoon:
         assert "50 titles are leaving soon" in body  # honest headline
         assert "and 30 more" in body  # 50 - 20 shown
 
-    async def test_an_empty_list_sends_nothing(self) -> None:
+    async def test_an_empty_list_sends_nothing(self, httpx2_mock: respx.Router) -> None:
         notifier = _notifier()
-        # No respx route registered: if it tried to post, it would error. It must not.
+        # No route registered: if it tried to post, the mock would flag an unexpected
+        # request. It must not.
         assert await notifier.announce_leaving_soon([], grace_days=14) is False
 
 
 class TestTheUrlIsNeverLogged:
-    @respx.mock
     async def test_logs_carry_the_status_not_the_url(
-        self, capsys: pytest.CaptureFixture[str]
+        self, httpx2_mock: respx.Router, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        respx.post(WEBHOOK).mock(return_value=httpx.Response(400))
+        httpx2_mock.post(WEBHOOK).mock(return_value=httpx.Response(400))
         notifier = _notifier()
         await notifier.post(Embed(title="hi", description="x"))
         out = capsys.readouterr()

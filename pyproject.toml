@@ -47,10 +47,11 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
-    "respx>=0.23.1",             # httpx mocking
+    "respx>=0.23.1",             # httpx mocking (respx speaks httpx only, not httpx2)
     "hypothesis>=6.161.0",       # property tests for the scoring invariants
     "pytest-xdist>=3.8.0",
     "httpx2>=2.9.0",
+    "pytest-httpx2>=1.0.0",      # httpx2 mocking; respx cannot (see docs/PLAN.md httpx2 scope)
 ]
 
 [project.scripts]

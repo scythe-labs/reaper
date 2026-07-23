@@ -39,9 +39,12 @@ def _restore_logging() -> Iterator[None]:
 
 def test_aiosqlite_and_sql_stay_at_warning(_restore_logging: None) -> None:
     assert "aiosqlite" in _NOISY_LOGGERS  # the whole point of the fix
+    # httpx2 renames its loggers; both spellings must stay quiet through the migration, or
+    # a Discord webhook token (in the URL path) leaks into the log in cleartext.
+    assert "httpx2" in _NOISY_LOGGERS and "httpcore2" in _NOISY_LOGGERS
     configure_logging(level="DEBUG")
     # Even booted at DEBUG, the SQL firehose is capped, so it cannot drown the diagnostics.
-    for name in ("aiosqlite", "sqlalchemy", "httpx"):
+    for name in ("aiosqlite", "sqlalchemy", "httpx", "httpx2"):
         assert logging.getLogger(name).getEffectiveLevel() == logging.WARNING, name
 
 
