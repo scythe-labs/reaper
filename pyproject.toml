@@ -50,6 +50,7 @@ dev = [
     "respx>=0.23.1",             # httpx mocking
     "hypothesis>=6.161.0",       # property tests for the scoring invariants
     "pytest-xdist>=3.8.0",
+    "httpx2>=2.9.0",
 ]
 
 [project.scripts]
