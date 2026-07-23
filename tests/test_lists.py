@@ -33,6 +33,8 @@ from reaper.services.lists import (
     sync,
 )
 
+pytestmark = pytest.mark.httpx2(assert_all_called=False)
+
 
 class _FakeSonarr:
     """A Sonarr stand-in for the tag-rule test: not a RadarrClient, so ArrTagRule takes
@@ -164,31 +166,34 @@ def _top250_payload(count: int = 250) -> list[dict[str, object]]:
 
 
 class TestImdbTop250:
-    @respx.mock
-    async def test_a_mirror_redirecting_to_a_cdn_still_fetches(self, engine: AsyncEngine) -> None:
+    async def test_a_mirror_redirecting_to_a_cdn_still_fetches(
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
+    ) -> None:
         """The public fetchers carry no credentials, so a cross-origin CDN hop is safe
         and must be followed -- unlike the credentialed clients, which refuse it."""
-        respx.get(IMDB_TOP_250_URL).mock(
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(
             return_value=httpx.Response(
                 302, headers={"location": "https://cdn.example.test/top250.json"}
             )
         )
-        respx.get("https://cdn.example.test/top250.json").mock(
+        httpx2_mock.get("https://cdn.example.test/top250.json").mock(
             return_value=httpx.Response(200, json=_top250_payload())
         )
         assert await sync(engine, ImdbTop250()) == 250
 
-    @respx.mock
-    async def test_it_fetches_and_stores(self, engine: AsyncEngine) -> None:
-        respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=_top250_payload()))
+    async def test_it_fetches_and_stores(
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(
+            return_value=httpx.Response(200, json=_top250_payload())
+        )
 
         count = await sync(engine, ImdbTop250(), mode=ListMode.HARD)
 
         assert count == 250
 
-    @respx.mock
     async def test_membership_is_binary_because_the_source_has_no_rank(
-        self, engine: AsyncEngine
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:
         """The payload carries NO rank field, and the entries come back in roughly
         CHRONOLOGICAL order -- the first is The Kid (1921).
@@ -196,7 +201,9 @@ class TestImdbTop250:
         Taking the array index as a chart position would tell the owner "The Kid is #1
         on the IMDb Top 250", which is false. The why-panel would be confidently lying.
         So membership is binary and rank stays None."""
-        respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=_top250_payload()))
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(
+            return_value=httpx.Response(200, json=_top250_payload())
+        )
         await sync(engine, ImdbTop250())
 
         found = await memberships(engine, media_type="movie", imdb_id="tt0000000")
@@ -205,36 +212,39 @@ class TestImdbTop250:
         assert found[0].rank is None
         assert found[0].describe() == "IMDb Top 250"  # no fabricated "#1"
 
-    @respx.mock
-    async def test_a_truncated_list_is_refused(self, engine: AsyncEngine) -> None:
+    async def test_a_truncated_list_is_refused(
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
+    ) -> None:
         """A protection that silently shrinks is worse than one that is out of date --
         it stops protecting the films that fell off it, and says nothing."""
-        respx.get(IMDB_TOP_250_URL).mock(
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(
             return_value=httpx.Response(200, json=_top250_payload(count=12))
         )
 
         with pytest.raises(Exception, match="truncated"):
             await sync(engine, ImdbTop250())
 
-    @respx.mock
     async def test_a_failed_fetch_leaves_the_previous_list_intact(
-        self, engine: AsyncEngine
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:
         """The whole point of the atomic swap. A protection must never silently empty
         itself because a third-party service had a bad minute."""
-        respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=_top250_payload()))
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(
+            return_value=httpx.Response(200, json=_top250_payload())
+        )
         await sync(engine, ImdbTop250())
 
-        respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(503))
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(503))
         with pytest.raises(Exception):  # noqa: B017
             await sync(engine, ImdbTop250())
 
         # Still protected.
         assert await memberships(engine, media_type="movie", imdb_id="tt0000001")
 
-    @respx.mock
-    async def test_the_error_is_recorded_for_the_settings_screen(self, engine: AsyncEngine) -> None:
-        respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(503))
+    async def test_the_error_is_recorded_for_the_settings_screen(
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(503))
 
         with pytest.raises(Exception):  # noqa: B017
             await sync(engine, ImdbTop250())
@@ -252,17 +262,23 @@ class TestImdbTop250:
 class TestMatching:
     """An item is protected if ANY of its external ids matches."""
 
-    @respx.mock
-    async def test_matched_by_tmdb_when_imdb_is_missing(self, engine: AsyncEngine) -> None:
+    async def test_matched_by_tmdb_when_imdb_is_missing(
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
+    ) -> None:
         """Requiring both ids would silently drop every item where only one is present."""
-        respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=_top250_payload()))
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(
+            return_value=httpx.Response(200, json=_top250_payload())
+        )
         await sync(engine, ImdbTop250())
 
         assert await memberships(engine, media_type="movie", tmdb_id=1005)
 
-    @respx.mock
-    async def test_an_unmatched_item_is_not_protected(self, engine: AsyncEngine) -> None:
-        respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=_top250_payload()))
+    async def test_an_unmatched_item_is_not_protected(
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(
+            return_value=httpx.Response(200, json=_top250_payload())
+        )
         await sync(engine, ImdbTop250())
 
         assert await memberships(engine, media_type="movie", imdb_id="tt9999999") == []
@@ -279,11 +295,12 @@ class TestAShowIsNeverMatchedAgainstAMovieList:
     Top 250", kept for a reason its owner never gave, and the why-panel says something false.
     A live instance showed exactly this on TV shows."""
 
-    @respx.mock
     async def test_a_show_sharing_a_top250_films_tmdb_id_is_not_protected(
-        self, engine: AsyncEngine
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:
-        respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=_top250_payload()))
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(
+            return_value=httpx.Response(200, json=_top250_payload())
+        )
         await sync(engine, ImdbTop250())
 
         # Film 5 is stored as a MOVIE with TMDb id 1005.
@@ -301,9 +318,12 @@ class TestMembershipIndexParity:
     once per run. The index must agree with :func:`memberships` -- the per-item SQL it
     replaced -- on every lookup, or the two paths could protect different items."""
 
-    @respx.mock
-    async def test_the_index_answers_exactly_like_the_query(self, engine: AsyncEngine) -> None:
-        respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=_top250_payload()))
+    async def test_the_index_answers_exactly_like_the_query(
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(
+            return_value=httpx.Response(200, json=_top250_payload())
+        )
         await sync(engine, ImdbTop250())
         # A second, whitelist-kind list overlapping one title, so an item can belong to
         # two lists at once and the parity check covers the multi-row answer.
@@ -336,9 +356,12 @@ class TestMembershipIndexParity:
                 expected, key=lambda m: m.slug
             ), probe
 
-    @respx.mock
-    async def test_a_disabled_list_drops_out_of_the_index(self, engine: AsyncEngine) -> None:
-        respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=_top250_payload()))
+    async def test_a_disabled_list_drops_out_of_the_index(
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(
+            return_value=httpx.Response(200, json=_top250_payload())
+        )
         await sync(engine, ImdbTop250())
         async with engine.begin() as conn:
             await conn.execute(text("UPDATE protection_list SET enabled = 0"))

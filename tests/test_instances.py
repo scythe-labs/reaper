@@ -20,6 +20,7 @@ from __future__ import annotations
 import ssl
 
 import httpx
+import httpx2
 import pytest
 import respx
 
@@ -37,6 +38,8 @@ from reaper.services.instances import (
     _suggest_instance,
     decode_service_instance_map,
 )
+
+pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
 SELF_SIGNED = (
     "The server's certificate is signed by an authority this machine doesn't know. "
@@ -85,7 +88,7 @@ CASES: list[tuple[str, InstanceKind, BaseException, str]] = [
         InstanceKind.SONARR,
         _chain(
             _cert_error(18, "self signed certificate"),
-            httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED]"),
+            httpx2.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED]"),
             IntegrationError("service", "request failed"),
         ),
         SELF_SIGNED,
@@ -169,51 +172,51 @@ CASES: list[tuple[str, InstanceKind, BaseException, str]] = [
     (
         "connect timeout",
         InstanceKind.SONARR,
-        _wrapped(httpx.ConnectTimeout("timed out")),
+        _wrapped(httpx2.ConnectTimeout("timed out")),
         "Couldn't open a connection to the server in time.",
     ),
     (
         "pool timeout",
         InstanceKind.SONARR,
-        _wrapped(httpx.PoolTimeout("no free connection")),
+        _wrapped(httpx2.PoolTimeout("no free connection")),
         "Couldn't open a connection to the server in time.",
     ),
     (
         "read timeout",
         InstanceKind.TAUTULLI,
-        _wrapped(httpx.ReadTimeout("timed out")),
+        _wrapped(httpx2.ReadTimeout("timed out")),
         "The server didn't answer in time.",
     ),
     (
         "unsupported scheme",
         InstanceKind.RADARR,
-        _wrapped(httpx.UnsupportedProtocol("no scheme")),
+        _wrapped(httpx2.UnsupportedProtocol("no scheme")),
         "That isn't an address Reaper can use. Start it with http:// or https://.",
     ),
     (
         "malformed url",
         InstanceKind.RADARR,
-        _wrapped(httpx.InvalidURL("not a url")),
+        _wrapped(httpx2.InvalidURL("not a url")),
         "That isn't an address Reaper can use. Start it with http:// or https://.",
     ),
     (
         "connection refused",
         InstanceKind.SONARR,
-        _wrapped(httpx.ConnectError("all connection attempts failed")),
+        _wrapped(httpx2.ConnectError("all connection attempts failed")),
         "Couldn't reach the server at this address. Check the URL and port, and that the "
         "service is running.",
     ),
     (
         "proxy error",
         InstanceKind.SONARR,
-        _wrapped(httpx.ProxyError("proxy refused")),
+        _wrapped(httpx2.ProxyError("proxy refused")),
         "Couldn't reach the server at this address. Check the URL and port, and that the "
         "service is running.",
     ),
     (
         "connection dropped",
         InstanceKind.SEERR,
-        _wrapped(httpx.ReadError("connection reset")),
+        _wrapped(httpx2.ReadError("connection reset")),
         "The connection to the server broke before it answered.",
     ),
     # -- body, bare wrapper, and the fallback ------------------------------------------
@@ -288,12 +291,13 @@ class TestSeerrConnectionExercisesTheKey:
     warning with the requester signal silently dark.
     """
 
-    @respx.mock
-    async def test_a_rejected_key_fails_even_though_status_is_public(self) -> None:
-        respx.get(f"{SEERR}/api/v1/status").mock(
+    async def test_a_rejected_key_fails_even_though_status_is_public(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.get(f"{SEERR}/api/v1/status").mock(
             return_value=httpx.Response(200, json={"version": "1.0.0"})
         )
-        authed = respx.get(f"{SEERR}/api/v1/request").mock(
+        authed = httpx2_mock.get(f"{SEERR}/api/v1/request").mock(
             return_value=httpx.Response(403, json={"message": "forbidden"})
         )
         result = await instances_service.test_connection(InstanceKind.SEERR, SEERR, "wrong-key")
@@ -301,12 +305,13 @@ class TestSeerrConnectionExercisesTheKey:
         assert result.detail == KEY_REFUSED
         assert authed.called  # the public status probe alone must not decide the outcome
 
-    @respx.mock
-    async def test_a_good_key_connects_and_reports_the_version(self) -> None:
-        respx.get(f"{SEERR}/api/v1/status").mock(
+    async def test_a_good_key_connects_and_reports_the_version(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        httpx2_mock.get(f"{SEERR}/api/v1/status").mock(
             return_value=httpx.Response(200, json={"version": "1.33.2"})
         )
-        authed = respx.get(f"{SEERR}/api/v1/request").mock(
+        authed = httpx2_mock.get(f"{SEERR}/api/v1/request").mock(
             return_value=httpx.Response(
                 200, json={"pageInfo": {"results": 3}, "results": [{"id": 1}]}
             )
@@ -316,13 +321,14 @@ class TestSeerrConnectionExercisesTheKey:
         assert result.version == "1.33.2"
         assert authed.called
 
-    @respx.mock
-    async def test_an_instance_with_no_requests_yet_still_connects(self) -> None:
+    async def test_an_instance_with_no_requests_yet_still_connects(
+        self, httpx2_mock: respx.Router
+    ) -> None:
         """Zero requests is healthy, not a rejected key: an empty authed page passes."""
-        respx.get(f"{SEERR}/api/v1/status").mock(
+        httpx2_mock.get(f"{SEERR}/api/v1/status").mock(
             return_value=httpx.Response(200, json={"version": "2.0.0"})
         )
-        respx.get(f"{SEERR}/api/v1/request").mock(
+        httpx2_mock.get(f"{SEERR}/api/v1/request").mock(
             return_value=httpx.Response(200, json={"pageInfo": {"results": 0}, "results": []})
         )
         result = await instances_service.test_connection(InstanceKind.SEERR, SEERR, "good-key")
@@ -416,9 +422,8 @@ class TestSuggestInstance:
 
 
 class TestSeerrServicesListing:
-    @respx.mock
-    async def test_lists_sonarr_then_radarr_services(self) -> None:
-        respx.get(f"{SEERR}/api/v1/settings/sonarr").mock(
+    async def test_lists_sonarr_then_radarr_services(self, httpx2_mock: respx.Router) -> None:
+        httpx2_mock.get(f"{SEERR}/api/v1/settings/sonarr").mock(
             return_value=httpx.Response(
                 200,
                 json=[
@@ -428,7 +433,7 @@ class TestSeerrServicesListing:
                 ],
             )
         )
-        respx.get(f"{SEERR}/api/v1/settings/radarr").mock(
+        httpx2_mock.get(f"{SEERR}/api/v1/settings/radarr").mock(
             return_value=httpx.Response(
                 200,
                 json=[
@@ -445,9 +450,8 @@ class TestSeerrServicesListing:
             (2, "radarr", False),
         ]
 
-    @respx.mock
-    async def test_a_non_list_body_is_refused(self) -> None:
-        respx.get(f"{SEERR}/api/v1/settings/sonarr").mock(
+    async def test_a_non_list_body_is_refused(self, httpx2_mock: respx.Router) -> None:
+        httpx2_mock.get(f"{SEERR}/api/v1/settings/sonarr").mock(
             return_value=httpx.Response(200, json={"message": "forbidden"})
         )
         client = SeerrClient(SEERR, "k", safety=RuntimeSafety(destructive_enabled=False))

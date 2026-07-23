@@ -30,6 +30,8 @@ from reaper.services import instances as instances_service
 
 from ._auth import TEST_PASSWORD, login
 
+pytestmark = pytest.mark.httpx2(assert_all_called=False)
+
 
 def _make(tmp_path: Path, **overrides: object) -> Settings:
     settings = Settings(data_dir=tmp_path, secret_key="k", **overrides)  # type: ignore[call-arg]
@@ -657,55 +659,54 @@ class TestPlexLinkChoice:
     API contract the PlexPanel picker consumes. The login-time twin of this flow is
     pinned in test_sessions; this pins the in-app route."""
 
-    def _mock_plextv(self) -> None:
-        respx.post("https://plex.tv/api/v2/pins").mock(
+    def _mock_plextv(self, httpx2_mock: respx.Router) -> None:
+        httpx2_mock.post("https://plex.tv/api/v2/pins").mock(
             return_value=httpx.Response(201, json={"id": 42, "code": "ABCD"})
         )
-        respx.get("https://plex.tv/api/v2/pins/42").mock(
+        httpx2_mock.get("https://plex.tv/api/v2/pins/42").mock(
             return_value=httpx.Response(200, json={"id": 42, "authToken": "tok"})
         )
-        respx.get("https://plex.tv/api/v2/user").mock(
+        httpx2_mock.get("https://plex.tv/api/v2/user").mock(
             return_value=httpx.Response(200, json={"id": 7, "username": "owner"})
         )
-        respx.get("https://plex.tv/api/v2/resources").mock(
+        httpx2_mock.get("https://plex.tv/api/v2/resources").mock(
             return_value=httpx.Response(
                 200,
                 json=[_plex_resource("machine-a", "Den"), _plex_resource("machine-b", "Attic")],
             )
         )
-        respx.get("https://x.plex.direct:32400/identity").mock(
+        httpx2_mock.get("https://x.plex.direct:32400/identity").mock(
             return_value=httpx.Response(200, json={})
         )
 
     def test_a_multi_server_account_gets_the_choices_and_the_pin_survives(
-        self, client: TestClient
+        self, client: TestClient, httpx2_mock: respx.Router
     ) -> None:
-        with respx.mock:
-            self._mock_plextv()
-            start = client.post("/api/settings/plex/link/start").json()
+        self._mock_plextv(httpx2_mock)
+        start = client.post("/api/settings/plex/link/start").json()
 
-            first = client.post("/api/settings/plex/link/poll", json={"pin_id": start["pin_id"]})
-            assert first.status_code == 200, first.text
-            body = first.json()
-            assert body["status"] == "choose_server"
-            assert {(s["name"], s["machine_identifier"]) for s in body["servers"]} == {
-                ("Den", "machine-a"),
-                ("Attic", "machine-b"),
-            }
+        first = client.post("/api/settings/plex/link/poll", json={"pin_id": start["pin_id"]})
+        assert first.status_code == 200, first.text
+        body = first.json()
+        assert body["status"] == "choose_server"
+        assert {(s["name"], s["machine_identifier"]) for s in body["servers"]} == {
+            ("Den", "machine-a"),
+            ("Attic", "machine-b"),
+        }
 
-            # The choice did not burn the PIN: the SAME sign-in finishes with the pick.
-            done = client.post(
-                "/api/settings/plex/link/poll",
-                json={"pin_id": start["pin_id"], "machine_identifier": "machine-b"},
-            )
-            assert done.status_code == 200, done.text
-            assert done.json()["status"] == "ok"
-            assert done.json()["server"]["name"] == "Attic"
+        # The choice did not burn the PIN: the SAME sign-in finishes with the pick.
+        done = client.post(
+            "/api/settings/plex/link/poll",
+            json={"pin_id": start["pin_id"], "machine_identifier": "machine-b"},
+        )
+        assert done.status_code == 200, done.text
+        assert done.json()["status"] == "ok"
+        assert done.json()["server"]["name"] == "Attic"
 
         assert client.get("/api/settings/plex").json()["linked"] is True
 
     def test_the_certificate_choice_reaches_the_probe_and_sticks_to_the_row(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch, httpx2_mock: respx.Router
     ) -> None:
         """Linking with the certificate check off must (a) probe the server without
         verification -- a self-signed HTTPS Plex is unreachable otherwise -- and (b)
@@ -724,20 +725,19 @@ class TestPlexLinkChoice:
 
         monkeypatch.setattr(plex_link, "probe_connection", spying_probe)
 
-        with respx.mock:
-            self._mock_plextv()
-            start = client.post("/api/settings/plex/link/start").json()
-            done = client.post(
-                "/api/settings/plex/link/poll",
-                json={
-                    "pin_id": start["pin_id"],
-                    "machine_identifier": "machine-b",
-                    "verify_tls": False,
-                },
-            )
-            assert done.status_code == 200, done.text
-            assert done.json()["status"] == "ok"
-            assert done.json()["server"]["verify_tls"] is False
+        self._mock_plextv(httpx2_mock)
+        start = client.post("/api/settings/plex/link/start").json()
+        done = client.post(
+            "/api/settings/plex/link/poll",
+            json={
+                "pin_id": start["pin_id"],
+                "machine_identifier": "machine-b",
+                "verify_tls": False,
+            },
+        )
+        assert done.status_code == 200, done.text
+        assert done.json()["status"] == "ok"
+        assert done.json()["server"]["verify_tls"] is False
 
         assert captured["verify"] is False
         assert client.get("/api/settings/plex").json()["verify_tls"] is False
@@ -746,23 +746,24 @@ class TestPlexLinkChoice:
         assert flipped.status_code == 200
         assert flipped.json()["verify_tls"] is True
 
-    def test_a_pick_matching_nothing_owned_fails_closed(self, client: TestClient) -> None:
-        with respx.mock:
-            self._mock_plextv()
-            start = client.post("/api/settings/plex/link/start").json()
+    def test_a_pick_matching_nothing_owned_fails_closed(
+        self, client: TestClient, httpx2_mock: respx.Router
+    ) -> None:
+        self._mock_plextv(httpx2_mock)
+        start = client.post("/api/settings/plex/link/start").json()
 
-            bad = client.post(
-                "/api/settings/plex/link/poll",
-                json={"pin_id": start["pin_id"], "machine_identifier": "somebody-elses-machine"},
-            )
-            assert bad.status_code == 400
-            assert "No server this account owns" in bad.json()["detail"]
+        bad = client.post(
+            "/api/settings/plex/link/poll",
+            json={"pin_id": start["pin_id"], "machine_identifier": "somebody-elses-machine"},
+        )
+        assert bad.status_code == 400
+        assert "No server this account owns" in bad.json()["detail"]
 
-            # The refusal consumed the PIN, so the obtained token cannot be replayed.
-            retry = client.post(
-                "/api/settings/plex/link/poll",
-                json={"pin_id": start["pin_id"], "machine_identifier": "machine-b"},
-            )
-            assert retry.status_code == 400
+        # The refusal consumed the PIN, so the obtained token cannot be replayed.
+        retry = client.post(
+            "/api/settings/plex/link/poll",
+            json={"pin_id": start["pin_id"], "machine_identifier": "machine-b"},
+        )
+        assert retry.status_code == 400
 
         assert client.get("/api/settings/plex").json()["linked"] is False

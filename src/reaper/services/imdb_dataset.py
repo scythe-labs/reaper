@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import IO
 from urllib.parse import urlsplit
 
-import httpx
+import httpx2
 import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -151,7 +151,7 @@ async def download(destination: Path, *, url: str = DATASET_URL) -> Path:
     parts = urlsplit(url)
     path = parts.path + (f"?{parts.query}" if parts.query else "")
     async with PublicClient(
-        f"{parts.scheme}://{parts.netloc}", timeout=httpx.Timeout(60.0)
+        f"{parts.scheme}://{parts.netloc}", timeout=httpx2.Timeout(60.0)
     ) as client:
         await client.stream_to(path, tmp)
 

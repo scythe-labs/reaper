@@ -19,7 +19,9 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
+import respx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -1828,8 +1830,9 @@ class TestMovieLiveSend:
         assert report.state is RunState.ABORTED  # sole item is the canary
         assert report.deleted_items == 0
 
+    @pytest.mark.httpx2(assert_all_called=False)
     async def test_the_delete_is_refused_by_the_guard_when_the_client_is_real(
-        self, session: AsyncSession
+        self, session: AsyncSession, httpx2_mock: respx.Router
     ) -> None:
         """Belt-and-suspenders: even inside a 'real' run, a genuine client refuses the
         mutation unless the host is armed. Here the executor thinks it is armed, but the
@@ -1839,19 +1842,14 @@ class TestMovieLiveSend:
         snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
         run = await _plan(session, snapshot_id)
         # A real Radarr client whose transport is read-only. movie_by_id (a GET) succeeds
-        # via respx, but delete_movie must be refused by the guard.
-        import respx
-
-        with respx.mock:
-            respx.get("https://radarr.test/api/v3/movie/1").mock(
-                return_value=__import__("httpx").Response(
-                    200, json={"id": 1, "tmdbId": 5, "sizeOnDisk": 1024**3}
-                )
-            )
-            client = RadarrClient("https://radarr.test", "k", safety=_read_only())
-            gateway = _gateway(radarr={1: client})
-            async with client:
-                report = await _real(session, run, gateway)
+        # via the mock, but delete_movie must be refused by the guard.
+        httpx2_mock.get("https://radarr.test/api/v3/movie/1").mock(
+            return_value=httpx.Response(200, json={"id": 1, "tmdbId": 5, "sizeOnDisk": 1024**3})
+        )
+        client = RadarrClient("https://radarr.test", "k", safety=_read_only())
+        gateway = _gateway(radarr={1: client})
+        async with client:
+            report = await _real(session, run, gateway)
 
         # The guard blocked the delete; it is caught and turned into a failed canary, which
         # aborts the run cleanly. Nothing was deleted, and the process did not crash.

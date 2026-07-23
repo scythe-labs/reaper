@@ -130,6 +130,10 @@ asyncio_mode = "auto"
 addopts = "--strict-markers --strict-config -m 'not live'"
 markers = [
     "live: talks to a real instance; requires .env.local. Deselected by default.",
+    # pytest-httpx2 registers this in its own pytest_configure, but exposes only the
+    # fixture (not the hook) from its package __init__, so under --strict-markers we must
+    # declare it here. Configures the httpx2_mock fixture (assert_all_called, base_url, ...).
+    "httpx2: configure the httpx2_mock fixture (see pytest-httpx2).",
 ]
 
 [tool.coverage.run]

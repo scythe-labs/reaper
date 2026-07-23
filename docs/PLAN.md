@@ -7,10 +7,11 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-23 (httpx -> httpx2 migration STARTED: first isolated slice shipped,
-scope corrected against the real code, sequencing rethought)
+Last updated: 2026-07-23 (httpx -> httpx2 migration: **all production code now on httpx2**,
+including the atomic BaseClient/GuardedTransport cluster and every respx test; only a live
+end-to-end TLS check against a real instance remains before it is fully done)
 
-### Newest — httpx is unmaintained; httpx2 migration started (first slice shipped)
+### Newest — httpx is unmaintained; httpx2 migration (production fully on httpx2)
 
 Test-suite CI work (sleep-patched tests, xdist, a sqlite-engine-leak fix) surfaced a
 `StarletteDeprecationWarning` pointing at `httpx2`. Checked it out: upstream `httpx` (encode/httpx)
@@ -32,6 +33,22 @@ added to the `dev` extra, `test_discord.py` was rewritten onto the `httpx2_mock`
 mechanism `GuardedTransport` depends on) behaves identically -- proved before the guard itself is
 ported. `discord.py` does NOT go through `GuardedTransport` (it posts to Discord, it mutates no
 library), which is exactly why migrating it first is safe.
+
+**Shipped (second slice): the whole atomic BaseClient/GuardedTransport cluster.** With the transport
+parity proved, the cluster the decomposition finding named -- `clients/base.py` (the
+`GuardedTransport` linchpin + `BaseClient`), `clients/plextv.py`, `clients/public.py`,
+`services/instances.py` (the exception classifier), and `services/imdb_dataset.py` -- all moved to
+`httpx2` in one pass, and all ~9 remaining respx test files were rewritten onto the `httpx2_mock`
+fixture in the same change. The port was a **pure symbol swap** (`httpx.X` -> `httpx2.X`): httpx2
+2.9.0 exports every symbol `base.py` touches (`AsyncBaseTransport`, `AsyncHTTPTransport`,
+`AsyncClient`, `Request`, `Response`, `Timeout`, `URL`) with a byte-identical exception hierarchy, so
+the guard's refusal logic is untouched, character for character. Verified end-to-end: `ruff`,
+`ruff format`, `mypy src/reaper` (95 files), the full `pytest` suite (unchanged test count, every
+migrated file's `assert`/`pytest.raises`/`.called` count identical before and after), and
+`alembic check` all green. **Production imports no `httpx` symbol anywhere now** -- `httpx` survives
+only as a *test* dependency (respx's own currency; see the currency note below). The one thing left
+before this is fully closed is a **live end-to-end TLS check** against a real self-hosted instance
+(the truststore default change, below), which cannot be proved from a unit test.
 
 **Findings that corrected the earlier scope (verified against the installed packages and the code):**
 
@@ -80,16 +97,26 @@ library), which is exactly why migrating it first is safe.
   correct, but it is a real behavior change and needs a real end-to-end check against a live
   self-hosted instance before it ships, not just a reading of the docs.
 
-**Corrected sequencing for the rest (the big, atomic piece):** the `TestTlsVerificationReachesTheTransport`
-test in `test_guarded_transport.py` monkeypatches `reaper.clients.base.httpx.AsyncHTTPTransport`, so
-it also moves in lockstep. When the BaseClient cluster is done in one pass: port `base.py` +
-`instances.py` + the six client files together; rewrite all their respx tests onto `httpx2_mock` in
-the same change (the parity probe already shipped proves the transport subclass holds); the
-`_NOISY_LOGGERS` names are already in place; then `services/imdb_dataset.py` can go on its own; then
-a real end-to-end TLS check against a live self-hosted instance; and only then drop `httpx`/`respx`
-once nothing imports them. `httpx` 0.28.1 still installs and runs correctly today, so the remaining
-work is about closing off future security-update coverage, not an active break -- there is no
-deadline pressure to rush the atomic cluster.
+**One more trap the atomic port surfaced, worth recording: the `httpx2_mock` fixture is stricter
+than `@respx.mock`, and its marker is not auto-registered.** `pytest-httpx2`'s fixture is built with
+`respx.mock(using="httpcore2")`, which defaults `assert_all_called=True` -- but the old
+`@respx.mock` decorator and `with respx.mock:` context manager both default it to **False**. A blind
+swap therefore fails any test that registers a route a refusal or early-raise path never calls (e.g.
+"server choice needed" raises before the reachability probe route is hit). The faithful fix is a
+per-file `pytestmark = pytest.mark.httpx2(assert_all_called=False)`, which restores the original
+semantics exactly. Second half of the trap: under the repo's `--strict-markers`, that marker is
+*unknown* -- `pytest-httpx2` registers it in its own `pytest_configure`, but its package `__init__`
+re-exports only the `httpx2_mock` fixture, **not** the hook, so the registration never runs. It had
+to be declared once in `pyproject.toml`'s `[tool.pytest.ini_options] markers`. Also in lockstep as
+predicted: `TestTlsVerificationReachesTheTransport` monkeypatched
+`reaper.clients.base.httpx.AsyncHTTPTransport`, which is now `...base.httpx2.AsyncHTTPTransport`.
+
+**What actually remains.** Only the **live end-to-end TLS check** against a real self-hosted instance
+(the truststore default change). `httpx`/`respx` are *not* being dropped: production is fully off
+httpx, but the tests still ride respx (its return currency is an `httpx.Response`), so `httpx` and
+`respx` stay as dev-only dependencies -- pinned there by pytest, not by any production import. `httpx`
+0.28.1 still installs and runs correctly, so this was always about closing off future security-update
+coverage on the production path, not an active break; that goal is now met.
 
 ### Newest — Backup & Restore, phase 2: restore + install-from-backup (shipped)
 

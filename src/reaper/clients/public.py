@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import ClassVar
 
-import httpx
+import httpx2
 
 from reaper.clients.base import _REDIRECTS, BaseClient, IntegrationError
 from reaper.config import RuntimeSafety
@@ -35,7 +35,7 @@ class PublicClient(BaseClient):
 
     service: ClassVar[str] = "public-fetch"
 
-    def __init__(self, base_url: str, *, timeout: httpx.Timeout | None = None) -> None:
+    def __init__(self, base_url: str, *, timeout: httpx2.Timeout | None = None) -> None:
         super().__init__(
             base_url,
             safety=RuntimeSafety(),
@@ -75,8 +75,8 @@ class PublicClient(BaseClient):
                         async for chunk in response.aiter_bytes(_CHUNK):
                             handle.write(chunk)
                     return
-            except httpx.TimeoutException as exc:
+            except httpx2.TimeoutException as exc:
                 raise IntegrationError(self.service, f"timed out ({type(exc).__name__})") from exc
-            except httpx.TransportError as exc:
+            except httpx2.TransportError as exc:
                 raise IntegrationError(self.service, f"unreachable ({exc})") from exc
         raise IntegrationError(self.service, f"too many redirects for GET {path}")

@@ -27,6 +27,8 @@ from reaper.services.lists import IMDB_TOP_250_URL, memberships
 from reaper.services.season_scan import SonarrSource
 from reaper.services.snapshot import _watch_stats, sync_protection_lists
 
+pytestmark = pytest.mark.httpx2(assert_all_called=False)
+
 
 @pytest.fixture
 async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
@@ -42,11 +44,14 @@ def _top250_payload(count: int = 250) -> list[dict[str, object]]:
 
 
 class TestTheTop250IsPopulatedForAScan:
-    @respx.mock
-    async def test_after_sync_a_top250_film_is_a_member(self, engine: AsyncEngine) -> None:
+    async def test_after_sync_a_top250_film_is_a_member(
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
+    ) -> None:
         """The end-to-end point: sync, then the membership a scan looks up is present.
         Before this wiring, that lookup always came back empty."""
-        respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(200, json=_top250_payload()))
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(
+            return_value=httpx.Response(200, json=_top250_payload())
+        )
 
         synced = await sync_protection_lists(engine, include_top_250=True)
 
@@ -54,8 +59,7 @@ class TestTheTop250IsPopulatedForAScan:
         found = await memberships(engine, media_type="movie", imdb_id="tt0000005")
         assert len(found) == 1  # a scan would now see this film as protected
 
-    @respx.mock
-    async def test_it_can_be_skipped(self, engine: AsyncEngine) -> None:
+    async def test_it_can_be_skipped(self, engine: AsyncEngine, httpx2_mock: respx.Router) -> None:
         synced = await sync_protection_lists(engine, include_top_250=False)
         assert "imdb-top-250" not in synced
 
@@ -80,24 +84,26 @@ class TestAnEmptyCacheDoesNotCrashTheScan:
 
 
 class TestOneFailingListDoesNotSinkTheScan:
-    @respx.mock
-    async def test_a_failed_fetch_is_recorded_not_raised(self, engine: AsyncEngine) -> None:
+    async def test_a_failed_fetch_is_recorded_not_raised(
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
+    ) -> None:
         """A protection source that errors must not abort the scan -- but the caller has
         to be able to SEE it failed, so the scan can treat itself as degraded rather than
         delete something the list would have saved."""
-        respx.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(503))
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(503))
 
         synced = await sync_protection_lists(engine, include_top_250=True)
 
         assert isinstance(synced["imdb-top-250"], str)
         assert "error" in synced["imdb-top-250"]
 
-    @respx.mock
-    async def test_a_truncated_list_is_refused(self, engine: AsyncEngine) -> None:
+    async def test_a_truncated_list_is_refused(
+        self, engine: AsyncEngine, httpx2_mock: respx.Router
+    ) -> None:
         """A short list would silently stop protecting the films that fell off it, so
         the provider refuses it -- and the orchestrator records that refusal rather than
         installing a half-empty whitelist."""
-        respx.get(IMDB_TOP_250_URL).mock(
+        httpx2_mock.get(IMDB_TOP_250_URL).mock(
             return_value=httpx.Response(200, json=_top250_payload(count=50))
         )
 

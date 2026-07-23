@@ -36,6 +36,8 @@ from reaper.db.session import create_engine, create_session_factory
 from reaper.services.login import PLEX_LOGIN_TTL, LoginError, login_local, poll_plex_login
 from reaper.services.plex_link import PlexServerChoiceNeededError
 
+pytestmark = pytest.mark.httpx2(assert_all_called=False)
+
 SAFETY = RuntimeSafety(destructive_enabled=False)
 
 
@@ -275,53 +277,54 @@ class TestPlexLoginPoll:
     is already linked, so the check is 'does this token own *this* machine?'."""
 
     async def test_not_yet_approved_is_pending(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router
     ) -> None:
         await _link_server(factory, "ours")
         await _pending(factory, 42)
-        with respx.mock:
-            respx.get("https://plex.tv/api/v2/pins/42").mock(
-                return_value=httpx.Response(200, json={"id": 42, "authToken": None})
-            )
-            result = await poll_plex_login(factory, _box(), pin_id=42, safety=SAFETY)
+        httpx2_mock.get("https://plex.tv/api/v2/pins/42").mock(
+            return_value=httpx.Response(200, json={"id": 42, "authToken": None})
+        )
+        result = await poll_plex_login(factory, _box(), pin_id=42, safety=SAFETY)
         assert result is None
 
-    async def test_the_owner_is_admitted(self, factory: async_sessionmaker[AsyncSession]) -> None:
+    async def test_the_owner_is_admitted(
+        self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router
+    ) -> None:
         await _link_server(factory, "ours")
         await _pending(factory, 42)
-        with respx.mock:
-            respx.get("https://plex.tv/api/v2/pins/42").mock(
-                return_value=httpx.Response(200, json={"id": 42, "authToken": "tok"})
-            )
-            respx.get("https://plex.tv/api/v2/user").mock(
-                return_value=httpx.Response(200, json={"id": 7, "username": "owner"})
-            )
-            respx.get("https://plex.tv/api/v2/resources").mock(
-                return_value=httpx.Response(200, json=[_resource("ours")])
-            )
-            result = await poll_plex_login(factory, _box(), pin_id=42, safety=SAFETY)
+        httpx2_mock.get("https://plex.tv/api/v2/pins/42").mock(
+            return_value=httpx.Response(200, json={"id": 42, "authToken": "tok"})
+        )
+        httpx2_mock.get("https://plex.tv/api/v2/user").mock(
+            return_value=httpx.Response(200, json={"id": 7, "username": "owner"})
+        )
+        httpx2_mock.get("https://plex.tv/api/v2/resources").mock(
+            return_value=httpx.Response(200, json=[_resource("ours")])
+        )
+        result = await poll_plex_login(factory, _box(), pin_id=42, safety=SAFETY)
 
         assert result is not None
         assert result.user.username == "owner"
         async with factory() as session:
             assert await resolve_session(session, result.session_token) is not None
 
-    async def test_a_non_owner_is_refused(self, factory: async_sessionmaker[AsyncSession]) -> None:
+    async def test_a_non_owner_is_refused(
+        self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router
+    ) -> None:
         """Authenticated to Plex, owns a *different* server -> not our admin."""
         await _link_server(factory, "ours")
         await _pending(factory, 42)
-        with respx.mock:
-            respx.get("https://plex.tv/api/v2/pins/42").mock(
-                return_value=httpx.Response(200, json={"id": 42, "authToken": "tok"})
-            )
-            respx.get("https://plex.tv/api/v2/user").mock(
-                return_value=httpx.Response(200, json={"id": 8, "username": "stranger"})
-            )
-            respx.get("https://plex.tv/api/v2/resources").mock(
-                return_value=httpx.Response(200, json=[_resource("someone-elses-server")])
-            )
-            with pytest.raises(LoginError, match="does not own this server"):
-                await poll_plex_login(factory, _box(), pin_id=42, safety=SAFETY)
+        httpx2_mock.get("https://plex.tv/api/v2/pins/42").mock(
+            return_value=httpx.Response(200, json={"id": 42, "authToken": "tok"})
+        )
+        httpx2_mock.get("https://plex.tv/api/v2/user").mock(
+            return_value=httpx.Response(200, json={"id": 8, "username": "stranger"})
+        )
+        httpx2_mock.get("https://plex.tv/api/v2/resources").mock(
+            return_value=httpx.Response(200, json=[_resource("someone-elses-server")])
+        )
+        with pytest.raises(LoginError, match="does not own this server"):
+            await poll_plex_login(factory, _box(), pin_id=42, safety=SAFETY)
 
         # No account was created, and the pending was consumed so it can't be retried.
         async with factory() as session:
@@ -338,29 +341,30 @@ class TestFirstRunServerChoice:
     owns -- whatever string the browser sends back.
     """
 
-    def _mock_signin(self, resources: list[dict[str, object]]) -> None:
-        respx.get("https://plex.tv/api/v2/pins/42").mock(
+    def _mock_signin(self, httpx2_mock: respx.Router, resources: list[dict[str, object]]) -> None:
+        httpx2_mock.get("https://plex.tv/api/v2/pins/42").mock(
             return_value=httpx.Response(200, json={"id": 42, "authToken": "tok"})
         )
-        respx.get("https://plex.tv/api/v2/user").mock(
+        httpx2_mock.get("https://plex.tv/api/v2/user").mock(
             return_value=httpx.Response(200, json={"id": 7, "username": "owner"})
         )
-        respx.get("https://plex.tv/api/v2/resources").mock(
+        httpx2_mock.get("https://plex.tv/api/v2/resources").mock(
             return_value=httpx.Response(200, json=resources)
         )
         # The reachability probe for whichever server gets picked.
-        respx.get("https://x.plex.direct:32400/identity").mock(
+        httpx2_mock.get("https://x.plex.direct:32400/identity").mock(
             return_value=httpx.Response(200, json={})
         )
 
     async def test_two_owned_servers_ask_for_a_choice_and_keep_the_pin(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router
     ) -> None:
         await _pending(factory, 42)
-        with respx.mock:
-            self._mock_signin([_resource("machine-a", "Den"), _resource("machine-b", "Attic")])
-            with pytest.raises(PlexServerChoiceNeededError) as exc_info:
-                await poll_plex_login(factory, _box(), pin_id=42, safety=SAFETY)
+        self._mock_signin(
+            httpx2_mock, [_resource("machine-a", "Den"), _resource("machine-b", "Attic")]
+        )
+        with pytest.raises(PlexServerChoiceNeededError) as exc_info:
+            await poll_plex_login(factory, _box(), pin_id=42, safety=SAFETY)
 
         # Both owned servers are offered, by name and identifier.
         offered = {(c.name, c.machine_identifier) for c in exc_info.value.candidates}
@@ -374,21 +378,19 @@ class TestFirstRunServerChoice:
             assert (await session.execute(select(PendingPlexLogin))).first() is not None
 
     async def test_the_choice_links_exactly_the_picked_server(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router
     ) -> None:
         await _pending(factory, 42)
         resources = [_resource("machine-a", "Den"), _resource("machine-b", "Attic")]
-        with respx.mock:
-            self._mock_signin(resources)
-            with pytest.raises(PlexServerChoiceNeededError):
-                await poll_plex_login(factory, _box(), pin_id=42, safety=SAFETY)
+        self._mock_signin(httpx2_mock, resources)
+        with pytest.raises(PlexServerChoiceNeededError):
+            await poll_plex_login(factory, _box(), pin_id=42, safety=SAFETY)
 
         # The re-poll carries the pick; the still-valid PIN completes setup.
-        with respx.mock:
-            self._mock_signin(resources)
-            result = await poll_plex_login(
-                factory, _box(), pin_id=42, safety=SAFETY, choice="machine-b"
-            )
+        self._mock_signin(httpx2_mock, resources)
+        result = await poll_plex_login(
+            factory, _box(), pin_id=42, safety=SAFETY, choice="machine-b"
+        )
 
         assert result is not None and result.setup is True
         async with factory() as session:
@@ -400,16 +402,17 @@ class TestFirstRunServerChoice:
             assert await resolve_session(session, result.session_token) is not None
 
     async def test_a_choice_matching_nothing_owned_is_refused(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router
     ) -> None:
         """Fail closed: a stale or hostile identifier can never link a server."""
         await _pending(factory, 42)
-        with respx.mock:
-            self._mock_signin([_resource("machine-a", "Den"), _resource("machine-b", "Attic")])
-            with pytest.raises(LoginError, match="No server this account owns"):
-                await poll_plex_login(
-                    factory, _box(), pin_id=42, safety=SAFETY, choice="somebody-elses-machine"
-                )
+        self._mock_signin(
+            httpx2_mock, [_resource("machine-a", "Den"), _resource("machine-b", "Attic")]
+        )
+        with pytest.raises(LoginError, match="No server this account owns"):
+            await poll_plex_login(
+                factory, _box(), pin_id=42, safety=SAFETY, choice="somebody-elses-machine"
+            )
 
         async with factory() as session:
             assert (await session.execute(select(PlexServer))).first() is None
@@ -417,29 +420,29 @@ class TestFirstRunServerChoice:
             assert (await session.execute(select(PendingPlexLogin))).first() is None
 
     async def test_a_choice_by_exact_name_works_and_a_duplicate_name_is_refused(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router
     ) -> None:
         """The CLI passes what a human types: an exact name resolves, an ambiguous
         one is refused rather than guessed."""
         await _pending(factory, 42)
-        with respx.mock:
-            self._mock_signin([_resource("machine-a", "Den"), _resource("machine-b", "Attic")])
-            result = await poll_plex_login(
-                factory, _box(), pin_id=42, safety=SAFETY, choice="Attic"
-            )
+        self._mock_signin(
+            httpx2_mock, [_resource("machine-a", "Den"), _resource("machine-b", "Attic")]
+        )
+        result = await poll_plex_login(factory, _box(), pin_id=42, safety=SAFETY, choice="Attic")
         assert result is not None
         async with factory() as session:
             server = (await session.execute(select(PlexServer))).scalar_one()
             assert server.machine_identifier == "machine-b"
 
     async def test_two_servers_sharing_the_chosen_name_are_refused(
-        self, factory: async_sessionmaker[AsyncSession]
+        self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router
     ) -> None:
         await _pending(factory, 42)
-        with respx.mock:
-            self._mock_signin([_resource("machine-a", "Home"), _resource("machine-b", "Home")])
-            with pytest.raises(LoginError, match="more than one server named"):
-                await poll_plex_login(factory, _box(), pin_id=42, safety=SAFETY, choice="Home")
+        self._mock_signin(
+            httpx2_mock, [_resource("machine-a", "Home"), _resource("machine-b", "Home")]
+        )
+        with pytest.raises(LoginError, match="more than one server named"):
+            await poll_plex_login(factory, _box(), pin_id=42, safety=SAFETY, choice="Home")
 
         async with factory() as session:
             assert (await session.execute(select(PlexServer))).first() is None

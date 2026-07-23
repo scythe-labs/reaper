@@ -25,7 +25,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-import httpx
+import httpx2
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -415,7 +415,7 @@ def _causes(exc: BaseException) -> list[BaseException]:
     """``exc`` and everything it was raised from, outermost first.
 
     The client layer maps transport failures to :class:`IntegrationError` with
-    ``raise ... from exc``, so the original httpx (and, under it, the ssl) exception is
+    ``raise ... from exc``, so the original httpx2 (and, under it, the ssl) exception is
     still reachable. Keying the operator message on those *types* beats sniffing the
     text of a message that upstream is free to reword.
     """
@@ -511,18 +511,18 @@ def _explain_failure(kind: InstanceKind, exc: BaseException) -> str:
             return f"{label} reported a problem of its own (HTTP {status}). Check its log."
         return f"{label} refused the request (HTTP {status})."
 
-    if any(isinstance(e, httpx.TimeoutException) for e in chain):
-        if any(isinstance(e, httpx.ConnectTimeout | httpx.PoolTimeout) for e in chain):
+    if any(isinstance(e, httpx2.TimeoutException) for e in chain):
+        if any(isinstance(e, httpx2.ConnectTimeout | httpx2.PoolTimeout) for e in chain):
             return "Couldn't open a connection to the server in time."
         return "The server didn't answer in time."
-    if any(isinstance(e, httpx.UnsupportedProtocol | httpx.InvalidURL) for e in chain):
+    if any(isinstance(e, httpx2.UnsupportedProtocol | httpx2.InvalidURL) for e in chain):
         return "That isn't an address Reaper can use. Start it with http:// or https://."
-    if any(isinstance(e, httpx.ConnectError | httpx.ProxyError) for e in chain):
+    if any(isinstance(e, httpx2.ConnectError | httpx2.ProxyError) for e in chain):
         return (
             "Couldn't reach the server at this address. Check the URL and port, and that "
             "the service is running."
         )
-    if any(isinstance(e, httpx.TransportError) for e in chain):
+    if any(isinstance(e, httpx2.TransportError) for e in chain):
         return "The connection to the server broke before it answered."
     if any(isinstance(e, ValueError) for e in chain):
         # A body that would not parse: usually a login page or a proxy error page.

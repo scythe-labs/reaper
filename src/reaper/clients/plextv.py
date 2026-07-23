@@ -41,7 +41,7 @@ from dataclasses import dataclass
 from typing import Any, ClassVar
 from urllib.parse import urlencode
 
-import httpx
+import httpx2
 import structlog
 
 from reaper.clients.base import BaseClient, IntegrationError
@@ -203,7 +203,7 @@ class PlexTvClient(BaseClient):
         Routed through ``_send`` so a transport error (a plex.tv outage) or a non-JSON body
         (a maintenance page served with HTTP 200) becomes an ``IntegrationError`` -- the same
         normalization ``get_json`` gives every read. Without it, ``owns_server``'s
-        ``except IntegrationError`` guard could not fail closed on a raw ``httpx`` error.
+        ``except IntegrationError`` guard could not fail closed on a raw ``httpx2`` error.
         """
         response = await self._send("POST", path, params=params)
         try:
@@ -257,7 +257,7 @@ class PlexTvClient(BaseClient):
         """Who this token belongs to. Authentication, not authorization.
 
         Routed through ``get_json`` so a plex.tv outage or a non-JSON (maintenance) body
-        surfaces as ``IntegrationError`` rather than a raw ``httpx``/``ValueError`` that
+        surfaces as ``IntegrationError`` rather than a raw ``httpx2``/``ValueError`` that
         would escape ``owns_server``'s fail-closed guard.
         """
         data = await self.get_json("/api/v2/user", headers={"X-Plex-Token": user_token})
@@ -279,7 +279,7 @@ class PlexTvClient(BaseClient):
 
         Routed through ``get_json`` so a transport error or a non-JSON body becomes an
         ``IntegrationError``. This is what makes ``owns_server`` able to fail closed on a
-        plex.tv outage: a raw ``httpx.ConnectTimeout`` (or a ``ValueError`` from a
+        plex.tv outage: a raw ``httpx2.ConnectTimeout`` (or a ``ValueError`` from a
         maintenance HTML page) would slip past its ``except IntegrationError`` and turn the
         authorization check into an uncaught 500 -- an open door dressed as a crash.
         """
@@ -327,11 +327,11 @@ async def probe_connection(
     clients have), threaded through the link flow and stored on the server row.
     """
     try:
-        async with httpx.AsyncClient(timeout=timeout, verify=verify) as client:
+        async with httpx2.AsyncClient(timeout=timeout, verify=verify) as client:
             response = await client.get(
                 f"{connection.uri.rstrip('/')}/identity",
                 headers={"X-Plex-Token": token, "Accept": "application/json"},
             )
             return response.status_code < 400
-    except httpx.HTTPError:
+    except httpx2.HTTPError:
         return False
