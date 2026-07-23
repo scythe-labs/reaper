@@ -19,6 +19,7 @@ import {
 } from "react";
 import { accentInk, DEFAULT_ACCENT, isHexColor } from "../accent";
 import { api, type Instance, type InstanceTest, type ScheduledJob } from "../api";
+import { useBackGuard } from "../backnav";
 import { bytes, count, since } from "../format";
 import { LogsPanel } from "./LogsPanel";
 import { ModalShell } from "./ModalShell";
@@ -669,6 +670,8 @@ function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => v
 export function ServicesPanel() {
   const { data, isPending, error } = useQuery({ queryKey: ["instances"], queryFn: api.instances });
   const [modal, setModal] = useState<{ kind: string; instance: Instance | null } | null>(null);
+  // Back closes the service editor instead of leaving Reaper.
+  useBackGuard(modal !== null, () => setModal(null));
 
   return (
     <div className="panel panel-wide">
@@ -1172,6 +1175,8 @@ function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
     refetchInterval: (query) => (query.state.data?.jobs.some((j) => j.running) ? 1500 : false),
   });
   const [editing, setEditing] = useState<ScheduledJob | null>(null);
+  // Back closes the schedule editor instead of leaving Reaper.
+  useBackGuard(editing !== null, () => setEditing(null));
 
   const jobsById = new Map<string, ScheduledJob>(
     (schedule.data?.jobs ?? []).map((j) => [j.id, j]),

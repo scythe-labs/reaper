@@ -40,6 +40,7 @@ import {
   type SortOrder,
   type Verdict,
 } from "../api";
+import { useBackGuard } from "../backnav";
 import { bytes, count, itemBytes, spareRemaining, totalBytes } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { ReapConfirm } from "./ReapConfirm";
@@ -578,6 +579,9 @@ export function OverrideControls({
   const defaultDays = useDefaultSpareDays();
   const [menuAt, setMenuAt] = useState<MenuPos | null>(null);
   const caretRef = useRef<HTMLButtonElement>(null);
+  // Back closes the open length menu before it does anything else (only the one open menu has a
+  // non-null position, so only it registers).
+  useBackGuard(menuAt !== null, () => setMenuAt(null));
 
   // The menu is position:fixed so the card's overflow:hidden can't clip it. Anchor it to the
   // chevron, right-aligned, and flip above when it would run off the bottom of the viewport.
@@ -1765,6 +1769,9 @@ export function ReviewQueue({
   // The plan whose confirmation sheet is open, if any. Building it is the "Reap now" step;
   // the sheet then dry-runs, checks arming, and takes the typed confirmation before deleting.
   const [reapRun, setReapRun] = useState<Run | null>(null);
+  // Back closes an open filter popover, then the reap-confirm sheet, before leaving the app.
+  useBackGuard(openMenu !== null, () => setOpenMenu(null));
+  useBackGuard(reapRun !== null, () => setReapRun(null));
   // The in-flight drag: whether a press-and-drag is currently adding or removing, so every card
   // the pointer crosses paints the same way. A ref, not state -- it changes mid-drag and must
   // not re-render the list on every card it passes over.

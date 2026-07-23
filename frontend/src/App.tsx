@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { applyAccent } from "./accent";
 import { api, ApiError, type AuthUser, type Snapshot, type Verdict } from "./api";
+import { BackNavProvider, useBackGuard, useBackNav } from "./backnav";
 import { Fairness } from "./components/Fairness";
 import { Login } from "./components/Login";
 import { NotInScanPanel } from "./components/NotInScanPanel";
@@ -305,6 +306,10 @@ export function UserMenu({ user }: { user: AuthUser }) {
     setOpen((v) => !v);
   };
 
+  // Back closes the menu instead of leaving Reaper. Held open while a sign-out is pending or
+  // failed, matching the outside-click guard, so the failure message is never yanked away.
+  useBackGuard(open && !keepOpen, () => setOpen(false));
+
   const initial = user.username.slice(0, 1).toUpperCase();
 
   return (
@@ -422,6 +427,22 @@ function Dashboard({ user }: { user: AuthUser }) {
   // The reap sheet reopened from the app-wide bar's View, by run id, on any screen.
   const [reapSheetRun, setReapSheetRun] = useState<number | null>(null);
 
+  // The browser Back button steps back through the UI instead of leaving Reaper: open panels
+  // and menus register themselves (useBackGuard, below and in their own components), and a tab
+  // or section change records how to undo it here. `pushNav` captures the CURRENT location so a
+  // later Back restores it; the undo calls the raw setter, never these wrappers, so it never
+  // records itself.
+  const { pushNav } = useBackNav();
+  const changeView = (next: View) => {
+    if (next !== view) pushNav(() => setView(view));
+    setView(next);
+  };
+  const changeVerdict = (next: Verdict) => {
+    if (next !== verdict) pushNav(() => setVerdict(verdict));
+    setVerdict(next);
+    setSelected(null);
+  };
+
   // Cross-page jumps: "Turn it on in Policy → Deletion" from the Reap page lands on
   // the Deletion section, "Settings → Plex" lands on the Plex panel. The nonce makes
   // each jump fire once; plain tab clicks clear the focus so revisiting a page never
@@ -436,11 +457,11 @@ function Dashboard({ user }: { user: AuthUser }) {
 
   const goToPolicySection = (section: PolicySectionId) => {
     setPolicyFocus({ section, nonce: Date.now() });
-    setView("policy");
+    changeView("policy");
   };
   const goToSettingsPanel = (panel: Panel) => {
     setSettingsFocus({ panel, nonce: Date.now() });
-    setView("settings");
+    changeView("settings");
   };
 
   // Scales lists titles without saying why each one is where it is. Opening one lands on its
@@ -448,11 +469,11 @@ function Dashboard({ user }: { user: AuthUser }) {
   // a whole show on its group panel.
   const goToItemReasons = (candidateId: number) => {
     setSelected({ kind: "item", id: candidateId });
-    setView("review");
+    changeView("review");
   };
   const goToGroupReasons = (key: string) => {
     setSelected({ kind: "group", key });
-    setView("review");
+    changeView("review");
   };
 
   const selectedId = selected?.kind === "item" ? selected.id : null;
@@ -565,6 +586,14 @@ function Dashboard({ user }: { user: AuthUser }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [view, hasSelection]);
 
+  // Back-button layers for the side panels and the app-wide reap sheet (the tab changes are
+  // recorded by changeView/changeVerdict above). Each is gated on the view that actually shows
+  // it, so a panel whose state lingers off-screen is not a phantom Back step.
+  useBackGuard(selected !== null && view === "review", () => setSelected(null));
+  useBackGuard(scalesUser !== null && view === "fairness", () => setScalesUser(null));
+  useBackGuard(scalesUnmatched && view === "fairness", () => setScalesUnmatched(false));
+  useBackGuard(reapSheetRun !== null, () => setReapSheetRun(null));
+
   return (
     <div className="app">
       <ScanLine running={scanStatus?.running ?? false} percent={scanStatus?.percent ?? 0} />
@@ -593,7 +622,7 @@ function Dashboard({ user }: { user: AuthUser }) {
                 // Leaving Scales (or re-entering it) closes any open person panel, so the
                 // split view never lingers on a tab that has no panel to show.
                 setScalesUser(null);
-                setView(n.id);
+                changeView(n.id);
               }}
             >
               {n.label}
@@ -627,10 +656,7 @@ function Dashboard({ user }: { user: AuthUser }) {
           <>
             <ReviewQueue
               verdict={verdict}
-              onVerdictChange={(v) => {
-                setVerdict(v);
-                setSelected(null);
-              }}
+              onVerdictChange={changeVerdict}
               selectedId={selectedId}
               selectedGroupKey={selectedGroupKey}
               onSelect={(id) => setSelected({ kind: "item", id })}
@@ -666,7 +692,7 @@ function Dashboard({ user }: { user: AuthUser }) {
             onGoToPlexSettings={() => goToSettingsPanel("plex")}
             onGoToReview={() => {
               setSelected(null);
-              setView("review");
+              changeView("review");
             }}
           />
         ) : view === "fairness" ? (
@@ -736,9 +762,11 @@ function Authed({ user }: { user: AuthUser }) {
     return <SetupWizard onSkip={() => setSkipped(true)} />;
   }
   return (
-    <DocsProvider>
-      <Dashboard user={user} />
-    </DocsProvider>
+    <BackNavProvider>
+      <DocsProvider>
+        <Dashboard user={user} />
+      </DocsProvider>
+    </BackNavProvider>
   );
 }
 

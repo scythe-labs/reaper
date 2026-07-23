@@ -6,6 +6,7 @@
 // state can all deep-link into the same docs without each owning a modal.
 
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { useBackGuard } from "../backnav";
 import { DocsModal } from "./DocsModal";
 
 type DocsApi = { openDoc: (id: string, anchor?: string) => void };
@@ -23,6 +24,9 @@ export function DocsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const api = useMemo(() => ({ openDoc }), [openDoc]);
+
+  // Back closes the docs overlay instead of leaving Reaper.
+  useBackGuard(target !== null, () => setTarget(null));
 
   return (
     <DocsCtx.Provider value={api}>
