@@ -2146,6 +2146,23 @@ export function PolicyEditor({
               <li className="rule-row">
                 <label className="toggle rule-toggle">
                   <Switch
+                    checked={draft.protect_incomplete_seasons}
+                    onChange={(protect_incomplete_seasons) =>
+                      update({ protect_incomplete_seasons })
+                    }
+                  />
+                  <span className="rule-name">Never remove a season that's still downloading</span>
+                </label>
+                <p className="help rule-help">
+                  Keeps a season Sonarr is still filling in, so a removal never fights an active
+                  download. Turn it off for ended shows that Sonarr permanently lists as missing an
+                  episode.
+                </p>
+              </li>
+
+              <li className="rule-row">
+                <label className="toggle rule-toggle">
+                  <Switch
                     checked={draft.flag_keep_conflicts}
                     onChange={(flag_keep_conflicts) => update({ flag_keep_conflicts })}
                   />

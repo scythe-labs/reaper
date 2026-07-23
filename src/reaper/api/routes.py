@@ -480,7 +480,13 @@ def _primary_reason(explanation_json: str, verdict: str) -> str | None:
 
     if verdict == "protect":
         fired = exp.get("protections_fired") or []
-        return fired[0]["detail"] if fired else None
+        if fired:
+            return str(fired[0]["detail"])
+        # A protect with nothing fired is a hand reap the engine refused to honor: the item
+        # was blocked (e.g. the season keep-rule conflict), so a "reap" override resolves to
+        # protect. Surface that blocked reason so the held row says WHY, not a generic line.
+        unknown = exp.get("protections_unknown") or []
+        return str(unknown[0]["detail"]) if unknown else None
     if verdict == "condemn":
         signals = [s for s in exp.get("signals") or [] if s.get("evaluated")]
         signals.sort(key=lambda s: s.get("contribution", 0), reverse=True)
@@ -990,6 +996,7 @@ def _to_body(payload: PolicyIn) -> PolicyBody:
             keep_in_progress=payload.keep_in_progress,
             in_progress_hold_days=payload.in_progress_hold_days,
             keep_specials=payload.keep_specials,
+            protect_incomplete_seasons=payload.protect_incomplete_seasons,
             flag_keep_conflicts=payload.flag_keep_conflicts,
             gates=tuple(
                 GateSetting(
@@ -1073,6 +1080,7 @@ def _policy_out(
             keep_in_progress=body.keep_in_progress,
             in_progress_hold_days=body.in_progress_hold_days,
             keep_specials=body.keep_specials,
+            protect_incomplete_seasons=body.protect_incomplete_seasons,
             flag_keep_conflicts=body.flag_keep_conflicts,
             gates=[
                 GateSettingIn(

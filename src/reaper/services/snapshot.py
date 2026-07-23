@@ -559,6 +559,7 @@ async def scan(
                 keep_in_progress=tv_policy.keep_in_progress,
                 in_progress_hold_days=tv_policy.in_progress_hold_days,
                 keep_specials=tv_policy.keep_specials,
+                protect_incomplete_seasons=tv_policy.protect_incomplete_seasons,
                 flag_keep_conflicts=tv_policy.flag_keep_conflicts,
                 membership_index=membership_index,
                 allowed_sections=allowed_sections,

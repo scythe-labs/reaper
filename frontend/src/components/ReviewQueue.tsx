@@ -1376,7 +1376,10 @@ function seasonDivergence(
   // A held reap is noted but the file is still kept -- dashed red, never the solid red of a
   // removal. Judged by the item's own fate, so an inherited held reap reads the same as an own one.
   if (handFate(season) === "refused") {
-    const why = chipWhy(season.chip) ?? "Reaper couldn't confirm it's safe to remove";
+    // The specific reason the engine held it (from the stored explanation) beats the chip's
+    // short phrase, which beats a generic line -- so the row says WHY, e.g. that the season it
+    // was compared against is kept because Sonarr is still downloading it.
+    const why = season.reason ?? chipWhy(season.chip) ?? "Reaper couldn't confirm it's safe to remove";
     return {
       chip: <span className="status-chip status-reap-held">Kept for now</span>,
       reason: capitalizeSentence(why),

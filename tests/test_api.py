@@ -1101,6 +1101,15 @@ class TestPolicyPersistence:
         assert body["name"] == "mine"
         assert body["body"]["condemn_at"] == 55
 
+    def test_the_still_downloading_toggle_survives_a_save(self, client: TestClient) -> None:
+        """protect_incomplete_seasons rides the whole PolicyIn -> PolicyBody -> PolicyIn path.
+        A non-default value must load back exactly, or the toggle silently resets on reload."""
+        client.post("/api/policy", json=_policy(protect_incomplete_seasons=False))
+
+        body = client.get("/api/policy").json()["body"]
+
+        assert body["protect_incomplete_seasons"] is False
+
     def test_saving_is_append_only_and_idempotent(self, client: TestClient) -> None:
         """The hash is the identity. Opening the editor and saving without changing
         anything must not fork the audit trail -- snapshots and approvals point at

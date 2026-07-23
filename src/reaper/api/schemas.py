@@ -522,6 +522,7 @@ class PolicyIn(BaseModel):
     keep_in_progress: bool = True
     in_progress_hold_days: int = Field(default=180, ge=0)
     keep_specials: bool = True
+    protect_incomplete_seasons: bool = True
     flag_keep_conflicts: bool = True
     gates: list[GateSettingIn]
     signals: list[SignalSettingIn]

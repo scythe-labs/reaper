@@ -27,7 +27,9 @@ bug a shipping competitor actually has, and each one resolves toward *keeping* a
 
 * **Never touch a currently-airing (or still-downloading) season.** Maintainerr #949: a
   mid-season break longer than the timeout leaves the back half permanently undownloaded.
-  A season Sonarr is still filling is not a candidate for removal.
+  A season Sonarr is still filling is not a candidate for removal. The still-downloading
+  half is the only one an operator can turn off (``protect_incomplete``), for an ended show
+  Sonarr permanently lists as missing an episode; the airing half always applies.
 
 * **Keep-rule conflict detector.** If the rule would remove a season that has *strictly
   more* viewers than one it keeps, that is almost certainly not what the owner wants
@@ -65,6 +67,24 @@ class ProtectedSeason:
     reason: str
 
 
+def _because(kept_reason: str) -> str:
+    """Turn a kept season's protection reason into a "because ..." clause, so a conflict
+    names *why* the season it was compared against is being kept -- not just "your keep
+    rule." Reads season_pruning's own closed vocabulary (the strings ``_protection_reason``
+    returns); anything unrecognized falls back to a safe generic clause, never an error."""
+    if kept_reason.startswith("Sonarr is still downloading"):
+        return "Sonarr is still downloading it"
+    if kept_reason == "currently airing":
+        return "it is currently airing"
+    if kept_reason.startswith("the first season"):
+        return "it is the first season, so the show can still be started"
+    if kept_reason.startswith("within the last") or kept_reason.startswith("this show has only"):
+        return "it is one of the newest seasons your rule keeps"
+    if kept_reason.startswith("a viewer is part-way"):
+        return "a viewer is part-way through it"
+    return "your season rule keeps it"
+
+
 @dataclass(frozen=True)
 class PruneConflict:
     """A season the rule would remove has more viewers than a season it keeps."""
@@ -73,14 +93,17 @@ class PruneConflict:
     kept_season: int
     pruned_watchers: int
     kept_watchers: int
+    #: Why the kept season is being kept -- its ``ProtectedSeason.reason``, so the message
+    #: can name the real protection ("still downloading") instead of a vague "keep rule."
+    kept_reason: str
 
     @property
     def message(self) -> str:
         viewers = "person" if self.pruned_watchers == 1 else "people"
         return (
             f"{self.pruned_watchers} {viewers} watched Season {self.pruned_season}, more "
-            f"than watched Season {self.kept_season}, which your keep rule protects. "
-            f"Reaper left it for you to decide instead of removing it."
+            f"than watched Season {self.kept_season}, which Reaper is keeping because "
+            f"{_because(self.kept_reason)}. Left for you to decide instead of removing it."
         )
 
 
@@ -177,6 +200,7 @@ def plan_series_prune(
     season_lookahead: int = SEQUENTIAL_LOOKAHEAD,
     keep_in_progress: bool = True,
     keep_specials: bool = True,
+    protect_incomplete: bool = True,
     flag_keep_conflicts: bool = True,
     airing_seasons: Collection[int] = (),
     watchers_by_season: Mapping[int, int] | None = None,
@@ -225,6 +249,7 @@ def plan_series_prune(
             keep_first_season=keep_first_season,
             apply_keep_last=apply_keep_last,
             keep_specials=keep_specials,
+            protect_incomplete=protect_incomplete,
             total_ranked=total_ranked,
             first_real=first_real,
             airing=airing,
@@ -257,6 +282,7 @@ def _protection_reason(
     keep_first_season: bool,
     apply_keep_last: bool,
     keep_specials: bool,
+    protect_incomplete: bool,
     total_ranked: int,
     first_real: int | None,
     airing: set[int],
@@ -267,15 +293,16 @@ def _protection_reason(
     Ordered safety-first: the checks that describe an *active* or *fragile* season come
     before the mechanical keep-last rule, so the reason shown is the most important one.
 
-    With ``keep_specials`` off, specials fall through to the checks below: the airing and
-    still-downloading guards still apply, but rank/first-season never do (specials are
-    excluded from both by construction), so an idle Season 0 becomes prunable.
+    With ``keep_specials`` off, specials fall through to the checks below: the airing guard
+    (and the still-downloading guard, unless ``protect_incomplete`` is off) still applies,
+    but rank/first-season never do (specials are excluded from both by construction), so an
+    idle Season 0 becomes prunable.
     """
     n = season.season_number
 
     if n == SPECIALS_SEASON and keep_specials:
         return "specials are never auto-pruned"
-    if season.is_incomplete:
+    if protect_incomplete and season.is_incomplete:
         return "Sonarr is still downloading this season"
     if n in airing:
         return "currently airing"
@@ -309,20 +336,21 @@ def _detect_conflicts(
     common when neither has been watched -- is not a conflict.
     """
     conflicts: list[PruneConflict] = []
-    kept_numbers = [p.season_number for p in protected if p.season_number != SPECIALS_SEASON]
+    kept_seasons = [p for p in protected if p.season_number != SPECIALS_SEASON]
     for pruned in prunable:
         if pruned == SPECIALS_SEASON:
             continue
         pruned_watchers = watchers_by_season.get(pruned, 0)
-        for kept in kept_numbers:
-            kept_watchers = watchers_by_season.get(kept, 0)
+        for kept in kept_seasons:
+            kept_watchers = watchers_by_season.get(kept.season_number, 0)
             if pruned_watchers > kept_watchers:
                 conflicts.append(
                     PruneConflict(
                         pruned_season=pruned,
-                        kept_season=kept,
+                        kept_season=kept.season_number,
                         pruned_watchers=pruned_watchers,
                         kept_watchers=kept_watchers,
+                        kept_reason=kept.reason,
                     )
                 )
     return conflicts

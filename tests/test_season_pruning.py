@@ -231,6 +231,64 @@ class TestKeepRuleConflict:
         assert plan.conflicts == []
         assert plan.auto_approvable
 
+    def test_the_message_names_a_still_downloading_kept_season(self) -> None:
+        """The real case behind this: keep-last off, keep-first off, so the only thing
+        protecting Season 4 is that Sonarr has not finished downloading it. An older,
+        more-watched season conflicts with it, and the message must name THAT reason --
+        not a vague 'your keep rule protects'."""
+        seasons = [_season(n) for n in range(1, 4)] + [_season(4, wanted=10, files=5)]
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=seasons,
+            keep_last=0,
+            keep_first_season=False,
+            watchers_by_season={1: 0, 2: 0, 3: 4, 4: 3},
+        )
+        assert "still downloading" in _reasons(plan)[4]  # season 4 kept only for that
+        conflict = next(c for c in plan.conflicts if c.pruned_season == 3)
+        assert conflict.kept_season == 4
+        assert "Sonarr is still downloading it" in conflict.message
+        assert "which your keep rule protects" not in conflict.message
+
+    def test_the_message_names_a_keep_last_kept_season(self) -> None:
+        """When the kept season is held by keep-last, the message says so in plain words."""
+        seasons = [_season(n) for n in range(1, 5)]
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=seasons,
+            keep_last=2,  # keeps 3, 4
+            keep_first_season=False,
+            watchers_by_season={1: 40, 2: 5, 3: 2, 4: 1},
+        )
+        conflict = next(c for c in plan.conflicts if c.pruned_season == 1)
+        assert "one of the newest seasons your rule keeps" in conflict.message
+
+
+class TestIncompleteSeasonProtection:
+    def test_an_incomplete_season_is_protected_by_default(self) -> None:
+        """Sonarr still wants an episode it does not have -> kept, so a removal never
+        fights an in-progress download."""
+        seasons = [_season(1), _season(2, wanted=10, files=5)]
+        plan = plan_series_prune(
+            series_title="Show", seasons=seasons, keep_last=0, keep_first_season=False
+        )
+        assert 2 not in plan.prunable
+        assert "still downloading" in _reasons(plan)[2]
+
+    def test_the_protection_can_be_switched_off(self) -> None:
+        """protect_incomplete=False: an ended show Sonarr permanently lists as missing an
+        episode is judged like any other season, so its stale-incomplete season is prunable."""
+        seasons = [_season(1), _season(2, wanted=10, files=5)]
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=seasons,
+            keep_last=0,
+            keep_first_season=False,
+            protect_incomplete=False,
+        )
+        assert 2 in plan.prunable
+        assert 2 not in _reasons(plan)  # no longer a protected season
+
 
 NOW = datetime(2026, 7, 17, tzinfo=UTC)
 

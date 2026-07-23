@@ -51,6 +51,7 @@ function body(custom: CustomCondemn[] = []): PolicyBody {
     keep_in_progress: true,
     in_progress_hold_days: 30,
     keep_specials: true,
+    protect_incomplete_seasons: true,
     flag_keep_conflicts: false,
     gates: [],
     signals: [

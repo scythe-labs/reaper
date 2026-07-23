@@ -352,6 +352,13 @@ class PolicyBody(Frozen):
     are judged like any other season -- they can be condemned by score -- but they still
     never occupy a keep-last slot and the airing/still-downloading guards still apply."""
 
+    protect_incomplete_seasons: bool = True
+    """Season pruning: keep a season Sonarr has not finished downloading (it wants an aired
+    episode it does not have yet), so a removal never fights an in-progress download. On by
+    default. When off, a partly-downloaded season is judged like any other -- useful for an
+    ended show that Sonarr permanently lists as missing an episode. The airing guard is
+    separate and still applies. Movies ignore it. See ``services.season_pruning``."""
+
     flag_keep_conflicts: bool = True
     """Season pruning: when a season the keep rule would remove was watched by more people
     than a season it keeps, block it as "Needs a look" instead of removing it. On by

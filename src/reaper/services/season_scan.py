@@ -903,6 +903,7 @@ async def gather(
     keep_in_progress: bool = True,
     in_progress_hold_days: int = 0,
     keep_specials: bool = True,
+    protect_incomplete_seasons: bool = True,
     flag_keep_conflicts: bool = True,
     membership_index: lists.MembershipIndex | None = None,
     allowed_sections: set[int] | None = None,
@@ -1003,6 +1004,7 @@ async def gather(
                 # guard and the conflict detector protect nothing here either way.
                 keep_in_progress=keep_in_progress,
                 keep_specials=keep_specials,
+                protect_incomplete=protect_incomplete_seasons,
                 flag_keep_conflicts=flag_keep_conflicts,
                 airing_seasons=airing_seasons(series, seasons),
             )
@@ -1289,6 +1291,7 @@ async def gather(
                 keep_in_progress=keep_in_progress,
                 in_progress_hold_days=in_progress_hold_days,
                 keep_specials=keep_specials,
+                protect_incomplete_seasons=protect_incomplete_seasons,
                 flag_keep_conflicts=flag_keep_conflicts,
                 ratings=ratings,
                 membership_index=membership_index,
@@ -1323,6 +1326,7 @@ def _judge_series(
     keep_in_progress: bool = True,
     in_progress_hold_days: int = 0,
     keep_specials: bool = True,
+    protect_incomplete_seasons: bool = True,
     flag_keep_conflicts: bool = True,
     ratings: dict[str, ImdbRating] | None = None,
 ) -> list[SeasonJudgment]:
@@ -1393,6 +1397,7 @@ def _judge_series(
         season_lookahead=season_lookahead,
         keep_in_progress=keep_in_progress,
         keep_specials=keep_specials,
+        protect_incomplete=protect_incomplete_seasons,
         flag_keep_conflicts=flag_keep_conflicts,
         airing_seasons=airing_seasons(series, item.seasons),
         watchers_by_season=watchers_by_season,

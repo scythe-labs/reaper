@@ -378,6 +378,7 @@ export interface PolicyBody {
   keep_in_progress: boolean;
   in_progress_hold_days: number;
   keep_specials: boolean;
+  protect_incomplete_seasons: boolean;
   flag_keep_conflicts: boolean;
   gates: GateSetting[];
   signals: SignalSetting[];
