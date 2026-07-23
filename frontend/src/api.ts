@@ -654,6 +654,9 @@ export interface PlexResources {
    *  server's remembered addresses (possibly stale). */
   source: "plex.tv" | "stored";
   servers: PlexResource[];
+  /** The signed-in Plex account's name (the person, not the server). Present on the live
+   *  path only; null on the stored fallback, where the UI shows the server name instead. */
+  owner_username: string | null;
 }
 
 export interface PlexLibrary {

@@ -246,6 +246,10 @@ class PlexResourcesOut(BaseModel):
     reached and this is the linked server's addresses as remembered at link time. Honest
     about staleness rather than pretending a cache is live."""
     servers: list[PlexResourceOut]
+    owner_username: str | None = None
+    """The signed-in Plex account's name -- the person, not the server. Known only on the
+    live path (it comes from plex.tv); ``None`` on the stored fallback, where the UI shows
+    the server name instead."""
 
 
 class PlexServerSwitchIn(BaseModel):
@@ -691,6 +695,9 @@ async def plex_resources(request: Request) -> PlexResourcesOut:
     try:
         async with PlexTvClient(cid, safety=safety) as plextv:
             owned = await plextv.owned_servers(token)
+            # The signed-in person's name, for the "who you're linked as" line. Same token,
+            # same live call as the server list; a failure here degrades to stored below.
+            account = await plextv.account(token)
     except IntegrationError as exc:
         log.warning("plex.resources_unreachable", error=str(exc))
         return PlexResourcesOut(
@@ -716,6 +723,7 @@ async def plex_resources(request: Request) -> PlexResourcesOut:
 
     return PlexResourcesOut(
         source="plex.tv",
+        owner_username=account.username,
         servers=[
             PlexResourceOut(
                 name=r.name,

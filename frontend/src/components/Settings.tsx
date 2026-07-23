@@ -261,23 +261,28 @@ function GeneralPanel() {
               install sees it. Pick from the wheel or type a hex code.
             </p>
             <div className="set-control">
-              <span className="swatch-wrap">
+              {/* Swatch and hex code are one control (the .url-join pattern): the swatch is a
+                  prefix fused inside the field's box, so a narrow screen can never split them
+                  onto two lines. */}
+              <span className="hex-join">
+                <span className="swatch-wrap">
+                  <input
+                    type="color"
+                    value={accentValid ? accent : DEFAULT_ACCENT}
+                    aria-label="Accent color"
+                    onChange={(e) => setAccent(e.target.value)}
+                  />
+                </span>
                 <input
-                  type="color"
-                  value={accentValid ? accent : DEFAULT_ACCENT}
-                  aria-label="Accent color"
+                  type="text"
+                  className="hexfield"
+                  value={accent}
+                  spellCheck={false}
+                  maxLength={7}
+                  aria-label="Accent color hex code"
                   onChange={(e) => setAccent(e.target.value)}
                 />
               </span>
-              <input
-                type="text"
-                className="hexfield"
-                value={accent}
-                spellCheck={false}
-                maxLength={7}
-                aria-label="Accent color hex code"
-                onChange={(e) => setAccent(e.target.value)}
-              />
               {accentDirty && (
                 <button
                   className="primary"

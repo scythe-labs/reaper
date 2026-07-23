@@ -5925,6 +5925,52 @@ button.danger:hover:not(:disabled) {
   font-variant-numeric: tabular-nums;
   text-transform: lowercase;
 }
+/* The swatch and hex field fused into one box on the control standard (the .url-join
+   pattern): the join carries the border and focus ring, the swatch is a prefix divided
+   from the field, and both are borderless inside it -- so the two never wrap apart on a
+   phone, where the field would otherwise go full-width and bump the swatch to its own line. */
+.hex-join {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  overflow: hidden;
+}
+.hex-join:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.hex-join .swatch-wrap {
+  width: 2.1rem;
+  height: auto;
+  align-self: stretch;
+  border: 0;
+  border-right: 1px solid var(--border-strong);
+  border-radius: 0;
+}
+/* Win over the control-standard input rules (which also match these two inputs) so the
+   field is borderless and stays field-width, and the swatch fill covers its whole box. */
+.set-control .hex-join .hexfield {
+  width: 8.5rem;
+  min-width: 0;
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+.set-control .hex-join .hexfield:focus {
+  outline: none;
+}
+.set-control .hex-join .swatch-wrap input[type="color"] {
+  min-width: 0;
+  inset: -6px;
+  width: calc(100% + 12px);
+  height: calc(100% + 12px);
+  padding: 0;
+  border: 0;
+}
 .presets {
   display: flex;
   gap: 0.45rem;
@@ -6448,6 +6494,9 @@ button.danger:hover:not(:disabled) {
      visible area -- matching the .why mobile sheet fix. */
   max-height: 88dvh;
   overflow-y: auto;
+  /* The panel is the scroll container; keep a boundary scroll from chaining out to the
+     page behind the scrim (which ModalShell also freezes while the modal is up). */
+  overscroll-behavior: contain;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);

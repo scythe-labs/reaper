@@ -327,7 +327,10 @@ export function PlexPanel() {
         <div className="set-rows">
           {linked && data ? (
             <div className="set-row">
-              <span className="set-label">{data.name}</span>
+              {/* Lead with the person signed in, not the server name (that lives one row down
+                  in the Server picker). The account name is live from plex.tv; until it loads,
+                  or if plex.tv is unreachable, fall back to the server name. */}
+              <span className="set-label">{resources.data?.owner_username ?? data.name}</span>
               <p className="help">Signed in with Plex. {data.connection_uri}</p>
               <div className="set-control">
                 <button
