@@ -100,6 +100,15 @@ describe("spareRemaining", () => {
     expect(spareRemaining(inDays(0.5)).phrase).toBe("1 day left");
   });
 
+  it("absorbs a small server clock lead so a fresh whole-day spare reads its own length", () => {
+    // The server sets the expiry; if its clock runs a few minutes ahead of the browser's, a
+    // just-made "90 days" spare would otherwise round up to 91d. Up to an hour of lead reads 90.
+    const r = spareRemaining(inDays(90 + 5 / 1440)); // 90 days + 5 minutes
+    expect(r.days).toBe(90);
+    expect(r.short).toBe("90d");
+    expect(r.phrase).toBe("90 days left");
+  });
+
   it("reads a past expiry as expired, floored at zero (realized only at the next scan)", () => {
     const r = spareRemaining(inDays(-3));
     expect(r.expired).toBe(true);

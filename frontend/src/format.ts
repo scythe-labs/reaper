@@ -80,10 +80,19 @@ export function since(iso: string): string {
   return `${(days / 365).toFixed(1)} years ago`;
 }
 
+/** A spare is always set to a WHOLE number of days on the server (`now + N days`), so its true
+ *  remaining life is at most N and counts down. When Reaper's server clock runs a little ahead
+ *  of the browser's -- the normal self-hosted case, server and browser on different machines --
+ *  the browser reads a hair MORE than N and would round a fresh "90 days" spare up to "91d". We
+ *  absorb up to an hour of that lead before rounding up, which is far more than any sane clock
+ *  skew yet far less than the day granularity, so a genuine partial day is untouched. */
+const SPARE_SKEW_SLACK_MS = 3_600_000;
+
 /** How a timed hand-spare's remaining life reads on a card. `iso` is when the spare stops
- *  keeping the item; null means it never does (kept forever). `days` floors at 0, and the
- *  clock is only truly realized at the next scan -- so a past expiry reads "expired" here,
- *  the item still shown as spared until that scan re-judges it (fail toward keeping). */
+ *  keeping the item; null means it never does (kept forever). While time remains `days` is at
+ *  least 1, and reaches 0 only once expired. The clock is only truly realized at the next scan,
+ *  so a past expiry reads "expired" here, the item still shown as spared until that scan
+ *  re-judges it (fail toward keeping). */
 export function spareRemaining(iso: string | null): {
   forever: boolean;
   days: number;
@@ -97,9 +106,11 @@ export function spareRemaining(iso: string | null): {
 } {
   if (!iso) return { forever: true, days: 0, expired: false, short: "", phrase: "", until: "" };
   const ms = new Date(iso).getTime() - Date.now();
-  const days = Math.max(0, Math.ceil(ms / 86_400_000));
   const until = `Kept until ${date(iso)}`;
   if (ms <= 0) return { forever: false, days: 0, expired: true, short: "0d", phrase: "expired", until };
+  // Round up so a partial day still shows, but only after shaving the small clock-skew slack --
+  // otherwise a fresh N-day spare reads N+1. Floor at 1: while time remains it is never "0 days".
+  const days = Math.max(1, Math.ceil((ms - SPARE_SKEW_SLACK_MS) / 86_400_000));
   return {
     forever: false,
     days,
