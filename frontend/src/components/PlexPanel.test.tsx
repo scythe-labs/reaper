@@ -163,6 +163,42 @@ describe("linking with Plex", () => {
   });
 });
 
+describe("the signed-in account label", () => {
+  it("never flashes the server name while the account name is loading", async () => {
+    let resolveResources: (value: unknown) => void = () => {};
+    apiMock.plexResources.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveResources = resolve;
+        }),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PlexPanel />
+      </QueryClientProvider>,
+    );
+
+    // Past the fast, local status query, the account row is up, but the live plex.tv
+    // account lookup is still in flight.
+    await screen.findByRole("button", { name: "Unlink" });
+    await waitFor(() => expect(apiMock.plexResources).toHaveBeenCalled());
+
+    // While that lookup is in flight, the row shows a neutral placeholder, never the
+    // server name ("Example server") the status query already has.
+    expect(screen.getByText("Loading…")).toBeInTheDocument();
+    expect(screen.queryByText("Example server")).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveResources({ source: "plex.tv", servers: [], owner_username: "reaper-owner" });
+    });
+
+    expect(await screen.findByText("reaper-owner")).toBeInTheDocument();
+  });
+});
+
 describe("the certificate check", () => {
   it("warns beside the switch that turned it off", async () => {
     const user = userEvent.setup();

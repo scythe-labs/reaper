@@ -328,9 +328,14 @@ export function PlexPanel() {
           {linked && data ? (
             <div className="set-row">
               {/* Lead with the person signed in, not the server name (that lives one row down
-                  in the Server picker). The account name is live from plex.tv; until it loads,
-                  or if plex.tv is unreachable, fall back to the server name. */}
-              <span className="set-label">{resources.data?.owner_username ?? data.name}</span>
+                  in the Server picker). The account name is live from plex.tv, which always
+                  resolves after the fast, local-only status query above, so show a neutral
+                  placeholder while it's in flight rather than flashing the server name; only
+                  fall back to the server name once resources has actually settled without a
+                  username (plex.tv unreachable). */}
+              <span className="set-label">
+                {resources.isPending ? "Loading…" : (resources.data?.owner_username ?? data.name)}
+              </span>
               <p className="help">Signed in with Plex. {data.connection_uri}</p>
               <div className="set-control">
                 <button
