@@ -2989,3 +2989,33 @@ rating-key tier below the declared map and above only the union.
 
 **Gates:** ruff/mypy clean, 1858 backend tests (+22), 187 frontend tests (+4), alembic upgrade+check
 clean, docker build clean. Not yet driven end-to-end against a live multi-Seerr instance.
+
+## Review queue keeps step with the latest scan (dev @ TBD)
+
+**The gap.** A scan finishing while the review queue was open left it showing the previous
+snapshot: the backend served fresher rows, but the mounted `["candidates"]` query kept the stale
+page until a manual filter change, navigation, or override. The `["scanStatus"]` poll was already
+global (it feeds the shell's scan line on every screen) and already carried the finish signal
+(`running` false-edge + the new `snapshot_id`), but nothing on the review page consumed it -- the
+only "on scan completion, invalidate" reflex lived in `ScanRow`, which mounts on Jobs alone.
+
+**The fix (frontend, one additive backend header).** `list_candidates` now returns
+`X-Snapshot-Id` (the snapshot the page was drawn from; no schema change, no migration). The queue
+compares it against the newest completed scan (`scanStatus.snapshot_id`, passed to `ReviewQueue`
+as `latestScanSnapshotId`) in one derived hook, `useReviewFreshness`: the whole state machine
+hangs off one fact -- *the list is behind* -- so ANY refetch that pulls the latest snapshot (a
+hand override, a filter change, Show latest) clears it on its own, with no dismiss flag the app
+has to remember to reset. Decided once per newer snapshot, from the busy state at that instant:
+idle at the top refreshes quietly; mid-review (scrolled, a panel open, a selection or write in
+flight) holds the reviewer's place and raises a sticky nudge built from the app's own accent
+tokens. Dismiss defers to a slim "one scan behind" marker rather than a silent stale list --
+resolving toward never leaving the operator unknowingly on an old scan. An override applied on a
+stale row was already safe (keyed on the durable `media_key`, snapshot-independent) and already
+refetched the queue, so "defer, then decide anyway" lands correctly and pulls the view current in
+one action; the nudge derivation makes that fall out for free.
+
+**Gates:** ruff/mypy clean, 1973 backend tests (+1), 227 frontend tests (+7, a hook unit test),
+alembic upgrade+check clean (no drift), frontend lint/build clean. Driven end-to-end in a real
+browser against real data (snapshot 26, 193 condemned): baseline quiet, nudge on a mid-review
+scan, Show latest clears it, idle-at-top refreshes silently, dismiss to the marker -- all verified,
+no console errors attributable to the change.

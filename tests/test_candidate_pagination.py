@@ -119,6 +119,17 @@ class TestPagination:
         assert r.headers["X-Total-Count"] == str(N_PROTECT)
         assert r.headers["X-Total-Bytes"] == str(N_PROTECT * SIZE)
 
+    def test_the_page_names_the_snapshot_it_came_from(self, client: TestClient) -> None:
+        # The queue compares this against the newest completed scan to tell when a fresher
+        # snapshot has landed under an open review. It is the latest snapshot's id, and it
+        # rides on every filtered page (the verdict does not change which snapshot is read).
+        latest_id = client.get("/api/snapshots/latest").json()["id"]
+        for path in (
+            "/api/candidates?verdict=condemn&limit=100&offset=0",
+            "/api/candidates?verdict=protect&limit=100&offset=0",
+        ):
+            assert client.get(path).headers["X-Snapshot-Id"] == str(latest_id)
+
 
 # ---------------------------------------------------------------------------
 # B-13: show cards must state what "Reap now" will plan, even across page breaks.

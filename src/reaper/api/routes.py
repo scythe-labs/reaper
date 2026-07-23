@@ -299,6 +299,10 @@ async def list_candidates(
         response.headers["X-Total-Count"] = str(int(totals[0]))
         response.headers["X-Total-Bytes"] = str(int(totals[1]))
         response.headers["X-Unknown-Size-Count"] = str(int(totals[2]))
+        # Which snapshot this page was drawn from. The queue compares it against the newest
+        # completed scan (from the polled status) to notice when a scan has landed a fresher
+        # snapshot underneath an open review, without re-deciding anything here.
+        response.headers["X-Snapshot-Id"] = str(snapshot.id)
 
         direction = asc if order == "asc" else desc
         sort_columns = {

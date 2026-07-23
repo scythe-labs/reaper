@@ -86,6 +86,7 @@ function renderQueue(
     totalBytes: items.reduce((sum, i) => sum + (i.size_bytes ?? 0), 0),
     unknownSize: items.reduce((n, i) => n + (i.size_bytes === null ? 1 : 0), 0),
     offset: 0,
+    snapshotId: 1,
   });
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },

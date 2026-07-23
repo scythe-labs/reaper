@@ -12,7 +12,7 @@
 // Reaper judged it -- not a plot synopsis -- because on this screen the question is "why did
 // it decide that?", not "what is this about?". The synopsis lives in the slide-out.
 
-import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
@@ -43,6 +43,7 @@ import {
 import { useBackGuard } from "../backnav";
 import { bytes, count, itemBytes, spareRemaining, totalBytes } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
+import { useReviewFreshness } from "../useReviewFreshness";
 import { ReapConfirm } from "./ReapConfirm";
 import { ScytheGlyph } from "./ScytheGlyph";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
@@ -1836,6 +1837,7 @@ export function ReviewQueue({
   onSelect,
   onSelectGroup,
   stepRef,
+  latestScanSnapshotId = null,
 }: {
   verdict: Verdict;
   onVerdictChange: (verdict: Verdict) => void;
@@ -1846,6 +1848,9 @@ export function ReviewQueue({
   /** Filled in with a way to move the open card one place up or down this list, for the
    *  keyboard review loop. The queue owns the order, so it owns the walk. */
   stepRef?: RefObject<((delta: 1 | -1) => void) | null>;
+  /** The newest completed scan's snapshot, from the polled scan status. When it moves past
+   *  the snapshot this list is showing, a scan has landed a fresher one underneath. */
+  latestScanSnapshotId?: number | null;
 }) {
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -2060,6 +2065,42 @@ export function ReviewQueue({
   const onSet = (key: string, decision: Override, spareDays?: number) =>
     setOverride.mutate({ key, decision, spareDays: spareDays ?? 0 });
   const onClear = (key: string) => clearOverride.mutate(key);
+
+  // --- Keeping the list in step with the latest scan ------------------------------------------
+  // A scan finishing while this queue is open leaves it showing an older snapshot. Pull the
+  // whole review surface to the newest one -- the list, the tab counts, the freshness line, an
+  // open show, the reap breakdown -- in the one place that names every review cache, the same
+  // way an override does. Any of these landing the newer snapshot clears the nudge on its own.
+  const queryClient = useQueryClient();
+  const refreshReview = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ["candidates"] });
+    void queryClient.invalidateQueries({ queryKey: ["candidates-unfiltered"] });
+    void queryClient.invalidateQueries({ queryKey: ["group"] });
+    void queryClient.invalidateQueries({ queryKey: ["snapshot"] });
+    void queryClient.invalidateQueries({ queryKey: ["reap-breakdown"] });
+  }, [queryClient]);
+  // Mid-review, judged at the instant the newer scan appears: scrolled into the list, a why or
+  // show panel open, a selection or a write in flight. Any of these means a quiet swap would
+  // move the ground under the reviewer, so hold their place and nudge instead of refreshing.
+  const isBusy = useCallback(
+    () =>
+      (typeof window !== "undefined" && window.scrollY > 120) ||
+      selectedId !== null ||
+      selectedGroupKey !== null ||
+      selected.size > 0 ||
+      pending,
+    [selectedId, selectedGroupKey, selected, pending],
+  );
+  const freshness = useReviewFreshness({
+    viewSnapshotId: pages?.pages[0]?.snapshotId ?? null,
+    latestSnapshotId: latestScanSnapshotId,
+    isBusy,
+    onSilentRefresh: refreshReview,
+  });
+  const showLatest = () => {
+    refreshReview();
+    if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   // --- Select mode: tap to toggle, or press-and-drag to paint a run of cards ------------------
   const applySelect = useCallback((key: string, mode: "add" | "remove") => {
@@ -2328,6 +2369,46 @@ export function ReviewQueue({
       </nav>
 
       <p className="blurb">{tab.blurb}</p>
+
+      {/* A scan finished under an open review. Sticky, so it stays in reach however far the
+          reviewer has scrolled; derived from the list being behind, so it clears itself the
+          moment any refetch pulls the newer snapshot. */}
+      {freshness.showBar && (
+        <div className="scan-nudge" role="status">
+          <span className="nudge-dot" aria-hidden="true" />
+          <span className="nudge-text">
+            <b>A newer scan just finished</b>
+            <span>You're viewing the previous scan.</span>
+          </span>
+          <span className="nudge-actions">
+            <button type="button" className="primary sm" onClick={showLatest}>
+              Show latest
+            </button>
+            <button
+              type="button"
+              className="nudge-x"
+              onClick={freshness.dismiss}
+              aria-label="Keep viewing this scan"
+              title="Keep viewing this scan"
+            >
+              <svg viewBox="0 0 14 14" width="13" height="13" aria-hidden="true">
+                <path
+                  d="M3 3l8 8M11 3l-8 8"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                />
+              </svg>
+            </button>
+          </span>
+        </div>
+      )}
+      {freshness.showMarker && (
+        <button type="button" className="scan-behind" onClick={showLatest}>
+          <span className="nudge-dot" aria-hidden="true" />
+          One scan behind. <span className="scan-behind-cta">Show latest</span>
+        </button>
+      )}
 
       <div className="queue-toolbar">
         <div className="search-wrap">

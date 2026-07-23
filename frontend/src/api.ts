@@ -181,6 +181,9 @@ export interface CandidatePage {
    *  what is known; this is what it could not include. */
   unknownSize: number;
   offset: number;
+  /** The snapshot this page was drawn from, or null before any scan. The queue compares it
+   *  against the newest completed scan to notice when a fresher snapshot has landed under it. */
+  snapshotId: number | null;
 }
 
 export type RequestedFilter = "any" | "yes" | "no";
@@ -1134,12 +1137,14 @@ export const api = {
       throw new ApiError(response.status, reason(response.status, body));
     }
     const items = (await response.json()) as Candidate[];
+    const snapshotHeader = response.headers.get("X-Snapshot-Id");
     return {
       items,
       total: Number(response.headers.get("X-Total-Count") ?? items.length),
       totalBytes: Number(response.headers.get("X-Total-Bytes") ?? 0),
       unknownSize: Number(response.headers.get("X-Unknown-Size-Count") ?? 0),
       offset,
+      snapshotId: snapshotHeader ? Number(snapshotHeader) : null,
     };
   },
   candidate: (id: number) => request<CandidateDetail>(`/api/candidates/${id}`),

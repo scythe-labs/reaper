@@ -662,6 +662,10 @@ function Dashboard({ user }: { user: AuthUser }) {
               onSelect={(id) => setSelected({ kind: "item", id })}
               onSelectGroup={(key) => setSelected({ kind: "group", key })}
               stepRef={stepRef}
+              // The newest completed scan, from the shell's status poll. When it moves past
+              // the snapshot the queue is showing, the queue offers (or quietly takes) the
+              // fresher one instead of leaving the reviewer on a stale list.
+              latestScanSnapshotId={scanStatus?.snapshot_id ?? null}
             />
             {selectedId !== null &&
               (detail ? (
