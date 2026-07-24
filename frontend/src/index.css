@@ -1390,6 +1390,9 @@ tbody tr.selected {
   top: 1rem;
   max-height: calc(100vh - 2rem);
   overflow-y: auto;
+  /* keep a boundary scroll from chaining out to the list behind the sheet (which App also
+     freezes while this covers the whole screen on a phone), the same pairing `.modal` uses. */
+  overscroll-behavior: contain;
 }
 
 /* Spare / Reap from inside the reasoning: pinned to the panel's bottom edge so the

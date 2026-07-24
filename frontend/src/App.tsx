@@ -21,6 +21,7 @@ import { ShowPanel } from "./components/ShowPanel";
 import { WhyClose, WhyPanel } from "./components/WhyPanel";
 import { DocsProvider } from "./docs/DocsContext";
 import { bytes, count, date, souls } from "./format";
+import { usePageScrollLock } from "./pageScrollLock";
 import { useMediaQuery } from "./useMediaQuery";
 
 type View = "review" | "policy" | "reap" | "fairness" | "settings";
@@ -495,6 +496,15 @@ function Dashboard({ user }: { user: AuthUser }) {
     splitPrevRef.current = { open: splitOpen, view };
     if (toggledInPlace) window.scrollTo(0, listScrollRef.current);
   }, [splitOpen, view]);
+
+  // Freeze the list while a panel covers the whole screen on a phone, so a touch drag scrolls
+  // the panel's own overflow instead of the list underneath it. Only the full-screen sheet
+  // (`splitOpen && fullSheet`, matching the 900px block in index.css): on a wider screen the
+  // list stays visible beside the panel and is meant to scroll, so it is left alone. The freeze
+  // parks and restores window.scrollY through the same ref-counted lock the modal shell uses,
+  // and it returns to the exact place the restore above keeps (both hold the pre-open offset),
+  // so the two never fight.
+  usePageScrollLock(splitOpen && fullSheet);
 
   // The browser Back button steps back through the UI instead of leaving Reaper: open panels
   // and menus register themselves (useBackGuard, below and in their own components), and a tab

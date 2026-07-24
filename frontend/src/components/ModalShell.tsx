@@ -24,46 +24,12 @@
 // the contract -- it imports `trapTab` from here, so Tab containment has one definition.
 
 import { useEffect, useId, useRef, type ReactNode } from "react";
+import { usePageScrollLock } from "../pageScrollLock";
 
 /** Everything a browser will put in the Tab order, in document order. */
 export const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
   'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
-
-/** Freeze the page behind the scrim while a modal is up, so a touch drag scrolls the
- *  panel's own overflow instead of the page underneath it -- on iOS an unlocked body is
- *  what the drag scrolls, leaving a tall modal (the service editor) impossible to reach the
- *  bottom of. `position: fixed` (not merely `overflow: hidden`, which iOS ignores) is what
- *  actually holds; the scroll offset is parked and restored so the page does not jump.
- *
- *  Ref-counted at module scope so a modal opened over another (rare here) only releases the
- *  lock when the last one closes, and the first lock is the one that owns the saved offset. */
-let scrollLocks = 0;
-let lockedScrollY = 0;
-function lockPageScroll() {
-  if (scrollLocks === 0) {
-    lockedScrollY = window.scrollY;
-    const { style } = document.body;
-    style.position = "fixed";
-    style.top = `-${lockedScrollY}px`;
-    style.left = "0";
-    style.right = "0";
-    style.width = "100%";
-  }
-  scrollLocks += 1;
-}
-function unlockPageScroll() {
-  scrollLocks -= 1;
-  if (scrollLocks === 0) {
-    const { style } = document.body;
-    style.position = "";
-    style.top = "";
-    style.left = "";
-    style.right = "";
-    style.width = "";
-    window.scrollTo(0, lockedScrollY);
-  }
-}
 
 /** Tab containment for one dialog panel: wrap from the last control back to the first and
  *  vice versa, so the still-rendered page behind it never takes focus.
@@ -130,10 +96,7 @@ export function ModalShell({
   }, []);
 
   // Hold the page still behind the scrim, so scrolling stays inside the panel.
-  useEffect(() => {
-    lockPageScroll();
-    return unlockPageScroll;
-  }, []);
+  usePageScrollLock(true);
 
   // Escape closes, through the same guard as the scrim and the ✕.
   useEffect(() => {
