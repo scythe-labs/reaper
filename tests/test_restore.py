@@ -19,6 +19,7 @@ from __future__ import annotations
 import io
 import json
 import sqlite3
+import stat
 import tarfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -40,18 +41,38 @@ from tests._auth import TEST_PASSWORD, login
 KNOWN_REVISION = next(iter(restore.known_revisions()))
 UNKNOWN_REVISION = "0000newerversion"
 
+#: For ``_make_archive``: put the manifest's claimed revision into the database itself. Pass
+#: an explicit ``db_revision`` to decouple the two (the tampered-archive case S-2 guards).
+_SAME_AS_MANIFEST = object()
+
 
 # --- archive builders --------------------------------------------------------
 
 
-def _tiny_sqlite(path: Path) -> None:
-    """A minimal real SQLite database carrying the one table ``arm`` writes to."""
+def _tiny_sqlite(path: Path, *, revision: str | None = None, with_auth: bool = False) -> None:
+    """A minimal real SQLite database carrying the one table ``arm`` writes to.
+
+    ``revision`` writes an ``alembic_version`` row the way a real ``reaper.db`` carries it,
+    so the restore schema gate reads the artifact's own revision (S-2). ``with_auth`` adds
+    the session/recovery/pending-login tables with a row each, so the arm-time purge (S-3)
+    has something to clear.
+    """
     con = sqlite3.connect(path)
     try:
         con.execute(
             "CREATE TABLE app_setting "
             "(key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL)"
         )
+        if revision is not None:
+            con.execute("CREATE TABLE alembic_version (version_num TEXT NOT NULL)")
+            con.execute("INSERT INTO alembic_version VALUES (?)", (revision,))
+        if with_auth:
+            con.execute("CREATE TABLE auth_session (token_hash TEXT PRIMARY KEY)")
+            con.execute("INSERT INTO auth_session VALUES ('sess')")
+            con.execute("CREATE TABLE recovery_token (token_hash TEXT PRIMARY KEY)")
+            con.execute("INSERT INTO recovery_token VALUES ('rec')")
+            con.execute("CREATE TABLE pending_plex_login (id INTEGER PRIMARY KEY)")
+            con.execute("INSERT INTO pending_plex_login VALUES (1)")
         con.commit()
     finally:
         con.close()
@@ -61,9 +82,11 @@ def _make_archive(
     dest: Path,
     *,
     revision: str | None = KNOWN_REVISION,
+    db_revision: object = _SAME_AS_MANIFEST,
     key_source: str = "file",
     with_key: bool = True,
     with_salt: bool = True,
+    with_auth: bool = False,
     fmt: str = "reaper-backup",
     include_manifest: bool = True,
     include_db: bool = True,
@@ -78,7 +101,8 @@ def _make_archive(
         if db_bytes is not None:
             db_path.write_bytes(db_bytes)
         else:
-            _tiny_sqlite(db_path)
+            db_rev = revision if db_revision is _SAME_AS_MANIFEST else db_revision
+            _tiny_sqlite(db_path, revision=db_rev, with_auth=with_auth)  # type: ignore[arg-type]
 
     manifest = {
         "format": fmt,
@@ -163,6 +187,29 @@ class TestSchemaGate:
         with pytest.raises(RestoreError):
             restore.stage_upload(settings, archive)
 
+    def test_it_reads_the_revision_from_the_database_not_the_manifest(self, tmp_path: Path) -> None:
+        # S-2: a manifest claiming a known revision cannot launder a database that carries a
+        # different (here newer/unknown) one -- the artifact's own version is what is gated.
+        settings = _settings(tmp_path)
+        archive = _make_archive(
+            tmp_path / "backup.reaper", revision=KNOWN_REVISION, db_revision=UNKNOWN_REVISION
+        )
+        with pytest.raises(RestoreError):
+            restore.stage_upload(settings, archive)
+        assert not (settings.data_dir / restore.PENDING_DIR).exists()
+
+    def test_it_refuses_a_db_with_no_revision_even_if_the_manifest_claims_one(
+        self, tmp_path: Path
+    ) -> None:
+        # S-2: the manifest's good claim must not paper over a database that carries no
+        # alembic_version at all (a repacked or foreign file).
+        settings = _settings(tmp_path)
+        archive = _make_archive(
+            tmp_path / "backup.reaper", revision=KNOWN_REVISION, db_revision=None
+        )
+        with pytest.raises(RestoreError):
+            restore.stage_upload(settings, archive)
+
 
 # --- untrusted-archive handling ----------------------------------------------
 
@@ -223,8 +270,8 @@ class TestArchiveSafety:
 class TestArm:
     def test_arm_writes_the_marker_and_forces_deletion_off(self, tmp_path: Path) -> None:
         settings = _settings(tmp_path)
-        restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
-        restore.arm(settings)
+        summary = restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
+        restore.arm(settings, summary.token)
         assert restore.is_armed(settings) is True
         staged_db = settings.data_dir / restore.PENDING_DIR / "reaper.db"
         assert _destructive_value(staged_db) == "false"
@@ -232,15 +279,52 @@ class TestArm:
     def test_arm_without_a_staged_backup_refuses(self, tmp_path: Path) -> None:
         settings = _settings(tmp_path)
         with pytest.raises(RestoreError):
-            restore.arm(settings)
+            restore.arm(settings, None)
+
+    def test_arm_refuses_a_token_from_a_replaced_staging(self, tmp_path: Path) -> None:
+        # S-1: a second upload replaces the staging (and its token) between review and
+        # confirm, so the operator's stale token no longer arms what they never saw.
+        settings = _settings(tmp_path)
+        first = restore.stage_upload(settings, _make_archive(tmp_path / "a.reaper"))
+        restore.stage_upload(settings, _make_archive(tmp_path / "b.reaper"))
+        with pytest.raises(RestoreError) as excinfo:
+            restore.arm(settings, first.token)
+        assert excinfo.value.status == 409
+        assert restore.is_armed(settings) is False
+
+    def test_arm_clears_inherited_auth_state(self, tmp_path: Path) -> None:
+        # S-3: the backup's sessions, recovery tokens, and pending logins must not survive
+        # the swap -- a restore is a wholesale credential change.
+        settings = _settings(tmp_path)
+        summary = restore.stage_upload(
+            settings, _make_archive(tmp_path / "backup.reaper", with_auth=True)
+        )
+        restore.arm(settings, summary.token)
+        staged_db = settings.data_dir / restore.PENDING_DIR / "reaper.db"
+        con = sqlite3.connect(staged_db)
+        try:
+            assert con.execute("SELECT count(*) FROM auth_session").fetchone()[0] == 0
+            assert con.execute("SELECT count(*) FROM recovery_token").fetchone()[0] == 0
+            assert con.execute("SELECT count(*) FROM pending_plex_login").fetchone()[0] == 0
+        finally:
+            con.close()
 
     def test_cancel_clears_the_staging(self, tmp_path: Path) -> None:
         settings = _settings(tmp_path)
-        restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
-        restore.arm(settings)
+        summary = restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
+        restore.arm(settings, summary.token)
         restore.clear_pending(settings)
         assert restore.is_armed(settings) is False
         assert not (settings.data_dir / restore.PENDING_DIR).exists()
+
+    def test_restored_key_and_salt_are_owner_only(self, tmp_path: Path) -> None:
+        # S-4: the key and salt are 0600 from creation, before the boot swap moves them into
+        # the data dir (a bind mount) where a write-then-chmod window would expose the key.
+        settings = _settings(tmp_path)
+        restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
+        pending = settings.data_dir / restore.PENDING_DIR
+        assert stat.S_IMODE((pending / "secret.key").stat().st_mode) == 0o600
+        assert stat.S_IMODE((pending / "secret.salt").stat().st_mode) == 0o600
 
 
 # --- the boot swap -----------------------------------------------------------
@@ -263,8 +347,8 @@ class TestApplyPendingRestore:
     def test_it_swaps_an_armed_backup_and_keeps_the_old_data(self, tmp_path: Path) -> None:
         settings = _settings(tmp_path)
         self._seed_live(settings, "live")
-        restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
-        restore.arm(settings)
+        summary = restore.stage_upload(settings, _make_archive(tmp_path / "backup.reaper"))
+        restore.arm(settings, summary.token)
 
         assert restore.apply_pending_restore(settings) is True
 
@@ -348,14 +432,37 @@ class TestApi:
         prepared = client.post("/api/settings/backup/restore/prepare", content=archive)
         assert prepared.status_code == 200, prepared.text
         assert prepared.json()["verdict"] in {"current", "older"}
+        token = prepared.json()["token"]
         # Staged, not yet armed.
         assert client.get("/api/settings/backup").json()["restore_armed"] is False
 
         confirmed = client.post(
-            "/api/settings/backup/restore/confirm", json={"password": TEST_PASSWORD}
+            "/api/settings/backup/restore/confirm",
+            json={"password": TEST_PASSWORD, "token": token},
         )
         assert confirmed.status_code == 200, confirmed.text
         assert client.get("/api/settings/backup").json()["restore_armed"] is True
+
+    def test_confirm_refuses_a_token_from_a_replaced_upload(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        # S-1 end to end: the operator reviews upload A, a second upload B replaces the
+        # staging, and A's token can no longer arm B even with the right password.
+        first = client.post(
+            "/api/settings/backup/restore/prepare",
+            content=_make_archive(tmp_path / "a.reaper").read_bytes(),
+        )
+        token_a = first.json()["token"]
+        client.post(
+            "/api/settings/backup/restore/prepare",
+            content=_make_archive(tmp_path / "b.reaper").read_bytes(),
+        )
+        response = client.post(
+            "/api/settings/backup/restore/confirm",
+            json={"password": TEST_PASSWORD, "token": token_a},
+        )
+        assert response.status_code == 409, response.text
+        assert client.get("/api/settings/backup").json()["restore_armed"] is False
 
     def test_prepare_refuses_a_newer_backup(self, client: TestClient, tmp_path: Path) -> None:
         archive = _make_archive(tmp_path / "up.reaper", revision=UNKNOWN_REVISION).read_bytes()
@@ -373,8 +480,11 @@ class TestApi:
 
     def test_cancel_disarms_a_staged_restore(self, client: TestClient, tmp_path: Path) -> None:
         archive = _make_archive(tmp_path / "up.reaper").read_bytes()
-        client.post("/api/settings/backup/restore/prepare", content=archive)
-        client.post("/api/settings/backup/restore/confirm", json={"password": TEST_PASSWORD})
+        prepared = client.post("/api/settings/backup/restore/prepare", content=archive)
+        client.post(
+            "/api/settings/backup/restore/confirm",
+            json={"password": TEST_PASSWORD, "token": prepared.json()["token"]},
+        )
         assert client.get("/api/settings/backup").json()["restore_armed"] is True
 
         canceled = client.post("/api/settings/backup/restore/cancel")

@@ -54,6 +54,8 @@ is what makes the guard real.
 
 from __future__ import annotations
 
+import asyncio
+import weakref
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -182,6 +184,26 @@ _WATCH_EVENT_COLUMNS = (
 )
 
 
+#: One rebuild lock per event loop, created lazily so it always binds to the running loop.
+#: A single module-level ``asyncio.Lock`` would bind to whichever loop first awaited it and
+#: raise on every other -- and the test suite runs a fresh loop per test. Weak-keyed on the
+#: loop so a closed loop's lock is collected. In production there is exactly one loop, hence
+#: one lock, which is what serializes the rebuild across every concurrent caller in the
+#: process (the scan, the fairness route, the nightly sync).
+_rebuild_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _rebuild_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _rebuild_locks.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _rebuild_locks[loop] = lock
+    return lock
+
+
 async def ensure_schema(engine: AsyncEngine) -> None:
     """Create ``watch_event`` if it is not there, and REBUILD it if its shape is stale.
 
@@ -222,13 +244,16 @@ async def ensure_schema(engine: AsyncEngine) -> None:
     # cache -> create it, and the next sync becomes a full one automatically) or its shape
     # is stale (drop and recreate empty -- rebuild, never migrate; see the docstring).
     #
-    # Re-read the shape INSIDE the write transaction and decide from THAT, never from the
-    # pre-lock read above. SQLite serializes writers, so the read under the write lock is the
-    # authority. Acting on the stale pre-lock read let two concurrent callers (the scan, the
-    # fairness route, the nightly sync -- all in one process) both see "stale" and the second
-    # DROP the table the first had just rebuilt, losing the newest plays mid-sync (fail-open).
-    # The pre-lock read only decides whether the lock is worth taking at all.
-    async with engine.begin() as conn:
+    # Serialize the whole rebuild behind a process-level asyncio.Lock and re-read the shape
+    # INSIDE it, deciding from THAT, never from the pre-lock read above. The LOCK is the
+    # mutual exclusion here, not any database write lock: pysqlite runs the PRAGMA and the
+    # DROP/CREATE in autocommit with no BEGIN IMMEDIATE, so nothing at the SQLite level stops
+    # two concurrent callers (the scan, the fairness route, the nightly sync -- all one
+    # process) from both seeing "stale" and the second re-DROPping the table the first just
+    # rebuilt (a redundant double rebuild; the nightly full sweep refills either way). Under
+    # the lock the re-read is authoritative, and the pre-lock read only decides whether taking
+    # the lock and the transaction is worth it at all.
+    async with _rebuild_lock(), engine.begin() as conn:
         cols = (await conn.execute(text("PRAGMA table_info(watch_event)"))).all()
         live = tuple((row[1], str(row[2]).upper(), int(row[3])) for row in cols)
         if cols and live == _WATCH_EVENT_COLUMNS:

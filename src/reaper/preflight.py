@@ -22,7 +22,7 @@ from __future__ import annotations
 import sys
 
 from reaper.config import DataDirError, get_settings
-from reaper.services import restore
+from reaper.services import backup, restore
 
 
 def main() -> int:
@@ -33,6 +33,15 @@ def main() -> int:
         # Just the message -- no traceback. The operator needs the fix, not a stack.
         sys.stderr.write(str(exc) + "\n")
         return 1
+    # Clear crash-leftover backup/restore temp dirs before anything else. Nothing is in
+    # flight this early, and a stale multi-GB partial snapshot only makes a full disk worse
+    # (PR-3). A sweep failure is never fatal: a leftover temp is not a reason to refuse boot.
+    try:
+        swept = backup.sweep_stale_temp(settings)
+        if swept:
+            sys.stderr.write(f"reaper: cleared {swept} leftover backup/restore temp entries\n")
+    except Exception as exc:  # housekeeping must never stop boot
+        sys.stderr.write(f"reaper: could not sweep leftover temp entries: {exc}\n")
     try:
         restore.apply_pending_restore(settings)
     except Exception as exc:  # any swap failure must stop boot, not serve a half-restore

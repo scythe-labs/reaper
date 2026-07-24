@@ -33,6 +33,8 @@ def _restore_file_sink() -> Iterator[None]:
         sink = logbuffer._file_sink
         logbuffer._file_sink = None
         logbuffer._log_path = None
+        # A degradation test flips this process-global; reset it so a later test starts healthy.
+        logbuffer._file_sink_healthy = True
     if sink is not None:
         sink.close()
 
@@ -110,3 +112,65 @@ def test_an_unwritable_data_dir_degrades_to_no_files(
     assert logbuffer.log_files() == []
     # The ring still works; the failed sink just does not capture to disk.
     logbuffer.RING.append(ts="t", level="info", text="still logging")
+
+
+def test_the_log_directory_is_owner_only(tmp_path: Path, _restore_file_sink: None) -> None:
+    # S-6: the decision trail (DEBUG carries the full per-item reasoning) must be no more
+    # readable than the databases beside it. The dir is owner-only, so no other local account
+    # can traverse into it regardless of the files' own modes.
+    logbuffer.configure_file_logging(tmp_path)
+    mode = (tmp_path / "logs").stat().st_mode & 0o777
+    assert mode == 0o700, oct(mode)
+
+
+def test_a_preexisting_world_readable_log_dir_is_tightened(
+    tmp_path: Path, _restore_file_sink: None
+) -> None:
+    # A dir left world-readable by an earlier version is chmod'd on the next boot, not only
+    # a freshly created one (the chmod runs unconditionally after mkdir).
+    loose = tmp_path / "logs"
+    loose.mkdir()
+    loose.chmod(0o755)  # deliberately world-readable: the old shape configure_file_logging tightens
+    logbuffer.configure_file_logging(tmp_path)
+    assert (loose.stat().st_mode & 0o777) == 0o700
+
+
+def test_a_steady_state_write_failure_degrades_loudly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, _restore_file_sink: None
+) -> None:
+    # PR-2: a volume that goes read-only AFTER setup fails every mirror write. The sink must
+    # flip to degraded and announce it through the ring exactly once, never swallow it forever.
+    logbuffer.configure_file_logging(tmp_path)
+    assert logbuffer.file_sink_healthy() is True
+
+    sink = logbuffer._file_sink
+    assert sink is not None
+    monkeypatch.setattr(
+        sink._handler, "handle", lambda record: (_ for _ in ()).throw(OSError("read-only"))
+    )
+
+    before = logbuffer.RING.last_seq()
+    logbuffer.RING.append(ts="t", level="info", text="line while the disk is read-only")
+    assert logbuffer.file_sink_healthy() is False
+    announced = [
+        line for line in logbuffer.RING.since(before) if "Log file writing failed" in line.text
+    ]
+    assert len(announced) == 1
+    assert announced[0].level == "WARNING"
+
+    # A second failing write does not announce again: the flag is already down.
+    mid = logbuffer.RING.last_seq()
+    logbuffer.RING.append(ts="t", level="info", text="another line, still read-only")
+    assert not [
+        line for line in logbuffer.RING.since(mid) if "Log file writing failed" in line.text
+    ]
+
+
+def test_reconfiguring_the_sink_clears_a_prior_degradation(
+    tmp_path: Path, _restore_file_sink: None
+) -> None:
+    # A fresh sink on a dir we just proved writable starts trusted again.
+    with logbuffer._file_lock:
+        logbuffer._file_sink_healthy = False
+    logbuffer.configure_file_logging(tmp_path)
+    assert logbuffer.file_sink_healthy() is True

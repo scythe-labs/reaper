@@ -14,6 +14,7 @@ import {
   type CSSProperties,
   type DragEvent,
   type ReactNode,
+  type RefObject,
   useEffect,
   useRef,
   useState,
@@ -923,10 +924,11 @@ function RestoreCard({ armed }: { armed: boolean }) {
   };
 
   const restore = async () => {
+    if (!summary) return;
     setError(null);
     setBusy(true);
     try {
-      await api.restoreConfirm(password);
+      await api.restoreConfirm(password, summary.token);
       // The confirm armed the swap; refetch so `armed` flips on and this card shows the
       // restart prompt. Drop the staged summary from local state either way.
       reset();
@@ -1266,8 +1268,20 @@ function maintenanceScheduleText(job: ScheduledJob): string {
 
 /** The one schedule editor, for the scan and every upkeep job. Presets plus "off" plus a
  *  cron line of your own; turning an upkeep job off carries a plain warning of what stops. */
-function ScheduleModal({ job, onClose }: { job: ScheduledJob; onClose: () => void }) {
+function ScheduleModal({
+  job,
+  onClose,
+  savePendingRef,
+}: {
+  job: ScheduledJob;
+  onClose: () => void;
+  // Set by JobsPanel so its Back guard can read the same canClose the scrim/Escape/✕ use (B-11).
+  savePendingRef?: RefObject<boolean>;
+}) {
   const queryClient = useQueryClient();
+  // The effective server time zone every timed job runs on, so the help names the real zone
+  // instead of guessing "UTC in Docker" (U-1, rule 86). Shares GeneralPanel's cache.
+  const zone = useQuery({ queryKey: ["general-settings"], queryFn: api.general }).data?.timezone;
   const meta = jobMeta(job.id);
   const presets =
     job.id === SCAN_ID ? SCAN_PRESETS : maintenancePresets(job.default_cron ?? "0 4 * * *");
@@ -1287,6 +1301,15 @@ function ScheduleModal({ job, onClose }: { job: ScheduledJob; onClose: () => voi
     },
     onError: (e: Error) => setError(e.message),
   });
+
+  // Mirror the save's pending state up to JobsPanel's Back guard, and clear it on unmount so a
+  // stale true never lingers after the modal closes (B-11).
+  useEffect(() => {
+    if (savePendingRef) savePendingRef.current = save.isPending;
+    return () => {
+      if (savePendingRef) savePendingRef.current = false;
+    };
+  }, [save.isPending, savePendingRef]);
 
   const chosenCron =
     choice === OFF_VALUE ? null : choice === CUSTOM_VALUE ? custom.trim() || null : choice;
@@ -1318,9 +1341,14 @@ function ScheduleModal({ job, onClose }: { job: ScheduledJob; onClose: () => voi
               Default: {describeCron(job.default_cron)}. You can Run now anytime.
             </span>
           )}
-          {/* The clock times above are the server's, not this browser's -- commonly UTC in a
-              Docker container. Said once so "2 AM" is not read as local time (U-5). */}
-          <span className="help">Times are your server's clock, often UTC in Docker.</span>
+          {/* The clock times above run on the server's configured time zone, not this browser's.
+              Name the real zone so "2 AM" is not read as local time, and the operator is not left
+              to guess (U-1, rule 86). Falls back to the generic phrasing only while it loads. */}
+          <span className="help">
+            {zone
+              ? `Times use your server time zone: ${zone}. Change it in Settings, General.`
+              : "Times use your server time zone. Change it in Settings, General."}
+          </span>
         </label>
 
         {choice === CUSTOM_VALUE && (
@@ -1545,8 +1573,17 @@ function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
     refetchInterval: (query) => (query.state.data?.jobs.some((j) => j.running) ? 1500 : false),
   });
   const [editing, setEditing] = useState<ScheduledJob | null>(null);
-  // Back closes the schedule editor instead of leaving Reaper.
-  useBackGuard(editing !== null, () => setEditing(null));
+  // The modal's save lives inside ScheduleModal; it mirrors its pending state here so the Back
+  // guard can refuse a close mid-save exactly as the scrim/Escape/✕ do (canClose={!save.isPending}
+  // below). Without this, Back would tear the modal down while the save is in flight, dropping
+  // the error it would have shown (B-11, rule 80).
+  const savePendingRef = useRef(false);
+  // Back closes the schedule editor instead of leaving Reaper -- unless a save is in flight.
+  useBackGuard(
+    editing !== null,
+    () => setEditing(null),
+    () => !savePendingRef.current,
+  );
 
   const jobsById = new Map<string, ScheduledJob>(
     (schedule.data?.jobs ?? []).map((j) => [j.id, j]),
@@ -1587,7 +1624,13 @@ function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
         <p className="notice notice-error">Couldn't load the upkeep jobs. Reload to try again.</p>
       )}
 
-      {editing && <ScheduleModal job={editing} onClose={() => setEditing(null)} />}
+      {editing && (
+        <ScheduleModal
+          job={editing}
+          onClose={() => setEditing(null)}
+          savePendingRef={savePendingRef}
+        />
+      )}
     </div>
   );
 }

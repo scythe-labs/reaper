@@ -369,6 +369,29 @@ class NotificationsTestIn(BaseModel):
 _DISCORD_WEBHOOK_HOSTS = ("discord.com", "discordapp.com")
 
 
+def _validate_external_url(raw: str | None) -> None:
+    """A per-service link address, when set, must be a real http(s) URL with a host, else 422.
+
+    Reaper renders ``external_url`` into a jump link for every signed-in user, so a scheme-less
+    paste (``host:8989``) or a ``javascript:``/``data:`` value must be refused at the edge, the
+    same way every sibling URL setting is, rather than stored verbatim (rules 84/13). A blank
+    value clears the setting and is allowed through; ``None`` (the field omitted on update)
+    keeps the stored value and is not our concern here. A ``type="url"`` input is not
+    validation, so this is the real check even when the browser mirrors it.
+    """
+    if raw is None:
+        return
+    cleaned = raw.strip()
+    if not cleaned:
+        return
+    parts = urlsplit(cleaned)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        raise HTTPException(
+            422,
+            "The external URL must be a full web address, like https://192.0.2.10:8989.",
+        )
+
+
 def _validated_discord_webhook(raw: str) -> str:
     """Return the stripped URL if it is a Discord webhook, else 422. Server-side twin of the
     form validation -- never trust the browser to have checked."""
@@ -410,6 +433,7 @@ async def list_instances(request: Request) -> list[InstanceOut]:
 
 @router.post("/instances")
 async def create_instance(request: Request, payload: InstanceCreateIn) -> InstanceOut:
+    _validate_external_url(payload.external_url)
     async with _factory(request)() as session:
         try:
             view = await instances.create_instance(
@@ -437,6 +461,7 @@ async def create_instance(request: Request, payload: InstanceCreateIn) -> Instan
 async def update_instance(
     request: Request, instance_id: int, payload: InstanceUpdateIn
 ) -> InstanceOut:
+    _validate_external_url(payload.external_url)
     async with _factory(request)() as session:
         try:
             view = await instances.update_instance(

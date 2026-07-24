@@ -612,10 +612,13 @@ class WhitelistEntry(Base):
     behavior, and what every pre-existing row carries -- so an omitted expiry is never an early
     reap. Only meaningful for a ``"spare"`` decision; a ``"reap"`` never expires and clears it.
 
-    The clock is realized in exactly ONE place: the scan drops a spare whose expiry has passed
+    The clock is realized in exactly ONE place, the scan, in two coupled steps of one
+    transaction: it drops a spare whose expiry has passed from the map it judges on
     (``whitelist.overrides_effective_at``) so the item is re-judged from scratch and re-enters
-    the reap flow on a FRESH grace window. Every live consumer keeps the spare in force until
-    that next scan runs -- failing toward keeping the file, never toward deleting it early."""
+    the reap flow on a FRESH grace window, and it deletes the expired row
+    (``whitelist.purge_expired_spares``) so every live consumer converges the moment the
+    snapshot commits. Every live consumer keeps the spare in force until that next scan runs --
+    failing toward keeping the file, never toward deleting it early."""
 
     created_at: Mapped[UtcTimestamp]
 

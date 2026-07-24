@@ -43,6 +43,10 @@ class LogsOut(BaseModel):
     """The newest sequence number the ring has seen -- the cursor for the next poll."""
     level: str
     """The level Reaper is recording at right now, so the picker stays honest."""
+    files_kept: int
+    """How many rotating log files the server keeps (the live file plus its backups). The
+    Logs tab renders this instead of a hardcoded number, so its "newest N files" copy tracks
+    the backend constant (rules 66/67)."""
 
 
 class LogLevelIn(BaseModel):
@@ -67,6 +71,7 @@ async def get_logs(
         ],
         last_seq=logbuffer.RING.last_seq(),
         level=logbuffer.level_name(),
+        files_kept=logbuffer.files_retained(),
     )
 
 
@@ -79,6 +84,11 @@ async def download_logs(request: Request) -> StreamingResponse:
     Before anything has been written to disk (or if file logging could not start), it
     falls back to the in-memory ring so the download is never empty. Streamed file by
     file, so three 20 MiB files never sit in memory at once.
+
+    If the on-disk mirror went degraded mid-run (a read-only remount, a full disk), the
+    files end where writing stopped; the in-memory ring is appended after them, behind a
+    marker, so the download carries the recent lines that never reached disk rather than
+    ending silently at the failure (rule 82).
     """
     files = logbuffer.log_files()
     stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
@@ -95,6 +105,13 @@ async def download_logs(request: Request) -> StreamingResponse:
                     # A file rotated away mid-read is gone, not an error worth failing the
                     # whole download over; skip it and stream what remains.
                     continue
+            if not logbuffer.file_sink_healthy():
+                yield (
+                    b"\n=== Log file writing failed at some point above. The lines below are "
+                    b"from memory and may overlap the on-disk trail. ===\n"
+                )
+                for line in logbuffer.dump_lines():
+                    yield f"{line.ts} {line.level:<7} {line.text}\n".encode()
         else:
             for line in logbuffer.dump_lines():
                 yield f"{line.ts} {line.level:<7} {line.text}\n".encode()
@@ -124,4 +141,9 @@ async def put_log_level(request: Request, payload: LogLevelIn) -> LogsOut:
         await app_settings.set_log_level(session, canonical)
         await session.commit()
     logbuffer.set_level(canonical)
-    return LogsOut(lines=[], last_seq=logbuffer.RING.last_seq(), level=logbuffer.level_name())
+    return LogsOut(
+        lines=[],
+        last_seq=logbuffer.RING.last_seq(),
+        level=logbuffer.level_name(),
+        files_kept=logbuffer.files_retained(),
+    )

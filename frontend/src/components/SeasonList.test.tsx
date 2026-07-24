@@ -301,4 +301,39 @@ describe("the all-seasons list", () => {
     expect(screen.getByText("Spared", { selector: ".status-chip" })).toBeInTheDocument();
     expect(screen.getByText("Kept even though the whole show is set to reap.")).toBeInTheDocument();
   });
+
+  it("qualifies the whole-show reap banner when the engine holds every season", async () => {
+    // The show is set to reap, but the engine can honor it on no season (all held). The banner
+    // must not assert removal; it says the reap is noted and the seasons are kept for now (U-2).
+    const withShow = (id: number, n: number, extra: Partial<Candidate>): Candidate => ({
+      ...season(id, n, "abstain", 80, null),
+      show_override: "reap",
+      ...extra,
+    });
+    const held1 = withShow(31, 1, { override: "reap", override_own: null, override_effective: false });
+    const held2 = withShow(32, 2, { override: "reap", override_own: null, override_effective: false });
+    apiMock.group.mockResolvedValue({
+      group_key: "sonarr:5:42",
+      title: "Example Show",
+      year: 2012,
+      poster_url: null,
+      summary: null,
+      size_bytes: 2 * 1024 ** 3,
+      unknown_size_seasons: 0,
+      reason: null,
+      library: null,
+      chip: null,
+      show_override: "reap",
+      show_spare_expires_at: null,
+      links: {} as Group["links"],
+      show_status: null,
+      seasons: [held1, held2],
+    } as Group);
+    renderQueue();
+    await expandSeasons();
+
+    expect(await screen.findByText(/the seasons are kept for now/i)).toBeInTheDocument();
+    // It must not claim blanket removal when nothing is actually going.
+    expect(screen.queryByText(/Every season below is removed/i)).not.toBeInTheDocument();
+  });
 });

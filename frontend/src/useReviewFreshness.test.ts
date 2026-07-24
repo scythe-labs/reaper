@@ -15,6 +15,8 @@ type Props = {
   latestSnapshotId: number | null;
   isBusy: () => boolean;
   onSilentRefresh: () => void;
+  refreshFetching?: boolean;
+  onSilentCaughtUp?: () => void;
 };
 
 const setup = (over: Partial<Props> = {}) => {
@@ -112,5 +114,33 @@ describe("useReviewFreshness", () => {
     const { hook, onSilentRefresh } = setup({ viewSnapshotId: 42, latestSnapshotId: null });
     expect(hook.result.current.showBar).toBe(false);
     expect(onSilentRefresh).not.toHaveBeenCalled();
+  });
+
+  it("confirms a silent swap only after the list actually catches up, never at issuance", () => {
+    const onSilentCaughtUp = vi.fn();
+    const onSilentRefresh = vi.fn();
+    const base = { isBusy: () => false, onSilentRefresh, onSilentCaughtUp };
+    // Idle and a scan behind: a silent refresh is issued, but nothing is confirmed yet.
+    const { hook } = setup({ viewSnapshotId: 42, latestSnapshotId: 43, refreshFetching: false, ...base });
+    expect(onSilentRefresh).toHaveBeenCalledTimes(1);
+    expect(onSilentCaughtUp).not.toHaveBeenCalled();
+    // The refetch runs...
+    act(() => hook.rerender({ viewSnapshotId: 42, latestSnapshotId: 43, refreshFetching: true, ...base }));
+    expect(onSilentCaughtUp).not.toHaveBeenCalled();
+    // ...and lands snapshot 43: only now is the swap confirmed.
+    act(() => hook.rerender({ viewSnapshotId: 43, latestSnapshotId: 43, refreshFetching: false, ...base }));
+    expect(onSilentCaughtUp).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.showBar).toBe(false);
+  });
+
+  it("nudges, and does not confirm, when a silent refresh's refetch settles still behind", () => {
+    const onSilentCaughtUp = vi.fn();
+    const base = { isBusy: () => false, onSilentRefresh: vi.fn(), onSilentCaughtUp };
+    const { hook } = setup({ viewSnapshotId: 42, latestSnapshotId: 43, refreshFetching: false, ...base });
+    // The refetch starts, then finishes with the list STILL on snapshot 42 (a network blip).
+    act(() => hook.rerender({ viewSnapshotId: 42, latestSnapshotId: 43, refreshFetching: true, ...base }));
+    act(() => hook.rerender({ viewSnapshotId: 42, latestSnapshotId: 43, refreshFetching: false, ...base }));
+    expect(onSilentCaughtUp).not.toHaveBeenCalled();
+    expect(hook.result.current.showBar).toBe(true);
   });
 });

@@ -363,6 +363,62 @@ class PlexSeasonRow:
 _PLEX_TYPE_CODES = {"movie": 1, "season": 3}
 
 
+def _iter_section_pages(
+    server: Any, section_key: int, query: str, *, what: str
+) -> Iterator[list[Any]]:
+    """Yield each raw page of one section listing, hardened against silent truncation.
+
+    The single paging loop every section sweep runs on, so the four (``library_guid_index``,
+    ``library_season_index``, ``labeled_in_section``, ``section_rating_keys``) can never drift
+    (rule 72). ``query`` is the ``/all`` query string BEFORE the container-window params
+    (``"?includeGuids=1"``, ``"?type=3&label=..."``); this appends the start/size.
+
+    Pages and terminates on the RAW child count, never a filtered one: advancing or ending a
+    section on the count of children that survived a ``ratingKey`` filter would let one dropped
+    child end the section a page early. A child without a ``ratingKey`` is an anomaly the
+    contract raises on (so the caller degrades), not a shorter page. ``totalSize`` is the sole
+    paging authority -- a server that clamps a page below the requested size is still followed
+    to the end, and a full page with no ``totalSize`` to bound it is failed closed rather than
+    guessed to be the last. Never falls back ``totalSize`` -> ``size`` (rule 56).
+    """
+    start = 0
+    while True:
+        container = server.query(
+            f"/library/sections/{section_key}/all{query}"
+            f"&X-Plex-Container-Start={start}&X-Plex-Container-Size={SWEEP_PAGE_SIZE}"
+        )
+        raw = list(container)
+        if any(el.get("ratingKey") is None for el in raw):
+            # A child the paging math cannot advance over: not the container shape the loop
+            # assumes. Raise so the caller falls back / degrades, never end on a filtered page.
+            raise PlexError(
+                f"{what} of section {section_key} returned a child with no ratingKey; "
+                "refusing to read the page as complete"
+            )
+        yield raw
+        start += len(raw)
+        total_attr = container.get("totalSize")
+        if total_attr is not None:
+            # totalSize is the authority: page until we have reached it, even if a page came
+            # back short (a clamped page is followed, never truncated).
+            if start >= int(total_attr):
+                return
+            if not raw:
+                # start < total but the page was empty: no progress. Fail closed.
+                raise PlexError(
+                    f"{what} of section {section_key} stalled at {start} of {int(total_attr)}"
+                )
+        elif len(raw) < SWEEP_PAGE_SIZE:
+            # No totalSize to lean on: a short raw page is the last page.
+            return
+        else:
+            # A full page with no totalSize -- we cannot tell whether more remains.
+            raise PlexError(
+                f"{what} of section {section_key} returned a full page with no totalSize; "
+                "refusing to guess it is the last page"
+            )
+
+
 @dataclass(frozen=True)
 class ActiveStream:
     """Something being watched *right now*."""
@@ -548,7 +604,10 @@ class PlexClient:
         **raises** ``PlexError`` on any failure rather than returning a partial map, so
         the caller can fail closed and degrade the snapshot: silently falling the whole
         library back to title-only matching at the moment the id signal vanished is
-        exactly the fail-open this feature exists to prevent.
+        exactly the fail-open this feature exists to prevent. The paging runs through
+        the one hardened ``_iter_section_pages`` loop (raw-count advance, ``totalSize`` the
+        sole authority, a truncated or unbounded page raised on), so a section can never
+        end early with a silently partial map.
         """
         server = await self._connect()
 
@@ -564,26 +623,16 @@ class PlexClient:
                 # two never disagree about which sections were read.
                 if allowed_sections is not None and int(section.key) not in allowed_sections:
                     continue
-                start = 0
-                while True:
-                    container = server.query(  # type: ignore[no-untyped-call]
-                        f"/library/sections/{section.key}/all"
-                        f"?includeGuids=1&X-Plex-Container-Start={start}"
-                        f"&X-Plex-Container-Size={SWEEP_PAGE_SIZE}"
-                    )
-                    elements = [el for el in container if el.get("ratingKey")]
-                    section_title = str(section.title) if section.title else None
-                    for el in elements:
+                section_title = str(section.title) if section.title else None
+                # Hardened, complete-or-raise paging (see _iter_section_pages): every child in
+                # every page carries a ratingKey, so the loop reads them straight off ``raw``.
+                for raw in _iter_section_pages(
+                    server, int(section.key), "?includeGuids=1", what="GUID sweep"
+                ):
+                    for el in raw:
                         item = _parse_sweep_element(el, library=section_title)
                         out[item.rating_key] = item
                         batch_keys.append(item.rating_key)
-                    start += len(elements)
-                    total = int(container.get("totalSize") or container.get("size") or 0)
-                    # A short page always ends the section, whether or not the server
-                    # reported a total -- never trust one signal alone to terminate.
-                    short_page = not elements or len(elements) < SWEEP_PAGE_SIZE
-                    if short_page or (total and start >= total):
-                        break
 
             # The batched metadata reads: show Location folders (each leaf becomes the
             # show's basename exactly as the object walk produced it), and the Rating
@@ -700,26 +749,19 @@ class PlexClient:
         A raw container read rather than ``section.search`` so a show section filters at
         the season level (``type=3``): the object walk searches shows by default, and a
         label sitting on a season would be invisible to it -- which would re-add the
-        label forever. GETs only.
+        label forever. GETs only. Paged through the one hardened ``_iter_section_pages`` loop
+        (raw-count advance, ``totalSize`` the sole authority), so a partial page can never
+        under-report the labeled set and re-add a label the item already carries.
         """
         code = _PLEX_TYPE_CODES["movie" if kind == "movie" else "season"]
         server = await self._connect()
 
         def read() -> set[int]:
             keys: set[int] = set()
-            start = 0
-            while True:
-                container = server.query(  # type: ignore[no-untyped-call]
-                    f"/library/sections/{section_key}/all?type={code}"
-                    f"&label={quote(label)}"
-                    f"&X-Plex-Container-Start={start}&X-Plex-Container-Size={SWEEP_PAGE_SIZE}"
-                )
-                elements = [el for el in container if el.get("ratingKey")]
-                keys.update(int(el.get("ratingKey") or 0) for el in elements)
-                start += len(elements)
-                total = int(container.get("totalSize") or container.get("size") or 0)
-                if not elements or len(elements) < SWEEP_PAGE_SIZE or (total and start >= total):
-                    break
+            for raw in _iter_section_pages(
+                server, section_key, f"?type={code}&label={quote(label)}", what="label read"
+            ):
+                keys.update(int(el.get("ratingKey") or 0) for el in raw)
             return keys
 
         try:
@@ -755,25 +797,19 @@ class PlexClient:
 
         This is what scopes the reconcile per library: the grace list's rating keys are
         intersected with this set, so an item is only ever marked in the section it
-        actually lives in. A read, paged like the GUID sweep.
+        actually lives in. A read, paged through the one hardened ``_iter_section_pages`` loop
+        (raw-count advance, ``totalSize`` the sole authority) so a partial page can never
+        shrink the section and leave a marked item unmatched by the reconcile.
         """
         code = _PLEX_TYPE_CODES["movie" if kind == "movie" else "season"]
         server = await self._connect()
 
         def read() -> set[int]:
             keys: set[int] = set()
-            start = 0
-            while True:
-                container = server.query(  # type: ignore[no-untyped-call]
-                    f"/library/sections/{section_key}/all?type={code}"
-                    f"&X-Plex-Container-Start={start}&X-Plex-Container-Size={SWEEP_PAGE_SIZE}"
-                )
-                elements = [el for el in container if el.get("ratingKey")]
-                keys.update(int(el.get("ratingKey") or 0) for el in elements)
-                start += len(elements)
-                total = int(container.get("totalSize") or container.get("size") or 0)
-                if not elements or len(elements) < SWEEP_PAGE_SIZE or (total and start >= total):
-                    break
+            for raw in _iter_section_pages(
+                server, section_key, f"?type={code}", what="section listing"
+            ):
+                keys.update(int(el.get("ratingKey") or 0) for el in raw)
             return keys
 
         try:
@@ -804,13 +840,10 @@ class PlexClient:
         reading a truncated season sweep as complete would let a real season's watch history
         go unread and unprotect it. The caller falls back per show for anything absent here.
 
-        The paging math runs on the RAW child count, never the filtered one: advancing or
-        ending the section on the count of children that survived a ``ratingKey`` filter would
-        let one dropped child end the section a page early. A child without a ``ratingKey`` is
-        an anomaly the contract raises on (so every show falls back per show), not a shorter
-        page. ``totalSize`` is the authority on how far to page (a server that clamps the page
-        below the requested size is still followed to the end); a full page with no
-        ``totalSize`` to bound it is an anomaly we fail closed on rather than truncate.
+        Paged through the one hardened ``_iter_section_pages`` loop: the RAW child count drives
+        the paging, ``totalSize`` is the sole authority (a clamped page is followed to the end),
+        and a child without a ``ratingKey`` or a full page with no ``totalSize`` raises so every
+        show falls back per show rather than a section ending a page early.
         """
         server = await self._connect()
         code = _PLEX_TYPE_CODES["season"]
@@ -824,23 +857,10 @@ class PlexClient:
                 # two never disagree about which sections were read.
                 if allowed_sections is not None and int(section.key) not in allowed_sections:
                     continue
-                start = 0
-                while True:
-                    container = server.query(  # type: ignore[no-untyped-call]
-                        f"/library/sections/{section.key}/all?type={code}"
-                        f"&X-Plex-Container-Start={start}&X-Plex-Container-Size={SWEEP_PAGE_SIZE}"
-                    )
-                    raw = list(container)
-                    elements = [el for el in raw if el.get("ratingKey")]
-                    if len(elements) != len(raw):
-                        # A child we cannot page over (no ratingKey) means this is not the
-                        # container shape the paging math assumes. Raise so the caller falls
-                        # back per show, rather than ending the section on a filtered page.
-                        raise PlexError(
-                            f"season sweep of section {section.key} returned a child with no "
-                            "ratingKey; refusing to read the page as complete"
-                        )
-                    for el in elements:
+                for raw in _iter_section_pages(
+                    server, int(section.key), f"?type={code}", what="season sweep"
+                ):
+                    for el in raw:
                         parent = el.get("parentRatingKey")
                         if parent is None:
                             # A season with no show cannot be attributed to one. Skipped, so
@@ -862,28 +882,6 @@ class PlexClient:
                                 rating_key=rk,
                                 added_at=el.get("addedAt"),
                             )
-                        )
-                    start += len(raw)
-                    total_attr = container.get("totalSize")
-                    if total_attr is not None:
-                        # totalSize is the authority: page until we have reached it, even if a
-                        # page came back short (a clamped page is followed, never truncated).
-                        if start >= int(total_attr):
-                            break
-                        if not raw:
-                            # start < total but the page was empty: no progress. Fail closed.
-                            raise PlexError(
-                                f"season sweep of section {section.key} stalled at {start} of "
-                                f"{int(total_attr)}"
-                            )
-                    elif len(raw) < SWEEP_PAGE_SIZE:
-                        # No totalSize to lean on: a short raw page is the last page.
-                        break
-                    else:
-                        # A full page with no totalSize -- we cannot tell whether more remains.
-                        raise PlexError(
-                            f"season sweep of section {section.key} returned a full page with "
-                            "no totalSize; refusing to guess it is the last page"
                         )
             return out
 
@@ -940,8 +938,13 @@ class PlexClient:
     # Everything below mutates Plex, so everything below requires ``declared_mutation()``
     # and an armed instance. GuardedSession enforces both; these methods cannot opt out.
 
-    async def add_label(self, section_title: str, rating_keys: list[int], label: str) -> None:
+    async def add_label(self, section_key: int, rating_keys: list[int], label: str) -> None:
         """Add a label to many items in one read plus one edit per chunk.
+
+        The section is addressed by **key** via ``sectionByID``, never by title: two libraries
+        can share a title and plexapi's title lookup returns the last match, so a title-addressed
+        write would target the wrong library every pass (rule 6/57, mirroring the collection
+        detach). The caller has the key already.
 
         **Verified against a live server: this PRESERVES existing labels.** Adding a
         second label leaves the first in place, so Reaper's "Leaving Soon" mark does not
@@ -955,7 +958,7 @@ class PlexClient:
         server = await self._connect()
 
         def write() -> None:
-            section = server.library.section(section_title)
+            section = server.library.sectionByID(section_key)
             for start in range(0, len(rating_keys), BATCH_SIZE):
                 keys = rating_keys[start : start + BATCH_SIZE]
                 # ONE /library/metadata/<id,id,...> read for the whole chunk, not one GET
@@ -976,8 +979,12 @@ class PlexClient:
         except Exception as exc:
             raise PlexError(f"Could not add label {label!r}: {exc}") from exc
 
-    async def remove_label(self, section_title: str, rating_keys: list[int], label: str) -> None:
+    async def remove_label(self, section_key: int, rating_keys: list[int], label: str) -> None:
         """Remove a label from many items.
+
+        The section is addressed by **key** via ``sectionByID``, never by title (rule 6/57),
+        exactly as :meth:`add_label` and the collection detach do -- two libraries can share a
+        title and the title lookup returns only the last match.
 
         Matched case-insensitively against what Plex actually stored, because it will
         have title-cased the tag on the way in. A case-sensitive removal silently removes
@@ -990,7 +997,7 @@ class PlexClient:
         wanted = normalize_label(label)
 
         def write() -> None:
-            section = server.library.section(section_title)
+            section = server.library.sectionByID(section_key)
             for start in range(0, len(rating_keys), BATCH_SIZE):
                 keys = rating_keys[start : start + BATCH_SIZE]
                 # ONE multi-id read for the chunk -- the metadata carries each item's labels,

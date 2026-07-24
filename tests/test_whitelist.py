@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import ActionStep, Candidate, Snapshot
+from reaper.db.models import ActionStep, Candidate, Snapshot, WhitelistEntry
 from reaper.db.session import create_engine, create_session_factory
 from reaper.services import whitelist
 from reaper.services.planner import build_plan
@@ -201,6 +201,71 @@ class TestTimedSpare:
         )
 
 
+class TestPurgeExpiredSpares:
+    """The durable half of realizing a timed spare (B-1): the scan drops an expired spare from
+    the map it judges on AND deletes the row, so every live consumer converges."""
+
+    async def test_purges_only_expired_spares_and_returns_their_keys(
+        self, session: AsyncSession
+    ) -> None:
+        t0 = utcnow()
+        await whitelist.spare(
+            session, media_key="radarr:1:7", title="Short", note=None, spare_days=1, now=t0
+        )
+        await whitelist.spare(
+            session, media_key="radarr:1:8", title="Long", note=None, spare_days=90, now=t0
+        )
+        await whitelist.spare(session, media_key="radarr:1:9", title="Forever", note=None, now=t0)
+
+        purged = await whitelist.purge_expired_spares(session, t0 + timedelta(days=2))
+
+        assert purged == ["radarr:1:7"]
+        # overrides() converges the moment the row is gone: the live and forever spares remain.
+        assert await whitelist.overrides(session) == {
+            "radarr:1:8": "spare",
+            "radarr:1:9": "spare",
+        }
+
+    async def test_purges_at_the_exact_expiry_boundary(self, session: AsyncSession) -> None:
+        # `spare_expires_at <= now` matches overrides_effective_at's own boundary, so the two
+        # halves agree on the same tick.
+        t0 = utcnow()
+        entry = await whitelist.spare(
+            session, media_key="radarr:1:7", title="Short", note=None, spare_days=1, now=t0
+        )
+        assert entry.spare_expires_at is not None
+        assert await whitelist.purge_expired_spares(session, entry.spare_expires_at) == [
+            "radarr:1:7"
+        ]
+
+    async def test_purges_nothing_before_expiry(self, session: AsyncSession) -> None:
+        t0 = utcnow()
+        await whitelist.spare(
+            session, media_key="radarr:1:7", title="Short", note=None, spare_days=5, now=t0
+        )
+        assert await whitelist.purge_expired_spares(session, t0 + timedelta(days=1)) == []
+        assert await whitelist.overrides(session) == {"radarr:1:7": "spare"}
+
+    async def test_never_purges_a_reap_even_with_a_stale_expiry(
+        self, session: AsyncSession
+    ) -> None:
+        # A reap should never carry an expiry (set_override nulls it), but guard the predicate
+        # directly: a hand-built reap row with a past expiry must survive the purge.
+        t0 = utcnow()
+        session.add(
+            WhitelistEntry(
+                media_key="radarr:1:9",
+                title="Gone",
+                decision="reap",
+                spare_expires_at=t0 - timedelta(days=1),
+                created_at=t0,
+            )
+        )
+        await session.flush()
+        assert await whitelist.purge_expired_spares(session, t0) == []
+        assert await whitelist.overrides(session) == {"radarr:1:9": "reap"}
+
+
 class TestEffectiveOverride:
     def test_a_show_override_covers_its_seasons(self) -> None:
         decisions = {"sonarr:1:88": "reap"}
@@ -251,6 +316,31 @@ class TestPlannerExcludesSparedItems:
 
         planned_keys = {s.media_key for s in (await session.execute(select(ActionStep))).scalars()}
         assert planned_keys == {"radarr:1:1"}
+
+    async def test_realizing_an_expired_spare_makes_the_item_plannable_again(
+        self, session: AsyncSession
+    ) -> None:
+        """B-1: once the scan realizes an expired spare (drop from the judged map + purge the
+        row), the item leaves the live override set, so a plan built on the still-condemned
+        snapshot targets it again -- the dead-end this fix exists to prevent."""
+        t0 = utcnow()
+        snapshot_id = await _snapshot_with(
+            session, [("radarr:1:1", 1 * GB), ("radarr:1:2", 5 * GB)]
+        )
+        await whitelist.spare(
+            session, media_key="radarr:1:2", title="Movie 1", note=None, spare_days=1, now=t0
+        )
+        # The scan's realization, in the order scan() runs it: same `now` for both halves.
+        after = t0 + timedelta(days=2)
+        await whitelist.overrides_effective_at(session, after)
+        assert await whitelist.purge_expired_spares(session, after) == ["radarr:1:2"]
+
+        await build_plan(
+            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
+        )
+
+        planned_keys = {s.media_key for s in (await session.execute(select(ActionStep))).scalars()}
+        assert planned_keys == {"radarr:1:1", "radarr:1:2"}
 
     async def test_sparing_every_condemned_item_leaves_no_plan(self, session: AsyncSession) -> None:
         """If everything condemned is spared, there is nothing to build -- and that is a

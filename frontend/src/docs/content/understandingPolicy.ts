@@ -145,7 +145,7 @@ export const understandingPolicy: Doc = {
       ["Limit", "What it bounds", "Default", "Floor"],
       [
         ["Most titles per run", "Titles one run may remove", "10", "1"],
-        ["Most disk freed per run", "Space one run may remove", "500 GB", "1"],
+        ["Most disk freed per run", "Space one run may remove", "500 GB", "Any amount"],
         ["Most titles per 30 days", "Titles over any rolling 30 days", "100", "the run cap"],
         ["Most disk freed per 30 days", "Space over any rolling 30 days", "2 TB", "the run cap"],
         ["Grace period", "Days a flagged title waits, cancellable", "14 days", "7 days"],

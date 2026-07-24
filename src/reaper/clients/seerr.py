@@ -461,3 +461,24 @@ class SeerrClient(BaseClient):
                     out.append(svc)
         log.info("seerr.services_loaded", count=len(out))
         return out
+
+    async def plex_machine_id(self) -> str | None:
+        """The machine identifier of the Plex server this portal is synced to, from
+        ``/settings/plex`` -- or ``None`` if it cannot be read.
+
+        Rating keys are unique per Plex server only, so a portal synced to a DIFFERENT Plex than
+        Reaper's files ratingKeys that can numerically collide with Reaper's candidates. This lets
+        the requested-by join skip such a portal's rating-key tier (requested_by.build_map, I-3).
+        Requires the portal's admin API key (settings are admin-scoped), like :meth:`services`.
+        Best-effort: ``None`` on any failure or a missing field keeps the caller's current
+        behavior, which is to file the rating-key tier."""
+        try:
+            payload = await self.get_json("/api/v1/settings/plex")
+        except IntegrationError as exc:
+            log.warning("seerr.plex_settings_unreadable", error=str(exc))
+            return None
+        if not isinstance(payload, dict):
+            return None
+        machine = payload.get("machineId") or payload.get("machineIdentifier")
+        text = str(machine).strip() if machine is not None else ""
+        return text or None

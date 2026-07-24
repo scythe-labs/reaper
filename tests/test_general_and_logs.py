@@ -480,6 +480,12 @@ class TestTheLogsRoutes:
         response = client.put("/api/logs/level", json={"level": "CRITICAL"})
         assert response.status_code == 422
 
+    def test_the_response_reports_how_many_files_are_kept(self, client: TestClient) -> None:
+        # I-6: the Logs tab renders this instead of hardcoding "3", so the copy tracks the
+        # backend retention constant.
+        page = client.get("/api/logs").json()
+        assert page["files_kept"] == logbuffer.LOG_BACKUP_COUNT + 1
+
 
 class TestTheLogDownload:
     """The full log downloads as one timestamped text file, behind the session, and the
@@ -506,3 +512,22 @@ class TestTheLogDownload:
         assert "download.secret_probe" in body
         assert "super-secret" not in body
         assert "[redacted]" in body
+
+    def test_a_degraded_sink_appends_the_ring_after_the_files(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # PR-2: when the on-disk mirror stopped accepting writes mid-run, the files end where
+        # writing failed. The download appends the in-memory ring behind a marker so recent
+        # lines that never reached disk are still carried, rather than ending silently.
+        marker = f"degraded.ring_tail_{time.time_ns()}"
+        structlog.get_logger("test").info(marker)
+        monkeypatch.setattr(logbuffer, "file_sink_healthy", lambda: False)
+
+        body = client.get("/api/logs/download").text
+        assert "Log file writing failed at some point above" in body
+        assert marker in body
+
+    def test_a_healthy_sink_does_not_append_the_ring(self, client: TestClient) -> None:
+        # The append marker is present only when degraded; a healthy download is the files alone.
+        body = client.get("/api/logs/download").text
+        assert "Log file writing failed at some point above" not in body

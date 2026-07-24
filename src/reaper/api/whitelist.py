@@ -88,7 +88,9 @@ async def _affected_candidates(session: AsyncSession, media_key: str) -> list[Ca
     return list(rows.scalars().all())
 
 
-async def _sync_grace_clocks(session: AsyncSession, media_key: str) -> None:
+async def _sync_grace_clocks(
+    session: AsyncSession, media_key: str, *, cleared_spare: bool = False
+) -> None:
     """Grace bookkeeping for an override change, so the countdown matches the click.
 
     The grace clock tracks one thing: how long an item has been on the reap list. An
@@ -108,6 +110,14 @@ async def _sync_grace_clocks(session: AsyncSession, media_key: str) -> None:
     on a weeks-old timestamp that would drop it straight past grace with no Leaving Soon
     warning (rule 4). ``_apply_first_flag`` alone would not reset here -- a deliberate spare
     is indistinguishable from a brief scan outage by gap -- so the delete forces the reset.
+
+    ``cleared_spare`` closes the one path the OFF-list delete cannot see: clearing a spare that
+    left an item invisibly condemned (an expired timed spare whose scans re-condemned it and
+    burned a clock down while every surface still showed "spared" -- B-2). On such a clear the
+    item lands back ON the list carrying a stale clock ``record_first_flagged_bulk`` would honor,
+    so when a protective spare is the override being removed we delete every affected clock FIRST
+    and let the recorder write a fresh window (rule 71). Phase 1's durable expiry purge already
+    prevents the burn-down from arising; this is the belt to that suspenders.
     """
     decisions = await whitelist.overrides(session)
     rows = await _affected_candidates(session, media_key)
@@ -124,6 +134,15 @@ async def _sync_grace_clocks(session: AsyncSession, media_key: str) -> None:
         if ov == "reap":
             return reap_is_effective(candidate)
         return candidate.verdict == "condemn"
+
+    if cleared_spare:
+        # Never trust a timestamp accrued while the item was invisible to the operator: wipe
+        # every affected clock so whatever lands back on the list below earns a fresh window.
+        for candidate in rows:
+            clock = await session.get(FirstFlagged, candidate.media_key)
+            if clock is not None:
+                await session.delete(clock)
+        await session.flush()
 
     on_list = [c.media_key for c in rows if on_reap_list(c)]
     if on_list:
@@ -190,8 +209,9 @@ async def unspare_item(request: Request, media_key: str) -> dict[str, bool]:
     """Remove any override (spare or reap). Returns whether one existed. This does not delete
     the file -- it lets the item be judged by the policy again on the next scan."""
     async with _sessions(request)() as session:
+        prior = await whitelist.override_for(session, media_key)
         removed = await whitelist.remove_override(session, media_key=media_key)
-        await _sync_grace_clocks(session, media_key)
+        await _sync_grace_clocks(session, media_key, cleared_spare=prior == "spare")
         await session.commit()
     return {"removed": removed}
 
@@ -200,7 +220,8 @@ async def unspare_item(request: Request, media_key: str) -> dict[str, bool]:
 async def clear_override(request: Request, media_key: str) -> dict[str, bool]:
     """Remove any override (spare or reap) -- the decision-neutral name for the same action."""
     async with _sessions(request)() as session:
+        prior = await whitelist.override_for(session, media_key)
         removed = await whitelist.remove_override(session, media_key=media_key)
-        await _sync_grace_clocks(session, media_key)
+        await _sync_grace_clocks(session, media_key, cleared_spare=prior == "spare")
         await session.commit()
     return {"removed": removed}

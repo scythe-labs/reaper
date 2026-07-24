@@ -58,6 +58,21 @@ def key_file_path(settings: Settings) -> Path:
     return settings.data_dir / KEY_FILENAME
 
 
+def env_key_active(settings: Settings) -> bool:
+    """Whether the operator supplies the encryption key from the environment.
+
+    Mirrors :func:`resolve_secret_key`'s precedence exactly: a non-empty
+    ``REAPER_SECRET_KEY`` always wins and is never written to disk, so a lingering
+    ``secret.key`` file is inactive when the env key is set. Anything reporting where the
+    key comes from, or whether a backup is self-sufficient, must read this rather than a
+    bare ``key_file_path(settings).is_file()`` -- provenance follows runtime precedence,
+    not file existence (rule 76).
+    """
+    if settings.secret_key is None:
+        return False
+    return bool(settings.secret_key.get_secret_value().strip())
+
+
 def salt_file_path(settings: Settings) -> Path:
     return settings.data_dir / SALT_FILENAME
 

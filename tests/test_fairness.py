@@ -31,7 +31,7 @@ from reaper.clients.seerr import (
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import Candidate, Snapshot
+from reaper.db.models import Candidate, Snapshot, WhitelistEntry
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
 from reaper.engine.requester import WatchEvidence
 from reaper.services import fairness, history_sync
@@ -59,6 +59,7 @@ def _req(
     tvdb: int | None = None,
     seerr_id: int | None = None,
     portal_key: str = "",
+    seasons: tuple[int, ...] = (),
 ) -> MediaRequest:
     return MediaRequest(
         request_id=request_id,
@@ -81,6 +82,7 @@ def _req(
         arr_instance_id=0,
         available_at=NOW - timedelta(days=400),
         portal_key=portal_key,
+        seasons=seasons,
     )
 
 
@@ -97,7 +99,16 @@ def _cand(
     group_key: str | None = None,
     group_title: str | None = None,
     title: str = "A Film",
+    override: str | None = None,
+    effective_condemn: bool | None = None,
+    season_number: int | None = None,
 ) -> CandidateInfo:
+    # Production loads effective_condemn from condemned.effective_condemned; a hand-built
+    # candidate mirrors that default (a scan condemn, not spared back, is reclaimable) so the
+    # existing roll-up tests need not spell it out. A spare override flips it off, matching
+    # the production truth (whitelist.effective_override -> effective_condemned).
+    if effective_condemn is None:
+        effective_condemn = verdict == "condemn" and override != "spare"
     return CandidateInfo(
         candidate_id=cid,
         plex_rating_key=rating_key,
@@ -110,6 +121,9 @@ def _cand(
         tmdb_id=tmdb,
         imdb_id=imdb,
         tvdb_id=tvdb,
+        override=override,
+        effective_condemn=effective_condemn,
+        season_number=season_number,
     )
 
 
@@ -422,6 +436,168 @@ class TestRollUp:
         assert report.total_reclaimable_items == 1
 
 
+class TestOverrideAwareReclaimable:
+    """B-5: reclaimable follows the EFFECTIVE decision, not the frozen scan verdict. A hand
+    spare keeps a scan-condemned title off the board; an engine-honored hand reap adds an
+    otherwise-kept one. The roll-up reads ``effective_condemn`` (loaded from the one production
+    ``condemned.effective_condemned``), so Scales can never disagree with Review (rule 77/61)."""
+
+    def test_a_hand_spared_condemned_title_is_not_reclaimable(self) -> None:
+        report = roll_up(
+            [_req(plex_id=100, name="Alice")],
+            [_cand(cid=7, verdict="condemn", size=8 * GB, override="spare")],
+            {},
+        )
+        (row,) = report.rows
+        # The scan condemned it, but the owner spared it: it is granted disk, never reclaimable.
+        assert row.gb_granted_bytes == 8 * GB
+        assert row.reclaimable_items == 0
+        assert row.reclaimable_bytes == 0
+        assert row.reclaimable == []
+        assert report.total_reclaimable_items == 0
+        assert report.total_reclaimable_bytes == 0
+
+    def test_an_engine_honored_hand_reap_on_an_abstain_is_reclaimable(self) -> None:
+        # An abstain the operator hand-reaps AND the engine will honor (effective_condemn True,
+        # as condemned.effective_condemned would return) counts as reclaimable.
+        report = roll_up(
+            [_req(plex_id=100, name="Alice")],
+            [_cand(cid=7, verdict="abstain", size=8 * GB, override="reap", effective_condemn=True)],
+            {},
+        )
+        (row,) = report.rows
+        assert row.reclaimable_items == 1
+        assert row.reclaimable_bytes == 8 * GB
+        assert report.total_reclaimable_items == 1
+
+    def test_a_held_hand_reap_the_engine_refuses_is_not_reclaimable(self) -> None:
+        # A hand reap the engine will NOT honor (a held reap) leaves effective_condemn False,
+        # so it is never counted as reclaimable disk.
+        report = roll_up(
+            [_req(plex_id=100, name="Alice")],
+            [
+                _cand(
+                    cid=7, verdict="abstain", size=8 * GB, override="reap", effective_condemn=False
+                )
+            ],
+            {},
+        )
+        (row,) = report.rows
+        assert row.reclaimable_items == 0
+        assert report.total_reclaimable_items == 0
+
+
+class TestScopeToRequest:
+    """B-6: a season-scoped request binds only the seasons it asked for; a movie or a whole-show
+    request binds the whole matched set (rule 78)."""
+
+    def test_a_season_scoped_request_keeps_only_its_seasons(self) -> None:
+        cands = [
+            _cand(cid=1, media_type="season", season_number=1),
+            _cand(cid=2, media_type="season", season_number=2),
+            _cand(cid=3, media_type="season", season_number=3),
+        ]
+        req = _req(plex_id=100, name="A", media_type="tv", seasons=(1, 3))
+        scoped = fairness._scope_to_request(cands, req)
+        assert {c.candidate_id for c in scoped} == {1, 3}
+
+    def test_a_whole_show_request_binds_everything(self) -> None:
+        cands = [_cand(cid=1, media_type="season", season_number=1)]
+        assert (
+            fairness._scope_to_request(
+                cands, _req(plex_id=100, name="A", media_type="tv", seasons=())
+            )
+            == cands
+        )
+
+    def test_a_movie_request_never_scopes(self) -> None:
+        cands = [_cand(cid=1, media_type="movie")]
+        # Even a stray seasons tuple (never happens for a movie) does not filter a movie out.
+        assert (
+            fairness._scope_to_request(
+                cands, _req(plex_id=100, name="A", media_type="movie", seasons=(1,))
+            )
+            == cands
+        )
+
+    def test_an_unknown_season_number_is_out_of_a_specific_scope(self) -> None:
+        cands = [_cand(cid=1, media_type="season", season_number=None)]
+        assert (
+            fairness._scope_to_request(
+                cands, _req(plex_id=100, name="A", media_type="tv", seasons=(1,))
+            )
+            == []
+        )
+
+
+class TestSeasonScopedAttribution:
+    """B-6 at the roll-up: co-requesters of one show who each asked for a different season are
+    each charged only their own season, never the whole show."""
+
+    def test_two_people_asking_for_different_seasons_split_the_disk(self) -> None:
+        cands = [
+            _cand(
+                cid=1,
+                verdict="condemn",
+                size=4 * GB,
+                media_type="season",
+                season_number=1,
+                tmdb=None,
+                tvdb=9001,
+                imdb=None,
+                group_key="tv:9001",
+                group_title="A Show",
+                rating_key=101,
+            ),
+            _cand(
+                cid=2,
+                verdict="condemn",
+                size=6 * GB,
+                media_type="season",
+                season_number=2,
+                tmdb=None,
+                tvdb=9001,
+                imdb=None,
+                group_key="tv:9001",
+                group_title="A Show",
+                rating_key=102,
+            ),
+        ]
+        alice = _req(
+            plex_id=100,
+            name="Alice",
+            media_type="tv",
+            tmdb=None,
+            tvdb=9001,
+            imdb=None,
+            seasons=(1,),
+            request_id=1,
+        )
+        bob = _req(
+            plex_id=200,
+            name="Bob",
+            media_type="tv",
+            tmdb=None,
+            tvdb=9001,
+            imdb=None,
+            seasons=(2,),
+            request_id=2,
+        )
+        report = roll_up([alice, bob], cands, {})
+        by_name = {r.name: r for r in report.rows}
+        # Each is granted and can reclaim only the season they asked for -- not the whole show.
+        assert by_name["Alice"].gb_granted_bytes == 4 * GB
+        assert by_name["Alice"].reclaimable_bytes == 4 * GB
+        assert by_name["Bob"].gb_granted_bytes == 6 * GB
+        assert by_name["Bob"].reclaimable_bytes == 6 * GB
+        # A lone requested season opens its own card, not the show group.
+        assert by_name["Alice"].reclaimable[0].item_id == 1
+        assert by_name["Alice"].reclaimable[0].group_key is None
+        # The deduped report total still covers the whole matched show's condemned seasons.
+        assert report.total_reclaimable_bytes == 10 * GB
+        assert report.total_reclaimable_items == 1
+
+
 class TestUnmatched:
     """The "not in the last scan" list: what each unmatched request is, and why. The count
     stays exactly the requests behind the list, so the card and the panel never disagree."""
@@ -726,6 +902,62 @@ class TestBuildReportMergesSeerrs:
                 cache_engine=cache,
             )
 
+    async def test_a_hand_spared_condemned_title_drops_off_the_board(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        """B-5 end to end: the fixture's only candidate (radarr:1:1) is scan-condemned. Sparing
+        it by hand must make the board stop counting it reclaimable -- exactly what Review and the
+        Reap page show -- because _load_candidates merges the live override (rule 77)."""
+        factory, cache = report_env
+        async with factory() as session:
+            session.add(
+                WhitelistEntry(
+                    media_key="radarr:1:1",
+                    title="A Film",
+                    decision="spare",
+                    note=None,
+                    created_at=NOW,
+                )
+            )
+            await session.commit()
+        report = await fairness.build_report(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[_FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])],  # type: ignore[list-item]
+            cache_engine=cache,
+        )
+        (row,) = report.rows
+        assert row.reclaimable_items == 0
+        assert row.reclaimable_bytes == 0
+        assert report.total_reclaimable_items == 0
+        assert report.total_reclaimable_bytes == 0
+
+    async def test_the_shared_cache_reuses_one_portal_read_across_calls(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        """P-1: the board and the drawer share a RequestCache, so a second call within the TTL
+        re-pages no portal. Fetch is concurrent, but the cache is what stops the drawer redoing
+        the board's read."""
+        factory, cache = report_env
+
+        class _CountingSeerr(_FakeSeerr):
+            reads = 0
+
+            async def all_requests(self, *, filter_: str = "available") -> list[MediaRequest]:
+                type(self).reads += 1
+                return await super().all_requests(filter_=filter_)
+
+        seerr = _CountingSeerr([_req(plex_id=1, name="Alice", tmdb=1)], instance_key="p1")
+        shared = fairness.RequestCache()
+        for _ in range(3):
+            await fairness.build_report(
+                session_factory=factory,  # type: ignore[arg-type]
+                seerrs=[seerr],  # type: ignore[list-item]
+                cache_engine=cache,
+                cache=shared,
+            )
+        # Three board loads, one portal read -- the rest served from the cache.
+        assert _CountingSeerr.reads == 1
+
 
 class TestFoldQuota:
     def test_no_readable_quota_reads_as_unlimited_never_a_made_up_cap(self) -> None:
@@ -962,3 +1194,73 @@ class TestBuildPersonDetail:
         eps = await fairness._distinct_episodes(cache, plex_id=1, season_keys={770})
         # Two distinct episodes, not three raw plays -- the panel's "N episodes watched".
         assert eps == {770: 2}
+
+    async def test_a_season_scoped_request_charges_only_its_season(self, tmp_path: Path) -> None:
+        """B-6 at the drawer: a show has two condemned seasons (S1=4 GiB key 770, S2=6 GiB key
+        771). Alice asked for S1 ONLY. Her granted/reclaimable bytes and her watched figure must
+        cover S1 alone -- never the whole show, and never S2 she played but never asked for."""
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        main = create_engine(settings)
+        async with main.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        cache = create_cache_engine(settings)
+        await history_sync.ensure_schema(cache)
+        factory = create_session_factory(main)
+        async with factory() as session:
+            snap = Snapshot(
+                created_at=NOW, policy_hash="p" * 64, horizon_at=NOW, item_count=2, degraded=False
+            )
+            session.add(snap)
+            await session.flush()
+            for season, rk, size in ((1, 770, 4 * GB), (2, 771, 6 * GB)):
+                session.add(
+                    Candidate(
+                        snapshot_id=snap.id,
+                        media_key=f"sonarr:1:9001:{season}",
+                        title=f"A Show S{season}",
+                        media_type="season",
+                        size_bytes=size,
+                        verdict="condemn",
+                        score=80,
+                        coverage_bp=10_000,
+                        explanation_json="{}",
+                        tvdb_id=9001,
+                        plex_rating_key=rk,
+                        group_key="sonarr:1:9001",
+                        group_title="A Show",
+                        created_at=NOW,
+                    )
+                )
+            await session.commit()
+        # Alice played an episode under S1 (770) and one under S2 (771); she asked for S1 only.
+        await _insert_event(cache, rating_key=9101, user_id=1, parent=770, gp=9001)
+        await _insert_event(cache, rating_key=9201, user_id=1, parent=771, gp=9001)
+        portal = _FakeSeerr(
+            [
+                _req(
+                    plex_id=1,
+                    name="Alice",
+                    media_type="tv",
+                    tmdb=None,
+                    tvdb=9001,
+                    imdb=None,
+                    seasons=(1,),
+                )
+            ]
+        )
+        detail = await fairness.build_person_detail(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[portal],  # type: ignore[list-item]
+            cache_engine=cache,
+            identity="plex:1",
+        )
+        assert detail is not None
+        # Only S1 is attributed to Alice -- not the whole show's 10 GiB.
+        assert detail.gb_granted_bytes == 4 * GB
+        assert detail.reclaimable_bytes == 4 * GB
+        (title,) = detail.titles
+        assert title.size_bytes == 4 * GB
+        # Watched counts the one S1 episode, never the S2 episode she never asked for.
+        assert title.watched_by_them == 1
+        await main.dispose()
+        await cache.dispose()

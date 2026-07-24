@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator, Iterator
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -332,6 +333,29 @@ def _clock_rows(tmp_path: Path) -> dict[str, Any]:
     return rows
 
 
+def _seed_clock(
+    tmp_path: Path,
+    media_key: str,
+    *,
+    first_flagged_at: datetime,
+    last_seen_condemned_at: datetime,
+) -> None:
+    """Force a grace clock into a chosen (possibly stale) state, standing in for the scans that
+    re-condemned an item while it still showed spared -- the B-2 burn-down."""
+    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    engine = sa_create_engine(settings.sync_database_url)
+    with Session(engine) as s:
+        s.merge(
+            FirstFlagged(
+                media_key=media_key,
+                first_flagged_at=first_flagged_at,
+                last_seen_condemned_at=last_seen_condemned_at,
+            )
+        )
+        s.commit()
+    engine.dispose()
+
+
 class TestOverrideRoutesAndTheGraceClock:
     def test_an_honored_reap_starts_the_clock_and_withdrawing_it_stops_it(
         self, client: TestClient, tmp_path: Path
@@ -386,6 +410,29 @@ class TestOverrideRoutesAndTheGraceClock:
         refreshed = _clock_rows(tmp_path)
         assert "radarr:1:21" in refreshed
         assert refreshed["radarr:1:21"] > original
+
+    def test_clearing_a_spare_restarts_a_clock_burned_down_while_invisible(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """B-2 defense in depth (rule 71): if an item was invisibly re-condemned while it still
+        showed spared (the burn-down Phase 1's durable purge now prevents), clearing the stale
+        spare must NOT coast on the spent clock -- it restarts on a fresh window. Without the
+        cleared_spare wipe, record_first_flagged_bulk would honor the weeks-old first_flagged."""
+        # Spared: off the list, its scan clock is dropped.
+        client.post("/api/override", json={"media_key": "radarr:1:21", "decision": "spare"})
+        assert "radarr:1:21" not in _clock_rows(tmp_path)
+        # The invisible burn-down: first flagged three weeks ago, last seen condemned yesterday
+        # -- exactly what the recorder would treat as a clock still legitimately running.
+        _seed_clock(
+            tmp_path,
+            "radarr:1:21",
+            first_flagged_at=NOW - timedelta(days=21),
+            last_seen_condemned_at=NOW - timedelta(days=1),
+        )
+        # Clearing the spare re-enters the item on a FRESH window, not the spent one.
+        client.delete("/api/override/radarr:1:21")
+        refreshed = _clock_rows(tmp_path)["radarr:1:21"]
+        assert refreshed > NOW - timedelta(days=2)
 
     def test_the_queue_reports_whether_a_reap_took(
         self, client: TestClient, tmp_path: Path

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clock import utcnow
@@ -74,23 +74,64 @@ def effective_spare_expiry(
 async def overrides(session: AsyncSession) -> dict[str, str]:
     """``media_key -> decision`` for every manual override -- what live consumers read once.
 
-    A timed spare stays in force here until the next scan realizes its expiry
-    (:func:`overrides_effective_at`). That is deliberate: between scans an expired spare keeps
-    protecting the file, failing toward keeping it rather than reaping it early on a clock tick
-    that no scan has yet re-anchored a grace window for.
+    A timed spare stays in force here until the next scan realizes its expiry. That is
+    deliberate: between scans an expired spare keeps protecting the file, failing toward keeping
+    it rather than reaping it early on a clock tick that no scan has yet re-anchored a grace
+    window for. The scan realizes expiry in two coupled steps in the SAME transaction:
+    :func:`overrides_effective_at` drops the expired spare from the map it judges on, and
+    :func:`purge_expired_spares` deletes the row so this function -- and every consumer that
+    reads it (planner, executor, grace, review queue) -- converges the moment the snapshot
+    commits. Reading the map without the purge would strand the expired spare here forever.
     """
     rows = await session.execute(select(WhitelistEntry.media_key, WhitelistEntry.decision))
     return dict(rows.tuples().all())
 
 
+async def purge_expired_spares(session: AsyncSession, now: datetime) -> list[str]:
+    """Delete every hand-spare whose clock has passed as of ``now`` -- the durable half of expiry.
+
+    :func:`overrides_effective_at` drops an expired spare from the map the scan JUDGES on, but
+    that is an in-memory view; the row itself lives on, and every live consumer (planner,
+    executor, grace, review queue) reads :func:`overrides`, which keeps returning it. This is
+    the ONE place the expiry is realized in storage. Call it inside the scan transaction with
+    the SAME ``now`` the judge used, right after :func:`overrides_effective_at`: the moment the
+    snapshot commits, every consumer converges on the re-condemned item, and the scan's own
+    ``record_first_flagged_bulk`` has already written it a FRESH grace clock (the spare took the
+    item's clock off the list when it was set, so the re-condemn earns a full window, never a
+    spent one -- rule 4). Without this, an expired spare dead-ends: unplannable, un-executable,
+    still shown "spared", until the operator manually clears it (rules 7/23/24/70).
+
+    Deletes by predicate (not an ``IN`` list of keys) so there is no SQLite variable-limit
+    ceiling, and returns the purged media_keys for a count-only log line. Reaps never expire,
+    so only spares are ever touched.
+    """
+    predicate = (
+        (WhitelistEntry.decision == "spare")
+        & WhitelistEntry.spare_expires_at.is_not(None)
+        & (WhitelistEntry.spare_expires_at <= now)
+    )
+    keys = [
+        key
+        for (key,) in (
+            await session.execute(select(WhitelistEntry.media_key).where(predicate))
+        ).tuples()
+    ]
+    if not keys:
+        return []
+    await session.execute(delete(WhitelistEntry).where(predicate))
+    return keys
+
+
 async def overrides_effective_at(session: AsyncSession, now: datetime) -> dict[str, str]:
     """Manual overrides with EXPIRED hand-spares dropped as of ``now`` -- what the scan judges on.
 
-    This is the ONE place a timed spare's clock is realized. A spare whose ``spare_expires_at``
-    has passed no longer protects, so the scan re-judges the item exactly as if it were never
-    spared -- which re-condemns it if the policy still would, and (because the spare took its
-    grace clock off the list when it was set) writes a FRESH first-flagged timestamp, so it
-    re-enters on a full grace window, never a spent one (rule 4). Reaps never expire.
+    The read half of realizing a timed spare's clock: a spare whose ``spare_expires_at`` has
+    passed no longer protects, so the scan re-judges the item exactly as if it were never spared
+    -- which re-condemns it if the policy still would, and (because the spare took its grace
+    clock off the list when it was set) writes a FRESH first-flagged timestamp, so it re-enters
+    on a full grace window, never a spent one (rule 4). This drops the spare from the judged map
+    only; :func:`purge_expired_spares`, called in the same transaction with the same ``now``,
+    deletes the row so every live consumer converges. Reaps never expire.
     """
     rows = await session.execute(
         select(WhitelistEntry.media_key, WhitelistEntry.decision, WhitelistEntry.spare_expires_at)

@@ -34,7 +34,10 @@ serve a schema the code cannot understand, so it is refused.
 
 from __future__ import annotations
 
+import hmac
 import json
+import os
+import secrets as pysecrets
 import shutil
 import sqlite3
 import sys
@@ -50,7 +53,13 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.secrets import KEY_FILENAME, SALT_FILENAME
 from reaper.services.app_settings import DESTRUCTIVE_KEY
-from reaper.services.backup import BACKUP_FORMAT, DB_ARCNAME, MANIFEST_NAME
+from reaper.services.backup import (
+    BACKUP_FORMAT,
+    DB_ARCNAME,
+    MANIFEST_NAME,
+    RESTORE_TMP_PREFIX,
+    _read_revision,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -59,6 +68,14 @@ log = structlog.get_logger(__name__)
 #: confirmed restore is ready" -- an interrupted upload never leaves one behind.
 PENDING_DIR = "pending-restore"
 READY_MARKER = "READY"
+
+#: Binds a password-confirmed arm to the exact content the operator reviewed. Minted per
+#: staging (see :func:`stage_upload`), returned in the summary, and required back by
+#: :func:`arm` -- if a second session re-stages between review and confirm, the staging (and
+#: this token) is replaced, so the stale token no longer matches and the arm is refused
+#: (rule 73). Not a secret: a nonce that says "still the same staged backup," living in the
+#: 0700 staging dir.
+TOKEN_MARKER = "TOKEN"  # noqa: S105 -- a marker filename, not a secret
 
 #: What the current data is moved into before the staged copy takes its place, so a bad
 #: restore is recoverable. Timestamped, and never touched again by Reaper.
@@ -112,6 +129,9 @@ class RestoreSummary:
     key, so the target must set ``REAPER_SECRET_KEY`` or saved credentials won't decrypt."""
     reaper_db_bytes: int
     """The staged database size on disk."""
+    token: str
+    """The staging token (see :data:`TOKEN_MARKER`). The operator hands it back at confirm
+    time, and :func:`arm` refuses if the staged content changed since this summary was cut."""
 
 
 # ---------------------------------------------------------------------------
@@ -200,10 +220,29 @@ def _check_schema(revision: str | None) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _copy_capped(source: Any, out_path: Path, cap: int) -> int:
+def _member_writer(out_path: Path, *, owner_only: bool) -> Any:
+    """Open an extracted member for writing, owner-only from creation when it is a secret.
+
+    The key and salt must be 0600 the instant they exist: the 0700 staging dir shields them
+    while staged, but ``apply_pending_restore`` moves them into the data dir (a host bind
+    mount) where a write-then-chmod window would leave the master key world-readable through
+    boot and migrations (rule 83/14). ``os.open`` with ``O_EXCL`` and mode 0600 closes that
+    window; the staging dir is freshly made and empty, so ``O_EXCL`` never clashes.
+    """
+    if not owner_only:
+        return out_path.open("wb")
+    old_umask = os.umask(0o077)
+    try:
+        fd = os.open(str(out_path), os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
+    finally:
+        os.umask(old_umask)
+    return os.fdopen(fd, "wb")
+
+
+def _copy_capped(source: Any, out_path: Path, cap: int, *, owner_only: bool = False) -> int:
     """Copy one archive member to disk, refusing anything past ``cap`` bytes."""
     written = 0
-    with out_path.open("wb") as out:
+    with _member_writer(out_path, owner_only=owner_only) as out:
         while chunk := source.read(_COPY_CHUNK):
             written += len(chunk)
             if written > cap:
@@ -231,7 +270,10 @@ def _extract(archive_path: Path, dest: Path) -> dict[str, Any]:
                 stream = tar.extractfile(member)
                 if stream is None:
                     raise RestoreError("This backup file is malformed.")
-                _copy_capped(stream, dest / member.name, _MEMBER_CAPS[member.name])
+                secret = member.name in (KEY_FILENAME, SALT_FILENAME)
+                _copy_capped(
+                    stream, dest / member.name, _MEMBER_CAPS[member.name], owner_only=secret
+                )
                 seen.add(member.name)
     except RestoreError:
         raise  # a validation refusal, not a read failure -- keep its message
@@ -259,14 +301,31 @@ def _opt_str(value: Any) -> str | None:
     return str(value) if isinstance(value, str) and value else None
 
 
-def _summarize(manifest: dict[str, Any], staged: Path) -> RestoreSummary:
+def _summarize(manifest: dict[str, Any], staged: Path, token: str) -> RestoreSummary:
     """Turn a validated manifest into the summary the operator confirms against.
 
     Runs the schema gate (raising on a backup this build can't serve) and refuses a
     manifest that claims a bundled key but ships none -- a tampered or truncated archive.
+
+    The schema gate reads the staged database's OWN ``alembic_version``, never the
+    manifest's claim: a repacked archive whose manifest names a known revision while its
+    database is any other SQLite file would otherwise pass and be swapped in, then boot's
+    ``alembic upgrade head`` runs against a mismatched schema (rule 74). The manifest's
+    claim, when present, must agree with the artifact or the backup is refused as altered.
     """
-    revision = _opt_str(manifest.get("alembic_revision"))
-    verdict = _check_schema(revision)
+    db_revision = _read_revision(staged / DB_ARCNAME)
+    if db_revision is None:
+        raise RestoreError(
+            "The database in this backup couldn't be verified. "
+            "It may be damaged, or not a Reaper backup."
+        )
+    manifest_revision = _opt_str(manifest.get("alembic_revision"))
+    if manifest_revision is not None and manifest_revision != db_revision:
+        raise RestoreError(
+            "This backup's description doesn't match the database inside it. "
+            "It may be damaged or altered."
+        )
+    verdict = _check_schema(db_revision)
 
     key_in_backup = (staged / KEY_FILENAME).is_file()
     if manifest.get("key_source") == "file" and not key_in_backup:
@@ -275,10 +334,11 @@ def _summarize(manifest: dict[str, Any], staged: Path) -> RestoreSummary:
     return RestoreSummary(
         app_version=_opt_str(manifest.get("app_version")),
         created_at=_opt_str(manifest.get("created_at")),
-        revision=revision,
+        revision=db_revision,
         verdict=verdict,
         key_in_backup=key_in_backup,
         reaper_db_bytes=(staged / DB_ARCNAME).stat().st_size,
+        token=token,
     )
 
 
@@ -300,11 +360,15 @@ def stage_upload(settings: Settings, archive_path: Path) -> RestoreSummary:
     """
     settings.ensure_data_dir()
     data_dir = settings.data_dir
-    tmp = Path(tempfile.mkdtemp(prefix=".restore-tmp-", dir=data_dir))
+    tmp = Path(tempfile.mkdtemp(prefix=RESTORE_TMP_PREFIX, dir=data_dir))
     staged = False
     try:
         manifest = _extract(archive_path, tmp)
-        summary = _summarize(manifest, tmp)
+        # Mint the staging token and write it beside the staged files, so it travels with
+        # the atomic rename below and binds this exact staging to the confirm (rule 73).
+        token = pysecrets.token_hex(32)
+        (tmp / TOKEN_MARKER).write_text(token + "\n", encoding="utf-8")
+        summary = _summarize(manifest, tmp, token)
         _replace_dir(data_dir / PENDING_DIR, tmp)
         staged = True  # tmp was renamed into place; the finally must not remove it
         log.info("restore.staged", revision=summary.revision, verdict=summary.verdict)
@@ -342,23 +406,78 @@ def _force_destructive_off(db_path: Path) -> None:
         con.close()
 
 
+#: The auth-bearing tables purged from the staged database at arm time (S-3). Fixed string
+#: literals so the ``DELETE`` statements below carry no interpolation; an older backup may
+#: predate a table, so each delete is guarded by an existence check first.
+_AUTH_PURGE: tuple[tuple[str, str], ...] = (
+    ("auth_session", "DELETE FROM auth_session"),
+    ("recovery_token", "DELETE FROM recovery_token"),
+    ("pending_plex_login", "DELETE FROM pending_plex_login"),
+)
+
+
+def _purge_auth_state(db_path: Path) -> None:
+    """Clear sessions, recovery tokens, and pending logins from the staged database.
+
+    A restore replaces the whole database, which is a wholesale credential change: the
+    backup's password hash returns, so its live sessions and recovery tokens must not
+    (rule 75/12). Otherwise a session or reset link valid when the backup was taken would
+    work again after the swap, defeating a later sign-out-everywhere. Runs in the same
+    fail-closed step as forcing deletion off; a table absent in an older backup simply has
+    nothing to purge.
+    """
+    con = sqlite3.connect(db_path)
+    try:
+        for table, statement in _AUTH_PURGE:
+            present = con.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+            ).fetchone()
+            if present:
+                con.execute(statement)
+        con.commit()
+    except sqlite3.OperationalError as exc:
+        raise RestoreError("Reaper couldn't prepare this backup to restore.") from exc
+    finally:
+        con.close()
+
+
+def _token_matches(pending: Path, provided: str | None) -> bool:
+    """Whether ``provided`` equals the token minted when this staging was created."""
+    if not provided:
+        return False
+    try:
+        stored = (pending / TOKEN_MARKER).read_text(encoding="utf-8").strip()
+    except OSError:
+        return False
+    return bool(stored) and hmac.compare_digest(stored, provided.strip())
+
+
 def is_armed(settings: Settings) -> bool:
     """Whether a verified restore is staged and armed, waiting for a restart."""
     return (settings.data_dir / PENDING_DIR / READY_MARKER).is_file()
 
 
-def arm(settings: Settings) -> None:
+def arm(settings: Settings, token: str | None) -> None:
     """Force deletion off in the staged database and arm the swap.
 
-    Called only after the admin password is verified at the API edge. The ``READY``
-    marker is written last, so a crash between forcing deletion off and arming leaves
-    the staging inert rather than half-armed.
+    Called only after the admin password is verified at the API edge. ``token`` must equal
+    the one minted for this staging (returned in the summary the operator reviewed): if a
+    different backup was staged since, the token no longer matches and the arm is refused,
+    so the password can only ever arm the content that was actually reviewed (rule 73). The
+    ``READY`` marker is written last, so a crash between preparing the database and arming
+    leaves the staging inert rather than half-armed.
     """
     pending = settings.data_dir / PENDING_DIR
     staged_db = pending / DB_ARCNAME
     if not _looks_like_sqlite(staged_db):
         raise RestoreError("There's no backup ready to restore. Choose a file first.")
+    if not _token_matches(pending, token):
+        raise RestoreError(
+            "The staged backup changed since you reviewed it. Check it again before restoring.",
+            status=409,
+        )
     _force_destructive_off(staged_db)
+    _purge_auth_state(staged_db)
     (pending / READY_MARKER).write_text(
         utcnow().strftime("%Y-%m-%dT%H:%M:%SZ") + "\n", encoding="utf-8"
     )

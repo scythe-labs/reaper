@@ -295,3 +295,60 @@ class TestLibrarySeasonIndex:
         server = _FakeServer([_FakeSection(2, "show")], {"/library/sections/2/all": listing})
         with pytest.raises(PlexError):
             await _client_with(server).library_season_index()
+
+
+class TestTwinsHardenedPaging:
+    """B-3: the GUID sweep and the two section-listing twins page exactly like the season
+    sweep -- raw-count advance, ``totalSize`` the sole authority, a truncated page or an
+    unbounded full page raised on. Before the fix these three still fell ``totalSize`` -> ``size``
+    and ended on a short page, so a clamped or unbounded section returned a silently partial map.
+    """
+
+    async def test_guid_sweep_follows_a_clamped_page_to_totalsize(self) -> None:
+        # size=1 while totalSize=2: the server clamped the page below the request. The sweep
+        # must follow the total to the second page, not stop on the short first one.
+        page0 = f'<MediaContainer size="1" totalSize="2">{MOVIE_ROW}</MediaContainer>'
+        page1 = f'<MediaContainer size="1" totalSize="2">{BARE_ROW}</MediaContainer>'
+        server = _FakeServer(
+            [_FakeSection(1, "movie")],
+            {
+                "/library/sections/1/all?includeGuids=1&X-Plex-Container-Start=0": page0,
+                "/library/sections/1/all?includeGuids=1&X-Plex-Container-Start=1": page1,
+                "/library/metadata/": "<MediaContainer/>",  # the batched Rating read, empty
+            },
+        )
+        index = await _client_with(server).library_guid_index(section_type="movie")
+        assert set(index) == {41, 42}
+
+    async def test_guid_sweep_raises_on_a_full_page_with_no_totalsize(self) -> None:
+        rows = "".join(
+            f'<Video ratingKey="{1000 + i}" title="F{i}"/>' for i in range(SWEEP_PAGE_SIZE)
+        )
+        listing = f'<MediaContainer size="{SWEEP_PAGE_SIZE}">{rows}</MediaContainer>'  # no total
+        server = _FakeServer([_FakeSection(1, "movie")], {"/library/sections/1/all": listing})
+        with pytest.raises(PlexError):
+            await _client_with(server).library_guid_index(section_type="movie")
+
+    async def test_label_read_raises_on_a_child_with_no_rating_key(self) -> None:
+        listing = (
+            '<MediaContainer size="2" totalSize="2">'
+            '<Video ratingKey="1"/>'
+            "<Video/>"  # no ratingKey: the paging math cannot advance over it
+            "</MediaContainer>"
+        )
+        server = _FakeServer([_FakeSection(1, "movie")], {"/library/sections/1/all": listing})
+        with pytest.raises(PlexError):
+            await _client_with(server).labeled_in_section(1, kind="movie", label="Leaving Soon")
+
+    async def test_section_listing_follows_a_clamped_page_to_totalsize(self) -> None:
+        page0 = '<MediaContainer size="1" totalSize="2"><Video ratingKey="1"/></MediaContainer>'
+        page1 = '<MediaContainer size="1" totalSize="2"><Video ratingKey="2"/></MediaContainer>'
+        server = _FakeServer(
+            [_FakeSection(1, "movie")],
+            {
+                "/library/sections/1/all?type=1&X-Plex-Container-Start=0": page0,
+                "/library/sections/1/all?type=1&X-Plex-Container-Start=1": page1,
+            },
+        )
+        keys = await _client_with(server).section_rating_keys(1, kind="movie")
+        assert keys == {1, 2}

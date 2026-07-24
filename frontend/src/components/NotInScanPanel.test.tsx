@@ -65,6 +65,30 @@ describe("NotInScanPanel", () => {
     await userEvent.keyboard("{Escape}");
     expect(onClose).toHaveBeenCalledTimes(2);
   });
+
+  it("says it is checking, not all-clear, while the report is still loading", () => {
+    render(<NotInScanPanel items={[]} isPending onClose={vi.fn()} />);
+    expect(screen.getByText(/checking the last scan/i)).toBeInTheDocument();
+    // The definite all-clear must not render when the data is merely missing (U-3, rule 17/36).
+    expect(
+      screen.queryByText(/every available request is in the last scan/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows an error notice, not all-clear, when the report failed to load", () => {
+    render(<NotInScanPanel items={[]} error onClose={vi.fn()} />);
+    expect(screen.getByText(/couldn't read the last scan/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/every available request is in the last scan/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the all-clear only when the report loaded and was genuinely empty", () => {
+    render(<NotInScanPanel items={[]} onClose={vi.fn()} />);
+    expect(
+      screen.getByText(/every available request is in the last scan/i),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("UnmatchedList", () => {

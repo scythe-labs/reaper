@@ -710,6 +710,9 @@ export interface LogsPage {
   last_seq: number;
   /** The level Reaper is recording at right now. */
   level: string;
+  /** How many rotating log files the server keeps (the live file plus its backups). Rendered
+   *  in the download help so the "newest N files" copy tracks the backend, not a local guess. */
+  files_kept: number;
 }
 
 /** A reclaimable title on a requester's row: what it is, the disk it holds, and how to open
@@ -1039,6 +1042,10 @@ export interface RestoreSummary {
    *  the target must have REAPER_SECRET_KEY set to the same value. */
   key_in_backup: boolean;
   reaper_db_bytes: number;
+  /** Handed back at confirm time so the arm binds to the exact backup reviewed here. If
+   *  another upload replaces the staged one before you confirm, this token stops matching
+   *  and the confirm is refused. */
+  token: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -1316,9 +1323,10 @@ export const api = {
     return (await response.json()) as RestoreSummary;
   },
   /** Confirm a staged restore with the admin password. Arms the swap; the operator then
-   *  restarts the container to finish. */
-  restoreConfirm: (password: string) =>
-    post<{ ok: boolean }>("/api/settings/backup/restore/confirm", { password }),
+   *  restarts the container to finish. The token comes from the prepare summary and binds
+   *  the confirm to the exact backup that was reviewed. */
+  restoreConfirm: (password: string, token: string) =>
+    post<{ ok: boolean }>("/api/settings/backup/restore/confirm", { password, token }),
   /** Discard a staged or armed restore. */
   restoreCancel: () => post<{ ok: boolean }>("/api/settings/backup/restore/cancel", {}),
 

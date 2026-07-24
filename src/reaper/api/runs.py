@@ -582,7 +582,7 @@ async def get_profile(request: Request) -> ProfileSettingsIO:
     """The caps and grace settings a run obeys. Built-in defaults until one is saved.
 
     Reports ``settings_recovered`` when the stored blob was unreadable and these are the
-    shipped defaults, so the Pace page can tell the operator to save again (rule 14)."""
+    shipped defaults, so the Pace page can tell the operator to save again (rule 65)."""
     async with _sessions(request)() as session:
         profile = await active_profile(session)
     return _settings_out(profile.settings, recovered=profile.fell_back)

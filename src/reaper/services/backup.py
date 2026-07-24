@@ -48,7 +48,13 @@ import structlog
 from reaper.buildinfo import build_version
 from reaper.clock import utcnow
 from reaper.config import Settings
-from reaper.secrets import KEY_FILENAME, SALT_FILENAME, key_file_path, salt_file_path
+from reaper.secrets import (
+    KEY_FILENAME,
+    SALT_FILENAME,
+    env_key_active,
+    key_file_path,
+    salt_file_path,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -60,7 +66,16 @@ BACKUP_FORMAT_VERSION = 1
 #: Streamed to the browser in modest chunks so a large archive never sits in memory.
 DOWNLOAD_CHUNK = 64 * 1024
 
-_TMP_PREFIX = ".backup-tmp-"
+#: Temp-entry prefixes under ``data/``. A backup builds in :data:`BACKUP_TMP_PREFIX`; the
+#: restore side stages in :data:`RESTORE_TMP_PREFIX` and spools its upload in
+#: :data:`RESTORE_UPLOAD_PREFIX` (both used by :mod:`reaper.services.restore` and
+#: :mod:`reaper.api.backup`, imported from here so the vocabulary lives in one place). All
+#: three name transient work a healthy run removes itself; anything matching them at boot
+#: is crash debris that :func:`sweep_stale_temp` clears (PR-3).
+BACKUP_TMP_PREFIX = ".backup-tmp-"
+RESTORE_TMP_PREFIX = ".restore-tmp-"
+RESTORE_UPLOAD_PREFIX = ".restore-upload-"
+_STALE_TEMP_PREFIXES = (BACKUP_TMP_PREFIX, RESTORE_TMP_PREFIX, RESTORE_UPLOAD_PREFIX)
 
 
 @dataclass(frozen=True)
@@ -120,7 +135,20 @@ def _build_sync(settings: Settings, created_at: str) -> BackupArchive:
     """
     settings.ensure_data_dir()
     data_dir = settings.data_dir
-    tmp_dir = Path(tempfile.mkdtemp(prefix=_TMP_PREFIX, dir=data_dir))
+    tmp_dir = Path(tempfile.mkdtemp(prefix=BACKUP_TMP_PREFIX, dir=data_dir))
+    # Anything past mkdtemp that raises (VACUUM INTO failing on a full disk, a locked
+    # database past the busy timeout, a gzip write error) must not strand the temp dir
+    # and its partial multi-GB snapshot -- that would make a disk-full worse (PR-3).
+    try:
+        return _build_into(settings, created_at, tmp_dir)
+    except BaseException:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
+
+
+def _build_into(settings: Settings, created_at: str, tmp_dir: Path) -> BackupArchive:
+    """Build the archive inside an already-created temp dir (see :func:`_build_sync`)."""
+    data_dir = settings.data_dir
     snapshot = tmp_dir / DB_ARCNAME
 
     # A consistent, compacted copy of the live database. VACUUM INTO reads inside a
@@ -133,9 +161,15 @@ def _build_sync(settings: Settings, created_at: str) -> BackupArchive:
     finally:
         con.close()
 
+    # The active key decides what travels. An env-supplied key always wins over any file
+    # on disk (resolve_secret_key precedence), so a lingering secret.key is inactive: never
+    # bundle it, and report key_source "env" so the target is told it still needs the env
+    # var (rule 76). The salt is install state, minted even for an env key, so it travels
+    # whenever it exists.
+    env_key = env_key_active(settings)
     key_path = key_file_path(settings)
     salt_path = salt_file_path(settings)
-    key_included = key_path.is_file()
+    key_included = key_path.is_file() and not env_key
     salt_included = salt_path.is_file()
     revision = _read_revision(snapshot)
 
@@ -146,8 +180,6 @@ def _build_sync(settings: Settings, created_at: str) -> BackupArchive:
         "app_version": build_version(),
         "alembic_revision": revision,
         "reaper_db_bytes": snapshot.stat().st_size,
-        # Where the key came from decides whether it is inside the archive: a file
-        # travels with the backup, an env-supplied key is the operator's to carry.
         "key_source": "file" if key_included else "env",
         "contents": {
             "reaper_db": True,
@@ -196,3 +228,31 @@ async def create_backup(settings: Settings) -> BackupArchive:
 def cleanup(archive: BackupArchive) -> None:
     """Remove the temp dir the archive was built in. Safe to call more than once."""
     shutil.rmtree(archive.tmp_dir, ignore_errors=True)
+
+
+def sweep_stale_temp(settings: Settings) -> int:
+    """Remove crash-leftover backup/restore temp entries under ``data/``. Returns the count.
+
+    A healthy backup or restore removes its own temp dir or upload spool; anything under
+    ``data/`` matching :data:`_STALE_TEMP_PREFIXES` at boot is debris from a crash mid-run
+    (PR-3). Called from preflight, which runs before the app starts, so nothing is in flight
+    to race. Only the dotted temp prefixes match, so the ``pending-restore`` staging and the
+    ``pre-restore-*`` recovery copies (no leading dot) are never touched.
+    """
+    swept = 0
+    try:
+        entries = list(settings.data_dir.iterdir())
+    except OSError:
+        return 0
+    for entry in entries:
+        if not entry.name.startswith(_STALE_TEMP_PREFIXES):
+            continue
+        try:
+            if entry.is_dir():
+                shutil.rmtree(entry, ignore_errors=True)
+            else:
+                entry.unlink(missing_ok=True)
+        except OSError:
+            continue
+        swept += 1
+    return swept

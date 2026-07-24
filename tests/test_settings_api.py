@@ -300,6 +300,58 @@ class TestInstancesCrud:
         ).json()
         assert cleared["external_url"] is None  # blank clears to null
 
+    def test_external_url_must_be_a_full_web_address(self, client: TestClient) -> None:
+        """S-5: the link address is rendered into an href for every signed-in user, so a
+        scheme-less paste or a non-http scheme is refused at the edge like every sibling URL
+        field -- never stored verbatim. A blank still clears; an update with a bad value
+        changes nothing."""
+        # A scheme-less host:port paste is refused on create.
+        scheme_less = client.post(
+            "/api/settings/instances",
+            json={
+                "kind": "radarr",
+                "name": "HD",
+                "base_url": "http://a.local",
+                "api_key": "k",
+                "external_url": "movies.example.com:8989",
+            },
+        )
+        assert scheme_less.status_code == 422
+
+        # A dangerous scheme is refused too.
+        dangerous = client.post(
+            "/api/settings/instances",
+            json={
+                "kind": "radarr",
+                "name": "HD",
+                "base_url": "http://a.local",
+                "api_key": "k",
+                "external_url": "javascript:alert(1)",
+            },
+        )
+        assert dangerous.status_code == 422
+
+        made = client.post(
+            "/api/settings/instances",
+            json={
+                "kind": "radarr",
+                "name": "HD",
+                "base_url": "http://a.local",
+                "api_key": "k",
+                "external_url": "https://radarr.example.com",
+            },
+        ).json()
+
+        # An update to a malformed value is refused and the stored one is untouched.
+        rejected = client.put(
+            f"/api/settings/instances/{made['id']}",
+            json={"external_url": "not a url"},
+        )
+        assert rejected.status_code == 422
+        still = client.get("/api/settings/instances").json()
+        kept = next(row for row in still if row["id"] == made["id"])
+        assert kept["external_url"] == "https://radarr.example.com"
+
 
 class TestConnectionTestsHonorTheTlsChoice:
     """The TLS choice must reach the client that actually dials out -- the stored

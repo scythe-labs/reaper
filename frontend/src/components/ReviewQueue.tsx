@@ -720,6 +720,11 @@ function SpareMenu({
   const spareCustom = () =>
     onPick(Math.max(1, Math.min(3650, Math.floor(Number(customText) || 1))));
 
+  // Read fresh inside the scroll handler without re-subscribing the listeners on each keystroke
+  // (rule 19: useRef for a cross-render flag, stable effect deps).
+  const customRef = useRef(custom);
+  customRef.current = custom;
+
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
       const t = e.target as Node;
@@ -730,7 +735,13 @@ function SpareMenu({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
-    const onScroll = () => onClose();
+    const onScroll = () => {
+      // While the Custom-length input is open, ignore scroll: on a phone the virtual keyboard
+      // opening scrolls the viewport to reveal the focused field, and a scroll-close would then
+      // dismiss the menu before a digit is typed. Outside-click and Escape still close it (U-4).
+      if (customRef.current) return;
+      onClose();
+    };
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
     window.addEventListener("scroll", onScroll, true);
@@ -1045,6 +1056,21 @@ function groupReapEffective(
   return reaped.some((s) => s.override_effective !== false);
 }
 
+/** How far a whole-show reap actually reaches across its seasons, for the inherit banner's
+ *  wording (rule 61): "all" every inherited reap is honored, "none" every one is held for now,
+ *  "some" a mix. Reads the same override/override_effective fields as groupReapEffective, over
+ *  the seasons the panel already has. Only meaningful when the show's own override is reap. */
+function showReapReach(
+  seasons: ReadonlyArray<{ override: Override | null; override_effective: boolean | null }>,
+): "all" | "some" | "none" {
+  const reaped = seasons.filter((s) => s.override === "reap");
+  if (reaped.length === 0) return "all"; // no inherited reap to hold; nothing to qualify
+  const held = reaped.filter((s) => s.override_effective === false).length;
+  if (held === 0) return "all";
+  if (held === reaped.length) return "none";
+  return "some";
+}
+
 /** Whether a whole-show Reap would change nothing -- the show analogue of rule 48's
  *  already-condemned test. It decides `hideReap` for a show on both the card and the panel,
  *  so the test lives here once rather than being reimplemented at each surface.
@@ -1336,7 +1362,13 @@ function capitalizeSentence(text: string): string {
  *  inheriting season used to carry an identical `KeptByShowNote`, which read as a wall of the
  *  same red sentence. The mark and tint track the inherited fate (green spare, red reap) so the
  *  banner never disagrees with the scores beneath it. Shown only when `show_override` is set. */
-function ShowInheritBanner({ override }: { override: Override }) {
+function ShowInheritBanner({
+  override,
+  reapReach,
+}: {
+  override: Override;
+  reapReach: "all" | "some" | "none";
+}) {
   const reap = override === "reap";
   return (
     <div className={`show-inherit ${reap ? "show-inherit-reap" : "show-inherit-spare"}`}>
@@ -1345,10 +1377,25 @@ function ShowInheritBanner({ override }: { override: Override }) {
       </span>
       <span>
         {reap ? (
-          <>
-            <b>The whole show is set to reap.</b> Every season below is removed unless you spare it
-            here.
-          </>
+          // The header must not assert removal the engine can't honor: with every inherited reap
+          // held, the seasons are kept; with a mix, only some go (rule 61). The per-row chips
+          // still mark each held season, so this just stops the header contradicting them (U-2).
+          reapReach === "none" ? (
+            <>
+              <b>The whole show is set to reap.</b> The reap is noted, but the seasons are kept for
+              now.
+            </>
+          ) : reapReach === "some" ? (
+            <>
+              <b>The whole show is set to reap.</b> Reaper removes the seasons it can, unless you
+              spare them here. The rest are kept for now.
+            </>
+          ) : (
+            <>
+              <b>The whole show is set to reap.</b> Every season below is removed unless you spare
+              it here.
+            </>
+          )
         ) : (
           <>
             <b>The whole show is spared.</b> Every season below is kept unless you reap it here.
@@ -1452,7 +1499,9 @@ function SeasonList({
   const showOverride = data.show_override;
   return (
     <>
-      {showOverride && <ShowInheritBanner override={showOverride} />}
+      {showOverride && (
+        <ShowInheritBanner override={showOverride} reapReach={showReapReach(data.seasons)} />
+      )}
       <ul
         className="season-list"
         style={
@@ -1836,6 +1885,7 @@ export function ReviewQueue({
   selectedGroupKey,
   onSelect,
   onSelectGroup,
+  onClearItemSelection,
   stepRef,
   latestScanSnapshotId = null,
 }: {
@@ -1845,6 +1895,9 @@ export function ReviewQueue({
   selectedGroupKey: string | null;
   onSelect: (id: number) => void;
   onSelectGroup: (key: string) => void;
+  /** Close an open why-panel. Called from Show latest, whose new snapshot makes the panel's
+   *  candidate id stale (B-7). Optional so the queue still renders without the app shell. */
+  onClearItemSelection?: () => void;
   /** Filled in with a way to move the open card one place up or down this list, for the
    *  keyboard review loop. The queue owns the order, so it owns the walk. */
   stepRef?: RefObject<((delta: 1 | -1) => void) | null>;
@@ -1925,8 +1978,15 @@ export function ReviewQueue({
     setBulkFailures(0);
   }, [verdict, search, filters]);
 
-  const { data: pages, isPending, error, hasNextPage, isFetchingNextPage, fetchNextPage } =
-    useInfiniteQuery({
+  const {
+    data: pages,
+    isPending,
+    error,
+    isFetching,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  } = useInfiniteQuery({
       queryKey: ["candidates", verdict, search, filters],
       queryFn: ({ pageParam }) =>
         api.candidates(
@@ -2069,12 +2129,16 @@ export function ReviewQueue({
   // --- Keeping the list in step with the latest scan ------------------------------------------
   // A scan finishing while this queue is open leaves it showing an older snapshot. Pull the
   // whole review surface to the newest one -- the list, the tab counts, the freshness line, an
-  // open show, the reap breakdown -- in the one place that names every review cache, the same
-  // way an override does. Any of these landing the newer snapshot clears the nudge on its own.
+  // open why or show panel, the reap breakdown -- in the one place that names every review
+  // cache, the same way an override does. Any of these landing the newer snapshot clears the
+  // nudge on its own. `["candidate"]` is here so the claim above is true and a stale why-panel
+  // refetches; the panel itself is also closed in showLatest, since its id is snapshot-bound
+  // and a refetch of the old id can only return a stale row (B-7).
   const queryClient = useQueryClient();
   const refreshReview = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["candidates"] });
     void queryClient.invalidateQueries({ queryKey: ["candidates-unfiltered"] });
+    void queryClient.invalidateQueries({ queryKey: ["candidate"] });
     void queryClient.invalidateQueries({ queryKey: ["group"] });
     void queryClient.invalidateQueries({ queryKey: ["snapshot"] });
     void queryClient.invalidateQueries({ queryKey: ["reap-breakdown"] });
@@ -2094,12 +2158,13 @@ export function ReviewQueue({
   // A quiet refresh still says so. When a newer scan lands while the reviewer is idle at the
   // top, the list swaps under them; a brief toast confirms it moved to the newest scan, so the
   // numbers never change with no acknowledgment. It is the silent path's only signal -- the
-  // nudge covers the mid-review one. A tick re-arms the fade on every refresh, then it clears.
+  // nudge covers the mid-review one. Fired only once the swap has actually landed (the freshness
+  // hook's caught-up callback), never at issuance, so a failed refetch can never claim it
+  // (PR-5, rule 85). A tick re-arms the fade each time, then it clears.
   const [toastTick, setToastTick] = useState(0);
   const [toastOn, setToastOn] = useState(false);
   const onSilentRefresh = useCallback(() => {
     refreshReview();
-    setToastTick((n) => n + 1);
   }, [refreshReview]);
   useEffect(() => {
     if (toastTick === 0) return;
@@ -2112,8 +2177,16 @@ export function ReviewQueue({
     latestSnapshotId: latestScanSnapshotId,
     isBusy,
     onSilentRefresh,
+    // A silent refresh whose refetch settles without catching up surfaces the nudge instead of a
+    // phantom toast, so the list is never left silently stale (PR-5).
+    refreshFetching: isFetching,
+    onSilentCaughtUp: () => setToastTick((n) => n + 1),
   });
   const showLatest = () => {
+    // Close an open why-panel first: its candidate id is from the snapshot being replaced, so a
+    // refetch could only return a stale row. The show panel is keyed on a stable group key and
+    // refreshes in place, so only the item selection is cleared (B-7).
+    onClearItemSelection?.();
     refreshReview();
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   };

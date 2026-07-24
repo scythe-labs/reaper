@@ -7,6 +7,7 @@ import { api, ApiError, type AuthUser, type Snapshot, type Verdict } from "./api
 import { BackNavProvider, useBackGuard, useBackNav } from "./backnav";
 import { Fairness } from "./components/Fairness";
 import { Login } from "./components/Login";
+import { ModalShell } from "./components/ModalShell";
 import { NotInScanPanel } from "./components/NotInScanPanel";
 import { PolicyEditor, type PolicySectionId } from "./components/PolicyEditor";
 import { ReapConfirm } from "./components/ReapConfirm";
@@ -188,9 +189,32 @@ function ReapBar({ onView }: { onView: (runId: number) => void }) {
  *  then hands it to the same ReapConfirm the review queue uses, which re-attaches to the live
  *  status and shows progress or the finished report. */
 function ReapSheetLoader({ runId, onClose }: { runId: number; onClose: () => void }) {
-  const { data: run } = useQuery({ queryKey: ["run", runId], queryFn: () => api.run(runId) });
-  if (!run) return null;
-  return <ReapConfirm run={run} onClose={onClose} />;
+  const {
+    data: run,
+    isPending,
+    error,
+  } = useQuery({ queryKey: ["run", runId], queryFn: () => api.run(runId) });
+  if (run) return <ReapConfirm run={run} onClose={onClose} />;
+  // Never render nothing here. This sheet is the app-wide reap bar's View, and the query
+  // defaults to one retry with no refetch-on-focus, so a failed fetch settles in error and a
+  // null render would leave the View button dead forever. Worse, useBackGuard keys on
+  // reapSheetRun, not this render, so a Back press would silently close an invisible sheet. Show
+  // a loading line or a plain error, both with ModalShell's own working close (PR-1, rule 36).
+  return (
+    <ModalShell title="Reap report" onClose={onClose}>
+      <div className="service-form">
+        {isPending ? (
+          <p className="help">Loading the reap…</p>
+        ) : (
+          <p className="notice notice-error">
+            {error instanceof ApiError && error.status === 404
+              ? "That reap is no longer available."
+              : "Reaper couldn't load this reap. Reload the page to try again."}
+          </p>
+        )}
+      </div>
+    </ModalShell>
+  );
 }
 
 /** A slim freshness line on the Review screen: when the queue was last built, and a loud
@@ -544,7 +568,11 @@ function Dashboard({ user }: { user: AuthUser }) {
   // The board report, for the "not in the last scan" panel. Same query key as the Fairness
   // list, so React Query serves it from one fetch -- no second network call. Only fetched on
   // the Scales screen, where the list already needs it.
-  const { data: fairnessReport } = useQuery({
+  const {
+    data: fairnessReport,
+    isPending: fairnessPending,
+    isError: fairnessError,
+  } = useQuery({
     queryKey: ["fairness"],
     queryFn: api.fairness,
     enabled: view === "fairness",
@@ -619,9 +647,12 @@ function Dashboard({ user }: { user: AuthUser }) {
                 // A plain tab visit must not replay an old cross-page jump.
                 setPolicyFocus(null);
                 setSettingsFocus(null);
-                // Leaving Scales (or re-entering it) closes any open person panel, so the
-                // split view never lingers on a tab that has no panel to show.
+                // Leaving Scales (or re-entering it) closes any open Scales panel, so the
+                // split view never lingers on a tab that has no panel to show. Both the person
+                // panel and the "not in the last scan" panel are cleared, matching the
+                // mutual-exclusion pairing the open handlers use (U-5).
                 setScalesUser(null);
+                setScalesUnmatched(false);
                 changeView(n.id);
               }}
             >
@@ -661,6 +692,13 @@ function Dashboard({ user }: { user: AuthUser }) {
               selectedGroupKey={selectedGroupKey}
               onSelect={(id) => setSelected({ kind: "item", id })}
               onSelectGroup={(key) => setSelected({ kind: "group", key })}
+              // Show latest closes an open why-panel: its candidate id belongs to the OLD
+              // snapshot, so a refetch could only return a stale row. The show panel is keyed on
+              // a stable group key and refreshes in place, so only the item selection is cleared
+              // (B-7).
+              onClearItemSelection={() =>
+                setSelected((s) => (s?.kind === "item" ? null : s))
+              }
               stepRef={stepRef}
               // The newest completed scan, from the shell's status poll. When it moves past
               // the snapshot the queue is showing, the queue offers (or quietly takes) the
@@ -721,6 +759,8 @@ function Dashboard({ user }: { user: AuthUser }) {
             {scalesUnmatched && (
               <NotInScanPanel
                 items={fairnessReport?.unmatched ?? []}
+                isPending={fairnessPending}
+                error={fairnessError}
                 onClose={() => setScalesUnmatched(false)}
               />
             )}

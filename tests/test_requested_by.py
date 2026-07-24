@@ -265,6 +265,57 @@ class TestBuildMapRatingKey:
         assert not any(k.startswith("plex:rk:") for k in result)
 
 
+class _PlexAwareSeerr(_FakeSeerr):
+    """A fake Seerr that also answers ``plex_machine_id`` -- for the I-3 namespace guard."""
+
+    def __init__(self, requests: list[MediaRequest], machine_id: str | None) -> None:
+        super().__init__(requests)
+        self._machine_id = machine_id
+
+    async def plex_machine_id(self) -> str | None:
+        return self._machine_id
+
+
+class TestBuildMapRatingKeyNamespace:
+    """I-3: the rating-key tier is filed only when the portal is on the SAME Plex as Reaper.
+    Rating keys are unique per server, so a portal on a different Plex would file keys that
+    collide with Reaper's candidates and name a requester on an unrelated item."""
+
+    async def test_a_matching_portal_still_files_the_rating_key(self) -> None:
+        seerr = _PlexAwareSeerr(
+            [_req(media_type="movie", tmdb_id=603, plex_rating_key="100")], machine_id="SAME"
+        )
+        result = await requested_by.build_map([_src(seerr)], reaper_plex_machine_id="SAME")
+        assert result[requested_by.rating_key_key("100")] == "Alice"
+
+    async def test_a_foreign_portal_skips_the_rating_key_but_keeps_the_loose_union(self) -> None:
+        seerr = _PlexAwareSeerr(
+            [_req(media_type="movie", tmdb_id=603, plex_rating_key="100")], machine_id="OTHER"
+        )
+        result = await requested_by.build_map([_src(seerr)], reaper_plex_machine_id="SAME")
+        # The colliding rating-key tier is dropped; the server-agnostic tmdb union survives.
+        assert not any(k.startswith("plex:rk:") for k in result)
+        assert result[requested_by.movie_key(603)] == "Alice"
+
+    async def test_an_unknown_reaper_id_keeps_todays_behavior(self) -> None:
+        # No Reaper machine id (no Plex, or unreadable): the tier is filed exactly as before,
+        # and the portal's own machine id is never even read.
+        seerr = _PlexAwareSeerr(
+            [_req(media_type="movie", tmdb_id=603, plex_rating_key="100")], machine_id="OTHER"
+        )
+        result = await requested_by.build_map([_src(seerr)], reaper_plex_machine_id=None)
+        assert result[requested_by.rating_key_key("100")] == "Alice"
+
+    async def test_an_unknown_portal_id_keeps_the_tier(self) -> None:
+        # Reaper's id is known, but the portal's /settings/plex could not be read (None): keep
+        # the tier rather than dropping a requester on an unproven mismatch.
+        seerr = _PlexAwareSeerr(
+            [_req(media_type="movie", tmdb_id=603, plex_rating_key="100")], machine_id=None
+        )
+        result = await requested_by.build_map([_src(seerr)], reaper_plex_machine_id="SAME")
+        assert result[requested_by.rating_key_key("100")] == "Alice"
+
+
 class TestRequestIndex:
     """The three-state fact index -- the fail-closed side, used to score, not to display."""
 

@@ -241,7 +241,7 @@ async def sync_section(
                     rating_keys=collection_plan.to_remove,
                 )
             if label_plan.to_remove:
-                await plex.remove_label(section_title, label_plan.to_remove, LEAVING_SOON_LABEL)
+                await plex.remove_label(section_key, label_plan.to_remove, LEAVING_SOON_LABEL)
             if collection_plan.to_add:
                 if collection_key is None:
                     # No collection (never had one, or the clear above dropped it): Plex
@@ -256,7 +256,7 @@ async def sync_section(
                 else:
                     await plex.add_to_collection(collection_key, collection_plan.to_add)
             if label_plan.to_add:
-                await plex.add_label(section_title, label_plan.to_add, LEAVING_SOON_LABEL)
+                await plex.add_label(section_key, label_plan.to_add, LEAVING_SOON_LABEL)
 
     # A section whose shelf already matches is APPLIED when writing was allowed: there
     # was nothing to write and nothing failed. Only a preview (apply=False) reports

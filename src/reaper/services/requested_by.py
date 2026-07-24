@@ -106,11 +106,12 @@ def rating_key_key(rating_key: object) -> str | None:
     level -- equals Reaper's ``plex_rating_key`` for the same item on the same Plex server, so a
     portal that scans only its own library gives per-copy attribution with no operator setup.
     It can only mis-point when a portal scans SEVERAL libraries and Overseerr's one non-4K slot
-    kept a different copy; the operator's service map (the precise tier) overrides those. Assumes
-    the portal shares Reaper's Plex server -- rating keys are unique per server, not across them,
-    so a portal pointed at a *different* Plex could collide (rare, display-only, and the reason
-    this sits above only the tmdb/tvdb union, never above the declared map). Takes ``object`` so
-    a Seerr string and a Reaper int normalize to the one text form."""
+    kept a different copy; the operator's service map (the precise tier) overrides those. Rating
+    keys are unique per Plex server, not across them, so a portal pointed at a *different* Plex
+    could collide -- which is why :func:`build_map` files this tier only when the portal's
+    ``/settings/plex`` machine id matches Reaper's (or one of the two is unknown, keeping today's
+    behavior); it always sits above only the tmdb/tvdb union, never above the declared map. Takes
+    ``object`` so a Seerr string and a Reaper int normalize to the one text form."""
     if rating_key is None:
         return None
     text = str(rating_key).strip()
@@ -142,7 +143,9 @@ async def _merge_requests(
     return merged, all_ok
 
 
-async def build_map(sources: Sequence[SeerrSource]) -> dict[str, str]:
+async def build_map(
+    sources: Sequence[SeerrSource], *, reaper_plex_machine_id: str | None = None
+) -> dict[str, str]:
     """Build ``key -> requester name`` from every available request, across *every* Seerr.
 
     Each request is filed under up to **three** kinds of key, and callers read them best-first:
@@ -155,7 +158,13 @@ async def build_map(sources: Sequence[SeerrSource]) -> dict[str, str]:
     2. A **rating-key** key -- the request's Plex ``ratingKey`` (:func:`rating_key_key`). Zero
        setup, and copy-true whenever a portal scans only its own library; it can mis-point only
        when a portal scans several libraries (Overseerr's one non-4K slot then kept a different
-       copy), which is exactly what tier 1 overrides.
+       copy), which is exactly what tier 1 overrides. Filed only when the portal is synced to the
+       SAME Plex as Reaper: rating keys are unique per server, so a portal on a different Plex
+       would file keys that numerically collide with Reaper's candidates (I-3). ``reaper_plex_
+       machine_id`` is Reaper's own server id; when it is known, each portal's ``/settings/plex``
+       machine id is read once and the tier is skipped for a portal that disagrees. Unknown on
+       either side keeps the tier (today's behavior); tmdb/tvdb below are server-agnostic and
+       always filed.
     3. The **loose** key -- tmdb (movie) or tvdb (show/season). Always, as the last fallback, so a
        request the first two cannot place still names everyone who asked for the title.
 
@@ -186,11 +195,24 @@ async def build_map(sources: Sequence[SeerrSource]) -> dict[str, str]:
             continue
         request_count += len(requests)
         service_map = source.service_instance_map
+        # I-3: file the rating-key tier only when this portal is on the SAME Plex as Reaper. The
+        # portal's machine id is read once (only bothered with when Reaper's own id is known, so
+        # a no-Plex deployment pays nothing); unknown on either side, or a match, files the tier.
+        portal_machine = (
+            await source.client.plex_machine_id() if reaper_plex_machine_id is not None else None
+        )
+        rating_keys_align = (
+            reaper_plex_machine_id is None
+            or portal_machine is None
+            or portal_machine == reaper_plex_machine_id
+        )
         for req in requests:
             name = _name(req.requester.display_name, req.requester.username)
             # Tier 2, zero-config: the request's own Plex rating key. Filed for both media types
-            # (Seerr stores a show's at the show level, which is what season lookups match on).
-            add(rating_key_key(req.plex_rating_key), name)
+            # (Seerr stores a show's at the show level, which is what season lookups match on),
+            # and only when this portal shares Reaper's Plex server (rating_keys_align, I-3).
+            if rating_keys_align:
+                add(rating_key_key(req.plex_rating_key), name)
             # The Reaper instance this request's *arr service adds to, if the operator mapped it.
             # Seerr numbers Sonarr and Radarr services in SEPARATE lists (both start at 0), so the
             # serviceId is unique only within its kind -- the map is keyed by "{kind}:{serviceId}",

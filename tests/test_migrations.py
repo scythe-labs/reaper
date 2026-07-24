@@ -190,6 +190,60 @@ def _held_back_default(engine: Engine) -> object:
     return col["default"]
 
 
+def _instance_has_import_exclusion(engine: Engine) -> bool:
+    return any(c["name"] == "add_import_exclusion" for c in inspect(engine).get_columns("instance"))
+
+
+# The add_import_exclusion migration and the revision just before it. A database created fresh
+# during the ~30-minute window when this column briefly lived in the frozen baseline already
+# carries it, so the additive migration's add_column must be guarded, not plain (B-8, rule 81).
+_BEFORE_IMPORT_EXCLUSION = "1f2a3b4c5d6e"
+_IMPORT_EXCLUSION = "2b3c4d5e6f70"
+
+
+def test_add_import_exclusion_upgrades_an_in_window_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A database that already has the column upgrades instead of boot-looping.
+
+    Build the schema up to the revision before the add, then simulate the in-window database by
+    adding ``add_import_exclusion`` by hand -- exactly the shape a fresh install got during the
+    ~30 minutes the column lived in the baseline. Upgrading to head must skip the add (the
+    reflection guard) rather than raise "duplicate column name", which would refuse every boot.
+    """
+    config = _alembic_config(tmp_path, monkeypatch)
+    command.upgrade(config, _BEFORE_IMPORT_EXCLUSION)
+    engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+
+    assert _instance_has_import_exclusion(engine) is False  # the reverted baseline lacks it
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE instance ADD COLUMN add_import_exclusion BOOLEAN NOT NULL DEFAULT 0")
+        )
+    assert _instance_has_import_exclusion(engine) is True  # the in-window shape
+
+    # Upgrading over the already-present column must not raise; the guard skips the add.
+    command.upgrade(config, "head")
+    assert _instance_has_import_exclusion(engine) is True
+
+    engine.dispose()
+
+
+def test_add_import_exclusion_still_adds_the_column_when_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The normal path is untouched: a database without the column still gets it."""
+    config = _alembic_config(tmp_path, monkeypatch)
+    command.upgrade(config, _BEFORE_IMPORT_EXCLUSION)
+    engine = create_engine(f"sqlite:///{tmp_path / 'reaper.db'}")
+    assert _instance_has_import_exclusion(engine) is False
+
+    command.upgrade(config, _IMPORT_EXCLUSION)
+    assert _instance_has_import_exclusion(engine) is True
+
+    engine.dispose()
+
+
 def test_heal_migration_relaxes_old_not_null_size_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

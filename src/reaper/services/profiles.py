@@ -56,7 +56,7 @@ class ActiveProfile:
     survive), a full fall-back replaces every value -- and the defaults can be *looser* than
     what they saved: a grace of 30 becomes 14 (items become deletable 16 days early), a run
     cap of 5 becomes 10. So this is surfaced on the settings page and degrades the scan,
-    exactly the way ``ActivePolicy.fell_back`` is, never a silent log line (rule 14)."""
+    exactly the way ``ActivePolicy.fell_back`` is, never a silent log line (rule 65)."""
 
     @property
     def repaired(self) -> bool:
@@ -120,7 +120,7 @@ async def active_profile_settings(session: AsyncSession) -> ProfileSettings:
 
     Every reader that just needs the numbers calls this. The scan and the settings GET call
     :func:`active_profile` instead, to also learn whether the stored blob had to be
-    recovered (which they surface and degrade on -- rule 14)."""
+    recovered (which they surface and degrade on -- rule 65)."""
     return (await active_profile(session)).settings
 
 

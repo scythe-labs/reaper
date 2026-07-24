@@ -14,8 +14,9 @@
 //      marking the root inert would mark the modal inert with it.
 //
 // Closing is routed through one `canClose` guard, so a modal that must stay open (the
-// reap sheet while a real reap is in flight) refuses the scrim, the ✕ and Escape by
-// stating that once.
+// schedule editor while a save is in flight) refuses the scrim, the ✕ and Escape by
+// stating that once. The reap sheet is deliberately NOT a canClose user: since the reap
+// went detached the run carries on in the ReapBar, so its sheet closes freely mid-run.
 //
 // One exception, named here so it cannot go quiet: the login screen's local-account sheet
 // (LocalSheet in Login.tsx) keeps its own markup, because it stays mounted and slides up

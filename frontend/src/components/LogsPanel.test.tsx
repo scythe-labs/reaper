@@ -21,6 +21,7 @@ function page(seq: number) {
   return {
     level: "INFO",
     last_seq: seq,
+    files_kept: 3,
     lines: [{ seq, ts: "2026-01-01T00:00:00+00:00", level: "INFO", text: "a line" }],
   };
 }
@@ -87,5 +88,11 @@ describe("LogsPanel", () => {
     const { person } = renderPanel();
     await person.click(screen.getByRole("button", { name: /download logs/i }));
     expect(await screen.findByText(/the download didn't start/i)).toBeInTheDocument();
+  });
+
+  it("renders the retention count from the server, not a hardcoded number (I-6)", async () => {
+    apiMock.logs.mockResolvedValue(page(1)); // files_kept: 3
+    renderPanel();
+    expect(await screen.findByText(/keeps the newest 3 files/i)).toBeInTheDocument();
   });
 });

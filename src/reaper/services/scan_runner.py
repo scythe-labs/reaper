@@ -570,7 +570,7 @@ async def _run_scan_locked(
         # unreadable, the run is holding the shipped defaults, which can be LOOSER than what
         # the operator saved (a shorter grace, a higher cap). A run must never execute against
         # limits nobody saved, so degrade until they re-save (profiles.ActiveProfile.fell_back,
-        # rule 14).
+        # rule 65).
         if active_profile.fell_back:
             pre_scan_degradations.append(
                 "your caps and grace need saving again before anything can be removed: open "
@@ -628,6 +628,15 @@ async def _run_scan_locked(
                     f"Plex unreachable: {exc}. The 'Never Reap' collection could not be "
                     "refreshed, so no reap may run against a keep-list we could not confirm"
                 )
+        # Reaper's own Plex server id, read off the connection we already opened (no extra
+        # round-trip). It lets the requested-by map skip a portal synced to a DIFFERENT Plex,
+        # whose rating keys would collide with Reaper's candidates (I-3). None when Plex is
+        # absent or unreachable, which keeps the rating-key tier's current behavior.
+        reaper_plex_machine_id: str | None = None
+        if plex_server is not None:
+            _mid = getattr(plex_server, "machineIdentifier", None)
+            reaper_plex_machine_id = str(_mid) if _mid else None
+
         # Three independent reads, overlapped: the protection-list refresh (the *arr tag
         # sweeps, the Plex collection, the Top 250 mirror), the "requested by" display map,
         # and the requested-or-not scoring index (the two Seerr reads walk different
@@ -653,7 +662,7 @@ async def _run_scan_locked(
             # mapped the Seerr service, else by tmdb/tvdb. Merged across every Seerr. Optional
             # and soft: no Seerr, or any unreachable one, just leaves those requests off the
             # map, never a failed scan.
-            requested_by.build_map(seerrs),
+            requested_by.build_map(seerrs, reaper_plex_machine_id=reaper_plex_machine_id),
             # A separate three-state index used as a scoring FACT (was this requested?),
             # built from every request in every Seerr and fail-closed to Unknown when ANY
             # Seerr can't be read -- distinct from the display map above, which is

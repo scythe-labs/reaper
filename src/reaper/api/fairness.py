@@ -43,6 +43,17 @@ from reaper.services import fairness
 router = APIRouter(prefix="/api")
 
 
+def _request_cache(request: Request) -> fairness.RequestCache:
+    """The one short-TTL request cache the board and the drawer share, lazily created on
+    ``app.state`` (P-1). One per app, so a fresh test app starts with an empty cache and the
+    board's read is reused by a drawer opened seconds later, never re-paging every portal."""
+    cache = getattr(request.app.state, "fairness_request_cache", None)
+    if cache is None:
+        cache = fairness.RequestCache()
+        request.app.state.fairness_request_cache = cache
+    return cache
+
+
 def _unmatched_out(u: fairness.UnmatchedTitle) -> UnmatchedRequestOut:
     """Map one not-in-scan title to its wire shape, dropping the internal join keys (tmdb id,
     portal) so no id ever reaches the UI."""
@@ -121,6 +132,7 @@ async def get_fairness(request: Request) -> FairnessReportOut:
                 session_factory=request.app.state.session_factory,
                 seerrs=seerrs,
                 cache_engine=request.app.state.cache_engine,
+                cache=_request_cache(request),
             )
     except IntegrationError as exc:
         # Any unreachable Seerr is a 502 with the reason -- never a partial leaderboard that
@@ -183,6 +195,7 @@ async def get_person(request: Request, identity: str) -> PersonDetailOut:
                 seerrs=seerrs,
                 cache_engine=request.app.state.cache_engine,
                 identity=identity,
+                cache=_request_cache(request),
             )
     except IntegrationError as exc:
         raise HTTPException(502, f"Could not build Scales: {exc}") from exc

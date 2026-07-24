@@ -92,15 +92,16 @@ function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Ca
   });
 }
 
-/** One page of candidates, with `total` deciding whether another page is claimed to exist. */
-function page(items: Candidate[], total = items.length, offset = 0) {
+/** One page of candidates, with `total` deciding whether another page is claimed to exist and
+ *  `snapshotId` naming which scan the page came from (so a refetch can land a newer one). */
+function page(items: Candidate[], total = items.length, offset = 0, snapshotId = 1) {
   return {
     items,
     total,
     totalBytes: items.reduce((sum, i) => sum + (i.size_bytes ?? 0), 0),
     unknownSize: items.reduce((n, i) => n + (i.size_bytes === null ? 1 : 0), 0),
     offset,
-    snapshotId: 1,
+    snapshotId,
   };
 }
 
@@ -180,16 +181,58 @@ beforeEach(() => {
 });
 
 describe("keeping the list in step with the latest scan", () => {
-  it("confirms a quiet refresh with a toast when a newer scan lands while idle", async () => {
-    // This view is snapshot 1; the newest completed scan is snapshot 2, so the list is a scan
-    // behind. Idle at the top (jsdom scrollY 0, nothing open or selected): it refreshes quietly
-    // and a toast says so, rather than swapping the numbers with no acknowledgment.
-    apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)]));
+  it("confirms a quiet refresh with a toast only once the swap has landed", async () => {
+    // This view loads snapshot 1; the newest completed scan is snapshot 2, so the list is a scan
+    // behind. Idle at the top (jsdom scrollY 0, nothing open or selected): it refreshes quietly,
+    // the refetch lands snapshot 2, and only THEN does a toast say so -- never at issuance (PR-5).
+    apiMock.candidates
+      .mockResolvedValueOnce(page([movie(1), movie(2)], 2, 0, 1))
+      .mockResolvedValue(page([movie(1), movie(2)], 2, 0, 2));
     renderQueue("condemn", 2);
     expect(await screen.findByText("Updated to the latest scan.")).toBeInTheDocument();
     // Quiet means quiet: no mid-review nudge, no "one scan behind" marker.
     expect(screen.queryByText("A newer scan just finished")).not.toBeInTheDocument();
     expect(screen.queryByText(/One scan behind/)).not.toBeInTheDocument();
+  });
+
+  it("does not claim a swap when the refetch fails to catch up; it nudges instead", async () => {
+    // The list is a scan behind and the reviewer is idle, so a silent refresh is attempted -- but
+    // the refetch errors, so the list never reaches snapshot 2. The toast must not lie that it
+    // did; a nudge appears so the reviewer is not left silently stale (PR-5).
+    apiMock.candidates
+      .mockResolvedValueOnce(page([movie(1), movie(2)], 2, 0, 1))
+      .mockRejectedValue(new Error("network blip"));
+    renderQueue("condemn", 2);
+    expect(await screen.findByText(/A newer scan just finished|One scan behind/)).toBeInTheDocument();
+    expect(screen.queryByText("Updated to the latest scan.")).not.toBeInTheDocument();
+  });
+
+  it("Show latest closes an open why-panel, whose row belongs to the replaced scan", async () => {
+    // A panel open is a busy condition, so a newer scan raises the nudge instead of swapping
+    // quietly. Pressing Show latest must close the panel: its candidate id is from the old
+    // snapshot, so keeping it open would leave the operator deciding from stale evidence (B-7).
+    const onClearItemSelection = vi.fn();
+    apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)], 2, 0, 1));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ReviewQueue
+          verdict="condemn"
+          onVerdictChange={() => {}}
+          selectedId={1}
+          selectedGroupKey={null}
+          onSelect={() => {}}
+          onSelectGroup={() => {}}
+          onClearItemSelection={onClearItemSelection}
+          latestScanSnapshotId={2}
+        />
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Show latest" }));
+    expect(onClearItemSelection).toHaveBeenCalledTimes(1);
   });
 });
 

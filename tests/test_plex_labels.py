@@ -113,8 +113,11 @@ class TestAddLabelBatchesReads:
     async def test_one_multi_id_read_and_one_edit_per_chunk(self) -> None:
         keys = list(range(1, 251))  # 250 items -> chunks of 100, 100, 50
         server = _FakeLabelServer({k: _Item(k, ["Favorite"]) for k in keys})
-        await _client(server).add_label("Movies", keys, "Leaving Soon")
+        await _client(server).add_label(7, keys, "Leaving Soon")
 
+        # The section is resolved by key, never by title (rule 57): two libraries can share a
+        # title and the title lookup returns only the last match.
+        assert server.section_ids == [7]
         # Reads are batched: three multi-id GETs (one per chunk), never one per item.
         assert [len(f) for f in server.fetches] == [BATCH_SIZE, BATCH_SIZE, 50]
         # One additive label edit per chunk, over exactly that chunk's items.
@@ -124,7 +127,7 @@ class TestAddLabelBatchesReads:
     async def test_it_skips_items_the_read_no_longer_returns(self) -> None:
         # 2 was deleted from Plex after the scan; the read returns 1 and 3 only.
         server = _FakeLabelServer({1: _Item(1, []), 3: _Item(3, [])})
-        await _client(server).add_label("Movies", [1, 2, 3], "Leaving Soon")
+        await _client(server).add_label(7, [1, 2, 3], "Leaving Soon")
         assert server.fetches == [[1, 2, 3]]
         # The edit covers only the items that came back -- a since-deleted item is skipped,
         # never a failed reconcile.
@@ -132,7 +135,7 @@ class TestAddLabelBatchesReads:
 
     async def test_no_keys_touches_plex_at_all(self) -> None:
         server = _FakeLabelServer({})
-        await _client(server).add_label("Movies", [], "Leaving Soon")
+        await _client(server).add_label(7, [], "Leaving Soon")
         assert server.fetches == [] and server.edits == []
 
 
@@ -145,8 +148,10 @@ class TestRemoveLabelBatchesReads:
                 3: _Item(3, ["leaving soon"]),  # carries a stale lower-cased spelling
             }
         )
-        await _client(server).remove_label("Movies", [1, 2, 3], "Leaving Soon")
+        await _client(server).remove_label(7, [1, 2, 3], "Leaving Soon")
 
+        # The section is resolved by key, never by title (rule 57).
+        assert server.section_ids == [7]
         # One multi-id read for the chunk, never one fetch + reload per item.
         assert server.fetches == [[1, 2, 3]]
         # Item 2 is never edited. Removal targets each item's STORED spelling (case-correct
@@ -160,7 +165,7 @@ class TestRemoveLabelBatchesReads:
     async def test_reads_batch_per_chunk(self) -> None:
         keys = list(range(1, 151))  # 150 items -> chunks of 100, 50
         server = _FakeLabelServer({k: _Item(k, ["Leaving Soon"]) for k in keys})
-        await _client(server).remove_label("Movies", keys, "Leaving Soon")
+        await _client(server).remove_label(7, keys, "Leaving Soon")
         assert [len(f) for f in server.fetches] == [BATCH_SIZE, 50]
         # One remove edit per chunk (all one spelling), over that chunk's items.
         assert [(op, tag, len(k)) for op, tag, k in server.edits] == [

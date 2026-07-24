@@ -162,6 +162,17 @@ describe("ServiceModal external URL", () => {
     // A blank value clears the stored one back to null, so links fall back to base_url.
     expect(body.external_url).toBe("");
   });
+
+  it("blocks the save and shows an error when the external URL is not a web address", async () => {
+    // S-5: a scheme-less paste is caught before save (mirroring the server's 422), so the value
+    // is never sent to be stored verbatim.
+    renderModal(sonarr({ external_url: null }), []);
+    await userEvent.type(screen.getByLabelText("External URL"), "tv.example.com:8989");
+
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(/must be a full web address/i)).toBeInTheDocument();
+    expect(apiMock.updateInstance).not.toHaveBeenCalled();
+  });
 });
 
 const ARR_INSTANCES: Instance[] = [

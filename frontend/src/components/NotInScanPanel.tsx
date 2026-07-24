@@ -13,9 +13,16 @@ import { UnmatchedList } from "./UnmatchedList";
 
 export function NotInScanPanel({
   items,
+  isPending = false,
+  error = false,
   onClose,
 }: {
   items: UnmatchedRequest[];
+  // This panel is always-visible once opened, so a bare items array is not enough: a pending or
+  // failed report must read as "we could not look," never collapse to the empty all-clear below
+  // (rules 17/36). The caller passes the query's own loading and error state.
+  isPending?: boolean;
+  error?: boolean;
   onClose: () => void;
 }) {
   // Escape closes, matching the why-panel; a modal, if one is up, owns the key first.
@@ -40,19 +47,34 @@ export function NotInScanPanel({
           titles === 1 ? "title" : "titles"
         } the last scan didn't include.`;
 
+  const sub = isPending
+    ? "Checking the last scan…"
+    : error
+      ? "Couldn't check the last scan."
+      : items.length === 0
+        ? "Nothing was left out."
+        : `${lead} Here is each one, and why.`;
+
   return (
     <aside className="why">
       <header className="why-head">
         <div>
           <h2>Not in the last scan</h2>
-          <p className="why-sub muted">{lead} Here is each one, and why.</p>
+          <p className="why-sub muted">{sub}</p>
         </div>
         <button className="ghost why-close" onClick={onClose} aria-label="Close">
           ✕
         </button>
       </header>
 
-      {items.length === 0 ? (
+      {isPending ? (
+        <p className="scales-foot muted">Loading…</p>
+      ) : error ? (
+        <p className="notice notice-error">
+          Reaper couldn't read the last scan, so it can't say which requests were left out. Reload
+          the page to try again.
+        </p>
+      ) : items.length === 0 ? (
         <p className="scales-foot">Every available request is in the last scan.</p>
       ) : (
         <div className="block">

@@ -729,6 +729,16 @@ async def scan(
     # from scratch, re-entering the reap flow on a fresh grace window (record_first_flagged_bulk
     # below). Live consumers keep an expired spare in force until this runs, failing to keep.
     override_map = await whitelist.overrides_effective_at(session, now)
+    # Realize the expiry durably: `overrides_effective_at` dropped expired spares from the map
+    # above (the read half), so delete their rows now in this same transaction (the write half)
+    # -- otherwise every live consumer that reads `whitelist.overrides()` (planner, executor,
+    # grace, review queue) keeps the expired spare in force forever and the item dead-ends,
+    # unplannable and un-executable (rule 70). Same `now`, so the two halves agree exactly; the
+    # re-condemned item earns a fresh grace clock from record_first_flagged_bulk below because
+    # its old clock was deleted when the spare was set. Count only in the log -- no title/key.
+    expired_spares = await whitelist.purge_expired_spares(session, now)
+    if expired_spares:
+        log.info("scan.spares_expired", snapshot=snapshot.id, count=len(expired_spares))
     condemned = 0
     total = len(items) + len(season_judgments)
 

@@ -115,11 +115,11 @@ class _FakePlex:
         self.calls.append(("collection_delete", collection_key))
         self.collections.pop(collection_key - 9000, None)
 
-    async def add_label(self, section_title: str, rating_keys: list[int], label: str) -> None:
+    async def add_label(self, section_key: int, rating_keys: list[int], label: str) -> None:
         self.calls.append(("label_add", tuple(rating_keys)))
-        self.labeled.setdefault(0, set()).update(rating_keys)
+        self.labeled.setdefault(section_key, set()).update(rating_keys)
 
-    async def remove_label(self, section_title: str, rating_keys: list[int], label: str) -> None:
+    async def remove_label(self, section_key: int, rating_keys: list[int], label: str) -> None:
         self.calls.append(("label_remove", tuple(rating_keys)))
 
 

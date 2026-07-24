@@ -34,8 +34,16 @@ export function useReviewFreshness(opts: {
   isBusy: () => boolean;
   /** Pull the latest snapshot into the view (invalidate the review queries). */
   onSilentRefresh: () => void;
+  /** Whether the review list is fetching right now. React Query keeps the old data on a refetch
+   *  error, so error flags stay clear; a fetch that went and settled while the list is still
+   *  behind is how we tell a failed silent refresh from one still in flight, so the hook can
+   *  nudge instead of leaving the list silently stale (PR-5). */
+  refreshFetching?: boolean;
+  /** Fired once when a SILENT refresh's swap has actually landed (behind -> caught up), so the
+   *  caller confirms it (a toast) only after it happened, never at issuance (rule 85). */
+  onSilentCaughtUp?: () => void;
 }): ReviewFreshness {
-  const { viewSnapshotId, latestSnapshotId } = opts;
+  const { viewSnapshotId, latestSnapshotId, refreshFetching = false } = opts;
   const behind =
     latestSnapshotId !== null &&
     viewSnapshotId !== null &&
@@ -51,12 +59,26 @@ export function useReviewFreshness(opts: {
   busyRef.current = opts.isBusy;
   const refreshRef = useRef(opts.onSilentRefresh);
   refreshRef.current = opts.onSilentRefresh;
+  const caughtUpRef = useRef(opts.onSilentCaughtUp);
+  caughtUpRef.current = opts.onSilentCaughtUp;
   // The scan we have already acted on, so we decide exactly once per newer snapshot.
   const handled = useRef<number | null>(null);
+  // A silent refresh is in flight and its swap has not landed yet: we still owe either a
+  // caught-up confirmation (behind -> false) or, if its refetch settles without catching up,
+  // a raised nudge. `sawFetch` records that the refetch actually started, so the settle check
+  // below can't misfire in the gap between issuing the refresh and the fetch beginning.
+  const awaitingSilent = useRef(false);
+  const sawFetch = useRef(false);
 
   useEffect(() => {
     if (!behind) {
-      // The list caught up (any refetch to the latest snapshot). Reset for the next scan.
+      // The list caught up (any refetch to the latest snapshot). If a silent refresh was waiting
+      // on exactly this, confirm the swap now -- only now (rule 85). Then reset for the next scan.
+      if (awaitingSilent.current) {
+        awaitingSilent.current = false;
+        sawFetch.current = false;
+        caughtUpRef.current?.();
+      }
       setNudging(false);
       setDismissed(false);
       handled.current = null;
@@ -67,9 +89,27 @@ export function useReviewFreshness(opts: {
     if (busyRef.current()) {
       setNudging(true);
     } else {
+      awaitingSilent.current = true;
+      sawFetch.current = false;
       refreshRef.current();
     }
   }, [behind, latestSnapshotId]);
+
+  // A silent refresh whose refetch went and finished while the list is STILL behind never caught
+  // up (a network blip): raise the nudge rather than leave the list silently stale -- the
+  // reviewer is idle, so the bar is theirs to act on (PR-5).
+  useEffect(() => {
+    if (!awaitingSilent.current) return;
+    if (refreshFetching) {
+      sawFetch.current = true;
+      return;
+    }
+    if (sawFetch.current && behind) {
+      awaitingSilent.current = false;
+      sawFetch.current = false;
+      setNudging(true);
+    }
+  }, [refreshFetching, behind]);
 
   return {
     showBar: nudging && behind && !dismissed,

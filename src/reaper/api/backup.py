@@ -30,12 +30,13 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from starlette.background import BackgroundTask
 
 from reaper.api.auth import _client_ip, _throttled
 from reaper.auth.ratelimit import argon2_gate, password_throttle
 from reaper.buildinfo import build_version
 from reaper.config import Settings
-from reaper.secrets import key_file_path
+from reaper.secrets import env_key_active, key_file_path
 from reaper.services import admin_password, app_settings, backup, restore
 
 log = structlog.get_logger(__name__)
@@ -71,10 +72,13 @@ class RestoreSummaryOut(BaseModel):
     verdict: str
     key_in_backup: bool
     reaper_db_bytes: int
+    token: str
+    """Handed back at confirm time so the arm binds to the exact backup reviewed here."""
 
 
 class RestoreConfirmIn(BaseModel):
     password: str | None = None
+    token: str | None = None
 
 
 def _settings(request: Request) -> Settings:
@@ -97,10 +101,22 @@ async def backup_info(request: Request) -> BackupInfoOut:
     return BackupInfoOut(
         reaper_db_bytes=backup.db_size_on_disk(settings.data_dir / "reaper.db"),
         last_backup_at=last,
-        key_in_backup=key_file_path(settings).is_file(),
+        # Self-sufficiency follows runtime precedence, not file existence: an env-supplied
+        # key wins over any lingering secret.key, so it is not what a backup would bundle
+        # (rule 76). Matches backup._build_into's key_included.
+        key_in_backup=key_file_path(settings).is_file() and not env_key_active(settings),
         app_version=build_version(),
         restore_armed=restore.is_armed(settings),
     )
+
+
+async def _record_backup_taken(request: Request, created_at: str) -> None:
+    """Record when a backup was secured. Runs as the response's background task, after the
+    last byte is sent, so a download that dies mid-stream never claims a copy exists that
+    the operator does not have (rule 85, I-2)."""
+    async with _factory(request)() as session:
+        await app_settings.set_last_backup_at(session, created_at)
+        await session.commit()
 
 
 @router.get("/download")
@@ -109,33 +125,35 @@ async def download_backup(request: Request) -> StreamingResponse:
     settings = _settings(request)
     archive = await backup.create_backup(settings)
 
-    # Record the moment the operator secured a copy, so the panel can say "last backup".
-    # Written before streaming: the file is built and about to leave, and a dropped
-    # connection mid-stream does not make the copy they asked for un-taken.
-    async with _factory(request)() as session:
-        await app_settings.set_last_backup_at(session, archive.created_at)
-        await session.commit()
+    # From here to the returned response, any failure would strand the finished archive
+    # (its cleanup lives in the stream generator's finally, which never runs if we never
+    # return the response), so clean it up and re-raise (PR-3).
+    try:
+        size = archive.path.stat().st_size
 
-    size = archive.path.stat().st_size
+        def body() -> Iterator[bytes]:
+            try:
+                with archive.path.open("rb") as handle:
+                    while chunk := handle.read(backup.DOWNLOAD_CHUNK):
+                        yield chunk
+            finally:
+                backup.cleanup(archive)
 
-    def body() -> Iterator[bytes]:
-        try:
-            with archive.path.open("rb") as handle:
-                while chunk := handle.read(backup.DOWNLOAD_CHUNK):
-                    yield chunk
-        finally:
-            backup.cleanup(archive)
-
-    log.info("backup.downloaded", revision=archive.revision, bytes=size)
-    return StreamingResponse(
-        body(),
-        media_type="application/gzip",
-        headers={
-            "Content-Disposition": f'attachment; filename="{archive.filename}"',
-            "Content-Length": str(size),
-            "X-Content-Type-Options": "nosniff",
-        },
-    )
+        log.info("backup.downloaded", revision=archive.revision, bytes=size)
+        return StreamingResponse(
+            body(),
+            media_type="application/gzip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{archive.filename}"',
+                "Content-Length": str(size),
+                "X-Content-Type-Options": "nosniff",
+            },
+            # Records "last backup" only after the stream completes, never before (I-2).
+            background=BackgroundTask(_record_backup_taken, request, archive.created_at),
+        )
+    except BaseException:
+        backup.cleanup(archive)
+        raise
 
 
 async def _spool_body(request: Request, settings: Settings) -> Path:
@@ -146,7 +164,7 @@ async def _spool_body(request: Request, settings: Settings) -> Path:
     a runaway upload is refused rather than filling the disk. The caller removes the file.
     """
     settings.ensure_data_dir()
-    fd, name = tempfile.mkstemp(prefix=".restore-upload-", dir=settings.data_dir)
+    fd, name = tempfile.mkstemp(prefix=backup.RESTORE_UPLOAD_PREFIX, dir=settings.data_dir)
     path = Path(name)
     total = 0
     try:
@@ -190,6 +208,7 @@ async def restore_prepare(request: Request) -> RestoreSummaryOut:
         verdict=summary.verdict,
         key_in_backup=summary.key_in_backup,
         reaper_db_bytes=summary.reaper_db_bytes,
+        token=summary.token,
     )
 
 
@@ -199,9 +218,11 @@ async def restore_confirm(request: Request, payload: RestoreConfirmIn) -> dict[s
 
     Gated exactly like arming deletion (:func:`reaper.api.settings.set_safety`): the
     same per-IP and per-account lockout and Argon2 concurrency gate, because a restore is
-    as consequential as arming and its confirm is a password-guessing surface too. On
-    success the staged database is forced read-only and the swap is armed; the operator
-    restarts the container to finish.
+    as consequential as arming and its confirm is a password-guessing surface too. The
+    ``token`` from the prepare summary binds this confirm to the exact backup reviewed, so
+    a backup swapped in by another session since cannot be armed by this password (rule 73).
+    On success the staged database is forced read-only, its inherited sessions are cleared,
+    and the swap is armed; the operator restarts the container to finish.
     """
     settings = _settings(request)
     keys = (f"ip:{_client_ip(request)}", "account:restore")
@@ -230,7 +251,7 @@ async def restore_confirm(request: Request, payload: RestoreConfirmIn) -> dict[s
             password_throttle.record_success(key)
 
     try:
-        await asyncio.to_thread(restore.arm, settings)
+        await asyncio.to_thread(restore.arm, settings, payload.token)
     except restore.RestoreError as exc:
         raise HTTPException(exc.status, str(exc)) from exc
     log.warning("restore.confirmed")

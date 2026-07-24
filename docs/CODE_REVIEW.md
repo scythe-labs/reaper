@@ -1,874 +1,830 @@
-# Diff review — `dev`, changes since `4478aa7`, 2026-07-21
+# Diff review — `dev`, changes since `80d19f5` (fourth pass), 2026-07-23
 
-> **Resolution (branch `worktree-unraid-auto-perms`).** All 43 findings below are addressed:
-> the three highs (B-1, B-2, B-3), the thirteen mediums, and the twenty-seven lows, each with
-> a regression test where one was missing. The safety-path fixes carry the most: the Scales
-> tmdb namespace (B-1), the season-sweep complete-or-raise pagination (B-4), the
-> collection-detach spelling/section keying (B-5/B-13), the `ensure_schema` TOCTOU (B-6), and
-> the profile-fallback degradation (PR-1). CI gates are green on this branch — `ruff`,
-> `ruff format`, `mypy`, pytest, `eslint`, vitest, `tsc` + `vite build`, and `alembic upgrade
-> head` + `alembic check`. **`docker build` was again not run** (no Docker daemon on this
-> machine); run it before release. The findings text is preserved below as the record.
+> **Scope.** Everything since the third review pass's findings doc landed: the reviewed
+> range is `80d19f5..cea72d1` (87 commits, 188 files, +21.5k / −2.6k lines), which
+> includes the third pass's own fix commits and the 78 commits after the resolution
+> closed at `741105c` (2026-07-21). The
+> range covers: the httpx → httpx2 client migration
+> (BaseClient/GuardedTransport and Discord); backup-and-restore to one portable file; the
+> in-app docs system with the safety-flow pages; the Seerr multi-portal / Scales drawer
+> work (per-portal requester keying, kind+id service maps, the rating-key tier, root-folder
+> → library mapping); timed spares; the operator-set scheduler time zone; rotating file
+> logs with download; per-item scan decision logging; browser Back navigation; fail-closed
+> hard-gate protection sync; and the review-queue freshness work. This is a *diff* review,
+> not a whole-codebase pass; the third diff review (dev @ `4478aa7` scope, 2026-07-21) is
+> preserved in this file's git history.
 >
-> **Scope.** The 16 commits and 84 files changed since `4478aa7` (the Jobs rebuild with
-> per-job schedules, the switchable per-run caps and the caps matrix, the Reap-page
-> breakdown, the Scales rebuild, the review-queue action-grammar pass across three
-> commits, the Deep brand mark, and the four scan-perf commits: instrumentation, the
-> paged season sweep, concurrent Leaving Soon reconciles, and batched shelf writes).
-> This is a *diff* review, not a whole-codebase pass; the previous diff review (dev @
-> `f750744`, 2026-07-19) is preserved in this file's git history.
+> **Method.** Nine scoped reviewer passes (clients/httpx2, backup/restore, scan pipeline,
+> deletion path, platform/migrations, Seerr/Scales, review-queue frontend, frontend shell
+> + docs, logging), each reviewing its group across all eight categories and required to
+> verify every candidate against the working tree before reporting. Every critical, high,
+> and medium candidate was then adversarially re-verified by an independent pass told to
+> refute it: **0 were refuted**, 3 were rescoped to narrower claims, and the rest were
+> confirmed with the failing path traced end to end. Two findings were discovered
+> independently by two reviewers working from different directions (the timed-spare expiry
+> root cause, and the external-URL validation gap) — those are merged below, which is as
+> confirmed as it gets here. After merges: **36 findings — 0 critical, 2 high, 11 medium,
+> 23 low.** The two highs share a single root cause (timed-spare expiry is never made
+> durable) and one fix closes both.
 >
-> **Method.** Seven scoped reviewer passes (one per file group: Plex client + Leaving
-> Soon, scan pipeline, jobs/scheduler/settings, caps/policy/executor, breakdown +
-> Scales, review queue + overrides, brand/shell/CSS), each reviewing its group across
-> all eight categories below and required to verify every candidate against the working
-> tree before reporting — one reviewer confirmed its finding with a live vitest probe.
-> The three high findings and four of the mediums were then re-verified independently
-> against the tree; one high was re-scoped after the re-check refuted its broadest
-> claim (the startup ratings catch-up *does* have a freshness guard; the finding
-> survives in narrowed form as B-3). One bug (B-4) was found independently by two
-> reviewers working from different directions, which is as confirmed as it gets here.
-> Duplicates merged: **43 findings: 0 critical, 3 high, 13 medium, 27 low.**
->
-> **CI gates on this tree:** `ruff`, `ruff format`, `mypy` (91 files), pytest (1736),
-> `eslint`, vitest (145), `tsc` + `vite build`, and `alembic upgrade head` + `alembic
-> check` are all green. `docker build` was **not** run (no Docker daemon on the review
-> machine) — run it before release. Nothing below is caught by the gates.
->
-> Reviewer verification notes worth keeping (things checked and found *correct*): the
-> caps-off switch still enforces the unknown-size allowance; the confirmation phrase
-> still derives from the exact effective set; the three override views
-> (`override`/`override_own`/`show_override`) are built once server-side and every
-> surface lights controls from own decisions and colors from effective ones;
-> `showReapIsNoop`/`groupReapEffective` take whole-show season sets on every lane;
-> `_sync_grace_clocks` runs on all four mutation routes with the rule-4 semantics;
-> `handFate` is the single fate router and the dashed-red classes win by declaration
-> order; the `_watch_stats` single-query rewrite is semantically identical to the three
-> queries it replaced; the phase-band change cannot strand a landed snapshot; GracePanel
-> left no dangling references; the new breakdown/fairness routers sit behind the `/api`
-> auth middleware; `api.ts` types match the changed backend schemas exactly; and the
-> pre-paint favicon script validates stored data before applying it.
+> **CI gates on this tree (`cea72d1`):** `ruff`, `ruff format --check`, `mypy src/reaper`,
+> pytest (1976 passed), `eslint`, vitest, `tsc` + `vite build`, and `alembic upgrade head`
+> + `alembic check` are all green. `docker build` is CI-only per policy and was not run
+> locally. One environment note: a stale local venv reproduces 92 collection errors
+> (`fixture 'httpx2_mock' not found`) until `uv sync --extra dev` is re-run — the
+> `pytest-httpx2` plugin is correctly declared and locked, and CI's
+> `uv sync --frozen --extra dev` installs it, so this is a developer-machine footgun, not
+> a repo defect. Nothing below is caught by the gates.
 
 ---
 
 ## 1. Bugs
 
-### B-1 · Scales binds TMDB ids without a movie/tv namespace — **high**
+### B-1 · An expired timed spare never leaves the live override set, so the item can never actually be reaped — **high**
 
-`src/reaper/services/fairness.py:128` (`_content_key`), `:152-156` (`by_tmdb`), `:185`
+`src/reaper/services/whitelist.py:86` (`overrides_effective_at`), `src/reaper/services/snapshot.py:731`,
+`src/reaper/services/planner.py:348`, `src/reaper/services/executor.py:742` / `:1107`,
+`src/reaper/services/grace.py:101`, `src/reaper/api/routes.py:274`
 
-TMDB movie ids and TMDB TV ids are separate, numerically overlapping id spaces. Movie
-candidates store Radarr's movie-namespace `tmdbId`; season candidates store Sonarr's
-TV-namespace series `tmdbId`. The rewritten roll-up keys a request as bare
-`("tmdb", id)` ignoring `MediaRequest.media_type`, and indexes candidates by the raw
-integer ignoring `CandidateInfo.media_type`. A TV request whose show has TMDB TV id N
-binds to any movie candidate with TMDB movie id N: the requester is charged that
-movie's size as "granted", and if it is condemned their card shows a reclaimable chip
-naming the wrong title and opening the wrong review card. The rest of the codebase
-disambiguates exactly this (`membership_index` lookups pass `media_type`); the roll-up
-does not (rules 6/29). The IMDb fallback is safe (globally unique); only the tmdb
-branch collides.
+Found independently by two reviewers. The scan judges candidates through
+`overrides_effective_at(session, now)`, which drops an expired spare so the item is
+re-condemned — but that realization exists only in the scan's in-memory map. Nothing ever
+deletes or invalidates the `WhitelistEntry` row (the only delete path is the operator's
+explicit clear), and every live consumer reads `overrides()`, which returns the expired
+row forever: the planner drops the item from every plan, the executor vetoes it at send,
+the grace report and Leaving Soon exclude it, and the queue still shows it spared (chip
+reads "expired"). Concrete failure: spare a condemned title for 7 days; after day 7 the
+next scan re-condemns it, yet it is permanently unplannable and un-executable until the
+operator manually clears the stale spare. The docstrings on `WhitelistEntry.spare_expires_at`,
+`overrides()`, and the snapshot call site all promise a re-entry that is never implemented
+(rules 7/24), and no live consumer handles the expired state at all (rule 23). Direction
+is fail-toward-keeping, so no data loss — but the feature dead-ends for every operator who
+uses it.
 
-**Fix.** Namespace the key by media kind on both sides — `("tmdb-movie", id)` for a
-movie request/candidate, `("tmdb-tv", id)` for a TV request / season candidate — in
-both `_content_key` and the `by_tmdb` index. Add a collision test with a movie and a
-season sharing one numeric id.
+**Fix:** realize expiry durably in the scan transaction: after
+`override_map = await whitelist.overrides_effective_at(session, now)`, delete the spare
+rows the read dropped (`decision == "spare" AND spare_expires_at <= now`, same `now`) in
+the same session the snapshot commits (e.g. a new `whitelist.purge_expired_spares`). The
+live map (planner, executor, grace, routes) then converges the moment the snapshot lands,
+and `record_first_flagged_bulk` already writes the fresh grace clock. Update the
+docstrings to match, and add a test asserting that after a realizing scan the item is
+plannable and appears in the grace report.
 
-### B-2 · Intent band and simulator still claim per-run caps while caps are off — **high**
+### B-2 · The grace window is silently spent while an expired spare still protects; clearing the stale spare lands the item on "ready" with no countdown — **high**
 
-`frontend/src/components/PolicyEditor.tsx:1658` (`paceClause`),
-`frontend/src/components/PolicySimulator.tsx:200`
+`src/reaper/api/whitelist.py:91` (`_sync_grace_clocks`), `src/reaper/services/snapshot.py:1232` (`_apply_first_flag`)
 
-`paceClause` renders "removes at most N titles or X per run" with no check of
-`pace.caps_enabled`, and the simulator's Outcome pace note does the same. When the
-operator uses the flow this range explicitly advertises ("Turn off for a big first
-cleanup"), the executor skips `_check_caps` and `_check_rolling_caps` entirely, yet the
-page's one-sentence policy summary still asserts a hard per-run bound — directly
-contradicting the caps-off warning rendered further down the same page. The comment
-above `paceClause` ("so it can never disagree with the controls below it") is now
-false; the copy claims a safeguard that is not in force (rules 7/24/25).
+The consequence of B-1, and a rule-4 violation in its own right. Setting a timed spare
+deletes the FirstFlagged clock. After expiry, every scan re-condemns the item and the
+first post-expiry scan recreates the clock, then each scan refreshes
+`last_seen_condemned_at` — while every live surface still treats the item as spared, so it
+is absent from the grace report and Leaving Soon and the window burns down invisibly.
+When the operator finally clears the expired spare (the only way to make the item
+reapable), `_apply_first_flag` sees a recent `last_seen_condemned_at` and does NOT restart
+the clock. Inputs: 7-day spare, daily scans, spare cleared 3 weeks after expiry with
+7-day grace → remaining = 0, the item is immediately "ready," and the household warning
+window never happened. Rule 50's promise ("re-enters on a FRESH window, never a spent
+one") is not honored on this path. Deletion still requires the armed host, plan, and
+phrase, so the loss is the warning window, not an unattended delete.
 
-**Fix.** Branch both strings on `pace.caps_enabled`: when off, say the run has no size
-limit until limits are turned back on (the grace clause still binds and stays). Pass
-`caps_enabled` through wherever the figures render.
+**Fix:** the B-1 root fix closes this (the clock and the item's visibility in grace start
+together once expiry is realized durably). Defense in depth regardless: when
+`_sync_grace_clocks` removes a spare override, delete the FirstFlagged row before calling
+`record_first_flagged_bulk`, so a cleared spare always re-enters on a fresh window.
 
-### B-3 · The ratings job's off switch does not govern the startup catch-up, and its warning misses the real consequence — **high**
+### B-3 · `library_guid_index` (and two twins) still page on the filtered child count, so the GUID sweep can silently return a partial map despite its complete-or-raise docstring — **medium**
 
-`frontend/src/components/Settings.tsx:698` (`offWarning`),
-`src/reaper/services/scheduler.py:297-307` (`catch_up_on_startup`),
-`src/reaper/main.py` (spawned unconditionally), `src/reaper/services/imdb_dataset.py:59`
+`src/reaper/clients/plex.py:574-585` (`library_guid_index`), `:717-722` (`labeled_in_section`), `:771-776` (`section_rating_keys`)
 
-The per-job off switch removes the cron job only. `catch_up_on_startup` never consults
-`get_maintenance_schedules`: it refreshes whenever the dataset is degraded (missing or
-past the 14-day `DEFAULT_MAX_AGE`). With the job off, the dataset inevitably passes 14
-days, after which (a) every snapshot degrades via `DatasetDegradedError`
-(`snapshot.py:615` — fail closed, so no run can start), and (b) every subsequent app
-restart downloads the full ~280 MB dataset anyway, despite "off". The modal's warning
-("With this off, scores keep using the ratings Reaper already has, and they slowly go
-out of date") describes neither outcome: scores do *not* keep using stale ratings past
-14 days — scans come back degraded and block runs — and downloads do not actually stop
-across restarts. Rules 7/24/25. (An earlier draft of this finding claimed the download
-runs on *every* restart; re-verification refuted that — the freshness guard is real,
-the off-switch bypass and the wrong warning are what remain.)
+The third pass's B-4 hardening (raw-count paging, totalSize authority, fail-closed raises)
+was applied only to `library_season_index`. `library_guid_index` — which WAS touched in
+this range (library-title stamping), triggering the previous review's own "apply to the
+twins when next touched" condition — still advances `start` by the ratingKey-filtered
+count, terminates on the filtered short page, and falls back `totalSize` → `size`
+(= the page size), which rule 56 explicitly forbids. Three silent-truncation paths, each
+ending a section early with a normal return: a child without a ratingKey in a full page;
+a server that clamps the container below the requested size (the documented-real case the
+season fix follows to the end); `totalSize` absent on a large section. The consumer
+(`services/library_index.py:93-100`) degrades the snapshot only on `PlexError`, so a
+silent partial map bypasses the un-executable degradation: items beyond the cut lose
+their id-tier identity and binding falls to basename/title matching, with wrong-bind and
+misjoined-watch-history risk — the exact fail-open the docstring's raise contract exists
+to prevent (rules 56, 7/24). `labeled_in_section` and `section_rating_keys` are
+byte-identical twins with a smaller blast radius (shelf reconcile scoping).
 
-**Fix.** Decide the contract and make code and copy match. Recommended: keep the
-startup catch-up (it prevents the degraded-forever state) and rewrite the warning to
-state the real consequences: after two weeks without a refresh, scans come back
-incomplete and no run can start, and Reaper will still refresh once at startup when the
-data is that old. Alternatively make `catch_up_on_startup` honor the stored off value
-and have the warning lead with the degradation.
+**Fix:** port the season sweep's paging verbatim to all three: page and terminate on the
+raw child count; raise `PlexError` on a child without a ratingKey, on a full page without
+`totalSize`, and on an empty page before `start` reaches `totalSize`; never fall back from
+`totalSize` to `size`. The consumers already handle `PlexError` by degrading, so raising
+is safe.
 
-### B-4 · `library_season_index` can silently return a partial map, violating its complete-or-raise contract — **medium** (found independently twice)
+### B-4 · Backup claims key_source "file" (and bundles a stale key) when the active key is the env key — **medium**
 
-`src/reaper/clients/plex.py:820, 844-852`; contract at `plex.py:798-800` and
-`src/reaper/services/season_scan.py:983-985`
+`src/reaper/services/backup.py:151` (`_build_sync`), `src/reaper/api/backup.py:100` (`backup_info`)
 
-The docstring ("Raises `PlexError` on any failure rather than returning a partial
-map") and the caller's load-bearing comment are what let the season scan skip
-degradation on sweep results. But the pagination advances and terminates on the
-*filtered* count: `elements` drops any child without a `ratingKey` (line 820), then
-`start += len(elements)` and `len(elements) < SWEEP_PAGE_SIZE` ends the section — so a
-full page containing even one dropped child silently truncates the rest of the
-section. Separately, `int(container.get("totalSize") or container.get("size") or 0)`
-falls back to the *page* size, so a server that omits `totalSize` (or clamps the
-container below the requested page size) truncates after page one. Both return a
-normal map, no raise. Shows entirely beyond the cut fall back safely to the per-show
-path, but a show *straddling* the cut is present in the sweep result and gets no
-fallback: its unswept seasons abstain (kept — fine), and a viewer whose newest watched
-season is among the unswept ones vanishes from `_progress_by_user`, so
-`sequential_protections` anchors them one season early and the season they are about
-to start loses its mid-binge protection — a narrow fail-open. Reachability requires an
-anomalous server response, but the code's own defensive filter treats that input as
-possible while the termination logic treats it as end-of-section; the defense and the
-paging math cannot both be right. (The same pattern pre-exists in
-`library_guid_index`, `labeled_in_section`, and `section_rating_keys`; this range
-added a fourth copy in the one function whose docstring promises completeness.)
+`_build_sync` sets `key_included = key_path.is_file()` and derives the manifest
+`key_source` from it; `backup_info` reports `key_in_backup` the same way. But
+`resolve_secret_key` gives `REAPER_SECRET_KEY` absolute precedence over the file, and the
+operator copy tells env-key users to delete the file — which can linger. Failure: operator
+runs with the env key set while an old `secret.key` file remains; the backup bundles the
+stale, inactive key and both the panel and the restore summary claim self-sufficiency
+(their env-key warnings stay hidden because `key_in_backup` is true). Restored onto a
+target without the env var, the stale bundled key is used and every stored credential
+silently fails to decrypt — despite the UI having said the key traveled inside.
 
-**Fix.** Advance `start` and test the short-page condition on the raw container child
-count, and treat a filtered-vs-raw mismatch (or an absent `totalSize` alongside a full
-page) as `PlexError`, so anomalies raise and every show falls back per show as the
-contract promises. Apply the same hardening to the three pre-existing twins when next
-touched.
+**Fix:** derive the key source from actual precedence: when `settings.secret_key` is set,
+write `key_source "env"` (omit the stale file or mark it inactive), and make
+`BackupInfoOut.key_in_backup` consult the same precedence so the panel and restore summary
+tell the operator the target still needs `REAPER_SECRET_KEY`.
 
-### B-5 · Collection detach removes by the constant name, not the stored spelling, so a case-variant shelf never shrinks — **medium**
+### B-5 · Scales counts hand-spared titles as reclaimable because it never consults overrides — **medium**
 
-`src/reaper/clients/plex.py:1065-1099` (`remove_collection_members`),
-`src/reaper/services/leaving_soon.py:230-235`
+`src/reaper/services/fairness.py:460` (`roll_up`), `:956` (`build_person_detail`)
 
-`find_collection` deliberately adopts a shelf collection whose title matches
-casefolded, so a collection stored as a case variant of the shelf name is treated as
-*the* shelf and its members are read. But the new partial-removal path issues
-`removeCollection(name)` — the tag-minus form — with the constant shelf name. The
-codebase's own live-verified doctrine for the identical mechanism says tag removal is
-case-sensitive: `remove_label` groups by "the exact spelling Plex stored" precisely
-because "a case-sensitive removal silently removes nothing", and the new docstring
-itself says "a collection is a tag". On a case-variant collection the detach returns
-200 and removes nothing: an item that left grace stays on the shelf indefinitely (the
-shelf over-claims — the exact dishonesty the "removals first" ordering exists to
-prevent), while `ShelfOutcome` reports `removed=N, applied=True`. Every pass recomputes
-the same removals and silently no-ops again; nothing converges. The full-clear path is
-immune (deletes by key). The test fake asserts the constant name, cementing the bug.
+Hand overrides live in the whitelist tables and are merged at review-queue read time;
+`Candidate.verdict` stays the frozen scan verdict. `fairness` never imports whitelist and
+gates "reclaimable" purely on `verdict == "condemn"`. State: operator hand-spares a
+scan-condemned title in Review, then opens Scales before the next scan → the title still
+counts in the board's reclaimable bytes/items and the drawer's fate ordering while Review
+and the Reap page show it kept. (Via B-1, an expired timed spare makes the disagreement
+permanent.) The symmetric hand-reap-on-abstain case disagrees the same way. Violates
+rule 61, and falsifies the module docstring's claim that "Scales can never disagree with
+Review" (rules 7/24). Read-only surface, no deletion impact.
 
-**Fix.** Mirror `remove_label`: the chunk's items come back from the multi-id metadata
-read already carrying their collection tags — group them by the exact stored spelling
-that casefold-matches the shelf name and issue `removeCollection` per spelling. Or have
-`find_collection` return the stored title and thread it through `sync_section`.
+**Fix:** load `whitelist.overrides(session)` in `_load_candidates`, carry the effective
+override on `CandidateInfo`, and exclude spare-overridden candidates from the reclaimable
+gate (optionally summarizing hand-reaped items separately). At minimum correct the
+docstring in the same change if override-awareness is deferred.
 
-### B-6 · `ensure_schema`'s check and DDL now run in separate transactions — a TOCTOU the old code did not have — **medium**
+### B-6 · Per-person disk attribution charges the whole show for a season-scoped request — **medium**
 
-`src/reaper/services/history_sync.py:211-226`
+`src/reaper/services/fairness.py:459` (`roll_up`), `:951-982` (`build_person_detail`)
 
-The perf change split `ensure_schema` into a read-connection shape check and a later
-write transaction that acts on the *stale* `cols`/`live` captured before the write
-lock was taken. The old code did check + DDL inside one `engine.begin()`, which SQLite
-serialized. Now two concurrent callers can both read "shape stale" before either
-commits, and the second executes `DROP TABLE watch_event` on the table the first just
-rebuilt. Concurrent callers are real: the scan pipeline, `GET /api/fairness`, and the
-scheduler's nightly sync all call it in the same process. The common interleaving is a
-benign double rebuild; in the worst one the second DROP lands after an in-flight sync
-has begun inserting pages, and since sync pages newest-first, the rows lost are the
-*newest* plays — evidence whose absence adds deletion pressure (fail-open) for one
-scan until the next sync's overlap re-fetches them. Only reachable on the one-time
-stale-shape rebuild path, hence medium.
+`roll_up` binds a TV request to every scanned season of the show via `_match_candidates`
+and never reads `req.seasons` (populated by the Seerr client and actively used by
+`requested_by` — the scope is available and simply ignored here). Inputs: person A
+requests one small season of a show whose other seasons pre-existed or were requested by
+others; output: A's row is granted the entire show's bytes, every condemned season counts
+in A's reclaimable figures, and the drawer's watched figure spans seasons A never asked
+for. On a board whose stated purpose is honest per-person attribution, the operator
+misjudges who is holding the disk. The only show-shaped test uses an empty `seasons`
+tuple, so partial-season scope (the default request shape in Seerr-family portals) is
+untested and unhandled.
 
-**Fix.** Keep the read-only fast path, but re-run `PRAGMA table_info(watch_event)`
-inside the `engine.begin()` block and decide DROP/CREATE from that fresh read,
-restoring the old atomicity.
+**Fix:** when `req.seasons` is non-empty, restrict the bound candidate set used for
+granted/reclaimable/watched to those season numbers (season number is recoverable from
+the candidate's media_key tail, or add it to `CandidateInfo`), keeping whole-show binding
+only for empty-seasons requests. Alternatively state title-level granularity in the
+drawer copy so the operator reads the number correctly.
 
-### B-7 · Enter/Space on a revealed Spare/Reap button never saves the override — **medium**
+### B-7 · `refreshReview` leaves an open why-panel showing the previous scan after "Show latest" — **medium**
 
-`frontend/src/components/ReviewQueue.tsx:1002` (row handler), `:423`
-(`OverrideControls`, the shared fix point)
+`frontend/src/components/ReviewQueue.tsx:2075` (`refreshReview`), `frontend/src/App.tsx:527`
 
-Every season row and card carries an `onKeyDown` that does `e.preventDefault();
-onOpen(...)` for Enter/Space with no target check. Keydown from the nested
-`OverrideControls` buttons bubbles into it, so the preventDefault cancels the button's
-native activation and the row opens the why-panel instead. Verified with a temporary
-vitest probe: focus the season row's Spare button, press Enter — the override API is
-called zero times and the panel opens once. The codebase already knows this hazard:
-`SeasonStrip` squares stop Enter/Space propagation for exactly this reason (lines
-877-881), but `OverrideControls` has no such guard. Partially pre-existing on cards,
-but this range's headline change ("every season is actable in place", rule 51) extended
-the broken keyboard path to every season row, and rule 46's contract explicitly
-includes keyboard-focus reveal. Feedback is visible (the button stays unlit), so no
-silent wrong deletion — but the advertised keyboard flow cannot spare or reap anything.
+`refreshReview` invalidates `["candidates"]`, `["candidates-unfiltered"]`, `["group"]`,
+`["snapshot"]`, `["reap-breakdown"]` but not `["candidate"]` (the open why-panel detail) —
+despite its comment claiming it "names every review cache, the same way an override does"
+(`useOverrideMutations.refresh` DOES invalidate `["candidate"]`). The nudge bar appears
+precisely when the reviewer is busy, and an open panel is a busy condition, so the primary
+path is: panel open → scan lands → "Show latest" → the list and tab counts move to the new
+snapshot while the open why-panel keeps the previous scan's score/verdict/reasoning beside
+them. Invalidation alone would not fix it: `selectedId` is the OLD snapshot's row id, so a
+refetch returns the same stale row. The operator can Spare/Reap from evidence one scan
+old. Violates rules 64 and 24.
 
-**Fix.** In `OverrideControls`, stop propagation of Enter/Space on the buttons
-(mirroring the strip-square guard), or guard every row/card key handler with
-`if (e.target !== e.currentTarget) return`. One change in the shared component fixes
-all surfaces.
+**Fix:** in `showLatest` (and the silent-refresh path), either close the open panel or
+re-resolve the selection to the new snapshot's row for the same media_key after the
+candidates refetch lands; also add `["candidate"]` to `refreshReview` so the comment's
+claim is true, or correct the comment if the panel is closed instead.
 
-### B-8 · The Reap page's unmeasured-items line contradicts the plan, in both allowance modes — **medium**
+### B-8 · Unguarded `add_column` fails with "duplicate column name" on a DB created during the in-range baseline-edit window — **low**
 
-`frontend/src/components/ReapBreakdown.tsx:157-162` (line), `:101-105` (headline),
-`:142-146` (ledger)
+`alembic/versions/20260721_2000_add_instance_import_exclusion.py:37`
 
-"N titles can't be measured, so Reaper won't remove them" renders unconditionally
-whenever `will_reap_unknown > 0`. With `max_unmeasured_per_run > 0` the planner admits
-unmeasured items into the plan, so the Reap page tells the operator these files are
-safe while the plan built directly below will delete them. The queue already solved
-this with `useHoldsBackUnmeasured()`, which this component does not consult.
-Conversely, under the default allowance of 0 the headline and "Will be reaped" row
-count `will_reap` *including* the unmeasured items the plan holds back, so the ledger
-total disagrees with the run's item count and the confirmation-phrase count shown on
-the same page (rule 30; `api/breakdown.py`'s docstring claims the numbers match the
-exact planned set, which the unmeasured tail breaks — rule 24).
+An in-range commit added `add_import_exclusion` to the frozen baseline IN PLACE (merged to
+dev), and a follow-up reverted the baseline and shipped the column as an additive revision
+about 30 minutes later. A database created fresh during that window has the column in its
+baseline-created `instance` table; the next `alembic upgrade head` runs the additive
+revision's plain `add_column` with no existence guard, SQLite raises "duplicate column
+name," and the container entrypoint (`set -eu` before `alembic upgrade head`) refuses to
+boot on every restart until the operator hand-stamps or rebuilds — exactly the rebuild the
+golden rule forbids. The sibling heal migration (`20260723_1000`, reflection-guarded
+`_column()` check) proves the project already knows the pattern. Exposed population is
+small (fresh dev-build DBs from one ~30-minute window), hence low — but the fix is
+trivial and safe for every path that already succeeded.
 
-**Fix.** Read `useHoldsBackUnmeasured()`: when true, keep the "won't remove them" line
-and subtract `will_reap_unknown` from the headline/ledger count (or annotate the
-total); when false, reword to say they are only removed within the unknown-size
-allowance. Test the allowance-on wording.
+**Fix:** add the heal migration's reflection guard to `20260721_2000`'s `upgrade()`: skip
+the `add_column` when the column already exists. Editing the shipped migration is safe;
+databases that already ran it never re-run it.
 
-### B-9 · All requesters without a Plex id merge into one row under the first person's name — **medium**
+### B-9 · `ensure_schema`'s "re-read inside the write transaction" holds no write lock; the comment claims a mechanism the code does not provide — **low** (rescoped)
 
-`src/reaper/services/fairness.py:171-181, 218-224`
+`src/reaper/services/history_sync.py:231`
 
-`rows` is keyed on `req.requester.plex_id`, which is `None` for Seerr local users not
-linked to Plex. Every such user collapses into a single row keyed `None`, named after
-whichever request came first; worse, the per-title `seen: set[int | None]` dedupe
-treats two distinct unlinked users as one person, so the second user's request of a
-shared title is dropped from their own tally entirely. Requests, granted disk, and
-reclaimable titles are misattributed to another person's name on a leaderboard the
-operator reads before a run (rule 6). A stable per-user id exists (`seerr_user_id`).
-The keying survived from the old code, but `roll_up` was fully rewritten in this range
-and re-chose it, still untested for the `None` case.
+The rule-58 fix re-reads `PRAGMA table_info` inside `async with engine.begin()` and
+comments "the read under the write lock is the authority" — but the engine has no
+`BEGIN IMMEDIATE` configured, and under pysqlite legacy transaction control the PRAGMA
+read and the DROP/CREATE DDL all run in autocommit with no write lock held, so the
+re-read gives no real mutual exclusion (rules 24/58). The adversarial pass refuted the
+original data-loss framing: the reachable race outcomes are a redundant double rebuild or
+a loud `no such table` OperationalError (fail-closed), and the nightly full sweep refills
+within a day regardless — so this survives as a false-comment/no-actual-lock defect, not
+a silent-partial-mirror bug.
 
-**Fix.** Key `rows` and the per-title `seen` set on `seerr_user_id` (always present),
-keeping `plex_id` only for the watch join. Add a test with two unlinked requesters.
+**Fix:** serialize the rebuild path behind a module-level `asyncio.Lock` (all racing
+callers share one process) or emit `BEGIN IMMEDIATE` for the block, and correct the
+comment to name the mechanism actually used.
 
-### B-10 · Presets stage cap values but not `caps_enabled`, so "Cautious" can leave an uncapped profile — **medium**
+### B-10 · The show-level rating-key tier outranks the season-precise key, blurring per-season attribution — **low**
 
-`frontend/src/components/PolicyEditor.tsx:69` (`PresetCaps`)
+`src/reaper/services/requested_by.py:193`, `src/reaper/services/season_scan.py:1461`
 
-`PresetCaps` picks only the five numeric keys and `applyPreset` merges only those. If
-the operator previously turned caps off and saved, clicking Cautious — whose help
-promises "removes less per run" — stages the values but leaves `caps_enabled: false`,
-and the save persists an unbounded profile. The validator accepts it (the invariant
-check is skipped while caps are off), and the intent band lies about the result (B-2
-compounds this). Every preset's pace promise implies enforcement.
+`build_map` files a TV request's Plex ratingKey (stored at the show level by the portal)
+into one `plex:rk:{show}` bucket for every requester of any season subset, and the season
+consumer ranks that tier above `season_key(tvdb, n)`. In the common zero-config case
+(one copy, portal sharing Reaper's Plex server): person A requests S1, person B requests
+S2 → every season row now reads "A + 1 other," where the season-key tier previously
+attributed S1 to A and S2 to B exactly. The rating-key commit silently traded season
+precision for copy precision on all TV rows. Display-only, but a visible regression for
+any multi-requester show.
 
-**Fix.** Add `caps_enabled: true` to `PresetCaps` and to each entry in `PRESETS`.
+**Fix:** for season rows, rank `season_key(tvdb, n)` above the show-level rating-key tier
+(keeping rating-key above `show_key` so copy precision still beats the whole-show union),
+or only file `plex:rk` for whole-show requests (`not req.seasons`).
 
-### B-11 · The static PNG favicon is declared after the SVG link, so the accent-following favicon can lose the tie-break — **medium**
+### B-11 · Browser Back bypasses the schedule modal's `canClose` guard while a save is in flight — **low**
 
-`frontend/index.html:8-9`
+`frontend/src/components/Settings.tsx:1549` (`useBackGuard`), `:1297` (`canClose`)
 
-The accent feature rewrites only the `#favicon` SVG link (the pre-paint script and
-`applyFavicon` in `accent.ts`). But line 9 declares a 32×32 PNG icon *after* the SVG
-link, and that PNG is baked at the default sky accent and never updated. Per the HTML
-spec, when multiple icons are equally appropriate the user agent uses the last one
-declared, and an exact-size PNG is a strong match (the SVG carries no `sizes`).
-Browsers resolving that way show the stale sky icon forever, silently defeating the
-feature the operator just configured. The standard pattern is raster fallback first,
-SVG last.
+`ScheduleModal` passes `canClose={!save.isPending}` so the scrim, Escape, and ✕ refuse to
+close during a save, but `JobsPanel`'s `useBackGuard(editing !== null, () => setEditing(null))`
+closes it unconditionally. Press Back while a save is pending: the modal is torn down, the
+mutation's error (which renders inside the modal) is never shown, and the operator cannot
+tell whether the schedule change stuck. The back layer silently bypasses the one close
+guard the modal declares.
 
-**Fix.** Swap the two lines so the SVG is declared last, and verify in a real browser
-session that changing the accent swaps the tab icon; optionally have `applyFavicon`
-also retarget or remove the PNG link once a data-URI icon is applied.
+**Fix:** gate the guard's close on the same condition (`if (!savePendingRef.current)
+setEditing(null)`), or thread a canClose-aware close through `useBackGuard` (re-park the
+sentinel when close refuses).
 
-### B-12 · `set_maintenance_schedule` is a read-modify-write of the whole overrides dict — **low**
+### B-12 · A stale parked sentinel survives a page reload, making the first Back press after reload a dead press — **low**
 
-`src/reaper/services/app_settings.py:297-302`
+`frontend/src/backnav.tsx:102`
 
-It reads the full `maintenance_schedules` JSON dict, mutates one key, and writes the
-whole dict back. Two overlapping saves for different jobs (two browser tabs, or a save
-racing startup) can both read the same base dict and last-write-wins the other's
-override away; the scheduler then disagrees with the stored state until restart, when
-the lost override silently reverts to its default.
+`history.pushState(SENTINEL, ...)` entries persist across a reload, but `parkedRef` resets
+to false and nothing at mount inspects `history.state`. Reload while any overlay/tab frame
+is open: the current entry is the sentinel; the first Back press pops to the identical URL
+beneath it and `onPop` finds no layers — one dead press, two to actually leave. Opening an
+overlay after the reload parks a second sentinel on top of the stale one, so dead presses
+accumulate.
 
-**Fix.** Scope the storage per job (one key per job id), or perform the merge in a
-single guarded UPDATE.
-
-### B-13 · Collection member removal regressed from key-addressed to title-addressed, breaking duplicate-titled libraries — **low** (fails closed)
-
-`src/reaper/clients/plex.py:1087-1092`
-
-The removed `remove_from_collection` addressed the collection by rating key, immune to
-section-title ambiguity. The replacement resolves the section via
-`server.library.section(section_title)`; plexapi documents that duplicate titles
-return the *last* match. With two libraries sharing a title (a common 4K/HD
-arrangement), the first twin's detach raises `BadRequest` at plexapi's item
-validation, so every partial detach in that library fails with a recorded
-`ShelfOutcome.error`, every pass, where the old key-addressed path worked. Fail-closed
-but persistent per-library breakage, and a rule 6 step backward on a path that
-previously had the stable identifier. (`add_label`/`remove_label` share the title
-addressing pre-range; only the collection path regressed here.)
-
-**Fix.** Pass `section_key` into `remove_collection_members` (`sync_section` has it)
-and resolve via `sectionByID`; consider the same for the label writers while there.
-
-### B-14 · One condemned candidate can count twice in `total_reclaimable_items` — **low**
-
-`src/reaper/services/fairness.py:196-199, 241-242`
-
-Requests carrying a tmdb id group under the tmdb key; requests for the same content
-carrying only an imdb id group under the imdb key. Both groups can bind the same
-candidates, and each adds its own content key to `reclaimable_content`, so the items
-total counts the title twice while the bytes total (deduped by candidate id) counts it
-once — the summary strip can disagree with itself.
-
-**Fix.** Dedupe the items total by candidate id, the way the bytes total already does.
-
----
+**Fix:** on `BackNavProvider` mount, check `history.state` for the sentinel marker and
+reconcile: `history.back()` with `selfPopRef` set (consume it), or
+`history.replaceState(null, "")` to neutralize it.
 
 ## 2. Hacks and workarounds
 
-### H-1 · `--btns` track widths hardcoded in TSX must silently stay in sync with three CSS values — **low**
-
-`frontend/src/components/ReviewQueue.tsx:987`; `frontend/src/index.css:4059, 4153, 4420`
-
-`SeasonList` sets `--btns` to `"11.8rem"` (two 5.75rem buttons plus a 0.3rem gap) or
-`"5.75rem"`. Those numbers derive from `.ov-btn { min-width: 5.75rem }`, the
-`.override-controls` gap, and the CSS fallback `var(--btns, 11.8rem)` — three
-declarations that nothing flags as coupled. A future button-width tweak drifts or
-clips the fixed columns rule 51 exists to keep straight.
-
-**Fix.** Define one `--ov-btn-w` custom property and derive all four sites from it
-(`min-width: var(--ov-btn-w)`; `--btns: calc(2 * var(--ov-btn-w) + 0.3rem)`), or at
-minimum cross-comment both files.
-
----
+None found. The nine passes specifically looked for guard bypasses, non-standard
+patterns, and shortcut plumbing in this range; nothing rose to a finding. (The closest
+candidates — the deliberate `overrides()` behavior between scans, the sanctioned Discord
+webhook path, and the documented rating-key tier tradeoff — are all recorded as correct
+or as scoped findings above.)
 
 ## 3. Refactor opportunities
 
-### R-1 · Dead `["grace"]` query invalidation with a comment naming a removed surface — **low** (found independently twice)
-
-`frontend/src/components/PolicyEditor.tsx:1416`
-
-`savePace.onSuccess` still invalidates `["grace"]` under the comment "Reap's read-only
-grace countdown shows grace_days; keep it in step." This range replaced GracePanel
-with ReapBreakdown (query key `["reap-breakdown"]`) and removed `api.grace` entirely;
-no query registers under `["grace"]`, so the invalidation is a no-op and the comment
-names a mechanism that no longer exists (rule 24). Meanwhile a saved grace change does
-*not* invalidate `["reap-breakdown"]`, the surface that replaced it.
-
-**Fix.** Delete the invalidation and comment; if the breakdown should refresh on a
-grace change, invalidate `["reap-breakdown"]` instead.
-
-### R-2 · `/api/grace` route and its schemas are consumed by nothing — **low**
-
-`src/reaper/api/grace.py:33`; `src/reaper/api/schemas.py:685-700`
-
-`api.ts` dropped `api.grace` and the GracePanel UI is gone, but the backend keeps the
-route plus `GraceReportOut`/`GraceItemOut`. Nothing in the product calls it. Related:
-the `App.tsx:331` comment still says "The grace countdown and Scales list titles…" —
-the grace countdown surface no longer exists. Rule 38's spirit: dead safety-adjacent
-surface area is deleted, not stockpiled.
-
-**Fix.** Remove the route and both schemas (or fold what the breakdown still needs
-into `breakdown.py`), and reword the App.tsx comment to name only Scales.
-
-### R-3 · `searchFor` prop and its run-once effect are dead after App.tsx dropped the queue-search jump — **low**
-
-`frontend/src/components/ReviewQueue.tsx:1315-1363`
-
-This range removed `goToQueueSearch`/`queueSearch` from App.tsx (Scales now jumps by
-id via `onOpenItem`/`onOpenGroup`) and stopped passing `searchFor`. ReviewQueue still
-declares the prop, documents it, and carries the `handledSearch` ref and effect that no
-caller can trigger — dead plumbing on an already-large prop surface that invites a
-half-rewire later.
-
-**Fix.** Delete the prop, its doc comment, and the effect.
-
-### R-4 · `.fair-card` re-implements `.card`'s hover/selected/focus grammar declaration-for-declaration — **low**
-
-`frontend/src/index.css:2982-3018` (duplicating `:3536-3573`)
-
-The new Scales requester card copies the review-queue card's entire interaction
-grammar — transition triple, hover accent border and wash, focus ring, inset open bar,
-additive open+hover deepen — under new class names; the block's own comment admits it
-copies "the review queue's card language." This is the drift surface rule 18 exists
-for: a future card-hover tweak (rule 47 already forced one) now has to land twice.
-
-**Fix.** Extract a shared base (grouped selectors or one common class both surfaces
-apply) so the treatment is declared once.
-
-### R-5 · The frontend hardcodes the upkeep job list, making the `jobMeta` fallback unreachable — **low**
-
-`frontend/src/components/Settings.tsx:676, 1109-1112`
-
-`MAINTENANCE_IDS` duplicates the backend's job-id list and `JobsPanel` maps only those
-ids, dropping any job the server returns that is not in the hardcoded list. The
-`jobMeta` fallback written "so the lookup is total" can never fire because the filter
-runs first. A fourth upkeep job added server-side would silently not appear on the
-Jobs page.
-
-**Fix.** Render from `schedule.data.jobs` (filtering out the scan job), preserving the
-server's order, with the `jobMeta` fallback covering ids without copy.
-
-### R-6 · New season-row `hideReap` inlines `verdict === "condemn"` instead of the `isCondemned` helper — **low**
-
-`frontend/src/components/ReviewQueue.tsx:983, 1034`
-
-Rule 48 says never reimplement the already-condemned no-op test inline; `isCondemned`
-(line 608) is the one expression. The new per-row control passes
-`hideReap={season.verdict === "condemn"}` and computes `anyReapable` with the raw
-comparison. The semantics are correct (own verdict, per rule 51), but it is a fresh
-inline copy of the test the helper exists to centralize.
-
-**Fix.** Use `isCondemned` in both places.
-
----
+None meeting the bar this pass. The one meaningful duplication found (the three unhardened
+paging twins in `clients/plex.py`) is a correctness defect and is tracked as B-3; its fix
+should extract or mirror the hardened paging contract rather than hand-copying it a third
+time.
 
 ## 4. Performance
 
-### PF-1 · Hourly presets are offered for the ratings job, which does a full ~280 MB download per run — **medium**
+### P-1 · Every person-drawer open re-reads every Seerr portal in full and rebuilds the whole evidence index — **low**
 
-`frontend/src/components/Settings.tsx:730-738`;
-`src/reaper/services/imdb_dataset.py:308-311`
+`src/reaper/services/fairness.py:907` (`build_person_detail`)
 
-`maintenancePresets` is one shared list for all three upkeep jobs. For the ratings
-job, each run is a full download plus a multi-minute parse/load with no freshness
-check and no conditional GET — and the scheduler module's own docstring says the
-dataset publishes once a day and "there is no value in hammering it." An operator
-innocently picking "Every hour" gets roughly 24 full downloads a day for zero data
-benefit.
+`build_person_detail` re-pages all requests from every portal serially (one GET per 100
+rows per portal), rebuilds the watch-evidence index over every candidate rating key, and
+re-runs the user-list and quota reads — on each drawer click; `get_fairness` repeats the
+same work on every board load with no shared cache. With a few thousand requests across
+two portals, one click costs dozens of serial round-trips plus a burst of quota calls, so
+the drawer feels seconds-slow and hammers the portal.
 
-**Fix.** Per-job preset lists (ratings: Off / Every day only), or add a freshness
-short-circuit to `refresh_ratings` (skip when the last sync is within ~20 hours) so
-aggressive schedules are harmless. The short-circuit also softens B-3.
-
----
+**Fix:** add a short-TTL in-process cache for the merged request list (and optionally the
+evidence index) shared by `get_fairness` and `get_person`, or scope the drawer's evidence
+query to the target person's bound candidate keys; fetch portals concurrently since the
+reads are independent.
 
 ## 5. Production readiness
 
-### PR-1 · An unrepairable profile blob silently resets to defaults, which can loosen grace and caps versus what the operator saved — **medium**
+### PR-1 · `ReapSheetLoader` renders nothing forever on a failed run fetch, leaving the reap bar's View button dead — **medium**
 
-`src/reaper/services/profiles.py:84`
+`frontend/src/App.tsx:190`
 
-`active_profile_settings` now falls back: full parse, salvage-known-keys, then bare
-`ProfileSettings()` with only a warning log. The final step fires when a stored value
-no longer validates (exactly how the current `grace_days` floor came about). Defaults
-are cautious in absolute terms, but relative to the operator's saved values they can
-loosen the deletion path: a grace of 30 becomes 14 (items become deletable 16 days
-earlier than promised to users), a run cap of 5 becomes 10. The directly analogous
-`active_policy` recovery sets `fell_back`/`repaired`, degrades the scan, and shows a
-loud editor notice; this degradation is invisible — the settings page shows defaults
-as if chosen.
+`const { data: run } = useQuery(...); if (!run) return null;` with no error or pending
+state. Query defaults are one retry and no refetch-on-focus, so after one failed retry the
+query settles in error and the sheet renders null indefinitely — clicking "View report" on
+the app-wide reap bar visibly does nothing, ever. Worse, `useBackGuard(reapSheetRun !==
+null, ...)` keys on the state, not the render, so the next Back press is silently consumed
+closing an invisible sheet. This is the surface for inspecting what a reap actually
+deleted — a rule-36 recurrence on a safety surface (the sibling `ScanFreshness` component
+already models the required fallback pattern).
 
-**Fix.** Mirror the policy pattern: return a flag when the blob was unreadable,
-surface it on the profile GET so Pace shows a recovery notice, and have the scan treat
-it as a degradation the way a repaired policy is.
+**Fix:** destructure `isPending`/`error` and render a small fallback (loading line,
+plain-language error, working close button that calls `onClose`).
 
-### PR-2 · Held (refused) hand reaps are invisible in the reap ledger — **medium**
+### PR-2 · Steady-state log-file write failures are silent in-app, so the download serves a stale trail with no signal — **medium**
 
-`src/reaper/services/breakdown.py:149-153`;
-`frontend/src/components/ReapBreakdown.tsx:108-114, 132-137`
+`src/reaper/logbuffer.py:144` (`_FileSink.write`), `src/reaper/api/logs.py:83-100`
 
-`hand_reaped` counts only reaps `decide_verdict` honors. A hand reap the engine
-refuses (blocked evidence, structural gate) appears nowhere in the breakdown: an
-operator who marked five items sees "+ 3 marked to reap by hand" with no line
-explaining the other two. In the degenerate case (nothing condemned, all reaps held)
-the page says the last scan condemned nothing while Review shows the operator's asks
-dashed-red as held. Rule 23 requires every consumer of override states to enumerate
-them; this new consumer silently drops one. The counts beside the destructive action
-stay correct, so no wrong deletion — the ledger just under-reports the operator's own
-decisions without saying so.
+`configure_file_logging` catches `OSError` only at setup, and with `delay=True` the
+handler never touches disk at construction — so a volume that goes read-only after boot
+passes setup cleanly, and every subsequent mirror write fails inside
+`suppress(Exception)`. Nothing reaches the ring or the Logs tab. Failure: the data volume
+remounts read-only mid-run (common on small-board/NAS deployments after disk errors); the
+operator later clicks Download to attach logs to a bug report; `log_files()` still returns
+the old on-disk files, so the ring fallback never engages, and the download is a trail
+that silently ends at the remount while the Logs tab shows current lines. Contradicts the
+module docstring's "the files carry exactly what the UI shows" (rule 24).
 
-**Fix.** Also count reap decisions where `reap_is_effective` is false (the keys are
-already in `decisions`), return it as `hand_reaped_held`, and render one line ("N of
-your reap marks are held back for safety, see Review") when nonzero.
+**Fix:** replace `suppress(Exception)` with a one-shot degraded flag that emits a single
+warning through the ring; expose it (e.g. `logbuffer.file_sink_healthy()`) and have
+`download_logs` append the in-memory ring (or at least a marker line) when the sink is
+degraded, so the download is never silently stale.
 
-### PR-3 · The batch collection detach silently locks the collection field on every detached item — **low**
+### PR-3 · Backup temp dirs leak on failure and are never swept — **low**
 
-`src/reaper/clients/plex.py:1092`
+`src/reaper/services/backup.py:123`, `src/reaper/api/backup.py:110-119`
 
-plexapi's `removeCollection(name)` defaults `locked=True` and always emits the lock on
-the edit. Every item taken off the shelf by the new tag-edit path gets its collection
-field locked — a persistent metadata change the old per-child DELETE never made, which
-alters how Plex agents and third-party collection tools treat those items afterward.
-The docstring claims the write "removes ONLY the named collection", true for
-membership but silent about the lock (rules 7/24). There is no leave-lock-alone option
-in this API shape (`locked=False` would actively *clear* operator-set locks), so the
-trade-off has to be chosen deliberately.
+`_build_sync` creates `data/.backup-tmp-*` then runs `VACUUM INTO` with no try/cleanup: if
+it fails (disk full is the likely trigger, or "database is locked" past the busy timeout),
+the dir and a possibly multi-GB partial snapshot stay behind — making the disk-full worse.
+On the route side, any exception between `create_backup` and returning the
+`StreamingResponse` leaks the finished archive (database plus master key) since cleanup
+lives only in the stream generator's `finally`. Nothing at boot sweeps `.backup-tmp-*`,
+`.restore-tmp-*`, or `.restore-upload-*` leftovers from a crash.
 
-**Fix.** Choose the lock behavior explicitly, document the side effect in the
-docstring, and note it as a known delta from the per-child DELETE path.
+**Fix:** wrap `_build_sync`'s body in try/except that removes the temp dir and re-raises;
+clean up the archive on any pre-response exception in `download_backup`; add a preflight
+sweep for stale temp entries under `data/`.
 
-### PR-4 · The concurrent shelf reconcile shares one requests session across four threads, against the client's own documented premise — **low**
+### PR-4 · Timezone save does not guard `reschedule_timezone` against a stored malformed cron; startup does — **low**
 
-`src/reaper/services/leaving_soon.py:61-66, 285-316`; premise at
-`src/reaper/clients/plex.py:399-404`
+`src/reaper/api/settings.py:1386`, `src/reaper/services/scheduler.py` (`reschedule_timezone`)
 
-`sync_shelves` now runs up to four `sync_section` tasks, each pushing reads and writes
-through `asyncio.to_thread` on the single shared `GuardedSession`, without taking
-`_sweep_lock` — whose rationale states "requests does not promise a Session is safe to
-share across threads, so the sweeps take this lock and run one at a time." The fan-out
-breaks the stated invariant without updating it (rule 24). No concrete corruption was
-constructed (urllib3's pool checkout is atomic; per-library section objects keep
-plexapi edit state disjoint), so this is documented-invariant debt rather than a
-demonstrated race — but the shelf path now writes, not just reads.
+Startup deliberately wraps `apply_scan_schedule`/`apply_maintenance_schedule` in
+try/except `ValueError` so a stored-but-malformed cron is logged and skipped. The same
+stored values are replayed by the timezone save path with no such guard:
+`CronTrigger.from_crontab` raises, the PUT returns 500 after the timezone was already
+committed, and jobs earlier in the loop have moved to the new zone while later ones have
+not — a partially rescheduled scheduler until restart. Same precondition startup defends
+against (hand-edited row, or a future cron-parser tightening).
 
-**Fix.** Either update the `_sweep_lock` and `SHELF_CONCURRENCY` comments to state why
-unlocked cross-thread session sharing is acceptable here, or serialize the shelf
-writes consistently with the sweeps.
+**Fix:** wrap each `apply_*` call in `reschedule_timezone` in try/except `ValueError` and
+log exactly as startup does, so one bad stored cron cannot 500 the save or half-apply the
+zone.
 
-### PR-5 · The schema fast path attests only `watch_event`'s columns, so future SCHEMA additions will never reach existing caches — **low**
+### PR-5 · "Updated to the latest scan" toast fires before the refetch settles — **low**
 
-`src/reaper/services/history_sync.py:207-215`
+`frontend/src/components/ReviewQueue.tsx:2100` (`onSilentRefresh`)
 
-The old code re-ran the full idempotent SCHEMA (both tables, three indexes) on every
-call; the new fast path returns as soon as `watch_event`'s columns match. That is safe
-today only by accident of history — the companion table and all indexes date to the
-initial commit — and the invariant is undocumented. The next person who adds an index
-or companion table to SCHEMA without touching `_WATCH_EVENT_COLUMNS` ships DDL that
-existing caches silently never execute.
+The toast is set synchronously with the fire-and-forget invalidations, so it asserts
+success before any refetch completes. If the candidates refetch fails (network blip right
+after a scan), the list stays on the old snapshot: the toast has claimed the opposite,
+the freshness hook has latched that snapshot as handled with no nudge, and no marker or
+retry appears until an unrelated refetch. "Silently stale" is the exact state the hook's
+docstring promises to prevent.
 
-**Fix.** Add a comment on `_WATCH_EVENT_COLUMNS` stating that any SCHEMA addition must
-change the column tuple (forcing the rebuild path), or cheaply extend the fast-path
-check to confirm the companion table exists.
-
-### PR-6 · No committed way to regenerate the five PNG icon assets the comments say are generated — **low**
-
-`frontend/src/brand/deepIcon.ts:5-9`; `frontend/src/brand/deepIcon.test.ts:3-5`
-
-`deepIcon.ts` states the committed `favicon.svg` and the apple-touch/manifest PNGs are
-generated from `deepIconSvg`, and the test instructs regenerating them on change — but
-the repo contains no rasterization script, and the drift test guards only the SVG. A
-future brand tweak regenerates the SVG to satisfy the test while the five PNGs
-silently keep the old drawing, with no documented command to fix them (rules 7/24: a
-process that exists only as prose).
-
-**Fix.** Commit a small node script that writes `favicon.svg` and rasterizes the PNGs
-from `deepIconSvg`, reference it from the comment, and have the test assert against it
-(or at least assert the PNGs exist with the right dimensions).
-
----
+**Fix:** fire the toast when the list actually catches up (expose a caught-up transition
+from `useReviewFreshness`, or await the invalidation promises and only then set the toast,
+resetting the handled latch on failure so the marker can appear).
 
 ## 6. Security
 
-No findings. Checked across the range: the new breakdown and fairness routers sit
-under `/api` behind the auth middleware; the pre-paint favicon script validates the
-stored value's `data:image/svg+xml` prefix before applying it, so localStorage cannot
-inject an arbitrary URL; no secrets appear in URLs or logs; all HTTP stays inside
-`clients/` (the Discord webhook remains the one sanctioned exception); the scheduler
-gained no path to a mutating call, and the transport guard still gates the new batched
-shelf writes (journalled intent, armed host).
+### S-1 · Restore confirm is not content-bound: the password arms whatever is staged at that moment — **medium**
 
----
+`src/reaper/api/backup.py:233` (`restore_confirm`), `src/reaper/services/restore.py:350` (`arm`)
+
+`restore_confirm` verifies the admin password and then arms whatever sits in
+`data/pending-restore` — no token, hash, or phrase binds the confirm to the staged content
+the operator reviewed. `/restore/prepare` requires only a session + CSRF (no password) and
+unconditionally replaces the staging dir. Failure: operator uploads backup A and reviews
+its summary; before they confirm, a second session (a stolen cookie — a session alone is
+below the password trust level this gate exists to enforce) stages a hostile-but-valid
+backup B; the operator's password confirm arms B, and the next restart swaps in an
+attacker-authored database (attacker-known admin password, attacker-controlled service
+endpoints, emptied whitelist). `destructive` is forced off at arm, but the attacker can
+log in post-restart and re-arm. The execute route's server-recomputed content-bound
+confirmation phrase is the in-repo model; this equally consequential surface lacks the
+binding. (The API-key lane cannot reach prepare — verified — so the vector is a second
+session, which is exactly what the password step is supposed to outrank.)
+
+**Fix:** have `stage_upload` mint a staging token (random, or a hash of the staged
+manifest + db) written into the staging dir and returned in `RestoreSummaryOut`; require
+it in `RestoreConfirmIn` and verify it in `arm()` before writing READY, refusing with
+"the staged backup changed, review it again" on mismatch.
+
+### S-2 · The restore schema gate validates the manifest's claimed revision, never the staged database's own `alembic_version` — **medium**
+
+`src/reaper/services/restore.py:269` (`_summarize`)
+
+`_summarize` takes the revision from `manifest.get("alembic_revision")` and passes it to
+`_check_schema`; nothing reads the `alembic_version` table inside the staged `reaper.db`
+(the backup side has `_read_revision` for exactly this; restore never calls it). A
+tampered or repacked archive whose manifest claims a known revision while its db is any
+SQLite file (foreign schema, ancient version, or no `alembic_version` at all) passes the
+gate, gets armed, and is swapped in at boot. `alembic upgrade head` then runs against a
+mismatched schema: with no `alembic_version` it replays every migration from base against
+pre-existing tables — typically a boot loop until manual recovery from `pre-restore-*`,
+or worse, a wrong-schema database the app then serves. The gate validates the claim, not
+the artifact.
+
+**Fix:** in `_summarize` (or `_extract`), read the staged database's own
+`alembic_version` (reuse `backup._read_revision`'s logic), require it non-None and equal
+to the manifest's claim before `_check_schema`, and refuse on mismatch with the existing
+"couldn't be verified" copy.
+
+### S-3 · Restore resurrects the backup's auth sessions; nothing invalidates them — **medium**
+
+`src/reaper/services/restore.py:350` (`arm`)
+
+`arm()` forces only `destructive_enabled` off in the staged database. The backup's
+`auth_session` rows (30-day TTL) travel with it and become valid again after the swap.
+Failure: operator's password is compromised, a backup is taken while the attacker's
+session is live, operator later resets the password and signs out everywhere; restoring
+that backup brings back both the old password hash AND the revoked session tokens, so the
+attacker's cookie works again within its TTL. A restore is a wholesale credential change
+and rule 12 requires session invalidation on credential change; the fail-closed precedent
+(forcing deletion off) already lives in this exact function, and the sign-out-everywhere
+primitive exists but is never called here.
+
+**Fix:** in `arm()`, alongside `_force_destructive_off`, clear `auth_session` (and
+recovery tokens and pending logins) in the staged database, so a restored install starts
+signed out and everyone logs in fresh.
+
+### S-4 · Restored `secret.key`/`secret.salt` are written with the default umask, not owner-only from creation — **low**
+
+`src/reaper/services/restore.py:206` (`_copy_capped`)
+
+Extraction writes every member with `out_path.open("wb")`, so under a 022 umask the staged
+`secret.key` is 0644. The 0700 staging dir shields it until boot, but
+`apply_pending_restore` then moves it into the data dir (typically a host bind mount),
+where it sits world-readable from the preflight swap through `alembic upgrade head` until
+`resolve_secret_key` finally runs `_ensure_owner_only`. Rule 14 forbids exactly this
+write-then-tighten window; on a multi-user host any local account can read the master key
+during migrations.
+
+**Fix:** create the key/salt outputs via `os.open(path, O_CREAT|O_WRONLY|O_EXCL, 0o600)`
+in `_copy_capped` (or chmod them in `apply_pending_restore` before the move).
+
+### S-5 · Per-service external URL is stored and rendered with no scheme validation, unlike every sibling URL setting — **low** (merged: found on both sides of the wire; rescoped)
+
+`src/reaper/services/instances.py:289` / `:371`, `src/reaper/api/settings.py` (`InstanceCreateIn`/`InstanceUpdateIn`), `frontend/src/components/ServiceModal.tsx:476`
+
+`create_instance`/`update_instance` accept any non-blank string for `external_url` and
+store it verbatim; the frontend field is `type="url"`, which accepts any scheme with a
+colon. Every sibling URL boundary 422s unless the value starts with http(s). Failure
+modes: (a) the common scheme-less paste (`host:8989`) saves silently and every jump link
+built from it renders as a broken unknown-scheme URL, where the sibling fields would have
+guided with a 422; (b) a `javascript:`/`data:` value is stored verbatim and rendered into
+an `href` for every signed-in user. The adversarial pass refuted the original
+privilege-escalation vector (the API-key lane cannot write instance settings — verified —
+so only a full settings-trust session can plant it, and every consumer renders
+`target="_blank" rel="noopener noreferrer"`, which neuters `javascript:` in modern
+browsers), so what survives is a validation-consistency and UX defect plus a missing
+defense-in-depth layer, off the deletion path.
+
+**Fix:** validate at the API edge in `create_instance`/`update_instance`: non-blank values
+must parse to scheme http/https with a hostname, else 422 with the same wording pattern as
+the Plex web-address check; blank continues to clear. Optionally mirror the check
+client-side before save.
+
+### S-6 · The log dir and files are created world-readable under the default umask — **low**
+
+`src/reaper/logbuffer.py:170`
+
+`log_dir.mkdir(...)` uses the default mode and the rotating handler opens `reaper.log`
+with builtin `open()` (0644 under umask 022). The logs are secret-redacted, but at DEBUG
+they now carry the full per-item decision trail for the operator's library. On a
+multi-user host with a world-traversable data mount, any local account can read that
+trail. The exposure is comparable to the SQLite files in the same dir — hence low — but
+the project's own standard is owner-only from creation (rule 14).
+
+**Fix:** `log_dir.mkdir(mode=0o700, ...)` plus a chmod for a pre-existing dir; that one
+change confines the live file and all rotations. Optionally a 0600 opener on the handler
+for defense in depth.
 
 ## 7. UI/UX consistency
 
-### U-1 · `KeptByShowNote` states "will be removed" for a reap the engine refuses — **medium**
+### U-1 · The schedule editor says times are "your server's clock, often UTC in Docker," but timed jobs run on the operator-set time zone — **medium**
 
-`frontend/src/components/ReviewQueue.tsx:486`; consumed at `:1037` and
-`WhyPanel.tsx:860`
+`frontend/src/components/Settings.tsx:1323`
 
-The component receives only `own` and `showOverride`, never `override_effective`. Two
-branches assert removal as fact ("The whole show is set to reap, so this season will
-be removed"; "You reaped this season, so it will be removed"). Reachable today: whole
-show set to reap while one season is being streamed — that season's inherited reap is
-refused, its chip reads "Reap requested · kept for now: playing right now" (dashed
-red), and the note on the same row says it will be removed. Rule 49 established that a
-held reap must never be presented as a done removal, and the `_candidate_out` comment
-says the UI "never promises a removal the engine will refuse" — this note promises
-exactly that. The component's own docstring ("the note never contradicts the row's
-chip") is currently false for held reaps.
+The range added a Time zone setting (Settings → General) that the scheduler uses for
+every timed job, with the stored zone winning over the env seed and host zone. The
+ScheduleModal help still unconditionally describes the server's clock and the common
+UTC-in-Docker case. An operator who set their home zone reads this note, mentally converts
+from UTC, and schedules the scan at the wrong local hour — the exact confusion the note
+was written to prevent. Copy states a consequence the code no longer has (rules 24/53/55);
+it is accurate only when no zone was stored.
 
-**Fix.** Pass the row's `override_effective` into `KeptByShowNote` and add a held-reap
-wording branch ("marked to reap but kept for now") matching the chip's language.
+**Fix:** render the actual effective zone (fetch general settings or pass the zone down):
+"Times use your server time zone: {timezone}. Change it in Settings, General."
 
-### U-2 · The curated-lists off warning is factually wrong: every scan still refreshes the lists — **medium**
+### U-2 · `ShowInheritBanner`'s reap wording asserts removal without branching on held reaps — **low**
 
-`frontend/src/components/Settings.tsx:704-705`
+`frontend/src/components/ReviewQueue.tsx:1347`
 
-The warning says the protection lists stop updating and a title that joins one later
-won't be protected until a hand refresh. But every scan re-syncs the curated lists
-regardless of this job (`scan_runner.py:598` calls `sync_protection_lists`, which
-defaults `include_top_250=True`), and list membership is only ever consulted during a
-scan — which just refreshed it. Turning the job off removes essentially nothing for
-anyone who scans; the warning's claim of lost protection is false (rule 25).
+The banner reads "Every season below is removed unless you spare it here" from `override`
+alone. For a show whose reap the engine refuses on every season, the card chip says "Reap
+requested · kept for now" and every row carries a "Kept for now" chip, yet the header
+between them still claims removal — and being spared is not why they are kept. Rule 61
+requires removal prose to branch on effectiveness; the per-row chips mitigate but the
+banner contradicts them on the same screen.
 
-**Fix.** Correct the warning ("Scans still refresh these lists on their own; this only
-affects the daily standalone refresh between scans."), or drop the off switch for this
-job.
+**Fix:** pass the show's effectiveness (`groupReapEffective` over the season set is
+already computable in `SeasonList`) into the banner and branch: all-held → "the reap is
+noted but the seasons are kept for now"; mixed → qualify.
 
-### U-3 · The show card's override chip claims "will be kept" even when a season's own effective reap wins — **low**
+### U-3 · `NotInScanPanel` renders a definite "Every available request is in the last scan." when the data is merely missing — **low**
 
-`frontend/src/components/ReviewQueue.tsx:1242`
+`frontend/src/components/NotInScanPanel.tsx:55`, `frontend/src/App.tsx:723`
 
-The chip renders from the show's own decision. With a whole-show spare and one season
-carrying its own honored reap (the season key wins per `effective_override`), the
-card-level chip reads "Spared by hand · will be kept" while a season inside will be
-removed. The replaced aggregate returned null on mixed sets, so it never overclaimed
-this way. Lighting the *control* from `show_override` is correct (rule 50); the
-display chip need not make an unqualified whole-show claim.
+The panel takes a bare items array and the caller passes `fairnessReport?.unmatched ?? []`,
+so pending/error collapse to "empty," and empty renders the definite all-clear. The
+unmatched-panel flag is not cleared by the nav's view switch, so returning to Scales past
+the query's gc window shows the panel open with a definite claim that was never checked.
+"We could not look" rendered as "we looked and it was fine" is the anti-pattern rules
+17/36 forbid.
 
-**Fix.** When any season's own decision opposes the show's, soften the chip (drop the
-"will be kept/removed" clause or append "except N seasons"), computed from
-`showSeasons`, which the card already holds.
+**Fix:** have the panel accept `isPending`/`error` (or the query result) and render an
+explicit loading line and notice-error fallback before the empty-state sentence.
 
-### U-4 · Rule 45's deferred `.warn` → `.notice-warn` merge came due this range and was not done — **low**
+### U-4 · `SpareMenu`'s capture-phase scroll close likely dismisses the Custom-length input the moment the mobile keyboard opens — **low** (rescoped)
 
-`frontend/src/components/ScanBar.tsx:198`; `frontend/src/components/WhyPanel.tsx:235`
+`frontend/src/components/ReviewQueue.tsx:733`
 
-Rule 45 defers the `.warn` banner merge "whenever the review UI is next touched." This
-range rebuilt the review UI across three commits and rewrote ScanBar into `ScanRow` —
-which converted its two error paragraphs to the shared notice classes but left the
-degraded-snapshot banner on the legacy `.warn` one block below. The trigger condition
-fired twice over and the debt survived.
+The menu closes on any scroll anywhere (`window.addEventListener("scroll", onClose, true)`),
+and "Custom length…" swaps in an autofocused number input. On phones the virtual keyboard
+typically scrolls the viewport to reveal the focused field, which would close the menu
+before a single digit is typed. The code half is fully traced (no suppression, reposition,
+or visualViewport handling exists); the device half was not reproduced on hardware and may
+not manifest in all layouts, so this needs the verify skill on a real phone. Presets,
+Forever, and the default length are unaffected.
 
-**Fix.** Convert the degraded banner in ScanRow and WhyPanel's `.warn kept-notice` to
-`.notice.notice-warn`, then retire `.warn` from `index.css` (keep `.warn.danger` only
-where still consumed).
+**Fix:** suppress the scroll-close while the custom input is open (skip `onClose` when
+`custom` is true, or when the scroll originates from the focus reveal), or reposition
+instead of closing; verify on a device.
 
-### U-5 · Schedule clock times are shown without a timezone and are actually server-container time — **low**
+### U-5 · Leaving Scales via the tab bar closes the person panel but leaves the "Not in the last scan" panel to reappear on return — **low**
 
-`frontend/src/components/Settings.tsx:721-738, 757-793`
+`frontend/src/App.tsx:624`
 
-`CronTrigger.from_crontab` evaluates in the container's local timezone (commonly UTC
-in Docker) while the new UI renders prominent wall-clock copy ("Every night at 2 AM",
-"Default: Every day at 3:30 AM") with no qualifier. For an operator whose container
-runs UTC in a UTC-7 home, "2 AM" fires at 7 PM local, and the relative "next in 3 hr"
-line will visibly contradict the stated clock time. Pre-existing for the one scan
-preset; this range multiplies the clock-time surfaces.
+The tab click handler calls `setScalesUser(null)` (with a comment saying the split view
+should never linger on a tab with no panel to show) but not `setScalesUnmatched(false)`.
+Open the unmatched panel, switch tabs, and return: it is still open, while a person panel
+in the same situation would have been closed — inconsistent with the stated intent and
+with the mutual-exclusion pairing three lines above.
 
-**Fix.** Add one help line in the modal ("times are the server's clock"), or derive
-the rendered description from the trigger's actual next-run instant in the browser's
-timezone.
+**Fix:** add `setScalesUnmatched(false)` beside `setScalesUser(null)` in the handler.
 
-### U-6 · On a schedule-load error the scan row says "Automatic scan: checking…" forever — **low**
+### U-6 · The docs pace table lists a unitless floor of "1" for the per-run disk caps — **low**
 
-`frontend/src/components/Settings.tsx:795-799, 1104`
+`frontend/src/docs/content/understandingPolicy.ts:148`
 
-`scanScheduleText(undefined)` returns the "checking…" line and `JobsPanel` passes
-`undefined` both while pending and on error, so a failed load leaves the row claiming
-to check indefinitely. The page-level error notice does render (rule 17's explicit
-error state exists), but the row's own line conflates loading with failure.
+The Floor column reads "1" for "Most disk freed per run" (the schema floor is one byte).
+Next to "500 GB," a bare "1" reads as 1 GB or as nothing at all — failing read-at-a-glance
+(rule 21 and the golden length rule).
 
-**Fix.** Thread the error state into `scanScheduleText` ("Couldn't check the
-schedule.") or pass a tri-state instead of `ScheduledJob | undefined`.
-
-### U-7 · Unmeasured condemned titles display as "Reclaimable · 0 B" in Scales — **low**
-
-`src/reaper/services/fairness.py:266-270`; `frontend/src/components/Fairness.tsx:61`
-
-`_load_candidates` coerces a missing size to 0 (the comment owns the tradeoff, so rule
-7 is satisfied), but the chip then renders a literal "Reclaimable · 0 B" for a title
-the arr would not size, and the person's reclaimable bytes silently under-report. The
-breakdown page carries unmeasured items as an explicit count; Scales shows a false
-zero instead.
-
-**Fix.** Carry `size_bytes: int | None` through `ReclaimableTitle`/`ReclaimableTitleOut`
-and render "size unknown" on the chip when null (totals keep summing measured only).
-
-### U-8 · Requester cards are keyed by display name, which is not unique — **low**
-
-`frontend/src/components/Fairness.tsx:264-271`
-
-`key={row.name}`, where the name falls back through display name and username; two
-people can share one, producing duplicate sibling keys and wrong reconciliation of the
-cards' open/closed state (rule 19). `RequesterRowOut` currently carries no id to key
-on.
-
-**Fix.** Add the stable per-user id to `RequesterRowOut` (pairs with B-9) and key on
-it.
-
-### U-9 · "across 1 people" in the Scales summary strip — **low**
-
-`frontend/src/components/Fairness.tsx:237`
-
-No singular form; a one-requester install reads "Requests across 1 people", and the
-component test pins the ungrammatical string (rule 21).
-
-**Fix.** Pluralize ("1 person" / "N people") and update the test.
-
-### U-10 · The non-clickable `.media-chip.static` still lights the accent hover — **low**
-
-`frontend/src/index.css:3130-3135` (and the `.mc-go` rule at `:3170`)
-
-`.media-chip:hover:not(:disabled)` outranks the global button hover, but the static
-variant is a `<span>`, which never matches `:disabled` — so a chip with nothing to
-open gets the accent border and wash on hover while `cursor: default` says it does
-nothing, contradicting the file's own rule stated 150 lines up ("hover only promises
-the accent where there is something to open"). The branch is defensive, so the
-contradiction surfaces exactly when backend data drifts.
-
-**Fix.** Scope the hover to real actions: `.media-chip:not(.static):hover:not(:disabled)`.
-
-### U-11 · Cap abort copy was reworded only for the two per-run messages — **low**
-
-`src/reaper/services/executor.py:541, 848, 855`
-
-The per-run cap messages were rewritten to plain language, but the unmeasured message
-still says "aborted, not trimmed: which of them gets deleted must never come down to
-sort order" and both rolling-cap messages still say "The run is aborted, not
-truncated" — the jargon phrasing rule 21 targets and this range deliberately removed
-elsewhere (tests were even updated away from asserting the old phrase). The rolling
-messages also do not mention the caps switch the per-run ones now point to, though the
-same switch governs them.
-
-**Fix.** Reword the rolling-cap and unmeasured aborts in the same voice ("It stops
-rather than deleting just part. Wait for the window to pass, raise the cap, or turn
-limits off in Policy, under Pace and limits.").
-
----
+**Fix:** replace with plain language ("any amount"), matching the other floors' wording.
 
 ## 8. Improvements
 
-### I-1 · No test pins that caps-off skips the rolling 30-day budget or the byte caps — **low**
+### I-1 · `add_label`/`remove_label` still resolve their section by title while rule 57 mandates `sectionByID`; the range fixed only the collection path — **low**
 
-`tests/test_reap_loop.py:483`
+`src/reaper/clients/plex.py:958` (`add_label`), `:993` (`remove_label`)
 
-`test_caps_off_lets_a_run_over_the_cap_proceed` exercises only the per-run item cap;
-nothing pins the `caps_enabled` guard in `_check_rolling_caps` (`executor.py:839`) or
-the per-run byte cap under the switch. A future refactor could silently regress the
-rolling half of the switch in either direction without a test failing.
+The collection-detach fix moved to `sectionByID(section_key)`, but the label twins —
+invoked in the same shelf sync pass right beside the now key-addressed call — still
+resolve `server.library.section(section_title)`. With two libraries sharing a title,
+plexapi returns the last match. Blast radius is thin (items are addressed by global
+rating key, so the writes likely still land), but it is a live rule-57 violation and one
+sync pass now mixes key- and title-addressed resolution for the same shelf.
 
-**Fix.** Add one executor test with caps off and a plan exceeding the 30-day and
-per-run byte caps, asserting the run completes.
+**Fix:** thread `section_key` into both (the caller already has it, exactly as it did for
+the collection fix) and resolve via `sectionByID`; drop the `section_title` parameters.
 
-### I-2 · Two new fail-closed branches in the season gather have no test — **low**
+### I-2 · `last_backup_at` is recorded before any byte reaches the browser — **low**
 
-`tests/test_season_scan.py` (`TestGatherEndToEnd`)
+`src/reaper/api/backup.py:116`
 
-(1) `library_season_index` *raising* `PlexError` → warning plus whole-library per-show
-fallback (`season_scan.py:988-991`) — the fake's empty-dict path exercises different
-code than the except. (2) `keep_in_progress=False` skipping the entire Sonarr
-`episodes()` fan-out (`season_scan.py:1016`) — correct today only because
-`plan_series_prune` empties `seq_protected` when the guard is off, and nothing pins
-that coupling.
+`download_backup` commits the timestamp before streaming starts, so a download that dies
+at byte zero still updates the panel's "last backup" to now. The operator reads that
+timestamp as evidence a safe copy exists — the state they check before a risky change —
+but no file ever landed. The inline comment argues the copy is "not un-taken" by a dropped
+connection, which inverts the honest direction: the operator's copy is what matters.
 
-**Fix.** Add a gather test whose fake Plex raises from `library_season_index` and
-asserts seasons still resolve via the fallback, and one asserting `episodes()` is
-never called when the guard is off. (Both also become the natural home for B-4's
-regression tests.)
+**Fix:** record the timestamp only after the final chunk is yielded (schedule the write
+from the generator's `finally`), or reword the panel field to what the pre-stream write
+can honestly claim.
 
-### I-3 · Two comments made stale by this range's own changes — **low**
+### I-3 · The rating-key requester tier carries no Plex-server namespace, so a foreign-server portal can bind wrong items — **low**
 
-`src/reaper/services/snapshot.py:414-416`; `src/reaper/services/season_scan.py:22-24`
+`src/reaper/services/requested_by.py:111` (`rating_key_key`)
 
-The first justifies the single `history_sync.state` read with "each re-runs the schema
-check inside a write transaction" — no longer true now that the common path is a read
-connection (the choice is still right; the stated reason is not). The second still
-claims resolution "bounds the per-show Plex calls to the shows that actually have
-something removable" — the new sweep reads every season of every show in the allowed
-sections; only the fallback and the Sonarr fan-out remain bounded (rule 24
-discipline).
+Rating keys are unique per Plex server only; a portal synced to a different server than
+Reaper's (possible in multi-portal setups) files keys that can numerically collide with
+Reaper's candidates, naming a requester on an unrelated item, and nothing abstains. The
+docstring acknowledges and accepts this (rare, display-only), so it is a documented
+tradeoff rather than an oversight — but the collision is detectable and avoidable.
 
-**Fix.** Reword both to match the new behavior.
+**Fix:** read each portal's Plex machine identifier once and skip filing `plex:rk` keys
+when it differs from Reaper's own server; keep current behavior when the check is
+unavailable.
 
-### I-4 · Spelling and grammar slips in new comments — **low**
+### I-4 · The profile fallback degradation cites "rule 14" instead of rule 65 in four places — **low**
 
-`frontend/src/components/Settings.tsx:952` ("greys" → "grays");
-`frontend/src/index.css:1054, 5576` ("centerd" → "centered", twice — introduced by the
-Americanization sweep itself); `src/reaper/engine/policy.py:675` ("Keep validating
-them here would reject" → "Keeping the validation here would reject").
+`src/reaper/services/profiles.py:59`, `:123`, `src/reaper/services/scan_runner.py:573`, `src/reaper/api/runs.py:585`
 
-**Fix.** The three one-word edits.
+Rule 14 is atomic secret-file creation; the rule governing this behavior is 65 ("silent
+recovery on operator-configured safety values is forbidden"). A future auditor tracing
+safeguard citations (rule 24 requires accuracy) is pointed at the wrong rule. The behavior
+itself is correct — only the citations are wrong.
+
+**Fix:** change all four citations to rule 65.
+
+### I-5 · `ModalShell`'s header comment names the reap sheet as the `canClose` user, but `ReapConfirm` no longer passes `canClose` — **low**
+
+`frontend/src/components/ModalShell.tsx:16`
+
+Since the reap went detached, the reap sheet closes freely mid-run by design (the ReapBar
+carries on); the only real `canClose` user is the schedule modal. A future reader will
+believe the reap sheet is un-closable mid-flight and skip re-verifying (rule 24).
+
+**Fix:** update the comment to cite the schedule modal, and note the reap sheet is
+deliberately closable because the run is detached.
+
+### I-6 · The "Newest 3 files" retention count is hardcoded with no cross-reference to the backend constant — **low**
+
+`frontend/src/components/LogsPanel.tsx:239`, `src/reaper/logbuffer.py:53`
+
+The help text hardcodes 3 while the real retention is `LOG_BACKUP_COUNT = 2` (+1 live
+file). Currently accurate, but rule 67 requires coupled values to share one declaration
+or carry cross-reference comments in both places; neither site names the other, so a
+future bump silently makes the operator copy wrong.
+
+**Fix:** add cross-reference comments both ways, or better, return the retention count in
+the `/api/logs` response and render it (rule 66 shape).
 
 ---
 
-## Suggested fix order
+## Verified correct (checked and found right — kept to prevent re-review churn)
 
-1. **The three highs.** B-1 (Scales tmdb namespace), B-2 + B-10 together (caps-off
-   honesty in the editor: intent band, simulator, presets), B-3 + U-2 + PF-1 together
-   (the jobs page's contract with reality: ratings catch-up vs the off switch, both
-   off-warnings, per-job presets or the freshness short-circuit).
-2. **The deletion-adjacent mediums.** B-4 (sweep pagination, plus I-2's tests), B-5 +
-   B-13 + PR-3 together (one pass over `remove_collection_members`: spelling-grouped
-   removal, key-addressed section, lock decision), B-6 + PR-5 (one pass over
-   `ensure_schema`), PR-1 (profile fallback surfacing), PR-2 + B-8 together (the
-   breakdown's held reaps and unmeasured lines).
-3. **The queue's honesty and keyboard.** B-7 (one guard in `OverrideControls`), U-1,
-   U-3, R-6, H-1.
-4. **Scales cleanups in one pass.** B-9 + U-8 (seerr-id keying and card keys), B-14,
-   U-7, U-9.
-5. **The rest of the lows** grouped by file: Settings.tsx (B-12, U-5, U-6, R-5),
-   frontend shell (B-11, R-1, R-2, R-3, R-4, U-4, U-10, PR-6), copy and comments
-   (U-11, I-3, I-4, PR-4's comment decision), and I-1's test.
+The reviewers traced 115 suspicious-looking things and found them correct; the ones worth
+keeping on record:
+
+- **httpx2 migration**: GuardedTransport semantics survived exactly (SAFE_METHODS, the
+  exact-path mutation allow-list, armed-then-journalled refusal order, the approval
+  extension), verified against real clients in tests, not mocks; httpx2 2.9.0's exception
+  hierarchy was introspected and matches httpx, so every `@retry` predicate and except
+  clause still fires; timeouts, TLS verify default, redirect policy, and pool limits
+  survived; request extensions reach a custom transport (executed probe); close owners
+  intact; Discord Retry-After handling preserved and the webhook URL never logged; the
+  `httpx2`/`httpcore2` noisy-logger pins are correct; no leftover respx decorators
+  silently failing to intercept.
+- **Backup/restore fundamentals**: no zip-slip (four fixed member names, bare filenames,
+  decompression caps, magic checked at stage/arm/swap); upload spooled to a 0600 tempfile
+  with an 8 GiB cap and unlinked on every path; READY-written-last arming with a
+  timestamped pre-restore fallback; restored installs always boot unarmed; API-key lane
+  fenced off both directions.
+- **Scan pipeline fail-closed**: hard-mode protection lists degrade on failure with empty
+  stored copies, missing rows fail closed; the root-folder library narrowing stands down
+  on unknown libraries, twin groups, stale maps, and unconfirmed sizes; the
+  fully-protected short-circuit can only protect more; both prune call sites use the one
+  production function; new candidate fields are populated in all builders with additive
+  migrations (rules 35/22 hold).
+- **Deletion path**: journalled-intent-before-send ordering intact; the new logging moved
+  no state transitions; caps count over the exact acted-on set; the timed-spare migration
+  is additive and a NULL expiry reads kept-forever; `overrides()` keeping an expired spare
+  protective BETWEEN scans is the deliberate safe direction (B-1 is only about the missing
+  durable realization afterward); timed-spare datetimes are aware-to-aware throughout.
+- **Platform**: the in-range baseline edit nets to docstring-only (the column add was
+  reverted inside the range; B-8 covers the residue); the migration chain is linear and
+  additive; DST behavior of the scheduler was verified by execution (nonexistent times
+  shift, ambiguous times fire once); the entrypoint `chown -R` does not follow symlinks
+  and leaves modes alone; all new env vars are documented and DB-backed where operator-
+  configurable; per-job schedule rows cannot last-write-wins each other.
+- **Seerr/Scales**: tmdb keys are media-kind namespaced both sides (the third pass's B-1
+  does not recur); requester identities are portal-namespaced; service maps are keyed
+  kind+id; the scoring-facing request index fails closed to Unknown while the display map
+  stays fail-soft (the rule-2 split is right); pagination raises on missing totals;
+  fairness endpoints are auth-guarded, read-only, and cannot feed the verdict path.
+- **Review queue**: `spareRemaining` is correct at every boundary checked (a fresh N-day
+  spare reads N, expiry reads "expired" while staying protective); `handFate` remains the
+  single fate router; `showReapIsNoop`/`groupReapEffective` run over whole-show sets on
+  every lane; bulk ops use `allSettled` with failed-key retention; the freshness hook
+  decides once per snapshot and cannot fire against a partial scan; card numbers come from
+  the server's planner-matched rollups (rule 62).
+- **Docs pages vs code**: every preset value, signal point, protection threshold, and
+  interlock the in-app docs name was checked against the engine and executor and matches;
+  the save-triggers-a-scan claim is wired; the arming/env-seed claims match; no em dashes
+  in operator copy.
+- **Logging**: the HTTP-retry DEBUG line formats service name, attempt, sleep, and
+  exception type only — no URL, params, or message, so tokens cannot leak at any level;
+  the download endpoint is session-gated with server-generated filenames and no traversal
+  surface; rotation is bounded (3 × 20 MiB, pinned by test); the WARNING pin on
+  aiosqlite/SQLAlchemy cannot suppress operator-relevant errors; ring and file carry
+  identical redacted lines.
 
 ---
 
-## Agent rules
+## Agent Rules (fourth pass)
 
-Direct constraints for the next coding agent, derived from what this review actually
-found. They extend CLAUDE.md's rules 1–51; where one sharpens an existing rule, the
-sharper obligation governs.
+Direct constraints derived from what this review actually found. Written as blockers, not
+suggestions, continuing CLAUDE.md's numbering; where one sharpens an earlier rule
+(70 → 23, 71 → 4/50, 72 → 56/64, 74 → 27, 75 → 12, 77 → 61, 79 → 64, 82 → 24/28,
+83 → 14, 86 → 21/53), the newer, more specific obligation governs.
 
-1. **Every tmdb id key is namespaced by media kind.** A bare integer tmdb key in any
-   map, index, or lookup is a blocker; the key carries movie-vs-TV alongside the
-   number, on both the write and the read side (sharpens rules 6/29 — B-1).
-2. **A rendered limit checks its enable switch.** Any UI string, summary clause, or
-   simulator note that states a cap, budget, or bound must branch on the setting that
-   enables enforcement; rendering the stored figure while the switch is off is a
-   blocker (sharpens rules 7/25 — B-2).
-3. **A preset that promises enforcement stages the enabling switch.** Applying a
-   preset must set every switch its help text implies, not just the values behind the
-   switch (B-10).
-4. **A job's off switch governs every path that runs the job.** Startup catch-ups,
-   recovery paths, and other side entrances either honor the stored off value or the
-   off-warning copy explicitly names the exception. Off-warning copy states the real,
-   code-verified consequence of turning the job off — including degradation that
-   blocks runs — never a guessed softer one (B-3, U-2).
-5. **Pagination advances and terminates on the raw page count.** A defensive filter
-   that can shrink a page must either raise on anomaly or be kept out of the paging
-   math; and a total-size fallback must never default to the page size. A
-   complete-or-raise docstring is a contract: violating input raises, it never returns
-   a partial result (sharpens rule 27 — B-4).
-6. **Plex tag-style removals address the stored spelling and sections by key.**
-   Any label or collection removal groups items by the exact stored tag spelling
-   (casefold-matched, following `remove_label`) and resolves sections via
-   `sectionByID`, never by title (B-5, B-13).
-7. **A check-then-write re-reads inside the write transaction.** Splitting a state
-   check into a read connection is fine only if the write transaction re-reads the
-   state it acts on; DDL or destructive writes driven by pre-lock reads are a blocker
-   (B-6).
-8. **Multi-key JSON settings are updated per key or under a guarded merge.** A
-   read-modify-write of a whole settings dict across an await is a blocker (B-12).
-9. **Interactive children of a keyboard-handling row stop Enter/Space propagation.**
-   Any control nested inside a row or card that has its own Enter/Space handler either
-   stops propagation (the `SeasonStrip` guard is the model) or the container checks
-   `e.target === e.currentTarget`. Adding a control to a row without this check is a
-   blocker (B-7).
-10. **Prose about a removal consults `override_effective`.** Any note, chip, or
-    sentence that asserts an item "will be removed" or "will be kept" must branch on
-    the effective state, including held reaps and opposing season-level decisions
-    (extends rule 49 from color to wording — U-1, U-3).
-11. **Every number on the Reap page derives from the planner's exact set.** Headline,
-    ledger, and per-line counts consult the same branches the planner does — including
-    the unknown-size allowance via `useHoldsBackUnmeasured()` — and every stored
-    override state (held reaps included) appears in the ledger or is explicitly
-    summarized (sharpens rules 23/30 — B-8, PR-2).
-12. **Rows are keyed and aggregated by a stable server id, never a display name.**
-    If the schema lacks an id, add one in the same change; user-level roll-ups key on
-    the always-present per-user id, not an optional linked-account id (B-9, U-8).
-13. **Removing a surface removes its whole supply chain in the same change.** Route,
-    schemas, client method, props, query-key invalidations, and comments naming it —
-    grep for the query key and prop name before closing (R-1, R-2, R-3).
-14. **Silent recovery on operator-configured safety values is forbidden.** A fallback
-    that replaces saved profile/policy values must surface a flag the UI renders and
-    degrade the scan, following the `ActivePolicy` pattern; a log line alone is a
-    blocker (sharpens rule 2 — PR-1).
-15. **Server-defined lists render from the server response.** A hardcoded frontend
-    copy of a backend id list (jobs, phases, states) is a blocker when the server
-    already returns the list; fallback copy handles unknown ids (R-5).
-16. **Values coupled across TSX and CSS are derived from one declaration.** A width,
-    gap, or count that must agree between a component and a stylesheet lives in one
-    custom property both read, or both sites carry a cross-reference comment (H-1).
-17. **Generated assets ship with their generator.** A comment saying an asset is
-    generated must name a committed, runnable script, and a drift test covers every
-    generated artifact, not just one (PR-6; extends rule 24 to assets).
-18. **The icon link the app rewrites is declared last.** Static fallback icons precede
-    the dynamic one in `index.html`; adding an icon link after `#favicon` is a blocker
-    (B-11).
+70. **Time-bounded state has exactly one durable realization point, shipped with the
+    feature.** Any stored decision that expires (a timed spare, a deadline, a TTL) must be
+    realized by code that WRITES the transition — an in-memory filter at read time is not
+    a realization — and every live consumer must converge after it. A docstring saying
+    "the next scan realizes it" requires the scan to actually persist that realization in
+    the same change; shipping the read half without the write half is a blocker (B-1;
+    extends rule 23: "expired" is a stored verdict state every consumer must handle).
+71. **Clearing a protective override always restarts the grace clock.** When an override
+    that kept an item off the reap list is removed, the FirstFlagged row is deleted before
+    `record_first_flagged_bulk` runs, unconditionally — never trust `last_seen_condemned_at`
+    continuity across a period when the item was invisible to the operator (B-2; sharpens
+    rules 4/50).
+72. **A hardening fix lands on every twin of the fixed function in the same change.**
+    Before closing a fix to a copied pattern (paging loops, section resolution, error
+    mapping), grep for the pattern's siblings and fix or explicitly defer each in writing;
+    "when next touched" deferrals are honored the moment ANY commit touches the twin, not
+    only when someone remembers (B-3, I-1; sharpens rules 56/64).
+73. **A password-gated destructive confirm is content-bound.** The confirm request carries
+    a server-verified token derived from the exact content the operator reviewed
+    (recomputed or stored server-side at stage time), and the action refuses if the
+    content changed since review. The execute route's phrase is the model; any new
+    stage-review-confirm flow (restore, import, bulk apply) must carry the same binding
+    (S-1).
+74. **A gate on an uploaded or restored artifact validates the artifact, never its
+    manifest.** Any property a safety check depends on (schema revision, version, counts)
+    is read from the artifact itself; a manifest or header claim may be cross-checked but
+    never trusted alone (S-2; extends rule 27's spirit to imports).
+75. **Restoring or importing an auth-bearing database is a credential change.** Purge
+    session rows, recovery tokens, and pending logins in the staged data at arm time, in
+    the same function that forces deletion off (S-3; extends rule 12).
+76. **Provenance and self-sufficiency fields derive from runtime precedence, not file
+    existence.** Anything reporting where a key/credential comes from or whether an
+    artifact is self-contained must consult the same resolution order the runtime uses
+    (`resolve_secret_key` precedence), never a bare `is_file()` (B-4).
+77. **Backend reporting surfaces consult effective overrides.** Any service that
+    summarizes items as removable/reclaimable/kept (Scales, breakdowns, exports) merges
+    live override state the same way the review routes do, or its copy explicitly states
+    it shows scan verdicts only (B-5; extends rule 61 from frontend prose to backend
+    aggregation).
+78. **Attribution honors the request's scope.** When a request carries a season (or any
+    partial) scope, per-person figures bind only the scoped subset; whole-title binding is
+    allowed only for unscoped requests or with the granularity stated in the copy beside
+    the number (B-6).
+79. **A cache-invalidation helper that claims completeness is grep-verified against every
+    query key, and a detail panel keyed on a row id is closed or re-resolved when its
+    snapshot is replaced.** Invalidation alone is insufficient when the key itself points
+    at superseded data (B-7; sharpens rule 64).
+80. **Every close affordance runs the modal's close guard.** Browser Back, gestures, and
+    any new dismissal path must honor the same `canClose` the scrim/Escape/✕ honor; a
+    back-layer close that bypasses a declared guard is a blocker (B-11; extends rule 60's
+    spirit to the history layer).
+81. **A baseline edit — even one reverted within hours — obligates a guarded migration.**
+    If the frozen baseline was ever wrong in a merged commit, every additive migration
+    covering that window carries the heal migration's reflection guard so in-window
+    databases upgrade instead of boot-looping. Never edit the baseline, and when the rule
+    is broken anyway, the follow-up is guarded, not plain (B-8; extends the frozen-
+    baseline golden rule).
+82. **A persistent sink degrades loudly, once.** Any always-on writer (log file mirror,
+    export stream) that can fail after setup carries a one-shot degradation flag surfaced
+    where its output is consumed; a bare `suppress(Exception)` around a steady-state write
+    whose output is documented as an audit trail is a blocker (PR-2; extends rules 24/28
+    to infrastructure sinks).
+83. **Owner-only-from-creation applies to every copy of a secret and to decision-trail
+    dirs.** Restored/extracted key material and newly created log directories get 0600 /
+    0700 at creation, not after a later chmod window (S-4, S-6; extends rule 14 beyond
+    first creation).
+84. **Operator-supplied URLs validate scheme http/https at the API edge, everywhere, via
+    one shared check.** Any new URL-shaped setting reuses the same validator the sibling
+    fields use; a `type="url"` input is not validation (S-5; extends rule 13's boundary
+    discipline).
+85. **Success copy fires on settled state.** A toast, timestamp, or "done" indicator is
+    set only after the operation it describes has actually completed (refetch settled,
+    final chunk streamed) — never at issuance (PR-5, I-2; extends rule 21's honesty to
+    timing).
+86. **Copy describing a clock, zone, or schedule renders the effective stored setting.**
+    Any help text that tells the operator what time base applies must read the setting
+    that governs it, not a static guess about the deployment (U-1; sharpens rules 53/55
+    for time).
+87. **A guarded startup replay is mirrored on every runtime replay of the same data.**
+    When startup wraps a stored-value replay in a tolerant guard (malformed cron, bad
+    zone), every settings-save or reschedule path replaying the same stored values carries
+    the same guard, so a save can never 500-and-half-apply what boot survives (PR-4;
+    extends rule 55's side-entrance principle in the other direction).

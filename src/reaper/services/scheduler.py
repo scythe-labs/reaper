@@ -386,24 +386,36 @@ def reschedule_timezone(
     to rebuild: a job the owner turned off stays off, an overridden one keeps its override,
     and an untouched one falls back to its default. Called when the time zone changes in the
     UI so every "next run" recomputes immediately; startup wires the same jobs directly.
+
+    Each ``apply_*`` is wrapped in the same ``ValueError`` guard startup uses (rule 87): a
+    stored-but-malformed cron (hand-edited, or a future parser tightening) is logged and
+    skipped, so one bad cron can never 500 the timezone save or half-apply the zone -- moving
+    some jobs and leaving the rest -- which is exactly what boot already survives.
     """
-    apply_scan_schedule(
-        scheduler,
-        scan_cron,
-        settings=settings,
-        session_factory=session_factory,
-        cache_engine=cache_engine,
-        secret_box=secret_box,
-        timezone=timezone,
-    )
-    for job_id in MAINTENANCE_JOB_IDS:
-        apply_maintenance_schedule(
+    try:
+        apply_scan_schedule(
             scheduler,
-            job_id,
-            effective_maintenance_cron(job_id, maintenance),
-            cache_engine=cache_engine,
-            data_dir=data_dir,
+            scan_cron,
+            settings=settings,
             session_factory=session_factory,
+            cache_engine=cache_engine,
             secret_box=secret_box,
             timezone=timezone,
         )
+    except ValueError:
+        log.warning("scheduler.bad_scan_cron", cron=scan_cron)
+    for job_id in MAINTENANCE_JOB_IDS:
+        cron = effective_maintenance_cron(job_id, maintenance)
+        try:
+            apply_maintenance_schedule(
+                scheduler,
+                job_id,
+                cron,
+                cache_engine=cache_engine,
+                data_dir=data_dir,
+                session_factory=session_factory,
+                secret_box=secret_box,
+                timezone=timezone,
+            )
+        except (ValueError, KeyError):
+            log.warning("scheduler.bad_maintenance_cron", job=job_id, cron=cron)

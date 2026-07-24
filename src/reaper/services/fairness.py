@@ -10,12 +10,18 @@ It is **read-only and deletes nothing.** It is a report.
 
 **Scales sits on the last scan.** Every number here is joined to the latest snapshot's
 candidates -- the same rows the review queue shows -- so Scales can never disagree with
-Review. In particular a title is only ever called *reclaimable* when the scan itself
-**condemns** it; a title the scan protects (watched too recently, on a keep list, ...) is
-never reclaimable here, whatever the requester did. This is deliberate: the scan resolves
-each title to its real Plex copies and folds watches across all of them, so leaning on its
-verdict is both correct and drift-free. Re-deriving that resolution live would be a second
-copy of the app's most delicate matching -- exactly what the "one decision" rule forbids.
+Review. A title is *reclaimable* here exactly when the effective decision reclaims it: the
+scan **condemns** it and no hand spare keeps it back, or the operator hand-reaps it and the
+engine will honor that (``condemned.effective_condemned``, the one production decision, merged
+at load -- rule 77/61). A title the scan protects, or one a hand spare keeps, is never
+reclaimable, whatever the requester did. This is deliberate: the scan resolves each title to
+its real Plex copies and folds watches across all of them, so leaning on its verdict is both
+correct and drift-free. Re-deriving that resolution live would be a second copy of the app's
+most delicate matching -- exactly what the "one decision" rule forbids.
+
+**Per-person figures honor the request's scope.** A season-scoped request (Seerr's default
+shape) attributes only the seasons it asked for, never the whole show (rule 78); the deduped
+report totals stay over the whole matched title.
 
 A request the last scan has not seen (added since, or filtered out) is surfaced as
 *not in the last scan*, never silently counted as unwatched.
@@ -32,7 +38,7 @@ import asyncio
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from itertools import batched
 
 import structlog
@@ -41,9 +47,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from reaper.clients.base import IntegrationError
 from reaper.clients.seerr import MediaRequest, QuotaStatus, SeerrClient, UserQuota
+from reaper.clock import utcnow
 from reaper.db.models import Candidate, Snapshot
 from reaper.engine.requester import WatchEvidence
-from reaper.services import history_sync
+from reaper.services import condemned, history_sync, whitelist
+from reaper.services.planner import MediaRef, PlanError
 
 log = structlog.get_logger(__name__)
 
@@ -71,6 +79,21 @@ class CandidateInfo:
     group_title: str | None
     tmdb_id: int | None
     imdb_id: str | None
+    override: str | None = None
+    """The manual decision in EFFECT on this candidate ("spare" | "reap" | None), resolved by
+    ``whitelist.effective_override`` (own key, else its show's) at load. A spare keeps the item
+    off the reclaimable board even when the frozen scan condemned it (rule 77/61); None for a
+    row loaded without overrides (hand-built test candidates)."""
+    effective_condemn: bool = False
+    """Whether this candidate is reclaimable AFTER overrides: the frozen ``condemned.effective_
+    condemned`` truth (a scan condemn not spared back, or a hand reap the engine will honor),
+    computed once at load so the pure roll-up never re-decides (rule 3/22). Defaults ``False`` --
+    the fail-closed reading -- so a candidate is only ever counted reclaimable when a loader (or
+    a test) marks it so."""
+    season_number: int | None = None
+    """The season a TV candidate addresses (its ``sonarr:i:series:n`` tail), for scoping a
+    season-scoped request to just the seasons it asked for (rule 78). None for a movie or an
+    unparsable key."""
     tvdb_id: int | None = None
     """The show's TVDb id for a season row (Sonarr's native id); None for a movie and for
     rows scanned before the column existed. Sonarr is tvdb-native, so a show often shares
@@ -317,6 +340,32 @@ def _match_candidates(index: _CandidateIndex, req: MediaRequest) -> list[Candida
     )
 
 
+def _season_number(media_key: str) -> int | None:
+    """The season a candidate's key addresses, or ``None`` (a movie, or a key that does not
+    parse). Reuses the one ``MediaRef`` parser -- never a second season-tail reader (rule 6/29) --
+    and, like the review-queue extractor, treats a parse failure as unknown rather than erroring
+    a row out of the report."""
+    try:
+        return MediaRef.parse(media_key).season
+    except PlanError:
+        return None
+
+
+def _scope_to_request(cands: list[CandidateInfo], req: MediaRequest) -> list[CandidateInfo]:
+    """The candidates one request actually asked for. A season-scoped TV request (``req.seasons``
+    non-empty) binds ONLY those season numbers; a movie, or a whole-show request (empty seasons),
+    binds the whole matched set (rule 78).
+
+    Charging a person the whole show for a single-season request is the exact over-attribution
+    B-6 fixes, so a season whose number is unknown (``None``) is treated as out of a specific
+    scope rather than swept in -- fail toward under-, never over-, attributing disk on a report
+    whose whole point is who is holding it. A movie never scopes (movies have no seasons)."""
+    if req.media_type == "movie" or not req.seasons:
+        return cands
+    wanted = set(req.seasons)
+    return [c for c in cands if c.season_number in wanted]
+
+
 def _unmatched_reason(group: list[MediaRequest], snapshot_at: datetime | None) -> str:
     """Why a joinable title produced no candidate: added since the scan, or set aside. Rounds
     toward SET-ASIDE whenever the clock does not *prove* "added since," so a title is never
@@ -412,8 +461,9 @@ def roll_up(
 ) -> FairnessReport:
     """Pure aggregation: given available requests, the scan's candidates, and who played
     what, roll up per requester. Split from the gathering so the correctness that matters --
-    the id join, the condemn-only reclaimable gate, the deduped totals -- is testable with
-    no live instance and no database.
+    the id join, the override-aware reclaimable gate (``CandidateInfo.effective_condemn``), the
+    per-person season scope (rule 78), the deduped totals -- is testable with no live instance
+    and no database.
 
     ``snapshot_at`` (the scan's own timestamp) only classifies the not-in-scan requests into
     "added since" vs "set aside"; it never touches a score or a verdict.
@@ -456,52 +506,61 @@ def roll_up(
             # _collect_unmatched, the one place that classifies not-in-scan.
             continue
 
-        title_size = sum(c.size_bytes or 0 for c in cands)
-        condemned = [c for c in cands if c.verdict == _CONDEMN]
-        # Sum only what is measured; ``None`` when nothing about the condemned set is measured
-        # (so the chip says "size unknown"), matching how the byte total treats unmeasured.
-        measured = [c.size_bytes for c in condemned if c.size_bytes is not None]
-        reclaimable_size: int | None = sum(measured) if measured else None
-
-        link: ReclaimableTitle | None = None
+        # The report-level reclaimable set (deduped across people) is the whole matched title's
+        # EFFECTIVELY-condemned candidates: a hand spare keeps its item off the board even though
+        # the frozen scan condemned it, and a hand reap the engine honors adds one. That truth is
+        # condemned.effective_condemned, frozen onto ``effective_condemn`` at load, so this pure
+        # roll-up never re-decides a verdict (rule 3/22/77). The per-PERSON figures below scope
+        # to each requester's own seasons; this report total stays over the whole matched title.
+        condemned = [c for c in cands if c.effective_condemn]
         if condemned:
             reclaimable_titles.add(frozenset(c.candidate_id for c in condemned))
             for c in condemned:
                 condemned_size_by_candidate[c.candidate_id] = c.size_bytes or 0
-            display = condemned[0].group_title or condemned[0].title
-            if len(cands) == 1:
-                # A movie or a lone season: open its own card.
-                link = ReclaimableTitle(display, reclaimable_size, condemned[0].candidate_id, None)
-            else:
-                # A show with condemned seasons: open the show, whose group carries them.
-                gk = next((c.group_key for c in condemned if c.group_key), None)
-                link = ReclaimableTitle(display, reclaimable_size, None, gk)
 
-        # Who played any copy of this title, merged across its candidates' keys.
-        plays_here: dict[int, int] = defaultdict(int)
-        for c in cands:
-            ev = evidence_by_key.get(str(c.plex_rating_key)) if c.plex_rating_key else None
-            if ev:
-                for uid, n in ev.plays_by_user.items():
-                    plays_here[uid] += n
-
-        # One row per distinct requester of this title (distinct by cross-portal identity).
+        # One row per distinct requester (by cross-portal identity), each attributed ONLY the
+        # seasons they asked for: a season-scoped request never charges the whole show (B-6,
+        # rule 78). Co-requesters of one show can scope different seasons, so this is per request.
         seen: set[str] = set()
         for req in group:
             ident = _identity(req)
             if ident in seen:
                 continue
             seen.add(ident)
+            scoped = _scope_to_request(cands, req)
             row = _row(req)
             row.requests_made += 1
-            row.gb_granted_bytes += title_size
+            row.gb_granted_bytes += sum(c.size_bytes or 0 for c in scoped)
+
             pid = req.requester.plex_id
-            if pid is not None and plays_here.get(pid, 0) > 0:
-                row.played_by_them += 1
-            if link is not None:
+            if pid is not None:
+                # Did THEY play any of the seasons they asked for (not the whole show)?
+                scoped_plays = 0
+                for c in scoped:
+                    ev = evidence_by_key.get(str(c.plex_rating_key)) if c.plex_rating_key else None
+                    if ev:
+                        scoped_plays += ev.plays_by_user.get(pid, 0)
+                if scoped_plays > 0:
+                    row.played_by_them += 1
+
+            scoped_condemned = [c for c in scoped if c.effective_condemn]
+            if scoped_condemned:
+                # Sum only what is measured; ``None`` when nothing in the scoped condemned set is
+                # measured (the chip then says "size unknown"), matching the byte total.
+                measured = [c.size_bytes for c in scoped_condemned if c.size_bytes is not None]
+                recl_size: int | None = sum(measured) if measured else None
                 row.reclaimable_items += 1
-                row.reclaimable_bytes += reclaimable_size or 0
-                row.reclaimable.append(link)
+                row.reclaimable_bytes += recl_size or 0
+                display = scoped_condemned[0].group_title or scoped_condemned[0].title
+                if len(scoped) == 1:
+                    # A movie or a lone requested season: open its own card.
+                    row.reclaimable.append(
+                        ReclaimableTitle(display, recl_size, scoped_condemned[0].candidate_id, None)
+                    )
+                else:
+                    # Several requested seasons: open the show, whose group carries them.
+                    gk = next((c.group_key for c in scoped_condemned if c.group_key), None)
+                    row.reclaimable.append(ReclaimableTitle(display, recl_size, None, gk))
 
     ordered = sorted(rows.values(), key=lambda r: r.gb_granted_bytes, reverse=True)
     for row in ordered:
@@ -719,7 +778,13 @@ async def _load_candidates(
     ``(snapshot_at, candidates)``; ``snapshot_at`` is ``None`` only when no scan has ever run
     (a snapshot always carries a ``created_at``), which tells a never-scanned install apart
     from a scan that legitimately found nothing. The timestamp classifies not-in-scan
-    requests into "added since" vs "set aside"."""
+    requests into "added since" vs "set aside".
+
+    Live hand overrides are merged in the same breath, exactly as the review routes do (rule
+    77): ``effective_override`` colors each candidate, and ``condemned.effective_condemned`` --
+    the ONE production reclaimable decision (rule 3/22) -- says which candidates are reclaimable
+    after a spare keeps one back or an engine-honored hand reap adds one. So Scales and Review
+    can never disagree about a hand-decided title."""
     snapshot = (
         await session.execute(select(Snapshot).order_by(Snapshot.id.desc()).limit(1))
     ).scalar_one_or_none()
@@ -730,6 +795,8 @@ async def _load_candidates(
         .scalars()
         .all()
     )
+    decisions = await whitelist.overrides(session)
+    reclaimable_keys = set(await condemned.effective_condemned(session, snapshot.id, decisions))
     return snapshot.created_at, [
         CandidateInfo(
             candidate_id=c.id,
@@ -748,6 +815,9 @@ async def _load_candidates(
             tvdb_id=c.tvdb_id,
             year=c.year,
             poster_rating_key=c.poster_rating_key,
+            override=whitelist.effective_override(c.media_key, decisions),
+            effective_condemn=c.media_key in reclaimable_keys,
+            season_number=_season_number(c.media_key),
         )
         for c in rows
     ]
@@ -818,11 +888,62 @@ async def _distinct_episodes(
     return out
 
 
+_REQUEST_CACHE_TTL = timedelta(seconds=30)
+
+
+async def _fetch_available(seerrs: Sequence[SeerrClient]) -> list[MediaRequest]:
+    """Every "available" request across every portal, fetched CONCURRENTLY. The portal reads are
+    independent, and paging them serially was the drawer's seconds-slow cost (P-1). Fail-hard:
+    ``asyncio.gather`` re-raises the first portal error exactly as the old serial loop did, so an
+    unreachable portal still 502s rather than a partial board."""
+    results = await asyncio.gather(*(s.all_requests(filter_="available") for s in seerrs))
+    return [r for sub in results for r in sub]
+
+
+class RequestCache:
+    """A tiny TTL cache for the merged "available" request list, shared by the board and the
+    drawer. It lives on ``app.state`` (one per app), never module-global, so tests stay hermetic
+    (rule 37). Opening a person right after a board load -- or reloading the board -- then re-pages
+    no portal within the window, which is where P-1's repeated full re-reads went. Fail-hard is
+    preserved: a portal error propagates out of :meth:`available` before anything is stored, so a
+    partial view is never cached; and the cache keys on the exact portal set, so a config change
+    never serves the old portals' requests."""
+
+    def __init__(self, ttl: timedelta = _REQUEST_CACHE_TTL) -> None:
+        self._ttl = ttl
+        self._at: datetime | None = None
+        self._key: str | None = None
+        self._requests: list[MediaRequest] | None = None
+
+    async def available(self, seerrs: Sequence[SeerrClient]) -> list[MediaRequest]:
+        key = ",".join(sorted(c.instance_key for c in seerrs))
+        now = utcnow()
+        if (
+            self._requests is not None
+            and self._key == key
+            and self._at is not None
+            and now - self._at < self._ttl
+        ):
+            return self._requests
+        merged = await _fetch_available(seerrs)
+        self._at, self._key, self._requests = now, key, merged
+        return merged
+
+
+async def _available_requests(
+    seerrs: Sequence[SeerrClient], cache: RequestCache | None
+) -> list[MediaRequest]:
+    """The merged available requests, through the shared cache when one is provided (the API
+    routes pass the app's), else a fresh concurrent fetch (the service tests call this way)."""
+    return await cache.available(seerrs) if cache is not None else await _fetch_available(seerrs)
+
+
 async def build_report(
     *,
     session_factory: Callable[[], AsyncSession],
     seerrs: list[SeerrClient],
     cache_engine: AsyncEngine,
+    cache: RequestCache | None = None,
 ) -> FairnessReport:
     """Gather what the roll-up needs -- the last scan's candidates, the available requests
     across *every* Seerr, and who played what -- then aggregate.
@@ -830,7 +951,9 @@ async def build_report(
     Seerr is multi-instance: every enabled portal is read and its requests merged, so a
     person who only ever asked through the second portal still appears. Fail-hard: if any
     Seerr is unreachable the ``IntegrationError`` propagates and the endpoint answers 502,
-    never a leaderboard that looks complete while a portal was silently skipped."""
+    never a leaderboard that looks complete while a portal was silently skipped. ``cache`` is
+    the app-scoped :class:`RequestCache` the board shares with the drawer (P-1); ``None`` fetches
+    fresh."""
     async with session_factory() as session:
         snapshot_at, candidates = await _load_candidates(session)
     if snapshot_at is None:
@@ -843,9 +966,7 @@ async def build_report(
             no_snapshot=True,
         )
 
-    requests: list[MediaRequest] = []
-    for seerr in seerrs:
-        requests.extend(await seerr.all_requests(filter_="available"))
+    requests = await _available_requests(seerrs, cache)
     keys = {c.plex_rating_key for c in candidates if c.plex_rating_key is not None}
     evidence = await _evidence_index(cache_engine, keys)
     horizon = await history_sync.horizon(cache_engine)
@@ -885,6 +1006,7 @@ async def build_person_detail(
     seerrs: Sequence[SeerrClient],
     cache_engine: AsyncEngine,
     identity: str,
+    cache: RequestCache | None = None,
 ) -> PersonDetail | None:
     """One person's full request breakdown for the Scales drawer: every title they asked
     for that the scan still has, each with when it was requested and when it arrived,
@@ -895,16 +1017,15 @@ async def build_person_detail(
     -- never a bare Seerr user id, which collides across portals (rule 6/12), nor the name
     (shared). Returns ``None`` when no one by that identity is in the current scan. Fail-hard
     on an unreachable Seerr, exactly like :func:`build_report`: a partial breakdown that looks
-    complete is worse than an error.
+    complete is worse than an error. ``cache`` is the app-scoped :class:`RequestCache` the drawer
+    shares with the board (P-1), so opening a person right after a board load re-pages no portal.
     """
     async with session_factory() as session:
         snapshot_at, candidates = await _load_candidates(session)
     if snapshot_at is None:
         return None
 
-    requests: list[MediaRequest] = []
-    for seerr in seerrs:
-        requests.extend(await seerr.all_requests(filter_="available"))
+    requests = await _available_requests(seerrs, cache)
     evidence = await _evidence_index(
         cache_engine, {c.plex_rating_key for c in candidates if c.plex_rating_key is not None}
     )
@@ -946,17 +1067,25 @@ async def build_person_detail(
         if not cands:
             # Not in the scan: collected (and named) below by the shared classifier.
             continue
+        # Only the seasons THIS person asked for (rule 78). A season-scoped request whose
+        # seasons are all absent from the scan scopes to nothing -- there is nothing of theirs
+        # to attribute here, so it is skipped rather than shown as a 0-byte matched title.
+        scoped = _scope_to_request(cands, mine)
+        if not scoped:
+            continue
         matched_any = True
 
-        granted += sum(c.size_bytes or 0 for c in cands)
+        granted += sum(c.size_bytes or 0 for c in scoped)
         # Nullable, matching the roll-up: None when nothing about the set is measured, so the
         # row says "size unknown" rather than a false 0 B.
-        measured = [c.size_bytes for c in cands if c.size_bytes is not None]
+        measured = [c.size_bytes for c in scoped if c.size_bytes is not None]
         title_size: int | None = sum(measured) if measured else None
-        condemned = [c for c in cands if c.verdict == _CONDEMN]
+        # Reclaimable after overrides, not just the frozen verdict (rule 77/61): a hand spare
+        # keeps its season off this set, an engine-honored hand reap adds one.
+        eff_condemned = [c for c in scoped if c.effective_condemn]
 
         plays = 0
-        for c in cands:
+        for c in scoped:
             ev = evidence.get(str(c.plex_rating_key)) if c.plex_rating_key else None
             if ev and plex_id is not None:
                 plays += ev.plays_by_user.get(plex_id, 0)
@@ -965,46 +1094,47 @@ async def build_person_detail(
         # What the row shows: a movie's raw plays ("watched 3x"), but a series' DISTINCT
         # episodes watched ("62 episodes watched") -- a resumed episode is one episode, so the
         # figure reads naturally and never inflates the way summed plays would.
-        if cands[0].media_type == "movie":
+        if scoped[0].media_type == "movie":
             watched_shown = plays
         else:
             watched_shown = sum(
                 episodes_by_season.get(c.plex_rating_key, 0)
-                for c in cands
+                for c in scoped
                 if c.plex_rating_key is not None
             )
 
-        # Title-level fate: reclaimable if ANY copy or season is condemned (a show is on the
-        # reap lane if any season is, rule 48); else abstain if any abstains; else protect.
-        if condemned:
+        # Title-level fate on the seasons they asked for: reclaimable if ANY is effectively
+        # condemned (a show is on the reap lane if any season is, rule 48); else abstain if any
+        # abstains and is not itself spared; else protect (a spared item reads as kept, rule 61).
+        if eff_condemned:
             verdict = _CONDEMN
             recl_items += 1
-            recl_bytes += sum(c.size_bytes or 0 for c in condemned)
-        elif any(c.verdict == "abstain" for c in cands):
+            recl_bytes += sum(c.size_bytes or 0 for c in eff_condemned)
+        elif any(c.verdict == "abstain" and c.override != "spare" for c in scoped):
             verdict = "abstain"
         else:
             verdict = "protect"
 
-        display = cands[0].group_title or cands[0].title
-        year = next((c.year for c in cands if c.year), None)
+        display = scoped[0].group_title or scoped[0].title
+        year = next((c.year for c in scoped if c.year), None)
         # The poster comes from Plex, proxied by our own image route -- the show's key for a
         # season (many have no poster of their own), the item's own key otherwise.
-        poster_key = cands[0].poster_rating_key or cands[0].plex_rating_key
+        poster_key = scoped[0].poster_rating_key or scoped[0].plex_rating_key
         poster_url = f"/api/poster/{poster_key}" if poster_key else None
-        if len(cands) == 1:
-            item_id: int | None = cands[0].candidate_id
+        if len(scoped) == 1:
+            item_id: int | None = scoped[0].candidate_id
             group_key: str | None = None
         else:
             item_id = None
-            group_key = next((c.group_key for c in condemned if c.group_key), None) or next(
-                (c.group_key for c in cands if c.group_key), None
+            group_key = next((c.group_key for c in eff_condemned if c.group_key), None) or next(
+                (c.group_key for c in scoped if c.group_key), None
             )
 
         titles.append(
             PersonTitle(
                 title=display,
                 year=year,
-                media_type=cands[0].media_type,
+                media_type=scoped[0].media_type,
                 is_4k=mine.is_4k,
                 size_bytes=title_size,
                 requested_at=mine.requested_at,

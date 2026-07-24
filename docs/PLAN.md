@@ -11,7 +11,121 @@ Last updated: 2026-07-23 (httpx -> httpx2 migration: **all production code now o
 including the atomic BaseClient/GuardedTransport cluster and every respx test; only a live
 end-to-end TLS check against a real instance remains before it is fully done)
 
-### Newest — httpx is unmaintained; httpx2 migration (production fully on httpx2)
+### Newest — fourth-pass review remediation, phased (all five phases landed)
+
+The fourth diff review (`docs/CODE_REVIEW.md`, dev @ `cea72d1`) found 36 findings (0 critical,
+2 high, 11 medium, 23 low). Broken into five subsystem-cohesive phases in
+`docs/CODE_REVIEW_PHASES.md` (the living tracker; the conversation is compacted between phases,
+so that file carries the hand-off). **All five are now landed on `dev` (uncommitted).**
+
+**Phase 5 landed** — platform, logging, settings, docs (PR-2, U-1, S-6, S-5, B-8, B-9, PR-4, U-6,
+I-4, I-6). The log-file mirror stopped failing silently: a steady-state write failure (a read-only
+remount) now flips a one-shot `logbuffer.file_sink_healthy()` flag, announces once through the ring,
+and the download appends the in-memory ring behind a marker so the trail is never silently truncated
+(PR-2, rule 82). The `logs/` dir is created and re-chmod'd `0o700` so the decision trail is
+owner-only (S-6, rule 83). Per-service `external_url` is now validated to http/https at the API edge
+via a shared `_validate_external_url`, mirrored client-side, so a scheme-less or `javascript:` value
+422s instead of being stored and rendered into an href (S-5, rules 84/13). The schedule editor names
+the real effective time zone instead of guessing "UTC in Docker" (U-1, rule 86). Two robustness
+fixes: the `add_instance_import_exclusion` migration gained the heal migration's reflection guard so
+a database created in the ~30-minute baseline-edit window upgrades instead of boot-looping on
+"duplicate column name" (B-8, rule 81 — the frozen baseline was NOT touched); and the timezone save
+wraps each schedule replay in the same `ValueError` guard startup uses, so a malformed stored cron
+can no longer 500 the save or half-apply the zone (PR-4, rule 87). `ensure_schema`'s rebuild is
+serialized behind a per-event-loop `asyncio.Lock` and its false "under the write lock" comment
+corrected (B-9, rescoped to a comment/no-lock defect, not data loss). Plus three copy/citation fixes:
+the docs pace floor reads "Any amount" not a unitless "1" (U-6), the four profile-fallback citations
+point at rule 65 not rule 14 (I-4), and the Logs tab renders its retention count from a new
+`/api/logs` `files_kept` field instead of a hardcoded "3" (I-6, rules 66/67). Gates green: ruff,
+mypy, 2023 pytest (+11), alembic upgrade + check (no drift); frontend eslint, 241 vitest (+2),
+tsc + vite build. Assumptions recorded in the tracker: B-9's per-loop lock (a module-level lock
+binds to the first test's loop and breaks the rest), and S-6's per-file 0600 opener was dropped
+because `RotatingFileHandler` has no `opener` hook and the 0700 dir already confines the files.
+
+**Phase 4 landed** — frontend, the review queue and shell (B-7, PR-1, B-11, B-12, PR-5, U-2,
+U-3, U-4, U-5, I-5). Two always-visible surfaces stopped rendering nothing on a failed fetch:
+the app-wide reap bar's View sheet (`ReapSheetLoader`) and the "not in the last scan" panel now
+show a loading line or a plain error, never a dead button or a false all-clear (PR-1, U-3, rule
+36). Two honesty fixes on stale data: "Show latest" now closes an open why-panel whose candidate
+id belongs to the snapshot being replaced (B-7, rule 79), and the "Updated to the latest scan"
+toast fires only once the swap has actually landed, never at issuance — with the failed-refetch
+case keyed on `isFetching` because React Query keeps the old data and clears the error flags on a
+background refetch error (PR-5, rule 85). Two Back-button fixes: `useBackGuard` gained a `canClose`
+predicate that re-parks the sentinel on a refused Back, so browser Back can no longer tear down the
+schedule modal mid-save (B-11, rule 80), and `BackNavProvider` reconciles a sentinel left parked
+before a reload so the first Back press is not dead (B-12). Plus the whole-show reap banner now
+qualifies its wording when the engine holds the reap (U-2, rule 61), the Scales unmatched panel is
+cleared on tab change (U-5), the Spare menu no longer scroll-closes while its custom input is open
+(U-4 — code half done; the phone-keyboard device half still wants the verify skill), and a stale
+`ModalShell` comment now cites the schedule modal (I-5). Frontend gates green: lint, 239 vitest
+(+10), tsc + vite build. Assumption worth recording: B-7 was fixed by *closing* the item panel, not
+re-resolving it — the fail-safe of the two options the review offered.
+
+**Phase 4 landed** — frontend, the review queue and shell (B-7, PR-1, B-11, B-12, PR-5, U-2,
+U-3, U-4, U-5, I-5). Two always-visible surfaces stopped rendering nothing on a failed fetch:
+the app-wide reap bar's View sheet (`ReapSheetLoader`) and the "not in the last scan" panel now
+show a loading line or a plain error, never a dead button or a false all-clear (PR-1, U-3, rule
+36). Two honesty fixes on stale data: "Show latest" now closes an open why-panel whose candidate
+id belongs to the snapshot being replaced (B-7, rule 79), and the "Updated to the latest scan"
+toast fires only once the swap has actually landed, never at issuance — with the failed-refetch
+case keyed on `isFetching` because React Query keeps the old data and clears the error flags on a
+background refetch error (PR-5, rule 85). Two Back-button fixes: `useBackGuard` gained a `canClose`
+predicate that re-parks the sentinel on a refused Back, so browser Back can no longer tear down the
+schedule modal mid-save (B-11, rule 80), and `BackNavProvider` reconciles a sentinel left parked
+before a reload so the first Back press is not dead (B-12). Plus the whole-show reap banner now
+qualifies its wording when the engine holds the reap (U-2, rule 61), the Scales unmatched panel is
+cleared on tab change (U-5), the Spare menu no longer scroll-closes while its custom input is open
+(U-4 — code half done; the phone-keyboard device half still wants the verify skill), and a stale
+`ModalShell` comment now cites the schedule modal (I-5). Frontend gates green: lint, 239 vitest
+(+10), tsc + vite build. Assumption worth recording: B-7 was fixed by *closing* the item panel, not
+re-resolving it — the fail-safe of the two options the review offered. Phase 5 (platform, logging,
+settings, docs) remains; see the tracker.
+
+**Phase 3 landed** — Plex client hardening + Scales/requested-by attribution. The four Plex
+section sweeps now share one hardened paging loop (`_iter_section_pages`): raw-count advance,
+`totalSize` the sole authority, a truncated or unbounded page raised on, never `totalSize`→`size`
+— so `library_guid_index`, `labeled_in_section`, and `section_rating_keys` can no longer return a
+silently partial map (B-3, rule 72); the label writes resolve their section by key via
+`sectionByID` (I-1, rule 57). Scales stopped disagreeing with Review: `_load_candidates` merges
+live overrides through the one `condemned.effective_condemned`, so a hand spare drops a
+scan-condemned title off the reclaimable board and an engine-honored hand reap adds one (B-5, rule
+77); a season-scoped request now attributes only the seasons it asked for, per person, never the
+whole show (B-6, rule 78). The season-precise requester key outranks the show-level Plex rating key
+(B-10); the rating-key requester tier is filed only when a portal shares Reaper's Plex server, read
+off the already-open connection with no extra round-trip (I-3); and the board and drawer share a
+short-TTL app-scoped request cache and fetch portals concurrently (P-1). Assumption that held:
+B-5's *expired*-spare disagreement was already closed by Phase 1's scan-time purge, so this fix is
+purely the live hand-spare-between-scans case. Deferred in writing (rule 72): `item_count`,
+`is_refreshing`, `refresh_path`, `empty_trash` still resolve their section by title — single
+named-section ops, not twins of the label writes — convert when next touched. Phases 4–5
+(frontend, platform) remain; see the tracker.
+
+**Phase 2 landed** — backup & restore security (S-1..S-4, B-4, PR-3, I-2). The restore
+confirm is now content-bound: `stage_upload` mints a per-staging token, returned in the summary
+and required back by `arm`, so a second session swapping in a different backup between review and
+confirm can no longer be armed by the operator's password (S-1). The schema gate reads the staged
+database's own `alembic_version`, not the manifest's claim (S-2); the backup's auth sessions,
+recovery tokens, and pending logins are purged at arm (S-3); key provenance follows
+`resolve_secret_key` precedence via `secrets.env_key_active`, so a stale `secret.key` beside an
+env key is neither bundled nor reported as self-sufficient (B-4); restored key/salt are 0600 from
+creation (S-4); backup/restore temp is swept at boot and cleaned on failure (PR-3); and
+`last_backup_at` is recorded only after the download stream completes (I-2). Deviation worth
+recording: S-1 makes the token *required*, so the frontend (`api.ts`, `Settings.tsx`) was threaded
+in the same change rather than deferred to Phase 4 — a required-field contract change carries its
+whole supply chain (rule 64). Phase 4 therefore does not touch the restore token.
+
+**Phase 1 landed** — the two highs, one root cause: a timed spare's expiry was realized only in
+the scan's in-memory map, never in storage, so every live consumer (planner, executor, grace,
+review queue) kept an expired spare in force forever (B-1) and the grace window burned down
+invisibly (B-2). Fix: `whitelist.purge_expired_spares` deletes expired-spare rows inside the scan
+transaction with the same `now` the judge used (`snapshot.scan`), so consumers converge the moment
+the snapshot commits and the re-condemned item earns a fresh grace clock. Defense in depth for B-2:
+`_sync_grace_clocks` now force-restarts the clock when a protective spare is cleared (rule 71).
+Assumption that held: the spare's clock is already deleted when the spare is set, so the existing
+`record_first_flagged_bulk` writes the fresh window with no extra work — only the durable row
+delete was missing.
+
+### httpx is unmaintained; httpx2 migration (production fully on httpx2)
 
 Test-suite CI work (sleep-patched tests, xdist, a sqlite-engine-leak fix) surfaced a
 `StarletteDeprecationWarning` pointing at `httpx2`. Checked it out: upstream `httpx` (encode/httpx)

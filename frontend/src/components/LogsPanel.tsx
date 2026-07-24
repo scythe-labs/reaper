@@ -235,8 +235,10 @@ export function LogsPanel() {
           <div className="set-row">
             <span className="set-label">Log files</span>
             <p className="help">
-              Save the whole log to your computer, handy for a bug report. Reaper keeps the
-              newest {count(3)} files on the server, a fuller trail than the window above.
+              Save the whole log to your computer, handy for a bug report.
+              {logs.data
+                ? ` Reaper keeps the newest ${count(logs.data.files_kept)} files on the server, a fuller trail than the window above.`
+                : " Reaper keeps a fuller trail on the server than the window above."}
             </p>
             <div className="set-control">
               <button

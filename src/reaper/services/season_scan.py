@@ -284,6 +284,36 @@ def season_title(series_title: str, season_number: int) -> str:
     return f"{series_title} · Season {season_number}"
 
 
+def season_requester(
+    requested: dict[str, str],
+    *,
+    media_key: str,
+    group_key: str,
+    tvdb_id: int | None,
+    season_number: int,
+    show_rating_key: int | None,
+) -> str | None:
+    """The "requested by" name for one season row -- display only, never a gate.
+
+    Best-first (requested_by.build_map): the EXACT copy where the operator mapped the Seerr
+    service (this season's own ``media_key``, then the whole-show ``group_key``, which are by
+    construction the precise keys); then this season's own loose tvdb key; then the show's Plex
+    rating key; then the whole-show tvdb union.
+
+    The season-precise tvdb key outranks the show-level rating key on purpose (B-10): Seerr
+    stores a TV request's ratingKey at the SHOW level, so ranking it above the season key blurred
+    "A asked S1, B asked S2" into "A + 1 other" on every season row. Rating-key still beats the
+    whole-show union, so copy precision survives for a whole-show request.
+    """
+    return (
+        requested.get(media_key)
+        or requested.get(group_key)
+        or requested.get(requested_by.season_key(tvdb_id, season_number) or "")
+        or requested.get(requested_by.rating_key_key(show_rating_key) or "")
+        or requested.get(requested_by.show_key(tvdb_id) or "")
+    )
+
+
 def parse_seasons(series: Mapping[str, Any]) -> list[SeasonStats]:
     """The season statistics for one Sonarr series, dropping any Sonarr cannot describe."""
     seasons: list[SeasonStats] = []
@@ -1449,18 +1479,15 @@ def _judge_series(
             genres=show_genres_obs,
             show_match_status=item.match_status,
         )
-        # Requested-by, display only, never a gate. Three tiers, best-first (build_map): the
-        # EXACT copy where the operator mapped the Seerr service (this season's own `media_key`,
-        # then the whole-show `group_key`, which are by construction the precise keys); then the
-        # show's Plex rating key (zero-config -- Seerr stores a TV request's ratingKey at the show
-        # level, so it matches the show, not the season); then the loose tvdb union (this season,
-        # then the whole show).
-        season_requester = (
-            requested.get(media_key)
-            or requested.get(group_key)
-            or requested.get(requested_by.rating_key_key(item.show_rating_key) or "")
-            or requested.get(requested_by.season_key(tvdb_id, n) or "")
-            or requested.get(requested_by.show_key(tvdb_id) or "")
+        # Requested-by, display only, never a gate. The tier precedence (including B-10's
+        # season-key-above-show-rating-key ordering) lives in the one season_requester helper.
+        season_requester_name = season_requester(
+            requested,
+            media_key=media_key,
+            group_key=group_key,
+            tvdb_id=tvdb_id,
+            season_number=n,
+            show_rating_key=item.show_rating_key,
         )
         judgments.append(
             SeasonJudgment(
@@ -1484,7 +1511,7 @@ def _judge_series(
                 guard_result=guard_result(plan, n),
                 year=show_year,
                 summary=show_summary,
-                requested_by=season_requester,
+                requested_by=season_requester_name,
                 group_key=group_key,
                 group_title=series_title,
                 poster_rating_key=item.show_rating_key,

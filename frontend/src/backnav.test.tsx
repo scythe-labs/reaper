@@ -6,8 +6,14 @@
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { BackNavProvider, useBackGuard, useBackNav } from "./backnav";
+
+afterEach(() => {
+  // Clear any sentinel left in history.state so the next test's provider mounts clean (its
+  // B-12 reconcile keys on exactly that marker).
+  history.replaceState(null, "");
+});
 
 /** A Back press, once our sentinel is parked, arrives as a popstate. */
 function pressBack() {
@@ -39,6 +45,25 @@ function TwoOverlays() {
       <button onClick={() => setB(true)}>openB</button>
       {a && <span>A open</span>}
       {b && <span>B open</span>}
+    </div>
+  );
+}
+
+function GuardedOverlay() {
+  const [open, setOpen] = useState(false);
+  const [locked, setLocked] = useState(false);
+  // The same shape ScheduleModal uses: Back is refused while a save is in flight (locked).
+  useBackGuard(
+    open,
+    () => setOpen(false),
+    () => !locked,
+  );
+  return (
+    <div>
+      <button onClick={() => setOpen(true)}>open</button>
+      <button onClick={() => setLocked(true)}>lock</button>
+      <button onClick={() => setLocked(false)}>unlock</button>
+      {open && <div role="dialog">the overlay</div>}
     </div>
   );
 }
@@ -108,6 +133,40 @@ describe("backnav", () => {
 
     pressBack();
     expect(screen.getByText("view: first")).toBeInTheDocument();
+  });
+
+  it("Back refuses a guarded overlay while it is locked, then closes it once unlocked", async () => {
+    render(
+      <BackNavProvider>
+        <GuardedOverlay />
+      </BackNavProvider>,
+    );
+    await userEvent.click(screen.getByText("open"));
+    await userEvent.click(screen.getByText("lock"));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    // Locked (a save in flight): Back is refused and the sentinel re-armed, so the overlay stays.
+    pressBack();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    // Unlock and press Back again: the re-armed guard now closes it, not a dead press (B-11).
+    await userEvent.click(screen.getByText("unlock"));
+    pressBack();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("reconciles a sentinel left parked before a reload, so the first Back is not dead", () => {
+    // Post-reload: the sentinel entry is the current one (its pushState state survived), but the
+    // provider's in-memory parkedRef is fresh false. On mount it steps back over the stale entry.
+    history.pushState({ __reaperBack: true }, "");
+    const backSpy = vi.spyOn(history, "back").mockImplementation(() => {});
+    render(
+      <BackNavProvider>
+        <Overlay />
+      </BackNavProvider>,
+    );
+    expect(backSpy).toHaveBeenCalledTimes(1);
+    backSpy.mockRestore();
   });
 
   it("a layer closed by its own control is no longer a Back step", async () => {

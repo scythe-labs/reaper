@@ -93,6 +93,70 @@ class TestKeys:
         assert "Specials" in season_scan.season_title("Example Show", 0)
 
 
+class TestSeasonRequester:
+    """B-10: the season-precise tvdb key outranks the show-level Plex rating key, so two people
+    who asked for different seasons attribute to their own season, not a blurred "A + 1 other"."""
+
+    def test_different_seasons_attribute_to_their_own_requester(self) -> None:
+        tvdb = 81189
+        show_rk = 500
+        # build_map files: each requested season under its season key, and BOTH requesters under
+        # the show-level rating key (Seerr stores a TV request's ratingKey at the show level).
+        requested = {
+            requested_by.season_key(tvdb, 1) or "": "Alice",
+            requested_by.season_key(tvdb, 2) or "": "Bob",
+            requested_by.rating_key_key(show_rk) or "": "Alice + 1 other",
+        }
+        s1 = season_scan.season_requester(
+            requested,
+            media_key="sonarr:1:9:1",
+            group_key="sonarr:1:9",
+            tvdb_id=tvdb,
+            season_number=1,
+            show_rating_key=show_rk,
+        )
+        s2 = season_scan.season_requester(
+            requested,
+            media_key="sonarr:1:9:2",
+            group_key="sonarr:1:9",
+            tvdb_id=tvdb,
+            season_number=2,
+            show_rating_key=show_rk,
+        )
+        assert s1 == "Alice"  # not "Alice + 1 other"
+        assert s2 == "Bob"
+
+    def test_the_show_rating_key_still_beats_the_whole_show_union(self) -> None:
+        # A whole-show request has no season key, so the rating-key tier (copy precision) still
+        # wins over the loose tvdb union.
+        tvdb = 81189
+        requested = {
+            requested_by.rating_key_key(500) or "": "Alice",
+            requested_by.show_key(tvdb) or "": "Alice + 1 other",
+        }
+        name = season_scan.season_requester(
+            requested,
+            media_key="sonarr:1:9:1",
+            group_key="sonarr:1:9",
+            tvdb_id=tvdb,
+            season_number=1,
+            show_rating_key=500,
+        )
+        assert name == "Alice"
+
+    def test_the_mapped_media_key_wins_over_everything(self) -> None:
+        requested = {"sonarr:1:9:1": "Mapped", requested_by.season_key(81189, 1) or "": "Loose"}
+        name = season_scan.season_requester(
+            requested,
+            media_key="sonarr:1:9:1",
+            group_key="sonarr:1:9",
+            tvdb_id=81189,
+            season_number=1,
+            show_rating_key=500,
+        )
+        assert name == "Mapped"
+
+
 class TestParseSeasons:
     def test_an_entry_without_statistics_is_dropped_not_guessed(self) -> None:
         """A season Sonarr cannot describe is left out entirely rather than defaulted to

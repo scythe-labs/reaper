@@ -153,6 +153,50 @@ class TestReschedulingMovesEveryJob:
             sched.shutdown(wait=False)
             await engine.dispose()
 
+    async def test_a_malformed_stored_cron_is_skipped_never_500s_or_half_applies(
+        self, tmp_path: Path
+    ) -> None:
+        """PR-4: a stored-but-malformed cron must not raise out of the timezone save or leave
+        the scheduler half-moved. reschedule_timezone wraps each apply in the same ValueError
+        guard startup uses, so a bad scan cron and a bad upkeep override are logged and skipped
+        while every well-formed job still moves to the new zone."""
+        settings = _settings(tmp_path)
+        engine = create_engine(settings)
+        factory = create_session_factory(engine)
+        box = SecretBox(resolve_secret_key(settings))
+        sched = scheduler.build_scheduler(
+            engine, tmp_path, session_factory=factory, secret_box=box, timezone=ZoneInfo("UTC")
+        )
+        sched.start()
+        try:
+            bad_job = scheduler.MAINTENANCE_JOB_IDS[0]
+            ny = ZoneInfo("America/New_York")
+            # Must not raise, though both the scan cron and one upkeep override are malformed.
+            scheduler.reschedule_timezone(
+                sched,
+                ny,
+                settings=settings,
+                session_factory=factory,
+                cache_engine=engine,
+                secret_box=box,
+                data_dir=tmp_path,
+                scan_cron="not a cron",
+                maintenance={bad_job: "also not a cron"},
+            )
+
+            # The malformed scan was skipped, so no scan job was created.
+            assert sched.get_job(scheduler.SCAN_JOB_ID) is None
+            for job_id in scheduler.MAINTENANCE_JOB_IDS:
+                zone = str(sched.get_job(job_id).trigger.timezone)
+                if job_id == bad_job:
+                    # The bad override was skipped: this job kept its prior zone, not half-moved.
+                    assert zone == "UTC"
+                else:
+                    assert zone == "America/New_York"
+        finally:
+            sched.shutdown(wait=False)
+            await engine.dispose()
+
 
 class TestTheApiSavesAndReschedules:
     def test_saving_a_zone_moves_the_live_scan_job(self, client: TestClient) -> None:

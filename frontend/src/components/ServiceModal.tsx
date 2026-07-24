@@ -111,6 +111,18 @@ export function joinBaseUrl(parts: UrlParts): string {
   return `${scheme}://${host}${portPart}${base}`;
 }
 
+/** Whether a value is a full http(s) web address. Mirrors the server's `_validate_external_url`
+ * so a scheme-less paste ("host:8989") or a "javascript:" value is caught before save, not only
+ * by the 422 (S-5). A `type="url"` input accepts any scheme with a colon, so it is not this check. */
+function isWebUrl(value: string): boolean {
+  try {
+    const u = new URL(value);
+    return (u.protocol === "http:" || u.protocol === "https:") && u.hostname !== "";
+  } catch {
+    return false;
+  }
+}
+
 export function ServiceModal({
   kind,
   instance,
@@ -384,6 +396,11 @@ export function ServiceModal({
         onSubmit={(e) => {
           e.preventDefault();
           setError(null);
+          const ext = externalUrl.trim();
+          if (ext && !isWebUrl(ext)) {
+            setError("The external URL must be a full web address, like https://192.0.2.10:8989.");
+            return;
+          }
           save.mutate();
         }}
       >

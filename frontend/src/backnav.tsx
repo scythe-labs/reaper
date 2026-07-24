@@ -48,6 +48,11 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
   // layer closes by non-Back means), so the resulting popstate is ignored rather than treated
   // as a user Back.
   const selfPopRef = useRef(false);
+  // A parked sentinel entry survives a page reload (its pushState state persists), but parkedRef
+  // resets to false on the fresh mount -- so on reload we would be sitting on a stale sentinel
+  // with no layer behind it, and the first Back would pop it as a dead press. Reconciled once at
+  // mount (below); StrictMode double-invokes effects, so this guards it to a single run.
+  const reconciledRef = useRef(false);
 
   // Built once (lazily), not per render: every method touches only refs and globals, so a single
   // stable instance is correct and keeps the context value from changing.
@@ -115,6 +120,24 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
       top.onBack();
     };
     window.addEventListener("popstate", onPop);
+    // Reconcile a sentinel left parked before a reload (see reconciledRef). Done after the
+    // listener is attached so our own history.back() below is swallowed by selfPopRef, and only
+    // once (StrictMode runs this effect twice).
+    if (!reconciledRef.current) {
+      reconciledRef.current = true;
+      const state = history.state as { __reaperBack?: boolean } | null;
+      if (state?.__reaperBack) {
+        if (history.length > 1) {
+          // Step back over the stale sentinel, consuming it, so the first real Back press does
+          // something instead of dead-popping to the identical URL beneath it (B-12).
+          selfPopRef.current = true;
+          history.back();
+        } else {
+          // Nothing to step back to: just clear the stale marker in place.
+          history.replaceState(null, "");
+        }
+      }
+    }
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
@@ -133,14 +156,31 @@ export function useBackNav(): { pushNav: (undo: () => void) => void } {
  * `close` is called if the user presses Back while this is the topmost open layer; closing it
  * any other way (Escape, an X, an outside click) auto-removes it. `close` is read fresh on each
  * Back, so a changing closure is fine.
+ *
+ * `canClose`, if given, is the same guard the modal's scrim / Escape / ✕ consult: while it
+ * returns false a Back press is refused and the sentinel re-parked, so Back can never tear down
+ * a modal that declared itself un-closable (a save in flight, say) -- rule 80.
  */
-export function useBackGuard(open: boolean, close: () => void): void {
+export function useBackGuard(
+  open: boolean,
+  close: () => void,
+  canClose: () => boolean = () => true,
+): void {
   const ctx = useContext(BackNavContext);
   const closeRef = useRef(close);
   closeRef.current = close;
+  const canCloseRef = useRef(canClose);
+  canCloseRef.current = canClose;
   useEffect(() => {
     if (!ctx || !open) return;
-    const id = ctx.register(() => closeRef.current());
+    // `id` tracks the live registration. A refused Back -- the modal says it can't close yet,
+    // the same guard the scrim/Escape/✕ honor -- re-registers, which re-parks the sentinel, so
+    // Back stays armed instead of being spent on a close that never happened (rule 80). The
+    // cleanup removes whichever id is current.
+    let id = ctx.register(function onBack() {
+      if (canCloseRef.current()) closeRef.current();
+      else id = ctx.register(onBack);
+    });
     return () => ctx.remove(id);
   }, [ctx, open]);
 }

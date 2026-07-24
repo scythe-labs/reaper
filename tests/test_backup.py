@@ -28,6 +28,7 @@ from reaper.api.middleware import _api_key_allowed
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.main import create_app
+from reaper.services import backup
 from tests._auth import login
 
 
@@ -94,6 +95,20 @@ class TestDownload:
         # way the field is present so the restore side can decide.
         assert "alembic_revision" in manifest
 
+    def test_a_stale_key_file_is_not_bundled_when_the_env_key_wins(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        # B-4: the env key ("k") wins over any file, so a lingering secret.key is inactive.
+        # It must not travel (bundling it would silently break decrypt on a target without
+        # the env var), and the manifest must say "env" so the operator sets it there.
+        (tmp_path / "secret.key").write_text("staleoldkey\n", encoding="utf-8")
+        members = _members(client.get("/api/settings/backup/download").content)
+        assert "secret.key" not in members
+        manifest = json.loads(members["manifest.json"])
+        assert manifest["key_source"] == "env"
+        assert manifest["contents"]["secret_key"] is False
+        assert client.get("/api/settings/backup").json()["key_in_backup"] is False
+
 
 class TestInfo:
     def test_fresh_install_has_never_backed_up(self, client: TestClient) -> None:
@@ -106,6 +121,33 @@ class TestInfo:
         assert client.get("/api/settings/backup").json()["last_backup_at"] is None
         client.get("/api/settings/backup/download")
         assert client.get("/api/settings/backup").json()["last_backup_at"] is not None
+
+
+class TestSweepStaleTemp:
+    """PR-3: crash-leftover backup/restore temp is swept at boot, real state is spared."""
+
+    def test_it_clears_leftover_temp_and_spares_real_state(self, tmp_path: Path) -> None:
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        settings.ensure_data_dir()
+        # Crash debris: a backup temp dir with a partial snapshot, a restore staging temp,
+        # and an upload spool file.
+        (tmp_path / ".backup-tmp-abc").mkdir()
+        (tmp_path / ".backup-tmp-abc" / "reaper.db").write_bytes(b"partial")
+        (tmp_path / ".restore-tmp-xyz").mkdir()
+        (tmp_path / ".restore-upload-123").write_bytes(b"upload")
+        # Real state that must survive: the armed staging and a recovery copy carry no
+        # leading dot, so the prefix match never touches them.
+        (tmp_path / "pending-restore").mkdir()
+        (tmp_path / "pre-restore-20260101T000000Z").mkdir()
+        (tmp_path / "reaper.db").write_bytes(b"live")
+
+        assert backup.sweep_stale_temp(settings) == 3
+        assert not (tmp_path / ".backup-tmp-abc").exists()
+        assert not (tmp_path / ".restore-tmp-xyz").exists()
+        assert not (tmp_path / ".restore-upload-123").exists()
+        assert (tmp_path / "pending-restore").exists()
+        assert (tmp_path / "pre-restore-20260101T000000Z").exists()
+        assert (tmp_path / "reaper.db").exists()
 
 
 class TestApiKeyIsFenced:

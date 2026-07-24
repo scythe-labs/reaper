@@ -29,7 +29,21 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _has_column(inspector: sa.Inspector, table: str, name: str) -> bool:
+    """Whether ``table`` already carries ``name`` in the live database."""
+    return any(col["name"] == name for col in inspector.get_columns(table))
+
+
 def upgrade() -> None:
+    # For a brief window this column lived in the frozen baseline's CREATE TABLE in place
+    # (later reverted), so a database created fresh during that ~30 minutes already carries
+    # it. A plain add_column then raises "duplicate column name" and boot-loops the container
+    # -- exactly the rebuild the frozen-baseline rule forbids. Reflect first and skip the add
+    # when it is already present, the same reflection guard the sibling heal migration
+    # (20260723_1000) uses (rule 81). A database that never had the column still gets it, and
+    # one that already ran this migration never re-runs it, so editing the shipped file is safe.
+    if _has_column(sa.inspect(op.get_bind()), "instance", "add_import_exclusion"):
+        return
     # batch_alter_table for SQLite parity with the baseline. The server default lets SQLite
     # add a NOT NULL column to a populated table (it cannot otherwise) and backfills every
     # existing instance to "off"; new rows still take the model's default.

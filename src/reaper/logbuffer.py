@@ -32,6 +32,7 @@ import threading
 from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -47,10 +48,21 @@ RING_SIZE = 2000
 #: (the live file plus two rotations), so the logs can never fill the data volume. The
 #: newest lines land in ``reaper.log``; when it fills it rolls to ``reaper.log.1`` and
 #: the older one to ``reaper.log.2``, and the oldest is discarded. These mirror the ring.
+#: The Logs tab tells the operator how many files are kept; it reads that count from the
+#: ``/api/logs`` response (:func:`files_retained`), never a hardcoded copy, so this constant
+#: is the one source of truth for it (LogsPanel.tsx; rules 66/67).
 LOG_DIRNAME = "logs"
 LOG_FILENAME = "reaper.log"
 LOG_MAX_BYTES = 20 * 1024 * 1024
 LOG_BACKUP_COUNT = 2
+
+
+def files_retained() -> int:
+    """How many log files survive on disk at once: the live ``reaper.log`` plus its
+    ``LOG_BACKUP_COUNT`` rotations. Returned in the ``/api/logs`` payload and rendered by
+    the Logs tab so its "newest N files" copy can never drift from the real retention
+    (rules 66/67)."""
+    return LOG_BACKUP_COUNT + 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +126,13 @@ class _FileSink:
     pre-rendered, already-redacted lines (see :meth:`LogRing.append`), so it never touches
     the redaction path itself. ``delay=True`` means the file is not created until the
     first line, so an install that never logs leaves no empty file behind.
+
+    A steady-state write failure (the data volume remounts read-only, the disk fills)
+    passes setup cleanly because ``delay=True`` never touches disk at construction. Rather
+    than swallow those failures forever -- which would leave the download serving a trail
+    that silently ends at the remount -- the sink flips a one-shot degraded flag and
+    announces it once through the ring, so both the Logs tab and the download can tell the
+    operator the on-disk trail went stale (rule 82).
     """
 
     def __init__(self, path: Path) -> None:
@@ -140,9 +159,12 @@ class _FileSink:
         )
         # A logging sink must never raise into its caller: a full or vanished disk cannot
         # be allowed to crash the very tool used to debug it. handle() takes the handler
-        # lock and rolls over as needed.
-        with suppress(Exception):
+        # lock and rolls over as needed. But a silent forever-swallow hides a stale trail,
+        # so on the first failure flip the degraded flag and announce it once (rule 82).
+        try:
             self._handler.handle(record)
+        except Exception:
+            _mark_file_sink_degraded()
 
     def close(self) -> None:
         with suppress(Exception):
@@ -152,6 +174,42 @@ class _FileSink:
 _file_lock = threading.Lock()
 _file_sink: _FileSink | None = None
 _log_path: Path | None = None
+#: True until a steady-state file write fails; then False until a fresh sink is configured.
+#: Read by :func:`file_sink_healthy` so the download can append the in-memory ring when the
+#: on-disk trail can no longer be trusted (rule 82). Guarded by ``_file_lock``.
+_file_sink_healthy = True
+
+
+def _mark_file_sink_degraded() -> None:
+    """Flip the sink to degraded on the first write failure and announce it once.
+
+    Idempotent: the announcement is emitted through the ring, which re-enters the sink's
+    write and fails again -- but the flag is already down by then, so the retry returns
+    here and does nothing. No recursion beyond that single bounce, and no re-spam.
+    """
+    global _file_sink_healthy
+    with _file_lock:
+        if not _file_sink_healthy:
+            return
+        _file_sink_healthy = False
+    RING.append(
+        ts=datetime.now(UTC).isoformat(),
+        level="WARNING",
+        text=(
+            "Log file writing failed, so the downloaded log may be missing recent lines. "
+            "The live view here is unaffected. Check the data volume is writable."
+        ),
+    )
+
+
+def file_sink_healthy() -> bool:
+    """Whether the on-disk mirror is still accepting writes.
+
+    False once a steady-state write has failed (and until a fresh sink is configured). The
+    download route consults this to decide whether the on-disk files are the whole trail or
+    the in-memory ring must be appended to carry the lines that never reached disk."""
+    with _file_lock:
+        return _file_sink_healthy
 
 
 def configure_file_logging(data_dir: Path) -> None:
@@ -163,11 +221,16 @@ def configure_file_logging(data_dir: Path) -> None:
     ring; a data dir that cannot be written must degrade to "no files," never stop the
     app from booting or logging, so a failure here is logged and swallowed.
     """
-    global _file_sink, _log_path
+    global _file_sink, _log_path, _file_sink_healthy
     log_dir = data_dir / LOG_DIRNAME
     path = log_dir / LOG_FILENAME
     try:
-        log_dir.mkdir(parents=True, exist_ok=True)
+        # Owner-only from creation: the trail carries the operator's per-item reasoning at
+        # DEBUG, so it should be no more readable than the databases beside it (rules 14/83).
+        # mkdir's mode only applies to a dir it creates (and is masked by umask); chmod
+        # unconditionally so a dir left world-readable by an earlier version is tightened too.
+        log_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        log_dir.chmod(0o700)
         sink = _FileSink(path)
     except OSError:
         logging.getLogger(__name__).warning(
@@ -177,6 +240,9 @@ def configure_file_logging(data_dir: Path) -> None:
         return
     with _file_lock:
         old, _file_sink, _log_path = _file_sink, sink, path
+        # A fresh sink starts trusted: it is a new file handler on a dir we just proved
+        # writable, so any prior degradation no longer applies.
+        _file_sink_healthy = True
     if old is not None:
         old.close()
 
