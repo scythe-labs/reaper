@@ -71,6 +71,7 @@ from reaper.services import (
     season_scan,
     whitelist,
 )
+from reaper.services.condemned import reap_override_verdict
 from reaper.services.display_meta import (
     build_ratings_json,
     dataset_entry,
@@ -1060,6 +1061,20 @@ def _judge_item(
     # run (record_first_flagged_bulk) -- one query for every condemned key instead of a
     # read per item. The decision per key is unchanged: see _apply_first_flag.
 
+    # One explanation, two uses: the frozen record stored on the row, and the same string the
+    # effective-reap fate is read back from below -- so the scan and every read-time consumer
+    # replay the identical evidence.
+    explanation = _explain(
+        evaluation,
+        item_score,
+        policy,
+        plex_rating_key=plex_rating_key,
+        matched_by=matched_by,
+        match_detail=match_detail,
+        match_status=match_status,
+        merged_rating_keys=merged_rating_keys,
+    )
+
     session.add(
         Candidate(
             snapshot_id=snapshot_id,
@@ -1097,16 +1112,7 @@ def _judge_item(
             verdict=verdict,
             score=score_value,
             coverage_bp=coverage_bp,
-            explanation_json=_explain(
-                evaluation,
-                item_score,
-                policy,
-                plex_rating_key=plex_rating_key,
-                matched_by=matched_by,
-                match_detail=match_detail,
-                match_status=match_status,
-                merged_rating_keys=merged_rating_keys,
-            ),
+            explanation_json=explanation,
             # The frozen scoring inputs: the Facts plus the season-pruning guard (extra_results,
             # NOT the hand-override, which is re-applied live at replay time from the override
             # map). This is what the simulator replays under an edited policy. See facts_codec.
@@ -1119,12 +1125,20 @@ def _judge_item(
     # Return the EFFECTIVE fate (the override applied) -- NOT the pure verdict we stored. The
     # caller uses it to set the grace clock and the condemned tally over the set that will
     # actually be removed: a honored hand reap earns a fresh grace window, a hand spare gives up
-    # its clock (rules 4/50). This mirrors condemned.effective_condemned / whitelist.on_reap_list,
-    # which recompute the same fate at read time -- so the fate is derived, never stored.
+    # its clock (rules 4/50). The fate is derived, never stored.
     if override == "spare":
         return "protect"
     if override == "reap":
-        return _verdict(evaluation, score_value, coverage_bp, policy, override="reap")
+        # Read the effective-reap fate off the SAME frozen explanation the read side does, via
+        # the one shared decision (condemned.reap_override_verdict). NOT off the live evaluation:
+        # a bad Plex match holds a reap read-side but never reaches the gate evaluation, so
+        # `_verdict(override="reap")` would honor a reap the planner and grace-clock resync hold
+        # -- orphaning a grace clock the delete set never claims (rules 3/4/22). A pure-policy
+        # condemn is trivially effective (mirrors condemned.reap_is_effective's shortcut).
+        reap_condemns = verdict == "condemn" or (
+            reap_override_verdict(explanation, score=score_value) == "condemn"
+        )
+        return "condemn" if reap_condemns else "protect"
     return verdict
 
 

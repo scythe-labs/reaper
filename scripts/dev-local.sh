@@ -22,6 +22,11 @@
 #   scripts/dev-local.sh status   show whether each is listening
 #   scripts/dev-local.sh logs     tail both logs (Ctrl-C to stop tailing)
 #
+# Serve another branch/worktree (flags go BEFORE the command), so an agent can boot a PR fast
+# without cd-ing around -- the code comes from the target tree, the data dir from main:
+#   scripts/dev-local.sh --branch <name> [up|down|...]   the worktree checked out on <name>
+#   scripts/dev-local.sh --worktree <path> [up|down|...] that checkout directly
+#
 # Env overrides:
 #   REAPER_DATA_DIR       data dir to serve (default: <main checkout>/data if it has a
 #                         reaper.db, else <this tree>/data)
@@ -33,9 +38,46 @@
 #
 set -euo pipefail
 
+log()  { printf '\033[36m[dev]\033[0m %s\n' "$*"; }
+warn() { printf '\033[33m[dev]\033[0m %s\n' "$*"; }
+
 # --- locate the tree and the real data dir --------------------------------------------------
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
+
+# --- optional: serve a DIFFERENT worktree/branch (so an agent can test a PR fast) -----------
+# `--worktree <path>` boots that checkout's code; `--branch <name>` finds the worktree already
+# checked out on that branch. Either re-execs this script FROM the target tree, so its code is
+# what runs -- while the data dir still resolves to the main checkout's data/ (below) and the
+# standard ports still apply. Flags come before the command:  dev-local.sh --branch X up
+TARGET_TREE=""
+while [ $# -gt 0 ]; do
+  case "${1:-}" in
+    -w|--worktree) TARGET_TREE="${2:?--worktree needs a path}"; shift 2 ;;
+    -b|--branch)
+      want="${2:?--branch needs a name}"; shift 2
+      # The worktree whose checked-out branch is <want>, from `git worktree list` (porcelain:
+      # a "worktree <path>" line followed by "branch refs/heads/<name>").
+      TARGET_TREE="$(git worktree list --porcelain \
+        | awk -v b="branch refs/heads/$want" '/^worktree /{w=$2} $0==b{print w; exit}')"
+      [ -n "$TARGET_TREE" ] || {
+        warn "no worktree is checked out on branch '$want'"
+        warn "create one first:  git worktree add .claude/worktrees/$want $want"
+        exit 2
+      }
+      ;;
+    *) break ;;
+  esac
+done
+# REAPER_DEV_REEXEC guards against a re-exec loop; the target run has no flags left anyway.
+if [ -n "$TARGET_TREE" ] && [ -z "${REAPER_DEV_REEXEC:-}" ]; then
+  TARGET_TREE="$(cd "$TARGET_TREE" 2>/dev/null && pwd)" \
+    || { warn "worktree path does not exist"; exit 2; }
+  target_script="$TARGET_TREE/scripts/dev-local.sh"
+  [ -x "$target_script" ] || { warn "no runnable scripts/dev-local.sh in $TARGET_TREE"; exit 2; }
+  log "serving worktree: $TARGET_TREE"
+  exec env REAPER_DEV_REEXEC=1 "$target_script" "$@"
+fi
 
 # The main checkout owns data/, shared by every worktree. Derive it from git rather than
 # hardcoding an absolute path (golden rule: no identifying paths in committed files).
@@ -59,9 +101,6 @@ WEB_PORT="${REAPER_WEB_PORT:-5173}"
 LOG_DIR="$REPO/.dev-logs"
 API_LOG="$LOG_DIR/api.log"
 WEB_LOG="$LOG_DIR/web.log"
-
-log()  { printf '\033[36m[dev]\033[0m %s\n' "$*"; }
-warn() { printf '\033[33m[dev]\033[0m %s\n' "$*"; }
 
 port_pids() { lsof -ti "tcp:$1" -sTCP:LISTEN 2>/dev/null | tr '\n' ' ' | sed 's/ *$//' || true; }
 
