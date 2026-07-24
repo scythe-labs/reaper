@@ -37,8 +37,11 @@ const cachedRow = (client: QueryClient, key: string) => {
 
 // The refetchType the queue was invalidated with on the last call touching ["candidates"].
 const queueRefetchType = (spy: ReturnType<typeof vi.spyOn>) => {
-  const calls = spy.mock.calls.filter((c) => (c[0] as { queryKey?: unknown[] })?.queryKey?.[0] === "candidates");
-  return (calls.at(-1)?.[0] as { refetchType?: string })?.refetchType;
+  const calls = spy.mock.calls as unknown[][];
+  const queueCalls = calls.filter(
+    (c) => (c[0] as { queryKey?: unknown[] })?.queryKey?.[0] === "candidates",
+  );
+  return (queueCalls.at(-1)?.[0] as { refetchType?: string })?.refetchType;
 };
 
 const setup = () => {
