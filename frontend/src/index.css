@@ -1395,6 +1395,40 @@ tbody tr.selected {
   overscroll-behavior: contain;
 }
 
+/* The panel's own loading state: the same ring Scales' first load uses, centered in the
+   reserved column and scaled to the panel (spinner-lg, not the full-page spinner-xl), so the
+   wait reads as the app working rather than a bare word. Shared by the Scales person panel
+   and the Review why-panel, which ride this same .why shell. Eases up on appear so it does
+   not snap in -- gentler on a phone, where the panel is the whole screen. */
+.why-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  text-align: center;
+  min-height: 45vh;
+  padding: 2rem 1rem;
+  color: var(--muted);
+  animation: why-loading-in 0.28s var(--ease) both;
+}
+.why-loading-lead {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text);
+}
+@keyframes why-loading-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* Spare / Reap from inside the reasoning: pinned to the panel's bottom edge so the
    decision stays in reach at the end of a long explanation. Bleeds into the panel's own
    padding so scrolled content passes under it, never beside it. */
@@ -7245,6 +7279,9 @@ button.danger:hover:not(:disabled) {
 @media (prefers-reduced-motion: reduce) {
   .spinner,
   .reap-running .spinner {
+    animation: none;
+  }
+  .why-loading {
     animation: none;
   }
   .prog-fill,

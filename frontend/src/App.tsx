@@ -388,16 +388,21 @@ function WhyPanelFallback({ error, onClose }: { error: boolean; onClose: () => v
   return (
     <aside className="why">
       <WhyClose onClose={onClose} />
-      <header className="why-head">
-        <h2>{error ? "Something went wrong" : "Loading…"}</h2>
-      </header>
       {error ? (
-        <p className="notice notice-error">
-          Couldn't load the reasons for this item. The item itself is unaffected. Close this
-          panel and click the item to try again.
-        </p>
+        <>
+          <header className="why-head">
+            <h2>Something went wrong</h2>
+          </header>
+          <p className="notice notice-error">
+            Couldn't load the reasons for this item. The item itself is unaffected. Close this
+            panel and click the item to try again.
+          </p>
+        </>
       ) : (
-        <p className="muted">Fetching what Reaper saw…</p>
+        <div className="why-loading" role="status" aria-live="polite">
+          <span className="spinner spinner-lg" aria-hidden="true" />
+          <p className="why-loading-lead">Fetching what Reaper saw…</p>
+        </div>
       )}
     </aside>
   );

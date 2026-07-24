@@ -347,13 +347,21 @@ export function ScalesPanelFallback({ error, onClose }: { error: boolean; onClos
   return (
     <aside className="why">
       <WhyClose onClose={onClose} />
-      <header className="why-head">
-        <h2>{error ? "Something went wrong" : "Loading…"}</h2>
-      </header>
-      {error && (
-        <p className="notice notice-error">
-          Couldn't load this person's requests. Close this panel and click the card to try again.
-        </p>
+      {error ? (
+        <>
+          <header className="why-head">
+            <h2>Something went wrong</h2>
+          </header>
+          <p className="notice notice-error">
+            Couldn't load this person's requests. Close this panel and click the card to try
+            again.
+          </p>
+        </>
+      ) : (
+        <div className="why-loading" role="status" aria-live="polite">
+          <span className="spinner spinner-lg" aria-hidden="true" />
+          <p className="why-loading-lead">Gathering their requests…</p>
+        </div>
       )}
     </aside>
   );
