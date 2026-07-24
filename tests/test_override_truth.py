@@ -63,6 +63,30 @@ UNMANAGED = json.dumps(
 BLOCKED = json.dumps(
     {"protections_unknown": [{"gate": "curated_list", "detail": "could not check the list"}]}
 )
+# The keep-rule conflict: the season guard flags a prunable season watched MORE than one
+# the rule keeps, and hands the call to a human. It rides in `protections_unknown` (blocked,
+# so the scan abstains and asks for a look) but its detail is a plain-language decision for
+# the owner, never a "could not check ...". A hand reap IS that decision, so it condemns.
+KEEP_RULE_CONFLICT = json.dumps(
+    {
+        "protections_unknown": [
+            {
+                "gate": "season_progression",
+                "detail": "5 people watched this season, more than one your keep rule protects.",
+            }
+        ]
+    }
+)
+# Belt-and-suspenders: even a deferrable gate holds the reap if its block is a genuine
+# plumbing failure ("could not check ..."), so the gate id alone can never open a fail-open
+# path. (The season guard does not emit such a block today; this pins that it stays safe.)
+CONFLICT_BUT_PLUMBING = json.dumps(
+    {
+        "protections_unknown": [
+            {"gate": "season_progression", "detail": "could not check the sequential guard"}
+        ]
+    }
+)
 UNMATCHED = json.dumps({"match": {"status": "unmatched"}})
 CLEAN_ABSTAIN = json.dumps({"threshold": 70})
 
@@ -77,6 +101,17 @@ class TestReapOverrideVerdict:
 
     def test_an_unchecked_protection_still_wins(self) -> None:
         assert reap_override_verdict(BLOCKED, score=99) == "protect"
+
+    def test_a_keep_rule_conflict_loses_to_the_owner(self) -> None:
+        """The season keep-rule conflict is a deliberate "you decide" flag, not a
+        protection Reaper could not check. A hand reap is exactly the decision it asked
+        for, so it condemns -- unlike an unchecked protection, which still holds."""
+        assert reap_override_verdict(KEEP_RULE_CONFLICT, score=90) == "condemn"
+
+    def test_a_deferrable_gate_that_actually_failed_still_wins(self) -> None:
+        """A "could not check ..." block holds the reap even on a deferrable gate: the
+        gate id alone never opens a fail-open path (belt-and-suspenders)."""
+        assert reap_override_verdict(CONFLICT_BUT_PLUMBING, score=90) == "protect"
 
     def test_a_match_problem_reads_as_blocked(self) -> None:
         assert reap_override_verdict(UNMATCHED, score=99) == "protect"
@@ -94,7 +129,9 @@ class TestReapOverrideVerdict:
         engine's decision order changed and services.condemned must be revisited."""
         for score in (0, 50, 100):
             assert reap_override_verdict(CAUTIOUS, score=score) == "condemn"
+            assert reap_override_verdict(KEEP_RULE_CONFLICT, score=score) == "condemn"
             assert reap_override_verdict(STRUCTURAL, score=score) == "protect"
+            assert reap_override_verdict(CONFLICT_BUT_PLUMBING, score=score) == "protect"
 
 
 # --- fixtures over a real database ------------------------------------------

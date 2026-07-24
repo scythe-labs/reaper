@@ -30,7 +30,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.db.models import Candidate
-from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict
+from reaper.engine.verdict import STRUCTURAL_GATES, block_holds_reap, decide_verdict
 from reaper.services import whitelist
 
 
@@ -39,13 +39,16 @@ def reap_override_verdict(explanation_json: str, *, score: int) -> str:
 
     Inputs are derived from the frozen explanation -- which protections fired, whether
     any could not be checked, whether the Plex match was clean -- and handed to
-    ``decide_verdict`` with ``override="reap"``. That branch consults only ``blocked``
-    and ``safety_protected`` (a structural gate: streaming right now, or a file no
-    *arr manages); the score, coverage and thresholds are never read on it, so the
-    zeros below are inert plumbing, pinned by a test, not hidden policy.
+    ``decide_verdict`` with ``override="reap"``. That branch consults only
+    ``blocked_holds_reap`` and ``safety_protected`` (a structural gate: streaming right
+    now, or a file no *arr manages); the score, coverage and thresholds are never read on
+    it, so the zeros below are inert plumbing, pinned by a test, not hidden policy.
 
-    A malformed or unreadable explanation reads as blocked: not being able to see why
-    an item was kept is not permission to remove it.
+    A block that could not be *checked* holds the reap (fail-closed); a block that is a
+    deliberate "the owner should decide" flag -- the keep-rule conflict -- does not, since
+    the reap IS that decision (:func:`reaper.engine.verdict.block_holds_reap`). A malformed
+    or unreadable explanation reads as blocked: not being able to see why an item was kept
+    is not permission to remove it.
     """
     try:
         exp = json.loads(explanation_json)
@@ -66,10 +69,18 @@ def reap_override_verdict(explanation_json: str, *, score: int) -> str:
     fired = [e for e in exp.get("protections_fired") or [] if isinstance(e, dict)]
     unknown = [e for e in exp.get("protections_unknown") or [] if isinstance(e, dict)]
     match_status = (exp.get("match") or {}).get("status")
+    bad_match = match_status in ("unmatched", "ambiguous")
 
     return decide_verdict(
         protected=bool(fired),
-        blocked=bool(unknown) or match_status in ("unmatched", "ambiguous"),
+        blocked=bool(unknown) or bad_match,
+        # A block holds the reap unless it is a deliberate "you decide" deferral (the
+        # keep-rule conflict); a bad Plex match always holds. Read off the same primitive
+        # the scan uses, so a stored explanation and a live evaluation agree.
+        blocked_holds_reap=bad_match
+        or any(
+            block_holds_reap(str(e.get("gate") or ""), str(e.get("detail") or "")) for e in unknown
+        ),
         score=score,
         coverage_bp=0,
         condemn_at=0,

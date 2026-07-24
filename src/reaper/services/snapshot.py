@@ -61,7 +61,7 @@ from reaper.engine.signals import (
     SignalId,
     score,
 )
-from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict
+from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict, reap_held_by_blocks
 from reaper.ratings import Rating, RatingSource, from_radarr, merge_by_source
 from reaper.services import (
     history_sync,
@@ -1130,12 +1130,16 @@ def _verdict(
 
     A manual ``"reap"`` override forces CONDEMN -- the owner looked and decided -- but never
     past a hard safety gate (streaming now, unmanaged) or a protection that could not be
-    checked; those still protect. A ``"spare"`` override arrives as an extra PROTECT result and
-    so is already handled by ``evaluation.protected``.
+    checked; those still protect. The one block a reap does overrule is a deliberate "the
+    owner should decide" deferral (the keep-rule conflict), which is exactly the call the
+    flag asked the owner to make -- ``reap_held_by_blocks`` tells the two apart. A ``"spare"``
+    override arrives as an extra PROTECT result and so is already handled by
+    ``evaluation.protected``.
     """
     return decide_verdict(
         protected=evaluation.protected,
         blocked=evaluation.blocked,
+        blocked_holds_reap=reap_held_by_blocks(evaluation.results),
         safety_protected=any(r.fired and r.gate in STRUCTURAL_GATES for r in evaluation.results),
         score=score_value,
         coverage_bp=coverage_bp,

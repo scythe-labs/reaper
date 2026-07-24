@@ -1802,6 +1802,16 @@ a.rating-chip:hover {
   background: var(--bg);
   border-color: var(--border);
 }
+/* A hand reap the engine can't honor yet: the condemn-soft ground, but a DASHED condemn
+   border, never the solid one that means "removed" (rule 49). Amber stays reserved for
+   "left for you to decide", so a held reap never wears it. */
+.verdict-held {
+  background: var(--condemn-soft);
+  border: 1px dashed var(--condemn);
+}
+.verdict-held .verdict-label {
+  color: var(--condemn);
+}
 
 .verdict-label {
   text-transform: uppercase;

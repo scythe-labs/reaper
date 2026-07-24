@@ -28,7 +28,7 @@ import {
   type SignalContribution,
   type SignalState,
 } from "../api";
-import { coverage, itemBytes, since } from "../format";
+import { coverage, itemBytes, since, spareRemaining } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import {
   KeptByShowNote,
@@ -255,38 +255,114 @@ function KeptNotice({ match }: { match: Match | undefined }) {
   );
 }
 
-/** The verdict headline, in the review queue's own tab words (Condemned Souls / Sanctuary /
- *  Limbo) rather than the engine's enum -- an operator should never be shown "abstain". */
-const VERDICT_LABELS: Record<string, string> = {
-  condemn: "Condemned",
-  protect: "Sanctuary",
-  abstain: "Limbo",
-};
+/** Is this abstain the keep-rule conflict -- a season the rule would prune but that was
+ *  watched more than one it keeps, deliberately left for the owner? Distinct from a plumbing
+ *  block ("could not check ..."), which is a genuine we-could-not-look. Mirrors the backend's
+ *  own test in ``engine.verdict.block_holds_reap`` / ``api.routes._chip``. */
+function isKeepRuleConflict(item: CandidateDetail): boolean {
+  return item.explanation.protections_unknown.some(
+    (o) => o.gate === "season_progression" && !o.detail.startsWith("could not check"),
+  );
+}
+
+/** Why a hand reap is still held -- the one thing the engine will not delete past. After the
+ *  keep-rule conflict became reap-overridable, a held reap can only be: something playing
+ *  right now, a file no app manages, or a protection that genuinely could not be checked. */
+function heldReapNote(item: CandidateDetail): string {
+  const fired = new Set(item.explanation.protections_fired.map((o) => o.gate));
+  if (fired.has("streaming_now")) {
+    return "You asked to remove this, but someone is watching it right now, so it's kept for now.";
+  }
+  if (fired.has("unmanaged")) {
+    return "You asked to remove this, but no app manages the file, so there's no safe way to remove it.";
+  }
+  if (item.explanation.protections_unknown.length > 0) {
+    return "You asked to remove this, but a protection couldn't be checked, so Reaper is keeping it to be safe.";
+  }
+  return "You asked to remove this, but Reaper can't confirm it's safe to remove yet, so it's kept for now.";
+}
+
+/** What a hand spare says: kept by the owner, forever or on a countdown. */
+function spareNote(item: CandidateDetail): string {
+  const remaining = spareRemaining(item.spare_expires_at);
+  if (remaining.forever) return "You chose to keep this, so it won't be removed.";
+  if (remaining.expired) return "Your spare has run out, so Reaper judges this again on the next scan.";
+  return `You chose to keep this. ${remaining.phrase}, then Reaper judges it again.`;
+}
+
+/** The verdict headline, and the reason under it. It reads the EFFECTIVE decision, not the
+ *  frozen scan verdict (rule 61): a hand reap the engine honors reads as a removal, a reap it
+ *  can't honor yet reads as held (dashed red, never solid), and a hand spare says the owner
+ *  kept it -- so a reaped or held item is never mislabeled "Sanctuary". Only with no hand
+ *  decision does the scan verdict speak, and then "Sanctuary" is claimed only when a
+ *  protection actually fired (a protect with nothing fired is a stale held-reap row from
+ *  before this shipped, which a rescan resolves; it reads as left-for-you, not protected). */
+function verdictLook(item: CandidateDetail): { klass: string; label: string; note: ReactNode } {
+  const { verdict, override, override_effective, explanation } = item;
+
+  if (override === "reap") {
+    if (override_effective) {
+      return {
+        klass: "verdict-condemn",
+        label: "Reaped by hand",
+        note: "You marked this for removal, so it will be removed. Nothing is holding it back.",
+      };
+    }
+    return { klass: "verdict-held", label: "Kept for now", note: heldReapNote(item) };
+  }
+  if (override === "spare") {
+    return { klass: "verdict-protect", label: "Spared by hand", note: spareNote(item) };
+  }
+
+  if (verdict === "protect" && explanation.protections_fired.length > 0) {
+    return {
+      klass: "verdict-protect",
+      label: "Sanctuary",
+      note: (
+        <>
+          Something is protecting this, so <strong>the score doesn't matter</strong>: it's kept
+          no matter what, and nothing can change that.
+        </>
+      ),
+    };
+  }
+  if (verdict === "condemn") {
+    return { klass: "verdict-condemn", label: "Condemned", note: null };
+  }
+  if (isKeepRuleConflict(item)) {
+    // "Needs a look", not "Left for you to decide": the latter is the heading of the section
+    // just below that lists the same block, so the headline would say it twice. Matches the
+    // conflict chip's own words.
+    return {
+      klass: "verdict-abstain",
+      label: "Needs a look",
+      note: "This was watched more than a season your keep rule protects, so Reaper left the call to you. Spare it to keep it, or Reap it to remove it.",
+    };
+  }
+  return {
+    klass: "verdict-abstain",
+    label: "Limbo",
+    note: (
+      <>
+        Reaper is not confident enough to judge this one. It scored below your threshold, or too
+        little of it could be seen. Either way, Reaper leaves it alone, and the file is kept.
+      </>
+    ),
+  };
+}
 
 function Verdict({ item }: { item: CandidateDetail }) {
-  const { verdict, score, explanation } = item;
+  const { score, explanation } = item;
+  const look = verdictLook(item);
 
   return (
-    <div className={`verdict verdict-${verdict}`}>
-      <div className="verdict-label">{VERDICT_LABELS[verdict] ?? verdict}</div>
+    <div className={`verdict ${look.klass}`}>
+      <div className="verdict-label">{look.label}</div>
       <div className="verdict-score">
         <strong>{score}</strong>
         <span className="muted">/100 &middot; your threshold is {explanation.threshold}</span>
       </div>
-
-      {verdict === "protect" && (
-        <p className="verdict-note">
-          Something is protecting this, so <strong>the score doesn't matter</strong>: it's kept
-          no matter what, and nothing can change that.
-        </p>
-      )}
-      {verdict === "abstain" && (
-        <p className="verdict-note">
-          Reaper is not confident enough to judge this one. It scored below your threshold, or
-          too little of it could be seen. Either way, Reaper leaves it alone, and the file is
-          kept.
-        </p>
-      )}
+      {look.note && <p className="verdict-note">{look.note}</p>}
     </div>
   );
 }

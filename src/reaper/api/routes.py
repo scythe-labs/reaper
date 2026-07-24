@@ -76,7 +76,7 @@ from reaper.engine.policy import (
 )
 from reaper.engine.signals import SignalConfig
 from reaper.engine.signals import score as score_facts
-from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict
+from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict, reap_held_by_blocks
 from reaper.services import app_settings, backup, whitelist
 from reaper.services.condemned import reap_is_effective, reap_override_verdict
 from reaper.services.deep_links import build_links
@@ -1296,6 +1296,7 @@ def _replay_simulation(
         verdict = decide_verdict(
             protected=evaluation.protected,
             blocked=evaluation.blocked,
+            blocked_holds_reap=reap_held_by_blocks(evaluation.results),
             safety_protected=any(
                 r.fired and r.gate in STRUCTURAL_GATES for r in evaluation.results
             ),

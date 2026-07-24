@@ -193,3 +193,41 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         """A rating floor is a *cautious* keep, not a safety guarantee -- the owner may
         overrule it. Only STREAMING_NOW and UNMANAGED are inviolable."""
         assert _verdict(PROTECTED, 0, 10_000, DEFAULT_MOVIE_POLICY, override="reap") == "condemn"
+
+    def test_a_reap_override_overrules_a_keep_rule_conflict(self) -> None:
+        """The keep-rule conflict flags a season for a human to decide -- a *blocked*
+        ABSTAIN, but a plain-language "you decide", not a "could not check". With no
+        override it abstains (needs a look); a hand reap IS the decision it asked for, so
+        it condemns -- unlike a protection that could not be checked, which still holds."""
+        conflict = Evaluation(
+            results=[
+                GateResult(
+                    GateId.SEASON_PROGRESSION,
+                    ABSTAIN,
+                    detail="5 people watched it, more than a season your keep rule protects",
+                    blocked=True,
+                )
+            ]
+        )
+        policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 100})
+
+        assert _verdict(conflict, 90, 10_000, policy) == "abstain"
+        assert _verdict(conflict, 90, 10_000, policy, override="reap") == "condemn"
+
+    def test_a_reap_override_still_yields_when_the_season_guard_could_not_run(self) -> None:
+        """Belt-and-suspenders: a deferrable gate whose block is a genuine "could not
+        check" still holds the reap. The gate id alone never opens a fail-open path, so a
+        real plumbing failure on the season guard is treated like any unchecked protection."""
+        plumbing = Evaluation(
+            results=[
+                GateResult(
+                    GateId.SEASON_PROGRESSION,
+                    ABSTAIN,
+                    detail="could not check the sequential guard",
+                    blocked=True,
+                )
+            ]
+        )
+        policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
+
+        assert _verdict(plumbing, 100, 10_000, policy, override="reap") == "protect"

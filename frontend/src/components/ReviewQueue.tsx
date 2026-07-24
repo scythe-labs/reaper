@@ -1530,6 +1530,11 @@ function SeasonList({
                 effective={season.override_effective}
                 keptWhy={chipWhy(season.chip)}
                 spareExpiresAt={season.spare_expires_at}
+                // The season list's own class family, exactly like ShowPanel's SeasonPill and
+                // the row's other chips (StatusChip/CondemnedChip). The `.chip` default sits on
+                // a card's meta line and does NOT clamp, so a long held-reap pill overflowed the
+                // title column into the fixed button track; `.status-chip` ellipsizes in place.
+                family="status-chip"
               />
             );
           } else if (season.verdict === "condemn") {

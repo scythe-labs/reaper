@@ -35,6 +35,7 @@ from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import SignalConfig
 from reaper.engine.signals import score as score_signals
+from reaper.engine.verdict import block_holds_reap
 from reaper.ratings import Rating, RatingSource
 from reaper.services import history_sync, lists, requested_by, season_scan
 from reaper.services.scan_runner import build_gates
@@ -334,6 +335,25 @@ class TestGuardResult:
         result = season_scan.guard_result(plan, 2)
         assert result.outcome == ABSTAIN
         assert result.blocked is False
+
+    def test_the_conflict_block_defers_to_the_owner_never_reads_as_plumbing(self) -> None:
+        """The honor of a hand reap on a keep-rule conflict (verdict.block_holds_reap) rests
+        on the guard NEVER dressing this block as a "could not check ..." plumbing failure --
+        it is a deliberate "you decide", so a reap overrules it. Pinned here so a reword of
+        the conflict message that starts "could not check" (which would fail closed and hold
+        the reap) fails loudly instead of silently un-honoring the owner's decision."""
+        plan = plan_series_prune(
+            series_title="S",
+            seasons=[_season(n) for n in range(1, 5)],
+            keep_last=2,
+            keep_first_season=False,
+            watchers_by_season={1: 40, 2: 1, 3: 1, 4: 1},
+        )
+        result = season_scan.guard_result(plan, 1)
+
+        assert result.blocked is True
+        assert not result.detail.startswith("could not check")
+        assert block_holds_reap(result.gate.value, result.detail) is False
 
 
 # ---------------------------------------------------------------------------

@@ -214,6 +214,43 @@ describe("the all-seasons list", () => {
     expect(within(list).getAllByRole("button", { name: /^Reap$/ })).toHaveLength(2);
   });
 
+  it("wears a season-level held reap in the truncating status-chip family, not the card .chip", async () => {
+    // The pill overran the fixed button column because a season-level OverrideChip used the
+    // default `.chip` family (a card's meta line), which never clamps. It must use the season
+    // list's own `.status-chip` family -- exactly like ShowPanel's SeasonPill and the row's
+    // other chips -- so a long "Reap requested" line ellipsizes in place instead (rule 51).
+    const held: Candidate = {
+      ...season(3, 3, "protect", 90, { tone: "kept", text: "Kept · playing right now" }),
+      override: "reap",
+      override_own: "reap",
+      override_effective: false,
+    };
+    apiMock.group.mockResolvedValue({
+      group_key: "sonarr:5:42",
+      title: "Example Show",
+      year: 2012,
+      poster_url: null,
+      summary: null,
+      size_bytes: 1024 ** 3,
+      reason: null,
+      library: null,
+      chip: limboSeason.chip,
+      show_override: null,
+      show_spare_expires_at: null,
+      links: {} as Group["links"],
+      show_status: null,
+      seasons: [held],
+    } as Group);
+    renderQueue();
+    await expandSeasons();
+
+    const chip = await screen.findByText(/Reap requested · kept for now/);
+    expect(chip.className).toContain("status-chip");
+    expect(chip.className).toContain("status-reap-held");
+    // NOT the non-clamping card family; a bare "chip" token here is the regression.
+    expect(chip.className).not.toMatch(/(^|\s)chip(\s|$)/);
+  });
+
   it("says a season's size is unknown rather than showing it as empty", async () => {
     // The server sends null when Sonarr would not report a size. "0 B" here would be a
     // false statement sitting beside Spare and Reap.

@@ -7,11 +7,42 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-23 (httpx -> httpx2 migration: **all production code now on httpx2**,
-including the atomic BaseClient/GuardedTransport cluster and every respx test; only a live
-end-to-end TLS check against a real instance remains before it is fully done)
+Last updated: 2026-07-24 (a hand reap on a keep-rule conflict is now honored, and a held reap
+is no longer mislabeled "Sanctuary")
 
-### Newest — fourth-pass review remediation, phased (all five phases landed)
+### Newest — a hand reap on a keep-rule conflict is honored, and a held reap stops calling itself "Sanctuary"
+
+A tester hand-reaped two seasons; Reaper said they would be kept anyway, under a panel that
+read "Sanctuary ... nothing can change that." One root confusion, wearing two faces.
+
+The keep-rule conflict (a season the rule would prune but that was watched MORE than one it
+keeps) is recorded as a *blocked* ABSTAIN so the scan leaves the call to a human -- correct. But
+`decide_verdict`'s reap branch held a reap on ANY block, so the very flag that asked the owner to
+decide then refused their decision. The wrong assumption: that "blocked" is one thing. It is two
+-- "a protection could not be checked" (fail-closed, still holds a reap) and "we looked and it is
+your call" (the conflict, which a reap settles). `engine.verdict.block_holds_reap` now tells them
+apart by gate id AND a `could not check ...` detail (belt-and-suspenders: a gate id alone can
+never open a fail-open path); `decide_verdict` gained `blocked_holds_reap`, and `snapshot._verdict`,
+the simulator replay, and `condemned.reap_override_verdict` all pass the narrower value. Streaming
+right now, an unmanaged file, and a genuine could-not-check still hold a reap, so the prime
+directive is intact. The honor reads off the STORED explanation too, so an existing reap takes
+effect without waiting for a rescan.
+
+The panel headline read the frozen scan verdict, so a held reap (stored `protect` by that same
+reap branch) was labeled a protected Sanctuary -- three false claims at once (nothing fired, the
+score is exactly the point, and the owner just tried to change it). It now reads the EFFECTIVE
+decision (rule 61): an honored reap is a removal, a held reap is dashed-red "Kept for now" that
+names the real stop, a spare says the owner kept it, and "Sanctuary" is claimed only when a
+protection actually fired. The conflict with no hand decision reads amber "Needs a look" and
+names the two ways out.
+
+One layout bug fell out of the same rows: a season-level held-reap pill used the card `.chip`
+family (which never clamps) instead of the season list's `.status-chip`, so a long pill overran
+the fixed button column. It now uses `.status-chip` like ShowPanel's SeasonPill and the row's
+other chips, ellipsizing in place with an ellipsis; the buttons do not move (verified in a
+browser: the pill's right edge lands exactly on the title column, never over the buttons).
+
+### Earlier — fourth-pass review remediation, phased (all five phases landed)
 
 The fourth diff review (`docs/CODE_REVIEW.md`, dev @ `cea72d1`) found 36 findings (0 critical,
 2 high, 11 medium, 23 low). Broken into five subsystem-cohesive phases in

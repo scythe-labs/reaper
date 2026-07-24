@@ -440,6 +440,91 @@ describe("the protection blocks", () => {
 // OWN decision (so a click always reverses something you can see) and, when a whole-show
 // decision is what really keeps or reaps the season, say so -- clearing a season key cannot
 // clear a show-level choice, and a dead "Spared" toggle was the bug this fixes.
+// The headline reads the EFFECTIVE decision, not the frozen scan verdict (rule 61): a hand
+// reap the engine honors reads as a removal, a reap it can't honor yet reads as held (never
+// "Sanctuary"), a spare says the owner kept it, and "Sanctuary" is claimed only when a
+// protection actually fired. This is the exact confusion the change fixes: a reaped item that
+// the old panel labeled a protected Sanctuary.
+describe("the verdict headline", () => {
+  const fired = (gate: string, d = "a reason") => ({ gate, detail: d });
+
+  it("labels an honored hand reap a removal, never a Sanctuary", () => {
+    show(detail(WORKED_ROWS, { verdict: "protect", override: "reap", override_effective: true }));
+    expect(screen.getByText("Reaped by hand")).toBeInTheDocument();
+    expect(screen.getByText(/it will be removed\. Nothing is holding it back/i)).toBeInTheDocument();
+    expect(screen.queryByText("Sanctuary")).not.toBeInTheDocument();
+    expect(screen.queryByText(/nothing can change that/i)).not.toBeInTheDocument();
+  });
+
+  it("labels a held reap 'Kept for now' and names why, in dashed red", () => {
+    const { container } = show(
+      detail(WORKED_ROWS, {
+        verdict: "protect",
+        override: "reap",
+        override_effective: false,
+        explanation: {
+          ...detail(WORKED_ROWS).explanation,
+          protections_fired: [fired("streaming_now", "being watched right now")],
+        },
+      }),
+    );
+    expect(screen.getByText("Kept for now")).toBeInTheDocument();
+    expect(screen.getByText(/someone is watching it right now/i)).toBeInTheDocument();
+    // Dashed red, never the solid "Sanctuary" green and never amber (rule 49).
+    expect(container.querySelector(".verdict-held")).not.toBeNull();
+    expect(container.querySelector(".verdict-protect")).toBeNull();
+    expect(screen.queryByText("Sanctuary")).not.toBeInTheDocument();
+  });
+
+  it("names an unmanaged hold and a could-not-check hold distinctly", () => {
+    show(detail(WORKED_ROWS, { override: "reap", override_effective: false,
+      explanation: { ...detail(WORKED_ROWS).explanation, protections_fired: [fired("unmanaged")] } }));
+    expect(screen.getByText(/no app manages the file/i)).toBeInTheDocument();
+
+    show(detail(WORKED_ROWS, { override: "reap", override_effective: false,
+      explanation: { ...detail(WORKED_ROWS).explanation,
+        protections_unknown: [fired("rating_floor", "could not check the IMDb rating")] } }));
+    expect(screen.getByText(/a protection couldn't be checked/i)).toBeInTheDocument();
+  });
+
+  it("labels a hand spare as the owner's keep, not a Sanctuary", () => {
+    show(detail(WORKED_ROWS, { verdict: "protect", override: "spare" }));
+    expect(screen.getByText("Spared by hand")).toBeInTheDocument();
+    expect(screen.getByText(/you chose to keep this/i)).toBeInTheDocument();
+    expect(screen.queryByText("Sanctuary")).not.toBeInTheDocument();
+  });
+
+  it("claims Sanctuary only when a protection actually fired", () => {
+    show(detail(WORKED_ROWS, { verdict: "protect",
+      explanation: { ...detail(WORKED_ROWS).explanation, protections_fired: [fired("min_dormancy")] } }));
+    expect(screen.getByText("Sanctuary")).toBeInTheDocument();
+    expect(screen.getByText(/nothing can change that/i)).toBeInTheDocument();
+  });
+
+  it("reads a stale protect-with-nothing-fired row as left-for-you, not protected", () => {
+    // A held-reap row frozen as "protect" before this shipped, its override since cleared: no
+    // protection fired, so it must not claim Sanctuary. A rescan resolves it to abstain.
+    show(detail(WORKED_ROWS, { verdict: "protect", override: null }));
+    expect(screen.queryByText("Sanctuary")).not.toBeInTheDocument();
+    expect(screen.queryByText(/nothing can change that/i)).not.toBeInTheDocument();
+  });
+
+  it("tells a keep-rule conflict what it is and how to resolve it", () => {
+    show(detail(WORKED_ROWS, { verdict: "abstain",
+      explanation: { ...detail(WORKED_ROWS).explanation,
+        protections_unknown: [fired("season_progression",
+          "5 people watched this, more than a season your keep rule protects")] } }));
+    expect(screen.getByText("Needs a look")).toBeInTheDocument();
+    expect(screen.getByText(/Spare it to keep it, or Reap it to remove it/i)).toBeInTheDocument();
+  });
+
+  it("keeps the plain 'Limbo' note for an ordinary abstain", () => {
+    show(detail(WORKED_ROWS, { verdict: "abstain" }));
+    expect(screen.getByText("Limbo")).toBeInTheDocument();
+    expect(screen.getByText(/not confident enough to judge/i)).toBeInTheDocument();
+  });
+});
+
 describe("the season footer's own-vs-show decision", () => {
   it("rests un-lit for a season kept only because the whole show is spared, and says why", () => {
     show(detail(WORKED_ROWS, { override: "spare", override_own: null, show_override: "spare" }));
