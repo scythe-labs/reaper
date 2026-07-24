@@ -284,6 +284,23 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* iOS Safari zooms the page whenever a focused field's font-size is under 16px, and that
+   zoom shrinks the visual viewport below the layout width, which unlocks the fixed app
+   shell so it pans ("free floating"). Every control inherits the 15px body font above (the
+   control standard is font: inherit), so hold the text-entry controls at the 16px no-zoom
+   floor on touch devices only; the desktop 15px standard is untouched, and pinch-zoom stays
+   enabled (viewport meta unchanged). The #root id lifts these over the control classes
+   without !important and covers future inputs; the Spare menu's custom-length field is the
+   one input portaled to <body>, outside #root, so it is named alongside. */
+@media (pointer: coarse) {
+  #root input:not([type="checkbox"]):not([type="radio"]),
+  #root select,
+  #root textarea,
+  .dur-menu input:not([type="checkbox"]):not([type="radio"]) {
+    font-size: 16px;
+  }
+}
+
 h1,
 h2,
 h3 {
