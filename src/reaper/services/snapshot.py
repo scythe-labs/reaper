@@ -50,7 +50,7 @@ from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
 from reaper.db.models import Candidate, FirstFlagged, SizeSource, Snapshot
 from reaper.engine import facts_codec, identity
-from reaper.engine.gates import PROTECT, Evaluation, Facts, Gate, GateId, GateResult, evaluate_all
+from reaper.engine.gates import Evaluation, Facts, Gate, GateResult, evaluate_all
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
 from reaper.engine.signals import (
@@ -1016,7 +1016,12 @@ def _judge_item(
     extra_results: Sequence[GateResult] = (),
     override: str | None = None,
 ) -> str:
-    """Evaluate one item's gates and signals, store its candidate, return its verdict.
+    """Evaluate one item's gates and signals, store its candidate, return its EFFECTIVE fate.
+
+    The candidate is stored with its PURE POLICY verdict (the hand override is held out); the
+    returned string is the EFFECTIVE fate with the override applied, for the caller's grace
+    clock and condemned tally only. Storage stays override-free so an un-spare / un-reap falls
+    back to the real policy result; the effective fate is recomputed downstream the same way.
 
     Shared by the movie and season paths so both reach a verdict the same way. Seasons
     pass ``extra_results`` -- the season-pruning guard's outcome -- which is merged ahead
@@ -1030,13 +1035,15 @@ def _judge_item(
     later condemn the very item the queue said it was sparing. There must be exactly one
     number, and everything must decide on it.
     """
-    # A hand "spare" enters as an extra PROTECT result, so it wins like any protection and
-    # shows in the why-panel as a reason; a hand "reap" is carried into _verdict, which forces
-    # CONDEMN unless a hard safety gate still stands.
-    merged_extra = list(extra_results)
-    if override == "spare":
-        merged_extra.insert(0, GateResult(GateId.WHITELISTED, PROTECT, detail=HAND_SPARE_DETAIL))
-    evaluation = Evaluation(results=[*merged_extra, *evaluate_all(gates, facts).results])
+    # The stored verdict and explanation are PURE POLICY: the scan never bakes a hand override
+    # into them. A hand "spare"/"reap" lives only in the whitelist and is re-applied live at
+    # read and plan time (whitelist.effective_override, condemned.effective_condemned,
+    # reap_is_effective, and the simulator). Keeping the stored verdict override-free is what
+    # lets an un-spare / un-reap fall back to the real policy result -- before a rescan and
+    # after one -- instead of the item taking the override on as its identity. The season-
+    # pruning guard (extra_results) is genuine policy and stays; only the hand override is held
+    # out here and applied on top downstream. See rules 48-51.
+    evaluation = Evaluation(results=[*extra_results, *evaluate_all(gates, facts).results])
     item_score = score(
         signals,
         facts,
@@ -1048,7 +1055,7 @@ def _judge_item(
     score_value = round(item_score.value)
     coverage_bp = round(item_score.coverage * 10_000)
 
-    verdict = _verdict(evaluation, score_value, coverage_bp, policy, override=override)
+    verdict = _verdict(evaluation, score_value, coverage_bp, policy, override=None)
     # The grace clock for a condemned item is set by the CALLER, batched across the whole
     # run (record_first_flagged_bulk) -- one query for every condemned key instead of a
     # read per item. The decision per key is unchanged: see _apply_first_flag.
@@ -1109,6 +1116,15 @@ def _judge_item(
             created_at=now,
         )
     )
+    # Return the EFFECTIVE fate (the override applied) -- NOT the pure verdict we stored. The
+    # caller uses it to set the grace clock and the condemned tally over the set that will
+    # actually be removed: a honored hand reap earns a fresh grace window, a hand spare gives up
+    # its clock (rules 4/50). This mirrors condemned.effective_condemned / whitelist.on_reap_list,
+    # which recompute the same fate at read time -- so the fate is derived, never stored.
+    if override == "spare":
+        return "protect"
+    if override == "reap":
+        return _verdict(evaluation, score_value, coverage_bp, policy, override="reap")
     return verdict
 
 

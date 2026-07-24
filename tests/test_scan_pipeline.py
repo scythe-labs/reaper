@@ -27,11 +27,12 @@ from reaper.clients.base import IntegrationError
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
-from reaper.db.models import FirstFlagged, SizeSource
+from reaper.db.models import FirstFlagged, SizeSource, WhitelistEntry
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
 from reaper.engine.observation import Known
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
 from reaper.services import app_settings, history_sync, lists, profiles, season_scan
+from reaper.services.condemned import reap_is_effective
 from reaper.services.scan_runner import _allowed_sections, build_gates
 from reaper.services.snapshot import Progress, RadarrSource, _release_age_days, candidates, scan
 
@@ -487,6 +488,77 @@ class TestScanPipelineEndToEnd:
                 cand.score,
                 cand.coverage_bp,
             ), f"replay diverged for {cand.media_key}"
+
+    async def test_a_scan_keeps_the_pure_policy_verdict_under_a_hand_override(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The scan never bakes a hand override into the stored verdict. A spared condemnation is
+        still stored ``condemn`` (so undoing the spare falls back to the real policy result), a
+        reaped protection is still stored ``protect``, and the grace clock tracks the EFFECTIVE
+        set: the spared item loses its clock, an engine-honored reap earns one (rules 4/48-51)."""
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+        await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
+        await lists.sync(
+            cache_engine,
+            _StaticList([lists.ListItem(media_type="movie", imdb_id="tt0000002", title="B")]),
+            mode=lists.ListMode.HARD,
+            kind=lists.ListKind.WHITELIST,
+        )
+
+        # The owner's hand decisions, set BEFORE this scan: spare a soul the policy condemns
+        # (radarr:1:1) and reap one the policy protects (radarr:1:2, kept by the whitelist list).
+        session.add_all(
+            [
+                WhitelistEntry(
+                    media_key="radarr:1:1", title="A", decision="spare", created_at=utcnow()
+                ),
+                WhitelistEntry(
+                    media_key="radarr:1:2", title="B", decision="reap", created_at=utcnow()
+                ),
+            ]
+        )
+        await session.flush()
+
+        tautulli = _FakeTautulli(
+            movies=_movie_spine(), shows=_show_spine(), children=_show_children()
+        )
+        snapshot = await scan(
+            cache_engine,
+            session,
+            radarrs=[
+                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+            ],
+            sonarrs=[
+                season_scan.SonarrSource(
+                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                )
+            ],
+            tautulli=tautulli,  # type: ignore[arg-type]
+            movie_policy=DEFAULT_MOVIE_POLICY,
+            movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+        )
+        await session.commit()
+
+        rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
+
+        # The stored verdict is PURE POLICY -- the override never reached it. This is the whole
+        # point: an un-spare / un-reap now falls back to the real policy result, after a rescan too.
+        assert rows["radarr:1:1"].verdict == "condemn"  # spared, yet policy still condemns it
+        assert rows["radarr:1:2"].verdict == "protect"  # reaped, yet policy still protects it
+        # And the spare stayed OUT of the explanation: no baked "whitelisted" protection.
+        assert "you spared this by hand" not in (rows["radarr:1:1"].explanation_json or "")
+
+        # The grace clock follows the EFFECTIVE set: the spare took its item off the reap list so
+        # its clock is gone, and the reap earns one exactly when the engine honors it.
+        flagged = {
+            f.media_key
+            for f in (await session.execute(text("SELECT media_key FROM first_flagged"))).all()
+        }
+        assert "radarr:1:1" not in flagged  # spared -> off the list -> no grace clock
+        assert ("radarr:1:2" in flagged) is reap_is_effective(rows["radarr:1:2"])
+        assert {"sonarr:1:42:2", "sonarr:1:42:3"} <= flagged  # untouched condemnations keep theirs
 
     async def test_one_unreachable_radarr_degrades_but_keeps_the_rest(
         self, session: AsyncSession, cache_engine: AsyncEngine

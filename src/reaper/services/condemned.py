@@ -99,6 +99,24 @@ def reap_is_effective(candidate: Candidate) -> bool:
     )
 
 
+def effective_verdict(candidate: Candidate, decisions: dict[str, str]) -> str:
+    """The lane an item lands in once its hand override is applied.
+
+    The backend twin of the frontend's ``handFate``, collapsed to the three stored lanes: a
+    hand spare -- and a hand reap the engine will not honor yet -- keep the item (``"protect"``);
+    a honored hand reap condemns it (``"condemn"``); with no override the pure-policy verdict
+    stands. This is the ONE place a stored (pure-policy) verdict is turned into an effective
+    lane, so the review-queue tab filter and the scan-summary counts route through it and can
+    never disagree with :func:`effective_condemned`.
+    """
+    override = whitelist.effective_override(candidate.media_key, decisions)
+    if override == "spare":
+        return "protect"
+    if override == "reap":
+        return "condemn" if reap_is_effective(candidate) else "protect"
+    return candidate.verdict
+
+
 async def _reap_overridden_rows(
     session: AsyncSession, snapshot_id: int, reap_keys: list[str]
 ) -> list[Candidate]:
@@ -163,6 +181,41 @@ async def effective_condemned(
         if reap_is_effective(c):
             out[c.media_key] = c
     return out
+
+
+async def overridden_lane_shifts(
+    session: AsyncSession, snapshot_id: int, decisions: dict[str, str]
+) -> list[tuple[Candidate, str, str]]:
+    """Every candidate a hand override moves to a lane other than its pure-policy verdict.
+
+    Only an overridden row can change lanes, so only overridden rows are read here -- the raw
+    ``verdict == lane`` query stays the cheap indexed path, and a caller splices these few moves
+    onto it (the tab filter) or applies them as count deltas (the scan summary). Returns
+    ``(candidate, from_lane, to_lane)`` for each row whose :func:`effective_verdict` differs from
+    its stored verdict. A show-level override reaches its seasons by ``group_key``; a per-item
+    override by ``media_key``.
+    """
+    if not decisions:
+        return []
+    keys = sorted(decisions)
+    affected = (
+        (
+            await session.execute(
+                select(Candidate).where(
+                    Candidate.snapshot_id == snapshot_id,
+                    or_(Candidate.media_key.in_(keys), Candidate.group_key.in_(keys)),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    shifts: list[tuple[Candidate, str, str]] = []
+    for c in affected:
+        effective = effective_verdict(c, decisions)
+        if effective != c.verdict:
+            shifts.append((c, c.verdict, effective))
+    return shifts
 
 
 async def held_reaps(

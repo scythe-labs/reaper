@@ -477,11 +477,17 @@ class TestOverrideRoutesAndTheGraceClock:
         client.post("/api/override", json={"media_key": "radarr:1:22", "decision": "reap"})
         client.post("/api/override", json={"media_key": "radarr:1:23", "decision": "reap"})
 
-        rows = client.get("/api/candidates?verdict=protect&limit=50").json()
-        by_key = {r["media_key"]: r for r in rows}
+        # A hand reap the engine honors moves the item onto the Condemned lane; one it will not
+        # honor yet (a held reap) stays on the Kept lane, its stored verdict pure policy beneath.
+        condemned = {
+            r["media_key"]: r for r in client.get("/api/candidates?verdict=condemn&limit=50").json()
+        }
+        kept = {
+            r["media_key"]: r for r in client.get("/api/candidates?verdict=protect&limit=50").json()
+        }
 
-        assert by_key["radarr:1:22"]["override_effective"] is True
-        assert by_key["radarr:1:23"]["override_effective"] is False
+        assert condemned["radarr:1:22"]["override_effective"] is True
+        assert kept["radarr:1:23"]["override_effective"] is False
 
 
 # --- override views in API responses: own vs inherited-from-show ---------------

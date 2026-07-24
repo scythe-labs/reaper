@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, cast
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import ValidationError
-from sqlalchemy import asc, desc, func, or_, select, text
+from sqlalchemy import and_, asc, desc, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 if TYPE_CHECKING:
@@ -78,7 +78,13 @@ from reaper.engine.signals import SignalConfig
 from reaper.engine.signals import score as score_facts
 from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict, reap_held_by_blocks
 from reaper.services import app_settings, backup, whitelist
-from reaper.services.condemned import reap_is_effective, reap_override_verdict
+from reaper.services.condemned import (
+    effective_condemned,
+    effective_verdict,
+    overridden_lane_shifts,
+    reap_is_effective,
+    reap_override_verdict,
+)
 from reaper.services.deep_links import build_links
 from reaper.services.display_meta import parse_ratings_json
 from reaper.services.planner import MediaRef, PlanError
@@ -126,17 +132,22 @@ async def _snapshot_out(session: AsyncSession, snapshot: Snapshot) -> SnapshotOu
             )
         ).all()
     }
-    # SUM silently skips NULL rows and COALESCE cannot tell that from a genuine zero, so
-    # the count of unmeasured rows is taken in the SAME query over the SAME conditions.
-    # Without it this number would go from honestly incomplete to silently wrong.
-    reclaimable, unknown_size = (
-        await session.execute(
-            select(
-                func.coalesce(func.sum(Candidate.size_bytes), 0),
-                func.count().filter(Candidate.size_bytes.is_(None)),
-            ).where(Candidate.snapshot_id == snapshot.id, Candidate.verdict == "condemn")
-        )
-    ).one()
+    decisions = await whitelist.overrides(session)
+    # Move each overridden item from its pure-policy lane to its EFFECTIVE lane, so the headline
+    # counts agree with the tabs and the reap ledger (condemned.effective_*). Only overridden
+    # rows shift, so this is the group-by above plus a handful of deltas.
+    for _candidate, from_lane, to_lane in await overridden_lane_shifts(
+        session, snapshot.id, decisions
+    ):
+        counts[from_lane] = counts.get(from_lane, 0) - 1
+        counts[to_lane] = counts.get(to_lane, 0) + 1
+
+    # Reclaimable bytes are summed over the EFFECTIVE condemned set -- the exact rows the planner
+    # will act on -- so a spared condemnation stops counting and a honored hand reap starts. A
+    # missing size is held out of the total and counted as unknown instead, never read as zero.
+    effective = await effective_condemned(session, snapshot.id, decisions)
+    reclaimable = sum(c.size_bytes or 0 for c in effective.values())
+    unknown_size = sum(1 for c in effective.values() if c.size_bytes is None)
 
     return SnapshotOut(
         id=snapshot.id,
@@ -232,10 +243,22 @@ async def list_candidates(
 
         # The filters, built once and applied to BOTH the count and the page, so the header
         # totals describe exactly the set the rows are drawn from.
-        conditions = [
-            Candidate.snapshot_id == snapshot.id,
-            Candidate.verdict == verdict,
-        ]
+        decisions = await whitelist.overrides(session)
+        conditions = [Candidate.snapshot_id == snapshot.id]
+        # Tab membership is the EFFECTIVE lane, not the raw verdict: a hand override moves an item
+        # to the lane of what will actually happen -- a spared condemnation shows under Kept, a
+        # honored hand reap under Condemned -- while its stored verdict stays pure policy. Only
+        # overridden rows move, so raw verdict==lane stays the indexed path and the few moves are
+        # spliced on; condemned.effective_verdict is the one classifier the scan summary shares.
+        shifts = await overridden_lane_shifts(session, snapshot.id, decisions)
+        moved_out = [c.media_key for c, from_lane, _to in shifts if from_lane == verdict]
+        moved_in = [c.media_key for c, _from, to_lane in shifts if to_lane == verdict]
+        lane = Candidate.verdict == verdict
+        if moved_out:
+            lane = and_(lane, Candidate.media_key.not_in(moved_out))
+        if moved_in:
+            lane = or_(lane, Candidate.media_key.in_(moved_in))
+        conditions.append(lane)
         if search and search.strip():
             pattern = f"%{search.strip()}%"
             conditions.append(
@@ -271,7 +294,6 @@ async def list_candidates(
             # the conditions built so far are resolved through the real function, and the
             # filter becomes an IN over the ones in the asked-for state. Totals below use
             # the same final conditions, so count, bytes and page describe one set.
-            decisions = await whitelist.overrides(session)
             keys = (
                 (await session.execute(select(Candidate.media_key).where(*conditions)))
                 .scalars()
@@ -345,7 +367,6 @@ async def list_candidates(
             .scalars()
             .all()
         }
-        decisions = await whitelist.overrides(session)
         expiries = await whitelist.spare_expiries(session)
         group_totals, group_marks = await _group_rollups(
             session, snapshot.id, {r.group_key for r in rows if r.group_key}, decisions
@@ -1279,8 +1300,9 @@ def _replay_simulation(
         facts, extra = facts_codec.facts_from_dict(json.loads(row.facts_json or "{}"))
         override = whitelist.effective_override(row.media_key, decisions)
 
-        # A hand spare enters as an extra PROTECT, exactly as _judge_item merges it; the
-        # frozen season guard rides in `extra`. The reap override is carried into
+        # A hand spare enters as an extra PROTECT so the simulator applies it LIVE -- the stored
+        # verdict is pure policy now, so the override is re-applied here, never read off the row.
+        # The frozen season guard rides in `extra`. The reap override is carried into
         # decide_verdict, which honors it only past the cautious cases.
         merged_extra = list(extra)
         if override == "spare":
@@ -1308,7 +1330,10 @@ def _replay_simulation(
         )
 
         histogram[min(score_value // 10, 9)] += 1
-        was_condemned = row.verdict == "condemn"
+        # The pre-edit fate is the EFFECTIVE one (override applied), matching the effective "now"
+        # verdict below -- so a hand reap's condemnation is never miscounted as a change the
+        # POLICY edit caused. The stored verdict alone is pure policy and would misattribute it.
+        was_condemned = effective_verdict(row, decisions) == "condemn"
         if verdict == "condemn":
             condemned += 1
             if row.size_bytes is None:
@@ -1469,11 +1494,13 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
                     unknown_size += 1
                 else:
                     reclaimable += row.size_bytes
-            elif row.verdict == "protect":
+            else:
+                # A hand reap the engine will not honor yet is KEPT for now (a held reap), so it
+                # buckets as protected -- matching condemned.effective_verdict. Its own pure-policy
+                # verdict (protect or abstain) is stored raw now and no longer stands in for the
+                # effective fate here.
                 protected += 1
                 spared_by.update(_fired_gates(row.explanation_json))
-            else:
-                abstained += 1
             continue
 
         # A protection always wins, whatever the threshold. Only the score-based

@@ -240,9 +240,11 @@ class TestGroupCondemnedTotals:
         spare = tv_client.post("/api/whitelist", json={"media_key": "sonarr:1:42"})
         assert spare.status_code == 200, spare.text
 
-        page = tv_client.get("/api/candidates?verdict=condemn&limit=10&offset=0").json()
+        # A whole-show spare moves its seasons onto the Kept lane (their stored verdict stays pure
+        # policy); the plan they would have fed is now empty.
+        page = tv_client.get("/api/candidates?verdict=protect&limit=10&offset=0").json()
         seasons = [r for r in page if r["group_key"] == "sonarr:1:42"]
-        assert seasons  # the rows still list (verdict unchanged); the plan is empty
+        assert seasons  # the rows still list, now on the Kept lane; the plan is empty
         for row in seasons:
             assert row["group_condemned_count"] == 0
             assert row["group_condemned_bytes"] == 0

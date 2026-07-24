@@ -997,8 +997,27 @@ function CheckSquareIcon() {
 /** Whether the row a card leads with is on the block. One expression for both card
  *  shapes: a show card reads its first (highest-scoring) season, a movie card reads
  *  itself, and neither may drift into asking the question a different way. */
-function isCondemned(item: Candidate): boolean {
-  return item.verdict === "condemn";
+export function isCondemned(item: {
+  verdict: Verdict;
+  override: Override | null;
+  override_effective: boolean | null;
+}): boolean {
+  // The item's EFFECTIVE fate (will it be removed), not its raw (now pure-policy) verdict: a hand
+  // spare and a held hand reap keep it, a honored hand reap condemns it. Routed through handFate so
+  // this and the colors can't disagree (rule 49). Drives the card's condemned styling and the
+  // which-tab proxy -- NOT hideReap, which asks a different question (see reapIsNoop).
+  const fate = handFate(item);
+  return fate === "condemn" || fate === "reap";
+}
+
+/** Whether a hand Reap on this row would change nothing, so its Reap control is dropped (rule 48).
+ *  Reaping is a no-op only when POLICY already condemns the item (its pure verdict is "condemn")
+ *  and the operator has not spared it: a spared row -- including a season kept by a whole-show
+ *  spare -- can still be flipped to Reap, and a row condemned only by the operator's OWN reap
+ *  keeps that control so the reap can be undone (its pure verdict is not "condemn"). The spare-
+ *  aware form of rule 48's "own verdict === condemn"; never reimplement it inline. */
+export function reapIsNoop(item: { verdict: Verdict; override: Override | null }): boolean {
+  return item.verdict === "condemn" && item.override !== "spare";
 }
 
 /** One status line per card. Condemned leads with the amber dormancy pill, and the reason
@@ -1271,7 +1290,14 @@ function SeasonStrip({
               : mark.override === "reap"
                 ? ", you reaped it by hand"
                 : "";
-        const lane = MARK_LABELS[mark.verdict] ?? mark.verdict;
+        // The lane word follows the EFFECTIVE fate (handFate), not the raw verdict, so a spared
+        // condemnation reads "kept, you spared it" and never "would be removed, you spared it".
+        const lane =
+          fate === "reap"
+            ? MARK_LABELS.condemn
+            : fate === "spare" || fate === "refused"
+              ? MARK_LABELS.protect
+              : (MARK_LABELS[mark.verdict] ?? mark.verdict);
         return (
           <button
             type="button"
@@ -1492,7 +1518,7 @@ function SeasonList({
   // (any non-condemned season). A show that is condemned top to bottom shows Spare alone on
   // every row and leaves no empty Reap slot, so the size sits flush without a gap. Every
   // row in one list uses the same width, so Spare and Reap line up straight down it.
-  const anyReapable = data.seasons.some((s) => !isCondemned(s));
+  const anyReapable = data.seasons.some((s) => !reapIsNoop(s));
   // A whole-show decision covers every season here. When set, the header states it once and each
   // row only speaks up if it diverges (seasonDivergence); when null, every row wears its own scan
   // or hand chip as before. `show_override` is a property of the show, so all seasons share it.
@@ -1576,7 +1602,7 @@ function SeasonList({
                 onSet={(d, sd) => onSet(season.media_key, d, sd)}
                 onClear={() => onClear(season.media_key)}
                 pending={pending}
-                hideReap={isCondemned(season)}
+                hideReap={reapIsNoop(season)}
               />
               <span className="season-size num">{itemBytes(season.size_bytes)}</span>
               {reason && <p className="season-reason">{reason}</p>}

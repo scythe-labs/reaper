@@ -34,6 +34,7 @@ import {
   KeptByShowNote,
   LibraryChip,
   OverrideControls,
+  reapIsNoop,
   ShowStatusChip,
   useHoldsBackUnmeasured,
 } from "./ReviewQueue";
@@ -992,9 +993,11 @@ export function WhyPanel({
             }
             onClear={() => clearOverride.mutate(item.media_key)}
             pending={setOverride.isPending || clearOverride.isPending}
-            // Same rule as the queue: a condemned item is already on the block, so Reap here
-            // would change nothing. Spare (rescue) stays; Reap returns on Sanctuary and Limbo.
-            hideReap={item.verdict === "condemn"}
+            // Same rule as the queue: reaping an item POLICY already condemns changes nothing, so
+            // its Reap is dropped (reapIsNoop) -- but a spared row keeps Reap (it can be flipped)
+            // and a row condemned only by its OWN reap keeps it (to undo). Spare (rescue) always
+            // stays.
+            hideReap={reapIsNoop(item)}
           />
           {(setOverride.isError || clearOverride.isError) && (
             <span className="error">Couldn't save that. Try again.</span>
