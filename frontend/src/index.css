@@ -1781,8 +1781,11 @@ a.rating-chip:hover {
     border: none;
     border-radius: 0;
   }
+  /* Full-screen sheet: no rounded top, and the hero KEEPS the base -1rem top margin
+     (it is not reset here) so the art still bleeds under the panel's 1rem top padding to
+     the very top edge, the same top-bleed every wider breakpoint already gets. Resetting
+     it to 0 left a 1rem band of panel surface above the art -- a gap on phones only. */
   .why-hero {
-    margin-top: 0;
     border-radius: 0;
   }
 }
