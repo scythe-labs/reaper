@@ -456,6 +456,19 @@ class TestBuildSeasonFacts:
         assert isinstance(facts.imdb_rating_tenths, Unknown)
         assert isinstance(facts.imdb_votes, Unknown)
 
+    def test_a_numbered_season_carries_its_rank(self) -> None:
+        facts = _facts(rank=2)
+        assert isinstance(facts.season_rank, Known) and facts.season_rank.value == 2
+
+    def test_a_special_with_no_rank_is_absent_not_unknown(self) -> None:
+        """rank_seasons deliberately leaves specials out of the ranking, so a special
+        reaches here with rank=None. That is Absent: we looked, and it genuinely has no
+        rank slot. Recording it as Unknown claimed Sonarr could not be read and made the
+        SEASON_RANK signal say "could not tell which season this is", dragging the special's
+        coverage down for a rank it was never meant to have."""
+        facts = _facts(rank=None)
+        assert isinstance(facts.season_rank, Absent)
+
     def test_a_season_is_always_managed(self) -> None:
         facts = _facts()
         assert isinstance(facts.is_managed, Known) and facts.is_managed.value is True

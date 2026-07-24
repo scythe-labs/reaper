@@ -55,6 +55,7 @@ def _facts(**overrides: object) -> Facts:
 
 
 UNWATCHED = SignalConfig(signal=SignalId.UNWATCHED, weight=70, saturate_at=1825, floor=365)
+SEASON_RANK = SignalConfig(signal=SignalId.SEASON_RANK, weight=15, saturate_at=6)
 
 
 class TestTheFourStates:
@@ -121,6 +122,31 @@ class TestTheFourStates:
         assert keeping.evaluated is True
         assert unreadable.evaluated is False
         assert unreadable.state is SignalState.UNREADABLE
+
+    def test_a_specials_absent_rank_does_not_apply_and_keeps_coverage(self) -> None:
+        # A special (season 0) is deliberately left out of the season ranking, so its rank
+        # is Absent -- we looked, and it genuinely has no rank slot. The built-in signal
+        # must read that as NOT_APPLICABLE, evaluated, so it never lands in "Couldn't check"
+        # and never drags the special's coverage down for a rank it was never meant to have,
+        # exactly as the custom path already reads an Absent field.
+        result = evaluate_signal(SEASON_RANK, _facts(season_rank=Absent(source="sonarr")))
+
+        assert result.pressure == 0
+        assert result.evaluated is True
+        assert result.state is SignalState.NOT_APPLICABLE
+        assert result.detail == "not one of the numbered seasons"
+
+    def test_a_rank_we_could_not_read_is_still_unreadable(self) -> None:
+        # A genuine Sonarr read failure is Unknown, not Absent, and stays "we could not
+        # look" -- the one case that keeps the old wording and rightly lowers coverage.
+        result = evaluate_signal(
+            SEASON_RANK,
+            _facts(season_rank=Unknown(source="sonarr", reason="Sonarr unreachable")),
+        )
+
+        assert result.evaluated is False
+        assert result.state is SignalState.UNREADABLE
+        assert result.detail == "could not tell which season this is"
 
 
 def _policy() -> PolicyBody:

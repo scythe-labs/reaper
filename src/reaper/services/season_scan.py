@@ -574,10 +574,16 @@ def build_season_facts(
             imdb_rating.average_rating * 10 if imdb_rating else None, rating_looked_up
         ),
         imdb_votes=_rating_obs(imdb_rating.num_votes if imdb_rating else None, rating_looked_up),
+        # A rank of None here is not an outage: rank_seasons deliberately leaves specials
+        # (and content-less seasons, already filtered out before this point) out of the
+        # newest->oldest ranking, so the only season reaching this branch with no rank is a
+        # special. We looked, and it genuinely has no rank slot -- that is Absent, not
+        # Unknown. Recording it as Unknown told the owner Sonarr could not be read and made
+        # the SEASON_RANK signal read "could not tell which season this is", dragging the
+        # special's coverage down for a rank it was never meant to have. See
+        # engine.signals.evaluate_signal, which reads this Absent as NOT_APPLICABLE.
         season_rank=(
-            Known(value=rank, source="sonarr")
-            if rank is not None
-            else Unknown(reason="season has no rank", source="sonarr")
+            Known(value=rank, source="sonarr") if rank is not None else Absent(source="sonarr")
         ),
         is_streaming_now=streaming,
         is_managed=Known(value=True, source="sonarr"),

@@ -270,6 +270,22 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
             raw = size / 1_000_000_000 if size is not None else None
             detail = f"{raw:.1f} GB on disk" if raw is not None else "could not read the file size"
         case SignalId.SEASON_RANK:
+            # A special (season 0) is deliberately left out of the newest->oldest ranking,
+            # so its rank is Absent: we looked, and it genuinely has no rank slot. That is
+            # NOT_APPLICABLE, exactly as evaluate_custom reads an Absent field -- evaluated,
+            # zero pressure, weight kept, coverage intact -- and must NOT read as UNREADABLE,
+            # which would tell the owner "could not tell which season this is" and drag the
+            # special's coverage down for a rank it was never meant to have. A genuine Sonarr
+            # read failure is Unknown and still falls through to the UNREADABLE branch below.
+            if isinstance(facts.season_rank, Absent):
+                return SignalResult(
+                    config.signal,
+                    0.0,
+                    config.weight,
+                    "not one of the numbered seasons",
+                    evaluated=True,
+                    state=SignalState.NOT_APPLICABLE,
+                )
             raw = _numeric(facts.season_rank)
             # Rank 1 is the NEWEST season with files, not the oldest. Calling it an
             # older season while charging it deletion pressure told the owner the
