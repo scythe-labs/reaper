@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import type { PersonDetail, PersonTitle, QuotaLine } from "../api";
 import { bytes, count, date, itemBytes } from "../format";
 import { UnmatchedList } from "./UnmatchedList";
+import { WhyClose } from "./WhyPanel";
 
 function initial(name: string): string {
   const c = name.trim()[0];
@@ -218,6 +219,7 @@ export function ScalesPanel({
 
   return (
     <aside className="why">
+      <WhyClose onClose={onClose} />
       <header className="why-head">
         <div className="scales-head-id">
           <span className="fair-avatar" aria-hidden="true">
@@ -231,9 +233,6 @@ export function ScalesPanel({
             </p>
           </div>
         </div>
-        <button className="ghost why-close" onClick={onClose} aria-label="Close">
-          ✕
-        </button>
       </header>
 
       <section className="block">
@@ -347,11 +346,9 @@ export function ScalesPanel({
 export function ScalesPanelFallback({ error, onClose }: { error: boolean; onClose: () => void }) {
   return (
     <aside className="why">
+      <WhyClose onClose={onClose} />
       <header className="why-head">
         <h2>{error ? "Something went wrong" : "Loading…"}</h2>
-        <button className="ghost why-close" onClick={onClose} aria-label="Close">
-          ✕
-        </button>
       </header>
       {error && (
         <p className="notice notice-error">

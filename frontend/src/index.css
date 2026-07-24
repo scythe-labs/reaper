@@ -1550,12 +1550,56 @@ tbody tr.selected {
   align-items: flex-start;
   gap: 0.5rem;
 }
+/* A panel with no hero art floats the close disc over its header's top-right corner, so that
+   header reserves the disc's width on the right and the title can never tuck under it. The
+   adjacency matches only when no .why-hero sits between the close and the head; the art panels
+   float the disc over the poster instead, well clear of the header. */
+.why-close + .why-head {
+  padding-right: 2rem;
+}
 .why-head p {
   margin: 0.15rem 0 0;
   font-size: 0.82rem;
 }
+/* The panel's close: a media-sheet button floated over the hero art rather than a boxed
+   glyph in the title row, where it read as a stray form control. A translucent dark disc,
+   blurred, with a hairline, so a stroked white X stays legible on any poster; over a title
+   with no art it rests on the surface top-right the same way. Scrolls with the hero, like the
+   header close it replaced. The hover pair carries :not(:disabled) so it outranks the base
+   button:hover, which would otherwise repaint the fill and border with the theme grays. */
 .why-close {
+  position: absolute;
+  top: 0.7rem;
+  right: 0.7rem;
+  z-index: 3;
   flex: none;
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(10, 11, 14, 0.42);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  -webkit-backdrop-filter: blur(7px);
+  backdrop-filter: blur(7px);
+  transition:
+    background 0.14s var(--ease),
+    border-color 0.14s var(--ease),
+    transform 0.05s var(--ease);
+}
+.why-close:hover:not(:disabled) {
+  background: rgba(10, 11, 14, 0.62);
+  border-color: rgba(255, 255, 255, 0.32);
+}
+.why-close:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+.why-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* The title as the "open in Plex" jump: reads as the title until you hover. */
@@ -5074,6 +5118,41 @@ button.sm {
   visibility: visible;
 }
 
+/* In the why-panel footer the Spare / Reap pair IS the screen's purpose, not a card's
+   hover-revealed afterthought, so it gets the room the card cannot spare: the full footer
+   width, a height that clears a 44px touch target, and Spare (keep-first) grown to own the
+   row while Reap holds the right. ONLY the size changes -- the split button's joined seam
+   (square where main meets caret, no gap), its 6px corners, and the keep-first colors are the
+   shared ones, untouched. Scoped to the footer, so the card and season-list controls, with
+   their fixed column tracks (rule 51/67), never move. The three-class selectors outrank the
+   base `.override-controls .ov-btn`/`.ov-split` pair; the split-main/caret specifics come
+   after the general `.ov-btn` rule so the source-order tie resolves their way. */
+.why-actions-row {
+  flex-wrap: wrap; /* a save error drops below the full-width buttons instead of squeezing them */
+}
+.why-actions .override-controls {
+  display: flex;
+  flex: 1 1 100%;
+  gap: var(--ov-btn-gap);
+}
+.why-actions .override-controls .ov-split {
+  width: auto;
+  flex: 1 1 auto;
+}
+.why-actions .override-controls .ov-btn {
+  min-width: 0;
+  height: 2.75rem;
+  padding: 0 0.9rem;
+  font-size: 0.92rem;
+}
+.why-actions .override-controls .split-caret {
+  width: 2.4rem;
+  padding: 0;
+}
+.why-actions .override-controls .ov-reap {
+  flex: 0 1 42%;
+}
+
 /* The length menu behind the Spare chevron. position:fixed (set inline) so the card's
    overflow:hidden cannot clip it; styled on the filter-menu pattern so it reads as one of the
    app's own popovers. */
@@ -5434,8 +5513,8 @@ button.sm {
      slot) and the size track are both a FIXED width, so every row places its buttons and its
      size at the same x -- the columns can't drift with the size string ("22.5 GiB" vs
      "9.1 GiB") or the button count. Only the title (1fr) flexes. See rule 51. */
-  grid-template-columns: 2.6rem 1fr var(--btns, calc(2 * var(--ov-btn-w) + var(--ov-btn-gap)))
-    4.75rem;
+  grid-template-columns: 2.6rem minmax(0, 1fr)
+    var(--btns, calc(2 * var(--ov-btn-w) + var(--ov-btn-gap))) 4.75rem;
   align-items: center;
   column-gap: 0.7rem;
   row-gap: 0.25rem;
@@ -5491,10 +5570,18 @@ button.sm {
 .season-title {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 0.25rem 0.5rem;
+  /* One line, never two. A long status pill shrinks and ellipsizes in place (.status-chip
+     carries overflow:hidden + text-overflow) instead of wrapping to a second line. Wrapping
+     grew the row taller when the list narrowed to seat the open why panel, which shifted every
+     card below it -- nowrap holds the row height steady at any width. */
+  flex-wrap: nowrap;
+  gap: 0.5rem;
   font-size: 0.88rem;
   min-width: 0;
+}
+/* The name holds its width and never wraps, so only the pill gives when space runs short. */
+.season-name {
+  white-space: nowrap;
 }
 .season-title .status-chip {
   min-width: 0;

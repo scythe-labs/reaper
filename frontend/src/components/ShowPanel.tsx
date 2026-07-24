@@ -19,7 +19,7 @@ import {
   ShowStatusChip,
 } from "./ReviewQueue";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
-import { JumpPill, Synopsis, WhyHero } from "./WhyPanel";
+import { JumpPill, Synopsis, WhyClose, WhyHero } from "./WhyPanel";
 
 /** The one pill a season row wears. The owner's hand decision replaces the scan chip
  *  (solid means "you chose this"); a reap the engine can't honor yet reads dashed red and
@@ -63,6 +63,7 @@ export function ShowPanel({
 
   return (
     <aside className="why">
+      <WhyClose onClose={onClose} />
       {group.poster_url && <WhyHero posterUrl={group.poster_url} />}
 
       <header className="why-head">
@@ -100,9 +101,6 @@ export function ShowPanel({
             <JumpPill href={group.links.seerr} label="Seerr" />
           </p>
         </div>
-        <button className="ghost why-close" onClick={onClose} aria-label="Close">
-          ✕
-        </button>
       </header>
 
       {group.summary && <Synopsis text={group.summary} />}

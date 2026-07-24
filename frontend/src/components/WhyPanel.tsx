@@ -219,6 +219,22 @@ export function WhyHero({ posterUrl }: { posterUrl: string }) {
   );
 }
 
+/** Every `.why` panel's close: a media-sheet disc floated over the hero art (see .why-close),
+ *  never a boxed glyph in the title row, where it read as a stray form control. A stroked X to
+ *  match the panel's round-capped glyphs, and NOT the scythe: closing is not reaping. Over a
+ *  title with no art it rests on the surface top-right the same way. Render it FIRST in each
+ *  panel so it is the panel's first tab stop; z-index clears the hero art and fade. One
+ *  component so the four panels never drift (rule 18). */
+export function WhyClose({ onClose }: { onClose: () => void }) {
+  return (
+    <button type="button" className="why-close" onClick={onClose} aria-label="Close">
+      <svg viewBox="0 0 16 16" width="15" height="15" fill="none" aria-hidden="true">
+        <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    </button>
+  );
+}
+
 /** Shown ONLY when Reaper could not confidently tie the item to a Plex entry -- the one match
  *  outcome the owner needs told, because it is *why* the file was kept. A clean match shows
  *  nothing at all. Two plain wordings, no jargon: nothing found in Plex, or more than one
@@ -724,6 +740,7 @@ export function WhyPanel({
 
   return (
     <aside className="why">
+      <WhyClose onClose={onClose} />
       {item.poster_url && <WhyHero posterUrl={item.poster_url} />}
 
       {/* A season's reasoning is one level down from its show: offer the way back up. */}
@@ -790,9 +807,6 @@ export function WhyPanel({
             <JumpPill href={item.links.sonarr} label="Sonarr" />
           </p>
         </div>
-        <button className="ghost why-close" onClick={onClose} aria-label="Close">
-          ✕
-        </button>
       </header>
 
       <MetaLine item={item} />

@@ -96,6 +96,18 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
   const api = apiRef.current;
 
   useEffect(() => {
+    // Own scroll restoration. This app has no router, so it parks and un-parks a history
+    // sentinel itself (pushState when a panel opens, history.back() when it closes). Under the
+    // browser default `auto`, the engine tries to manage scroll across those history writes and,
+    // with the card list's CSS containment (`container-type` on `.card-list`), lands the page at
+    // the top on both the open and the close -- desktop and phone alike. `manual` hands the app
+    // the scroll: parking and un-parking the sentinel no longer moves the reviewer, so they stay
+    // exactly where they tapped. Restored on unmount so a test or an embedding host is left as it
+    // was found.
+    const priorScrollRestoration =
+      "scrollRestoration" in history ? history.scrollRestoration : null;
+    if (priorScrollRestoration !== null) history.scrollRestoration = "manual";
+
     const onPop = () => {
       if (selfPopRef.current) {
         // Our own unpark(); the sentinel is gone, nothing to unwind.
@@ -138,7 +150,10 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
         }
       }
     }
-    return () => window.removeEventListener("popstate", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      if (priorScrollRestoration !== null) history.scrollRestoration = priorScrollRestoration;
+    };
   }, []);
 
   return <BackNavContext.Provider value={api}>{children}</BackNavContext.Provider>;

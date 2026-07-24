@@ -1559,7 +1559,7 @@ function SeasonList({
             >
               <Score item={season} />
               <span className="season-title">
-                {seasonName(season.title, data.title)}
+                <span className="season-name">{seasonName(season.title, data.title)}</span>
                 {chip}
               </span>
               {/* The control toggles the season's OWN decision (override_own), never the one it

@@ -169,6 +169,25 @@ describe("backnav", () => {
     backSpy.mockRestore();
   });
 
+  it("takes scroll restoration off auto while mounted, and restores it on unmount", () => {
+    // With the browser default `auto`, the sentinel this provider parks on open and the
+    // history.back() it runs on close both let the engine yank the page to the top (worse
+    // with the card list's CSS containment). The provider takes it to `manual` so the reviewer
+    // stays put, and restores the prior mode on unmount. jsdom leaves scrollRestoration absent
+    // (a real browser always has it); seed it so the guarded path runs, then clear it.
+    history.scrollRestoration = "auto";
+    const { unmount } = render(
+      <BackNavProvider>
+        <Overlay />
+      </BackNavProvider>,
+    );
+    expect(history.scrollRestoration).toBe("manual");
+    unmount();
+    expect(history.scrollRestoration).toBe("auto");
+    // Leave history as jsdom hands it to the next test (the property is optional there).
+    delete (history as { scrollRestoration?: ScrollRestoration }).scrollRestoration;
+  });
+
   it("a layer closed by its own control is no longer a Back step", async () => {
     render(
       <BackNavProvider>

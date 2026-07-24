@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { applyAccent } from "./accent";
 import { api, ApiError, type AuthUser, type Snapshot, type Verdict } from "./api";
 import { BackNavProvider, useBackGuard, useBackNav } from "./backnav";
@@ -18,9 +18,10 @@ import { ScytheGlyph } from "./components/ScytheGlyph";
 import { Settings, type Panel } from "./components/Settings";
 import { SetupWizard } from "./components/SetupWizard";
 import { ShowPanel } from "./components/ShowPanel";
-import { WhyPanel } from "./components/WhyPanel";
+import { WhyClose, WhyPanel } from "./components/WhyPanel";
 import { DocsProvider } from "./docs/DocsContext";
 import { bytes, count, date, souls } from "./format";
+import { useMediaQuery } from "./useMediaQuery";
 
 type View = "review" | "policy" | "reap" | "fairness" | "settings";
 
@@ -385,11 +386,9 @@ export function UserMenu({ user }: { user: AuthUser }) {
 function WhyPanelFallback({ error, onClose }: { error: boolean; onClose: () => void }) {
   return (
     <aside className="why">
+      <WhyClose onClose={onClose} />
       <header className="why-head">
         <h2>{error ? "Something went wrong" : "Loading…"}</h2>
-        <button className="ghost why-close" onClick={onClose} aria-label="Close">
-          ✕
-        </button>
       </header>
       {error ? (
         <p className="notice notice-error">
@@ -450,6 +449,52 @@ function Dashboard({ user }: { user: AuthUser }) {
   };
   // The reap sheet reopened from the app-wide bar's View, by run id, on any screen.
   const [reapSheetRun, setReapSheetRun] = useState<number | null>(null);
+
+  // A side panel is open: the why panel, the show panel, or one of the Scales panels, all of
+  // which render as `main.split`'s second column beside their list.
+  const splitOpen =
+    (selected !== null && view === "review") ||
+    ((scalesUser !== null || scalesUnmatched) && view === "fairness");
+  // The two list views the split rides on. Off these, there is no list scroll to keep.
+  const listView = view === "review" || view === "fairness";
+  // A phone shows the panel as a full-screen sheet over the list (`main.split .why` below 900px
+  // in index.css); a wider screen keeps the list visible beside it. That is what decides whether
+  // the window scroll still tracks the list while a panel is open (used just below). 900px must
+  // match that full-screen-sheet breakpoint (rule 67).
+  const fullSheet = useMediaQuery("(max-width: 900px)");
+
+  // Keep the reviewer's place when a panel opens or closes. Opening turns the list into the
+  // side-by-side split (the cards make room for the panel) and closing takes it back; that
+  // reflow drops the window scroll in some browsers -- Safari all the way to the top -- and on a
+  // phone the panel is a full-screen sheet whose close landed back at the top too. An operator
+  // pages deep into thousands of items, so losing that place is real work to redo. Remember where
+  // the list is scrolled, then put it back the instant the layout toggles -- in a layout effect,
+  // before the browser paints -- so the list never jumps. scrollRestoration is `manual`
+  // (BackNavProvider), so the Back sentinel it parks on open can't fight this.
+  const listScrollRef = useRef(0);
+  useEffect(() => {
+    // Track the list's scroll so a close lands where the reviewer is NOW -- even after they
+    // scrolled and opened a different card with the panel already up. Frozen only while a
+    // full-screen sheet covers the list (a phone): the list is not being scrolled then, so any
+    // movement is the page drifting behind the sheet, which must not overwrite the place we
+    // return to. On wider screens the list stays visible beside the panel, so keep tracking.
+    if (!listView || (splitOpen && fullSheet)) return;
+    const onScroll = () => {
+      listScrollRef.current = window.scrollY;
+    };
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [splitOpen, fullSheet, listView]);
+  // Restore only on a genuine open/close within one list view -- never when the change is a page
+  // navigation (which owns its own scroll), which the view guard below distinguishes.
+  const splitPrevRef = useRef({ open: splitOpen, view });
+  useLayoutEffect(() => {
+    const prev = splitPrevRef.current;
+    const toggledInPlace = prev.view === view && prev.open !== splitOpen;
+    splitPrevRef.current = { open: splitOpen, view };
+    if (toggledInPlace) window.scrollTo(0, listScrollRef.current);
+  }, [splitOpen, view]);
 
   // The browser Back button steps back through the UI instead of leaving Reaper: open panels
   // and menus register themselves (useBackGuard, below and in their own components), and a tab
@@ -675,14 +720,7 @@ function Dashboard({ user }: { user: AuthUser }) {
         />
       )}
 
-      <main
-        className={
-          (selected !== null && view === "review") ||
-          ((scalesUser !== null || scalesUnmatched) && view === "fairness")
-            ? "split"
-            : ""
-        }
-      >
+      <main className={splitOpen ? "split" : ""}>
         {view === "review" ? (
           <>
             <ReviewQueue

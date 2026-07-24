@@ -10,6 +10,7 @@ import { useEffect } from "react";
 import type { UnmatchedRequest } from "../api";
 import { count } from "../format";
 import { UnmatchedList } from "./UnmatchedList";
+import { WhyClose } from "./WhyPanel";
 
 export function NotInScanPanel({
   items,
@@ -57,14 +58,12 @@ export function NotInScanPanel({
 
   return (
     <aside className="why">
+      <WhyClose onClose={onClose} />
       <header className="why-head">
         <div>
           <h2>Not in the last scan</h2>
           <p className="why-sub muted">{sub}</p>
         </div>
-        <button className="ghost why-close" onClick={onClose} aria-label="Close">
-          ✕
-        </button>
       </header>
 
       {isPending ? (
