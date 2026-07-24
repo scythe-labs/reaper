@@ -1401,30 +1401,24 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
       // Optimistically mark the job running so the spinner shows at once and the finish is
       // seen as a running->done transition (the flash) even for a job that completes inside
       // one poll interval. The real state, and the fresh last-run fields, land on the next
-      // refetch.
+      // poll: the schedule query's own refetchInterval reacts to this optimistic flag right
+      // away (nothing here needs to force an earlier refetch), so there is no fixed delay to
+      // race against a scheduler that is slow to submit the job.
       queryClient.setQueryData<Schedule>(["schedule"], (prev) =>
         prev
           ? { ...prev, jobs: prev.jobs.map((j) => (j.id === job.id ? { ...j, running: true } : j)) }
           : prev,
-      );
-      // Refetch once the scheduler has actually submitted the job (a beat later), never
-      // immediately: an immediate refetch can land BEFORE submission and briefly read the
-      // job as not-running again, which would flash the *previous* run's result. The
-      // optimistic flag above already shows "running" at once, and the poll (armed while any
-      // job runs) carries it to the real finish.
-      window.setTimeout(
-        () => void queryClient.invalidateQueries({ queryKey: ["schedule"] }),
-        700,
       );
     },
   });
   const running = job.running || run.isPending;
   // The flash keys on the server's own running flag (which the mutation seeds optimistically),
   // never on `run.isPending` -- that would fire a stale flash the instant the POST returns,
-  // before the job has even run.
+  // before the job has even run. Compared with `!== null`, not truthiness: an empty (but
+  // present) result must still flash, unlike a job that has simply never run.
   const flash = useJobFlash(
     job.running,
-    job.last_result ? { ok: job.last_ok !== false, text: job.last_result } : null,
+    job.last_result !== null ? { ok: job.last_ok !== false, text: job.last_result } : null,
   );
 
   return (
@@ -1437,6 +1431,7 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
           runningLabel="Running now…"
           lastRunAt={job.last_run_at}
           lastOk={job.last_ok}
+          lastResult={job.last_result}
           flash={flash}
         />
         <div className="jobrow-sched">{maintenanceScheduleText(job)}</div>
@@ -1477,11 +1472,15 @@ function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
   const syncResult = runSync.data
     ? {
         ok: runSync.data.problems.length === 0,
-        text: !runSync.data.applied
-          ? "Preview only, nothing written"
-          : runSync.data.problems.length > 0
+        // A real per-library problem always wins the message, even in preview: "preview
+        // only" is a benign caveat, but it must never mask an actual failure that happened
+        // in the same pass.
+        text:
+          runSync.data.problems.length > 0
             ? "Some shelves didn't update"
-            : `${count(runSync.data.added_count)} added, ${count(runSync.data.cleared_count)} cleared`,
+            : !runSync.data.applied
+              ? "Preview only, nothing written"
+              : `${count(runSync.data.added_count)} added, ${count(runSync.data.cleared_count)} cleared`,
       }
     : runSync.error
       ? { ok: false, text: "It didn't update" }
@@ -1554,7 +1553,8 @@ function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
           running={running}
           runningLabel="Updating…"
           lastRunAt={last?.at ?? null}
-          lastOk={last ? true : null}
+          lastOk={last ? last.ok : null}
+          lastResult={last?.result ?? null}
           flash={flash}
         />
         {last && (
@@ -1631,6 +1631,7 @@ function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
       <div className="set-rows">
         <ScanRow
           snapshot={snapshot}
+          scanJob={scanJob}
           title={jobMeta(SCAN_ID).title}
           desc={jobMeta(SCAN_ID).desc}
           scheduleText={scanScheduleText(scanJob, schedule.isError)}

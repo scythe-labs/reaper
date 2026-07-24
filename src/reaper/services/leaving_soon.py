@@ -427,6 +427,17 @@ async def run_sync(
         seasons_on_shelves=sum(o.on_shelf for o in outcomes if o.kind == "show"),
     )
 
+    # A plain-language summary for the Jobs page's status line, in the same precedence a
+    # real per-library problem takes over the (benign) preview-mode caveat, which takes
+    # over a clean run's counts. ``applied`` alone cannot drive this: it is false in
+    # preview too, and a preview with no problems is not a failure.
+    if result.problems:
+        last_result = "Some shelves didn't update"
+    elif not result.applied:
+        last_result = "Preview only, nothing written"
+    else:
+        last_result = f"{result.added} added, {result.removed} cleared"
+
     async with session_factory() as session:
         await app_settings.set_leaving_soon_announced(session, set(result.announced))
         await app_settings.set_leaving_soon_last(
@@ -435,6 +446,8 @@ async def run_sync(
             movies=result.movies_on_shelves,
             seasons=result.seasons_on_shelves,
             applied=result.applied,
+            ok=not result.problems,
+            result=last_result,
         )
         await session.commit()
 

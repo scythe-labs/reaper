@@ -112,19 +112,26 @@ async def refresh_ratings(
     catch-up gates on the 14-day staleness itself, so a genuinely stale dataset (which is far
     older than the window) still refreshes there.
     """
-    state = await ImdbRatings(cache_engine).state()
-    if state.synced_at is not None and utcnow() - state.synced_at < RATINGS_MIN_REFRESH_INTERVAL:
-        log.info("scheduler.ratings_fresh_skip", synced_at=state.synced_at.isoformat())
-        await _record_run(session_factory, "refresh_ratings", ok=True, result="Already up to date")
-        return
     try:
+        state = await ImdbRatings(cache_engine).state()
+        if (
+            state.synced_at is not None
+            and utcnow() - state.synced_at < RATINGS_MIN_REFRESH_INTERVAL
+        ):
+            log.info("scheduler.ratings_fresh_skip", synced_at=state.synced_at.isoformat())
+            await _record_run(
+                session_factory, "refresh_ratings", ok=True, result="Already up to date"
+            )
+            return
         rows = await imdb_dataset.refresh(cache_engine, data_dir)
         log.info("scheduler.ratings_refreshed", rows=rows)
         await _record_run(session_factory, "refresh_ratings", ok=True, result="Ratings refreshed")
     except Exception as exc:
         # Leaves the previous dataset in place (load swaps atomically). A stale dataset
         # is caught by the snapshot's own degradation check; a crashed scheduler would
-        # silently stop all upkeep, which is worse.
+        # silently stop all upkeep, which is worse. The state read is inside this try too,
+        # so a broken cache (locked/corrupt cache.db) is recorded as a failed run instead of
+        # escaping unrecorded.
         log.warning("scheduler.ratings_refresh_failed", error=str(exc))
         await _record_run(
             session_factory, "refresh_ratings", ok=False, result="Couldn't refresh ratings"
@@ -163,37 +170,39 @@ async def full_history_sweep(
 
     Read-only. If no Tautulli is configured, there is nothing to sweep.
     """
-    async with session_factory() as session:
-        row = (
-            (
-                await session.execute(
-                    select(Instance).where(
-                        Instance.kind == InstanceKind.TAUTULLI, Instance.enabled.is_(True)
+    try:
+        async with session_factory() as session:
+            row = (
+                (
+                    await session.execute(
+                        select(Instance).where(
+                            Instance.kind == InstanceKind.TAUTULLI, Instance.enabled.is_(True)
+                        )
                     )
                 )
+                .scalars()
+                .first()
             )
-            .scalars()
-            .first()
-        )
 
-    if row is None:
-        await _record_run(
-            session_factory, "full_history_sweep", ok=True, result="No history source"
-        )
-        return
+        if row is None:
+            await _record_run(
+                session_factory, "full_history_sweep", ok=True, result="No history source"
+            )
+            return
 
-    client = TautulliClient(
-        row.base_url,
-        secret_box.decrypt(row.api_key_enc),
-        safety=RuntimeSafety(destructive_enabled=False),
-        verify=row.verify_tls,
-    )
-    try:
+        client = TautulliClient(
+            row.base_url,
+            secret_box.decrypt(row.api_key_enc),
+            safety=RuntimeSafety(destructive_enabled=False),
+            verify=row.verify_tls,
+        )
         async with client:
             state = await history_sync.sync(cache_engine, client, full=True)
         log.info("scheduler.history_swept", rows=state.rows)
         await _record_run(session_factory, "full_history_sweep", ok=True, result="History updated")
     except Exception as exc:
+        # The instance lookup and client construction are inside this try too, so a broken
+        # DB read or a bad decrypt is recorded as a failed run instead of escaping unrecorded.
         log.warning("scheduler.history_sweep_failed", error=str(exc))
         await _record_run(
             session_factory, "full_history_sweep", ok=False, result="Couldn't update history"
@@ -228,7 +237,11 @@ async def scheduled_scan(
     except scan_runner.ScanConfigError as exc:
         log.info("scheduler.scan_skipped", reason=str(exc))
     except Exception as exc:
+        # A genuine crash (unlike the two quiet skips above) writes no snapshot, so the
+        # Jobs page would otherwise keep showing whatever the last snapshot said forever.
+        # Recorded here so ScanRow can prefer this over a stale snapshot (see get_schedule).
         log.warning("scheduler.scan_failed", error=str(exc))
+        await _record_run(session_factory, SCAN_JOB_ID, ok=False, result="Scan failed")
 
 
 def apply_scan_schedule(

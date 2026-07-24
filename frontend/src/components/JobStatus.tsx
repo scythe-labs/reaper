@@ -23,6 +23,10 @@ const FLASH_MS = 4200;
  *
  * `result` is read only at the moment of the transition (through a ref, so a later change to
  * it never re-arms the timer), which is why the effect depends on `running` alone.
+ *
+ * A restart while the flash is still showing (a quick re-click right after a run finishes)
+ * clears it immediately on the not-running -> running edge, so the spinner is never hidden
+ * behind the PREVIOUS run's stale confirmation for the rest of its window.
  */
 export function useJobFlash(running: boolean, result: JobFlash | null): JobFlash | null {
   const [flash, setFlash] = useState<JobFlash | null>(null);
@@ -36,6 +40,9 @@ export function useJobFlash(running: boolean, result: JobFlash | null): JobFlash
       setFlash(latest.current);
       if (timer.current !== null) window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => setFlash(null), FLASH_MS);
+    } else if (!wasRunning.current && running) {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+      setFlash(null);
     }
     wasRunning.current = running;
   }, [running]);
@@ -62,12 +69,17 @@ export function JobStatus({
   runningLabel,
   lastRunAt,
   lastOk,
+  lastResult,
   flash,
 }: {
   running: boolean;
   runningLabel: string;
   lastRunAt: string | null;
   lastOk: boolean | null;
+  /** A short plain-language reason for a failed run, shown beside the exact time once the
+   *  flash clears -- otherwise that reason is only ever visible for the few seconds of the
+   *  flash and is unrecoverable after a reload. Ignored for a run that did not fail. */
+  lastResult?: string | null;
   flash: JobFlash | null;
 }) {
   let variant: string;
@@ -103,6 +115,7 @@ export function JobStatus({
           {since(lastRunAt)}{" "}
           <span className="last-exact">
             · {date(lastRunAt)}, {time(lastRunAt)}
+            {failed && lastResult ? ` · ${lastResult}` : ""}
           </span>
         </span>
       </div>

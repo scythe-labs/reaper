@@ -12,7 +12,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { api, type Snapshot } from "../api";
+import { api, type ScheduledJob, type Snapshot } from "../api";
 import { bytes, count, totalBytes } from "../format";
 import { JobStatus, useJobFlash } from "./JobStatus";
 
@@ -71,6 +71,7 @@ function scanDelta(
  *  line are handed in so the copy lives in one place with the other jobs. */
 export function ScanRow({
   snapshot,
+  scanJob,
   title,
   desc,
   scheduleText,
@@ -78,6 +79,10 @@ export function ScanRow({
   canEdit,
 }: {
   snapshot: Snapshot | undefined;
+  /** The scan's own schedule entry. Carries `last_run_at`/`last_ok`/`last_result` only for
+   *  a SCHEDULED scan that crashed outright and wrote no snapshot (see `get_schedule`); a
+   *  successful run is read from `snapshot` below instead. */
+  scanJob: ScheduledJob | undefined;
   title: string;
   desc: string;
   scheduleText: string;
@@ -159,6 +164,21 @@ export function ScanRow({
     status?.error ? null : { ok: true, text: "Queue refreshed" },
   );
 
+  // A scheduled scan that crashed outright writes no snapshot, so it is recorded separately
+  // (job id "scheduled_scan", see get_schedule) instead of being silently invisible here.
+  // Prefer that failure only while it is actually newer than the snapshot on hand -- once a
+  // later scan succeeds, its fresh snapshot wins again with no need to clear the record.
+  const scanFailedAt =
+    scanJob && scanJob.last_ok === false && scanJob.last_run_at ? scanJob.last_run_at : null;
+  const failureIsCurrent =
+    scanFailedAt !== null &&
+    (!snapshot || new Date(scanFailedAt).getTime() > new Date(snapshot.created_at).getTime());
+  // A completed-but-degraded scan produced a result, just an incomplete one -- the warning
+  // notice below explains that. It is not a "failed" run, so it must not paint the dot red;
+  // only a scan attempt that crashed outright (above) is a real failure here.
+  const lastRunAt = failureIsCurrent ? scanFailedAt : (snapshot?.created_at ?? null);
+  const lastOk = failureIsCurrent ? false : snapshot ? true : null;
+
   return (
     <div className="jobrow">
       <div className="jobrow-main">
@@ -168,8 +188,9 @@ export function ScanRow({
         <JobStatus
           running={scanning}
           runningLabel={runLabel}
-          lastRunAt={snapshot?.created_at ?? null}
-          lastOk={snapshot ? !snapshot.degraded : null}
+          lastRunAt={lastRunAt}
+          lastOk={lastOk}
+          lastResult={failureIsCurrent ? (scanJob?.last_result ?? null) : null}
           flash={scanFlash}
         />
 

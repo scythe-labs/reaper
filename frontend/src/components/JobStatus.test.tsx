@@ -31,6 +31,38 @@ describe("JobStatus resting states", () => {
     expect(line?.textContent).toContain("Last run failed");
   });
 
+  it("appends the plain-language reason beside the exact time for a failed run", () => {
+    const { container } = render(
+      <JobStatus
+        running={false}
+        runningLabel=""
+        lastRunAt={AT}
+        lastOk={false}
+        lastResult="Couldn't refresh ratings"
+        flash={null}
+      />,
+    );
+    expect(container.querySelector(".last-exact")?.textContent).toContain(
+      "Couldn't refresh ratings",
+    );
+  });
+
+  it("never shows the reason beside a run that did not fail", () => {
+    const { container } = render(
+      <JobStatus
+        running={false}
+        runningLabel=""
+        lastRunAt={AT}
+        lastOk={true}
+        lastResult="Ratings refreshed"
+        flash={null}
+      />,
+    );
+    expect(container.querySelector(".last-exact")?.textContent).not.toContain(
+      "Ratings refreshed",
+    );
+  });
+
   it("reads 'hasn't run yet' with a hollow dot when there is no last run", () => {
     const { container } = render(
       <JobStatus running={false} runningLabel="" lastRunAt={null} lastOk={null} flash={null} />,
@@ -105,5 +137,30 @@ describe("useJobFlash", () => {
     );
     expect(container.querySelector(".flash-chip")).toBeNull();
     expect(container.querySelector(".jobrow-last")?.textContent).toContain("Last run");
+  });
+
+  it("clears a still-showing flash the instant a new run starts, instead of hiding the spinner behind it", () => {
+    vi.useFakeTimers();
+    const first = { ok: true, text: "Ratings refreshed" };
+    const { container, rerender } = render(<Harness running={true} result={first} />);
+    rerender(<Harness running={false} result={first} />);
+    expect(container.querySelector(".flash-chip")?.textContent).toContain("Ratings refreshed");
+
+    // A quick re-click restarts the job well inside the flash window.
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    const second = { ok: true, text: "Ratings refreshed" };
+    rerender(<Harness running={true} result={second} />);
+
+    // The spinner shows now -- the previous run's chip is not left covering it.
+    expect(container.querySelector(".flash-chip")).toBeNull();
+    expect(container.querySelector(".spin")).not.toBeNull();
+
+    // The old timer must not fire a stale flash later either.
+    act(() => {
+      vi.advanceTimersByTime(4300);
+    });
+    expect(container.querySelector(".spin")).not.toBeNull();
   });
 });

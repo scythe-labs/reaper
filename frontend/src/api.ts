@@ -635,6 +635,11 @@ export interface LeavingSoonSettings {
     movies: number;
     seasons: number;
     applied: boolean;
+    /** Whether the last sync was actually clean: false only for a real per-library
+     *  problem, never merely because it ran in preview (unarmed). */
+    ok: boolean;
+    /** A short plain-language summary of the last sync. */
+    result: string;
   } | null;
 }
 
@@ -996,8 +1001,9 @@ export interface ScheduledJob {
   /** Whether the job is executing right this moment. */
   running: boolean;
   /** The last completion of this job: when it finished (ISO), whether it succeeded, and a
-   *  short plain-language result. All `null` for a job that has never run, and for the scan
-   *  (which shows its last run from the latest snapshot, not this store). */
+   *  short plain-language result. All `null` for a job that has never run. For the scan, a
+   *  SUCCESSFUL run is read from the latest snapshot instead (see ScanRow); these fields are
+   *  populated for the scan only when a scheduled run crashed outright. */
   last_run_at: string | null;
   last_ok: boolean | null;
   last_result: string | null;

@@ -22,6 +22,7 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.db.base import Base
+from reaper.db.models import Instance, InstanceKind
 from reaper.db.session import create_engine, create_session_factory
 from reaper.secrets import resolve_secret_key
 from reaper.services import app_settings, scheduler
@@ -204,7 +205,8 @@ async def main_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[Async
 class TestUpkeepJobsRecordTheirLastRun:
     """Every upkeep job records when it last finished, whether it succeeded, and a short
     result -- the store behind the Jobs page's one last-run line per job. The scan and
-    Leaving Soon keep their own last-run sources, so they are not exercised here."""
+    Leaving Soon read a SUCCESSFUL run from their own sources, so those are not exercised
+    here; the scan's own failure-only recording has its own test class below."""
 
     async def _last(
         self, factory: async_sessionmaker[AsyncSession], job_id: str
@@ -287,3 +289,132 @@ class TestUpkeepJobsRecordTheirLastRun:
         # no-op -- a catch-up refresh is not an on-schedule or by-hand run.
         await _seed_synced(cache_engine, hours_ago=1)
         await scheduler.refresh_ratings(cache_engine, tmp_path)  # no factory, must not raise
+
+    async def test_a_ratings_state_read_failure_still_records_not_ok(
+        self,
+        cache_engine: AsyncEngine,
+        tmp_path: Path,
+        main_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The freshness check itself (``ImdbRatings.state()``) used to run before the
+        try/except, so a broken cache read would escape unrecorded. It is inside the try
+        now, so a crash there is a recorded failure, not a silent gap."""
+
+        async def boom(self: object) -> object:
+            raise RuntimeError("cache.db is locked")
+
+        monkeypatch.setattr(ImdbRatings, "state", boom)
+        await scheduler.refresh_ratings(cache_engine, tmp_path, main_factory)
+
+        last = await self._last(main_factory, "refresh_ratings")
+        assert last is not None
+        assert last["ok"] is False
+        assert last["result"] == "Couldn't refresh ratings"
+
+    async def test_a_history_sweep_instance_lookup_failure_still_records_not_ok(
+        self,
+        cache_engine: AsyncEngine,
+        main_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The Tautulli instance lookup and client construction used to run before the
+        try/except, so a broken DB read or a bad decrypt would escape unrecorded. Both are
+        inside the try now."""
+
+        class _BoomSecretBox:
+            def decrypt(self, value: str) -> str:
+                raise ValueError("secret key rotated")
+
+        async with main_factory() as session:
+            session.add(
+                Instance(
+                    kind=InstanceKind.TAUTULLI,
+                    name="t",
+                    enabled=True,
+                    base_url="http://tautulli.example",
+                    api_key_enc="not-really-encrypted",
+                    verify_tls=True,
+                    created_at=utcnow(),
+                )
+            )
+            await session.commit()
+
+        await scheduler.full_history_sweep(main_factory, cache_engine, _BoomSecretBox())  # type: ignore[arg-type]
+
+        last = await self._last(main_factory, "full_history_sweep")
+        assert last is not None
+        assert last["ok"] is False
+        assert last["result"] == "Couldn't update history"
+
+
+class TestScheduledScanRecordsOnlyItsFailure:
+    """A scheduled scan that crashes outright writes no snapshot, so it is the one
+    exception to 'the scan reads its own last-run line from the snapshot' (see
+    JOB_LAST_RUN_PREFIX): the crash is recorded under ``scheduler.SCAN_JOB_ID`` so the
+    Jobs page can still show it failed, instead of silently repeating whatever the last
+    successful snapshot said. A quiet, expected skip (no Radarr/Tautulli configured yet,
+    or a scan already running) is not a failure and must record nothing."""
+
+    async def _last(
+        self, factory: async_sessionmaker[AsyncSession], job_id: str
+    ) -> dict[str, object] | None:
+        async with factory() as session:
+            return (await app_settings.get_job_last_runs(session)).get(job_id)
+
+    async def test_a_crashed_scan_records_a_failure(
+        self,
+        cache_engine: AsyncEngine,
+        tmp_path: Path,
+        main_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from reaper.services import scan_runner
+
+        async def boom(**kwargs: object) -> object:
+            raise RuntimeError("radarr unreachable")
+
+        monkeypatch.setattr(scan_runner, "run_scan", boom)
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        await scheduler.scheduled_scan(settings, main_factory, cache_engine, None)  # type: ignore[arg-type]
+
+        last = await self._last(main_factory, scheduler.SCAN_JOB_ID)
+        assert last is not None
+        assert last["ok"] is False
+        assert last["result"] == "Scan failed"
+
+    async def test_a_misconfigured_skip_records_nothing(
+        self,
+        cache_engine: AsyncEngine,
+        tmp_path: Path,
+        main_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from reaper.services import scan_runner
+
+        async def config_error(**kwargs: object) -> object:
+            raise scan_runner.ScanConfigError("no Radarr configured yet")
+
+        monkeypatch.setattr(scan_runner, "run_scan", config_error)
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        await scheduler.scheduled_scan(settings, main_factory, cache_engine, None)  # type: ignore[arg-type]
+
+        assert await self._last(main_factory, scheduler.SCAN_JOB_ID) is None
+
+    async def test_a_scan_already_running_records_nothing(
+        self,
+        cache_engine: AsyncEngine,
+        tmp_path: Path,
+        main_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from reaper.services import scan_runner
+
+        async def in_progress(**kwargs: object) -> object:
+            raise scan_runner.ScanInProgressError("a scan is already running")
+
+        monkeypatch.setattr(scan_runner, "run_scan", in_progress)
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        await scheduler.scheduled_scan(settings, main_factory, cache_engine, None)  # type: ignore[arg-type]
+
+        assert await self._last(main_factory, scheduler.SCAN_JOB_ID) is None

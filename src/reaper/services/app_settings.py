@@ -45,8 +45,11 @@ MAINTENANCE_SCHEDULE_PREFIX = "maintenance_schedule:"
 #: One row per upkeep job records its last completion -- when it ran, whether it succeeded,
 #: and a short plain-language result -- so the Jobs page shows the same last-run line for
 #: every job. One key per job (never a shared dict), so a concurrent write of a different
-#: job cannot clobber it (rule 59). The scan and Leaving Soon keep their own last-run
-#: sources (the snapshot, the leaving_soon_last row); this store is for the upkeep jobs.
+#: job cannot clobber it (rule 59). The scan and Leaving Soon read a SUCCESSFUL last run
+#: from their own sources (the snapshot, the leaving_soon_last row); this store is for the
+#: upkeep jobs, plus one row for the scan itself (job id ``scheduled_scan``) that is written
+#: ONLY when a scheduled scan crashes outright, so a run that produced no snapshot is never
+#: silently invisible on the Jobs page (see ``scheduler.scheduled_scan``).
 JOB_LAST_RUN_PREFIX = "job_last_run:"
 #: The Discord webhook, stored Fernet-encrypted exactly like an instance API key -- its
 #: token lives in the URL path, so the whole URL is a credential.
@@ -63,7 +66,11 @@ LEAVING_SOON_ENABLED_KEY = "leaving_soon_enabled"
 #: exactly like the deletion switch. Edited in Settings -> Plex.
 LEAVING_SOON_UNARMED_KEY = "leaving_soon_unarmed"
 #: What the last shelf update did and when -- the status line under the Leaving Soon
-#: settings. ``{"at": iso, "movies": n, "seasons": n, "applied": bool}``.
+#: settings. ``{"at": iso, "movies": n, "seasons": n, "applied": bool, "ok": bool,
+#: "result": str}``. ``applied`` is false in preview (unarmed) as well as on a genuine
+#: per-library error, so it alone cannot color the Jobs page's status dot -- ``ok`` is
+#: false only for a real per-library problem, which is what the dot and the short
+#: ``result`` line should reflect.
 LEAVING_SOON_LAST_KEY = "leaving_soon_last"
 #: The Plex libraries Reaper may touch, as last synced from the server:
 #: ``[{"key": int, "title": str, "kind": "movie"|"show", "enabled": bool}]``. Only video
@@ -605,12 +612,26 @@ async def get_leaving_soon_last(session: AsyncSession) -> dict[str, Any] | None:
 
 
 async def set_leaving_soon_last(
-    session: AsyncSession, *, at: str, movies: int, seasons: int, applied: bool
+    session: AsyncSession,
+    *,
+    at: str,
+    movies: int,
+    seasons: int,
+    applied: bool,
+    ok: bool,
+    result: str,
 ) -> None:
     await _set(
         session,
         LEAVING_SOON_LAST_KEY,
-        {"at": at, "movies": movies, "seasons": seasons, "applied": applied},
+        {
+            "at": at,
+            "movies": movies,
+            "seasons": seasons,
+            "applied": applied,
+            "ok": ok,
+            "result": result,
+        },
     )
 
 

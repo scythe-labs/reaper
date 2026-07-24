@@ -290,6 +290,12 @@ class LeavingSoonLastOut(BaseModel):
     movies: int
     seasons: int
     applied: bool
+    #: Whether the last sync was actually clean: false only for a real per-library
+    #: problem, never merely because it ran in preview (unarmed). This, not ``applied``,
+    #: is what should color the Jobs page's status dot.
+    ok: bool
+    #: A short plain-language summary of the last sync, for the Jobs page's resting line.
+    result: str
 
 
 class LeavingSoonSettingsOut(BaseModel):
@@ -316,8 +322,9 @@ class ScheduledJobOut(BaseModel):
     running: bool
     #: The last completion of this job: when it finished (ISO), whether it succeeded, and a
     #: short plain-language result the Jobs page shows. All ``null`` for a job that has never
-    #: run. Also ``null`` for the scan, which shows its last run from the latest snapshot, not
-    #: this store; the Jobs page fills the scan's line from the snapshot instead.
+    #: run. For the scan, a SUCCESSFUL run is read from the latest snapshot instead (see
+    #: ``ScanRow``); these fields are populated for the scan only when a scheduled run
+    #: crashed outright and wrote no snapshot, so ScanRow can still show it failed.
     last_run_at: str | None = None
     last_ok: bool | None = None
     last_result: str | None = None
@@ -972,6 +979,8 @@ async def _leaving_soon_out(session: AsyncSession, settings: Settings) -> Leavin
             movies=int(last.get("movies", 0)),
             seasons=int(last.get("seasons", 0)),
             applied=bool(last.get("applied", False)),
+            ok=bool(last.get("ok", True)),
+            result=str(last.get("result", "")),
         )
         if last
         else None,
