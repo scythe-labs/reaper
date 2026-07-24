@@ -314,6 +314,13 @@ class ScheduledJobOut(BaseModel):
     next_run_at: str | None
     #: Whether the job is executing right this moment.
     running: bool
+    #: The last completion of this job: when it finished (ISO), whether it succeeded, and a
+    #: short plain-language result the Jobs page shows. All ``null`` for a job that has never
+    #: run. Also ``null`` for the scan, which shows its last run from the latest snapshot, not
+    #: this store; the Jobs page fills the scan's line from the snapshot instead.
+    last_run_at: str | None = None
+    last_ok: bool | None = None
+    last_result: str | None = None
 
 
 class ScheduleOut(BaseModel):
@@ -1028,6 +1035,7 @@ async def get_schedule(request: Request) -> ScheduleOut:
     async with _factory(request)() as session:
         scan_cron = await app_settings.get_scan_schedule(session)
         maintenance = await app_settings.get_maintenance_schedules(session)
+        last_runs = await app_settings.get_job_last_runs(session)
 
     jobs = []
     for job_id in SCHEDULABLE_JOB_IDS:
@@ -1038,6 +1046,7 @@ async def get_schedule(request: Request) -> ScheduleOut:
             cron = effective_maintenance_cron(job_id, maintenance)
             default_cron = DEFAULT_MAINTENANCE_CRONS[job_id]
         job = scheduler.get_job(job_id)
+        last = last_runs.get(job_id)
         jobs.append(
             ScheduledJobOut(
                 id=job_id,
@@ -1045,6 +1054,9 @@ async def get_schedule(request: Request) -> ScheduleOut:
                 default_cron=default_cron,
                 next_run_at=job.next_run_time.isoformat() if job and job.next_run_time else None,
                 running=job_id in running,
+                last_run_at=last.get("at") if last else None,
+                last_ok=last.get("ok") if last else None,
+                last_result=last.get("result") if last else None,
             )
         )
     return ScheduleOut(jobs=jobs)

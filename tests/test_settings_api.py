@@ -575,6 +575,33 @@ class TestSchedule:
         assert by_id["refresh_ratings"]["default_cron"] == "30 3 * * *"
         assert by_id["refresh_ratings"]["cron"] == "30 3 * * *"
         assert by_id["refresh_ratings"]["running"] is False
+        # A job that has never completed reads as "hasn't run yet".
+        assert by_id["refresh_ratings"]["last_run_at"] is None
+        assert by_id["refresh_ratings"]["last_ok"] is None
+
+    def test_a_recorded_last_run_surfaces_on_the_job(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Once a job has completed, its stored last run (when, ok, result) shows on the row;
+        a job with no record stays null so the page can say "hasn't run yet"."""
+        from reaper.services import app_settings
+
+        async def fake_last_runs(session: object) -> dict[str, dict[str, object]]:
+            return {
+                "refresh_ratings": {
+                    "at": "2026-07-24T03:30:00+00:00",
+                    "ok": True,
+                    "result": "Ratings refreshed",
+                }
+            }
+
+        monkeypatch.setattr(app_settings, "get_job_last_runs", fake_last_runs)
+        by_id = {j["id"]: j for j in client.get("/api/settings/schedule").json()["jobs"]}
+        assert by_id["refresh_ratings"]["last_run_at"] == "2026-07-24T03:30:00+00:00"
+        assert by_id["refresh_ratings"]["last_ok"] is True
+        assert by_id["refresh_ratings"]["last_result"] == "Ratings refreshed"
+        assert by_id["full_history_sweep"]["last_run_at"] is None
+        assert by_id["full_history_sweep"]["last_ok"] is None
 
     def test_the_scan_cron_is_stored_and_a_bad_one_refused(self, client: TestClient) -> None:
         ok = client.put("/api/settings/jobs/scheduled_scan/schedule", json={"cron": "30 4 * * *"})

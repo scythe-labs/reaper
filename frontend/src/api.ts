@@ -995,6 +995,12 @@ export interface ScheduledJob {
   next_run_at: string | null;
   /** Whether the job is executing right this moment. */
   running: boolean;
+  /** The last completion of this job: when it finished (ISO), whether it succeeded, and a
+   *  short plain-language result. All `null` for a job that has never run, and for the scan
+   *  (which shows its last run from the latest snapshot, not this store). */
+  last_run_at: string | null;
+  last_ok: boolean | null;
+  last_result: string | null;
 }
 
 export interface Schedule {

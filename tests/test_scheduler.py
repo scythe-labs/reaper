@@ -16,14 +16,15 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
+from reaper.db.base import Base
 from reaper.db.session import create_engine, create_session_factory
 from reaper.secrets import resolve_secret_key
-from reaper.services import scheduler
+from reaper.services import app_settings, scheduler
 from reaper.services.imdb_dataset import ImdbRatings
 
 
@@ -184,3 +185,105 @@ class TestTheSchedulerIsUpkeepOnly:
                 or ("sweep" in job.func.__name__)
             )
         await engine.dispose()
+
+
+@pytest.fixture
+async def main_factory(tmp_path: Path) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """A real main-database session factory (with the ``AppSetting`` table) so an upkeep job
+    can record its last run. Its own file, kept apart from the cache engine above."""
+    data_dir = tmp_path / "main"
+    data_dir.mkdir()
+    settings = Settings(data_dir=data_dir, secret_key="k")  # type: ignore[call-arg]
+    engine = create_engine(settings)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield create_session_factory(engine)
+    await engine.dispose()
+
+
+class TestUpkeepJobsRecordTheirLastRun:
+    """Every upkeep job records when it last finished, whether it succeeded, and a short
+    result -- the store behind the Jobs page's one last-run line per job. The scan and
+    Leaving Soon keep their own last-run sources, so they are not exercised here."""
+
+    async def _last(
+        self, factory: async_sessionmaker[AsyncSession], job_id: str
+    ) -> dict[str, object] | None:
+        async with factory() as session:
+            return (await app_settings.get_job_last_runs(session)).get(job_id)
+
+    async def test_a_successful_list_refresh_records_ok(
+        self,
+        cache_engine: AsyncEngine,
+        main_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def fake_sync(*args: object, **kwargs: object) -> int:
+            return 250
+
+        monkeypatch.setattr(scheduler.lists, "sync", fake_sync)
+        await scheduler.refresh_curated_lists(cache_engine, main_factory)
+
+        last = await self._last(main_factory, "refresh_curated_lists")
+        assert last == {"at": last["at"], "ok": True, "result": "Lists refreshed"}  # type: ignore[index]
+
+    async def test_a_failed_list_refresh_records_not_ok(
+        self,
+        cache_engine: AsyncEngine,
+        main_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def boom(*args: object, **kwargs: object) -> int:
+            raise RuntimeError("source down")
+
+        monkeypatch.setattr(scheduler.lists, "sync", boom)
+        await scheduler.refresh_curated_lists(cache_engine, main_factory)
+
+        last = await self._last(main_factory, "refresh_curated_lists")
+        assert last is not None
+        assert last["ok"] is False
+        assert last["result"] == "Couldn't refresh lists"
+
+    async def test_a_fresh_skip_still_records_a_run(
+        self,
+        cache_engine: AsyncEngine,
+        tmp_path: Path,
+        main_factory: async_sessionmaker[AsyncSession],
+    ) -> None:
+        # Synced an hour ago: the download short-circuits, but the owner who pressed "Run
+        # now" still gets a truthful last-run line rather than "hasn't run yet".
+        await _seed_synced(cache_engine, hours_ago=1)
+        await scheduler.refresh_ratings(cache_engine, tmp_path, main_factory)
+
+        last = await self._last(main_factory, "refresh_ratings")
+        assert last is not None
+        assert last["ok"] is True
+        assert last["result"] == "Already up to date"
+
+    async def test_a_successful_ratings_refresh_records_ok(
+        self,
+        cache_engine: AsyncEngine,
+        tmp_path: Path,
+        main_factory: async_sessionmaker[AsyncSession],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        await _seed_synced(cache_engine, hours_ago=25)  # stale, so it downloads
+
+        async def fake_download(engine: AsyncEngine, data_dir: Path) -> int:
+            return 7
+
+        monkeypatch.setattr(scheduler.imdb_dataset, "refresh", fake_download)
+        await scheduler.refresh_ratings(cache_engine, tmp_path, main_factory)
+
+        last = await self._last(main_factory, "refresh_ratings")
+        assert last is not None
+        assert last["ok"] is True
+        assert last["result"] == "Ratings refreshed"
+
+    async def test_the_startup_catch_up_records_nothing(
+        self, cache_engine: AsyncEngine, tmp_path: Path
+    ) -> None:
+        # Called without a session factory (as the startup catch-up does), recording is a
+        # no-op -- a catch-up refresh is not an on-schedule or by-hand run.
+        await _seed_synced(cache_engine, hours_ago=1)
+        await scheduler.refresh_ratings(cache_engine, tmp_path)  # no factory, must not raise

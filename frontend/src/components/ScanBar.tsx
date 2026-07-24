@@ -13,7 +13,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { api, type Snapshot } from "../api";
-import { bytes, count, date, time, totalBytes } from "../format";
+import { bytes, count, totalBytes } from "../format";
+import { JobStatus, useJobFlash } from "./JobStatus";
 
 //: Friendly names for the scan's internal phases, so the status line reads in English.
 //  Exported because the first-run wizard shows the same progress line; one table keeps
@@ -144,15 +145,36 @@ export function ScanRow({
   const delta =
     before && snapshot && snapshot.id !== before.id ? scanDelta(before, snapshot) : null;
 
+  // The scan's live phase, shown in the shared status slot while it runs.
+  const runLabel = status
+    ? `${phaseLabel(status.phase)}${status.detail ? ` · ${status.detail}` : ""}${
+        pct !== null ? ` · ${pct}%` : ""
+      }`
+    : "Scanning…";
+  // A finished scan confirms itself in the same slot, then settles to the last-run line. A
+  // scan that reported a problem gets no flash: the error notice below carries the detail,
+  // and a green "done" chip beside it would contradict.
+  const scanFlash = useJobFlash(
+    scanning,
+    status?.error ? null : { ok: true, text: "Queue refreshed" },
+  );
+
   return (
     <div className="jobrow">
       <div className="jobrow-main">
         <div className="jobrow-title">{title}</div>
         <div className="jobrow-desc">{desc}</div>
 
+        <JobStatus
+          running={scanning}
+          runningLabel={runLabel}
+          lastRunAt={snapshot?.created_at ?? null}
+          lastOk={snapshot ? !snapshot.degraded : null}
+          flash={scanFlash}
+        />
+
         {snapshot && !scanning && (
           <div className="jobrow-meta">
-            Last scan {date(snapshot.created_at)} &middot; {time(snapshot.created_at)} &middot;{" "}
             {count(snapshot.item_count)} items &middot;{" "}
             <strong>{count(snapshot.condemned)}</strong> would be removed, freeing{" "}
             <strong>{totalBytes(snapshot.reclaimable_bytes, snapshot.unknown_size_items)}</strong>
@@ -160,16 +182,7 @@ export function ScanRow({
         )}
         {delta && !scanning && <div className="jobrow-meta">{delta}</div>}
         {!snapshot && !scanning && (
-          <div className="jobrow-meta">No scan has run yet. A scan only reads. It cannot delete.</div>
-        )}
-
-        {scanning && (
-          <div className="jobrow-run">
-            <span className="spin" aria-hidden="true" />
-            {phaseLabel(status!.phase)}
-            {status!.detail && ` · ${status!.detail}`}
-            {pct !== null && ` · ${pct}%`}
-          </div>
+          <div className="jobrow-meta">A scan only reads. It cannot delete.</div>
         )}
 
         {scanning ? (

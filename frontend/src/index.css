@@ -6092,6 +6092,114 @@ button.danger:hover:not(:disabled) {
   }
 }
 
+/* The one status line every job wears (JobStatus.tsx), used by the scan row, the Leaving
+   Soon row, and every upkeep job. Its whole point is that every state -- the resting
+   "Last run ..." line, the running spinner, and the manual-run confirmation -- lives in
+   this ONE fixed-height slot, vertically centered, so swapping between them never changes
+   the slot's height or margin and nothing below it moves. The inner element is keyed by
+   state in the TSX, so React remounts it on a change and it fades in on OPACITY ALONE --
+   no transform, no height change, no reflow. */
+.jobrow-status {
+  margin: 0.42rem 0 0;
+  min-height: 1.45rem;
+  display: flex;
+  align-items: center;
+}
+.jobrow-status > * {
+  animation: job-status-in 0.28s var(--ease);
+}
+@keyframes job-status-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* The running line rides the shared slot, so it drops its own top margin and centers. */
+.jobrow-status .jobrow-run {
+  margin: 0;
+}
+.jobrow-last {
+  font-size: 0.8rem;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-variant-numeric: tabular-nums;
+}
+/* The outcome dot, in Reaper's verdict colors: a success is green, a failure red, and a job
+   that has never run is a hollow ring -- "nothing to report" reads differently from "ran". */
+.last-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+.last-dot.ok {
+  background: var(--protect);
+}
+.last-dot.fail {
+  background: var(--condemn);
+}
+.last-dot.never {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+  border: 1.5px solid var(--faint);
+}
+.jobrow-last.is-fail {
+  color: var(--condemn);
+}
+.jobrow-last.is-never {
+  color: var(--faint);
+}
+/* The exact time trails the relative phrase on the same line, so a glance reads "when-ish"
+   and the precise time is still there. Held at --muted (never --faint) so it clears WCAG as
+   real text. */
+.last-exact {
+  color: var(--muted);
+}
+.jobrow-last.is-fail .last-exact {
+  color: color-mix(in srgb, var(--condemn) 78%, var(--muted));
+}
+/* The manual-run confirmation. The chip carries ONLY horizontal padding, and its border is
+   an inset box-shadow, so it is exactly as tall as the plain text line -- the slot never
+   grows when the chip appears. */
+.jobrow-last.is-flash {
+  color: var(--protect);
+  font-weight: 600;
+}
+.jobrow-last.is-flash-fail {
+  color: var(--condemn);
+  font-weight: 600;
+}
+.flash-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+}
+.is-flash .flash-chip {
+  background: var(--protect-soft);
+  color: var(--protect);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--protect) 35%, transparent);
+}
+.is-flash-fail .flash-chip {
+  background: var(--condemn-soft);
+  color: var(--condemn);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--condemn) 35%, transparent);
+}
+.flash-chip .check {
+  font-weight: 700;
+}
+@media (prefers-reduced-motion: reduce) {
+  .jobrow-status > * {
+    animation: none;
+  }
+}
+
 /* The indeterminate "running now" spinner beside a background job that is executing. */
 .spin {
   display: inline-block;

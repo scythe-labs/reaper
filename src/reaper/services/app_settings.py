@@ -42,6 +42,12 @@ SCAN_SCHEDULE_KEY = "scan_schedule"
 #: value is turned off; no row falls back to the code default. See
 #: ``scheduler.DEFAULT_MAINTENANCE_CRONS`` and ``get_maintenance_schedules``.
 MAINTENANCE_SCHEDULE_PREFIX = "maintenance_schedule:"
+#: One row per upkeep job records its last completion -- when it ran, whether it succeeded,
+#: and a short plain-language result -- so the Jobs page shows the same last-run line for
+#: every job. One key per job (never a shared dict), so a concurrent write of a different
+#: job cannot clobber it (rule 59). The scan and Leaving Soon keep their own last-run
+#: sources (the snapshot, the leaving_soon_last row); this store is for the upkeep jobs.
+JOB_LAST_RUN_PREFIX = "job_last_run:"
 #: The Discord webhook, stored Fernet-encrypted exactly like an instance API key -- its
 #: token lives in the URL path, so the whole URL is a credential.
 DISCORD_WEBHOOK_KEY = "discord_webhook_enc"
@@ -435,6 +441,43 @@ async def set_maintenance_schedule(session: AsyncSession, job_id: str, cron: str
     Writes only this job's own row, so a concurrent save of a *different* job cannot clobber
     it -- the fix for the whole-dict read-modify-write that raced (B-12)."""
     await _set(session, f"{MAINTENANCE_SCHEDULE_PREFIX}{job_id}", cron or None)
+
+
+# --- upkeep job last-run ---------------------------------------------------
+
+
+async def get_job_last_runs(session: AsyncSession) -> dict[str, dict[str, Any]]:
+    """The last completion of each upkeep job, keyed by job id.
+
+    Each value is ``{"at": iso, "ok": bool, "result": str}`` -- when it last finished, whether
+    it succeeded, and a short plain-language summary. A job that has never completed is simply
+    absent, which the Jobs page reads as "hasn't run yet". Read from the per-job rows so one
+    job's write never touches another's.
+    """
+    rows = (
+        (
+            await session.execute(
+                select(AppSetting).where(AppSetting.key.startswith(JOB_LAST_RUN_PREFIX))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        value = json.loads(row.value_json)
+        if isinstance(value, dict):
+            out[row.key[len(JOB_LAST_RUN_PREFIX) :]] = value
+    return out
+
+
+async def set_job_last_run(
+    session: AsyncSession, job_id: str, *, at: str, ok: bool, result: str
+) -> None:
+    """Record one upkeep job's last completion. Writes only this job's own row (rule 59)."""
+    await _set(
+        session, f"{JOB_LAST_RUN_PREFIX}{job_id}", {"at": at, "ok": bool(ok), "result": result}
+    )
 
 
 # --- Discord webhook -------------------------------------------------------

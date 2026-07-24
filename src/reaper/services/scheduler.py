@@ -40,7 +40,7 @@ from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind
-from reaper.services import history_sync, imdb_dataset, lists, scan_runner
+from reaper.services import app_settings, history_sync, imdb_dataset, lists, scan_runner
 from reaper.services.imdb_dataset import ImdbRatings
 
 log = structlog.get_logger(__name__)
@@ -74,7 +74,37 @@ SCHEDULABLE_JOB_IDS: tuple[str, ...] = (SCAN_JOB_ID, *MAINTENANCE_JOB_IDS)
 RATINGS_MIN_REFRESH_INTERVAL = timedelta(hours=20)
 
 
-async def refresh_ratings(cache_engine: AsyncEngine, data_dir: Path) -> None:
+async def _record_run(
+    session_factory: async_sessionmaker[AsyncSession] | None,
+    job_id: str,
+    *,
+    ok: bool,
+    result: str,
+) -> None:
+    """Persist an upkeep job's last completion so the Jobs page can show its last-run line.
+
+    A no-op when ``session_factory`` is ``None`` -- the startup catch-up calls the job
+    callables directly, without one, and a catch-up refresh is not an on-schedule/by-hand run.
+    Never lets this bookkeeping break the job it records: a failed write is logged and
+    swallowed, exactly like each job's own error handling.
+    """
+    if session_factory is None:
+        return
+    try:
+        async with session_factory() as session:
+            await app_settings.set_job_last_run(
+                session, job_id, at=utcnow().isoformat(), ok=ok, result=result
+            )
+            await session.commit()
+    except Exception as exc:
+        log.warning("scheduler.record_run_failed", job=job_id, error=str(exc))
+
+
+async def refresh_ratings(
+    cache_engine: AsyncEngine,
+    data_dir: Path,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> None:
     """Download and load the IMDb ratings dataset. Idempotent; safe to run any time.
 
     Short-circuits when the dataset was refreshed within ``RATINGS_MIN_REFRESH_INTERVAL``, so
@@ -85,24 +115,38 @@ async def refresh_ratings(cache_engine: AsyncEngine, data_dir: Path) -> None:
     state = await ImdbRatings(cache_engine).state()
     if state.synced_at is not None and utcnow() - state.synced_at < RATINGS_MIN_REFRESH_INTERVAL:
         log.info("scheduler.ratings_fresh_skip", synced_at=state.synced_at.isoformat())
+        await _record_run(session_factory, "refresh_ratings", ok=True, result="Already up to date")
         return
     try:
         rows = await imdb_dataset.refresh(cache_engine, data_dir)
         log.info("scheduler.ratings_refreshed", rows=rows)
+        await _record_run(session_factory, "refresh_ratings", ok=True, result="Ratings refreshed")
     except Exception as exc:
         # Leaves the previous dataset in place (load swaps atomically). A stale dataset
         # is caught by the snapshot's own degradation check; a crashed scheduler would
         # silently stop all upkeep, which is worse.
         log.warning("scheduler.ratings_refresh_failed", error=str(exc))
+        await _record_run(
+            session_factory, "refresh_ratings", ok=False, result="Couldn't refresh ratings"
+        )
 
 
-async def refresh_curated_lists(cache_engine: AsyncEngine) -> None:
+async def refresh_curated_lists(
+    cache_engine: AsyncEngine,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> None:
     """Refresh the curated protection lists that need no per-scan client (the Top 250)."""
     try:
         count = await lists.sync(cache_engine, lists.ImdbTop250(), mode=lists.ListMode.HARD)
         log.info("scheduler.lists_refreshed", **{lists.ImdbTop250().slug: count})
+        await _record_run(
+            session_factory, "refresh_curated_lists", ok=True, result="Lists refreshed"
+        )
     except Exception as exc:
         log.warning("scheduler.lists_refresh_failed", error=str(exc))
+        await _record_run(
+            session_factory, "refresh_curated_lists", ok=False, result="Couldn't refresh lists"
+        )
 
 
 async def full_history_sweep(
@@ -133,6 +177,9 @@ async def full_history_sweep(
         )
 
     if row is None:
+        await _record_run(
+            session_factory, "full_history_sweep", ok=True, result="No history source"
+        )
         return
 
     client = TautulliClient(
@@ -145,8 +192,12 @@ async def full_history_sweep(
         async with client:
             state = await history_sync.sync(cache_engine, client, full=True)
         log.info("scheduler.history_swept", rows=state.rows)
+        await _record_run(session_factory, "full_history_sweep", ok=True, result="History updated")
     except Exception as exc:
         log.warning("scheduler.history_sweep_failed", error=str(exc))
+        await _record_run(
+            session_factory, "full_history_sweep", ok=False, result="Couldn't update history"
+        )
 
 
 async def scheduled_scan(
@@ -224,8 +275,8 @@ def _maintenance_specs(
     """The (callable, args) each upkeep job is added with. One place, so wiring a job at
     build time and re-wiring it on a schedule change can never drift apart."""
     return {
-        "refresh_ratings": (refresh_ratings, [cache_engine, data_dir]),
-        "refresh_curated_lists": (refresh_curated_lists, [cache_engine]),
+        "refresh_ratings": (refresh_ratings, [cache_engine, data_dir, session_factory]),
+        "refresh_curated_lists": (refresh_curated_lists, [cache_engine, session_factory]),
         "full_history_sweep": (full_history_sweep, [session_factory, cache_engine, secret_box]),
     }
 

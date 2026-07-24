@@ -25,10 +25,12 @@ import {
   type Instance,
   type InstanceTest,
   type RestoreSummary,
+  type Schedule,
   type ScheduledJob,
 } from "../api";
 import { useBackGuard } from "../backnav";
 import { bytes, count, since } from "../format";
+import { JobStatus, useJobFlash } from "./JobStatus";
 import { LogsPanel } from "./LogsPanel";
 import { ModalShell } from "./ModalShell";
 import { PlexPanel } from "./PlexPanel";
@@ -1396,9 +1398,20 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
   const run = useMutation({
     mutationFn: () => api.runJob(job.id),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["schedule"] });
-      // A beat later, once the scheduler has actually submitted the job, so a long upkeep
-      // run still reads as "running" even if the first refetch landed before it started.
+      // Optimistically mark the job running so the spinner shows at once and the finish is
+      // seen as a running->done transition (the flash) even for a job that completes inside
+      // one poll interval. The real state, and the fresh last-run fields, land on the next
+      // refetch.
+      queryClient.setQueryData<Schedule>(["schedule"], (prev) =>
+        prev
+          ? { ...prev, jobs: prev.jobs.map((j) => (j.id === job.id ? { ...j, running: true } : j)) }
+          : prev,
+      );
+      // Refetch once the scheduler has actually submitted the job (a beat later), never
+      // immediately: an immediate refetch can land BEFORE submission and briefly read the
+      // job as not-running again, which would flash the *previous* run's result. The
+      // optimistic flag above already shows "running" at once, and the poll (armed while any
+      // job runs) carries it to the real finish.
       window.setTimeout(
         () => void queryClient.invalidateQueries({ queryKey: ["schedule"] }),
         700,
@@ -1406,17 +1419,26 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
     },
   });
   const running = job.running || run.isPending;
+  // The flash keys on the server's own running flag (which the mutation seeds optimistically),
+  // never on `run.isPending` -- that would fire a stale flash the instant the POST returns,
+  // before the job has even run.
+  const flash = useJobFlash(
+    job.running,
+    job.last_result ? { ok: job.last_ok !== false, text: job.last_result } : null,
+  );
 
   return (
     <div className="jobrow">
       <div className="jobrow-main">
         <div className="jobrow-title">{meta.title}</div>
         <div className="jobrow-desc">{meta.desc}</div>
-        {running && (
-          <div className="jobrow-run">
-            <span className="spin" aria-hidden="true" /> Running now…
-          </div>
-        )}
+        <JobStatus
+          running={running}
+          runningLabel="Running now…"
+          lastRunAt={job.last_run_at}
+          lastOk={job.last_ok}
+          flash={flash}
+        />
         <div className="jobrow-sched">{maintenanceScheduleText(job)}</div>
         {run.error && (
           <p className="notice notice-error notice-inline">
@@ -1449,6 +1471,22 @@ function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
     mutationFn: api.syncLeavingSoon,
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["leaving-soon-settings"] }),
   });
+  // The manual-run confirmation for this row: the sync is a synchronous mutation, so its
+  // result is read straight off the mutation when it settles (unlike the polled upkeep jobs).
+  // Called before the early returns below, so the hook order never changes.
+  const syncResult = runSync.data
+    ? {
+        ok: runSync.data.problems.length === 0,
+        text: !runSync.data.applied
+          ? "Preview only, nothing written"
+          : runSync.data.problems.length > 0
+            ? "Some shelves didn't update"
+            : `${count(runSync.data.added_count)} added, ${count(runSync.data.cleared_count)} cleared`,
+      }
+    : runSync.error
+      ? { ok: false, text: "It didn't update" }
+      : null;
+  const flash = useJobFlash(runSync.isPending, syncResult);
 
   const title = "Update Leaving Soon shelf";
   const desc =
@@ -1512,6 +1550,13 @@ function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
       <div className="jobrow-main">
         <div className="jobrow-title">{title}</div>
         <div className="jobrow-desc">{desc}</div>
+        <JobStatus
+          running={running}
+          runningLabel="Updating…"
+          lastRunAt={last?.at ?? null}
+          lastOk={last ? true : null}
+          flash={flash}
+        />
         {last && (
           <div className="jobrow-meta">
             <strong>{count(last.movies)}</strong> movie{last.movies === 1 ? "" : "s"} and{" "}
@@ -1519,28 +1564,12 @@ function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
             shelves
           </div>
         )}
-        {running ? (
-          <div className="jobrow-run">
-            <span className="spin" aria-hidden="true" /> Updating…
-          </div>
-        ) : (
-          <div className="jobrow-sched">
-            Runs after every scan{last ? ` · last updated ${since(last.at)}` : ""}
-          </div>
-        )}
+        <div className="jobrow-sched">Runs after every scan</div>
         <div className="jobrow-link">
           <button className="link" onClick={onGoToPlex}>
             Manage in Plex → Leaving Soon
           </button>
         </div>
-        {runSync.data && !running && (
-          <div className="jobrow-sched">
-            {runSync.data.applied
-              ? `${count(runSync.data.added_count)} added, ${count(runSync.data.cleared_count)} cleared in Plex${runSync.data.notified ? " · Discord notified" : ""}`
-              : `${count(runSync.data.added_count)} to add, ${count(runSync.data.cleared_count)} to clear · preview only, nothing was written`}
-            {runSync.data.problems.length > 0 && " · some libraries didn't sync, see the logs"}
-          </div>
-        )}
         {runSync.error && (
           <p className="notice notice-error notice-inline">
             The shelves didn't update: {runSync.error.message}
