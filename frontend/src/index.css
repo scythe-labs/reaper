@@ -5788,7 +5788,10 @@ button.danger:hover:not(:disabled) {
    suggested pill are new. */
 .plex-map-grid {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
+  /* The folder column sizes to its path, but its MIN is 0, not max-content: a long root path
+     must be able to shrink and wrap (.pl-root is overflow-wrap: anywhere) instead of forcing the
+     grid wider than the modal, which on touch turned the whole panel into a sideways pan. */
+  grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
   gap: 0.5rem 0.8rem;
   align-items: center;
   margin: 0.15rem 0 0.35rem;
@@ -6894,6 +6897,11 @@ button.danger:hover:not(:disabled) {
      centered delete-confirm modal could push its actions off-screen. dvh tracks the actually
      visible area -- matching the .why mobile sheet fix. */
   max-height: 88dvh;
+  /* Scroll only on the block axis. A too-wide child (a long root-folder path in the service
+     editor's .plex-map-grid) must never make the panel pan sideways on touch. Content is sized
+     to fit, so this clips nothing; it forecloses the horizontal float for good. (.docs-modal
+     sets its own overflow and is unaffected.) */
+  overflow-x: hidden;
   overflow-y: auto;
   /* The panel is the scroll container; keep a boundary scroll from chaining out to the
      page behind the scrim (which ModalShell also freezes while the modal is up). */
