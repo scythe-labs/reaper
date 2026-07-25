@@ -43,7 +43,7 @@ verification `VERIFIED`, B2-8's fix changes freshly-built plans too. Every findi
 - [x] **Phase 7 — Security, auth, restore & infra** (18 findings) — *done 2026-07-24*
 - [x] **Phase 8 — Fairness, Leaving Soon & engine cleanup** (11 findings) — *done 2026-07-24*
 - [x] **Phase 9 — Test suite** (10 findings) — *done 2026-07-24*
-- [ ] **Phase 10 — Merge the review's Agent Rules into CLAUDE.md**
+- [x] **Phase 10 — Merge the review's Agent Rules into CLAUDE.md** ✅ DONE
 
 Every finding in `docs/CODE_REVIEW.md` is assigned to exactly one phase below (100 total: 37
 Part I code + 10 Part I test + 53 Part II).
@@ -907,10 +907,98 @@ no schema change; frontend `lint` clean, `test` 268 passed (30 files), `build` c
 
 ---
 
-## Phase 10 — Merge the review's Agent Rules into CLAUDE.md
+## Phase 10 — Merge the review's Agent Rules into CLAUDE.md ✅ DONE
 
 Not a code finding: `docs/CODE_REVIEW.md` ends with 41 Agent Rules (23 from the first pass, 18
-new in the second). Once phases 1–9 land, merge them into `CLAUDE.md` as rules **88–128**,
-continuing after the 70–87 block Phase 1 restores, and reconcile any that sharpen an existing
-rule (the newer, more specific obligation governs — say which older rule each sharpens). Drop
-or reword any rule whose finding was fixed differently than the review proposed.
+new in the second). Once phases 1–9 land, merge them into `CLAUDE.md`, continuing after the
+70–87 block Phase 1 restores, and reconcile any that sharpen an existing rule (the newer, more
+specific obligation governs — say which older rule each sharpens). Drop or reword any rule
+whose finding was fixed differently than the review proposed.
+
+### What was done
+
+Landed as **rules 88–119** under a new `## Blockers from the fifth review pass` heading, not
+the 88–128 the plan guessed. The plan assumed a one-for-one append; four of the 41 were already
+law here, and merging pairs that govern one mechanism was the difference between a rulebook and
+a pile.
+
+**Four folded into the rule they duplicate**, edited in place rather than restated, because a
+second copy of an existing rule is the thing rule 104 exists to prevent:
+
+| Review rule | Folded into | What the edit added |
+| --- | --- | --- |
+| 2, resolve by section key | **57** | `library.section(title)` banned in `src/` outright; binds trash/refresh/count/refresh-status, not just label and collection writes; ambiguous titles ask each same-titled library in turn |
+| 3, no dict keyed by a colliding name | **63** | binds membership indexes and path tables, not only display rows |
+| 8, a comment naming a safeguard cites its code | **24** | nothing — rule 24 already says it verbatim; dropped |
+| 12, every client closed on every branch | **34** | early returns and pre-`try` exceptions; `push_async_callback` when the caller's stack already entered the client |
+
+Rule **28** also gained two clauses it needed from this pass: a success response with a null or
+malformed body is not a genuine empty, and a **second sanctioned exception** for a source that
+can only ever *add* condemn evidence (`season_scan`'s batch enrichment), where losing it can
+only lower pressure. That exception is real and was taken deliberately in Phase 3 (I-1); leaving
+it unwritten would have made a merged commit look like a rule-28 violation forever.
+
+**Five pairs merged**, each governing one mechanism: 9+29 (`Absent` vs `Unknown` → 93), 14+32
+(count the removal, not the bookkeeping → 97), 15+18 (throttle granularity → 98), 16+35 (the
+scrubber → 99), 4+PR-6 (paging → 89).
+
+**Reworded against what was built, not what the review proposed.** Phases 1–9 diverged from the
+review's Fix paragraph in ~30 findings; a rule copied verbatim would teach the next agent the
+fix that was rejected. The ones that changed the rule's meaning:
+
+- **96 (B-10) — the review's own fix was wrong and the rule now says the opposite.** It proposed
+  reading a non-dict `match` as *no* match status, which inverts unreadable evidence into
+  "nothing was wrong." Shipped as a **BAD** match that holds the reap; genuinely-absent stays
+  permissive. The rule states the fallback resolves toward keeping.
+- **113 (B2-8)** — the review offered "enforce it **or** delete the claim." Deleting the claim
+  was rejected; the rule drops that option and adds refusing a plan built *after* the edit.
+- **117 (B2-15)** — the gate was **retired**, not wired. The rule names the retirement pattern:
+  drop from `GATE_TYPES`, refuse in `build_gates`, keep the `GateId` so stored explanations
+  still decode, refuse to scan under a policy that enables it.
+- **100 (S-5)** — narrowed to present-but-unreadable refuses to boot; *missing* material still
+  generates. Absent is a first run, corrupt is a disaster.
+- **99 (S2-1)** — the review missed half the defect (the structlog side redacted before
+  `format_exc_info`), so the rule binds processor **order** on both paths, not just the handler.
+- **105 (B2-1)** — added the disabled-gate carve-out: nothing was protecting anything either
+  way, so there is no reason to degrade a scan over it.
+- **107 (B2-3)** — added the operator warning for a stored rule that just became unofferable.
+- **112 (B2-9)** — added the intersection with the frozen run-start set (refresh can only
+  *remove*) and routing through production `condemned.effective_verdict`.
+- **97 (B2-10)** — the verifier's correction over the Fix paragraph: the step stays **FAILED**,
+  with `file_removed_at` carrying the cap charge.
+- **104 (R-1)** — added what a stored record lacking the field thaws as (`Unknown`, never
+  `Absent`, never `KeyError`) — moving a derivation to the write side moves the problem to the
+  read side.
+- **94 (P-4)** — reconcile a `cache.db` index by name; never bump the column-shape tuple, which
+  drops the whole mirror.
+- **118/119 (T-1, T-3, T-5, T-7)** — added the three honesty clauses Phase 9 earned: a test that
+  cannot discriminate says so in its own docstring rather than reading as a proof; a test never
+  rests on an environmental accident (a closed port, a non-root uid); extract the shared part
+  rather than patching the copy, since the divergence is invisible exactly when the fixture's
+  baseline is generated by the copy.
+
+**Not carried:** the Agent Rules' preamble blockquote warning that rules 70–87 were missing from
+`CLAUDE.md` (I2-2). Phase 1 restored them verbatim from `a7d7659`, so the warning is stale.
+
+### Verification
+
+- Numbering swept programmatically: continuous 1→119, no gap and no duplicate.
+- Every symbol cited in a new rule was grep-verified present in `src/` before it was written
+  (rule 24 applies to this file too): `_iter_pages`, `MAX_HISTORY_PAGES`, `_MAX_RETRY_AFTER`,
+  `_redact_str`, `activity_degraded`, `file_removed_at`, `_OBS_FIELDS`, `trusted_proxies`,
+  `GATE_TYPES`, `build_gates`, `ConcurrencyGate`, `_mark_skipped`, `policy_hash`,
+  `ActivePolicy.repaired`, `engine/dormancy.py`, `condemned.effective_verdict`, `SEASON_RANK`.
+  The paging helper is `_iter_pages`, **not** the `_iter_section_pages` the review names — Phase
+  3 generalized it — which is exactly the kind of stale citation this check exists to catch.
+- American English swept across the whole file; the only hits are inside the rule that defines
+  the British forms it bans.
+
+### Gates
+
+Documentation only, no code changed. `ruff check .`, `ruff format --check .`,
+`mypy src/reaper`, and `pytest` were run to confirm the tree is unchanged from Phase 9's green
+state.
+
+### Files
+
+`CLAUDE.md`, `docs/CODE_REVIEW_PHASES.md`.
