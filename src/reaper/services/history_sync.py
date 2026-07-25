@@ -80,6 +80,11 @@ INCREMENTAL_OVERLAP = timedelta(days=2)
 log = structlog.get_logger(__name__)
 
 PAGE_SIZE = 25_000
+
+#: Hard stop on the history paging loop, for a source that serves page after page without
+#: ever reporting a total. At PAGE_SIZE rows a page this is far past any real library's
+#: history, so it never truncates a genuine sync -- it only stops a runaway one.
+MAX_HISTORY_PAGES = 1_000
 """Tautulli serves a 25k page in about the same time as a 1k page, so large pages
 are strictly better: 17 requests instead of 422."""
 
@@ -319,8 +324,10 @@ async def sync(
     skipped_live = 0
     skipped_malformed = 0
 
+    pages = 0
     while True:
         page = await client.history(length=PAGE_SIZE, start=start, after=after)
+        pages += 1
         rows = page.get("data") or []
         if total is None:
             # recordsFiltered reflects the `after` filter; on an incremental sync it is
@@ -381,9 +388,23 @@ async def sync(
                 )
             inserted += len(batch)
 
-        start += PAGE_SIZE
+        # Advance by what the page actually held, never by the constant. A middle page
+        # shorter than PAGE_SIZE used to move `start` past rows nobody had fetched, and
+        # a truncated mirror reads as a shallow horizon -- which is the single largest
+        # mass-deletion vector this codebase has (rule 56).
+        start += len(rows)
         log.info("history.page", fetched=start, of=total, inserted=inserted)
-        if total is not None and start >= total:
+        # `total` is trusted only when it is actually there. `int(... or 0)` makes a
+        # Tautulli that omits recordsFiltered indistinguishable from one reporting an
+        # empty history, and 0 ended the loop after page one. Falsy means "we were not
+        # told how many": keep paging until a page comes back empty.
+        if total and start >= total:
+            break
+        if pages >= MAX_HISTORY_PAGES:
+            # Only reachable if the source keeps serving non-empty pages without ever
+            # reporting a total. Stop rather than spin; the horizon gate treats the
+            # shorter mirror as less evidence, which keeps files rather than deleting.
+            log.warning("history.page_cap_reached", pages=pages, fetched=start)
             break
 
     after_state = await _state(engine)

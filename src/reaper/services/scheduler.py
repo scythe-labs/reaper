@@ -123,9 +123,18 @@ async def refresh_ratings(
                 session_factory, "refresh_ratings", ok=True, result="Already up to date"
             )
             return
-        rows = await imdb_dataset.refresh(cache_engine, data_dir)
-        log.info("scheduler.ratings_refreshed", rows=rows)
-        await _record_run(session_factory, "refresh_ratings", ok=True, result="Ratings refreshed")
+        loaded = await imdb_dataset.refresh(cache_engine, data_dir)
+        log.info("scheduler.ratings_refreshed", rows=loaded.rows, skipped=loaded.skipped)
+        # A load that dropped an unusual share of rows still "succeeded", and the rows it
+        # kept are good -- but the ratings it lost are protections that stop keeping
+        # titles, so the operator is told rather than left with a green tick.
+        result = (
+            "Ratings refreshed, but a lot of the file could not be read. Fewer titles "
+            "now have a rating to protect them."
+            if loaded.drifted
+            else "Ratings refreshed"
+        )
+        await _record_run(session_factory, "refresh_ratings", ok=True, result=result)
     except Exception as exc:
         # Leaves the previous dataset in place (load swaps atomically). A stale dataset
         # is caught by the snapshot's own degradation check; a crashed scheduler would

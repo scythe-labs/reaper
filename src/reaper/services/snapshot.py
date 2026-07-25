@@ -104,6 +104,31 @@ class ScanContext:
     active_rating_keys: set[int] = field(default_factory=set)
     degraded_reasons: list[str] = field(default_factory=list)
 
+    activity_degraded: bool = False
+    """True when we could not read what is playing right now.
+
+    ``active_rating_keys`` being empty is ambiguous on its own: it is what a healthy
+    server with nobody watching looks like, and also what an unreachable or malformed
+    Tautulli looks like. Anything that vetoes a deletion on "nothing is streaming" must
+    read this flag, never the emptiness of the set. Set it wherever the activity read
+    fails; ``_gather`` is the only writer today.
+
+    This is a typed field and not a substring of ``degraded_reasons`` on purpose: the
+    veto used to be coupled to the wording of a free-text reason, so rewording the
+    message would have silently turned "we could not check" into "nothing is playing".
+    """
+
+    imdb_degraded: bool = False
+    """True when the IMDb ratings data could not be read at all.
+
+    Same shape of trap as ``activity_degraded``: the lookup map comes back empty, which
+    is indistinguishable from "every one of these titles is genuinely unrated" unless
+    something says so. ``build_facts`` reads this to emit Unknown rather than Absent for
+    the rating and vote count, because Absent withdraws every rating-based keep -- the
+    protection is REMOVED by the missing evidence, which is the inverted direction this
+    codebase fails closed against.
+    """
+
     @property
     def degraded(self) -> bool:
         return bool(self.degraded_reasons)
@@ -242,10 +267,22 @@ def build_facts(
     if entry is not None:
         rating = Known(value=int(entry.average_rating * 10), source="imdb")
         votes = Known(value=int(entry.num_votes), source="imdb")
+    elif context.imdb_degraded:
+        # We never got to ask about THIS title either: the dataset as a whole was
+        # unreadable, so the empty map below is not an answer about any film in it.
+        # ``looked_up`` is still True here (the item does carry an imdb id), and taking
+        # the Absent branch on that would tell the keep lane "checked, and it is unrated"
+        # for the entire library at once -- every rating floor reporting
+        # checked-and-did-not-fire, every graded rating keep withdrawn, on evidence
+        # Reaper has already declared untrustworthy.
+        unreadable = Unknown(reason="the IMDb ratings data could not be read", source="imdb")
+        rating = unreadable
+        votes = unreadable
     elif looked_up:
         # Absent, not Unknown: we looked and this title genuinely has no IMDb rating.
-        # (A *degraded* dataset is different, and is caught upstream -- it degrades the
-        # whole snapshot rather than silently unprotecting every film.)
+        # (A *degraded* dataset is different, and is caught by the branch above -- it
+        # degrades the snapshot AND reads Unknown, because degrading alone would still
+        # have left every film here silently unprotected.)
         rating = Absent(source="imdb")
         votes = Absent(source="imdb")
     else:
@@ -307,7 +344,7 @@ def build_facts(
 
     # --- streaming right now ------------------------------------------------
     streaming: Observation[bool]
-    if "tautulli-activity" in " ".join(context.degraded_reasons):
+    if context.activity_degraded:
         # We could not check. Never assume False -- that is how a tool deletes a file
         # somebody is watching.
         streaming = Unknown(reason="could not read active sessions", source="tautulli")
@@ -482,14 +519,33 @@ async def scan(
     emit(Progress("gathering", 1, 5, "active streams"))
     try:
         activity = await tautulli.activity()
-        for session_data in activity.get("sessions") or []:
-            for key in ("rating_key", "parent_rating_key", "grandparent_rating_key"):
-                value = session_data.get(key)
-                if value:
-                    context.active_rating_keys.add(int(value))
+        sessions = activity.get("sessions")
+        if not isinstance(sessions, list) or not all(isinstance(s, dict) for s in sessions):
+            # A 200 carrying a null or wrong-shaped body is NOT "nobody is watching". Coercing
+            # it to an empty list reads as a measured "nothing is streaming" and defeats the
+            # veto on every item. Same treatment as an unreachable server: we could not check.
+            context.degrade("could not read what is playing right now")
+            context.activity_degraded = True
+        else:
+            unreadable = False
+            for session_data in sessions:
+                for key in ("rating_key", "parent_rating_key", "grandparent_rating_key"):
+                    value = session_data.get(key)
+                    if not value:
+                        continue
+                    try:
+                        context.active_rating_keys.add(int(value))
+                    except (TypeError, ValueError):
+                        # One stream we cannot identify. It may well be an item this scan
+                        # is about to judge, so this is "we could not check", not "not it".
+                        unreadable = True
+            if unreadable:
+                context.degrade("could not read what is playing right now")
+                context.activity_degraded = True
     except IntegrationError as exc:
         # Do NOT assume nothing is playing. That is how you delete a file mid-stream.
-        context.degrade(f"tautulli-activity unreachable: {exc}")
+        context.degrade(f"could not read what is playing right now: {exc}")
+        context.activity_degraded = True
 
     # Manual spares are applied via the override, not the whitelist gate, so the gate is left to
     # the *arr-tag / collection whitelists alone. An empty set keeps that path tag-only.
@@ -544,7 +600,6 @@ async def scan(
     # movie-only deployment (no Sonarr) skips it entirely.
     season_task: asyncio.Task[list[season_scan.SeasonJudgment]] | None = None
     if sonarrs:
-        activity_degraded = "tautulli-activity" in " ".join(context.degraded_reasons)
         season_task = _spawn(
             season_scan.gather(
                 engine,
@@ -553,7 +608,7 @@ async def scan(
                 plex=plex,
                 horizon=context.horizon,
                 active_rating_keys=context.active_rating_keys,
-                activity_degraded=activity_degraded,
+                activity_degraded=context.activity_degraded,
                 keep_last_seasons=tv_policy.keep_last_seasons,
                 keep_first_season=tv_policy.keep_first_season,
                 window_days=tv_policy.popularity_window_days(),
@@ -653,9 +708,13 @@ async def scan(
                 "scan.imdb_coverage", media="movie", requested=len(imdb_ids), resolved=len(imdb)
             )
         except DatasetDegradedError as exc:
-            # The inverted failure: a missing rating REMOVES protection. Degrade loudly.
+            # The inverted failure: a missing rating REMOVES protection. Degrade loudly,
+            # and flag it so build_facts reads every title as "we could not check" rather
+            # than "we checked and it is unrated" -- degrading alone does not stop the
+            # condemn set from being built on ratings nobody could read.
             context.degrade(str(exc))
             imdb = {}
+            context.imdb_degraded = True
         last_played, watchers_window, watchers_all_time = await _watch_stats(
             engine,
             rating_keys={i.plex_rating_key for i in items if i.plex_rating_key},
@@ -916,7 +975,25 @@ async def scan(
 
     # Grace clocks for everything condemned this run, in one batched pass -- the
     # _apply_first_flag decision per key, without a database round trip per item.
-    await record_first_flagged_bulk(session, condemned_keys, now, grace_days=grace_days)
+    #
+    # Not on a degraded run. The condemn set here was built on evidence Reaper itself
+    # declared untrustworthy, and planner.build_plan already refuses it outright -- but
+    # the clock write does not go through the planner, so it would start (or silently
+    # continue) a countdown for files a healthy scan would have kept. Worse, because
+    # _apply_first_flag restarts a clock only after a gap longer than a whole grace
+    # window, a run of consecutive degraded scans keeps refreshing last_seen_condemned_at
+    # and the window never restarts: the first healthy scan then finds it already spent,
+    # and the item's warning time is gone. Skipping can only ever cause an EXTRA restart,
+    # which is more grace, the safe direction.
+    if context.degraded:
+        log.info(
+            "scan.grace_clocks_skipped",
+            snapshot=snapshot.id,
+            condemned=len(condemned_keys),
+            reason="degraded",
+        )
+    else:
+        await record_first_flagged_bulk(session, condemned_keys, now, grace_days=grace_days)
 
     await session.flush()
     score_ms = round((time.monotonic() - score_started) * 1000)
@@ -982,6 +1059,11 @@ class Display:
     # by season_scan.show_status_key.
     show_status: str | None = None
 
+
+#: How many rating keys go into one expanding ``IN`` against the watch mirror. Well under
+#: SQLite's bound-variable ceiling, and the same 500 the sibling batched reads use
+#: (``record_first_flagged_bulk``, ``season_watch_stats``).
+_WATCH_KEY_CHUNK = 500
 
 #: The "no display fields" default, as a singleton so it is not constructed per call.
 _NO_DISPLAY = Display()
@@ -1794,20 +1876,27 @@ async def _fold_merged_watch_stats(
     if not all_keys:
         return
     window_start = int((utcnow() - timedelta(days=window_days)).timestamp())
-    async with engine.connect() as conn:
-        rows = (
-            await conn.execute(
-                text(
-                    "SELECT rating_key, user_id, MAX(watched_at) AS last FROM watch_event "
-                    "WHERE media_type = 'movie' AND rating_key IN :keys "
-                    "GROUP BY rating_key, user_id"
-                ).bindparams(bindparam("keys", expanding=True)),
-                {"keys": all_keys},
-            )
-        ).all()
     per_key: dict[int, list[Any]] = {}
-    for row in rows:
-        per_key.setdefault(int(row.rating_key), []).append(row)
+    async with engine.connect() as conn:
+        # Chunked, like every sibling that expands an IN over library-sized key sets
+        # (season_watch_stats, record_first_flagged_bulk). SQLite caps the number of bound
+        # variables in one statement; a library with enough merged listings to pass that
+        # cap raised OperationalError, which is not an IntegrationError and so was caught
+        # nowhere: the whole scan died rather than one fold being skipped.
+        for start in range(0, len(all_keys), _WATCH_KEY_CHUNK):
+            chunk = all_keys[start : start + _WATCH_KEY_CHUNK]
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT rating_key, user_id, MAX(watched_at) AS last FROM watch_event "
+                        "WHERE media_type = 'movie' AND rating_key IN :keys "
+                        "GROUP BY rating_key, user_id"
+                    ).bindparams(bindparam("keys", expanding=True)),
+                    {"keys": chunk},
+                )
+            ).all()
+            for row in rows:
+                per_key.setdefault(int(row.rating_key), []).append(row)
     for canonical, group in groups.items():
         group_rows = [row for key in group for row in per_key.get(key, [])]
         if not group_rows:

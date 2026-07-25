@@ -29,7 +29,7 @@ from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import FirstFlagged, SizeSource, WhitelistEntry
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
-from reaper.engine.observation import Known
+from reaper.engine.observation import Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY
 from reaper.services import app_settings, history_sync, lists, profiles, season_scan
 from reaper.services.condemned import reap_is_effective
@@ -134,11 +134,11 @@ class _StaticList:
 
 
 class TestLibraryScope:
-    """Which Plex libraries the scan enriches against. Scoping only ever removes a
-    library's enrichment, so an absent or unreadable selection must widen to all."""
+    """Which Plex libraries the scan enriches against. Turning a library off is what
+    KEEPS its files, so widening on a failed read is the condemn direction and degrades."""
 
     async def test_no_configured_libraries_scans_everything(self, session: AsyncSession) -> None:
-        assert await _allowed_sections(session) is None
+        assert await _allowed_sections(session) == (None, None)
 
     async def test_the_enabled_subset_scopes_the_scan(self, session: AsyncSession) -> None:
         await app_settings.set_plex_libraries(
@@ -149,17 +149,42 @@ class TestLibraryScope:
                 {"key": 3, "title": "TV", "kind": "show", "enabled": True},
             ],
         )
-        assert await _allowed_sections(session) == {1, 3}
+        assert await _allowed_sections(session) == ({1, 3}, None)
 
-    async def test_an_unreadable_setting_falls_back_to_all(self, tmp_path: Path) -> None:
-        """A settings-read failure must not abort a scan: it defaults to scanning every
-        library (full coverage), never to scanning none."""
+    async def test_an_unreadable_setting_degrades_rather_than_widening_silently(
+        self, tmp_path: Path
+    ) -> None:
+        """A settings-read failure must not abort a scan, and must not quietly widen it.
+
+        Scanning every library is the more permissive branch, not the safe one: a library
+        the operator turned OFF is one whose items resolve unmatched and are therefore
+        kept, so re-adding it walks those files into the condemnable set. The scan still
+        runs (a viewable snapshot beats an aborted one) but says so, which makes the
+        snapshot un-executable.
+        """
         settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
         engine = create_engine(settings)  # no create_all: the app_setting table is missing
         factory: async_sessionmaker[AsyncSession] = create_session_factory(engine)
         async with factory() as s:
-            assert await _allowed_sections(s) is None
+            sections, degradation = await _allowed_sections(s)
+        assert sections is None
+        assert degradation is not None
+        assert "could not be read" in degradation
         await engine.dispose()
+
+    async def test_every_library_turned_off_is_honored_and_does_not_degrade(
+        self, session: AsyncSession
+    ) -> None:
+        """An explicit "none of them" is a choice, not a failure: enrich nothing, no
+        degradation. It is the read FAILURE that widens, and only that one degrades."""
+        await app_settings.set_plex_libraries(
+            session,
+            [
+                {"key": 1, "title": "Movies", "kind": "movie", "enabled": False},
+                {"key": 2, "title": "TV", "kind": "show", "enabled": False},
+            ],
+        )
+        assert await _allowed_sections(session) == (set(), None)
 
 
 @pytest.fixture
@@ -750,6 +775,229 @@ class TestAStaleMirrorDegradesTheSnapshot:
         assert snapshot.degraded is False, snapshot.degraded_reason
 
 
+class TestADegradedSnapshotDoesNotActOnItsOwnCondemnSet:
+    """A degraded scan is un-plannable, but two side effects never went through the
+    planner: the grace clock, and the Leaving Soon shelf / heads-up.
+
+    Both act on a condemn set built from evidence Reaper itself declared untrustworthy.
+    The clock is the one that outlives the run: because a clock restarts only after a gap
+    longer than a whole grace window, a run of consecutive degraded scans keeps the
+    countdown alive, and the first healthy scan finds the operator's warning window
+    already spent. Skipping can only ever cause an extra restart, which is more grace.
+    """
+
+    async def _scan_with(
+        self, session: AsyncSession, cache_engine: AsyncEngine, *, degrade: bool
+    ) -> Any:
+        await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+        radarrs = [
+            RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+        ]
+        if degrade:
+            # A second, unreachable Radarr: one failed source, snapshot degraded, and the
+            # first instance's items still judged. The same shape as the loud-failure test.
+            radarrs.append(RadarrSource(client=_BrokenRadarr(), instance_id=2, name="uhd"))  # type: ignore[arg-type]
+        return await scan(
+            cache_engine,
+            session,
+            radarrs=radarrs,
+            sonarrs=[],
+            tautulli=_FakeTautulli(movies=_movie_spine()),  # type: ignore[arg-type]
+            movie_policy=DEFAULT_MOVIE_POLICY,
+            movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+        )
+
+    async def _flagged(self, session: AsyncSession) -> set[str]:
+        rows = (await session.execute(text("SELECT media_key FROM first_flagged"))).all()
+        return {r.media_key for r in rows}
+
+    async def test_a_healthy_scan_still_starts_the_clock(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The control: without this, the test below would pass on a broken scan."""
+        snapshot = await self._scan_with(session, cache_engine, degrade=False)
+
+        assert snapshot.degraded is False, snapshot.degraded_reason
+        assert await self._flagged(session) == {"radarr:1:1", "radarr:1:2"}
+
+    async def test_a_degraded_scan_starts_no_clock(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        snapshot = await self._scan_with(session, cache_engine, degrade=True)
+
+        assert snapshot.degraded is True
+        # The same item is still condemned and still viewable -- it just does not start
+        # a countdown on evidence this run already called untrustworthy.
+        rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
+        assert rows["radarr:1:1"].verdict == "condemn"
+        assert await self._flagged(session) == set()
+
+    async def test_a_degraded_scan_does_not_extend_an_existing_clock(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The one that costs the operator their warning time.
+
+        A clock already running must be left exactly as it was: refreshing
+        last_seen_condemned_at on a degraded run is what silently keeps a spent window
+        alive across a run of bad scans.
+        """
+        session.add(
+            FirstFlagged(
+                media_key="radarr:1:1",
+                first_flagged_at=LONG_AGO,
+                last_seen_condemned_at=LONG_AGO,
+            )
+        )
+        await session.flush()
+        before = await session.get(FirstFlagged, "radarr:1:1")
+        assert before is not None
+        seen_before = before.last_seen_condemned_at
+
+        await self._scan_with(session, cache_engine, degrade=True)
+
+        after = await session.get(FirstFlagged, "radarr:1:1")
+        assert after is not None
+        assert after.first_flagged_at == LONG_AGO
+        assert after.last_seen_condemned_at == seen_before
+
+
+class TestTheStreamingVetoNeedsAReadableAnswer:
+    """ "Nobody is watching" and "we could not tell" look identical from an empty set.
+
+    Which one it is decides whether a file somebody is streaming right now can be
+    condemned, so the flag is typed and set where the read fails -- never inferred from
+    the wording of a degradation reason, which is how it used to be detected: rewording
+    the message would have silently turned the veto off.
+    """
+
+    async def _scan_with(
+        self, session: AsyncSession, cache_engine: AsyncEngine, tautulli: Any
+    ) -> Any:
+        await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+        return await scan(
+            cache_engine,
+            session,
+            radarrs=[
+                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+            ],
+            sonarrs=[],
+            tautulli=tautulli,
+            movie_policy=DEFAULT_MOVIE_POLICY,
+            movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+        )
+
+    async def test_a_genuinely_empty_session_list_is_a_measurement(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        snapshot = await self._scan_with(
+            session, cache_engine, _FakeTautulli(movies=_movie_spine(), sessions=[])
+        )
+
+        assert snapshot.degraded is False, snapshot.degraded_reason
+
+    async def test_a_null_session_list_is_not_a_measurement(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """A 200 carrying `{"sessions": null}` is a successful call that answered nothing.
+
+        Coercing it to an empty list reads as "nothing is streaming" on every item at
+        once, which is the veto silently defeated -- and the executor's live re-check is
+        the only thing left between that and deleting a file mid-stream.
+        """
+
+        class _NullSessions(_FakeTautulli):
+            async def activity(self) -> dict[str, Any]:
+                return {"sessions": None}
+
+        snapshot = await self._scan_with(
+            session, cache_engine, _NullSessions(movies=_movie_spine())
+        )
+
+        assert snapshot.degraded is True
+        assert "playing right now" in (snapshot.degraded_reason or "")
+
+    async def test_an_unreachable_tautulli_still_degrades(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        class _BrokenActivity(_FakeTautulli):
+            async def activity(self) -> dict[str, Any]:
+                raise IntegrationError("tautulli", "unreachable (boom)")
+
+        snapshot = await self._scan_with(
+            session, cache_engine, _BrokenActivity(movies=_movie_spine())
+        )
+
+        assert snapshot.degraded is True
+        assert "playing right now" in (snapshot.degraded_reason or "")
+
+
+class TestAnUnreadableRatingsDatasetKeepsInsteadOfCondemning:
+    """A stale IMDb dataset is the inverted failure: the missing evidence REMOVES a
+    protection rather than adding one.
+
+    With the dataset unreadable the lookup map is empty, which is indistinguishable from
+    "every title here is genuinely unrated" unless something says otherwise. Recorded as
+    Absent, that withdraws every rating-based keep across the whole library at once and
+    the why-panel asserts a rating was checked and found missing, when it was never
+    readable at all.
+    """
+
+    async def _scan_without_ratings(self, session: AsyncSession, cache_engine: AsyncEngine) -> Any:
+        # Deliberately NO _seed_imdb: the dataset is missing, so lookup degrades.
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+        return await scan(
+            cache_engine,
+            session,
+            radarrs=[
+                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+            ],
+            sonarrs=[
+                season_scan.SonarrSource(
+                    client=_FakeSonarr(_series_payloads()),  # type: ignore[arg-type]
+                    instance_id=1,
+                    name="tv",
+                )
+            ],
+            tautulli=_FakeTautulli(  # type: ignore[arg-type]
+                movies=_movie_spine(), shows=_show_spine(), children=_show_children()
+            ),
+            movie_policy=DEFAULT_MOVIE_POLICY,
+            movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+        )
+
+    async def test_ratings_read_as_unknown_on_both_paths(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        import json as _json
+
+        from reaper.engine.facts_codec import facts_from_dict
+
+        snapshot = await self._scan_without_ratings(session, cache_engine)
+        assert snapshot.degraded is True
+
+        rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
+        # One movie and one season, so the fix is pinned on both fact builders -- a field
+        # populated on one path and not the other silently moves scores on the other.
+        for key in ("radarr:1:1", "sonarr:1:42:2"):
+            facts, _ = facts_from_dict(_json.loads(rows[key].facts_json))
+            rating = facts.imdb_rating_tenths
+            assert isinstance(rating, Unknown), (key, rating)
+            assert "could not be read" in rating.reason, key
+            assert isinstance(facts.imdb_votes, Unknown), key
+
+        # And nothing is condemned on ratings nobody could read: Unknown blocks the
+        # rating floor into an abstain, where Absent left the item free to go.
+        assert all(c.verdict != "condemn" for c in rows.values())
+
+
 class TestRunScanHistorySync:
     """The orchestrator's handling of the watch-history mirror sync.
 
@@ -1154,6 +1402,48 @@ class _UsersTautulli:
         return list(self._rows)
 
 
+class TestATautulliSpineFailureDegradesRatherThanKillingTheScan:
+    """The library listing is the scan's spine, and it had no handler at all.
+
+    Every other evidence source degrades: an unreachable Radarr, a failed Plex sweep, a
+    stalled mirror. A Tautulli library-list timeout raised straight through the gather
+    and aborted the run with no snapshot to look at -- so a transient hiccup cost the
+    operator their scan instead of costing them a plan. With no spine rows, nothing
+    matches, which abstains and keeps.
+    """
+
+    async def test_a_failed_library_list_degrades_and_still_produces_a_snapshot(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        await _seed_imdb(cache_engine, {"tt0000001": (5.0, 5000), "tt0000042": (5.0, 5000)})
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+
+        class _BrokenSpine(_FakeTautulli):
+            async def libraries(self) -> list[dict[str, Any]]:
+                raise IntegrationError("tautulli", "libraries timed out")
+
+        snapshot = await scan(
+            cache_engine,
+            session,
+            radarrs=[
+                RadarrSource(client=_FakeRadarr(_movie_payloads()), instance_id=1, name="hd")  # type: ignore[arg-type]
+            ],
+            sonarrs=[],
+            tautulli=_BrokenSpine(movies=_movie_spine()),  # type: ignore[arg-type]
+            movie_policy=DEFAULT_MOVIE_POLICY,
+            movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+        )
+
+        assert snapshot.degraded is True
+        assert "could not be read" in (snapshot.degraded_reason or "")
+        # And the run survived: items are present, unmatched, and therefore kept.
+        rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
+        assert rows
+        assert all(c.verdict != "condemn" for c in rows.values())
+
+
 class TestKeepHistoryCoverage:
     """A household member with Tautulli's per-user Keep History off is invisible in the
     history table: everything only they watch looks never-played. The scan must degrade
@@ -1203,6 +1493,65 @@ class TestKeepHistoryCoverage:
         )
 
         assert reasons == []
+
+    async def test_an_unparseable_flag_is_unreadable_not_true(self) -> None:
+        """`bool("false")` is True, and that was the whole bug.
+
+        The docstring on `_flag` promises None for anything unreadable, and
+        `_keep_history_degradations` is built on that promise -- an unreadable value goes
+        in the cannot-confirm bucket and degrades. Falling back to plain truthiness read
+        every non-empty string as "yes, recording": no degradation, the scan stays
+        executable, and every title only that user watches scores as never-played. Which
+        is the one case this whole function exists to catch.
+        """
+        from reaper.services.scan_runner import _flag
+
+        for junk in ("false", "N", "off", "no", {"nested": 1}, ["x"], "maybe"):
+            row = {"username": "user-one", "keep_history": junk}
+            assert _flag(row, "keep_history") in (False, None), junk
+            assert _flag(row, "keep_history") is not True, junk
+
+    async def test_the_flags_it_does_understand(self) -> None:
+        """Tautulli stores these as integers, so 1/0 and "1"/"0" are the real path."""
+        from reaper.services.scan_runner import _flag
+
+        for truthy in (1, "1", True, 2, "true", "Yes", " ON "):
+            assert _flag({"f": truthy}, "f") is True, truthy
+        for falsy in (0, "0", False, "false", "No", "off"):
+            assert _flag({"f": falsy}, "f") is False, falsy
+        assert _flag({"f": None}, "f") is None
+        assert _flag({}, "f") is None
+        assert _flag("not a row", "f") is None
+
+    async def test_a_truthy_unparseable_flag_degrades_end_to_end(self) -> None:
+        """The contract, through the caller: an unreadable value degrades the scan.
+
+        It used to pass straight through as "recording", because the value is a non-empty
+        string and every non-empty string is truthy.
+        """
+        from reaper.services.scan_runner import _keep_history_degradations
+
+        reasons = await _keep_history_degradations(
+            _UsersTautulli(
+                [
+                    {"username": "user-one", "is_active": 1, "keep_history": 1},
+                    {"username": "user-two", "is_active": 1, "keep_history": "maybe"},
+                ]
+            )  # type: ignore[arg-type]
+        )
+
+        assert any("cannot confirm" in r for r in reasons)
+
+    async def test_a_spelled_out_false_is_read_as_off_not_as_unreadable(self) -> None:
+        """ "false" is a value we DO understand, so it names the user rather than landing
+        in the vaguer cannot-confirm bucket. Both degrade; only the wording differs."""
+        from reaper.services.scan_runner import _keep_history_degradations
+
+        reasons = await _keep_history_degradations(
+            _UsersTautulli([{"username": "user-two", "is_active": 1, "keep_history": "false"}])  # type: ignore[arg-type]
+        )
+
+        assert any("user-two" in r for r in reasons)
 
     async def test_an_unreadable_user_list_degrades(self) -> None:
         from reaper.services.scan_runner import _keep_history_degradations

@@ -19,8 +19,12 @@ verification `VERIFIED`, B2-8's fix changes freshly-built plans too. Every findi
 
 **Working agreement for this remediation**
 - Work happens in the `backend-code-review` worktree, on branch `worktree-backend-code-review`.
-- **Do not commit** (CLAUDE.md: commit only when asked). Leave the working tree dirty; the
-  operator commits between phases.
+- **Commit and push at the end of every phase**, once its gates are green — one commit per
+  phase, then `git push origin worktree-backend-code-review`. The operator standing-authorized
+  this on 2026-07-24 after an uncommitted tree nearly cost three phases of work. It overrides
+  CLAUDE.md's "commit only when asked" for this branch and this remediation only.
+  **Never `git checkout -- <directory>`**: to undo a bad bulk edit, revert the individual files
+  you touched, or re-edit them forward.
 - End every phase by running the CLAUDE.md verification gates for the files touched
   (`uv run ruff format .`, `ruff check .`, `mypy src/reaper`, `pytest`) and record the real
   result in that phase's section — including anything left failing.
@@ -34,7 +38,7 @@ verification `VERIFIED`, B2-8's fix changes freshly-built plans too. Every findi
 - [x] **Phase 2 — Identity binds & keep-list joins** (2 highs) — *done 2026-07-24*
 - [x] **Phase 3 — Plex client hardening & protection lists** (3 highs) — *done 2026-07-24*
 - [x] **Phase 4 — Executor & the deletion path** (10 findings) — *done 2026-07-24*
-- [ ] **Phase 5 — Snapshot & scan pipeline**
+- [x] **Phase 5 — Snapshot & scan pipeline** (14 findings; B2-24 already fixed in Phase 2) — *done 2026-07-24*
 - [ ] **Phase 6 — API routes, runs & query performance**
 - [ ] **Phase 7 — Security, auth, restore & infra**
 - [ ] **Phase 8 — Fairness, Leaving Soon & engine cleanup**
@@ -365,7 +369,7 @@ check` all clean. Frontend re-run for confidence after the incident below: eslin
 
 ---
 
-## Phase 5 — Snapshot & scan pipeline
+## Phase 5 — Snapshot & scan pipeline  ✅ DONE
 
 **Findings:** PR-1 (medium), H-1 (medium), B2-11 (medium), B2-12 (medium), P-1 (medium),
 B-11 (low-medium), PR-5 (low-medium), B2-22 (low), B2-23 (low), B2-24 (low), B2-26 (low),
@@ -376,10 +380,82 @@ signal itself being detected by substring-matching free text (H-1), and the seas
 that read missing data as a definite value.
 
 **Files:** `services/snapshot.py`, `services/scan_runner.py`, `services/season_scan.py`,
-`services/season_pruning.py`, `clients/tautulli.py`, the IMDb dataset service.
+`services/season_pruning.py`, `services/season_pruning.py`, `services/library_index.py`,
+`services/history_sync.py`, `services/imdb_dataset.py`, `services/scheduler.py`.
 
-**Planned work:** H-1 first (it is the typed-flag foundation the others read), then the
-degradation findings, then the season guards, then the paging/leak/perf items.
+**What was done**
+
+- **H-1 + B-11** — two typed flags on `ScanContext`: `activity_degraded` and `imdb_degraded`.
+  The streaming veto and the season gather now read the flag instead of
+  `"tautulli-activity" in " ".join(context.degraded_reasons)`, so rewording a reason can no
+  longer turn "we could not check" into "nothing is playing" (and the join is out of the
+  per-movie scoring loop). B-11 rides the same flag: a 200 whose `sessions` is null, not a
+  list, or holds non-dict entries now degrades instead of coercing to `[]`; so does a session
+  whose rating key will not parse as an int (which previously escaped the `except
+  IntegrationError` and aborted the scan).
+- **B2-12** — a degraded IMDb dataset now reads as **Unknown**, not Absent, on **both** fact
+  builders (`snapshot.build_facts` and `season_scan.build_season_facts`, via a new
+  `rating_dataset_degraded` threaded through `_judge_series` and `_rating_obs`). Absent said
+  "we checked and this title is unrated" for the entire library at once, which withdrew every
+  rating-based keep and let the why-panel assert a check that never happened. The comment at
+  the old Absent branch claimed degrading prevented this; it did not, and now says so
+  accurately (rule 24).
+- **PR-1** — `_allowed_sections` returns `(sections, degradation_reason)`. A settings-read
+  failure still scans every library (a viewable snapshot beats an aborted one) but now
+  degrades, because widening is the *condemn* direction: a library the operator turned off is
+  one whose items resolve unmatched and are kept, so silently re-adding it walks those files
+  into the condemnable set. Its docstring called that the "safe" fallback; corrected.
+- **PR-4** — the Tautulli spine (`library_index._spine`) catches `IntegrationError` and
+  degrades, matching the plexapi sweep beside it. A library-list timeout used to propagate
+  through `gather_reaped` and kill the run with no snapshot at all.
+- **B2-22** — `_flag` returns `None` for any value that is not a recognized boolean, including
+  a truthy one. `bool("false")` is True, so an unparseable keep-history value read as "this
+  user IS recording history": no degradation, and every title only that user watches scored as
+  never-played. Recognized tokens (`true/t/yes/y/on`, `false/f/no/n/off`) map properly;
+  everything else is unreadable, which degrades. Unit tests added, as the verifier asked.
+- **B2-26** — a degraded snapshot no longer writes grace clocks or runs the Leaving Soon
+  reconcile/announce. Both acted on a condemn set the planner already refuses. The clock is
+  the one that outlives the run: it restarts only after a gap longer than a whole grace
+  window, so consecutive degraded scans kept refreshing `last_seen_condemned_at` and the first
+  healthy scan found the operator's warning window already spent.
+- **B2-11** — `sequential_protections` now takes `last_play_by_user` and anchors each viewer
+  on **both** the season of their most recent play and the highest-numbered season they have
+  touched. Recency alone regresses someone mid-binge on the newest season who dips into an old
+  one; number alone was the bug (a re-watcher is anchored on the finale, judged ready for a
+  season that does not exist, and protected nowhere). The union is never less than the old
+  behavior, which the existing suite confirms. Specials are a separate line, as the verifier
+  asked: Season 0 joins the anchor set only when `keep_specials` is off (the one setting that
+  can prune it), and finishing the specials protects nothing, since season 1 is not "the next
+  special".
+- **B2-23** — `watchers_by_season` is three-state (`int | None`), built over the seasons **on
+  disk** rather than the ones Plex resolved, and `_detect_conflicts` skips a pair where either
+  side is unmeasured. `0` still means "resolved, and nobody watched it". Reading an unresolved
+  season as 0 invented conflicts, parked the show in permanent abstain, and told the operator a
+  count that was never taken.
+- **P-1** — `_fold_merged_watch_stats` chunks its `IN` at 500 like every sibling. Its
+  regression test uses 36,000 keys and is a genuine tripwire: it raises `OperationalError`
+  (uncaught, so the whole scan dies) without the fix.
+- **PR-6** — the history page loop advances by `len(rows)` and only trusts `recordsFiltered`
+  when it is actually present. `int(... or 0)` made "not told" identical to "none" and ended
+  the loop after page one; a short middle page skipped the un-fetched remainder. Both truncate
+  the mirror, and a shallow horizon is the largest mass-deletion vector here. A
+  `MAX_HISTORY_PAGES` backstop bounds a source that never terminates.
+- **PR-5** — `load`/`refresh` return a `LoadResult(rows, skipped)`, and the nightly job puts a
+  high skip fraction in front of the operator on the Jobs page instead of only logging it. A
+  format change that halves rating coverage clears the zero-row tripwire, and lost rating
+  coverage is lost protection.
+- **PR2-4** — `build_reap_gateway` registers each client for close as it is constructed and
+  `pop_all()`s on success. A `box.decrypt` raising on a later instance row used to strand every
+  pool already built. `push_async_callback` rather than `enter_async_context`, because the
+  run's own stack enters these clients for real and must not double-enter them.
+- **B2-24** — **already fixed in Phase 2.** B2-7's work exported `MOVIE_ID_PRIORITY` /
+  `SHOW_ID_PRIORITY` from `engine.identity` and wired both diagnostic call sites
+  (`season_scan.py` stale-library-map guard and unmatched-show log) to them. Verified, not
+  re-done.
+
+**Gates:** `ruff format --check` (179 files), `ruff check`, `mypy src/reaper` (95 files) all
+clean; **pytest 2137 passed** (2114 + 23 new); `alembic upgrade head` + `alembic check` clean
+(Phase 5 adds no migration).
 
 ---
 

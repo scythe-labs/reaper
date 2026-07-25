@@ -25,7 +25,7 @@ from reaper.db.base import Base
 from reaper.db.models import Instance, InstanceKind
 from reaper.db.session import create_engine, create_session_factory
 from reaper.secrets import resolve_secret_key
-from reaper.services import app_settings, scheduler
+from reaper.services import app_settings, imdb_dataset, scheduler
 from reaper.services.imdb_dataset import ImdbRatings
 
 
@@ -271,8 +271,8 @@ class TestUpkeepJobsRecordTheirLastRun:
     ) -> None:
         await _seed_synced(cache_engine, hours_ago=25)  # stale, so it downloads
 
-        async def fake_download(engine: AsyncEngine, data_dir: Path) -> int:
-            return 7
+        async def fake_download(engine: AsyncEngine, data_dir: Path) -> imdb_dataset.LoadResult:
+            return imdb_dataset.LoadResult(rows=7, skipped=0)
 
         monkeypatch.setattr(scheduler.imdb_dataset, "refresh", fake_download)
         await scheduler.refresh_ratings(cache_engine, tmp_path, main_factory)

@@ -516,6 +516,38 @@ class TestMergedWatchStatsFold:
         assert window[100] == 1
         assert ever[100] == 1
 
+    async def test_a_library_sized_group_set_does_not_blow_the_variable_ceiling(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The IN was expanded whole, unlike every sibling that batches at 500.
+
+        Past SQLite's bound-variable ceiling the statement raises OperationalError, which
+        is not an IntegrationError and so is caught nowhere: the whole scan dies rather
+        than one fold being skipped. Enough merged listings to need that many binds is a
+        big library, not an exotic one.
+        """
+        # 36,000 keys: past SQLite's bound-variable ceiling (32,766 on a current build,
+        # 999 on an older one) and past the 500-key chunk many times over.
+        groups = {rk: (rk, rk + 100_000) for rk in range(1_000, 19_000)}
+        await _play_event(cache_engine, 1, 101_000, 4, NOW - timedelta(days=3))
+
+        last_played, window, ever = await _watch_stats(
+            cache_engine, rating_keys=set(groups), window_days=365
+        )
+        await _fold_merged_watch_stats(
+            cache_engine,
+            groups=groups,
+            window_days=365,
+            last_played=last_played,
+            watchers_window=window,
+            watchers_all_time=ever,
+        )
+
+        # And it is not merely "did not raise": the play under the second listing of the
+        # group in the middle of the run still folded onto its canonical key.
+        assert ever[1_000] == 1
+        assert window[1_000] == 1
+
     async def test_a_group_with_no_plays_changes_nothing(self, cache_engine: AsyncEngine) -> None:
         last_played, window, ever = await _watch_stats(
             cache_engine, rating_keys={100}, window_days=365

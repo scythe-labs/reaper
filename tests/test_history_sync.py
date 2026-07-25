@@ -144,6 +144,77 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
         assert await _count(engine) == 2  # the live session was not recorded
 
 
+class TestThePageLoopFetchesEveryRow:
+    """The mirror's depth is what the horizon gate reads, and a shallow horizon is the
+    single largest mass-deletion vector this codebase has: every item older than the
+    mirror looks never-played. So the paging loop must not truncate on a source that is
+    merely less tidy than expected."""
+
+    async def test_a_source_that_reports_no_total_is_still_paged_to_the_end(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`int(page.get("recordsFiltered") or 0)` made "not told" identical to "none",
+        and 0 ended the loop after page one, silently keeping a single page of history."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 2)
+
+        class _NoTotal(FakeTautulli):
+            async def history(self, **kwargs: Any) -> dict[str, Any]:
+                page = await super().history(**kwargs)
+                page.pop("recordsFiltered")
+                return page
+
+        rows = [_row(n, days_ago=n) for n in range(1, 8)]
+        await sync(engine, _NoTotal(rows), full=True)  # type: ignore[arg-type]
+
+        assert await _count(engine) == 7
+
+    async def test_a_short_middle_page_does_not_skip_the_rest(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Advancing by the constant walked `start` past rows nobody had fetched."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 4)
+
+        class _ShortSecondPage(FakeTautulli):
+            def __init__(self, rows: list[dict[str, Any]]) -> None:
+                super().__init__(rows)
+                self.pages = 0
+
+            async def history(self, **kwargs: Any) -> dict[str, Any]:
+                page = await super().history(**kwargs)
+                if kwargs.get("length", 100) > 1:
+                    self.pages += 1
+                    if self.pages == 2:
+                        # A page that came back short without being the last one.
+                        page["data"] = page["data"][:1]
+                return page
+
+        rows = [_row(n, days_ago=n) for n in range(1, 13)]
+        await sync(engine, _ShortSecondPage(rows), full=True)  # type: ignore[arg-type]
+
+        assert await _count(engine) == 12
+
+    async def test_a_source_that_never_ends_is_stopped(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Terminating on an empty page alone would spin forever against a source that
+        ignores `start` and reports no total. Bounded, and the shorter mirror keeps."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 2)
+        monkeypatch.setattr(history_sync, "MAX_HISTORY_PAGES", 3)
+
+        class _Endless(FakeTautulli):
+            async def history(self, **kwargs: Any) -> dict[str, Any]:
+                page = await super().history(**kwargs)
+                if kwargs.get("length", 100) > 1:
+                    page["data"] = self.rows[:2]  # same page, forever
+                    page.pop("recordsFiltered")
+                return page
+
+        rows = [_row(n, days_ago=n) for n in range(1, 8)]
+        await sync(engine, _Endless(rows), full=True)  # type: ignore[arg-type]
+
+        assert await _count(engine) == 2  # it stopped, and kept what it read
+
+
 class TestRegressionDetection:
     async def test_the_first_sync_sets_a_baseline_and_does_not_raise(
         self, engine: AsyncEngine
