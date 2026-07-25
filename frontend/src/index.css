@@ -5227,8 +5227,21 @@ button.sm {
 
 /* In the why-panel footer the Spare / Reap pair IS the screen's purpose, not a card's
    hover-revealed afterthought, so it gets the room the card cannot spare: the full footer
-   width, a height that clears a 44px touch target, and Spare (keep-first) grown to own the
-   row while Reap holds the right. ONLY the size changes -- the split button's joined seam
+   width, a height that clears a 44px touch target, and the two halves split the row evenly:
+   both take a `calc(50% - var(--ov-btn-gap) / 2)` basis with `min-width: 0`, so Spare (its
+   main button plus the length caret) and Reap each hold half the footer whatever their labels
+   say, and neither grows when the other's text shortens (Reap -> Reaping). A lone Spare, with
+   Reap hidden on an already-condemned item (rule 48), still grows to fill the row.
+   The basis is half the row, NOT 0, and the difference is not cosmetic: these boxes are
+   `border-box`, where a flex-basis of 0 is floored at the item's own padding + border. Reap is
+   a <button> carrying 0.9rem of side padding and a 1px border (30.8px); Spare's `.ov-split`
+   is a bare <span> carrying none, so an equal share of the leftover still left Reap 30.8px
+   wider than Spare -- measured, not assumed. Half the row clears that floor at any width this
+   footer reaches. The gap comes OUT of the basis (the same `--ov-btn-gap` the container
+   spaces them by, halved each, rule 67) rather than being shrunk back out afterwards:
+   shrinking is scaled by each item's content basis, which these two do not share, so it left
+   a sub-pixel lean toward Reap. Subtracting it up front leaves nothing to shrink, and the two
+   land exactly even. ONLY the size changes -- the split button's joined seam
    (square where main meets caret, no gap), its 6px corners, and the keep-first colors are the
    shared ones, untouched. Scoped to the footer, so the card and season-list controls, with
    their fixed column tracks (rule 51/67), never move. The three-class selectors outrank the
@@ -5244,7 +5257,8 @@ button.sm {
 }
 .why-actions .override-controls .ov-split {
   width: auto;
-  flex: 1 1 auto;
+  flex: 1 1 calc(50% - var(--ov-btn-gap) / 2);
+  min-width: 0;
 }
 .why-actions .override-controls .ov-btn {
   min-width: 0;
@@ -5257,7 +5271,8 @@ button.sm {
   padding: 0;
 }
 .why-actions .override-controls .ov-reap {
-  flex: 0 1 42%;
+  flex: 1 1 calc(50% - var(--ov-btn-gap) / 2);
+  min-width: 0;
 }
 
 /* The length menu behind the Spare chevron. position:fixed (set inline) so the card's
