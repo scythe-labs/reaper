@@ -60,8 +60,8 @@
         /* storage unavailable: the stylesheet's built-in fallback stands */
       }
       // Apply the saved tab favicon before first paint too, so a custom accent does not flash
-      // the default sky icon. accent.ts caches the Deep icon as a data URI under this key; here
-      // we only read it back, so the icon drawing lives in exactly one place (deepIcon.ts).
+      // the default sky icon. accent.ts caches the app icon as a data URI under this key; here
+      // we only read it back, so the icon drawing lives in exactly one place (appIcon.ts).
       try {
         var reaperFavicon = localStorage.getItem("reaper-favicon");
         if (reaperFavicon && reaperFavicon.indexOf("data:image/svg+xml,") === 0) {

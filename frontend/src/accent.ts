@@ -20,7 +20,7 @@
 // a custom accent does not flash the sky-blue default on load. This module writes that cache
 // and is the runtime applier once the saved value arrives.
 
-import { deepIconDataUri } from "./brand/deepIcon";
+import { appIconDataUri } from "./brand/appIcon";
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 const DARK_INK = "#06202c";
@@ -153,12 +153,13 @@ export function applyAccent(color: string | null | undefined): void {
   }
 }
 
-/** Redraw the browser-tab favicon (the Deep icon) at the accent, and cache it so the next
- *  load's pre-paint shows the operator's accent instead of the default sky. The dark shell is
- *  fixed; only the platter follows the accent (see deepIcon). Chrome/Firefox/Edge honor an
- *  SVG data-URI favicon; Safari keeps the static /favicon.svg default, which is still Deep. */
+/** Redraw the browser-tab favicon at the accent, and cache it so the next load's pre-paint
+ *  shows the operator's accent instead of the default sky. The ink shell and the bone figure
+ *  are fixed; only the eyes follow the accent (see appIcon). Chrome/Firefox/Edge honor an SVG
+ *  data-URI favicon; Safari keeps the static /favicon.svg, which is the same mark at the
+ *  default accent. */
 function applyFavicon(hex: string): void {
-  const uri = deepIconDataUri(hex);
+  const uri = appIconDataUri(hex);
   const link = document.getElementById("favicon");
   if (link instanceof HTMLLinkElement) link.href = uri;
   try {

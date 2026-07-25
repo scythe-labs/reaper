@@ -1201,7 +1201,7 @@ bare `vh` in the stylesheet.
   `latestSnapshot.degraded`/`.degraded_reason`, render the same `.notice.notice-warn` wording
   `ScanRow` uses, and disable Build while it is set.
 
-- [ ] **PR9 [medium]** `frontend/src/brand/deepIcon.ts:6-13` with `deepIcon.test.ts:49-62` · Rule 68 is
+- [x] **PR9 [medium]** `frontend/src/brand/deepIcon.ts:6-13` with `deepIcon.test.ts:49-62` · Rule 68 is
   unmet: the comment says the five committed PNGs are rasterized from the SVG variants but names no
   committed, runnable generator (none exists in `scripts/` or as an npm script), and the drift test
   only reads each PNG's IHDR width and height. A brand change regenerates `favicon.svg` — the vector
@@ -1209,6 +1209,12 @@ bare `vh` in the stylesheet.
   never change. The test's own comment claims it catches exactly this, which a size check structurally
   cannot do. **Fix:** commit `scripts/gen-icons.mjs`, name it in both comments, wire it as
   `npm run icons`, and replace the size assertion with a content check.
+  **Landed** with the brand-mark change (the module is now `appIcon.ts`, its test `appIcon.test.ts`):
+  `frontend/scripts/gen-icons.mjs` writes all six assets plus `src/brand/icons.generated.json`, which
+  records the sha256 of the exact SVG string each asset was rasterized from. The test re-derives that
+  string from the current `appIconSvg` and compares, so a redraw that skips `npm run icons` fails by
+  asset name; a seventh test cross-checks the generator's asset list against every icon `index.html`
+  and `site.webmanifest` actually reference, so neither side can gain an entry alone.
 
 - [x] **PR10 [medium]** `frontend/src/components/ReapConfirm.tsx:51-55` and `frontend/src/App.tsx:113-117` ·
   The `["reapStatus"]` query stops polling entirely when nothing is running, in both consumers, so a

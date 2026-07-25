@@ -7,16 +7,47 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-24 (the whole-frontend UI/UX review, remediated in seven batches)
+Last updated: 2026-07-25 (the brand mark became the hooded figure)
 
-### Newest — the whole-frontend UI/UX review, remediated in ten batches
+### Newest — the brand mark became the hooded figure
+
+The scythe is no longer Reaper's mark. The app icon, the favicon, the login badge and the header
+now wear a hooded figure whose head holds while its body breaks into blocks and falls away, which
+says what the app does rather than what it is named after. The shell is fixed ink and bone; the
+**eyes take the operator's accent**, so the mark tracks the one color set in Settings exactly as
+the old platter did.
+
+What the change taught us, and what to keep in mind next time:
+
+- **The scythe had two jobs, and only one of them was branding.** In the review queue it is the
+  verb: a decided row rests as ∞ for spared and a scythe for reaped (rules 46, 49). Swapping the
+  brand there would have replaced a word with a picture of the company. `brand/scythe.ts` survives,
+  demoted to that glyph alone, and both its comment and `ScytheGlyph`'s said the opposite until
+  this change corrected them.
+- **A square badge is not a header mark.** Dropping the full ink tile into the masthead reads as a
+  sticker in light mode and vanishes into the page in dark. `brand/BrandMark.tsx` is the shell-less
+  form: the figure rides `currentColor` (`.brand-mark` sets `--text`), the cowl opening is a hole
+  in a luminance mask so the page shows through, and the eyes keep `--accent`. `.brand-mark` no
+  longer needs the logotype contrast exemption for the figure, only for the eyes.
+- **The eyes are the accent verbatim, with no contrast correction.** A near-black accent gives
+  near-invisible eyes. That is the operator's color shown honestly; lifting it would put a hue on
+  the icon they never chose, and the old platter behaved the same way.
+- **A brand change is what a size-only drift check cannot see**, which is why PR9 came due now
+  rather than later. `frontend/scripts/gen-icons.mjs` (`npm run icons`) is the committed generator
+  rule 68 always required, and `icons.generated.json` records the sha256 of the source SVG behind
+  each asset so a redraw that skips regeneration fails by name instead of shipping a stale icon to
+  every installed PWA and iOS home screen. The generator loads the TypeScript through Vite's own
+  module runner, so it needs no bundler the frontend does not already declare.
+
+### The whole-frontend UI/UX review, remediated in ten batches
 
 `docs/UI_REVIEW.md` (dev @ `a7d7659`) swept every file under `frontend/src` with six parallel
 agents and landed **94 findings**: 1 critical, 18 high, 45 medium, 30 low. Worked in seven
-batches along the document's own fix order, then three more past its end. **91 are checked off.**
+batches along the document's own fix order, then three more past its end. **92 are checked off.**
 R1 and R2 (the two big file splits) are annotated in place with exactly what landed and what did
-not, and PR9 waits on an icon generator that was never committed; those three are all that remain,
-none of them operator-visible.
+not; those two are all that remain, neither operator-visible. PR9's icon generator finally landed
+alongside the brand-mark change below, which is what forced it: a redraw is exactly the case a
+size-only drift check cannot see.
 
 The batches were the deletion path, the queue's control grammar, the number-input family, the
 unknown-state and stale-cache sweep, contrast and motion, copy, and refactor plus performance.

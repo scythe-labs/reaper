@@ -427,13 +427,15 @@ a:hover {
   gap: 0.6rem;
   min-width: 0;
 }
-/* The app mark keeps the raw --accent, not --accent-text: it is the logo, and a logotype
-   is the one graphic WCAG exempts from a contrast ratio. Everything a person READS in the
-   accent uses --accent-text (see the token). */
+/* The mark's figure is the page's own text color and its EYES are the raw --accent, drawn by
+   BrandMark itself. Two consequences worth stating: the figure needs no contrast exception
+   because it is --text, and the eyes keep the raw --accent rather than --accent-text because a
+   logotype is the one graphic WCAG exempts from a contrast ratio. Everything a person READS in
+   the accent uses --accent-text (see the token). */
 .brand-mark {
   width: 34px;
   height: 34px;
-  color: var(--accent);
+  color: var(--text);
 }
 .brand-mark.sm {
   width: 30px;

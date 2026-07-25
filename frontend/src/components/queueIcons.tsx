@@ -96,10 +96,11 @@ export function CheckIcon() {
   );
 }
 
-/** The reap glyph: the brand scythe (see ScytheGlyph), shrunk into a reap ACTION -- the same
- *  drawing as the header mark, so the two never read as different icons. A heavier snath (5.5
- *  vs the header's 3.5) holds the shape's weight at button size, where the logo's own stroke
- *  would thin to a hairline. Only reap actions wear it -- close buttons keep ✕. */
+/** The reap glyph: the scythe (see ScytheGlyph) as a reap ACTION. It is not the app's mark --
+ *  that is the hooded figure in brand/dissolve -- and it should not follow the brand: what it
+ *  has to say is which way a row went, paired against ∞ for spared. A heavier snath (5.5 vs the
+ *  glyph's default 3.5) holds the shape's weight at button size, where the stroke would
+ *  otherwise thin to a hairline. Only reap actions wear it -- close buttons keep ✕. */
 export function ScytheIcon() {
   return <ScytheGlyph className="scythe" width={13} height={13} strokeWidth={5.5} />;
 }

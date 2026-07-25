@@ -15,7 +15,7 @@ import {
   FAVICON_STORAGE_KEY,
   isHexColor,
 } from "./accent";
-import { deepIconDataUri } from "./brand/deepIcon";
+import { appIconDataUri } from "./brand/appIcon";
 
 /** WCAG contrast, written out here rather than imported: these tests assert that the ink
  *  accent.ts picks really does clear 4.5:1, and an assertion that reuses the module's own
@@ -215,17 +215,18 @@ describe("applyAccent favicon", () => {
   it("redraws the tab favicon at the accent and caches it for pre-paint", () => {
     applyAccent("#24b26b");
     const link = document.getElementById("favicon") as HTMLLinkElement;
-    const expected = deepIconDataUri("#24b26b");
+    const expected = appIconDataUri("#24b26b");
     expect(link.getAttribute("href")).toBe(expected);
     expect(expected.startsWith("data:image/svg+xml,")).toBe(true);
     expect(localStorage.getItem(FAVICON_STORAGE_KEY)).toBe(expected);
   });
 
-  it("tints the platter to the accent while the dark shell stays fixed", () => {
+  it("tints the eyes to the accent while the shell and figure stay fixed", () => {
     applyAccent("#24b26b");
-    const svg = decodeURIComponent(deepIconDataUri("#24b26b"));
-    expect(svg).toContain("#24b26b"); // the glow rides the accent
-    expect(svg).toContain("#0f3040"); // the shell does not
+    const svg = decodeURIComponent(appIconDataUri("#24b26b"));
+    expect(svg.match(/#24b26b/g)).toHaveLength(2); // both eyes ride the accent
+    expect(svg).toContain("#14161C"); // the shell does not
+    expect(svg).toContain("#EDE7DA"); // nor the figure
   });
 
   it("does not touch the favicon for a malformed color", () => {

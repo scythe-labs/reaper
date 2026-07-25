@@ -12,7 +12,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { api } from "../api";
 import { phaseLabel } from "./ScanBar";
-import { ScytheGlyph } from "./ScytheGlyph";
+import { BrandMark } from "../brand/BrandMark";
 import { PlexPanel, ServicesPanel } from "./Settings";
 
 // The tick is the only thing that says whether a step is finished, so it carries the state
@@ -85,7 +85,7 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
     <div className="setup">
       <div className="setup-head">
         <div className="brand">
-          <ScytheGlyph className="brand-mark" />
+          <BrandMark className="brand-mark" />
           <div>
             <h1>Welcome to Reaper</h1>
             <p className="muted">

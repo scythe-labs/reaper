@@ -12,7 +12,7 @@ import type { PolicySectionId } from "./components/PolicyEditor";
 import { ReapConfirm } from "./components/ReapConfirm";
 import { ReviewQueue } from "./components/ReviewQueue";
 import { ScalesPanel, ScalesPanelFallback } from "./components/ScalesPanel";
-import { ScytheGlyph } from "./components/ScytheGlyph";
+import { BrandMark } from "./brand/BrandMark";
 import type { Panel } from "./components/Settings";
 import { ShowPanel } from "./components/ShowPanel";
 import { WhyClose, WhyPanel } from "./components/WhyPanel";
@@ -751,7 +751,7 @@ function Dashboard({ user }: { user: AuthUser }) {
       <ScanLine running={scanStatus?.running ?? false} percent={scanStatus?.percent ?? 0} />
       <header className="masthead">
         <div className="brand">
-          <ScytheGlyph className="brand-mark sm" />
+          <BrandMark className="brand-mark sm" />
           <div className="brand-text">
             <span className="brand-word">Reaper</span>
             <span className="muted brand-sub">explainable pruning for Plex</span>
