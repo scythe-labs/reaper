@@ -38,12 +38,19 @@ export function handFate(item: {
   override_effective: boolean | null;
   /** When the spare in effect stops keeping the item (ISO), null for a forever spare.
    *
-   *  Optional for the sake of `isCondemned`, whose yes/no answer is the same for both spare
-   *  states, so threading an expiry through it would be noise. Any caller that COLORS a cell
-   *  must pass it: omitted, an expired spare reads as `"spare"` and paints the solid "you chose
-   *  this" green, which is the one thing it is not. That is the pre-expiry behavior and the
-   *  keep direction, so it fails safe rather than loud -- which is exactly why a new
-   *  fate-bearing surface has to be checked against this line rather than trusted to error. */
+   *  Optional only for the yes/no callers below (`isCondemned`, `showReapReaches`), which
+   *  answer the same for both spare states, so threading an expiry through them would be
+   *  noise. Any caller that COLORS a cell must pass it: omitted, an expired spare reads as
+   *  `"spare"` and paints the solid "you chose this" green, which is the one thing it is not.
+   *  That is the pre-expiry behavior and the keep direction, so it fails safe rather than
+   *  loud -- which is exactly why a new fate-bearing surface has to be checked against this
+   *  line rather than trusted to error.
+   *
+   *  Being optional does NOT make it absent at runtime: a caller passes a whole mark or
+   *  candidate, which carries the field whatever the parameter type names. A yes/no caller
+   *  that treats the two spare states differently is therefore a bug the types cannot catch,
+   *  and `showReapReaches` was one -- so every consumer of this function's result enumerates
+   *  BOTH spare states, or says in its own doc why one answer covers them. */
   spare_expires_at?: string | null;
 }): Fate {
   if (item.override === "spare") {
@@ -115,6 +122,13 @@ export function showReapReach(
  *  above a chip reading "kept for now" and three dashed-red refused squares, and left it
  *  there after the refetch settled (rules 49/61).
  *
+ *  EVERY spare state keeps its season, expired ones included: the server drops a season from
+ *  the show's rollup on `override != "spare"` alone, and the planner reads the same live
+ *  whitelist, where an expired row is still a spare until a scan purges it. So this asks
+ *  "is it spared at all", not "is the spare live" -- reading only `"spare"` counted an
+ *  expired one as removable and printed a number the planner would not act on, beside the
+ *  dashed-green square that says the season is kept (rules 30/62).
+ *
  *  Routed through `handFate`, so the number and the colors beside it cannot disagree, and it
  *  reads correctly in both states the card lives in. BEFORE the refetch the marks still carry
  *  their pre-decision override (`patchShowOverride` writes only `show_override`, by design),
@@ -125,9 +139,13 @@ export function showReapReaches(season: {
   verdict: Verdict;
   override: Override | null;
   override_effective: boolean | null;
+  /** Passed through to `handFate`, which needs it to tell an expired spare from a live one.
+   *  Both keep the season, so this changes no answer here -- it is declared so a caller
+   *  cannot quietly hand over a mark whose expiry the type dropped on the floor. */
+  spare_expires_at?: string | null;
 }): boolean {
   const fate = handFate(season);
-  return fate !== "spare" && fate !== "refused";
+  return fate !== "spare" && fate !== "spare-expired" && fate !== "refused";
 }
 
 /** Whether a whole-show Reap would change nothing -- the show analogue of rule 48's

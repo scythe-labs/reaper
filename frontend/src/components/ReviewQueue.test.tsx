@@ -964,6 +964,35 @@ describe("what a card says after a hand decision", () => {
     expect(screen.queryByText(/3 of 3 would be removed/)).not.toBeInTheDocument();
   });
 
+  it("still counts out a season whose own spare has expired", async () => {
+    // An expired spare keeps the season exactly as a live one does: the server drops it from
+    // the show's rollup on "is it spared", and the planner reads the same live whitelist,
+    // where the row survives until a scan purges it. Counting it as removable printed a
+    // number the reap would not act on, one line under the dashed-green square that says the
+    // season is kept (rules 30/62). The card's count and its strip must agree.
+    const gb = 1024 ** 3;
+    const past = new Date(Date.now() - 3 * 86_400_000).toISOString();
+    const marks: GroupSeasonMark[] = [
+      { id: 1, season: 1, verdict: "protect", override: "reap", override_effective: true, size_bytes: gb, spare_expires_at: null },
+      // Spared by hand for a set time, and that time has run out.
+      { id: 2, season: 2, verdict: "protect", override: "spare", override_effective: null, size_bytes: gb, spare_expires_at: past },
+    ];
+    const extra = {
+      group_seasons: marks,
+      show_override: "reap" as const,
+      group_condemned_count: 1,
+      group_condemned_bytes: gb,
+      group_unknown_size: 0,
+    };
+    apiMock.candidates.mockResolvedValue(
+      page([season(1, "protect", extra), season(2, "protect", extra)]),
+    );
+    renderQueue("protect");
+
+    expect(await screen.findByText(/1 of 2 would be removed · 1\.0 GiB/)).toBeInTheDocument();
+    expect(screen.queryByText(/2 of 2 would be removed/)).not.toBeInTheDocument();
+  });
+
   it("keeps the dormancy line when a condemned movie is spared", async () => {
     // A condemned row carries no chip by construction, so the spare flipped the card to the
     // chip branch and it lost a line and reflowed under the cursor (B-24).
