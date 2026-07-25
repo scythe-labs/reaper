@@ -32,9 +32,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.api.auth import _busy_hashing, _client_ip, _throttled, _verify_admin_password
-from reaper.auth.cookie import read_session_token
 from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.ratelimit import argon2_gate, password_throttle
+from reaper.auth.sessions import resolve_session_from_cookies
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
 from reaper.clients.plextv import PlexConnection, PlexTvClient, connection_identity
@@ -1252,11 +1252,14 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict
     borrowed session or an unattended tab cannot quietly swap the arming credential.
     Verify and hash both run behind the login's lockout and Argon2 concurrency gate.
     """
-    # Preserve the caller's own cookie so changing your password does not log you out of
-    # the tab you are using; every *other* session for that admin is still revoked.
-    keep = read_session_token(request.cookies)
     keys = (f"ip:{_client_ip(request)}", "account:admin-password")
     async with _factory(request)() as session:
+        # Preserve the caller's own cookie so changing your password does not log you out
+        # of the tab you are using; every *other* session for that admin is still revoked.
+        # It has to be the token that actually RESOLVES: with two cookie names in play, a
+        # stale cookie under the other name would be the one spared here while the live
+        # session was revoked, signing the operator out of the very tab they were in.
+        _, keep = await resolve_session_from_cookies(session, request.cookies)
         if await admin_password.has_password(session):
             _throttled(password_throttle, *keys)
             ok = await _verify_admin_password(session, payload.current_password or "")

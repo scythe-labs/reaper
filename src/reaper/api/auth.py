@@ -31,7 +31,7 @@ from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import (
     clear_session_cookie,
     is_secure_request,
-    read_session_token,
+    read_session_tokens,
     set_session_cookie,
 )
 from reaper.auth.proxy import client_ip
@@ -45,7 +45,11 @@ from reaper.auth.ratelimit import (
     recover_throttle,
 )
 from reaper.auth.recovery import redeem_recovery_token
-from reaper.auth.sessions import close_session, open_session, resolve_session
+from reaper.auth.sessions import (
+    close_session,
+    open_session,
+    resolve_session_from_cookies,
+)
 from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
 from reaper.db.models import AppUser, AuthProvider, PlexServer
@@ -252,9 +256,8 @@ async def context(request: Request) -> AuthContext:
 @router.get("/me")
 async def me(request: Request) -> UserOut:
     """The signed-in admin, or 401. The SPA calls this to decide login vs app."""
-    token = read_session_token(request.cookies)
     async with _factory(request)() as session:
-        user = await resolve_session(session, token)
+        user, _ = await resolve_session_from_cookies(session, request.cookies)
         await session.commit()
         if user is None:
             raise HTTPException(401, "Not authenticated.")
@@ -388,11 +391,15 @@ async def local(request: Request, payload: LocalLoginIn, response: Response) -> 
 
 @router.post("/logout")
 async def logout(request: Request, response: Response) -> dict[str, bool]:
-    token = read_session_token(request.cookies)
+    # Revoke every session the jar can present, not just the first name carrying a cookie.
+    # With two names in play a stale cookie used to absorb the logout -- its row was
+    # already gone, so the delete was a no-op -- and the genuinely live session under the
+    # other name stayed valid in the database after the operator had asked to sign out.
     async with _factory(request)() as session:
-        await close_session(session, token)
+        for token in read_session_tokens(request.cookies):
+            await close_session(session, token)
         await session.commit()
-    clear_session_cookie(response, secure=is_secure_request(request))
+    clear_session_cookie(response)
     return {"ok": True}
 
 

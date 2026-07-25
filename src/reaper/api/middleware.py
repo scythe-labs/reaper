@@ -54,9 +54,8 @@ from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocketClose
 
-from reaper.auth.cookie import read_session_token
 from reaper.auth.ratelimit import Throttle
-from reaper.auth.sessions import resolve_session
+from reaper.auth.sessions import resolve_session_from_cookies
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -275,10 +274,9 @@ class AuthGuard:
             await self.app(scope, receive, send)
             return
 
-        token = read_session_token(request.cookies)
         factory = request.app.state.session_factory
         async with factory() as session:
-            user = await resolve_session(session, token)
+            user, _ = await resolve_session_from_cookies(session, request.cookies)
             await session.commit()  # persist the throttled last_seen bump / expiry prune
 
         if user is None:

@@ -641,7 +641,8 @@ export function GeneralPanel() {
               Turn this on if Nginx, Traefik, Caddy or similar sits in front of Reaper. Reaper
               will then trust the proxy to say which address each visitor really came from,
               which keeps sign-in rate limits accurate per visitor instead of lumping everyone
-              together.
+              together. It is also how Reaper learns that visitors arrive over HTTPS, so it can
+              mark the sign-in cookie HTTPS-only.
             </p>
             <div className="set-control">
               <Switch

@@ -13,11 +13,13 @@ out no live sessions.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import timedelta
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from reaper.auth.cookie import read_session_tokens
 from reaper.auth.tokens import SESSION_TTL, generate_token, hash_token
 from reaper.clock import expiry, utcnow
 from reaper.db.models import AppUser, AuthSession
@@ -99,6 +101,30 @@ async def resolve_session(session: AsyncSession, token: str | None) -> AppUser |
         row.last_seen_at = now
 
     return user
+
+
+async def resolve_session_from_cookies(
+    session: AsyncSession, cookies: Mapping[str, str]
+) -> tuple[AppUser | None, str | None]:
+    """The active user behind a request's cookies, plus the token that carried them.
+
+    Two cookie names are in play (:mod:`reaper.auth.cookie`), and a jar can hold both.
+    Try each in turn and keep the first that really resolves, rather than the first that
+    merely exists: a stale cookie under one name must not shadow a live session under the
+    other. That shadowing locked operators out of sign-in, spared the wrong session on a
+    password change, and let logout revoke a dead row while the live one stayed open.
+
+    Returning the winning token matters as much as returning the user. Callers that
+    revoke or preserve "this session" must act on the token that is actually authorizing
+    the request, not on whichever name happened to sort first.
+
+    The caller commits, exactly as with :func:`resolve_session`.
+    """
+    for token in read_session_tokens(cookies):
+        user = await resolve_session(session, token)
+        if user is not None:
+            return user, token
+    return None, None
 
 
 async def close_session(session: AsyncSession, token: str | None) -> None:
