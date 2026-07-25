@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from reaper.clients.plex import PlexError
 from reaper.clients.seerr import MediaRequest, Requester
 from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings
@@ -579,11 +580,12 @@ class TestADegradedScanDoesNotReachTheShelf:
         await self._snapshot(factory, degraded=True)
         await self._snapshot(factory, degraded=False)
 
-        # It gets past the degraded guard and fails later, on the missing Plex link --
-        # which is the proof: a different error means a different gate stopped it.
-        with pytest.raises(Exception) as caught:
+        # It gets past the degraded guard and fails later, on the missing Plex link. Named
+        # exactly, not caught as a bare Exception: the point is WHICH gate stopped it, and a
+        # test that accepts any failure would pass even if the degraded guard had fired
+        # (rule 119).
+        with pytest.raises(PlexError, match="needs a linked Plex server"):
             await leaving_soon.run_sync(factory, _settings(tmp_path), SecretBox("test-key"))
-        assert not isinstance(caught.value, leaving_soon.LeavingSoonDegradedError)
 
     async def test_no_snapshot_at_all_is_not_degraded(
         self, factory: async_sessionmaker[AsyncSession]

@@ -3382,3 +3382,64 @@ alembic upgrade+check clean (no drift), frontend lint/build clean. Driven end-to
 browser against real data (snapshot 26, 193 condemned): baseline quiet, nudge on a mid-review
 scan, Show latest clears it, idle-at-top refreshes silently *with the toast* (pinned 18px off the
 viewport bottom, centered, self-clearing), dismiss to the marker -- all verified.
+
+## Follow-ups from the #44/#45 verification pass (dev, 2026-07-25)
+
+Merging the two review-remediation PRs turned up seven issues (#46-#52), all worked in one
+branch. What they changed is in the commits; what is worth carrying forward is **which
+assumptions turned out wrong**, because five of the seven were a *fix* that had itself gone
+one step too far or not far enough.
+
+**A flag whose correct value depends on the NAME, not the request.** The sign-in lockout
+(#46) came from `clear_session_cookie` taking one `Secure` flag from the request and using
+it for both cookie names. A browser only accepts a `__Host-` cookie carrying `Secure`,
+deletion included, so on TLS-behind-an-unlisted-proxy the delete was silently discarded and
+the dead cookie outranked every later sign-in. The parameter is gone; each name now carries
+the flag it requires. Two further bugs of the same family fell out of that: logout revoked
+the dead session and left the live one open server-side, and a password change spared the
+wrong token. A third only surfaced under review -- a *live* cookie under the unused name
+shadowed a new sign-in, so signing in as a second admin kept authenticating as the first.
+Reading the first name that RESOLVES fixes the dead case and not the live one; writing one
+name now clears the other, which does.
+
+**"Belt and braces" on a destructive path is not free.** The restore fix (#48) added a
+resume-path sweep of `-wal`/`-shm` scoped by whether the staged database was still staged,
+with a second arm added defensively "because the branch looks unreachable." It was
+reachable: `_move_staged_in` ends in an rmtree that swallows its own failure, so a completed
+swap can keep its marker, and every later boot would then move the app's own live WAL into
+the recovery folder -- losing those transactions and overwriting the pre-restore copy's log
+with a foreign one, the exact corruption the sweep exists to prevent. The defensive arm is
+gone. A branch believed unreachable on the deletion or restore path should be *asserted*
+unreachable or not written.
+
+**A fix that trades one honest number for a differently wrong one.** Three separate cases:
+the executor's wedge fix bought a recoverable run by giving up the halt, so an unclassifiable
+failure at item 2 of 50 let 3..50 delete anyway; the season-pruning fix stopped reading an
+unmeasured watcher count as 0 (right) by dropping the hold entirely (wrong), so unreadable
+evidence cleared a protection; and the show card traded an under-count ("0 of 5 would be
+removed") for an over-count that survived the refetch and contradicted the chip beside it.
+In all three the answer was to keep BOTH properties, not to pick one.
+
+**A precision floor has a direction.** `QuantityInput`'s blur clamp was lifted to the
+smallest amount the *shown* unit can draw, which made the display honest by raising the
+stored number -- 0.01 TB in a TB box is ten gigabytes of permitted deletion where the
+operator typed 0. Rule 31 governs this: on a field that can add deletion pressure, take the
+bound producing less. The floor now drops to what the smallest unit can draw and the box
+switches to that unit.
+
+**A slug that does not carry what it is keyed on.** Holding back the keep-tag *retire* pass
+under a repaired policy (#51) did not stop the *sync* from running with Reaper's default
+tags into the operator's own slug -- the slug carries service, instance and match mode, not
+the tag names -- which would wipe their stored membership. The whole family is now left
+alone under a fallen-back policy, and the flag was narrowed to `fell_back`: the other two
+`repaired` arms hand back the operator's own body with the keep tags untouched.
+
+**Deliberately not fixed**, recorded so they are decisions rather than gaps: the shelf
+sweep's shared `requests.Session` (taking the lock on reads alone is a fake fix); the
+hardcoded `"Movies"` library name in `_find_collection`; the bulk bar's rollup (rule 48's
+documented exception); and `judge_facts` always building the explanation, which costs the
+simulator ~14 microseconds a row and is the price of rule 22's one decision function.
+
+**Gates:** ruff format/check, mypy (96 files), full pytest, `alembic upgrade head` + `check`
+with no drift, eslint, vitest, vite build -- all clean. Every fix that could be reverted was
+reverted to confirm its tests actually catch it.

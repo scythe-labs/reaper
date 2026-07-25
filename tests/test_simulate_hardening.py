@@ -28,6 +28,7 @@ override through ``snapshot.effective_fate`` rather than assembling that pipelin
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, NamedTuple
@@ -215,9 +216,15 @@ ROWS: tuple[Row, ...] = (
     ),
 )
 
-#: The counts the table above adds up to. Spelled out rather than derived, so a change to
-#: the fixture has to be reckoned with here too.
-EXPECTED = {"condemned": 2, "protected": 2, "abstained": 5}
+#: The counts the table above adds up to, DERIVED from it, so ``Row.bucket`` is the one
+#: statement of what each row is owed rather than dead data beside a second hand-kept copy.
+#:
+#: What this can and cannot discriminate, stated plainly (rule 118): the route reports bucket
+#: TOTALS, not a bucket per row, so two rows swapping buckets is invisible here and would stay
+#: invisible however these numbers were written. That is what
+#: ``test_the_unreadable_rows_are_kept_and_the_readable_one_is_not`` is for -- it separates the
+#: rows by the property under test instead of counting them.
+EXPECTED = dict(Counter(r.bucket for r in ROWS))
 
 
 @pytest.fixture
@@ -290,7 +297,10 @@ class TestTheSimulationSurvivesABrokenRow:
 
     def test_every_row_lands_in_the_bucket_the_table_gives_it(self, client: TestClient) -> None:
         result = _simulate(client)
-        assert {k: result[k] for k in EXPECTED} == EXPECTED
+        assert {k: result[k] for k in EXPECTED} == EXPECTED, (
+            "the simulator disagreed with the fixture table. What each row is owed:\n  "
+            + "\n  ".join(f"{r.media_key} -> {r.bucket}: {r.why}" for r in ROWS)
+        )
 
     def test_the_unreadable_rows_are_kept_and_the_readable_one_is_not(
         self, client: TestClient
