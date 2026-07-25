@@ -1018,6 +1018,9 @@ export function WhyPanel({
             // and a row condemned only by its OWN reap keeps it (to undo). Spare (rescue) always
             // stays.
             hideReap={reapIsNoop(item)}
+            spareExpiresAt={item.spare_expires_at}
+            // The footer gives the pair the whole row, so a timed spare spells its count out.
+            roomy
           />
           {(setOverride.isError || clearOverride.isError) && (
             <span className="error">Couldn't save that. Try again.</span>

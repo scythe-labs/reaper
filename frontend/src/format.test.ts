@@ -113,6 +113,16 @@ describe("spareRemaining", () => {
     const r = spareRemaining(inDays(-3));
     expect(r.expired).toBe(true);
     expect(r.days).toBe(0);
-    expect(r.phrase).toBe("expired");
+  });
+
+  it("gives a run-down spare no count and no clause, so no surface names the gap", () => {
+    // The item is still kept until a scan realizes the expiry, so the button and chip keep
+    // saying "Spared" -- they just have nothing left to count. An empty phrase is what makes
+    // them drop the clause instead of printing a word for it.
+    const r = spareRemaining(inDays(-3));
+    expect(r.short).toBe("");
+    expect(r.phrase).toBe("");
+    // The date it ran out still reaches the tooltip.
+    expect(r.until).not.toBe("");
   });
 });

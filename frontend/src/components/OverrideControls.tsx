@@ -57,12 +57,25 @@ export function OverrideControls({
   onClear,
   pending,
   hideReap = false,
+  spareExpiresAt = null,
+  roomy = false,
 }: {
   override: Override | null;
   onSet: (decision: Override, spareDays?: number) => void;
   onClear: () => void;
   pending: boolean;
   hideReap?: boolean;
+  /** When the spare on THIS control's own level runs out (ISO), or null for a forever spare.
+   *  Read only while `override` is `"spare"`, which is what makes the effective
+   *  `spare_expires_at` safe to pass from a season row: a season with no decision of its own
+   *  carries its SHOW's expiry there, but its `override_own` is null, so the button is not in
+   *  the spared state and never reads it (rule 50). Once `override_own` IS set, the effective
+   *  expiry is that item's own (`effective_spare_expiry` prefers the item's key). */
+  spareExpiresAt?: string | null;
+  /** The why/show panel footers give the pair the whole row, so the spared button spells the
+   *  count out ("Spared 87d"). The card and season-row tracks are fixed at `--ov-btn-w` (rule
+   *  51), where only the count fits and the solid green fill carries "you chose this". */
+  roomy?: boolean;
 }) {
   const defaultDays = useDefaultSpareDays();
   const [menuAt, setMenuAt] = useState<MenuPos | null>(null);
@@ -95,6 +108,24 @@ export function OverrideControls({
     );
   };
 
+  // Undecided, the button says what a press WILL do (the default length). Spared, it says what
+  // is in force on this item -- its own glyph, its own count -- because the default stops
+  // mattering the moment there is a real answer. Sparing for 90 days under a Forever default
+  // used to leave the button reading "∞ Spared", wrong on both counts.
+  const spared = override === "spare";
+  const remaining = spareRemaining(spareExpiresAt);
+  // A run-down spare has nothing left to count, and gets no word of its own: the item really is
+  // still kept (every consumer reads all spares on file; only a scan realizes the expiry), so
+  // the button rests on the plain "Spared" and the next scan hands it back to policy.
+  const counting = spared && !remaining.forever && !remaining.expired;
+  const spareLabel = !spared
+    ? "Spare"
+    : counting
+      ? roomy
+        ? `Spared ${remaining.short}`
+        : remaining.short
+      : "Spared";
+
   const clickSpare = (e: ReactMouseEvent) => {
     e.stopPropagation();
     override === "spare" ? onClear() : onSet("spare", defaultDays);
@@ -122,16 +153,25 @@ export function OverrideControls({
           className={`ov-btn ov-spare split-main ${override === "spare" ? "active" : ""}`}
           disabled={pending}
           aria-pressed={override === "spare"}
+          // On the narrow surfaces the visible label is the bare count, so name the button in
+          // full for a screen reader. The visible "87d" stays a substring of that name, which
+          // is what WCAG 2.5.3 (Label in Name) asks for.
+          aria-label={counting && !roomy ? `Spared ${remaining.short} left` : undefined}
           onClick={clickSpare}
           title={
-            override === "spare"
-              ? "Spared. Click to let Reaper judge it again"
+            spared
+              ? counting
+                ? `${remaining.until}. Click to let Reaper judge it again`
+                : "Spared. Click to let Reaper judge it again"
               : defaultDays > 0
                 ? `Spare for ${defaultDays} days. Use the arrow for another length`
                 : "Spare forever. Use the arrow for a set time"
           }
         >
-          <SpareGlyph days={defaultDays} /> {override === "spare" ? "Spared" : "Spare"}
+          {/* `days` only picks the glyph's shape here: ∞ for a forever spare, the clock for a
+              timed one. The count itself rides in the label beside it. */}
+          <SpareGlyph days={spared ? (remaining.forever ? 0 : 1) : defaultDays} />{" "}
+          <span className="ov-label">{spareLabel}</span>
         </button>
         <button
           ref={caretRef}

@@ -869,6 +869,10 @@ function SeasonList({
                 onClear={() => onClear(season.media_key)}
                 pending={pending}
                 hideReap={reapIsNoop(season)}
+                // Safe to pass the effective expiry beside `override_own`: a season with no
+                // decision of its own carries its SHOW's expiry here, but its button is not in
+                // the spared state and never reads it (rule 50, and the prop's own doc).
+                spareExpiresAt={season.spare_expires_at}
               />
               <span className="season-size num">{itemBytes(season.size_bytes)}</span>
               {reason && <p className="season-reason">{reason}</p>}
@@ -981,6 +985,7 @@ const MovieCard = memo(function MovieCard({
               onClear={() => onClear(item.media_key)}
               pending={pending}
               hideReap={hideReap}
+              spareExpiresAt={item.spare_expires_at}
             />
           </>
         )}
@@ -1198,6 +1203,8 @@ const ShowCard = memo(function ShowCard({
                 // seasons and would wrongly read as "all condemned" and hide Reap. The season
                 // rows below keep the per-lane test.
                 hideReap={showReapIsNoop(showSeasons)}
+                // The show's OWN spare, to match the show-level decision the button reflects.
+                spareExpiresAt={first.show_spare_expires_at}
               />
             </>
           )}

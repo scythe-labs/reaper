@@ -97,9 +97,14 @@ export function spareRemaining(iso: string | null): {
   forever: boolean;
   days: number;
   expired: boolean;
-  /** The compact count the resting clock mark wears: "27d", or "" for a forever spare. */
+  /** The compact count the resting clock mark and the Spare button wear: "27d". Empty for a
+   *  forever spare, and empty once the count has run down -- see `phrase`. */
   short: string;
-  /** The chip's clause: "27 days left", "1 day left", or "expired". */
+  /** The chip's clause: "27 days left", "1 day left". Empty for a forever spare, and empty once
+   *  the count has run down: NO surface names that gap. The item is genuinely still kept there
+   *  (the queue, planner and executor all read every spare on file, expired or not -- only a
+   *  scan realizes the expiry), so the button and chip drop the countdown and rest on the plain
+   *  "Spared" rather than teaching the operator a word for a state that clears itself. */
   phrase: string;
   /** "Kept until Aug 18", for a tooltip or a fuller line. Empty for a forever spare. */
   until: string;
@@ -107,7 +112,7 @@ export function spareRemaining(iso: string | null): {
   if (!iso) return { forever: true, days: 0, expired: false, short: "", phrase: "", until: "" };
   const ms = new Date(iso).getTime() - Date.now();
   const until = `Kept until ${date(iso)}`;
-  if (ms <= 0) return { forever: false, days: 0, expired: true, short: "0d", phrase: "expired", until };
+  if (ms <= 0) return { forever: false, days: 0, expired: true, short: "", phrase: "", until };
   // Round up so a partial day still shows, but only after shaving the small clock-skew slack --
   // otherwise a fresh N-day spare reads N+1. Floor at 1: while time remains it is never "0 days".
   const days = Math.max(1, Math.ceil((ms - SPARE_SKEW_SLACK_MS) / 86_400_000));

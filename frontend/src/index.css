@@ -5137,6 +5137,15 @@ button.sm {
   min-width: var(--ov-btn-w);
   justify-content: center;
 }
+/* A spared button's label carries its countdown, so it is the one label here that varies in
+   length ("Spared 87d" in a panel footer, "87d" on a card). The tracks above are fixed and must
+   stay fixed (rule 51), so the label clips rather than pushing the button out of its column on
+   a very narrow phone. `min-width: 0` is what lets a flex item shrink below its text at all. */
+.ov-btn .ov-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
 /* Keep-first: the safe action (Spare) invites in green; the destructive one (Reap) stays the
    quiet gray of the base button and only reddens as you reach for it. Reuses the app's
    green-spare and quiet-danger conventions, so a delete stays a deliberate move. */

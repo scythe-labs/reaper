@@ -94,12 +94,15 @@ export function OverrideChip({
     exceptions > 0 ? `except ${exceptions} ${exceptions === 1 ? "season" : "seasons"}` : null;
   if (override === "spare") {
     // A forever spare keeps "will be kept"; a timed one counts down. The exceptions clause,
-    // when present, still wins -- a mixed whole-show claim needs qualifying first.
+    // when present, still wins -- a mixed whole-show claim needs qualifying first. Once a timed
+    // spare's count has run down there is no clause at all (`phrase` is empty) and the chip
+    // drops the middot with it: the item is still kept until a scan re-judges it, and no
+    // surface teaches the operator a word for that gap.
     const remaining = spareRemaining(spareExpiresAt);
     const suffix = except ?? (remaining.forever ? "will be kept" : remaining.phrase);
     return (
       <span className={classes.spare} title={remaining.until || undefined}>
-        Spared by hand · {suffix}
+        {suffix ? `Spared by hand · ${suffix}` : "Spared by hand"}
       </span>
     );
   }

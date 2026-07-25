@@ -144,6 +144,8 @@ export function ShowPanel({
             onClear={() => clearOverride.mutate(group.group_key)}
             pending={setOverride.isPending || clearOverride.isPending}
             hideReap={showReapIsNoop(group.seasons)}
+            spareExpiresAt={group.show_spare_expires_at}
+            roomy
           />
           {(setOverride.isError || clearOverride.isError) && (
             <span className="error">Couldn't save that. Try again.</span>
