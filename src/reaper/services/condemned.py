@@ -52,9 +52,23 @@ def reap_override_verdict(explanation_json: str, *, score: int) -> str:
     """
     try:
         exp = json.loads(explanation_json)
-        if not isinstance(exp, dict):
-            raise ValueError("explanation is not an object")
     except (ValueError, TypeError):
+        exp = None
+    return reap_override_verdict_decoded(exp, score=score)
+
+
+def reap_override_verdict_decoded(explanation: object, *, score: int) -> str:
+    """:func:`reap_override_verdict` over an ALREADY-DECODED explanation.
+
+    Same decision, same fail-closed posture -- the only difference is that the caller
+    already ran ``json.loads``. The review queue decodes each row's explanation once and
+    hands the dict to every display extractor and to this, rather than re-parsing the
+    same multi-KB document three or four times per row.
+
+    Anything that is not a dict (a decode that failed, a stored top level that is a list
+    or null) reads as blocked and keeps the file.
+    """
+    if not isinstance(explanation, dict):
         return decide_verdict(
             protected=False,
             blocked=True,
@@ -65,11 +79,25 @@ def reap_override_verdict(explanation_json: str, *, score: int) -> str:
             override="reap",
             safety_protected=True,
         )
+    exp = explanation
 
     fired = [e for e in exp.get("protections_fired") or [] if isinstance(e, dict)]
     unknown = [e for e in exp.get("protections_unknown") or [] if isinstance(e, dict)]
-    match_status = (exp.get("match") or {}).get("status")
-    bad_match = match_status in ("unmatched", "ambiguous")
+    # A ``match`` that is there but is not an object used to raise an AttributeError,
+    # which escaped this function's "unreadable means blocked" contract entirely (B-10).
+    # It is now read as a BAD match, not as a missing one: an unreadable match block is
+    # "we cannot tell what this was tied to in Plex", which is the same not-checked state
+    # unmatched and ambiguous describe, and it holds the reap. Reading it as absent would
+    # be the inversion this codebase exists to avoid -- evidence we could not read
+    # becoming evidence that nothing was wrong, which REMOVES a hold on a deletion.
+    #
+    # A match block that is genuinely ABSENT (null, or missing) is different and stays
+    # permissive: the field is optional precisely so a row scored before it shipped still
+    # reads, and those rows were judged fine without it.
+    match = exp.get("match")
+    match_unreadable = match is not None and not isinstance(match, dict)
+    match_status = match.get("status") if isinstance(match, dict) else None
+    bad_match = match_unreadable or match_status in ("unmatched", "ambiguous")
 
     return decide_verdict(
         protected=bool(fired),
@@ -97,6 +125,13 @@ def reap_is_effective(candidate: Candidate) -> bool:
     return (
         reap_override_verdict(candidate.explanation_json, score=int(candidate.score)) == "condemn"
     )
+
+
+def reap_is_effective_decoded(candidate: Candidate, explanation: object) -> bool:
+    """:func:`reap_is_effective` for a caller that already decoded the explanation."""
+    if candidate.verdict == "condemn":
+        return True
+    return reap_override_verdict_decoded(explanation, score=int(candidate.score)) == "condemn"
 
 
 def effective_verdict(candidate: Candidate, decisions: dict[str, str]) -> str:

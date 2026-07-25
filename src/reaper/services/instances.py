@@ -540,7 +540,14 @@ def _explain_failure(kind: InstanceKind, exc: BaseException) -> str:
     return _GENERIC_FAILURE
 
 
-def _client(kind: InstanceKind, base_url: str, api_key: str, *, verify: bool = True) -> BaseClient:
+def _client(
+    kind: InstanceKind,
+    base_url: str,
+    api_key: str,
+    *,
+    verify: bool = True,
+    api_path_prefix: str | None = None,
+) -> BaseClient:
     # Destructive actions disabled: a connection test never mutates anything. ``verify`` is
     # the instance's own TLS setting and defaults ON: the API key travels on this
     # connection, so skipping certificate verification is an explicit per-instance choice
@@ -548,29 +555,49 @@ def _client(kind: InstanceKind, base_url: str, api_key: str, *, verify: bool = T
     # something turned off on their behalf.
     safety = RuntimeSafety(destructive_enabled=False)
     base_url = base_url.strip().rstrip("/")
+    # The stored prefix rides along so Test Connection probes the SAME path the scan will
+    # use. It has only ever held its default, but the scan already passes it
+    # (scan_runner.build_sources), so leaving it off here meant a test that validated a
+    # path the scan does not use the moment the column ever diverged (PR2-3). ``None``
+    # keeps each client's own default.
     if kind is InstanceKind.RADARR:
-        return RadarrClient(base_url, api_key, safety=safety, verify=verify)
+        return RadarrClient(
+            base_url, api_key, safety=safety, verify=verify, api_path_prefix=api_path_prefix
+        )
     if kind is InstanceKind.SONARR:
-        return SonarrClient(base_url, api_key, safety=safety, verify=verify)
+        return SonarrClient(
+            base_url, api_key, safety=safety, verify=verify, api_path_prefix=api_path_prefix
+        )
     if kind is InstanceKind.TAUTULLI:
         return TautulliClient(base_url, api_key, safety=safety, verify=verify)
     return SeerrClient(base_url, api_key, safety=safety, verify=verify)
 
 
 async def test_connection(
-    kind: InstanceKind, base_url: str, api_key: str, *, verify: bool = True
+    kind: InstanceKind,
+    base_url: str,
+    api_key: str,
+    *,
+    verify: bool = True,
+    api_path_prefix: str | None = None,
 ) -> TestResult:
     """Reach the service and report what came back. Never raises -- a failure is a result.
 
     Each service is probed with cheap reads that also exercise the key. For the *arr the
-    status endpoint doubles as the version probe (Reaper version-gates its API path off
-    it) and carries the key; Tautulli's status read carries its key too. Seerr's
-    ``/status`` is public -- it proves the URL and gives the version but would pass with a
-    wrong key -- so Seerr is probed a second time on an authenticated route, and that
-    probe is what actually confirms the key.
+    status endpoint reports the version, which is shown beside the instance; it carries
+    the key too, so reaching it proves both. Tautulli's status read carries its key as
+    well. Seerr's ``/status`` is public -- it proves the URL and gives the version but
+    would pass with a wrong key -- so Seerr is probed a second time on an authenticated
+    route, and that probe is what actually confirms the key.
+
+    ``api_path_prefix`` is the instance's stored API path, passed through so this probes
+    the same path the scan will. Nothing writes that column today -- it has only ever held
+    its default -- so a server that does not serve ``/api/v3`` cannot be reached by
+    editing it. A reverse-proxy subpath IS fixable: the base URL is merged into every
+    request, so storing ``https://host/sonarr`` works.
     """
     try:
-        client = _client(kind, base_url, api_key, verify=verify)
+        client = _client(kind, base_url, api_key, verify=verify, api_path_prefix=api_path_prefix)
     except Exception as exc:  # a malformed URL, say
         log.warning("instance.test_failed", kind=kind.value, stage="build", error=str(exc))
         return TestResult(ok=False, detail=_explain_failure(kind, exc))
@@ -612,7 +639,11 @@ async def test_saved_instance(
     """Test a stored instance and record the outcome on the row (last_ok_at / last_error)."""
     row = await _get(session, instance_id)
     result = await test_connection(
-        row.kind, row.base_url, box.decrypt(row.api_key_enc), verify=row.verify_tls
+        row.kind,
+        row.base_url,
+        box.decrypt(row.api_key_enc),
+        verify=row.verify_tls,
+        api_path_prefix=row.api_path_prefix,
     )
     if result.ok:
         row.last_ok_at = utcnow()

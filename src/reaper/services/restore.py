@@ -37,6 +37,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 import secrets as pysecrets
 import shutil
 import sqlite3
@@ -51,12 +52,14 @@ import structlog
 
 from reaper.clock import utcnow
 from reaper.config import Settings
+from reaper.db.models import AUTH_BEARING_TABLES
 from reaper.secrets import KEY_FILENAME, SALT_FILENAME
 from reaper.services.app_settings import DESTRUCTIVE_KEY
 from reaper.services.backup import (
     BACKUP_FORMAT,
     DB_ARCNAME,
     MANIFEST_NAME,
+    MAX_DB_BYTES,
     RESTORE_TMP_PREFIX,
     _read_revision,
 )
@@ -68,6 +71,15 @@ log = structlog.get_logger(__name__)
 #: confirmed restore is ready" -- an interrupted upload never leaves one behind.
 PENDING_DIR = "pending-restore"
 READY_MARKER = "READY"
+
+#: Written just before the first file is moved, and removed only when the last one is.
+#: Its presence at boot means an earlier boot was killed PART WAY THROUGH the swap, which
+#: is the one state where "the staged database is missing" must not be read as "the
+#: staging is broken": the staged database is missing because it is already the live one
+#: (B2-21). Discarding there would delete the backup's secret.key -- the only copy of the
+#: key for the database now serving -- while printing that the current data was kept.
+#: It carries the ``pre-restore-*`` directory name, so a resumed boot can name it.
+SWAP_MARKER = "SWAPPING"
 
 #: Binds a password-confirmed arm to the exact content the operator reviewed. Minted per
 #: staging (see :func:`stage_upload`), returned in the summary, and required back by
@@ -90,10 +102,11 @@ _COPY_CHUNK = 1024 * 1024
 #: Per-member ceilings while unpacking an untrusted archive. A gzip member can claim a
 #: modest size and expand without bound, so the copy is capped as it runs -- a decompression
 #: bomb hits the ceiling and is refused rather than filling the disk. The database ceiling is
-#: generous (a large real library is well under it); the key, salt, and manifest are tiny.
+#: the same constant the BACKUP side refuses to exceed, so this build can always restore what
+#: it can produce (PR-11); the key, salt, and manifest are tiny.
 _MEMBER_CAPS = {
     MANIFEST_NAME: 1 * 1024 * 1024,
-    DB_ARCNAME: 8 * 1024 * 1024 * 1024,
+    DB_ARCNAME: MAX_DB_BYTES,
     KEY_FILENAME: 64 * 1024,
     SALT_FILENAME: 64 * 1024,
 }
@@ -406,14 +419,11 @@ def _force_destructive_off(db_path: Path) -> None:
         con.close()
 
 
-#: The auth-bearing tables purged from the staged database at arm time (S-3). Fixed string
-#: literals so the ``DELETE`` statements below carry no interpolation; an older backup may
-#: predate a table, so each delete is guarded by an existence check first.
-_AUTH_PURGE: tuple[tuple[str, str], ...] = (
-    ("auth_session", "DELETE FROM auth_session"),
-    ("recovery_token", "DELETE FROM recovery_token"),
-    ("pending_plex_login", "DELETE FROM pending_plex_login"),
-)
+#: The identifier pattern a purgeable table name must match. The ``DELETE`` below is built
+#: by interpolation because SQLite has no bind parameter for a table name, so the name is
+#: proved to be a bare identifier first rather than trusted for coming from our own module
+#: -- the check costs nothing and does not depend on where the list came from.
+_TABLE_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _purge_auth_state(db_path: Path) -> None:
@@ -425,15 +435,21 @@ def _purge_auth_state(db_path: Path) -> None:
     work again after the swap, defeating a later sign-out-everywhere. Runs in the same
     fail-closed step as forcing deletion off; a table absent in an older backup simply has
     nothing to purge.
+
+    Which tables those are is declared beside the models
+    (:data:`~reaper.db.models.AUTH_BEARING_TABLES`), not here, so a new one cannot be
+    added to the schema and silently ride a restore through (R-3).
     """
     con = sqlite3.connect(db_path)
     try:
-        for table, statement in _AUTH_PURGE:
+        for table in AUTH_BEARING_TABLES:
+            if not _TABLE_NAME.match(table):  # pragma: no cover -- guards the f-string below
+                raise RestoreError("Reaper couldn't prepare this backup to restore.")
             present = con.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
             ).fetchone()
             if present:
-                con.execute(statement)
+                con.execute(f"DELETE FROM {table}")  # noqa: S608 -- identifier checked above
         con.commit()
     except sqlite3.OperationalError as exc:
         raise RestoreError("Reaper couldn't prepare this backup to restore.") from exc
@@ -513,42 +529,93 @@ def _unique_dir(parent: Path, name: str) -> Path:
     return candidate
 
 
+def _move_staged_in(data_dir: Path, pending: Path) -> None:
+    """Move whatever the staging still holds into ``data/``, then drop the staging.
+
+    Each name is skipped when it is already gone, so this is safe to run again after an
+    interrupted swap: a file that made it across on the previous attempt stays where it
+    is rather than being looked for and missed.
+    """
+    for name in (DB_ARCNAME, KEY_FILENAME, SALT_FILENAME):
+        staged = pending / name
+        if staged.exists():
+            shutil.move(str(staged), str(data_dir / name))
+    shutil.rmtree(pending, ignore_errors=True)
+
+
+def _discard_unusable(data_dir: Path, pending: Path) -> None:
+    """Throw away a staging whose database will not read, KEEPING its key material.
+
+    An ``rmtree`` here would delete ``secret.key`` and ``secret.salt`` along with the
+    rest. They are small, they are the only copy of what decrypts that backup's
+    credentials, and an operator who staged the wrong file may well want to try the right
+    one from the same source (B2-21). Parking them costs nothing.
+    """
+    kept = [name for name in (KEY_FILENAME, SALT_FILENAME) if (pending / name).is_file()]
+    if kept:
+        parked = _unique_dir(
+            data_dir, f"{PRE_RESTORE_PREFIX}{utcnow().strftime('%Y%m%dT%H%M%SZ')}-keys"
+        )
+        for name in kept:
+            shutil.move(str(pending / name), str(parked / name))
+        sys.stderr.write(
+            f"reaper: the staged backup's key files were moved to data/{parked.name}\n"
+        )
+    shutil.rmtree(pending, ignore_errors=True)
+
+
 def apply_pending_restore(settings: Settings) -> bool:
     """Swap a staged, armed backup into place. Returns whether a swap happened.
 
-    Run at boot before migrations. Resolves toward keeping the live data: if the
-    staged database does not read as SQLite, the whole staging is discarded and the
-    live data is left untouched. Otherwise the current database, its write-ahead log,
+    Run at boot before migrations. Resolves toward keeping the live data: if the staged
+    database does not read as SQLite, the staging is discarded (bar its key material) and
+    the live data is left untouched. Otherwise the current database, its write-ahead log,
     and the key and salt are moved into a timestamped ``pre-restore-*`` directory for
     recovery, and the staged files take their place. ``alembic upgrade head`` (next in
     the entrypoint) then brings the restored database current.
+
+    The moves are two atomic renames per file, but a swap is several files, so a kill
+    between them (a host reboot, an OOM, a ``docker stop`` timeout) can leave the
+    database replaced and the key still staged. :data:`SWAP_MARKER` records that a swap
+    is under way so the next boot finishes it instead of reading a missing staged
+    database as a broken staging and discarding the key that opens the database now
+    serving (B2-21).
     """
     data_dir = settings.data_dir
     pending = data_dir / PENDING_DIR
     if not (pending / READY_MARKER).is_file():
         return False
 
+    marker = pending / SWAP_MARKER
+    if marker.is_file():
+        recovery_name = marker.read_text(encoding="utf-8").strip() or "the pre-restore folder"
+        _move_staged_in(data_dir, pending)
+        sys.stderr.write(
+            "reaper: finished a restore that was interrupted on an earlier start; the "
+            f"previous data is saved in data/{recovery_name} (remove it once the restore "
+            "looks good)\n"
+        )
+        return True
+
     staged_db = pending / DB_ARCNAME
     if not _looks_like_sqlite(staged_db):
-        # Armed but unusable: discard it and keep the live data. Fail closed.
-        shutil.rmtree(pending, ignore_errors=True)
+        # Armed but unusable, and nothing has been moved yet -- so the live data really is
+        # untouched and saying so is true. Fail closed.
+        _discard_unusable(data_dir, pending)
         sys.stderr.write(
             "reaper: a staged restore was unreadable and was discarded; current data kept\n"
         )
         return False
 
     recovery = _unique_dir(data_dir, f"{PRE_RESTORE_PREFIX}{utcnow().strftime('%Y%m%dT%H%M%SZ')}")
+    marker.write_text(recovery.name + "\n", encoding="utf-8")
     # Move the live copy aside first (its -wal/-shm travel with it), then move the
     # staged copy in. Same filesystem, so each move is an atomic rename.
     for name in (DB_ARCNAME, f"{DB_ARCNAME}-wal", f"{DB_ARCNAME}-shm", KEY_FILENAME, SALT_FILENAME):
         live = data_dir / name
         if live.exists():
             shutil.move(str(live), str(recovery / name))
-    for name in (DB_ARCNAME, KEY_FILENAME, SALT_FILENAME):
-        staged = pending / name
-        if staged.exists():
-            shutil.move(str(staged), str(data_dir / name))
-    shutil.rmtree(pending, ignore_errors=True)
+    _move_staged_in(data_dir, pending)
 
     sys.stderr.write(
         "reaper: restored the database from a staged backup; the previous data is saved in "

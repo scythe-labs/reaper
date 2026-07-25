@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import httpx
 import pytest
@@ -27,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from reaper.api.runs import _planned_candidates
 from reaper.clients.base import IntegrationError
-from reaper.clients.plex import ActiveStream, PlexError
+from reaper.clients.plex import ActiveStream, PlexError, PlexSectionPaths
 from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings
 from reaper.db.base import Base
@@ -36,6 +37,7 @@ from reaper.db.models import (
     Candidate,
     Instance,
     InstanceKind,
+    Policy,
     ReapRun,
     RunState,
     SizeSource,
@@ -43,14 +45,18 @@ from reaper.db.models import (
     StepState,
 )
 from reaper.db.session import create_engine, create_session_factory
-from reaper.engine.policy import ProfileSettings
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY, PolicyBody, ProfileSettings
+from reaper.services import executor as executor_module
 from reaper.services import whitelist
 from reaper.services.condemned import effective_condemned
 from reaper.services.executor import (
     ExecutionError,
     Executor,
     ReapGateway,
+    ReapProgress,
     RunReport,
+    _deletable_bytes,
+    _Delete,
     _grew_materially,
     _row_timestamp,
 )
@@ -61,7 +67,7 @@ from reaper.services.planner import (
     confirmation_phrase,
     manifest_hash,
 )
-from reaper.services.profiles import save_profile_settings
+from reaper.services.profiles import live_policy_hash, save_profile_settings
 
 GB = 1024**3
 
@@ -85,7 +91,7 @@ async def _snapshot_with(session: AsyncSession, condemned: list[tuple[str, int |
     now = utcnow()
     snapshot = Snapshot(
         created_at=now,
-        policy_hash="p" * 64,
+        policy_hash=await live_policy_hash(session),
         scoring_hash="s" * 64,
         horizon_at=now,
         item_count=len(condemned),
@@ -155,9 +161,7 @@ class TestSeasonPruningSteps:
 
     async def _plan_steps(self, session: AsyncSession, media_key: str) -> list[ActionStep]:
         snapshot_id = await _snapshot_with(session, [(media_key, 4 * GB)])
-        run = await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="tester"
-        )
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="tester")
         return list(
             (
                 await session.execute(
@@ -234,9 +238,7 @@ class TestBuildPlan:
             [("radarr:1:1", 50 * GB), ("radarr:1:2", 1 * GB), ("radarr:1:3", 9 * GB)],
         )
 
-        run = await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
         steps = await _steps(session, run.id)
         canary = next(s for s in steps if s.ordinal == 0)
@@ -249,9 +251,7 @@ class TestBuildPlan:
         call. Credentials are NOT in it, so it is safe to keep and to render."""
         snapshot_id = await _snapshot_with(session, [("radarr:2:42", 5 * GB)])
 
-        run = await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
         step = (await _steps(session, run.id))[0]
         assert step.method == "DELETE"
@@ -271,16 +271,12 @@ class TestBuildPlan:
         await session.flush()
 
         with pytest.raises(PlanError, match="degraded"):
-            await build_plan(
-                session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-            )
+            await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
     async def test_an_empty_condemned_set_is_refused(self, session: AsyncSession) -> None:
         snapshot_id = await _snapshot_with(session, [])
         with pytest.raises(PlanError, match="othing is condemned"):
-            await build_plan(
-                session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-            )
+            await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
 
 class TestARestrictedPlanReapsOnlyTheChosenItems:
@@ -295,7 +291,6 @@ class TestARestrictedPlanReapsOnlyTheChosenItems:
         run = await build_plan(
             session,
             snapshot_id=snapshot_id,
-            policy_hash="p" * 64,
             approved_by="admin",
             only_media_keys={"radarr:1:2"},
         )
@@ -317,7 +312,6 @@ class TestARestrictedPlanReapsOnlyTheChosenItems:
             await build_plan(
                 session,
                 snapshot_id=snapshot_id,
-                policy_hash="p" * 64,
                 approved_by="admin",
                 only_media_keys={"radarr:1:999"},
             )
@@ -333,7 +327,6 @@ class TestARestrictedPlanReapsOnlyTheChosenItems:
             await build_plan(
                 session,
                 snapshot_id=snapshot_id,
-                policy_hash="p" * 64,
                 approved_by="admin",
                 only_media_keys={"radarr:1:1"},
             )
@@ -349,9 +342,7 @@ class TestDryRunProvesEverythingAndDeletesNothing:
         snapshot_id = await _snapshot_with(
             session, [("radarr:1:1", 1 * GB), ("radarr:1:2", 5 * GB)]
         )
-        run = await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
         executor = Executor(session, safety=_read_only(), settings=ProfileSettings(), dry_run=True)
         report = await executor.execute(run.id)
@@ -367,9 +358,7 @@ class TestDryRunProvesEverythingAndDeletesNothing:
         snapshot_id = await _snapshot_with(
             session, [("radarr:1:1", 9 * GB), ("radarr:1:2", 1 * GB)]
         )
-        run = await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
         report = await Executor(
             session, safety=_read_only(), settings=ProfileSettings(), dry_run=True
@@ -388,9 +377,7 @@ class TestASeasonDryRunsAsAWholeSequence:
 
     async def test_all_three_steps_are_skipped_and_shown(self, session: AsyncSession) -> None:
         snapshot_id = await _snapshot_with(session, [("sonarr:1:42:3", 4 * GB)])
-        run = await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
         report = await Executor(
             session, safety=_read_only(), settings=ProfileSettings(), dry_run=True
@@ -422,9 +409,7 @@ class TestASeasonDryRunsAsAWholeSequence:
         snapshot_id = await _snapshot_with(
             session, [("radarr:1:1", 1 * GB), ("sonarr:1:42:3", 4 * GB)]
         )
-        run = await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
         report = await Executor(
             session, safety=_read_only(), settings=ProfileSettings(), dry_run=True
         ).execute(run.id)
@@ -440,9 +425,7 @@ class TestTheManifestGuard:
         snapshot_id = await _snapshot_with(
             session, [("radarr:1:1", 1 * GB), ("radarr:1:2", 5 * GB)]
         )
-        run = await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
         # A new item gets condemned after approval -- the plan is now different.
         session.add(
@@ -473,9 +456,7 @@ class TestCapsAbortNeverTruncate:
         make *which* items die depend on sort order."""
         condemned = [(f"radarr:1:{i}", 1 * GB) for i in range(5)]
         snapshot_id = await _snapshot_with(session, condemned)
-        run = await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
         settings = ProfileSettings(max_items_per_run=3, max_items_per_30d=100)
         report = await Executor(
@@ -498,9 +479,7 @@ class TestCapsAbortNeverTruncate:
         untouched, and this dry run still sends nothing."""
         condemned = [(f"radarr:1:{i}", 1 * GB) for i in range(5)]
         snapshot_id = await _snapshot_with(session, condemned)
-        run = await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
         # A cap of 3 that WOULD abort five items -- but caps_enabled=False turns it off.
         settings = ProfileSettings(caps_enabled=False, max_items_per_run=3, max_items_per_30d=100)
@@ -519,9 +498,7 @@ class TestCapsAbortNeverTruncate:
         Each cap here is set below the plan, so any one still enforced would abort it."""
         condemned = [(f"radarr:1:{i}", 400 * GB) for i in range(5)]  # 5 items, 2000 GB
         snapshot_id = await _snapshot_with(session, condemned)
-        run = await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
         settings = ProfileSettings(
             caps_enabled=False,
@@ -564,9 +541,7 @@ class TestCapsAbortNeverTruncate:
         snapshot_id = await _snapshot_with(
             session, [("radarr:1:1", 400 * GB), ("radarr:1:2", 400 * GB)]
         )
-        run = await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
         settings = ProfileSettings(max_bytes_per_run=500 * GB, max_bytes_per_30d=2000 * GB)
         report = await Executor(
@@ -584,9 +559,7 @@ class TestArmingIsRequiredForARealRun:
         With the ceiling down, the executor refuses at the top -- and the transport guard
         would refuse again below it. Two layers, neither trusted alone."""
         snapshot_id = await _snapshot_with(session, [("radarr:1:1", 1 * GB)])
-        run = await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
         with pytest.raises(ExecutionError, match="Refusing to execute for real"):
             await Executor(
@@ -598,9 +571,7 @@ class TestArmingIsRequiredForARealRun:
         the streaming veto and the played-since check. With no gateway it refuses, loudly,
         before touching anything -- it does not silently proceed blind."""
         snapshot_id = await _snapshot_with(session, [("radarr:1:1", 1 * GB)])
-        run = await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
         with pytest.raises(ExecutionError, match="no clients configured"):
             await Executor(
@@ -611,9 +582,7 @@ class TestArmingIsRequiredForARealRun:
         """No Plex means no active-stream veto. Deleting blind to who is watching is the
         one thing that must never happen, so the run refuses."""
         snapshot_id = await _snapshot_with(session, [("radarr:1:1", 1 * GB)])
-        run = await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        run = await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
         gateway = ReapGateway(radarr={1: FakeRadarr()}, plex=None, tautulli=FakeTautulli())
 
         with pytest.raises(ExecutionError, match="without Plex"):
@@ -882,7 +851,6 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
             await build_plan(
                 session,
                 snapshot_id=snapshot_id,
-                policy_hash="p" * 64,
                 approved_by="admin",
                 only_media_keys={"radarr:1:2"},
             )
@@ -1038,6 +1006,42 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
 
         assert confirmation_phrase(await _planned_candidates(session, run)) == "REAP 1 SOUL 1 GB"
 
+    def test_an_unmeasured_item_reaching_the_byte_sum_aborts_the_run(self) -> None:
+        """The tripwire under every byte cap, tested directly because nothing can reach it.
+
+        ``_deletable`` filters unmeasured items out first, so this branch is unreachable
+        through ``execute()`` -- which is exactly why it needs its own test. Its docstring
+        calls it "the only thing standing between a future regression in the planner's
+        filter and a cap that silently stops working", and until now deleting the ``raise``
+        outright, or softening it to a log line, passed the whole suite. Note which way it
+        fails: a stand-in zero under-states the total, an under-stated total under-states
+        the cap, and a cap that does not fire deletes past what the owner approved. This is
+        the one lane where rounding toward keeping is backwards.
+        """
+        deletable = [
+            _Delete(steps=(), candidate=_fake_candidate("radarr:1:1", 10 * GB)),
+            _Delete(steps=(), candidate=_fake_candidate("radarr:1:2", None)),
+        ]
+
+        with pytest.raises(ExecutionError, match="couldn't measure the size"):
+            _deletable_bytes(deletable, allow_unmeasured=False)
+
+    def test_the_allowance_totals_what_it_could_measure_instead_of_aborting(self) -> None:
+        """The other arm: with the allowance open the unmeasured item is a legitimate member
+        of the set, so the sum reports the measured bytes rather than refusing the run.
+
+        It cannot tell "left out of the total" from "summed as the zero its stored size
+        implies" -- both produce 10 GB, so that distinction is unfalsifiable at this
+        function's interface. What bounds the unmeasured item is the item cap, not this
+        number, which is the whole reason the allowance is a count rather than a size.
+        """
+        deletable = [
+            _Delete(steps=(), candidate=_fake_candidate("radarr:1:1", 10 * GB)),
+            _Delete(steps=(), candidate=_fake_candidate("radarr:1:2", None)),
+        ]
+
+        assert _deletable_bytes(deletable, allow_unmeasured=True) == 10 * GB
+
 
 class TestTheUnmeasuredAllowance:
     """``max_unmeasured_per_run`` above zero lets a bounded number of unmeasured items be
@@ -1064,7 +1068,6 @@ class TestTheUnmeasuredAllowance:
         run = await build_plan(
             session,
             snapshot_id=snapshot_id,
-            policy_hash="p" * 64,
             approved_by="admin",
             max_unmeasured=3,
         )
@@ -1087,7 +1090,6 @@ class TestTheUnmeasuredAllowance:
             await build_plan(
                 session,
                 snapshot_id=snapshot_id,
-                policy_hash="p" * 64,
                 approved_by="admin",
                 max_unmeasured=1,
             )
@@ -1110,7 +1112,6 @@ class TestTheUnmeasuredAllowance:
         run = await build_plan(
             session,
             snapshot_id=snapshot_id,
-            policy_hash="p" * 64,
             approved_by="admin",
             max_unmeasured=2,
         )
@@ -1127,7 +1128,6 @@ class TestTheUnmeasuredAllowance:
         run = await build_plan(
             session,
             snapshot_id=snapshot_id,
-            policy_hash="p" * 64,
             approved_by="admin",
             max_unmeasured=2,
         )
@@ -1155,7 +1155,6 @@ class TestTheUnmeasuredAllowance:
         run = await build_plan(
             session,
             snapshot_id=snapshot_id,
-            policy_hash="p" * 64,
             approved_by="admin",
             max_unmeasured=2,
         )
@@ -1179,7 +1178,6 @@ class TestTheUnmeasuredAllowance:
         run = await build_plan(
             session,
             snapshot_id=snapshot_id,
-            policy_hash="p" * 64,
             approved_by="admin",
             max_unmeasured=1,
         )
@@ -1212,7 +1210,6 @@ class TestTheUnmeasuredAllowance:
         run = await build_plan(
             session,
             snapshot_id=snapshot_id,
-            policy_hash="p" * 64,
             approved_by="admin",
             max_unmeasured=1,
         )
@@ -1241,7 +1238,6 @@ class TestTheUnmeasuredAllowance:
         run = await build_plan(
             session,
             snapshot_id=snapshot_id,
-            policy_hash="p" * 64,
             approved_by="admin",
             only_media_keys={"sonarr:1:42"},
             max_unmeasured=5,
@@ -1273,7 +1269,6 @@ class TestUsingTheAllowanceDoesNotBrickTheNextThirtyDays:
         first = await build_plan(
             session,
             snapshot_id=past,
-            policy_hash="p" * 64,
             approved_by="admin",
             max_unmeasured=1,
         )
@@ -1288,7 +1283,6 @@ class TestUsingTheAllowanceDoesNotBrickTheNextThirtyDays:
         second = await build_plan(
             session,
             snapshot_id=later,
-            policy_hash="p" * 64,
             approved_by="admin",
             max_unmeasured=1,
         )
@@ -1309,7 +1303,6 @@ class TestUsingTheAllowanceDoesNotBrickTheNextThirtyDays:
         first = await build_plan(
             session,
             snapshot_id=past,
-            policy_hash="p" * 64,
             approved_by="admin",
             max_unmeasured=1,
         )
@@ -1317,9 +1310,7 @@ class TestUsingTheAllowanceDoesNotBrickTheNextThirtyDays:
         await _real(session, first, _gateway(radarr={1: FakeRadarr()}), settings=allowing)
 
         later = await _snapshot_with(session, [("radarr:1:9", 1 * GB)])
-        second = await build_plan(
-            session, snapshot_id=later, policy_hash="p" * 64, approved_by="admin"
-        )
+        second = await build_plan(session, snapshot_id=later, approved_by="admin")
         # Two already spent this month, and a cap of two.
         capped = ProfileSettings(max_items_per_run=2, max_items_per_30d=2, max_unmeasured_per_run=1)
         report = await Executor(
@@ -1349,7 +1340,6 @@ class TestTheAllowanceIsACountNotASwitch:
         run = await build_plan(
             session,
             snapshot_id=snapshot_id,
-            policy_hash="p" * 64,
             approved_by="admin",
             max_unmeasured=2,
         )
@@ -1376,7 +1366,6 @@ class TestTheCanaryRuleHoldsWhenNothingIsMeasured:
             await build_plan(
                 session,
                 snapshot_id=snapshot_id,
-                policy_hash="p" * 64,
                 approved_by="admin",
                 max_unmeasured=5,
             )
@@ -1400,7 +1389,6 @@ class TestTheHeldBackNoticeSurvivesTheAllowance:
         run = await build_plan(
             session,
             snapshot_id=snapshot_id,
-            policy_hash="p" * 64,
             approved_by="admin",
             only_media_keys={"sonarr:1:42"},
             max_unmeasured=5,
@@ -1425,7 +1413,6 @@ class TestTheHeldBackNoticeSurvivesTheAllowance:
             await build_plan(
                 session,
                 snapshot_id=snapshot_id,
-                policy_hash="p" * 64,
                 approved_by="admin",
                 only_media_keys={"sonarr:1:42"},
             )
@@ -1556,14 +1543,20 @@ class TestStopMidRun:
         assert report.state is RunState.COMPLETED
         assert radarr.delete_calls == [1]  # it ran to completion, not halted on the blip
 
-    async def test_a_hard_cancel_still_marks_aborted_and_tidies_plex(
+    async def test_a_hard_cancel_marks_aborted_and_defers_the_trash_purge(
         self, session: AsyncSession
     ) -> None:
         """A hard cancel mid-run (the app shutting down, or a force-stop) is not the graceful
-        Stop -- it arrives as CancelledError, not ExecutionError -- but the executor must still
-        mark the run ABORTED and tidy Plex for what was already removed BEFORE the cancellation
-        propagates, so shutdown never leaves the run EXECUTING with orphaned Plex entries. This
-        exercises the separate ``except asyncio.CancelledError`` branch and its finally."""
+        Stop -- it arrives as CancelledError, not ExecutionError -- and the executor must still
+        mark the run ABORTED before the cancellation propagates, so shutdown never leaves the
+        run EXECUTING.
+
+        What it must NOT do is finish tidying Plex. The purge polls each affected section for
+        up to ``_plex_settle_attempts * _plex_settle_delay`` before it can even decide, so
+        honoring it here holds the container's shutdown open for tens of seconds per section
+        and can empty a section's trash while the process is being torn down. The purge is
+        cosmetic; the state commit is not, so the state is made durable and the purge is
+        deferred to Plex's own scan or the next run over that section."""
         snapshot_id = await _snapshot_many(
             session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
         )
@@ -1594,8 +1587,11 @@ class TestStopMidRun:
         refreshed = await session.get(ReapRun, run.id)
         assert refreshed is not None
         assert refreshed.state is RunState.ABORTED  # not left EXECUTING
+        # The path-scoped refresh already fired with the delete, mid-run -- that is not part
+        # of the shutdown work.
         assert plex.refreshed == [("Movies", "/movies/One (2001)")]  # the first item's path
-        assert plex.emptied == ["Movies"]  # tidied on the cancel path, before it propagated
+        # ...but the settle-wait and the purge do not run inside the cancellation.
+        assert plex.emptied == []
 
     async def test_progress_is_reported_after_every_item(self, session: AsyncSession) -> None:
         """The polled status is fed a cumulative tally after each item, so a long run shows
@@ -2319,6 +2315,34 @@ class TestPlexCleanup:
         assert plex.refreshed == [("Movies 4K", "/media/movies-4k/Worthless (2001)")]
         assert plex.emptied == ["Movies 4K"]  # never "Movies"
 
+    async def test_two_libraries_sharing_a_title_are_told_apart(
+        self, session: AsyncSession
+    ) -> None:
+        """Two Plex libraries may legally share a title, and a title lookup answers with
+        whichever one the server listed first. Addressed by title, this run would refresh
+        one library, read ITS size as the count-delta baseline, and purge ITS trash: three
+        operations aimed at a library nothing was deleted from, on the most dangerous call
+        the app makes. Only the key tells them apart."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+        plex = FakePlex(
+            section_rows=[
+                PlexSectionPaths(key=1, title="Movies", locations=("/media/hd",)),
+                PlexSectionPaths(key=2, title="Movies", locations=("/media/4k",)),
+            ],
+            # The count-delta baseline: only the SECOND library shrinks by the one delete.
+            # Read off the first, the purge would be refused (or worse, allowed against a
+            # library whose size moved for some entirely unrelated reason).
+            item_counts_by_key={1: [100, 100], 2: [50, 49]},
+        )
+        gateway = _gateway(radarr={1: FakeRadarr(path="/media/4k/Worthless (2001)")}, plex=plex)
+
+        report = await _real(session, run, gateway)
+
+        assert report.deleted_items == 1
+        assert plex.refreshed_keys == [2]
+        assert plex.emptied_keys == [2]
+
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -2427,7 +2451,7 @@ async def _snapshot_many(
     now = utcnow()
     snapshot = Snapshot(
         created_at=now,
-        policy_hash="p" * 64,
+        policy_hash=await live_policy_hash(session),
         scoring_hash="s" * 64,
         horizon_at=now,
         item_count=len(items),
@@ -2477,9 +2501,24 @@ async def _seed_radarr(session: AsyncSession, *, exclusion: bool, instance_id: i
 
 
 async def _plan(session: AsyncSession, snapshot_id: int) -> ReapRun:
-    return await build_plan(
-        session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
+    return await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
+
+
+async def _save_policy(session: AsyncSession, body: PolicyBody, name: str = "saved") -> None:
+    """Append a movie policy row, the way the editor does.
+
+    ``active_policy`` reads the NEWEST row per media type, so appending is what changes the
+    policy in force -- and therefore the hash the executor compares a plan against."""
+    session.add(
+        Policy(
+            policy_hash=body.policy_hash(),
+            body_json=body.model_dump_json(),
+            media_type="movie",
+            name=name,
+            created_at=utcnow(),
+        )
     )
+    await session.flush()
 
 
 async def _armed_forever() -> bool:
@@ -2668,6 +2707,13 @@ class FakePlex:
     last value repeats), so a test can make a section "shrink" by exactly what was
     deleted -- or by more, to prove the purge refuses. The default never shrinks, which
     the count-delta gate treats as unconfirmed: no purge.
+
+    Sections are declared by title for readability, and the fake assigns each one a KEY --
+    which is all the executor ever sees, because a title cannot address a library (two may
+    share one). ``sections`` maps title to paths; ``section_rows`` takes explicit rows
+    instead, which is the only way to model two libraries of the same name. The recorded
+    ``refreshed`` / ``emptied`` are titles for legibility, with ``refreshed_keys`` /
+    ``emptied_keys`` beside them for when the title is deliberately ambiguous.
     """
 
     def __init__(
@@ -2676,37 +2722,55 @@ class FakePlex:
         streams: list[ActiveStream] | None = None,
         raise_on_streams: bool = False,
         sections: dict[str, list[str]] | None = None,
+        section_rows: list[PlexSectionPaths] | None = None,
         item_counts: dict[str, list[int]] | None = None,
+        item_counts_by_key: dict[int, list[int]] | None = None,
     ) -> None:
         self._streams = streams or []
         self._raise = raise_on_streams
-        self._sections = sections or {}
-        self._item_counts = {k: list(v) for k, v in (item_counts or {}).items()}
+        self._rows = section_rows or [
+            PlexSectionPaths(key=100 + i, title=title, locations=tuple(paths))
+            for i, (title, paths) in enumerate((sections or {}).items())
+        ]
+        self._titles = {row.key: row.title for row in self._rows}
+        # Scripted counts are declared per title (every test that uses them has one
+        # library of that name) and resolved to the key the executor asks with.
+        self._item_counts = {
+            row.key: list(item_counts[row.title])
+            for row in self._rows
+            if item_counts and row.title in item_counts
+        }
+        # ...and by key directly, for the same-title case where a title cannot say which.
+        self._item_counts.update({k: list(v) for k, v in (item_counts_by_key or {}).items()})
         self.refreshed: list[tuple[str, str]] = []
+        self.refreshed_keys: list[int] = []
         self.emptied: list[str] = []
+        self.emptied_keys: list[int] = []
 
     async def active_streams(self) -> list[ActiveStream]:
         if self._raise:
             raise PlexError("cannot read sessions")
         return list(self._streams)
 
-    async def section_paths(self) -> dict[str, list[str]]:
-        return dict(self._sections)
+    async def section_paths(self) -> list[PlexSectionPaths]:
+        return list(self._rows)
 
-    async def refresh_path(self, section_title: str, path: str) -> None:
-        self.refreshed.append((section_title, path))
+    async def refresh_path(self, section_key: int, path: str) -> None:
+        self.refreshed.append((self._titles[section_key], path))
+        self.refreshed_keys.append(section_key)
 
-    async def is_refreshing(self, section_title: str) -> bool:
+    async def is_refreshing(self, section_key: int) -> bool:
         return False
 
-    async def item_count(self, section_title: str) -> int:
-        scripted = self._item_counts.get(section_title)
+    async def item_count(self, section_key: int) -> int:
+        scripted = self._item_counts.get(section_key)
         if not scripted:
             return 100
         return scripted.pop(0) if len(scripted) > 1 else scripted[0]
 
-    async def empty_trash(self, section_title: str) -> None:
-        self.emptied.append(section_title)
+    async def empty_trash(self, section_key: int) -> None:
+        self.emptied.append(self._titles[section_key])
+        self.emptied_keys.append(section_key)
 
 
 class FakeTautulli:
@@ -2751,6 +2815,16 @@ class FakeTautulli:
 # ---------------------------------------------------------------------------
 
 
+class _ProcessDied(BaseException):
+    """Stands in for the process simply stopping mid-send.
+
+    Deliberately a ``BaseException``: the executor now funnels every ordinary ``Exception``
+    through ``_fail`` (one item's surprise must not wedge the run), so an ``Exception`` here
+    would be *handled* and would prove nothing about the journal surviving a death. This is
+    the shape of the thing that genuinely cannot be handled -- like the ``CancelledError`` a
+    shutdown sends -- so it escapes the same way a killed process does."""
+
+
 class _DyingRadarr(FakeRadarr):
     """Succeeds on the first delete, then simulates the process dying on the second."""
 
@@ -2758,7 +2832,7 @@ class _DyingRadarr(FakeRadarr):
         self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True
     ) -> None:
         if len(self.delete_calls) >= 1:
-            raise RuntimeError("process died mid-send")
+            raise _ProcessDied("process died mid-send")
         await super().delete_movie(movie_id, delete_files=delete_files, add_exclusion=add_exclusion)
 
 
@@ -2809,7 +2883,7 @@ class TestJournalDurability:
                     exclusion_poll_delay=0.0,
                     plex_settle_delay=0.0,
                 )
-                with pytest.raises(RuntimeError, match="process died"):
+                with pytest.raises(_ProcessDied, match="process died"):
                     await executor.execute(run_id)
                 # Deliberately no commit: the process "died" here.
 
@@ -3004,9 +3078,12 @@ class TestRollingThirtyDayCaps:
         first = await _plan(session, first_snapshot)
         assert (await self._execute(session, first.id, settings)).deleted_items == 1
 
-        # Age the verified deletion out of the window.
+        # Age the verified deletion out of the window. BOTH stamps: a deletion carries a
+        # verified_at and a file_removed_at, and the window reads either, so aging only one
+        # of them leaves the deletion inside the window through the other.
         for step in await _steps(session, first.id):
             step.verified_at = utcnow() - timedelta(days=40)
+            step.file_removed_at = utcnow() - timedelta(days=40)
         await session.commit()
 
         second_snapshot = await _snapshot_one(
@@ -3014,6 +3091,544 @@ class TestRollingThirtyDayCaps:
         )
         second = await _plan(session, second_snapshot)
         report = await self._execute(session, second.id, settings)
+
+        assert report.state is RunState.COMPLETED
+        assert report.deleted_items == 1
+
+
+# ---------------------------------------------------------------------------
+# The approval's second half: the policy that judged the plan
+# ---------------------------------------------------------------------------
+
+
+class TestAPolicyEditVoidsAPendingPlan:
+    """The manifest hash cannot see a policy edit -- it hashes frozen candidate rows, and
+    editing a policy touches none of them -- so a plan approved under a looser policy sailed
+    through every gate and deleted the very items a freshly-added protection was meant to
+    keep. The run carries the policy hash its snapshot was scored under; the executor
+    compares it against the policy in force now."""
+
+    async def _tighten(self, session: AsyncSession) -> None:
+        """Save a movie policy that differs from the shipped default, so the live hash moves."""
+        await _save_policy(session, DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 95}))
+
+    async def test_a_plan_under_the_policy_in_force_still_runs(self, session: AsyncSession) -> None:
+        """The control: nothing edited, so nothing is refused."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+
+        report = await _real(session, run, _gateway(radarr={1: FakeRadarr()}))
+
+        assert report.state is RunState.COMPLETED
+
+    async def test_tightening_the_policy_after_approval_refuses_the_run(
+        self, session: AsyncSession
+    ) -> None:
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        await self._tighten(session)
+
+        radarr = FakeRadarr()
+        # A refusal, not an abort: like the manifest re-check this runs before the run is
+        # claimed, so the route can answer it immediately instead of through the poll.
+        with pytest.raises(ExecutionError, match="policy changed"):
+            await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert radarr.delete_calls == []  # nothing was sent
+        refreshed = await session.get(ReapRun, run.id)
+        assert refreshed is not None
+        assert refreshed.state is RunState.PLANNED  # still runnable after a re-scan
+
+    async def test_the_dry_run_proves_the_same_refusal(self, session: AsyncSession) -> None:
+        """A simulation that still said "would delete" would send the operator to the real
+        run to discover the refusal, after they had typed the phrase."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        await self._tighten(session)
+
+        executor = Executor(session, safety=_read_only(), settings=ProfileSettings(), dry_run=True)
+        with pytest.raises(ExecutionError, match="policy changed"):
+            await executor.execute(run.id)
+
+    async def test_a_run_is_still_refused_after_the_policy_is_put_back(
+        self, session: AsyncSession
+    ) -> None:
+        """Putting the old numbers back into a NEW policy row restores the hash, because the
+        hash is over the body, not the row. This pins that the check is content-addressed --
+        an operator who edits and undoes has not been locked out of their own plan."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        await self._tighten(session)
+        await _save_policy(session, DEFAULT_MOVIE_POLICY)
+
+        report = await _real(session, run, _gateway(radarr={1: FakeRadarr()}))
+
+        assert report.state is RunState.COMPLETED
+
+
+# ---------------------------------------------------------------------------
+# Overrides reach a run already in flight
+# ---------------------------------------------------------------------------
+
+
+class TestAnOverrideChangedMidRun:
+    """A 200-item reap takes minutes, and the grace window exists so the owner may change
+    their mind inside it. The decisions were read once before the first item, so a Spare
+    clicked while the run was in flight was invisible to it and the file went anyway -- Stop
+    was the only mid-run control that actually worked.
+
+    Each test hangs its change off the ARM re-check, which the executor runs at the top of
+    every item, immediately before it re-reads the overrides. That is the moment a decision
+    committed from another screen has to land."""
+
+    @staticmethod
+    def _on_second_item(action: Callable[[], Awaitable[None]]) -> Callable[[], Awaitable[bool]]:
+        """An arm re-check that stays armed and fires ``action`` as item two begins."""
+        calls = {"n": 0}
+
+        async def recheck() -> bool:
+            calls["n"] += 1
+            if calls["n"] == 2:
+                await action()
+            return True
+
+        return recheck
+
+    async def test_a_spare_committed_mid_run_keeps_the_file(self, session: AsyncSession) -> None:
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+
+        async def spare_it() -> None:
+            await whitelist.set_override(
+                session,
+                media_key="radarr:1:2",
+                title="Worthless 1",
+                decision="spare",
+                note=None,
+            )
+            await session.commit()
+
+        radarr = FakeRadarr()
+        report = await _real(
+            session,
+            run,
+            _gateway(radarr={1: radarr}),
+            armed_recheck=self._on_second_item(spare_it),
+        )
+
+        assert report.state is RunState.COMPLETED
+        assert radarr.delete_calls == [1]  # the second item was never sent
+        assert report.deleted_items == 1
+        assert report.skipped == 1
+        kept = next(o for o in report.outcomes if o.media_key == "radarr:1:2")
+        assert kept.state is StepState.SKIPPED
+        assert "spared this by hand" in kept.detail
+
+    async def test_withdrawing_a_hand_reap_mid_run_keeps_the_file(
+        self, session: AsyncSession
+    ) -> None:
+        """The mirror case, and why the check consults the whole effective verdict and not
+        just the spare map: an item planned only because it was hand-reaped drops out the
+        moment that reap is withdrawn."""
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
+        )
+        # Item two is NOT scan-condemned; a hand reap is what puts it in the plan.
+        second = (
+            await session.execute(select(Candidate).where(Candidate.media_key == "radarr:1:2"))
+        ).scalar_one()
+        second.verdict = "abstain"
+        await whitelist.set_override(
+            session, media_key="radarr:1:2", title="Worthless 1", decision="reap", note=None
+        )
+        await session.flush()
+        run = await _plan(session, snapshot_id)
+
+        async def unreap_it() -> None:
+            await whitelist.remove_override(session, media_key="radarr:1:2")
+            await session.commit()
+
+        radarr = FakeRadarr()
+        report = await _real(
+            session,
+            run,
+            _gateway(radarr={1: radarr}),
+            armed_recheck=self._on_second_item(unreap_it),
+        )
+
+        assert report.state is RunState.COMPLETED
+        assert radarr.delete_calls == [1]
+        kept = next(o for o in report.outcomes if o.media_key == "radarr:1:2")
+        assert kept.state is StepState.SKIPPED
+        assert "hand reap on this was removed" in kept.detail
+
+    async def test_a_reap_added_mid_run_cannot_smuggle_an_item_in(
+        self, session: AsyncSession
+    ) -> None:
+        """The refresh may only ever REMOVE items. The run-start effective set is the ceiling,
+        because it is what the caps counted and what the operator's typed phrase described --
+        so an item they un-reaped before starting stays out even if the decision flips back
+        while the run is walking."""
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
+        )
+        second = (
+            await session.execute(select(Candidate).where(Candidate.media_key == "radarr:1:2"))
+        ).scalar_one()
+        second.verdict = "abstain"
+        await whitelist.set_override(
+            session, media_key="radarr:1:2", title="Worthless 1", decision="reap", note=None
+        )
+        await session.flush()
+        run = await _plan(session, snapshot_id)
+        # ...and withdrawn again before the run starts, so it is outside the run-start set.
+        await whitelist.remove_override(session, media_key="radarr:1:2")
+        await session.flush()
+
+        async def re_reap_it() -> None:
+            await whitelist.set_override(
+                session,
+                media_key="radarr:1:2",
+                title="Worthless 1",
+                decision="reap",
+                note=None,
+            )
+            await session.commit()
+
+        radarr = FakeRadarr()
+        await _real(
+            session,
+            run,
+            _gateway(radarr={1: radarr}),
+            armed_recheck=self._on_second_item(re_reap_it),
+        )
+
+        assert radarr.delete_calls == [1]  # still only the item the operator confirmed
+
+    async def test_an_unreadable_override_read_stops_the_run(self, session: AsyncSession) -> None:
+        """Fail-closed. If the decisions cannot be re-read we cannot prove the next file is
+        still one the owner wants gone, so the run halts rather than falling back on a map
+        that may be minutes old."""
+        snapshot_id = await _snapshot_many(
+            session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
+        )
+        run = await _plan(session, snapshot_id)
+        radarr = FakeRadarr()
+
+        real_overrides = whitelist.overrides
+        calls = {"n": 0}
+
+        async def flaky(sess: AsyncSession) -> dict[str, str]:
+            # Reads 1 and 2 are the run-start load and item one's refresh; the database
+            # "goes away" before item two is decided.
+            calls["n"] += 1
+            if calls["n"] > 2:
+                raise RuntimeError("the database went away")
+            return await real_overrides(sess)
+
+        with mock.patch.object(executor_module.whitelist, "overrides", flaky):
+            report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert report.state is RunState.ABORTED
+        assert "could not re-check your keep and remove decisions" in (report.aborted_reason or "")
+        assert radarr.delete_calls == [1]  # the first item went; the second was never sent
+
+
+# ---------------------------------------------------------------------------
+# A file that is gone is charged, whatever the verification said
+# ---------------------------------------------------------------------------
+
+
+class TestARemovalIsCountedEvenWhenTheStepFails:
+    """Radarr honors the delete, the file goes, and the import exclusion never appears
+    inside the poll window. The step is FAILED -- correctly, the verification failed -- but
+    the bytes are off disk, and counting only VERIFIED steps meant they were charged against
+    nothing. Repeat that on an intermittently slow Radarr and the monthly budget is spent
+    past, with the cap check reporting a number it knows to be short."""
+
+    @staticmethod
+    def _settings() -> ProfileSettings:
+        return ProfileSettings(
+            max_items_per_run=1,
+            max_bytes_per_run=10_000 * GB,
+            max_items_per_30d=2,
+            max_bytes_per_30d=10_000 * GB,
+        )
+
+    async def test_the_step_stays_failed_but_the_removal_is_stamped(
+        self, session: AsyncSession
+    ) -> None:
+        """The state must keep telling the truth: marking it VERIFIED would make the journal
+        and the after-action report claim an exclusion that never landed."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+
+        report = await _real(session, run, _gateway(radarr={1: FakeRadarr(land_exclusion=False)}))
+
+        # The sole item is the canary, so an unconfirmed delete halts the run -- as designed.
+        assert report.state is RunState.ABORTED
+        step = (await _steps(session, run.id))[0]
+        assert step.state is StepState.FAILED  # the verification really did fail
+        assert step.file_removed_at is not None  # and the file really did go
+
+    async def test_it_is_charged_against_the_rolling_budget(self, session: AsyncSession) -> None:
+        """The point of the stamp. Two such deletions fill a cap of two, and the third run
+        is refused -- where before, an unlimited number of them spent nothing."""
+        settings = self._settings()
+        for i in (1, 2):
+            snapshot_id = await _snapshot_one(
+                session, media_key=f"radarr:1:{i}", rating_key=700 + i
+            )
+            run = await _plan(session, snapshot_id)
+            await _real(
+                session,
+                run,
+                _gateway(radarr={1: FakeRadarr(land_exclusion=False)}),
+                settings=settings,
+            )
+
+        third_snapshot = await _snapshot_one(session, media_key="radarr:1:3", rating_key=703)
+        third = await _plan(session, third_snapshot)
+        radarr = FakeRadarr()
+        report = await _real(session, third, _gateway(radarr={1: radarr}), settings=settings)
+
+        assert report.state is RunState.ABORTED
+        assert "rolling cap of 2" in (report.aborted_reason or "")
+        assert radarr.delete_calls == []
+
+    async def test_the_run_reports_that_the_library_changed(self, session: AsyncSession) -> None:
+        """The rescan trigger. Reading the confirmed count alone left the queue offering
+        files that were already gone."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+
+        report = await _real(session, run, _gateway(radarr={1: FakeRadarr(land_exclusion=False)}))
+
+        assert report.deleted_items == 0  # nothing is CONFIRMED deleted
+        assert report.removed_unconfirmed == 1
+        assert report.library_changed is True
+
+    async def test_a_failure_before_the_delete_does_not_claim_a_removal(
+        self, session: AsyncSession
+    ) -> None:
+        """The mirror: a movie that would not delete at all changed nothing, so nothing is
+        stamped and no rescan is owed."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+
+        report = await _real(session, run, _gateway(radarr={1: FakeRadarr(become_gone=False)}))
+
+        assert report.removed_unconfirmed == 0
+        assert report.library_changed is False
+        assert (await _steps(session, run.id))[0].file_removed_at is None
+
+
+# ---------------------------------------------------------------------------
+# The progress bar counts the set the operator authorized
+# ---------------------------------------------------------------------------
+
+
+class TestProgressIsDenominatedInTheActedOnSet:
+    """``deletes`` deliberately keeps items spared after the plan was built, so the report
+    can say they were kept. Counting those in the denominator flipped the bar mid-run to a
+    number LARGER than the one the operator typed to authorize, and disagreed with the header
+    in the same window."""
+
+    async def test_a_spare_after_planning_does_not_inflate_the_total(
+        self, session: AsyncSession
+    ) -> None:
+        snapshot_id = await _snapshot_many(
+            session,
+            [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 2 * GB, 702), ("radarr:1:3", 3 * GB, 703)],
+        )
+        run = await _plan(session, snapshot_id)
+        await whitelist.set_override(
+            session, media_key="radarr:1:3", title="Worthless 2", decision="spare", note=None
+        )
+        await session.flush()
+
+        seen: list[ReapProgress] = []
+        executor = Executor(
+            session,
+            safety=_armed(),
+            settings=ProfileSettings(),
+            dry_run=False,
+            gateway=_gateway(radarr={1: FakeRadarr()}),
+            armed_recheck=_armed_forever,
+            progress=seen.append,
+            exclusion_poll_delay=0.0,
+            plex_settle_delay=0.0,
+        )
+        report = await executor.execute(run.id)
+
+        # Two items are acted on, and that is what the operator's phrase counts too.
+        assert len(await _planned_candidates(session, run)) == 2
+        assert {p.total for p in seen} == {2}
+        assert seen[-1].done == 2  # and the bar still finishes
+        assert report.skipped == 1  # the spared one is reported, just not denominated
+
+
+# ---------------------------------------------------------------------------
+# The season path: Plex, and a season with nothing left to delete
+# ---------------------------------------------------------------------------
+
+
+class TestASeasonPruneTidiesPlexToo:
+    """The class docstring said the trash interlock covers "every deletion routed through an
+    *arr". It covered movies only: the season path never nudged Plex, so a TV section never
+    joined the affected set and its trash was never purged -- stale "unavailable" episodes
+    piling up until Plex's own scheduled scan."""
+
+    async def test_a_pruned_season_refreshes_its_series_folder(self, session: AsyncSession) -> None:
+        snapshot_id = await _snapshot_one(
+            session, media_key="sonarr:1:42:3", rating_key=701, media_type="season"
+        )
+        run = await _plan(session, snapshot_id)
+        plex = FakePlex(sections={"Shows": ["/tv"]}, item_counts={"Shows": [50, 49]})
+
+        class _PathedSonarr(FakeSonarr):
+            async def series_by_id(self, series_id: int) -> dict[str, Any]:
+                return {**await super().series_by_id(series_id), "path": "/tv/A Show"}
+
+        report = await _real(session, run, _gateway(sonarr={1: _PathedSonarr()}, plex=plex))
+
+        assert report.state is RunState.COMPLETED
+        # Scoped to the series' own folder, never the whole library.
+        assert plex.refreshed == [("Shows", "/tv/A Show")]
+        # ...and the section now qualifies for the end-of-run purge, behind the same gate.
+        assert plex.emptied == ["Shows"]
+
+    async def test_a_series_with_no_path_simply_does_not_refresh(
+        self, session: AsyncSession
+    ) -> None:
+        """Best-effort, exactly like the movie path: the files are gone either way, and an
+        unmappable path costs a lingering entry, never a lost file."""
+        snapshot_id = await _snapshot_one(
+            session, media_key="sonarr:1:42:3", rating_key=701, media_type="season"
+        )
+        run = await _plan(session, snapshot_id)
+        plex = FakePlex(sections={"Shows": ["/tv"]})
+
+        report = await _real(session, run, _gateway(sonarr={1: FakeSonarr()}, plex=plex))
+
+        assert report.state is RunState.COMPLETED
+        assert plex.refreshed == []
+        assert plex.emptied == []
+
+
+class TestASeasonWithNothingLeftToDelete:
+    """The episode file ids are resolved live, immediately before the delete. If that resolve
+    comes back empty -- the files went out of band between the size re-read and here --
+    ``delete_episode_files([])`` is a documented no-op, nothing remains, and the season was
+    marked VERIFIED: a deletion asserted that never happened, charged in full against the
+    rolling budget. "No files" is a skip."""
+
+    class _VanishingSonarr(FakeSonarr):
+        """Reports files for the size re-read, then none for the live resolve."""
+
+        def __init__(self, **kw: Any) -> None:
+            super().__init__(**kw)
+            self._reads = 0
+
+        async def episode_files(self, series_id: int) -> list[dict[str, Any]]:
+            self._reads += 1
+            if self._reads >= 2:
+                return []
+            return await super().episode_files(series_id)
+
+    async def test_it_is_skipped_not_verified(self, session: AsyncSession) -> None:
+        snapshot_id = await _snapshot_one(
+            session, media_key="sonarr:1:42:3", rating_key=701, media_type="season"
+        )
+        run = await _plan(session, snapshot_id)
+        sonarr = self._VanishingSonarr()
+
+        report = await _real(session, run, _gateway(sonarr={1: sonarr}))
+
+        assert report.deleted_items == 0
+        assert report.deleted_bytes == 0
+        assert report.skipped == 1
+        assert sonarr.delete_calls == []  # no empty delete was even sent
+        outcome = report.outcomes[0]
+        assert outcome.state is StepState.SKIPPED
+        assert "nothing to delete" in outcome.detail
+
+    async def test_the_verified_unmonitor_keeps_its_state(self, session: AsyncSession) -> None:
+        """The unmonitor already took, and it is still in force. Overwriting its VERIFIED mark
+        with SKIPPED would make the journal deny a reversible edit that really happened."""
+        snapshot_id = await _snapshot_one(
+            session, media_key="sonarr:1:42:3", rating_key=701, media_type="season"
+        )
+        run = await _plan(session, snapshot_id)
+
+        await _real(session, run, _gateway(sonarr={1: self._VanishingSonarr()}))
+
+        by_kind = {s.kind: s.state for s in await _steps(session, run.id)}
+        assert by_kind["sonarr_unmonitor"] is StepState.VERIFIED
+        assert by_kind["sonarr_verify_unmonitor"] is StepState.VERIFIED
+        assert by_kind["sonarr_delete_files"] is StepState.SKIPPED
+
+
+# ---------------------------------------------------------------------------
+# One item's surprise cannot wedge the run
+# ---------------------------------------------------------------------------
+
+
+class TestAnUnmappedErrorDoesNotWedgeTheRun:
+    """A raw transport error out of a client -- Plex restarting between the connect and the
+    read, say -- used to escape ``_send_for_real`` and ``execute()`` alike, AFTER a file was
+    already deleted: the terminal step stuck SENT, the run stuck EXECUTING (which execute()
+    refuses to re-enter and nothing reconciles), and no report at all, so the operator could
+    not even see which files had gone."""
+
+    async def test_a_raw_error_fails_the_item_and_the_run_carries_on(
+        self, session: AsyncSession
+    ) -> None:
+        snapshot_id = await _snapshot_many(
+            session,
+            [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 2 * GB, 702), ("radarr:1:3", 3 * GB, 703)],
+        )
+        run = await _plan(session, snapshot_id)
+
+        class _SurprisingRadarr(FakeRadarr):
+            async def exclusions(self) -> list[dict[str, Any]]:
+                # Not an IntegrationError, not a PlexError: the shape nothing maps.
+                if self.delete_calls and self.delete_calls[-1] == 2:
+                    raise ValueError("something nobody anticipated")
+                return await super().exclusions()
+
+        radarr = _SurprisingRadarr()
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert report.state is RunState.COMPLETED  # the run finished rather than escaping
+        assert radarr.delete_calls == [1, 2, 3]  # and reached the third item
+        hurt = next(o for o in report.outcomes if o.media_key == "radarr:1:2")
+        assert hurt.state is StepState.FAILED
+        assert "unexpected error" in hurt.detail
+        steps = {s.media_key: s for s in await _steps(session, run.id)}
+        assert steps["radarr:1:2"].state is StepState.FAILED  # not left SENT forever
+        assert steps["radarr:1:2"].file_removed_at is not None  # and the removal is charged
+
+    async def test_a_plex_surprise_during_the_refresh_is_swallowed(
+        self, session: AsyncSession
+    ) -> None:
+        """``_best_effort_refresh`` is documented as never fatal, and a PlexError-only handler
+        did not deliver that. It runs immediately after a file is gone, so anything escaping
+        it lands on the worst possible moment."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+
+        class _DyingPlex(FakePlex):
+            async def section_paths(self) -> list[PlexSectionPaths]:
+                raise RuntimeError("the connection went away")
+
+        report = await _real(
+            session,
+            run,
+            _gateway(radarr={1: FakeRadarr(path="/movies/One")}, plex=_DyingPlex()),
+        )
 
         assert report.state is RunState.COMPLETED
         assert report.deleted_items == 1

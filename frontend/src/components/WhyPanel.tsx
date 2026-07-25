@@ -361,7 +361,14 @@ function Verdict({ item }: { item: CandidateDetail }) {
       <div className="verdict-label">{look.label}</div>
       <div className="verdict-score">
         <strong>{score}</strong>
-        <span className="muted">/100 &middot; your threshold is {explanation.threshold}</span>
+        {/* The threshold clause is dropped when the server could not read this row's
+            stored explanation: it sends no threshold rather than an invented one, and
+            "your threshold is" with nothing after it would be worse than saying nothing. */}
+        <span className="muted">
+          /100
+          {typeof explanation.threshold === "number" &&
+            ` \u00b7 your threshold is ${explanation.threshold}`}
+        </span>
       </div>
       {look.note && <p className="verdict-note">{look.note}</p>}
     </div>
@@ -896,6 +903,17 @@ export function WhyPanel({
           notice buries the identity. Here the notice sits directly above the verdict it
           explains. Movies and seasons share this panel, so both orders move together. */}
       <KeptNotice match={explanation.match} />
+
+      {/* The scan's stored reasoning for this one would not read back. Say that plainly:
+          the blocks below are empty because nothing could be read, not because nothing
+          protected it, and an empty panel alone would read as the second. Same amber
+          `.notice-warn` every other "we could not check" uses. */}
+      {item.explanation_unreadable && (
+        <p className="notice notice-warn">
+          Reaper couldn't read why it judged this one, so the reasons below are missing.
+          Run a scan to rebuild them. Nothing is removed on a reason Reaper can't show.
+        </p>
+      )}
 
       <Verdict item={item} />
 

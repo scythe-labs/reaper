@@ -76,6 +76,7 @@ from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
 from reaper.db.models import SizeSource
 from reaper.engine import identity
+from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.gates import ABSTAIN as GATE_ABSTAIN
 from reaper.engine.gates import PROTECT as GATE_PROTECT
 from reaper.engine.gates import Facts, GateId, GateResult
@@ -97,10 +98,15 @@ log = structlog.get_logger(__name__)
 _UNSET_OBS: Absent = Absent(source="unset")
 
 
-def _rating_obs(value: float | None, looked_up: bool) -> Observation[int]:
+def _rating_obs(value: float | None, looked_up: bool, dataset_degraded: bool) -> Observation[int]:
     """One IMDb figure as a three-state observation. See build_season_facts."""
     if value is not None:
         return Known(value=int(value), source="imdb")
+    if dataset_degraded:
+        # The dataset itself was unreadable, so the empty lookup map is not an answer
+        # about this show. Absent here would claim we checked and found it unrated --
+        # for every show at once -- which withdraws every rating-based keep.
+        return Unknown(reason="the IMDb ratings data could not be read", source="imdb")
     if looked_up:
         return Absent(source="imdb")
     return Unknown(reason="no IMDb id to look up", source="imdb")
@@ -446,6 +452,12 @@ def build_season_facts(
     # opposite instructions to the keep lane. Defaults to the fail-closed reading: a
     # caller that does not say keeps fully.
     rating_looked_up: bool = False,
+    # Whether the IMDb dataset could be read AT ALL this scan. A third state on top of
+    # `rating_looked_up`: the show may well carry an imdb id (looked_up True) and still
+    # have never been asked about, because the data was missing or stale. Defaults False,
+    # which with `rating_looked_up`'s False default still lands a silent caller on
+    # Unknown -- the reading that keeps fully.
+    rating_dataset_degraded: bool = False,
     plex_ratings: tuple[Rating, ...] = (),
     requested: Observation[bool] = _UNSET_OBS,
     show_ended: Observation[bool] = _UNSET_OBS,
@@ -502,11 +514,21 @@ def build_season_facts(
         # which floors on each item's own added_at. When we cannot establish the season's
         # arrival at all, dormancy is Unknown -- which protects -- exactly as a movie with
         # no added-at date does; we never fabricate a Known dormancy from the horizon.
+        # Through the one shared derivation (engine/dormancy.py), the same one the movie
+        # scan, the backtest and the prior calibration use (rule 3). The two arms differ
+        # only in what reference is available: with no arrival date there is nothing to
+        # fall back to, so a season with neither a play nor an added-at goes Unknown below
+        # rather than being measured from the horizon alone.
         if last_played is not None:
-            dormancy = Known(value=(utcnow() - last_played).days, source="tautulli")
+            reference = reference_instant(
+                last_played=last_played, added_at=last_played, horizon=horizon
+            )
+            dormancy = Known(value=dormancy_days(reference, now=utcnow()), source="tautulli")
         elif season_added_at is not None:
-            reference = max(season_added_at, horizon)
-            dormancy = Known(value=(utcnow() - reference).days, source="tautulli")
+            reference = reference_instant(
+                last_played=None, added_at=season_added_at, horizon=horizon
+            )
+            dormancy = Known(value=dormancy_days(reference, now=utcnow()), source="tautulli")
         else:
             # Matched to a Plex season, but no arrival date and no play history, so dormancy
             # cannot be measured and the season abstains: kept to be safe, never reaped. Warn
@@ -571,9 +593,15 @@ def build_season_facts(
         # The movie path draws the same line (snapshot.build_facts, display_meta
         # .dataset_lookup); see tests/test_fact_layer_states.py.
         imdb_rating_tenths=_rating_obs(
-            imdb_rating.average_rating * 10 if imdb_rating else None, rating_looked_up
+            imdb_rating.average_rating * 10 if imdb_rating else None,
+            rating_looked_up,
+            rating_dataset_degraded,
         ),
-        imdb_votes=_rating_obs(imdb_rating.num_votes if imdb_rating else None, rating_looked_up),
+        imdb_votes=_rating_obs(
+            imdb_rating.num_votes if imdb_rating else None,
+            rating_looked_up,
+            rating_dataset_degraded,
+        ),
         # A rank of None here is not an outage: rank_seasons deliberately leaves specials
         # (and content-less seasons, already filtered out before this point) out of the
         # newest->oldest ranking, so the only season reaching this branch with no rank is a
@@ -589,7 +617,6 @@ def build_season_facts(
         is_managed=Known(value=True, source="sonarr"),
         in_curated_list=in_curated,
         is_whitelisted=Known(value=whitelisted, source="lists"),
-        others_watching=Absent(source="tautulli"),
         # --- fields authorable in custom rules ---------------------------------
         requested=requested,
         genres=genres,
@@ -794,6 +821,28 @@ def _progress_by_user(
         progressed = stats.user_season_progress.get(user_id, {})
         for key in keys & show_keys:
             per_season[season_key_to_number[key]] = progressed.get(key)
+        if per_season:
+            result[str(user_id)] = per_season
+    return result
+
+
+def _last_play_by_user_season(
+    stats: SeasonWatchStats, season_key_to_number: Mapping[int, int]
+) -> dict[str, dict[int, datetime | None]]:
+    """For one show, each viewer's last play of each season: season number -> when.
+
+    The recency half of the sequential guard's anchor (season_pruning
+    .sequential_protections). ``None`` for a season whose timestamp is unreadable, so the
+    anchor can skip it rather than treat an unknown time as old. Scoped to this show's
+    keys, exactly like :func:`_progress_by_user`.
+    """
+    show_keys = set(season_key_to_number)
+    result: dict[str, dict[int, datetime | None]] = {}
+    for user_id, keys in stats.user_season_keys.items():
+        per_key = stats.user_season_last.get(user_id, {})
+        per_season: dict[int, datetime | None] = {
+            season_key_to_number[key]: per_key.get(key) for key in keys & show_keys
+        }
         if per_season:
             result[str(user_id)] = per_season
     return result
@@ -1122,7 +1171,7 @@ async def gather(
         if plex_library is not None:
             key = (item.source.instance_id, plex_library)
             if plex_library.strip().casefold() in identity.libraries_for_ids(
-                ids, tv_index, ("tvdb", "imdb")
+                ids, tv_index, identity.SHOW_ID_PRIORITY
             ):
                 mapped_lib_hits.add(key)
             elif resolution.status is identity.MatchStatus.AMBIGUOUS:
@@ -1170,7 +1219,9 @@ async def gather(
                 match_status=str(resolution.status),
                 detail=resolution.detail,
                 mapped_library=plex_library,
-                candidate_libraries=identity.candidate_libraries(ids, tv_index, ("tvdb", "imdb"))
+                candidate_libraries=identity.candidate_libraries(
+                    ids, tv_index, identity.SHOW_ID_PRIORITY
+                )
                 or None,
             )
 
@@ -1294,14 +1345,20 @@ async def gather(
     # A show's Sonarr imdbId and its Plex-matched imdb id are usually the same string;
     # the dataset lookup returns a keyed map, so deduping only trims the chunk count.
     imdb_ids = list(dict.fromkeys(imdb_ids))
+    ratings_degraded = False
     try:
         ratings = await ImdbRatings(engine).lookup(imdb_ids) if imdb_ids else {}
         # Same coverage signal as the movie path (snapshot.scan): low coverage means the
         # series rating floor protected little. Per scan, so info.
         log.info("scan.imdb_coverage", media="tv", requested=len(imdb_ids), resolved=len(ratings))
     except DatasetDegradedError as exc:
+        # Degrading is not enough on its own: with an empty map every show would read
+        # "checked, and unrated", withdrawing every rating-based keep at once. Flag it
+        # so each season records "could not check" instead. Twin of the movie path's
+        # handler in snapshot.scan (rule 72).
         degrade(str(exc))
         ratings = {}
+        ratings_degraded = True
 
     # The one clock read for the mid-binge expiry, taken once so every show in this scan
     # judges viewer activity against the same instant -- the snapshot discipline.
@@ -1330,6 +1387,7 @@ async def gather(
                 protect_incomplete_seasons=protect_incomplete_seasons,
                 flag_keep_conflicts=flag_keep_conflicts,
                 ratings=ratings,
+                ratings_degraded=ratings_degraded,
                 membership_index=membership_index,
             )
         )
@@ -1365,6 +1423,9 @@ def _judge_series(
     protect_incomplete_seasons: bool = True,
     flag_keep_conflicts: bool = True,
     ratings: dict[str, ImdbRating] | None = None,
+    # True when the IMDb dataset could not be read at all, so `ratings` being empty
+    # says nothing about any show in it. See build_season_facts.
+    ratings_degraded: bool = False,
 ) -> list[SeasonJudgment]:
     """Build a judgment for every content-bearing season of one series.
 
@@ -1419,9 +1480,19 @@ def _judge_series(
         now=now or utcnow(),
         hold_days=in_progress_hold_days,
     )
-    watchers_by_season = {
-        n: stats.watchers_all_time.get(s.rating_key, 0) for n, s in item.seasons_in_plex.items()
-    }
+    # Built over the seasons ON DISK -- the exact set the conflict detector compares --
+    # not over the ones Plex happened to resolve (rule 30). A season on disk that Plex
+    # never resolved has no rating key, so nobody could read its history: that is None,
+    # "not measured", and the detector skips it. Built from seasons_in_plex alone it was
+    # simply absent, and `.get(n, 0)` then asserted nobody watched it, which invented
+    # conflicts and told the operator a count that was never taken. 0 still means what it
+    # always did: resolved, and nobody watched it.
+    watchers_by_season: dict[int, int | None] = {}
+    for season in item.seasons:
+        in_plex = item.seasons_in_plex.get(season.season_number)
+        watchers_by_season[season.season_number] = (
+            stats.watchers_all_time.get(in_plex.rating_key, 0) if in_plex is not None else None
+        )
     plan = plan_series_prune(
         series_title=series_title,
         seasons=item.seasons,
@@ -1429,6 +1500,7 @@ def _judge_series(
         keep_first_season=keep_first_season,
         apply_keep_last=_keep_last_applies(series, keep_last_scope, request_index),
         progress_by_user=progress,
+        last_play_by_user=_last_play_by_user_season(stats, key_to_number),
         season_final_episode=item.season_final_episode,
         season_lookahead=season_lookahead,
         keep_in_progress=keep_in_progress,
@@ -1479,6 +1551,7 @@ def _judge_series(
             curated=curated,
             imdb_rating=show_rating,
             rating_looked_up=show_rating_looked_up,
+            rating_dataset_degraded=ratings_degraded,
             plex_ratings=item.show_plex_ratings,
             requested=requested_obs,
             show_ended=show_ended_obs,

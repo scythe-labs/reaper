@@ -4,6 +4,13 @@
 An unwritable data folder is the single most common deploy failure (a bind mount
 owned by root while the container runs unprivileged). These lock in that it fails
 with a plain, actionable message rather than SQLite's opaque driver traceback.
+
+One test here is uid-dependent and always will be: root bypasses directory permissions,
+so a chmod-based probe cannot fail for it. CI runs jobs in a container whose uid this
+repository does not pin, so that test may or may not run there -- which is why the real
+filesystem is also exercised by a case no uid can bypass
+(``test_a_real_unusable_data_dir_is_caught_whatever_the_uid``). The coverage no longer
+depends on who the runner happens to be.
 """
 
 from __future__ import annotations
@@ -63,7 +70,34 @@ def test_non_permission_error_omits_the_chown_advice(
     assert "No space left on device" in msg
 
 
-@pytest.mark.skipif(os.getuid() == 0, reason="root bypasses directory permissions")
+def test_a_real_unusable_data_dir_is_caught_whatever_the_uid(tmp_path: Path) -> None:
+    """A genuine filesystem refusal, on every runner, root or not.
+
+    The permission case below is the one operators actually hit, but root bypasses
+    directory permissions, so on a CI runner that runs jobs as root it silently skips --
+    and the module's stated subject ("the single most common deploy failure") goes
+    unverified with nothing on screen to say so. Its two other siblings monkeypatch
+    ``TemporaryFile`` to raise, which tests the *message* rather than the probe.
+
+    A data dir under a regular FILE is the failure no uid can bypass: ``mkdir`` gets
+    ENOTDIR from the kernel whoever asks. Different errno, same contract -- a real OSError
+    from a real path becomes a plain ``DataDirError`` rather than SQLite's opaque
+    "unable to open database file" several layers later.
+    """
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("")
+
+    with pytest.raises(DataDirError):
+        _settings(blocker / "data").ensure_data_dir()
+
+
+@pytest.mark.skipif(
+    os.getuid() == 0,
+    reason=(
+        "root bypasses directory permissions; the always-on ENOTDIR case above covers "
+        "the real-filesystem path here"
+    ),
+)
 def test_real_readonly_directory_is_caught(tmp_path: Path) -> None:
     readonly = tmp_path / "ro"
     readonly.mkdir()

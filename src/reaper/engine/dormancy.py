@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""How long an item has sat unwatched, derived in exactly one place.
+
+``days_observed_unwatched`` is the single biggest source of deletion pressure in the whole
+scorer, and it is *derived*, not read: "days since last play" is null for precisely the
+items this tool exists to find, and every naive implementation coerces that null to epoch 0
+-- roughly 20,600 days, the maximum pressure the scale can express, for the item we know
+least about. So the reference instant is chosen deliberately (:func:`reference_instant`) and
+the day count is floored (:func:`dormancy_days`).
+
+The live scan, the season scan, the backtest and the prior calibration all answer the same
+question, and each used to answer it in its own arithmetic. That is the dual derivation rule
+3 warns about: calibration bucketed on an integer floor while the backtest scored a float, so
+one item could bucket one side of a boundary and score the other. One helper, four callers.
+
+**Floored, never rounded or ceiled** (rule 31). Dormancy sits on the condemn lane, so
+reducing its precision must move it toward *less* pressure: 9.9 days dormant is 9, and an
+item one hour short of a 90-day floor stays kept for that hour.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+
+def reference_instant(
+    *, last_played: datetime | None, added_at: datetime, horizon: datetime
+) -> datetime:
+    """The instant dormancy is measured from.
+
+    The last play if there is one. Failing that, whichever is *later* of when the item
+    arrived and how far back the watch mirror reaches -- never epoch 0, and never a date
+    before our evidence begins. A mirror that only goes back a year cannot honestly say a
+    file has been ignored for five, so an item older than the mirror is measured from the
+    mirror's edge and reads as "not watched within our reach".
+    """
+    return last_played or max(added_at, horizon)
+
+
+def dormancy_days(reference: datetime, *, now: datetime) -> int:
+    """Whole days between ``reference`` and ``now``, floored.
+
+    Negative when ``reference`` is in the future, which callers treat as "cannot be judged"
+    rather than clamping to zero: a play after the cutoff means the evidence and the clock
+    disagree, and inventing a 0 there would score an item on a contradiction.
+    """
+    return (now - reference).days

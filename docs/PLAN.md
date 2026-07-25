@@ -1702,7 +1702,7 @@ A pass over the operator console fixed six things a real look surfaced:
 | **M7b** Leaving Soon label + Discord | ✅ done — reconcile, notifier, **and the live label write** (gated like a delete by default; `REAPER_ALLOW_UNARMED_LEAVING_SOON` opts in) |
 | **M8** Profiles + scheduler | ✅ done |
 | **Whitelist** — manual "spare this file" path, scan + planner + grace | ✅ done |
-| **Fairness** — per-requester leaderboard (the orphaned requester rule, wired) | ✅ done |
+| **Fairness** — per-requester leaderboard (it took the orphaned requester rule's *evidence*, never its verdict; the rule itself is deleted — see the correction below) | ✅ done |
 | **Scales** — the fairness view, renamed and rebuilt as per-requester cards (a balance bar weighing granted disk that is *earning its keep* vs *to reclaim*, the reclaimable summary leading with the disk not the count, each reclaimable title a chip that opens its real card). Nav label + heading say "Scales"; the internal `view` id, `["fairness"]` query key, and `/api/fairness` route are unchanged. | ✅ done |
 | **Scales sits on the last scan** (was a live requester-rule re-evaluation). It joins Seerr requests to the latest snapshot's candidates by tmdb/imdb, so it can never disagree with Review: a title is reclaimable only when the scan **condemns** it (`verdict == condemn`), watches are keyed on the candidate's own rating key (fixes the stale-Seerr-key false "nobody watched"), and a request the scan hasn't seen reads *not in the last scan*, never unwatched. The old live path re-derived the scan's title resolution (a second copy of the app's most delicate matching); reusing the snapshot keeps one resolution. `/api/fairness` rows now carry `reclaimable: [{title, size_bytes, item_id, group_key}]` (heaviest first, capped 25); report adds `not_in_scan` and `no_snapshot`. Root cause it fixes: the watch log has no content id, so the old single-key lookup missed plays on a title's other copies (4K/HD, merged listings, re-match) that the scan folds. Verified end-to-end: the reclaimable count agrees with Review, and a chip click lands on the item's Why panel. | ✅ done |
 | **Operator console** — service config, first-run setup, schedule, safety, redesigned review | ✅ done — the whole tool is now configurable from the browser |
@@ -2104,11 +2104,17 @@ live clients is that step.
   key judges PROTECT), the planner (excluded even from a frozen snapshot's condemned set),
   and grace (a canceled item leaves the countdown at once). Spare/un-spare on every
   condemn row. Un-sparing deletes nothing — it lets the file be judged again.
-- **Fairness view.** `engine/requester.py` was complete and tested but *orphaned*. It now
-  powers a per-requester leaderboard: requests made, disk granted, share ever played, disk
-  nobody watched. Every join hangs off the Plex rating key; the evidence query matches both
-  `rating_key` (movies) and `grandparent_rating_key` (a show's episodes). Read-only —
-  surfaces the rule's findings as information, not as a second condemn path.
+- **Fairness view.** A per-requester leaderboard: requests made, disk granted, share ever
+  played, disk nobody watched. Every join hangs off the Plex rating key; the evidence query
+  matches both `rating_key` (movies) and `grandparent_rating_key` (a show's episodes).
+  Read-only — information, never a second condemn path.
+  - **Correction (2026-07-24, review H-2).** This entry used to say the view *wired*
+    `engine/requester.py`, the orphaned requester rule. It did not: it took only
+    `WatchEvidence` from it, and the rule's `evaluate` — a whole second
+    CONDEMN/PROTECT/ABSTAIN decision beside `engine.verdict.decide_verdict` — stayed
+    unreachable from production, called only by its own tests. Rebuilding Scales on the
+    last scan (below) is what actually replaced it. The module is now deleted and
+    `WatchEvidence` lives in `services/fairness.py` with its one consumer (rule 38).
 - **Grace lifecycle.** The cancellable countdown, derived from `first_flagged_at +
   grace_days` (one source of truth, nothing to store). Items partition into counting-down
   and cleared; cancel = spare. Panel on the Reap view.

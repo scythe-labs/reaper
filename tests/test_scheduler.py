@@ -25,7 +25,7 @@ from reaper.db.base import Base
 from reaper.db.models import Instance, InstanceKind
 from reaper.db.session import create_engine, create_session_factory
 from reaper.secrets import resolve_secret_key
-from reaper.services import app_settings, scheduler
+from reaper.services import app_settings, imdb_dataset, scheduler
 from reaper.services.imdb_dataset import ImdbRatings
 
 
@@ -173,7 +173,15 @@ class TestTheSchedulerIsUpkeepOnly:
         # build_scheduler returns an unstarted scheduler; jobs are inspectable without
         # starting it, and there is nothing to shut down.
         job_ids = {job.id for job in sched.get_jobs()}
-        assert job_ids == {"refresh_ratings", "refresh_curated_lists", "full_history_sweep"}
+        assert job_ids == {
+            "refresh_ratings",
+            "refresh_curated_lists",
+            "full_history_sweep",
+            # Housekeeping, deliberately absent from the operator's Jobs list: deleting
+            # sessions whose window has already closed is not a choice to hand over, and an
+            # off switch on it could only ever let the table grow (PR-13).
+            scheduler.SESSION_SWEEP_JOB_ID,
+        }
         # Every job is a refresh/sweep. Nothing here touches the executor or an *arr
         # delete -- automated deletion is gated behind an autonomy grant, not a cron entry.
         for job in sched.get_jobs():
@@ -271,8 +279,8 @@ class TestUpkeepJobsRecordTheirLastRun:
     ) -> None:
         await _seed_synced(cache_engine, hours_ago=25)  # stale, so it downloads
 
-        async def fake_download(engine: AsyncEngine, data_dir: Path) -> int:
-            return 7
+        async def fake_download(engine: AsyncEngine, data_dir: Path) -> imdb_dataset.LoadResult:
+            return imdb_dataset.LoadResult(rows=7, skipped=0)
 
         monkeypatch.setattr(scheduler.imdb_dataset, "refresh", fake_download)
         await scheduler.refresh_ratings(cache_engine, tmp_path, main_factory)

@@ -72,7 +72,13 @@ def effective_spare_expiry(
 
 
 async def overrides(session: AsyncSession) -> dict[str, str]:
-    """``media_key -> decision`` for every manual override -- what live consumers read once.
+    """``media_key -> decision`` for every manual override, as of this read.
+
+    Cheap enough to re-read on a hot path: a two-column Core select, not an ORM entity load,
+    so it does not go through a session's identity map and a caller re-querying inside its
+    own long transaction still sees other sessions' committed rows. The executor relies on
+    exactly that -- it re-reads this before every item of a real run, so a Spare clicked
+    while a reap is in flight still keeps the file.
 
     A timed spare stays in force here until the next scan realizes its expiry. That is
     deliberate: between scans an expired spare keeps protecting the file, failing toward keeping

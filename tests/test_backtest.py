@@ -201,18 +201,7 @@ class TestPopularityIsWindowed:
         assert facts.distinct_watchers.value == 1
 
 
-class TestTheRequesterGateIsNotApplied:
-    """`others_watching` means "somebody other than the person who requested it".
-
-    In a general policy there is no requester, so "others" is everyone -- and the
-    gate would protect anything ever played by anyone, silently disabling the
-    scorer. It is Absent here, deliberately.
-    """
-
-    def test_others_watching_is_absent_in_a_backtest(self) -> None:
-        facts = facts_as_of(
-            _item(), [(1, CUTOFF - timedelta(days=1), "a")], cutoff=CUTOFF, horizon=HORIZON
-        )
-
-        assert facts is not None
-        assert not isinstance(facts.others_watching, Known)
+# A TestTheRequesterGateIsNotApplied class lived here, pinning that a backtest leaves
+# `others_watching` Absent so the requester gate could not protect everything ever played.
+# The gate and the fact are both gone (no builder ever produced a Known value, so it could
+# never protect anything); the invariant it guarded went with them.

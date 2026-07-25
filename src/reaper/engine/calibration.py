@@ -1,6 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Deriving the rewatch prior from *this* server's own history.
 
+**Engine-complete, not yet reachable.** :func:`derive` has no production caller: only
+``engine.backtest`` imports it, and nothing routes, schedules or CLIs a backtest. So no
+number an operator sees today comes from here, and no gate threshold is fitted by it --
+``MinDormancyGate`` enforces the operator's own stored number, and the backtest falls
+back to ``backtest.FALLBACK_REWATCH_PRIOR``. Nothing operator-facing may claim otherwise
+until :func:`derive` is wired (rule 24). This note mirrors the one at the top of
+``engine.backtest``, which was written and this module then went without.
+
 The prior -- "how likely is a film dormant for N days to be watched again this year" --
 is the baseline the scorer must beat. It is **not a constant**, and shipping it as one
 is a bug: every library has its own rhythm. A household of three has a different curve
@@ -37,6 +45,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from reaper.clock import from_epoch
+from reaper.engine.dormancy import dormancy_days, reference_instant
 
 log = structlog.get_logger(__name__)
 
@@ -231,11 +240,13 @@ async def derive(
         if arrived is None or arrived > cutoff:
             continue  # It did not exist yet. Judging it would be fiction.
 
-        last = before.get(key)
-        # Never played => measure from whichever is later: when it arrived, or the
-        # start of our evidence. NOT from epoch 0, which reads as ~20,600 days.
-        reference = last or max(arrived, horizon)
-        dormant = (cutoff - reference).days
+        # The one dormancy derivation (engine/dormancy.py), shared with the live scan, the
+        # season scan and the backtest -- so an item cannot bucket by one arithmetic here
+        # and score by another there.
+        reference = reference_instant(
+            last_played=before.get(key), added_at=arrived, horizon=horizon
+        )
+        dormant = dormancy_days(reference, now=cutoff)
         if dormant < 0:
             continue
 

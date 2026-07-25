@@ -53,7 +53,6 @@ def _facts(draw: st.DrawFn) -> Facts:
         is_managed=draw(_obs(st.booleans())),
         in_curated_list=draw(_obs(st.text(max_size=15))),
         is_whitelisted=draw(_obs(st.booleans())),
-        others_watching=draw(_obs(ints)),
         requested=draw(_obs(st.booleans())),
         genres=draw(_obs(st.text(max_size=15))),
         release_age_days=draw(_obs(st.floats(0, 40000, allow_nan=False))),
@@ -105,5 +104,4 @@ def _bare_facts() -> Facts:
         is_managed=Known(value=True, source="t"),
         in_curated_list=absent,
         is_whitelisted=Known(value=False, source="t"),
-        others_watching=absent,
     )

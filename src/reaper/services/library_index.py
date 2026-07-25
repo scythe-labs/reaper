@@ -32,8 +32,8 @@ result. A deployment with no Plex configured simply gets no enrichment.
 The sweep and the spine read different services, so they run concurrently and are
 joined only afterwards; the pairing goes through ``aio.gather_reaped`` so a spine
 failure aborts the scan exactly as it did when the reads were sequential, with the
-sweep reaped rather than left running. The sweep itself never raises -- it degrades
-and returns empty.
+sweep reaped rather than left running. Neither read raises: both degrade and return
+empty, so a failure of either costs the operator a plan, never the whole scan.
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ from typing import Any
 import structlog
 
 from reaper.aio import gather_reaped
+from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch
@@ -100,6 +101,21 @@ async def build_index(
             return {}
 
     async def _spine() -> list[Mapping[str, Any]]:
+        try:
+            return await _spine_rows()
+        except IntegrationError as exc:
+            # Same treatment the plexapi sweep already gets: degrade, return nothing,
+            # let the scan finish. A raise here would propagate through gather_reaped
+            # and kill the whole run with NO viewable snapshot, so a Tautulli hiccup
+            # would cost the operator their scan rather than costing them a plan. With
+            # no spine rows every item resolves unmatched, which abstains and keeps.
+            degrade(
+                f"the Plex library listing could not be read ({exc}), so nothing in this "
+                "scan could be matched to your libraries"
+            )
+            return []
+
+    async def _spine_rows() -> list[Mapping[str, Any]]:
         collected: list[Mapping[str, Any]] = []
         for library in await tautulli.libraries():
             if library.get("section_type") != section_type:

@@ -25,8 +25,15 @@ const DEADLINE_MS = 5 * 60 * 1000;
 
 /** What both poll endpoints answer with. */
 export interface PinPollResult {
-  status: "pending" | "ok" | "choose_server";
+  /** `retrying` is a NON-final status, like `pending`: the sign-in was approved but the
+   *  Plex server did not answer this instant (it may be restarting). The backend keeps
+   *  the sign-in alive and answers this instead of an error, because this loop stops for
+   *  good on any thrown status -- which used to throw away a sign-in that was still
+   *  perfectly good and send the operator back through the whole approval round trip. */
+  status: "pending" | "retrying" | "ok" | "choose_server";
   servers: PlexServerChoice[] | null;
+  /** Present only with status "retrying": why, in the operator's words. */
+  reason?: string | null;
 }
 
 interface PinPollHandlers<R extends PinPollResult> {
@@ -53,6 +60,9 @@ function failureText(e: unknown): string {
  *  out, failed) stops the timer and drops the server list before the handler runs. */
 export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandlers<R>) {
   const [servers, setServers] = useState<PlexServerChoice[] | null>(null);
+  // Why a still-running wait is taking longer than usual, straight from the backend.
+  // Cleared as soon as a poll gets past it, so a blip that resolves leaves no trace.
+  const [retrying, setRetrying] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
   const pinRef = useRef<number | null>(null);
 
@@ -80,6 +90,7 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
         if (Date.now() > deadline) {
           stop();
           setServers(null);
+          setRetrying(null);
           h.onTimedOut();
           return;
         }
@@ -89,17 +100,25 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
             if (result.status === "ok") {
               stop();
               setServers(null);
+              setRetrying(null);
               h.onOk(result);
             } else if (result.status === "choose_server") {
               // The sign-in stays valid while the picker is up; stop polling and hold
               // the list until the operator picks one.
               stop();
+              setRetrying(null);
               setServers(result.servers ?? []);
               h.onChooseServer?.(result.servers ?? []);
+            } else {
+              // "pending" or "retrying" -- neither is final, so keep polling. Only
+              // "retrying" carries a reason; say it, so a longer-than-usual wait is
+              // explained rather than looking like a hang.
+              setRetrying(result.status === "retrying" ? (result.reason ?? null) : null);
             }
           } catch (e) {
             stop();
             setServers(null);
+            setRetrying(null);
             h.onFailed(failureText(e));
           }
         })();
@@ -115,6 +134,7 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
       const pinId = pinRef.current;
       if (pinId == null) return;
       setServers(null);
+      setRetrying(null);
       const h = handlersRef.current;
       try {
         const result = await h.poll(pinId, machineId);
@@ -136,9 +156,10 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
   const cancel = useCallback(() => {
     stop();
     setServers(null);
+    setRetrying(null);
   }, [stop]);
 
-  return { servers, begin, pick, cancel };
+  return { servers, retrying, begin, pick, cancel };
 }
 
 /** One tappable row per server the account owns, and a way out. The surrounding

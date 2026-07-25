@@ -28,6 +28,8 @@ not.
 from __future__ import annotations
 
 import logging
+import os
+import stat
 import threading
 from collections import deque
 from contextlib import suppress
@@ -35,6 +37,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Any
 
 #: The levels the operator can pick. ERROR is deliberately absent from the UI choices:
 #: hiding warnings from a tool that deletes files serves nobody.
@@ -118,6 +121,40 @@ class LogRing:
 RING = LogRing()
 
 
+#: Owner-only, for the log files and the directory holding them.
+_OWNER_READ_WRITE = 0o600
+_OWNER_ONLY_DIR = 0o700
+
+
+class _OwnerOnlyRotatingFileHandler(RotatingFileHandler):
+    """A rotating handler whose files are owner-only *from creation*.
+
+    ``RotatingFileHandler`` takes no file mode, so under a typical 0022 umask both the
+    first file and every rotation are born world-readable -- and the DEBUG trail carries
+    the per-item reasoning behind each deletion. Clamping the umask around ``_open`` (the
+    one place the stdlib creates these files, for the live file and each rollover alike)
+    means the file exists at 0600 the instant it appears, with no widen-then-narrow window
+    (rules 14/83; S-6). The umask is process-global, so it is restored immediately; the
+    handler's own lock serializes ``_open`` against this handler's other writers.
+
+    A file left world-readable by an earlier version is tightened on open too, since the
+    umask alone only governs files being created.
+    """
+
+    # Returns Any because logging.FileHandler._open's stub type is not importable.
+    def _open(self) -> Any:
+        old_umask = os.umask(0o077)
+        try:
+            stream = super()._open()
+        finally:
+            os.umask(old_umask)
+        base = Path(self.baseFilename)
+        with suppress(OSError):
+            if stat.S_IMODE(base.stat().st_mode) != _OWNER_READ_WRITE:
+                base.chmod(_OWNER_READ_WRITE)
+        return stream
+
+
 class _FileSink:
     """A rotating file the ring mirrors each line into.
 
@@ -136,7 +173,7 @@ class _FileSink:
     """
 
     def __init__(self, path: Path) -> None:
-        self._handler = RotatingFileHandler(
+        self._handler = _OwnerOnlyRotatingFileHandler(
             path,
             maxBytes=LOG_MAX_BYTES,
             backupCount=LOG_BACKUP_COUNT,
@@ -229,8 +266,11 @@ def configure_file_logging(data_dir: Path) -> None:
         # DEBUG, so it should be no more readable than the databases beside it (rules 14/83).
         # mkdir's mode only applies to a dir it creates (and is masked by umask); chmod
         # unconditionally so a dir left world-readable by an earlier version is tightened too.
-        log_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        log_dir.chmod(0o700)
+        # The FILES get the same treatment in _OwnerOnlyRotatingFileHandler -- the directory
+        # alone used to be all this claim rested on, which left the files themselves 0644
+        # under a normal umask (S-6).
+        log_dir.mkdir(parents=True, exist_ok=True, mode=_OWNER_ONLY_DIR)
+        log_dir.chmod(_OWNER_ONLY_DIR)
         sink = _FileSink(path)
     except OSError:
         logging.getLogger(__name__).warning(

@@ -17,7 +17,11 @@ bug a shipping competitor actually has, and each one resolves toward *keeping* a
 
 * **Sequential-progression guard.** For every viewer part-way through the show, keep the
   season they last watched *and the next one* -- the one they are about to watch. Without
-  this, "keep the last 2 seasons" deletes the season a user is mid-binge on. Unioned
+  this, "keep the last 2 seasons" deletes the season a user is mid-binge on. "Last
+  watched" means most recent in TIME, not highest-numbered: anchoring on the number alone
+  left every re-watcher and every out-of-order viewer with no protection at all, because
+  someone who has finished the show is judged to be waiting on a season that does not
+  exist (see :func:`sequential_protections`, which now anchors on both). Unioned
   across viewers, because the set of "next episodes people are about to watch" is the
   union of everyone's. The policy can turn the guard off (``keep_in_progress``), and a
   viewer's hold expires once their whole-show activity is older than the policy's
@@ -124,41 +128,86 @@ class SeriesPrunePlan:
         return not self.conflicts
 
 
+def _anchor_positions(
+    anchor: int,
+    progress: Mapping[int, int | None],
+    season_final_episode: Mapping[int, int | None],
+) -> set[int]:
+    """What one anchor season protects: the season being watched, or the next one.
+
+    Fail-closed: if the anchor's final episode is unknown (Sonarr unavailable) or the
+    viewer's episode index is unknown (a season with only un-backfilled rows), protect
+    BOTH the anchor and the one after -- exactly the old season-level behavior, never
+    less.
+    """
+    final = season_final_episode.get(anchor)
+    watched = progress.get(anchor)
+    if anchor == SPECIALS_SEASON:
+        # Specials are not a sequence. There is no "next special" to line up, and
+        # season 1 is emphatically not what follows season 0, so a viewer part-way
+        # through the specials holds the specials themselves and nothing else.
+        if final is not None and watched is not None and watched >= final:
+            return set()
+        return {SPECIALS_SEASON}
+    if final is None or watched is None:
+        return {anchor, anchor + 1}
+    if watched >= final:
+        return {anchor + 1}  # finished the anchor, ready for the next
+    return {anchor}  # still watching it
+
+
 def sequential_protections(
     progress_by_user: Mapping[str, Mapping[int, int | None]],
     season_final_episode: Mapping[int, int | None],
     *,
     lookahead: int = SEQUENTIAL_LOOKAHEAD,
+    last_play_by_user: Mapping[str, Mapping[int, datetime | None]] | None = None,
+    include_specials: bool = False,
 ) -> set[int]:
     """Seasons to protect because a viewer is part-way through -- episode-precise.
 
-    For each viewer, anchor on ``m`` = the highest real season they have any play under. If
-    they have completed ``m``'s last on-disk episode they are ready for ``m+1`` (protect
-    ``m+1``); otherwise they are still watching ``m`` (protect ``m``). Then extend each
-    protected season by ``lookahead``. The union across viewers is the set somebody is
-    watching or about to.
+    Each viewer contributes up to two anchors, and the union across viewers is the set
+    somebody is watching or about to:
 
-    Fail-closed: if ``m``'s final episode is unknown (Sonarr unavailable) or the viewer's
-    episode index is unknown (a season with only un-backfilled rows), protect BOTH ``m`` and
-    ``m+1`` -- exactly the old season-level behavior, never less.
+    * the season of their **most recent play** (``last_play_by_user``), which is what
+      "the season they last watched" in this module's contract actually means; and
+    * the **highest-numbered** season they have any play under.
+
+    Both, because either can be the one they are on and neither subsumes the other. The
+    number alone was the whole bug: a viewer who has finished the show and started it
+    again is anchored on the finale, judged ready for a season that does not exist, and
+    protected nowhere -- so the season they are re-watching today is prunable, and the
+    conflict detector does not catch it either (every season shares the same all-time
+    watcher count). The recency anchor alone is not enough on its own either: someone
+    mid-binge on the newest season who dips back into an old one would lose the hold on
+    the season they are actually working through.
+
+    Each anchor is then resolved by :func:`_anchor_positions` and extended by
+    ``lookahead``. ``include_specials`` adds Season 0 to the anchor candidates, for the
+    one configuration where a special can be pruned at all (``keep_specials`` off);
+    otherwise specials are excluded, since a hold on something nothing can remove only
+    costs the operator seasons they wanted gone.
     """
+    last_play_by_user = last_play_by_user or {}
     protected: set[int] = set()
-    for progress in progress_by_user.values():
-        real = [n for n in progress if n != SPECIALS_SEASON]
-        if not real:
+    for user, progress in progress_by_user.items():
+        candidates = [n for n in progress if include_specials or n != SPECIALS_SEASON]
+        if not candidates:
             continue
-        m = max(real)
-        final = season_final_episode.get(m)
-        watched = progress.get(m)
-        if final is None or watched is None:
-            positions = {m, m + 1}  # fail closed to season-level
-        elif watched >= final:
-            positions = {m + 1}  # finished m, ready for the next
-        else:
-            positions = {m}  # still watching m
-        for start in positions:
-            for offset in range(lookahead + 1):
-                protected.add(start + offset)
+        anchors = {max(candidates)}
+        # A viewer with no readable timestamps keeps exactly the old anchor: unreadable
+        # is not evidence that they are somewhere else.
+        times = {
+            n: when
+            for n, when in (last_play_by_user.get(user) or {}).items()
+            if when is not None and n in progress and (include_specials or n != SPECIALS_SEASON)
+        }
+        if times:
+            anchors.add(max(times, key=lambda n: times[n]))
+        for anchor in anchors:
+            for start in _anchor_positions(anchor, progress, season_final_episode):
+                for offset in range(lookahead + 1):
+                    protected.add(start + offset)
     return protected
 
 
@@ -196,6 +245,10 @@ def plan_series_prune(
     keep_first_season: bool = True,
     apply_keep_last: bool = True,
     progress_by_user: Mapping[str, Mapping[int, int | None]] | None = None,
+    # Per viewer, per season, when they last played it. The sequential guard anchors on
+    # the most recent of these, which is the only way to tell a re-watcher (or an
+    # out-of-order viewer) from someone working steadily up the season numbers.
+    last_play_by_user: Mapping[str, Mapping[int, datetime | None]] | None = None,
     season_final_episode: Mapping[int, int | None] | None = None,
     season_lookahead: int = SEQUENTIAL_LOOKAHEAD,
     keep_in_progress: bool = True,
@@ -203,7 +256,10 @@ def plan_series_prune(
     protect_incomplete: bool = True,
     flag_keep_conflicts: bool = True,
     airing_seasons: Collection[int] = (),
-    watchers_by_season: Mapping[int, int] | None = None,
+    # Season number -> all-time watcher count, or None for a season nobody could
+    # measure (on disk, but never resolved in Plex). None is NOT zero: see
+    # _detect_conflicts.
+    watchers_by_season: Mapping[int, int | None] | None = None,
 ) -> SeriesPrunePlan:
     """Decide, for one series, which seasons may be pruned.
 
@@ -227,7 +283,15 @@ def plan_series_prune(
     # so no caller can half-apply it. Expiry (in_progress_hold_days) happens upstream in
     # active_progress, which needs the per-viewer timestamps this function never sees.
     seq_protected = (
-        sequential_protections(progress_by_user, season_final_episode, lookahead=season_lookahead)
+        sequential_protections(
+            progress_by_user,
+            season_final_episode,
+            lookahead=season_lookahead,
+            last_play_by_user=last_play_by_user,
+            # Specials can only be pruned with keep_specials off, so that is the only
+            # configuration where a viewer part-way through them needs the hold.
+            include_specials=not keep_specials,
+        )
         if keep_in_progress
         else set()
     )
@@ -324,7 +388,7 @@ def _protection_reason(
 def _detect_conflicts(
     prunable: Sequence[int],
     protected: Sequence[ProtectedSeason],
-    watchers_by_season: Mapping[int, int],
+    watchers_by_season: Mapping[int, int | None],
 ) -> list[PruneConflict]:
     """Flag any prunable season with strictly more viewers than a kept season.
 
@@ -334,15 +398,27 @@ def _detect_conflicts(
     season as a conflict -- refusing auto-approval for a comparison that means nothing.
     Specials are excluded from both sides. Strictly greater, so an equal count --
     common when neither has been watched -- is not a conflict.
+
+    A season with no watcher count (``None``: on disk, but never resolved in Plex, so
+    nobody could read its history) is skipped on BOTH sides. Reading it as 0 turned an
+    unmeasured season into a measured-and-unwatched one and invented conflicts out of
+    nothing: the show sat in permanent abstain, scan after scan, and the operator was
+    told in plain words that N people watched one season "more than watched" another --
+    a comparison against a number that was never taken. 0 stays a legitimate value for a
+    season Plex DID resolve and nobody watched, so the two cases must not be collapsed.
     """
     conflicts: list[PruneConflict] = []
     kept_seasons = [p for p in protected if p.season_number != SPECIALS_SEASON]
     for pruned in prunable:
         if pruned == SPECIALS_SEASON:
             continue
-        pruned_watchers = watchers_by_season.get(pruned, 0)
+        pruned_watchers = watchers_by_season.get(pruned)
+        if pruned_watchers is None:
+            continue
         for kept in kept_seasons:
-            kept_watchers = watchers_by_season.get(kept.season_number, 0)
+            kept_watchers = watchers_by_season.get(kept.season_number)
+            if kept_watchers is None:
+                continue
             if pruned_watchers > kept_watchers:
                 conflicts.append(
                     PruneConflict(

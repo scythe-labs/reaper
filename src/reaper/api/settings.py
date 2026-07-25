@@ -31,9 +31,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from reaper.api.auth import _client_ip, _throttled
-from reaper.api.middleware import parse_proxy_networks
+from reaper.api.auth import _busy_hashing, _client_ip, _throttled, _verify_admin_password
 from reaper.auth.cookie import read_session_token
+from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.ratelimit import argon2_gate, password_throttle
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
@@ -219,10 +219,13 @@ class PlexServerChoiceOut(BaseModel):
 
 
 class PlexLinkPollOut(BaseModel):
-    status: str  # "pending" | "ok" | "choose_server"
+    status: str  # "pending" | "retrying" | "ok" | "choose_server"
     server: PlexStatusOut | None = None
     # Present only with status "choose_server": the owned servers to pick from.
     servers: list[PlexServerChoiceOut] | None = None
+    # Present only with status "retrying": why this poll could not finish yet, in the
+    # operator's words. The sign-in is still good and the browser keeps polling.
+    reason: str | None = None
 
 
 class PlexResourceConnectionOut(BaseModel):
@@ -541,6 +544,9 @@ async def instance_root_folders(request: Request, instance_id: int) -> list[Root
     """
     # The Plex side of the suggestion: {library title: folder paths}. Best-effort -- if Plex is
     # not linked or is unreachable the folders still come back, just with no suggestions.
+    # Titled, not keyed, because the stored library map itself is titled; two libraries
+    # sharing a title contribute BOTH their folder lists here rather than one dropping the
+    # other, so the prefill considers everything under that name.
     section_paths: dict[str, list[str]] = {}
     async with _factory(request)() as session:
         server = (await session.execute(select(PlexServer))).scalars().first()
@@ -553,7 +559,8 @@ async def instance_root_folders(request: Request, instance_id: int) -> list[Root
             verify=server.verify_tls,
         )
         try:
-            section_paths = await plex.section_paths()
+            for section in await plex.section_paths():
+                section_paths.setdefault(section.title, []).extend(section.locations)
         except PlexError:
             section_paths = {}
         finally:
@@ -682,6 +689,15 @@ async def plex_link_poll(request: Request, payload: PlexLinkPollIn) -> PlexLinkP
                 for c in exc.candidates
             ],
         )
+    except PlexLinkRetryableError as exc:
+        # The sign-in was approved but the server could not be reached this instant -- it
+        # may just be restarting. ``poll_link`` deliberately KEEPS the pending login for
+        # exactly this case, so the answer must not be an error: the browser aborts its
+        # poll loop on any thrown status, which would strand the still-valid sign-in and
+        # send the operator back through the whole approval round trip (B2-14). Answered
+        # as a non-final status instead, so the loop keeps polling until it works or the
+        # deadline passes.
+        return PlexLinkPollOut(status="retrying", reason=str(exc))
     except PlexLinkError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -1194,16 +1210,7 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
                     "Set an admin password first. It's what confirms turning deletion on.",
                 )
             _throttled(password_throttle, *keys)
-            if not argon2_gate.acquire():
-                raise HTTPException(
-                    503,
-                    "The server is busy checking passwords. Please try again shortly.",
-                    headers={"Retry-After": "2"},
-                )
-            try:
-                ok = await admin_password.verify(session, payload.password or "")
-            finally:
-                argon2_gate.release()
+            ok = await _verify_admin_password(session, payload.password or "")
             if not ok:
                 for key in keys:
                     password_throttle.record_failure(key)
@@ -1235,28 +1242,16 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict
     async with _factory(request)() as session:
         if await admin_password.has_password(session):
             _throttled(password_throttle, *keys)
-            if not argon2_gate.acquire():
-                raise HTTPException(
-                    503,
-                    "The server is busy checking passwords. Please try again shortly.",
-                    headers={"Retry-After": "2"},
-                )
-            try:
-                ok = await admin_password.verify(session, payload.current_password or "")
-            finally:
-                argon2_gate.release()
+            ok = await _verify_admin_password(session, payload.current_password or "")
             if not ok:
                 for key in keys:
                     password_throttle.record_failure(key)
                 raise HTTPException(403, "The current password didn't match. Nothing was changed.")
             for key in keys:
                 password_throttle.record_success(key)
+        # Hashing the NEW password is one more Argon2 run, so it takes its own slot.
         if not argon2_gate.acquire():
-            raise HTTPException(
-                503,
-                "The server is busy checking passwords. Please try again shortly.",
-                headers={"Retry-After": "2"},
-            )
+            raise _busy_hashing()
         try:
             username = await admin_password.set_password(
                 session, payload.password, keep_session_token=keep
@@ -1539,7 +1534,9 @@ async def reveal_api_key(request: Request) -> ApiKeyOut:
 @router.post("/general/api-key")
 async def generate_api_key(request: Request) -> ApiKeyOut:
     """Generate the key, replacing any previous one. The old key stops working the
-    moment this returns -- rotation IS revocation, there is nothing to clean up."""
+    moment this returns, so rotating revokes the previous key. It does not CLOSE the
+    header-credential lane, though: there is always a working key afterwards. Turning the
+    lane off is what ``DELETE`` below is for."""
     key = secrets.token_urlsafe(32)
     async with _factory(request)() as session:
         await app_settings.set_api_key(session, _box(request), key)
@@ -1547,3 +1544,23 @@ async def generate_api_key(request: Request) -> ApiKeyOut:
     request.app.state.api_key_digest = hashlib.sha256(key.encode("utf-8")).digest()
     log.info("settings.api_key_rotated")
     return ApiKeyOut(key=key)
+
+
+@router.delete("/general/api-key")
+async def remove_api_key(request: Request) -> dict[str, bool]:
+    """Close the header-credential lane: delete the key, and stop honoring it now.
+
+    Rotating replaces one working key with another, so an operator who generated a key for
+    a one-off script had no way to shut the lane again (PR2-2). This is that way.
+
+    The stored digest on the app is cleared in the same breath. Auth reads that digest, not
+    the database, so a deleted key would otherwise keep working until the next restart.
+    Session-only, like every write here: the middleware is deny-by-default for anything
+    that is not a safe method, so a key cannot delete itself or anyone else's.
+    """
+    async with _factory(request)() as session:
+        await app_settings.clear_api_key(session)
+        await session.commit()
+    request.app.state.api_key_digest = None
+    log.info("settings.api_key_removed")
+    return {"removed": True}

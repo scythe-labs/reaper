@@ -277,7 +277,12 @@ suggestions. They extend the rules above; where one sharpens an earlier rule (22
     alone is held back from every plan (`planner.build_plan`) and refused again at send
     (`executor.size_confirmed`), and the operator is told the count and which items. The
     exception covers the item's own size only; a source that fails to *respond* still
-    degrades.
+    degrades. A success response carrying a null or malformed body is not a genuine empty
+    either: distinguish it and degrade, rather than reading it as "nothing found."
+    **Second sanctioned exception:** a source that can only ever *add* condemn evidence
+    (the batch enrichment in `season_scan`) may log instead of degrading, because losing it
+    can only lower pressure, which is the keep direction; the comment must say so. A source
+    whose loss can *withdraw* a protection never qualifies (I-1).
 29. **Every identity or membership lookup passes every id the item carries.** When calling
     `membership_index.lookup` or any cross-system join, pass imdb+tmdb+tvdb together;
     adding a new id kind to storage requires grepping and updating every lookup call site
@@ -302,7 +307,12 @@ suggestions. They extend the rules above; where one sharpens an earlier rule (22
     and the client sends only outbound notifications.
 34. **Every constructed client has an owner that closes it.** A client constructed
     outside an exit stack (or without entering one in the same scope) is a leak; add the
-    close path in the same diff as the construction.
+    close path in the same diff as the construction. Every branch counts, including early
+    returns and exceptions raised before the `try`: construct the client only *after* the
+    guard that can return early, or wrap construction-through-use in one `try/finally` or
+    `AsyncExitStack`. When the caller's own stack already entered the client for real,
+    register the close with `push_async_callback`, never a second `enter_async_context`
+    (PR-3, PR2-4).
 35. **New `Facts` fields must be populated (or explicitly `Absent` with a comment) in
     every fact builder**: snapshot movies, season_scan, backtest, calibration. Grep all
     builders when adding a field; a field populated in one path silently changes scores
@@ -497,6 +507,10 @@ extend the rules above; where one sharpens an earlier rule (52 → 6/29, 53 → 
 57. **Plex tag-style removals address the stored spelling and resolve sections by key.**
     Group items by the exact stored tag spelling (casefold-matched, following
     `remove_label`) and resolve sections via `sectionByID`, never by title (B-5, B-13).
+    `library.section(title)` is banned in `src/` outright, and this binds every call, not
+    just label and collection writes: trash, refresh, count, and refresh-status too. Where
+    only a title is known and it is ambiguous, ask each same-titled library in turn
+    (`lists.PlexCollection` is the model), never the first match (B-2, B-3).
 58. **A check-then-write re-reads inside the write transaction.** Splitting a state check
     into a read connection is fine only if the write transaction re-reads the state it acts
     on; DDL or destructive writes driven by pre-lock reads are a blocker (B-6).
@@ -518,7 +532,9 @@ extend the rules above; where one sharpens an earlier rule (52 → 6/29, 53 → 
     23/30 — B-8, PR-2).
 63. **Rows are keyed and aggregated by a stable server id, never a display name.** If the
     schema lacks an id, add one in the same change; user-level roll-ups key on the
-    always-present per-user id, not an optional linked-account id (B-9, U-8).
+    always-present per-user id, not an optional linked-account id (B-9, U-8). This binds
+    membership indexes and path tables as much as it binds display rows: any dict whose key
+    can collide is a bug, and a display name always can (B-3).
 64. **Removing a surface removes its whole supply chain in the same change.** Route,
     schemas, client method, props, query-key invalidations, and comments naming it; grep for
     the query key and prop name before closing (R-1, R-2, R-3).
@@ -539,3 +555,302 @@ extend the rules above; where one sharpens an earlier rule (52 → 6/29, 53 → 
 69. **The icon link the app rewrites at runtime is declared last in `index.html`.** Static
     fallback icons precede the dynamic one; adding an icon link after `#favicon` is a
     blocker (B-11).
+
+## Blockers from the fourth review pass
+
+Direct constraints from the fourth diff review (dev @ `cea72d1`, 2026-07-23; its 36 findings
+are remediated, and the review itself is preserved in this file's git history at `a7d7659`).
+Written as blockers, not suggestions; where one sharpens an earlier rule (70 → 23, 71 → 4/50,
+72 → 56/64, 74 → 27, 75 → 12, 77 → 61, 79 → 64, 82 → 24/28, 83 → 14, 86 → 21/53), the newer,
+more specific obligation governs.
+
+70. **Time-bounded state has exactly one durable realization point, shipped with the
+    feature.** Any stored decision that expires (a timed spare, a deadline, a TTL) must be
+    realized by code that WRITES the transition — an in-memory filter at read time is not
+    a realization — and every live consumer must converge after it. A docstring saying
+    "the next scan realizes it" requires the scan to actually persist that realization in
+    the same change; shipping the read half without the write half is a blocker (B-1;
+    extends rule 23: "expired" is a stored verdict state every consumer must handle).
+71. **Clearing a protective override always restarts the grace clock.** When an override
+    that kept an item off the reap list is removed, the FirstFlagged row is deleted before
+    `record_first_flagged_bulk` runs, unconditionally — never trust `last_seen_condemned_at`
+    continuity across a period when the item was invisible to the operator (B-2; sharpens
+    rules 4/50).
+72. **A hardening fix lands on every twin of the fixed function in the same change.**
+    Before closing a fix to a copied pattern (paging loops, section resolution, error
+    mapping), grep for the pattern's siblings and fix or explicitly defer each in writing;
+    "when next touched" deferrals are honored the moment ANY commit touches the twin, not
+    only when someone remembers (B-3, I-1; sharpens rules 56/64).
+73. **A password-gated destructive confirm is content-bound.** The confirm request carries
+    a server-verified token derived from the exact content the operator reviewed
+    (recomputed or stored server-side at stage time), and the action refuses if the
+    content changed since review. The execute route's phrase is the model; any new
+    stage-review-confirm flow (restore, import, bulk apply) must carry the same binding
+    (S-1).
+74. **A gate on an uploaded or restored artifact validates the artifact, never its
+    manifest.** Any property a safety check depends on (schema revision, version, counts)
+    is read from the artifact itself; a manifest or header claim may be cross-checked but
+    never trusted alone (S-2; extends rule 27's spirit to imports).
+75. **Restoring or importing an auth-bearing database is a credential change.** Purge
+    session rows, recovery tokens, and pending logins in the staged data at arm time, in
+    the same function that forces deletion off (S-3; extends rule 12).
+76. **Provenance and self-sufficiency fields derive from runtime precedence, not file
+    existence.** Anything reporting where a key/credential comes from or whether an
+    artifact is self-contained must consult the same resolution order the runtime uses
+    (`resolve_secret_key` precedence), never a bare `is_file()` (B-4).
+77. **Backend reporting surfaces consult effective overrides.** Any service that
+    summarizes items as removable/reclaimable/kept (Scales, breakdowns, exports) merges
+    live override state the same way the review routes do, or its copy explicitly states
+    it shows scan verdicts only (B-5; extends rule 61 from frontend prose to backend
+    aggregation).
+78. **Attribution honors the request's scope.** When a request carries a season (or any
+    partial) scope, per-person figures bind only the scoped subset; whole-title binding is
+    allowed only for unscoped requests or with the granularity stated in the copy beside
+    the number (B-6).
+79. **A cache-invalidation helper that claims completeness is grep-verified against every
+    query key, and a detail panel keyed on a row id is closed or re-resolved when its
+    snapshot is replaced.** Invalidation alone is insufficient when the key itself points
+    at superseded data (B-7; sharpens rule 64).
+80. **Every close affordance runs the modal's close guard.** Browser Back, gestures, and
+    any new dismissal path must honor the same `canClose` the scrim/Escape/✕ honor; a
+    back-layer close that bypasses a declared guard is a blocker (B-11; extends rule 60's
+    spirit to the history layer).
+81. **A baseline edit — even one reverted within hours — obligates a guarded migration.**
+    If the frozen baseline was ever wrong in a merged commit, every additive migration
+    covering that window carries the heal migration's reflection guard so in-window
+    databases upgrade instead of boot-looping. Never edit the baseline, and when the rule
+    is broken anyway, the follow-up is guarded, not plain (B-8; extends the frozen-
+    baseline golden rule).
+82. **A persistent sink degrades loudly, once.** Any always-on writer (log file mirror,
+    export stream) that can fail after setup carries a one-shot degradation flag surfaced
+    where its output is consumed; a bare `suppress(Exception)` around a steady-state write
+    whose output is documented as an audit trail is a blocker (PR-2; extends rules 24/28
+    to infrastructure sinks).
+83. **Owner-only-from-creation applies to every copy of a secret and to decision-trail
+    dirs.** Restored/extracted key material and newly created log directories get 0600 /
+    0700 at creation, not after a later chmod window (S-4, S-6; extends rule 14 beyond
+    first creation).
+84. **Operator-supplied URLs validate scheme http/https at the API edge, everywhere, via
+    one shared check.** Any new URL-shaped setting reuses the same validator the sibling
+    fields use; a `type="url"` input is not validation (S-5; extends rule 13's boundary
+    discipline).
+85. **Success copy fires on settled state.** A toast, timestamp, or "done" indicator is
+    set only after the operation it describes has actually completed (refetch settled,
+    final chunk streamed) — never at issuance (PR-5, I-2; extends rule 21's honesty to
+    timing).
+86. **Copy describing a clock, zone, or schedule renders the effective stored setting.**
+    Any help text that tells the operator what time base applies must read the setting
+    that governs it, not a static guess about the deployment (U-1; sharpens rules 53/55
+    for time).
+87. **A guarded startup replay is mirrored on every runtime replay of the same data.**
+    When startup wraps a stored-value replay in a tolerant guard (malformed cron, bad
+    zone), every settings-save or reschedule path replaying the same stored values carries
+    the same guard, so a save can never 500-and-half-apply what boot survives (PR-4;
+    extends rule 55's side-entrance principle in the other direction).
+
+## Blockers from the fifth review pass
+
+Direct constraints from the whole-backend review (`docs/CODE_REVIEW.md`), merging both of
+its rule sets: the 23 carried from its first pass and the 18 new in its second. Written as
+blockers, not suggestions.
+
+Four of its 41 were already law here and were folded into the rule they duplicate rather
+than restated (its 2 → rule 57, its 3 → rule 63, its 8 → rule 24, its 12 → rule 34); pairs
+governing one mechanism were merged. **Several are worded against what was actually built,
+not what the review proposed** — where remediation went a different way, the rule follows
+the code. The sharpest case is rule 96: the review's own proposed fix would have read
+unreadable evidence as "nothing was wrong," and the rule says the opposite. Where one
+sharpens an earlier rule, the newer, more specific obligation governs.
+
+88. **Case-fold both sides of every label, tag, collection, or list-name match.** When one
+    side of a lookup is lower-cased, the other must be too. Lower-casing the source but not
+    the operator's configured value is a fail-open protection bug: the protection stops
+    matching and nothing announces it. Every new name-matching path ships a mixed-case test
+    (B-1).
+89. **Every windowed list read goes through the complete-or-raise paging helper.** Raw
+    `server.query(...)` and raw multi-id metadata reads that can silently truncate are
+    banned; page through `clients/plex.py`'s `_iter_pages` or assert `totalSize`
+    completeness, and give any unbounded loop a page backstop (`MAX_HISTORY_PAGES` is the
+    model). A truncated read of a protection source is a protection that quietly stopped
+    covering most of the library (B-4, I-1, PR-6; sharpens rule 56).
+90. **A populated container that filters down to zero usable items is a failure, not an
+    empty success.** Rule 27 covers container-missing and malformed-body; this is the third
+    case, where the body parses and every row in it is unusable. Distinguish it before any
+    atomic `DELETE` + reinsert of protection membership: with members already stored,
+    preserve them and degrade (B-5; sharpens rule 27).
+91. **A settings or config read *failure* is not the same as "nothing configured."** On any
+    safety-scoping path, a read error degrades the snapshot; only a successful read that
+    finds nothing may fall back to the permissive default. A transient error must never
+    silently widen what can be reaped, and copy calling the wider scope the "safe" fallback
+    is wrong: widening is the condemn direction (PR-1; sharpens rules 2/65).
+92. **Degradation is detected by a typed flag on the context, never by substring-matching a
+    free-text reason.** Any `"some-source" in " ".join(reasons)` coupling between producer
+    and consumer is a blocker, because the reason string is operator copy and will be
+    reworded. Carry an explicit boolean (`activity_degraded`) (H-1, B-11).
+93. **`Absent` means "we looked and there is genuinely nothing"; a source that could not be
+    read is `Unknown`.** Never route a read failure to `Absent`: it withdraws the
+    protection library-wide and prints a why-panel asserting a check that never ran, while
+    `Unknown` blocks the gate and takes the full keep discount. Conversely, a genuine
+    `Absent` on a numeric signal routes to `NOT_APPLICABLE` (evaluated, weight retained,
+    coverage intact) as `SEASON_RANK` and the graded custom path already do, never to the
+    `UNREADABLE` branch. Degrading the snapshot is necessary but not sufficient, and a
+    comment claiming degradation already prevents this is the bug (B-7, B2-12; sharpens
+    rules 2/28).
+94. **Every `WHERE col IN :keys` over a scan-sized set is chunked at 500 or fewer.** An
+    unchunked expanding bindparam overflows SQLite's variable ceiling and aborts the scan;
+    chunk it, or express the filter as an anti-join. A new `parent_rating_key`-style filter
+    also needs its covering index. Reconcile a `cache.db` index by name and create the
+    missing one in place; never bump the column-shape tuple to force it, which drops the
+    whole mirror (P-1, P-3, P-4).
+95. **Every numeric API bound is validated at the boundary with `ge`/`le`, and every
+    destructive-path list or string carries `max_length`.** A `min()` cap with no floor
+    lets `limit=-1` become `LIMIT -1`, which is unbounded (B-8, PR-8).
+96. **A why-panel extractor never raises a row off the queue, and its fallback resolves
+    toward keeping.** Guard every `json.loads` plus model construction on a stored
+    explanation with `(ValueError, TypeError)`. The value it falls back to is the
+    *conservative* one, never the permissive one: a match record that is present but
+    unreadable is a BAD match that holds the reap, not an absent one that clears it.
+    Genuinely absent stays permissive; unreadable does not. Surface the unreadable state to
+    the operator rather than printing a fabricated number in its place (PR-7, B-10).
+97. **Anything that counts what was deleted counts the file's removal, not the bookkeeping
+    that follows it.** A live re-resolve that returns no files is `_mark_skipped` ("no files
+    resolved; kept"), never an approved size counted as deleted, and it never overwrites an
+    already-VERIFIED step. In the other direction, a step whose file is confirmed gone but
+    whose follow-up (exclusion, refresh) failed still charges the rolling caps: it stays
+    FAILED, because marking it VERIFIED would make the journal claim a verification that
+    explicitly failed, and the charge rides on the durable `file_removed_at` column instead
+    (B-9, B2-10, PR2-1; sharpens rules 5/30).
+98. **Throttles and the Argon2 gate bind at the granularity of the thing being abused.**
+    Every unauthenticated, state-establishing endpoint is throttled per-IP (`plex/start`
+    and `plex/poll` exactly as `/local` and `/recover`), and outbound-amplifying routes cap
+    per-IP resource creation. The concurrency gate acquires one slot per *hash*, not per
+    request: a gate wrapping a loop of N Argon2 verifications bounds nothing. A full gate
+    returns 503 and must never be allowed to register as a failed attempt, or the DoS
+    defense becomes the lockout (S-1, S-4; sharpens rule 11).
+99. **The scrubber covers path-embedded secrets, and nothing renders a record the scrubber
+    has not seen.** Add the webhook path shape to `_redact_str`, so a token in a URL path is
+    scrubbed whatever log key it rides under. Redaction runs *after* exception formatting on
+    both paths, the stdlib handler and the structlog chain alike: an HTTP error's `str()`
+    embeds the full request URL, so a processor order that redacts before `format_exc_info`
+    (or a handler that appends `self.format(record)` beside an already-redacted copy) writes
+    the secret in the clear (S-2, S2-1; sharpens rule 13).
+100. **Key or salt material that is present but unreadable refuses to boot; it never
+     regenerates and proceeds.** Regenerating silently bricks every credential written
+     under the prior material. Raise with an actionable message and surface it in the UI
+     safety state. Genuinely *missing* material is a different case and may still be
+     generated: absent is a first run, corrupt is a disaster (S-5; sharpens rule 2).
+101. **A forwarded request header that changes an auth or security decision is trusted only
+     from a configured trusted proxy.** `X-Forwarded-Proto` passes the same
+     `trusted_proxies` check `X-Forwarded-For` already does (S-7).
+102. **A task created with `create_task` has a done-callback that logs its exception.** A
+     fire-and-forget startup or maintenance task must not swallow a raise at GC time
+     (PR-12).
+103. **A hardcoded list that mirrors the model or schema set carries a drift guard.** The
+     restore auth-purge list, generated-asset manifests, and server-defined id lists either
+     derive from one declaration or are covered by a test that fails when the set changes.
+     When the guard flags a member, classify it in writing as considered-and-kept rather
+     than silencing it (R-3; sharpens rules 66/68).
+104. **A value derived two ways in two modules is derived once in a shared helper, and the
+     helper defines what a record lacking it thaws as.** Dormancy days
+     (`engine/dormancy.py`), condemn/score/coverage, and any parallel field list
+     (`_OBS_FIELDS`) have exactly one derivation; prefer `dataclasses.fields(...)` over a
+     hand-maintained parallel list. Moving a derivation to the write side moves the problem
+     to the read side, so state the thaw explicitly: a key a stored snapshot predates is
+     `Unknown`, never `Absent` and never a `KeyError` (R-1, R-2; sharpens rule 3).
+105. **A stored policy body that gains a protection-bearing field ships a loader shim in the
+     same change, and the shim degrades the scan.** When a field moves out of a gate row
+     into the body (as the rating bars did), a body written before the move is migrated on
+     load, keyed on the raw key being *absent* (an explicit `[]` is an operator who cleared
+     it deliberately, rule 1) and never on `schema_version`, which cannot discriminate
+     across a change that did not bump it. Recover only where something actually was
+     protecting: a *disabled* gate is left alone, since nothing was protecting anything
+     either way and there is no reason to degrade a scan over it. The migrated body sets the
+     `ActivePolicy.repaired` flag, degrades the scan, and opens the editor on it as an
+     unsaved draft. A protection that silently evaluates to "nothing configured" is the
+     worst outcome this codebase has (B2-1; sharpens rule 65).
+106. **Every *spelling* of an id the item carries goes into every lookup, on the movie path
+     exactly as on the TV path.** An item holding both `imdb_id` and `plex_imdb_id` is
+     looked up with `item.imdb_id or item.plex_imdb_id`; passing one where two exist is a
+     fail-open protection bug. Rule 29 covers id *kinds*; this covers two sources for one
+     kind (B2-6; sharpens rule 29).
+107. **A field offered in the policy vocabulary is populated by the fact builder for every
+     media type it is offered on.** A `FieldSpec` with no `media_types=` is offered on both
+     policies; if the season builder hardcodes it `Absent`, restrict the spec in the same
+     change, on *both* lanes. Removal weights sum to a fixed 100, so a condemn rule on an
+     always-`Absent` field permanently depresses every score in that media type rather than
+     merely never firing. Operators holding a stored rule that just became unofferable are
+     warned, not silently dropped (B2-3; sharpens rule 35).
+108. **A text condition value is rejected at the save boundary when it strips to empty.**
+     `contains ""` matches every item and lands the rule's full weight library-wide; `in ""`
+     can never match and reports as a green "checked, did not fire." Reject
+     `value.strip() == ""` for CONTAINS/IN, and reject an IN target whose split yields no
+     elements, so a comma-only list cannot pass (B2-4; sharpens rule 32).
+109. **An identity tier that can corroborate a bind is computed even when an earlier tier
+     already bound, as a cross-check only, never as an originator.** Pass the binding ids
+     explicitly rather than reordering a priority tuple, so a corroborating id kind can add
+     an abstain but can never originate a bind. A `tier1 is None` guard in front of a
+     corroborating tier makes the documented contradiction veto structurally undetectable.
+     A multi-hit tier is silence, not a contradiction, and a hit inside the earlier tier's
+     merged group is agreement (B2-5, B2-7; sharpens rule 6).
+110. **Every client method maps its failures to the client's domain error type.** One read
+     that lets a raw transport exception escape defeats every `except <Domain>Error` in the
+     call chain. A method documented "never fatal" catches `Exception`, not one mapped type
+     (B2-2; sharpens rule 9).
+111. **The executor's send loop and `execute()` each carry a catch-all that records terminal
+     state.** An unmapped exception after a file is already deleted must not leave the step
+     `SENT`, the run `EXECUTING`, and the report `None` with nothing able to reconcile it.
+     Per-item surprises funnel through `_fail`; run-level surprises record `ABORTED` and
+     return the report rather than re-raising into a caller that will not persist it
+     (PR2-1; sharpens rule 26).
+112. **The executor re-reads the operator's spare decisions before every item.** A decision
+     map loaded once at run start means a Spare clicked during a multi-minute reap is
+     ignored and the file is deleted. Refresh only the per-item spare and effective-set
+     checks, intersected with the frozen run-start set so the refresh can only ever *remove*
+     items, never add one the operator never approved; cap math stays on the run-start set
+     (rule 30). Route it through the production `condemned.effective_verdict`, never a
+     second membership copy (B2-9; sharpens rules 2/22).
+113. **A run's approval is bound to the policy it was planned under.** `run.policy_hash` is
+     recorded *and enforced at execute time*, with operator copy telling them to re-scan,
+     since a policy edit does not trigger a scan on its own. A plan built after the edit is
+     refused too, not just one built before it. Code and comments disagreeing about a safety
+     binding is itself the blocker: never leave a hash recorded and unread (B2-8; sharpens
+     rules 7/24).
+114. **A sleep, retry budget, or allocation whose size comes from a remote server is
+     clamped.** Clamp to a ceiling *and* to the caller's remaining deadline.
+     `notify/discord.py`'s `_MAX_RETRY_AFTER` is the pattern; any other site honoring
+     `Retry-After` matches it (S2-2).
+115. **A protection-list slug that changes shape disables its predecessor in the same
+     transaction.** Slugs derived from operator settings (match mode, instance id) leave
+     orphaned rows that `enabled = 1` keeps protecting forever, so a tightening the operator
+     saved never takes effect. Either disable every slug not produced by the current run, or
+     keep the setting out of the slug. Retire only on a *successful* sync, and only for a
+     family whose source was actually reachable: a failed sync's slug is exactly the
+     membership that must survive (B2-25).
+116. **A degraded snapshot's side effects are gated with its plan.** Un-plannable also means
+     un-announced: grace clocks, the Leaving Soon shelf, and Discord all read the condemned
+     set, and none may act on evidence the scan itself declared untrustworthy (B2-26;
+     sharpens rules 2/8).
+117. **A gate or option the operator can enable must be able to fire.** If every fact
+     builder sets its input `Absent`, either wire the input or retire the gate: remove it
+     from `GATE_TYPES` and refuse it in `build_gates`, keeping its `GateId` only so stored
+     explanations still decode, and refuse to scan under a policy that enables it. A
+     protection that is built, evaluated, hashed, and can never keep a file is worse than
+     one that does not exist, because the operator counts on it (B2-15; sharpens rule 38).
+118. **Every deletion-path interlock has a test that fails when the interlock is deleted.**
+     Write the test against the interlock function directly when the guard upstream makes
+     it unreachable through the public path: an unreachable tripwire with no test is one
+     refactor away from silently gone. This covers the route-to-planner conversion of an
+     empty selection as much as the byte cap itself. Where an interlock's two arms are
+     genuinely indistinguishable at that function's interface, say so in the test's own
+     docstring and name it for what it does pin. A test that cannot discriminate must never
+     be left reading as a proof (T-1, T-3).
+119. **A test never re-implements production logic, never asserts on a bare `Exception`, and
+     never rests on an environmental accident.** Agreement tests call the real function.
+     Expectations are explicit tables written from the spec, not transcriptions of the
+     branch structure they check. Where a test mirrors a production pipeline, extract the
+     shared part and point both at it rather than patching the copy: the divergence is
+     otherwise invisible precisely when the fixture's own baseline is generated by the copy.
+     Assert the domain error and its message, never `pytest.raises(Exception)`. A test whose
+     evidence is a closed port, a non-root uid, or any other property of the machine is not
+     a proof: stub the boundary and assert what was actually sent, and add a case no
+     environment can skip (T-2, T-4, T-5, T-7, T-8; sharpens rule 22).

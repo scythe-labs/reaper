@@ -30,12 +30,8 @@ from sqlalchemy import create_engine as sa_create_engine
 from starlette.requests import Request
 
 from reaper import logbuffer
-from reaper.api.middleware import (
-    _api_key_allowed,
-    api_key_throttle,
-    client_ip,
-    parse_proxy_networks,
-)
+from reaper.api.middleware import _api_key_allowed, api_key_throttle
+from reaper.auth.proxy import client_ip, parse_proxy_networks
 from reaper.config import Settings, parse_trusted_proxies
 from reaper.db.base import Base
 from reaper.main import create_app
@@ -265,6 +261,40 @@ class TestTheApiKeyLane:
 
         assert bare.get("/api/settings/general", headers={"X-Api-Key": new}).status_code == 200
         assert bare.get("/api/settings/general", headers={"X-Api-Key": old}).status_code == 401
+
+    def test_removing_the_key_closes_the_lane(self, client: TestClient) -> None:
+        """Rotating swaps one working key for another, so it never closes this lane.
+
+        An operator who generated a key for a one-off script had no way to shut the header
+        credential off again. Removing it must also stop it authenticating immediately:
+        the check reads a digest held on the app, not the database, so a key deleted from
+        storage alone would have kept working until the next restart.
+        """
+        key = self._issue(client)
+        bare = _bare(client)
+        assert bare.get("/api/settings/general", headers={"X-Api-Key": key}).status_code == 200
+
+        removed = client.delete("/api/settings/general/api-key")
+        assert removed.status_code == 200, removed.text
+        assert removed.json() == {"removed": True}
+
+        assert bare.get("/api/settings/general", headers={"X-Api-Key": key}).status_code == 401
+        assert client.get("/api/settings/general/api-key").status_code == 404
+        assert client.get("/api/settings/general").json()["api_key_set"] is False
+
+    def test_removing_a_key_that_is_not_there_is_not_an_error(self, client: TestClient) -> None:
+        assert client.delete("/api/settings/general/api-key").status_code == 200
+
+    def test_a_key_cannot_delete_itself(self, client: TestClient) -> None:
+        """Deny-by-default covers the new route without naming it anywhere."""
+        key = self._issue(client)
+        bare = _bare(client)
+        assert (
+            bare.delete("/api/settings/general/api-key", headers={"X-Api-Key": key}).status_code
+            == 403
+        )
+        # And it still works, because the refusal never reached the delete.
+        assert bare.get("/api/settings/general", headers={"X-Api-Key": key}).status_code == 200
 
     def test_bad_keys_back_off_per_address(self, client: TestClient) -> None:
         self._issue(client)

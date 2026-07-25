@@ -32,8 +32,8 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.background import BackgroundTask
 
-from reaper.api.auth import _client_ip, _throttled
-from reaper.auth.ratelimit import argon2_gate, password_throttle
+from reaper.api.auth import _client_ip, _throttled, _verify_admin_password
+from reaper.auth.ratelimit import password_throttle
 from reaper.buildinfo import build_version
 from reaper.config import Settings
 from reaper.secrets import env_key_active, key_file_path
@@ -233,16 +233,7 @@ async def restore_confirm(request: Request, payload: RestoreConfirmIn) -> dict[s
                 "Set an admin password first. It's what confirms a restore.",
             )
         _throttled(password_throttle, *keys)
-        if not argon2_gate.acquire():
-            raise HTTPException(
-                503,
-                "The server is busy checking passwords. Please try again shortly.",
-                headers={"Retry-After": "2"},
-            )
-        try:
-            ok = await admin_password.verify(session, payload.password or "")
-        finally:
-            argon2_gate.release()
+        ok = await _verify_admin_password(session, payload.password or "")
         if not ok:
             for key in keys:
                 password_throttle.record_failure(key)

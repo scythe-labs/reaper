@@ -21,6 +21,7 @@ from collections.abc import Mapping
 
 from fastapi import Request, Response
 
+from reaper.auth.proxy import peer_is_trusted_proxy
 from reaper.auth.tokens import SESSION_TTL
 
 _SECURE_NAME = "__Host-reaper_session"
@@ -33,10 +34,21 @@ def is_secure_request(request: Request) -> bool:
 
     Behind a reverse proxy the app speaks plain HTTP, and only
     ``X-Forwarded-Proto`` records that the browser's leg was encrypted. Honor it,
-    so the cookie is marked ``Secure`` in exactly the cases where it can be.
+    so the cookie is marked ``Secure`` in exactly the cases where it can be -- but
+    only from a peer the operator listed as a proxy, exactly as ``X-Forwarded-For``
+    is honored (:func:`reaper.auth.proxy.peer_is_trusted_proxy`).
+
+    The header used to be believed from anyone (S-7). On a plain-HTTP install that let
+    a caller name the cookie for itself: send ``X-Forwarded-Proto: https`` and get back
+    a ``Secure``/``__Host-`` cookie the browser then drops over HTTP, which is a sign-in
+    that silently does nothing -- the exact failure the ``__Host-`` note above exists to
+    avoid. It reaches only the sender's own response, but a header deciding an auth
+    cookie's flags should not be attacker-writable at all.
     """
     if request.url.scheme == "https":
         return True
+    if not peer_is_trusted_proxy(request):
+        return False
     forwarded = request.headers.get("x-forwarded-proto", "")
     return forwarded.split(",")[0].strip().lower() == "https"
 

@@ -47,7 +47,11 @@ from reaper.engine.gates import GateId, RatingRule
 from reaper.engine.signals import MAX_SCORE, CustomSignalConfig, KeepConfig, SignalId
 from reaper.ratings import RatingSource, is_percentage_source, source_label
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
+"""Bumped when the stored SHAPE changes. 3 marks bodies written after the rating bar moved
+off the RATING_FLOOR gate row into ``keep_rating_rules`` (see ``recover_rating_rules``,
+which backfills a body written before it)."""
+
 SCORER_VERSION = 2
 """Bumped when the SCORER changes meaning, not when the schema gains a field.
 Both are inside the policy hash: an item scored under a different scorer was not
@@ -766,6 +770,67 @@ def rebalance(raw: object) -> dict[str, Any] | None:
     return body
 
 
+def recover_rating_rules(raw: object) -> dict[str, Any] | None:
+    """A stored body whose rating bar was lost when the bar moved off the gate row.
+
+    The bar used to live on the RATING_FLOOR gate setting as ``threshold`` (tenths) plus
+    ``secondary`` (minimum votes). It now lives in ``keep_rating_rules`` as one spec per
+    rating source, and the move shipped no backfill. A body written before it still
+    **validates cleanly** -- the gate keeps its now-meaningless numbers, ``keep_rating_rules``
+    defaults to empty -- and an empty rule set makes ``RatingFloorGate`` abstain on every
+    item with "No rating is set that would keep a title." So the operator's "keep anything
+    at 7.5 from 1,000 votes" silently protects nothing, on a healthy, executable snapshot.
+    Every install seeded before that move is in this state, whether or not anyone opened
+    the editor: ``services.profiles`` persists the shipped default as a real row the first
+    time a profile is saved.
+
+    Returns the body with the equivalent IMDb bar synthesized, or ``None`` when there is
+    nothing to recover. The caller flags it (``services.profiles.ActivePolicy
+    .rating_rules_recovered``), which makes ``repaired`` true, degrades the scan, and opens
+    the editor on it as an unsaved draft -- never a silent substitution of an operator's
+    own safety value (rule 65).
+
+    What it keys on, and why not ``schema_version``: affected bodies already carry
+    ``schema_version: 2`` (it was 2 before the move too), so the version cannot tell them
+    apart. The trigger is the raw key ``keep_rating_rules`` being **absent** -- an explicit
+    ``[]`` is an operator who deliberately cleared their bars and must keep an empty set
+    (rule 1) -- plus an ENABLED ``rating_floor`` gate carrying numbers the old validator
+    would have accepted (``1 <= threshold <= 100``, ``secondary >= 1``). A disabled gate is
+    left alone: nothing was protecting anything either way, so there is nothing to restore
+    and no reason to degrade a scan over it. IMDb is the right source because it is the
+    only one the old single-source gate ever read.
+
+    Must not raise: ``services.profiles.active_policy`` keeps the policy editor reachable.
+    """
+    if not isinstance(raw, dict) or "keep_rating_rules" in raw:
+        return None
+    gates = raw.get("gates")
+    if not isinstance(gates, list):
+        return None
+    for gate in gates:
+        if not isinstance(gate, dict) or gate.get("gate") != GateId.RATING_FLOOR.value:
+            continue
+        if not gate.get("enabled", True):
+            return None
+        floor, min_votes = gate.get("threshold"), gate.get("secondary")
+        # bool is an int subclass, so a body carrying `true` must not read as 1.
+        if isinstance(floor, bool) or isinstance(min_votes, bool):
+            return None
+        if not isinstance(floor, int) or not isinstance(min_votes, int):
+            return None
+        if not 1 <= floor <= 100 or min_votes < 1:
+            return None
+        body = copy.deepcopy(raw)
+        body["keep_rating_rules"] = [
+            {"source": RatingSource.IMDB.value, "floor": floor, "min_votes": min_votes}
+        ]
+        # Write back at the current schema so a body that has been through the editor
+        # since can be told apart, and this shim can eventually retire.
+        body["schema_version"] = SCHEMA_VERSION
+        return body
+    return None
+
+
 def inspect(
     body: PolicyBody,
     settings: ProfileSettings,
@@ -915,6 +980,56 @@ def inspect(
                         "measures how much space you reclaim, not whether anyone wants the "
                         "title, and big files are usually the popular 4K ones. Review what "
                         "this rule flags over a few scans before arming it."
+                    ),
+                )
+            )
+
+    # The same footgun through the built-in signal, which had no warning at all while the
+    # hand-written equivalent above got a danger one -- and the SignalId.SIZE docstring
+    # claimed the UI warned about it (rule 24). Neither shipped default enables it.
+    size_signal = next(
+        (s for s in body.signals if s.signal is SignalId.SIZE and s.weight > 0), None
+    )
+    if size_signal is not None:
+        warnings.append(
+            PolicyWarning(
+                field="signals",
+                severity="danger",
+                message=(
+                    f'"Large files" is adding {size_signal.weight} points toward removal. File '
+                    "size measures how much space you reclaim, not whether anyone wants the "
+                    "title, and big files are usually the popular 4K ones. Review what it "
+                    "flags over a few scans before arming it."
+                ),
+            )
+        )
+
+    # A rule written on a field this media type cannot read. `Condition.validate_for`
+    # checks the lane, the operator and the type, but NOT the media type, so a rule saved
+    # before a field was narrowed (``release_age`` and ``quality`` are movie-only: a season
+    # has no single release date and mixes episode qualities) keeps validating and simply
+    # stops being offered in the editor. Left unsaid, a protection reads as "checked, did
+    # not fire" forever, and a removal rule is worse than inert -- its points still count
+    # toward the fixed 100-point denominator, so it holds down every score in this policy.
+    for anchor, kind, rules in (
+        ("protect_conditions", "protection", [(c.field, "") for c in body.protect_conditions]),
+        ("custom_condemn", "rule", [(c.field, c.name) for c in body.custom_condemn]),
+        ("graded_keeps", "keep rule", [(k.field, k.name) for k in body.graded_keeps]),
+    ):
+        for field_key, name in rules:
+            field_spec = BY_KEY.get(field_key)
+            if field_spec is None or body.media_type in field_spec.media_types:
+                continue
+            called = f' "{name}"' if name else ""
+            where = "seasons" if body.media_type == "tv" else "movies"
+            warnings.append(
+                PolicyWarning(
+                    field=anchor,
+                    severity="danger",
+                    message=(
+                        f"Your {kind}{called} uses {field_spec.label}, which Reaper cannot read "
+                        f"for {where}, so it never does anything. Remove it here, and set it "
+                        "on your other policy instead."
                     ),
                 )
             )

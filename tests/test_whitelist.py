@@ -292,9 +292,7 @@ class TestPlannerExcludesSparedItems:
         )
         await whitelist.spare(session, media_key="radarr:1:2", title="Movie 1", note=None)
 
-        await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
         planned_keys = {s.media_key for s in (await session.execute(select(ActionStep))).scalars()}
         assert "radarr:1:2" not in planned_keys
@@ -310,9 +308,7 @@ class TestPlannerExcludesSparedItems:
         )
         await whitelist.spare(session, media_key="sonarr:1:88", title="A Show", note=None)
 
-        await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
         planned_keys = {s.media_key for s in (await session.execute(select(ActionStep))).scalars()}
         assert planned_keys == {"radarr:1:1"}
@@ -335,9 +331,7 @@ class TestPlannerExcludesSparedItems:
         await whitelist.overrides_effective_at(session, after)
         assert await whitelist.purge_expired_spares(session, after) == ["radarr:1:2"]
 
-        await build_plan(
-            session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-        )
+        await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
 
         planned_keys = {s.media_key for s in (await session.execute(select(ActionStep))).scalars()}
         assert planned_keys == {"radarr:1:1", "radarr:1:2"}
@@ -351,6 +345,4 @@ class TestPlannerExcludesSparedItems:
         await whitelist.spare(session, media_key="radarr:1:1", title="Movie 0", note=None)
 
         with pytest.raises(PlanError):
-            await build_plan(
-                session, snapshot_id=snapshot_id, policy_hash="p" * 64, approved_by="admin"
-            )
+            await build_plan(session, snapshot_id=snapshot_id, approved_by="admin")
