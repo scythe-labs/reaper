@@ -36,6 +36,7 @@ from reaper.api.schemas import (
     RunOut,
     RunOutcomeOut,
     RunReportOut,
+    RunSummaryOut,
 )
 from reaper.config import Settings
 from reaper.crypto import SecretBox
@@ -202,7 +203,15 @@ async def create_run(request: Request, payload: CreateRunIn | None = None) -> Ru
 
 
 @router.get("/runs")
-async def list_runs(request: Request, limit: int = 50) -> list[RunOut]:
+async def list_runs(request: Request, limit: int = 50) -> list[RunSummaryOut]:
+    """The recent plans, as stored rows and nothing more (see ``RunSummaryOut``).
+
+    Deliberately NOT ``RunOut``: that shape's counts, totals and phrase are each derived
+    from the effective condemned set of the run's snapshot, so building it per run read
+    the whitelist, the profile and the whole candidate table once per row -- fifty times
+    on every visit to the Reap page (P-3). Opening a run goes to ``GET /runs/{id}``,
+    which derives them for the one run being looked at.
+    """
     async with _sessions(request)() as session:
         runs = list(
             (
@@ -213,7 +222,18 @@ async def list_runs(request: Request, limit: int = 50) -> list[RunOut]:
             .scalars()
             .all()
         )
-        return [await _run_out(session, r) for r in runs]
+        return [
+            RunSummaryOut(
+                id=r.id,
+                snapshot_id=r.snapshot_id,
+                state=r.state.value,
+                approved_by=r.approved_by,
+                approved_at=r.approved_at.isoformat(),
+                aborted_reason=r.aborted_reason,
+                held_back_unknown_size=r.held_back_unknown_size,
+            )
+            for r in runs
+        ]
 
 
 @router.get("/runs/{run_id}")

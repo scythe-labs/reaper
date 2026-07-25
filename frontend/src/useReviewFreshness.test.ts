@@ -14,8 +14,7 @@ type Props = {
   viewSnapshotId: number | null;
   latestSnapshotId: number | null;
   isBusy: () => boolean;
-  onSilentRefresh: () => void;
-  refreshFetching?: boolean;
+  onSilentRefresh: () => void | Promise<unknown>;
   onSilentCaughtUp?: () => void;
 };
 
@@ -116,30 +115,56 @@ describe("useReviewFreshness", () => {
     expect(onSilentRefresh).not.toHaveBeenCalled();
   });
 
-  it("confirms a silent swap only after the list actually catches up, never at issuance", () => {
+  it("confirms a silent swap only after the list actually catches up, never at issuance", async () => {
     const onSilentCaughtUp = vi.fn();
-    const onSilentRefresh = vi.fn();
+    // The refresh settles when its refetches do -- what the queue's invalidation returns. The
+    // hook waits on THIS, not on a fetching flag it happens to catch mid-render: a refetch that
+    // rejects in the same microtask flush never renders as fetching at all, and the nudge below
+    // silently never came (found when the queue stopped re-rendering so freely, P-1/P-7).
+    let settle = () => {};
+    const onSilentRefresh = vi.fn(() => new Promise<void>((resolve) => (settle = resolve)));
     const base = { isBusy: () => false, onSilentRefresh, onSilentCaughtUp };
     // Idle and a scan behind: a silent refresh is issued, but nothing is confirmed yet.
-    const { hook } = setup({ viewSnapshotId: 42, latestSnapshotId: 43, refreshFetching: false, ...base });
+    const { hook } = setup({ viewSnapshotId: 42, latestSnapshotId: 43, ...base });
     expect(onSilentRefresh).toHaveBeenCalledTimes(1);
     expect(onSilentCaughtUp).not.toHaveBeenCalled();
-    // The refetch runs...
-    act(() => hook.rerender({ viewSnapshotId: 42, latestSnapshotId: 43, refreshFetching: true, ...base }));
-    expect(onSilentCaughtUp).not.toHaveBeenCalled();
-    // ...and lands snapshot 43: only now is the swap confirmed.
-    act(() => hook.rerender({ viewSnapshotId: 43, latestSnapshotId: 43, refreshFetching: false, ...base }));
+    // It lands snapshot 43, and then settles: only now is the swap confirmed.
+    act(() => hook.rerender({ viewSnapshotId: 43, latestSnapshotId: 43, ...base }));
+    await act(async () => {
+      settle();
+    });
     expect(onSilentCaughtUp).toHaveBeenCalledTimes(1);
     expect(hook.result.current.showBar).toBe(false);
   });
 
-  it("nudges, and does not confirm, when a silent refresh's refetch settles still behind", () => {
+  it("nudges, and does not confirm, when a silent refresh settles with the list still behind", async () => {
     const onSilentCaughtUp = vi.fn();
-    const base = { isBusy: () => false, onSilentRefresh: vi.fn(), onSilentCaughtUp };
-    const { hook } = setup({ viewSnapshotId: 42, latestSnapshotId: 43, refreshFetching: false, ...base });
-    // The refetch starts, then finishes with the list STILL on snapshot 42 (a network blip).
-    act(() => hook.rerender({ viewSnapshotId: 42, latestSnapshotId: 43, refreshFetching: true, ...base }));
-    act(() => hook.rerender({ viewSnapshotId: 42, latestSnapshotId: 43, refreshFetching: false, ...base }));
+    let settle = () => {};
+    const onSilentRefresh = vi.fn(() => new Promise<void>((resolve) => (settle = resolve)));
+    const base = { isBusy: () => false, onSilentRefresh, onSilentCaughtUp };
+    const { hook } = setup({ viewSnapshotId: 42, latestSnapshotId: 43, ...base });
+    // Nothing yet -- the refetch is still in flight, and an early nudge would be a lie.
+    expect(hook.result.current.showBar).toBe(false);
+    // It finishes with the list STILL on snapshot 42 (a network blip).
+    await act(async () => {
+      settle();
+    });
+    expect(onSilentCaughtUp).not.toHaveBeenCalled();
+    expect(hook.result.current.showBar).toBe(true);
+  });
+
+  it("still nudges when the refresh never renders as fetching at all", async () => {
+    // The regression this signal exists for: a refetch that rejects synchronously. There is no
+    // window in which any flag reads "fetching", so a hook watching one would leave the reviewer
+    // on a stale list with nothing on screen to say so (PR-5).
+    const onSilentCaughtUp = vi.fn();
+    const base = {
+      isBusy: () => false,
+      onSilentRefresh: vi.fn(() => Promise.resolve()),
+      onSilentCaughtUp,
+    };
+    const { hook } = setup({ viewSnapshotId: 42, latestSnapshotId: 43, ...base });
+    await act(async () => {});
     expect(onSilentCaughtUp).not.toHaveBeenCalled();
     expect(hook.result.current.showBar).toBe(true);
   });

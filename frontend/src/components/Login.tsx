@@ -231,9 +231,12 @@ function LocalSheet({
           <form onSubmit={submit} className="local-form">
             <label className="field">
               <span className="field-label">Username</span>
+              {/* The lengths the server accepts, so a long pasted passphrase is stopped in
+                  the box rather than coming back as a validator's sentence. */}
               <input
                 ref={usernameRef}
                 autoComplete="username"
+                maxLength={128}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
               />
@@ -243,6 +246,7 @@ function LocalSheet({
               <input
                 type="password"
                 autoComplete="current-password"
+                maxLength={128}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
@@ -290,9 +294,14 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
       <BrandBadge className="brand-badge" />
       <h1 className="brand-word">Recovery</h1>
       <p className="auth-tagline">Single-use admin access</p>
+      {/* The console, NOT "its log": mint_recovery_token prints the banner deliberately
+          (auth/recovery.py), so the code never reaches structlog, the in-app Logs tab, or
+          the log files that tab downloads. Sending a locked-out operator to Settings ->
+          Logs to find it left them concluding recovery was broken (U-11). */}
       <p className="auth-note">
-        Reaper printed a recovery code to its log. Paste it here to sign in as an admin so
-        you can reset a password or re-link Plex; the code expires the moment it is used.
+        Reaper printed a recovery code to the container's console output. Paste it here to
+        sign in as an admin so you can reset a password or re-link Plex; the code expires the
+        moment it is used.
       </p>
       <form onSubmit={submit} className="local-form">
         <label className="field">
@@ -301,6 +310,7 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
             autoFocus
             autoComplete="off"
             spellCheck={false}
+            maxLength={256}
             value={code}
             onChange={(e) => setCode(e.target.value)}
             placeholder="Paste the code from the log"

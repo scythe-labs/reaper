@@ -39,7 +39,13 @@ log = structlog.get_logger(__name__)
 
 
 async def mint_recovery_token(session: AsyncSession, *, base_url: str) -> str:
-    """Create a single-use recovery token and print the link to the log."""
+    """Create a single-use recovery token and print it to the CONSOLE.
+
+    Not "to the log": the banner below goes out through ``print``, deliberately (see the
+    comment on it), so it never reaches structlog, the in-app Logs tab, or the rotating
+    files the Logs tab downloads. ``docker logs`` is where the operator finds it, and the
+    recovery screen's copy has to say so (U-11).
+    """
     # Invalidate any earlier unredeemed tokens: only one may be live at a time.
     stale = (
         (await session.execute(select(RecoveryToken).where(RecoveryToken.used_at.is_(None))))

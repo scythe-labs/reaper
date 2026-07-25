@@ -23,7 +23,8 @@ export const arming: Doc = {
       "Keep your first run supervised, and read the exact list before you confirm the phrase.",
     ]),
     p(
-      "Even armed, Reaper re-checks safety at the moment of every delete: nothing that is being watched is removed, caps abort a run rather than trimming it, and the scheduler never deletes. A real reap is always a person typing the phrase.",
+      // "stop", not "abort" -- one word for one mechanism, across the docs and the app (U-15).
+      "Even armed, Reaper re-checks safety at the moment of every delete: nothing that is being watched is removed, caps stop a run rather than trimming it, and the scheduler never deletes. A real reap is always a person typing the phrase.",
     ),
   ],
 };

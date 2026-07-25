@@ -11,13 +11,8 @@
 import type { Candidate, Group } from "../api";
 import { itemBytes, totalBytes } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
-import {
-  handFate,
-  LibraryChip,
-  OverrideControls,
-  showReapIsNoop,
-  ShowStatusChip,
-} from "./ReviewQueue";
+import { LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
+import { handFate, showReapIsNoop } from "./reviewFate";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
 import { JumpPill, Synopsis, WhyClose, WhyHero } from "./WhyPanel";
 

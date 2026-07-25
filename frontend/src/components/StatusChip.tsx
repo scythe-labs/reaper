@@ -30,25 +30,16 @@ export function CondemnedChip() {
 /** The refused-reap chip's clause: why the item is still being kept, in lowercase, ready
  *  to sit after "Reap requested · kept for now:".
  *
- *  A reap is refused in two different lanes, and their chips read nothing alike. A
- *  protection that fired says "Kept · playing right now", so dropping the prefix leaves a
- *  clause that already fits. A reap refused because a protection could not be checked
- *  carries that lane's own chip instead, capitalized and sometimes with a middot of its
- *  own, so each of those is mapped to a clause here rather than pasted in mid-sentence.
- *  Both lanes come from `decide_verdict`'s reap branch (blocked, or a safety stop). */
-const BLOCKED_WHY: Record<string, string> = {
-  "Couldn't be found in Plex": "it couldn't be found in Plex",
-  "Looks like two different things in Plex": "it looks like two different things in Plex",
-  "Needs a look · watched more than a season your rule keeps":
-    "watched more than a season your rule keeps",
-  "Needs a look · left for you to decide": "a check on it couldn't be settled",
-  "Some checks couldn't run": "some checks couldn't run",
-};
-
+ *  A reap is refused in two different lanes, and their chips read nothing alike -- a
+ *  protection that fired ("Kept · playing right now") and a check that could not run
+ *  ("Some checks couldn't run") -- so the server words the clause for both beside the
+ *  chip text itself (`_chip` in `api/routes.py`). This used to slice the "Kept · " prefix
+ *  off and look the rest up in a map of the backend's exact prose: rewording one chip
+ *  server-side dropped every held-reap explanation to the generic fallback below, with
+ *  the tests still green because they transcribed the same strings (H-1). Null is a real
+ *  answer -- a chip about the score names no reason a reap would be refused. */
 export function chipWhy(chip: Chip | null): string | null {
-  if (!chip) return null;
-  if (chip.text.startsWith("Kept · ")) return chip.text.slice("Kept · ".length);
-  return BLOCKED_WHY[chip.text] ?? null;
+  return chip?.why ?? null;
 }
 
 /** Which class family an override chip is drawn in. Cards use the `.chip` family that

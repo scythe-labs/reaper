@@ -8,20 +8,25 @@
 // safer. This is safety UI, so it never renders nothing: while the state is unknown it
 // says so, in the amber "we could not look" tone, never in a way that reads as safe.
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../api";
+import { useSafety } from "../useSafety";
 
 export function DeletionToggle() {
   const queryClient = useQueryClient();
-  const { data, isLoading, isError } = useQuery({ queryKey: ["safety"], queryFn: api.safety });
+  const { data, isLoading, isError } = useSafety();
   const [confirming, setConfirming] = useState(false);
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  // ["safety"] is the whole list: it is the one query that carries whether deletion is on,
+  // and every surface that gates on it (this switch, the app banner, the Reap page's
+  // Execute button) reads it through useSafety. There used to be a ["health"] line here
+  // too, left behind by the health-based safety read App.tsx retired, naming a cache no
+  // component subscribes to (B-35).
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["safety"] });
-    void queryClient.invalidateQueries({ queryKey: ["health"] });
   };
   const toggle = useMutation({
     mutationFn: (vars: { enabled: boolean; password?: string }) =>
@@ -38,12 +43,45 @@ export function DeletionToggle() {
   if (isLoading) {
     return <p className="muted">Checking whether deletion is on…</p>;
   }
-  // Unknown must never read as safe: say it plainly, in amber.
+  // Unknown must never read as safe: say it plainly, in amber -- and still offer the one
+  // direction that can only make Reaper safer. Turning deletion OFF takes no password and
+  // needs no prior state, so the operator who wants read-only RIGHT NOW must not be handed
+  // advice to assume the worst and nothing to click. (Turning it ON is the direction that
+  // stays gone: it takes a password, and offering it against a state we could not read would
+  // be arming on a guess.)
   if (isError || !data) {
     return (
-      <p className="notice notice-warn">
-        Reaper couldn't confirm whether deletion is on. Until it can, treat it as on.
-      </p>
+      <>
+        {toggle.isSuccess ? (
+          <div className="safety-state safe">
+            <span className="banner-dot" aria-hidden="true" />
+            <div>
+              <strong>Deletion is off. Reaper is read-only.</strong>
+            </div>
+          </div>
+        ) : (
+          <p className="notice notice-warn">
+            Reaper couldn't confirm whether deletion is on. Until it can, treat it as on.
+          </p>
+        )}
+        <div className="safety-row">
+          <div>
+            <strong>Turn deletion off</strong>
+            <p className="help">
+              Puts Reaper back to read-only right away. Safe to press either way: if it was
+              already off, nothing changes.
+            </p>
+          </div>
+          <button
+            className="ghost danger"
+            disabled={toggle.isPending}
+            onClick={() => toggle.mutate({ enabled: false })}
+          >
+            {toggle.isPending ? "Turning off…" : "Turn off"}
+          </button>
+        </div>
+        {error && <p className="notice notice-error">{error}</p>}
+      </>
     );
   }
 
@@ -89,6 +127,7 @@ export function DeletionToggle() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              maxLength={128}
               placeholder="admin password"
               aria-label="Admin password"
               autoComplete="current-password"

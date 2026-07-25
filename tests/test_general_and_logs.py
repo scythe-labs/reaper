@@ -319,11 +319,27 @@ class TestTheApiKeyLane:
             bare.put("/api/logs/level", json={"level": "debug"}, headers=headers).status_code == 403
         )
 
+    def test_the_key_cannot_read_the_logs(self, client: TestClient) -> None:
+        """The logs are a running transcript of who watched what, and the download is
+        every rotating file at once. The operator is told a key can "read your library" --
+        the catalog, not everyone's viewing (S-3)."""
+        key = self._issue(client)
+        bare = _bare(client)
+        headers = {"X-Api-Key": key}
+
+        assert bare.get("/api/logs", headers=headers).status_code == 403
+        assert bare.get("/api/logs/download", headers=headers).status_code == 403
+        # Still readable in the browser, where the Logs tab lives.
+        assert client.get("/api/logs").status_code == 200
+
     def test_the_allowlist_matches_by_method_and_shape(self) -> None:
-        # Reads are open to the key, except the one that reveals a stored secret.
+        # Reads are open to the key, except the handful that hand back more than a catalog.
         assert _api_key_allowed("GET", "/api/candidates") is True
         assert _api_key_allowed("GET", "/api/settings/general") is True
         assert _api_key_allowed("GET", "/api/settings/general/api-key") is False
+        assert _api_key_allowed("GET", "/api/settings/backup/download") is False
+        assert _api_key_allowed("GET", "/api/logs") is False
+        assert _api_key_allowed("GET", "/api/logs/download") is False
         # Writes are closed except the automation allowlist: scan, plan, policy.
         assert _api_key_allowed("POST", "/api/scan/start") is True
         assert _api_key_allowed("POST", "/api/policy") is True

@@ -31,6 +31,10 @@ export interface Snapshot {
 export interface Chip {
   tone: "kept" | "quiet" | "look";
   text: string;
+  /** The same fact as `text`, worded as a lowercase clause that can follow "Reap
+   *  requested · kept for now:" -- or null when this chip names no reason a reap would
+   *  be refused. Read it through `chipWhy`; never parse `text` to recover it. */
+  why?: string | null;
 }
 
 /** One square of a show card's season strip: the lightest per-season mark, across
@@ -504,6 +508,20 @@ export interface Run {
   steps: ActionStep[];
 }
 
+/** One line of the run history: the stored row, and nothing derived. A past plan's counts,
+ *  totals and phrase are all re-derived from today's overrides, which costs a whole snapshot's
+ *  candidates per run and, for a finished run, describes a plan that never existed -- so the
+ *  list carries none of them and opening a row fetches the full `Run` (P-3). */
+export interface RunSummary {
+  id: number;
+  snapshot_id: number;
+  state: string;
+  approved_by: string;
+  approved_at: string;
+  aborted_reason: string | null;
+  held_back_unknown_size: number;
+}
+
 export interface RunCheck {
   label: string;
   ok: boolean;
@@ -609,7 +627,12 @@ export interface ReapBreakdown {
   will_reap_bytes: number;
   will_reap_unknown: number;
   movies: number;
+  /** The unmeasured share of `movies`, so the split can subtract exactly the rows the
+   *  planner holds back and stay in step with the total beside it. */
+  movies_unknown: number;
   seasons: number;
+  /** The unmeasured share of `seasons`; see `movies_unknown`. */
+  seasons_unknown: number;
   /** Why the policy condemned them, most-common first. Overlapping: a title trips several. */
   condemned_by: SignalCount[];
 }
@@ -1082,7 +1105,14 @@ export class ApiError extends Error {
  *  `detail` is a string for HTTPException and a list of {loc, msg} for a validation
  *  failure. The domain's refusals arrive as the latter, and they are the most useful
  *  messages in the product ("a vote floor of 0 makes the rating floor meaningless") --
- *  so it would be a shame to render them as "[object Object]". */
+ *  so it would be a shame to render them as "[object Object]".
+ *
+ *  When there is no detail at all there is nothing of Reaper's to say, and what comes back
+ *  is not Reaper's: a reverse proxy during a container restart answers with its own HTML
+ *  and no `detail`. Every component renders `error.message` verbatim, so the old fallback
+ *  put a bare "Request failed (502)." across the review queue, the reap sheet and every
+ *  settings panel (U-14, rule 21). The status still goes to the console, where whoever is
+ *  debugging can read it. */
 function reason(status: number, body: unknown): string {
   const detail = (body as { detail?: unknown } | null)?.detail;
 
@@ -1095,26 +1125,104 @@ function reason(status: number, body: unknown): string {
     if (messages.length) return messages.join(" ");
   }
 
-  return `Request failed (${status}).`;
+  console.warn(`Reaper: request failed with HTTP ${status} and no reason in the body.`, body);
+  return status >= 500
+    ? "Reaper couldn't reach the server. Try again."
+    : "Reaper couldn't do that. Try again.";
+}
+
+/** What to do when the server stops recognizing the session. Set once at startup (main.tsx).
+ *
+ *  Without it a dead cookie is reported one panel at a time and the app never goes back to
+ *  the login screen: the operator sits on the Dashboard reading "Not authenticated." in every
+ *  card with nothing to click. A restored backup carries different session rows, so the
+ *  restore flow reaches this on the very next request; the 30-day session expiry reaches it
+ *  eventually for everyone. */
+let onUnauthorized: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: () => void): void {
+  onUnauthorized = handler;
+}
+
+/** The session, not this request, is what failed. The gate's own probe is exempt: `/api/auth/me`
+ *  answers 401 for every signed-out visitor, and that is the gate working, not a session dying.
+ *  Firing there would also mean answering a refetch by asking for a refetch. */
+function noteAuthFailure(status: number, path: string): void {
+  if (status === 401 && !path.startsWith("/api/auth/")) onUnauthorized?.();
+}
+
+/** Read a success body, with a malformed one reported as an ApiError like every other failure.
+ *
+ *  Empty is fine: every endpoint returns JSON today, but the client is hand-maintained, and the
+ *  day someone adds a 204 or an empty-body 200 this should resolve cleanly rather than throw
+ *  "Unexpected end of JSON input". Unparseable is NOT fine, and is not hypothetical: a
+ *  forward-auth proxy whose sign-in has expired answers 200 with an HTML login page, so
+ *  `response.ok` is true and the parse throws a raw SyntaxError -- which is not an ApiError, so
+ *  it falls past every `instanceof` branch in the app and surfaces to the operator as parser
+ *  jargon about an unexpected token. */
+async function parseBody<T>(response: Response): Promise<T> {
+  if (response.status === 204) return undefined as T;
+  const text = await response.text();
+  if (!text) return undefined as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new ApiError(response.status, "Reaper got an unexpected reply from the server.");
+  }
+}
+
+/** The not-ok half of every call: a failure means the same thing wherever it was made from. */
+async function throwIfFailed(response: Response, path: string): Promise<void> {
+  if (response.ok) return;
+  const body: unknown = await response.json().catch(() => null);
+  noteAuthFailure(response.status, path);
+  throw new ApiError(response.status, reason(response.status, body));
+}
+
+/** EVERY request the app makes goes through here: the CSRF header, the session hook, and the
+ *  error mapping, in one place, returning the raw Response for the few callers that need more
+ *  than a parsed body (the paged queue reads its totals off the headers; the two downloads
+ *  want a blob).
+ *
+ *  Four call sites used to hand-roll this `fetch` -- so the wrapper only looked like a choke
+ *  point, and a cross-cutting change landed on three quarters of the surface. They had already
+ *  drifted (R-3). Anything that must hold for all traffic -- a retry, a timeout, a header --
+ *  belongs here and nowhere else. */
+async function fetchApi(path: string, init?: RequestInit): Promise<Response> {
+  const response = await fetch(path, {
+    ...init,
+    headers: { ...CSRF_HEADER, ...init?.headers },
+  });
+  await throwIfFailed(response, path);
+  return response;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetchApi(path, {
     ...init,
-    headers: { "Content-Type": "application/json", ...CSRF_HEADER, ...init?.headers },
+    headers: { "Content-Type": "application/json", ...init?.headers },
   });
+  return parseBody<T>(response);
+}
 
-  if (!response.ok) {
-    const body: unknown = await response.json().catch(() => null);
-    throw new ApiError(response.status, reason(response.status, body));
+/** Save a binary response to a file the browser downloads. The server names it in
+ *  Content-Disposition; `fallbackName` covers a proxy that strips the header. */
+async function download(path: string, fallbackName: string): Promise<void> {
+  const response = await fetchApi(path);
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? fallbackName;
+  const url = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = name;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+  } finally {
+    URL.revokeObjectURL(url);
   }
-  // Tolerate empty bodies the way the error branch above does. Every endpoint returns JSON
-  // today, but the client is hand-maintained: the day someone adds a 204 No Content or an
-  // empty-body 200, `response.json()` would throw a raw "Unexpected end of JSON input"
-  // SyntaxError instead of resolving cleanly. Parse only when there is something to parse.
-  if (response.status === 204) return undefined as T;
-  const text = await response.text();
-  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 const post = <T>(path: string, body: unknown): Promise<T> =>
@@ -1148,14 +1256,10 @@ export const api = {
     params.set("limit", String(limit));
     params.set("offset", String(offset));
 
-    const response = await fetch(`/api/candidates?${params.toString()}`, {
-      headers: { "Content-Type": "application/json", ...CSRF_HEADER },
+    const response = await fetchApi(`/api/candidates?${params.toString()}`, {
+      headers: { "Content-Type": "application/json" },
     });
-    if (!response.ok) {
-      const body: unknown = await response.json().catch(() => null);
-      throw new ApiError(response.status, reason(response.status, body));
-    }
-    const items = (await response.json()) as Candidate[];
+    const items = (await parseBody<Candidate[]>(response)) ?? [];
     const snapshotHeader = response.headers.get("X-Snapshot-Id");
     return {
       items,
@@ -1272,67 +1376,24 @@ export const api = {
   /** Fetch the full on-disk log and hand it to the browser as a file download.
    *  Bypasses `request` (which JSON-parses every body) to read a binary blob, and takes
    *  the filename the server offers so it carries a timestamp. */
-  downloadLogs: async (): Promise<void> => {
-    const response = await fetch("/api/logs/download", { headers: { ...CSRF_HEADER } });
-    if (!response.ok) {
-      const errorBody: unknown = await response.json().catch(() => null);
-      throw new ApiError(response.status, reason(response.status, errorBody));
-    }
-    const blob = await response.blob();
-    const disposition = response.headers.get("Content-Disposition") ?? "";
-    const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? "reaper-logs.log";
-    const url = URL.createObjectURL(blob);
-    try {
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = name;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-  },
+  downloadLogs: () => download("/api/logs/download", "reaper-logs.log"),
 
   // Backup: what a backup would contain, and the download itself. Like the log download,
   // the file comes back as a binary blob (not JSON), and the server names it with a stamp.
   backupInfo: () => request<BackupInfo>("/api/settings/backup"),
-  downloadBackup: async (): Promise<void> => {
-    const response = await fetch("/api/settings/backup/download", { headers: { ...CSRF_HEADER } });
-    if (!response.ok) {
-      const errorBody: unknown = await response.json().catch(() => null);
-      throw new ApiError(response.status, reason(response.status, errorBody));
-    }
-    const blob = await response.blob();
-    const disposition = response.headers.get("Content-Disposition") ?? "";
-    const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? "reaper-backup.reaper";
-    const url = URL.createObjectURL(blob);
-    try {
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = name;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-  },
+  downloadBackup: () => download("/api/settings/backup/download", "reaper-backup.reaper"),
 
   /** Upload a backup file for restore. The bytes go up as the raw request body (not a
    *  multipart form), so the server streams them straight to disk. On success the file is
    *  staged, un-armed; `restoreConfirm` then verifies the password and arms the swap. */
   restorePrepare: async (file: File): Promise<RestoreSummary> => {
-    const response = await fetch("/api/settings/backup/restore/prepare", {
+    // The one call that must not carry request()'s JSON Content-Type: the body is the file
+    // itself, and the server streams it straight to disk.
+    const response = await fetchApi("/api/settings/backup/restore/prepare", {
       method: "POST",
-      headers: { ...CSRF_HEADER },
       body: file,
     });
-    if (!response.ok) {
-      const body: unknown = await response.json().catch(() => null);
-      throw new ApiError(response.status, reason(response.status, body));
-    }
-    return (await response.json()) as RestoreSummary;
+    return parseBody<RestoreSummary>(response);
   },
   /** Confirm a staged restore with the admin password. Arms the swap; the operator then
    *  restarts the container to finish. The token comes from the prepare summary and binds
@@ -1386,12 +1447,20 @@ export const api = {
   startScan: () => post<ScanStatus>("/api/scan/start", {}),
   scanStatus: () => request<ScanStatus>("/api/scan/status"),
 
-  runs: () => request<Run[]>("/api/runs"),
+  runs: () => request<RunSummary[]>("/api/runs"),
   run: (id: number) => request<Run>(`/api/runs/${id}`),
-  /** Build a plan. With no keys it covers the whole condemned set; with `mediaKeys` it
-   *  reaps just those items -- the safe path for a first, hand-picked deletion. */
-  createRun: (mediaKeys?: string[]) =>
-    post<Run>("/api/runs", mediaKeys && mediaKeys.length ? { media_keys: mediaKeys } : {}),
+  /** Build a plan, over an explicitly named set. `"all"` covers the whole condemned set; an
+   *  array reaps just those items -- the safe path for a first, hand-picked deletion.
+   *
+   *  "All" has to be spelled, never implied: the route reads an omitted `media_keys` as the
+   *  whole condemned set, so a selection that filtered down to nothing must not be able to
+   *  fall through into it. An empty array throws here rather than widening the request. */
+  createRun: (target: "all" | string[]) => {
+    if (target !== "all" && target.length === 0) {
+      throw new Error("Nothing is selected, so there is nothing to reap.");
+    }
+    return post<Run>("/api/runs", target === "all" ? {} : { media_keys: target });
+  },
   dryRun: (id: number) => post<RunReport>(`/api/runs/${id}/dry-run`, {}),
   /** Start a real reap. Requires deletion armed on the host and the exact content-bound
    *  confirmation phrase -- the server recomputes and refuses anything else. The reap then
@@ -1419,9 +1488,11 @@ export const api = {
   reapBreakdown: () => request<ReapBreakdown>("/api/reap/breakdown"),
   syncLeavingSoon: () => post<LeavingSoonResult>("/api/leaving-soon/sync", {}),
 
-  whitelist: () => request<WhitelistEntry[]>("/api/whitelist"),
-  spare: (media_key: string, note?: string, spareDays = 0) =>
-    post<WhitelistEntry>("/api/whitelist", { media_key, note: note ?? null, spare_days: spareDays }),
+  // The keep list has one pair of methods in the UI, `override` / `clearOverride` below.
+  // `whitelist`, `spare` and `unspare` used to sit here too, uncalled by anything: three
+  // more ways to write the same safety-adjacent row, with nothing to tell a reader which
+  // one the app actually used (rule 38, R-6). Their routes are still served, for the
+  // API-key lane.
   /** Override a verdict by hand -- spare (keep) or reap (force onto the list). A show's
    *  media_key covers all its seasons. `spareDays` is how long a spare keeps it: 0 = forever,
    *  a positive count that many days; ignored for a reap. */
@@ -1436,10 +1507,6 @@ export const api = {
    *  the policy again on the next scan. */
   clearOverride: (media_key: string) =>
     request<{ removed: boolean }>(`/api/override/${encodeURIComponent(media_key)}`, {
-      method: "DELETE",
-    }),
-  unspare: (media_key: string) =>
-    request<{ removed: boolean }>(`/api/whitelist/${encodeURIComponent(media_key)}`, {
       method: "DELETE",
     }),
 

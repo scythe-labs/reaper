@@ -253,6 +253,114 @@ class TestChip:
         assert _chip("not json", "protect", 50) is None
 
 
+class TestChipWhy:
+    """The clause a chip carries for the refused-reap sentence.
+
+    The frontend used to recover this by slicing "Kept · " off the chip text and looking
+    the rest up in a transcribed copy of the strings above, so rewording one chip here
+    silently dropped every held-reap explanation to a generic fallback -- and both sides
+    of the contract were asserted from the same transcription, so nothing failed (H-1).
+    The clause now ships beside the text, and these are the assertions that hold the two
+    in step.
+    """
+
+    def test_a_fired_protection_says_the_same_words_without_the_lead(self) -> None:
+        """ "Kept · playing right now" reads "kept for now: playing right now"."""
+        chip = _chip(
+            _exp(90, fired=[{"gate": "streaming_now", "detail": "someone is watching"}]),
+            "protect",
+            90,
+        )
+        assert chip is not None
+        assert chip.text == f"Kept · {chip.why}"
+
+    @pytest.mark.parametrize(
+        ("explanation", "verdict", "score", "why"),
+        [
+            (_exp(82, match_status="unmatched"), "abstain", 82, "it couldn't be found in Plex"),
+            (
+                _exp(50, match_status="ambiguous"),
+                "abstain",
+                50,
+                "it looks like two different things in Plex",
+            ),
+            (
+                _exp(82, unknown=[{"gate": "season_progression", "detail": CONFLICT_SENTENCE}]),
+                "abstain",
+                82,
+                "watched more than a season your rule keeps",
+            ),
+            (
+                _exp(60, unknown=[{"gate": "custom", "detail": "A rule asked a human to look."}]),
+                "abstain",
+                60,
+                "a check on it couldn't be settled",
+            ),
+            (
+                _exp(50, unknown=[{"gate": "min_dormancy", "detail": "could not check when: no"}]),
+                "abstain",
+                50,
+                "some checks couldn't run",
+            ),
+        ],
+    )
+    def test_every_blocked_lane_words_its_own_clause(
+        self, explanation: str, verdict: str, score: int, why: str
+    ) -> None:
+        chip = _chip(explanation, verdict, score)
+        assert chip is not None
+        assert chip.why == why
+
+    @pytest.mark.parametrize(
+        ("explanation", "verdict", "score"),
+        [
+            (_exp(82), "abstain", 82),  # the coverage floor
+            (_exp(42), "abstain", 42),  # under the threshold
+        ],
+    )
+    def test_a_chip_about_the_score_names_no_refusal(
+        self, explanation: str, verdict: str, score: int
+    ) -> None:
+        """None is a real answer, not a gap. An item that merely scored low is reaped
+        when the owner asks; nothing is holding it, so there is no clause to say."""
+        chip = _chip(explanation, verdict, score)
+        assert chip is not None
+        assert chip.why is None
+
+    @pytest.mark.parametrize(
+        ("explanation", "verdict", "score"),
+        [
+            (_exp(90, fired=[{"gate": "unmanaged", "detail": "not managed"}]), "protect", 90),
+            (_exp(90, fired=[{"gate": "curated_list", "detail": "on a list"}]), "protect", 90),
+            (_exp(82, match_status="unmatched"), "abstain", 82),
+            (_exp(50, match_status="ambiguous"), "abstain", 50),
+            (
+                _exp(82, unknown=[{"gate": "season_progression", "detail": CONFLICT_SENTENCE}]),
+                "abstain",
+                82,
+            ),
+            (
+                _exp(60, unknown=[{"gate": "custom", "detail": "A rule asked a human to look."}]),
+                "abstain",
+                60,
+            ),
+            (
+                _exp(50, unknown=[{"gate": "min_dormancy", "detail": "could not check when: no"}]),
+                "abstain",
+                50,
+            ),
+        ],
+    )
+    def test_a_clause_reads_mid_sentence(self, explanation: str, verdict: str, score: int) -> None:
+        """It follows a colon, so it starts lowercase and carries no chip furniture: no
+        capital lead, and no middot of its own to collide with the sentence's."""
+        chip = _chip(explanation, verdict, score)
+        assert chip is not None
+        assert chip.why is not None
+        assert chip.why[0].islower()
+        assert "·" not in chip.why
+
+
 class TestSeasonNumber:
     def test_season_key(self) -> None:
         assert _season_number("sonarr:5:42:16") == 16
@@ -375,6 +483,9 @@ class TestCandidatesCarryTheGroupShape:
         assert row["chip"] == {
             "tone": "look",
             "text": "Needs a look · watched more than a season your rule keeps",
+            # The clause travels with the chip, so a held reap on this row can say why
+            # without the frontend parsing the text back apart (H-1).
+            "why": "watched more than a season your rule keeps",
         }
         marks = row["group_seasons"]
         assert [(m["season"], m["verdict"]) for m in marks] == [

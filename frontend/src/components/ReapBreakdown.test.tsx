@@ -43,7 +43,9 @@ function full(overrides: Partial<Breakdown> = {}): Breakdown {
     will_reap_bytes: 4500 * GB,
     will_reap_unknown: 0,
     movies: 402,
+    movies_unknown: 0,
     seasons: 167,
+    seasons_unknown: 0,
     condemned_by: [
       { id: "unwatched", count: 521, bytes: 0, unknown_size: 0 },
       { id: "low_rating", count: 201, bytes: 0, unknown_size: 0 },
@@ -91,18 +93,25 @@ describe("the ledger", () => {
   });
 
   it("names how many can't be measured and won't be removed", async () => {
-    apiMock.reapBreakdown.mockResolvedValue(full({ will_reap: 569, will_reap_unknown: 4 }));
+    apiMock.reapBreakdown.mockResolvedValue(
+      full({ will_reap: 569, will_reap_unknown: 4, movies_unknown: 3, seasons_unknown: 1 }),
+    );
     renderBreakdown();
     expect(await screen.findByText(/4 titles can't be measured, so Reaper won't remove/)).toBeInTheDocument();
     // With the allowance off the planner drops those 4, so the headline and total count only
     // 565, and the raw 569 never appears (B-8).
     expect(screen.getAllByText("565").length).toBeGreaterThan(0);
     expect(screen.queryByText("569")).not.toBeInTheDocument();
+    // And the split subtracts the same four, so the page states ONE number for one reap:
+    // 399 + 166 = 565, never the raw 402 + 167 (B-5, rule 30).
+    expect(screen.getByText(/399 movies · 166 TV seasons/)).toBeInTheDocument();
   });
 
   it("rewords the unmeasured line when the allowance admits them", async () => {
     apiMock.profile.mockResolvedValue(profileWith(10)); // allowance on
-    apiMock.reapBreakdown.mockResolvedValue(full({ will_reap: 569, will_reap_unknown: 4 }));
+    apiMock.reapBreakdown.mockResolvedValue(
+      full({ will_reap: 569, will_reap_unknown: 4, movies_unknown: 3, seasons_unknown: 1 }),
+    );
     renderBreakdown();
     // Allowance on: the planner admits the unmeasured, so the line must not promise they are
     // kept, and the count is not reduced (B-8).
@@ -110,15 +119,52 @@ describe("the ledger", () => {
       await screen.findByText(/only removed within your unknown-size allowance/),
     ).toBeInTheDocument();
     expect(screen.queryByText(/won't remove them/)).not.toBeInTheDocument();
-    // Not reduced: the unmeasured stay in the count when the allowance admits them.
+    // Not reduced: the unmeasured stay in the count when the allowance admits them -- and in
+    // the split, which follows the same set.
     expect(screen.getAllByText("569").length).toBeGreaterThan(0);
+    expect(screen.getByText(/402 movies · 167 TV seasons/)).toBeInTheDocument();
+  });
+
+  it("says a reap removes nothing when every condemned title is unmeasured", async () => {
+    // The old empty-state test was `will_reap === 0`, which renders a full ledger totaling
+    // zero when the whole list is held back for want of a size (B-5).
+    apiMock.reapBreakdown.mockResolvedValue(
+      full({
+        will_reap: 4,
+        will_reap_unknown: 4,
+        movies: 3,
+        movies_unknown: 3,
+        seasons: 1,
+        seasons_unknown: 1,
+      }),
+    );
+    renderBreakdown();
+    expect(await screen.findByText(/would remove nothing right now/)).toBeInTheDocument();
+    expect(screen.getByText(/couldn't measure any of the titles/)).toBeInTheDocument();
+    expect(screen.queryByText("Will be reaped")).not.toBeInTheDocument();
+  });
+
+  it("says it couldn't check the allowance rather than printing an adjusted count", async () => {
+    apiMock.profile.mockRejectedValue(new Error("boom"));
+    apiMock.reapBreakdown.mockResolvedValue(
+      full({ will_reap: 569, will_reap_unknown: 4, movies_unknown: 3, seasons_unknown: 1 }),
+    );
+    renderBreakdown();
+    const notice = await screen.findByText(/couldn't check your unknown-size allowance/);
+    expect(notice).toHaveClass("notice-warn");
+    // Neither answer may be stated as fact: not the held-back 565, not the raw 569 (B-16).
+    expect(screen.queryByText("565")).not.toBeInTheDocument();
+    expect(screen.queryByText("569")).not.toBeInTheDocument();
+    expect(screen.queryByText("Will be reaped")).not.toBeInTheDocument();
   });
 
   it("reports held hand reaps rather than dropping them", async () => {
     apiMock.reapBreakdown.mockResolvedValue(full({ hand_reaped_held: 2 }));
     renderBreakdown();
-    // The operator marked reaps the engine won't honor yet: say so (PR-2).
-    expect(await screen.findByText(/2 reaps you marked are held back for safety/)).toBeInTheDocument();
+    // The operator marked reaps the engine won't honor yet: say so (PR-2), and name the
+    // operation that is actually holding them -- this reap, never "a scan" (U-10).
+    expect(await screen.findByText(/2 reaps you marked are on hold/)).toBeInTheDocument();
+    expect(screen.queryByText(/a scan won't remove/)).not.toBeInTheDocument();
   });
 });
 

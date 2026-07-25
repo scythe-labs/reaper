@@ -7,7 +7,15 @@
 // These live in their own module because both the policy editor and the simulator column
 // beside it name protections, and neither should have to import the other to do it.
 
-export type GateMeta = { label: string; help: string; unit?: "days" | "people" };
+// `window` marks a gate that counts activity inside a look-back window, so the editor
+// renders the window as a control of its own. Without it the server could warn about a
+// `window_days` the operator had no way to change (U-9, rules 42/25).
+export type GateMeta = {
+  label: string;
+  help: string;
+  unit?: "days" | "people";
+  window?: { label: string; help: string };
+};
 
 export const GATE_META: Record<string, GateMeta> = {
   min_dormancy: {
@@ -19,6 +27,10 @@ export const GATE_META: Record<string, GateMeta> = {
     label: "Keep what your users actually watch",
     help: "If at least this many different people have played it recently, it stays, whatever it scored.",
     unit: "people",
+    window: {
+      label: "counting plays from the last",
+      help: "How far back “recently” reaches. A year is the usual setting. Make it much shorter and almost nothing counts as watched, so this protection stops catching anything.",
+    },
   },
   rating_floor: {
     label: "Keep well-rated titles",

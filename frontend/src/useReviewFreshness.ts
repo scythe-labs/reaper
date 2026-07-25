@@ -32,18 +32,15 @@ export function useReviewFreshness(opts: {
   /** Whether the reviewer is mid-review right now. Read only at the instant a newer scan
    *  appears, so a later scroll never re-decides a scan already handled. */
   isBusy: () => boolean;
-  /** Pull the latest snapshot into the view (invalidate the review queries). */
-  onSilentRefresh: () => void;
-  /** Whether the review list is fetching right now. React Query keeps the old data on a refetch
-   *  error, so error flags stay clear; a fetch that went and settled while the list is still
-   *  behind is how we tell a failed silent refresh from one still in flight, so the hook can
-   *  nudge instead of leaving the list silently stale (PR-5). */
-  refreshFetching?: boolean;
+  /** Pull the latest snapshot into the view (invalidate the review queries). Returns a promise
+   *  that settles when those refetches have finished, which is how a failed silent refresh is
+   *  told from one still in flight (see the note on the second effect below). */
+  onSilentRefresh: () => void | Promise<unknown>;
   /** Fired once when a SILENT refresh's swap has actually landed (behind -> caught up), so the
    *  caller confirms it (a toast) only after it happened, never at issuance (rule 85). */
   onSilentCaughtUp?: () => void;
 }): ReviewFreshness {
-  const { viewSnapshotId, latestSnapshotId, refreshFetching = false } = opts;
+  const { viewSnapshotId, latestSnapshotId } = opts;
   const behind =
     latestSnapshotId !== null &&
     viewSnapshotId !== null &&
@@ -65,10 +62,15 @@ export function useReviewFreshness(opts: {
   const handled = useRef<number | null>(null);
   // A silent refresh is in flight and its swap has not landed yet: we still owe either a
   // caught-up confirmation (behind -> false) or, if its refetch settles without catching up,
-  // a raised nudge. `sawFetch` records that the refetch actually started, so the settle check
-  // below can't misfire in the gap between issuing the refresh and the fetch beginning.
+  // a raised nudge.
   const awaitingSilent = useRef(false);
-  const sawFetch = useRef(false);
+  // Bumped once the silent refresh's own refetches have SETTLED -- the signal the effect below
+  // waits for. It used to watch the list's `isFetching` flag go true and then false instead,
+  // which only worked if a render happened to be committed during the fetch: a refetch that
+  // rejected in the same microtask flush never showed up as fetching at all, and the nudge
+  // silently never came (found when the queue stopped re-rendering so freely, P-1/P-7). What
+  // the refresh returns settles exactly when its work is done, whatever the render schedule.
+  const [settleTick, setSettleTick] = useState(0);
 
   useEffect(() => {
     if (!behind) {
@@ -76,7 +78,6 @@ export function useReviewFreshness(opts: {
       // on exactly this, confirm the swap now -- only now (rule 85). Then reset for the next scan.
       if (awaitingSilent.current) {
         awaitingSilent.current = false;
-        sawFetch.current = false;
         caughtUpRef.current?.();
       }
       setNudging(false);
@@ -90,26 +91,24 @@ export function useReviewFreshness(opts: {
       setNudging(true);
     } else {
       awaitingSilent.current = true;
-      sawFetch.current = false;
-      refreshRef.current();
+      void Promise.resolve(refreshRef.current()).then(() => setSettleTick((n) => n + 1));
     }
   }, [behind, latestSnapshotId]);
 
   // A silent refresh whose refetch went and finished while the list is STILL behind never caught
   // up (a network blip): raise the nudge rather than leave the list silently stale -- the
   // reviewer is idle, so the bar is theirs to act on (PR-5).
+  //
+  // `behind` is a dependency as well as a guard, so a swap that lands after this fires still
+  // reaches the effect above, which clears the nudge and confirms the catch-up. That ordering
+  // is what makes the tick safe to trust even if it arrives a commit early.
   useEffect(() => {
-    if (!awaitingSilent.current) return;
-    if (refreshFetching) {
-      sawFetch.current = true;
-      return;
-    }
-    if (sawFetch.current && behind) {
+    if (!awaitingSilent.current || settleTick === 0) return;
+    if (behind) {
       awaitingSilent.current = false;
-      sawFetch.current = false;
       setNudging(true);
     }
-  }, [refreshFetching, behind]);
+  }, [settleTick, behind]);
 
   return {
     showBar: nudging && behind && !dismissed,

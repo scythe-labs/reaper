@@ -126,7 +126,25 @@ export function ScanRow({
             }
           : null,
       );
-      void queryClient.invalidateQueries();
+      // Named, not a bare invalidateQueries(): that refetched EVERY mounted query at once --
+      // the logs, safety, the profile, every settings panel, every instance test -- against
+      // a server that had just finished a full scan (P-5). These are the caches a new
+      // snapshot actually changes, each with the surface it feeds. A cache added later that
+      // reads from the scan belongs in this list; one that does not, does not.
+      for (const key of [
+        ["snapshot"], // the scan's own totals, in the header and on the Reap page
+        ["candidates"], // the review queue, every loaded page
+        ["candidates-unfiltered"], // the "how many the filters are hiding" count beside it
+        ["candidate"], // an open item panel
+        ["group"], // an open show panel, and every expanded season list
+        ["reap-breakdown"], // the Reap page's ledger
+        ["run"], // one plan's counts, re-derived against the new condemned set
+        ["fairness"], // Scales matches requests to the last scan
+        ["season-shape"], // the policy editor's "from your last scan" advisory
+        ["schedule"], // the scan job's own last-run line
+      ]) {
+        void queryClient.invalidateQueries({ queryKey: key });
+      }
     }
     if (!wasScanning.current && scanning) setBefore(null);
     wasScanning.current = scanning;

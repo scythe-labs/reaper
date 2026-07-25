@@ -24,6 +24,7 @@
 // the contract -- it imports `trapTab` from here, so Tab containment has one definition.
 
 import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useModalLayer } from "../backnav";
 import { usePageScrollLock } from "../pageScrollLock";
 
 /** Everything a browser will put in the Tab order, in document order. */
@@ -97,6 +98,11 @@ export function ModalShell({
 
   // Hold the page still behind the scrim, so scrolling stays inside the panel.
   usePageScrollLock(true);
+
+  // Say out loud that a modal is up, so the list keyboard handlers behind the scrim can stand
+  // down (useModalOpen). Declared here, in the one component every modal is built from, rather
+  // than probed for as a `[role="dialog"]` element on each keypress (H-2).
+  useModalLayer();
 
   // Escape closes, through the same guard as the scrim and the ✕.
   useEffect(() => {

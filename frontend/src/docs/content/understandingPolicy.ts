@@ -54,7 +54,9 @@ export const understandingPolicy: Doc = {
       },
       {
         title: "Run a scan and let it finish.",
-        text: 'A scan freezes all the evidence, then scores, so a brief timeout can never flip a title’s fate mid-run. If it comes back "degraded," a source failed and Reaper marked the run unusable on purpose. Fix the source and scan again.',
+        // "incomplete" is the word the app itself shows (ScanBar, App.tsx). "degraded" is
+        // the internal field name, which rules 21 and 25 both bar from operator copy (U-12).
+        text: 'A scan freezes all the evidence, then scores, so a brief timeout can never flip a title’s fate mid-run. If it comes back "incomplete," a source failed and Reaper marked the run unusable on purpose. Fix the source and scan again.',
       },
       {
         title: 'Read a few "why" panels before touching anything.',

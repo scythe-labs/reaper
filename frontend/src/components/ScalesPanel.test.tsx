@@ -112,6 +112,27 @@ describe("ScalesPanel", () => {
     expect(screen.getByText(/2 per 30 days · at limit/)).toBeInTheDocument();
   });
 
+  it("says “per day” for a daily quota, not “per 1 days”", () => {
+    // This file and Fairness already pluralize "person"/"people" and "title"/"titles";
+    // the quota line pluralized nothing (U-19).
+    render(
+      <ScalesPanel
+        detail={detail({
+          quota: {
+            seerr_total: 3,
+            movie: { limit: 1, days: 1, at_limit: false },
+            tv: { limit: null, days: null, at_limit: false },
+          },
+        })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("1 per day")).toBeInTheDocument();
+    expect(screen.queryByText(/per 1 days/)).not.toBeInTheDocument();
+  });
+
   it("opens a movie by its item id from its row", async () => {
     const onOpenItem = vi.fn();
     render(

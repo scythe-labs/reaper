@@ -21,8 +21,9 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { api, type ReapStatus, type Run, type RunReport } from "../api";
+import { ApiError, api, type ReapStatus, type Run, type RunReport } from "../api";
 import { bytes, count, souls } from "../format";
+import { useSafety } from "../useSafety";
 import { ModalShell } from "./ModalShell";
 
 export function ReapConfirm({
@@ -38,7 +39,7 @@ export function ReapConfirm({
   const [typed, setTyped] = useState("");
   const [dryReport, setDryReport] = useState<RunReport | null>(null);
 
-  const safety = useQuery({ queryKey: ["safety"], queryFn: api.safety });
+  const safety = useSafety();
   const armed = safety.data?.destructive_enabled === true;
 
   const dry = useMutation({
@@ -48,10 +49,12 @@ export function ReapConfirm({
 
   // The live reap status, shared with the app-wide reap bar (one cache key, one poll). Read
   // on open so this sheet re-attaches to a run already in flight, and polled while running.
+  // Idle still polls, slowly: a reap started from a phone or a second tab must reach an
+  // already-open sheet, which is otherwise still offering Execute for a plan now in flight.
   const reap = useQuery({
     queryKey: ["reapStatus"],
     queryFn: api.reapStatus,
-    refetchInterval: (q) => (q.state.data?.running ? 1000 : false),
+    refetchInterval: (q) => (q.state.data?.running ? 1000 : 15000),
   });
   const status = reap.data;
   const mine = status?.run_id === run.id;
@@ -62,11 +65,28 @@ export function ReapConfirm({
   const otherRunning = !!status?.running && !mine;
   // The after-action report lands on the status when the run ends; only this run's own.
   const report = mine && status && !status.running ? status.report : null;
+  // The run raised instead of finishing -- deletion switched off mid-run, a cap breached, a
+  // failed canary, a crash after N files were already gone. There is no report to show, and
+  // files may already be deleted, so the confirm stage must NOT re-arm itself in silence:
+  // say what happened and offer nothing but Done.
+  const failed = mine && !!status && !status.running && status.phase === "error";
 
   const exec = useMutation({
-    mutationFn: () => api.executeRun(run.id, run.confirmation_phrase),
+    // What the operator typed, verbatim -- never the phrase this sheet already holds. The
+    // server re-derives the expected phrase live, so posting our own copy would reduce the
+    // human gate to a `disabled` attribute the server cannot tell from an echo, and would
+    // deadlock the moment the expected phrase moved under an open sheet.
+    mutationFn: () => api.executeRun(run.id, typed.trim()),
     // Seed the shared status so "running" shows at once, without waiting for the first poll.
     onSuccess: (s) => queryClient.setQueryData(["reapStatus"], s),
+    onError: (e) => {
+      // The phrase moved while this sheet was open (a spare or reap elsewhere, a raised
+      // unknown-size allowance). Pull the run again so the label, the placeholder, and the
+      // typed check all measure against the phrase the server will actually accept.
+      if (e instanceof ApiError && e.status === 409) {
+        void queryClient.invalidateQueries({ queryKey: ["run", run.id] });
+      }
+    },
   });
 
   const stop = useMutation({
@@ -74,33 +94,31 @@ export function ReapConfirm({
     onSuccess: (s) => queryClient.setQueryData(["reapStatus"], s),
   });
 
-  // When the run ends, refresh the queue and history once. The server also kicks a fresh
-  // scan (removed files leave the queue and policy stale); its progress shows on the scan
-  // line. onDone lets the parent react (e.g. clear a selection).
+  // When the run ends, let the parent react (e.g. clear a selection). Refreshing the caches
+  // the reap invalidated is NOT done here: this sheet is meant to be closed mid-run, so the
+  // work lives on the always-mounted reap bar (App.tsx), which cannot be unmounted out of it.
   const endedRef = useRef(false);
   useEffect(() => {
-    if (report && !endedRef.current) {
+    if ((report || failed) && !endedRef.current) {
       endedRef.current = true;
-      void queryClient.invalidateQueries({ queryKey: ["runs"] });
-      void queryClient.invalidateQueries({ queryKey: ["candidates"] });
       onDone?.();
     }
-  }, [report, onDone, queryClient]);
+  }, [report, failed, onDone]);
 
   // Prove the plan the moment the sheet opens. Nothing is sent; this only walks interlocks.
-  // Skipped when reopening a run already in flight or finished (via the bar's View): the
-  // executor refuses a dry run on a non-PLANNED run, and its "practice run" blurb must never
-  // render over live progress or the report.
+  // Skipped when reopening a run already in flight, finished, or failed (via the bar's View):
+  // the executor refuses a dry run on a non-PLANNED run, and its "practice run" blurb must
+  // never render over live progress, the report, or a failure.
   useEffect(() => {
     const s = queryClient.getQueryData<ReapStatus>(["reapStatus"]);
-    const active = s?.run_id === run.id && (s.running || s.report != null);
+    const active = s?.run_id === run.id && (s.running || s.report != null || s.phase === "error");
     if (!active) dry.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.id]);
 
   const dryClean = dryReport?.dry_run === true && dryReport.state === "completed";
   const phraseOk = typed.trim() === run.confirmation_phrase;
-  const canExecute = armed && dryClean && phraseOk && !exec.isPending && !running;
+  const canExecute = armed && dryClean && phraseOk && !exec.isPending && !running && !failed;
   const pct = status && status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
 
   return (
@@ -124,29 +142,32 @@ export function ReapConfirm({
         </p>
       )}
 
-      {/* Stage 1 — the dry run. Every block here is gated on !running && !report so none of
-          it can render over live progress or the finished report (e.g. after reopening a live
-          run from the app-wide bar). */}
-      {!running && !report && (
+      {/* Stage 1 — the practice run ("dry run" is still the API's and the executor's word for
+          it; every operator-facing string in this flow says practice run, U-15). Every block
+          here is gated on !running && !report && !failed so
+          none of it can render over live progress, the finished report, or a failure (e.g.
+          after reopening a live run from the app-wide bar). */}
+      {!running && !report && !failed && (
         <>
           {dry.isPending && (
             <p className="blurb">Checking every safety stop with a practice run…</p>
           )}
           {dry.error && (
             <p className="notice notice-error">
-              The dry run failed, so nothing can be executed: {dry.error.message}
+              The practice run failed, so nothing can be executed: {dry.error.message}
             </p>
           )}
           {dryReport?.dry_run && dryReport.state === "aborted" && (
             <div className="sim sim-info">
-              <strong>The plan aborted. Nothing would be touched.</strong>
+              {/* "stopped", the one word the product uses for this (U-15). */}
+              <strong>The plan stopped. Nothing would be touched.</strong>
               <p>{dryReport.aborted_reason}</p>
             </div>
           )}
           {dryClean && (
             <p className="dry-ok">
-              <span className="gate-mark">✓</span> Dry run passed: the plan is sound, and it sent
-              nothing.
+              <span className="gate-mark">✓</span> Practice run passed: the plan is sound, and it
+              sent nothing.
             </p>
           )}
         </>
@@ -154,15 +175,15 @@ export function ReapConfirm({
 
       {/* Another reap holds the single slot: say so, rather than lighting a Reap button the
           server would refuse. */}
-      {!running && !report && otherRunning && (
+      {!running && !report && !failed && otherRunning && (
         <p className="notice notice-warn">
           Another reap is running. Wait for it to finish, then reopen this to reap.
         </p>
       )}
 
-      {/* Stage 2 — arm + typed confirmation, shown once the dry run is clean and nothing is
+      {/* Stage 2 — arm + typed confirmation, shown once the practice run is clean and nothing is
           running or finished (here or elsewhere) yet. */}
-      {dryClean && !running && !report && !otherRunning && (
+      {dryClean && !running && !report && !failed && !otherRunning && (
         <div className="reap-arm">
           {!armed ? (
             // Three states, never one definite claim: only a switch we actually read may
@@ -238,6 +259,24 @@ export function ReapConfirm({
               onClick={() => stop.mutate()}
             >
               {stopping ? "Stopping…" : "Stop"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Stopped by a problem. There is no report, and files may already be gone, so the one
+          thing on offer is Done: re-arming the phrase here would invite a second execute the
+          server refuses just as silently. What was removed is on the reap bar's report. */}
+      {failed && (
+        <div className="reap-arm">
+          <p className="notice notice-error">
+            <strong>The reap stopped on a problem.</strong>{" "}
+            {status?.error ?? "Reaper couldn't say what went wrong."} Anything already removed is
+            gone; check the Review queue after the next scan.
+          </p>
+          <div className="reap-confirm-actions">
+            <button className="primary" onClick={onClose}>
+              Done
             </button>
           </div>
         </div>

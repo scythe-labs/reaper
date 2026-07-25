@@ -30,6 +30,7 @@ import {
 } from "../api";
 import { useBackGuard } from "../backnav";
 import { bytes, count, since } from "../format";
+import { useSafety } from "../useSafety";
 import { JobStatus, useJobFlash } from "./JobStatus";
 import { LogsPanel } from "./LogsPanel";
 import { ModalShell } from "./ModalShell";
@@ -128,7 +129,7 @@ function allTimeZones(): string[] {
   return _zoneCache;
 }
 
-function GeneralPanel() {
+export function GeneralPanel() {
   const queryClient = useQueryClient();
   const general = useQuery({ queryKey: ["general-settings"], queryFn: api.general });
 
@@ -163,29 +164,46 @@ function GeneralPanel() {
 
   const save = useMutation({
     mutationFn: api.saveGeneral,
-    onSuccess: (data) => {
-      // Re-seed from the canonical stored values (rule 39). Setting the query cache also
-      // makes the shell re-apply the accent app-wide, so a save re-tints everything.
+    onSuccess: (data, sent) => {
+      // Re-seed from the canonical stored values (rule 39) -- but only the fields this Save
+      // actually sent. Every row on this panel has its own Save button, so re-seeding all of
+      // them made one row's Save quietly discard every other row's in-progress edit: type a
+      // new application URL, press Save on the NAME row, and the typed URL and its own Save
+      // button both vanish, with nothing on screen to say why (B-18).
+      //
+      // Setting the query cache stays unconditional: it is the canonical stored state, and it
+      // is what re-applies the accent app-wide so a save re-tints everything.
       queryClient.setQueryData(["general-settings"], data);
-      setName(data.application_name);
-      setUrl(data.application_url ?? "");
-      setTz(data.timezone);
-      setProxies(data.trusted_proxies.join(", "));
-      setAccent(data.accent_color);
+      if ("application_name" in sent) setName(data.application_name);
+      if ("application_url" in sent) setUrl(data.application_url ?? "");
+      if ("timezone" in sent) setTz(data.timezone);
+      if ("trusted_proxies" in sent) setProxies(data.trusted_proxies.join(", "));
+      if ("accent_color" in sent) setAccent(data.accent_color);
     },
   });
 
+  // Three buttons (Show, Generate/Replace, Copy) share one notice, and a mutation holds its
+  // error until its OWN next call -- so rendering `reveal.error ?? generate.error ?? copy.error`
+  // left a failure on screen beside a key that had since worked: fail Copy on a plain-http LAN
+  // page, then press Show, and the red notice was still the copy failure (B-33). The three
+  // report through this one piece of state instead, cleared the moment any of them starts, so
+  // the notice always describes the last thing the operator did.
+  const [keyError, setKeyError] = useState<string | null>(null);
   const reveal = useMutation({
     mutationFn: api.revealApiKey,
+    onMutate: () => setKeyError(null),
     onSuccess: (r) => setRevealedKey(r.key),
+    onError: (e: Error) => setKeyError(e.message),
   });
   const generate = useMutation({
     mutationFn: api.generateApiKey,
+    onMutate: () => setKeyError(null),
     onSuccess: (r) => {
       setRevealedKey(r.key);
       setConfirmReplace(false);
       void queryClient.invalidateQueries({ queryKey: ["general-settings"] });
     },
+    onError: (e: Error) => setKeyError(e.message),
   });
 
   const copyKey = async () => {
@@ -203,7 +221,11 @@ function GeneralPanel() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
-  const copy = useMutation({ mutationFn: copyKey });
+  const copy = useMutation({
+    mutationFn: copyKey,
+    onMutate: () => setKeyError(null),
+    onError: (e: Error) => setKeyError(e.message),
+  });
 
   if (general.isPending) {
     return <p className="muted">Loading…</p>;
@@ -496,11 +518,17 @@ function GeneralPanel() {
         <div className="set-rows">
           <div className="set-row">
             <span className="set-label">API key</span>
+            {/* This sentence is the whole basis on which an operator decides to hand a key
+                to a third-party dashboard, so it names what the fence in api/middleware.py
+                (_API_KEY_READ_DENY / _API_KEY_WRITE_ALLOW) actually allows, not a rounder
+                claim. It used to say a key "cannot change any setting", while /api/profile
+                sat in the write allowlist: a key holder could turn run limits off (S-2).
+                Changing either list means changing this line in the same commit. */}
             <p className="help">
-              Lets scripts and other apps call the Reaper API without signing in: send it as
-              the X-Api-Key header. A key can read your library, start scans, plan, and edit
-              the policy. It cannot change any setting, turn deletion on, or run a reap. Those
-              stay here in the browser, behind your password.
+              Send it as the X-Api-Key header so scripts and other apps can use Reaper
+              without signing in. A key reads your library, and can start scans, build plans,
+              and change your policy, run limits, and grace. It cannot turn deletion on, run
+              a reap, read your logs, or change your connections or password.
             </p>
             <div className="set-control">
               {data.api_key_set ? (
@@ -567,11 +595,7 @@ function GeneralPanel() {
             </div>
           </div>
         </div>
-        {(reveal.error || generate.error || copy.error) && (
-          <p className="notice notice-error">
-            {(reveal.error ?? generate.error ?? copy.error)?.message}
-          </p>
-        )}
+        {keyError && <p className="notice notice-error">{keyError}</p>}
       </div>
 
       <div className="set-group">
@@ -741,8 +765,16 @@ function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => v
 export function ServicesPanel() {
   const { data, isPending, error } = useQuery({ queryKey: ["instances"], queryFn: api.instances });
   const [modal, setModal] = useState<{ kind: string; instance: Instance | null } | null>(null);
-  // Back closes the service editor instead of leaving Reaper.
-  useBackGuard(modal !== null, () => setModal(null));
+  // The modal's save lives inside ServiceModal; it mirrors its pending state here so Back
+  // refuses a close mid-save exactly as the scrim/Escape/✕ do, the same arrangement the
+  // schedule editor uses (B-19).
+  const savePendingRef = useRef(false);
+  // Back closes the service editor instead of leaving Reaper -- unless a save is in flight.
+  useBackGuard(
+    modal !== null,
+    () => setModal(null),
+    () => !savePendingRef.current,
+  );
 
   return (
     <div className="panel panel-wide">
@@ -789,6 +821,7 @@ export function ServicesPanel() {
           kind={modal.kind}
           instance={modal.instance}
           onClose={() => setModal(null)}
+          savePendingRef={savePendingRef}
         />
       )}
     </div>
@@ -1068,6 +1101,7 @@ function RestoreCard({ armed }: { armed: boolean }) {
                 setPassword(e.target.value);
               }}
               autoComplete="current-password"
+              maxLength={128}
               placeholder="Confirm to restore"
             />
           </label>
@@ -1928,6 +1962,7 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
                   value={current}
                   onChange={onEdit(setCurrent)}
                   autoComplete="current-password"
+                  maxLength={128}
                 />
               </label>
               <hr className="pw-sep" />
@@ -1935,13 +1970,16 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
           )}
           <label className="field-sm">
             <span className="field-label">New password</span>
-            {/* The placeholder states the length up front; the label names the field. */}
+            {/* The placeholder states the length up front; the label names the field. The
+                cap is the server's own, so a long pasted passphrase is stopped in the box
+                rather than coming back as a validator's sentence. */}
             <input
               type="password"
               value={pw}
               onChange={onEdit(setPw)}
               placeholder="at least 12 characters"
               autoComplete="new-password"
+              maxLength={128}
             />
           </label>
           <label className="field-sm">
@@ -1951,6 +1989,7 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
               value={confirm}
               onChange={onEdit(setConfirm)}
               autoComplete="new-password"
+              maxLength={128}
             />
           </label>
           <div className="add-actions">
@@ -1967,7 +2006,7 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
 }
 
 export function SecurityPanel() {
-  const { data, isLoading, isError } = useQuery({ queryKey: ["safety"], queryFn: api.safety });
+  const { data, isLoading, isError } = useSafety();
 
   if (isLoading) {
     return (

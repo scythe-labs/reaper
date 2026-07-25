@@ -9,7 +9,7 @@
 //   - a fixed suffix ("30 days", "3 people", "6.5 / 10"): the unit cannot change, so it
 //     renders as a quiet suffix inside the same box instead of a dropdown.
 
-import { useState } from "react";
+import { useRef, useState, type ChangeEvent } from "react";
 
 export interface Unit {
   label: string;
@@ -42,6 +42,60 @@ function trim(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/** Where a number lives while it is being typed.
+ *
+ * A box whose text is re-derived from the stored number on every render gets rewritten
+ * under the caret: clear it to retype, the stored value reads the empty box as 0, writes
+ * "0" back, and the digits typed next land after it -- select-all + "25" saves 125. So
+ * while the box has focus it shows what was typed, nothing else, and the value only moves
+ * when the text actually parses: an empty or half-finished box ("", "7.") says nothing and
+ * leaves the stored number alone. Leaving the box is the commit -- it goes back to showing
+ * the stored value, pulled into range if what was typed was out of it.
+ *
+ * `shown` and the emitted number are both in whatever unit the box displays; a caller that
+ * translates (QuantityInput's dropdown) translates on the way in and out.
+ *
+ * Exported for the handful of number boxes that carry no unit at all (a rank, a ramp bound),
+ * which rule 40 leaves as plain boxes -- they still need this, and there is only one of it.
+ */
+export function useTypedNumber(
+  shown: string,
+  emit: (n: number) => void,
+  bounds: { min?: number | undefined; max?: number | undefined } = {},
+): {
+  value: string;
+  onFocus: () => void;
+  onChange: (e: ChangeEvent<HTMLInputElement>) => void;
+  onBlur: () => void;
+} {
+  const [text, setText] = useState(shown);
+  const [typing, setTyping] = useState(false);
+
+  return {
+    value: typing ? text : shown,
+    onFocus: () => {
+      setText(shown);
+      setTyping(true);
+    },
+    onChange: (e) => {
+      const raw = e.target.value;
+      setText(raw);
+      // An empty box is someone midway through retyping, never a zero.
+      if (raw.trim() === "") return;
+      const n = Number(raw);
+      if (Number.isFinite(n)) emit(n);
+    },
+    onBlur: () => {
+      setTyping(false);
+      const n = Number(text);
+      if (text.trim() === "" || !Number.isFinite(n)) return; // nothing usable typed: keep what was stored
+      const { min, max } = bounds;
+      if (min != null && n < min) emit(min);
+      else if (max != null && n > max) emit(max);
+    },
+  };
+}
+
 export function QuantityInput({
   value,
   onChange,
@@ -56,18 +110,33 @@ export function QuantityInput({
   ariaLabel?: string;
 }) {
   const [unit, setUnit] = useState<Unit>(() => bestUnit(value, units));
-  const shown = trim(value / unit.factor);
+
+  // The unit follows a value replaced from outside -- Discard, a preset, a media-type
+  // switch, the re-seed after a save. A grace box left on "months" would otherwise show a
+  // staged 7 days as 0.23 months: right, and unreadable. Our own emits are remembered so
+  // typing 500 in a GB box never jumps the box to TB mid-keystroke.
+  const mine = useRef(value);
+  const seen = useRef(value);
+  if (value !== seen.current) {
+    const fromThisBox = value === mine.current;
+    seen.current = value;
+    if (!fromThisBox) setUnit(bestUnit(value, units));
+  }
+
+  const shown = String(trim(value / unit.factor));
+  const typed = useTypedNumber(
+    shown,
+    (n) => {
+      const base = Math.round(n * unit.factor);
+      mine.current = base;
+      onChange(base);
+    },
+    { min: min / unit.factor },
+  );
 
   return (
     <span className="qty">
-      <input
-        type="number"
-        min={min / unit.factor}
-        step="any"
-        value={shown}
-        aria-label={ariaLabel}
-        onChange={(e) => onChange(Math.round((Number(e.target.value) || 0) * unit.factor))}
-      />
+      <input type="number" min={min / unit.factor} step="any" aria-label={ariaLabel} {...typed} />
       <select
         value={unit.label}
         aria-label={ariaLabel ? `${ariaLabel} unit` : "Unit"}
@@ -110,6 +179,8 @@ export function FixedQuantity({
   ariaLabel?: string;
   disabled?: boolean;
 }) {
+  const typed = useTypedNumber(String(value), onChange, { min, max });
+
   return (
     <span className={width === "narrow" ? "qty qty-narrow" : "qty"}>
       <input
@@ -117,10 +188,9 @@ export function FixedQuantity({
         min={min}
         max={max}
         step={step}
-        value={value}
         aria-label={ariaLabel}
         disabled={disabled}
-        onChange={(e) => onChange(Number(e.target.value) || 0)}
+        {...typed}
       />
       <span className="qty-suffix" aria-hidden="true">
         {suffix}

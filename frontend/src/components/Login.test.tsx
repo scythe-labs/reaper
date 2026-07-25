@@ -77,3 +77,25 @@ describe("the local-account sheet", () => {
     }
   });
 });
+
+describe("the recovery card", () => {
+  it("sends a locked-out operator to the console, which is the only place the code is", async () => {
+    // mint_recovery_token prints its banner rather than logging it, deliberately, so the
+    // code never reaches the in-app Logs tab or the files that tab downloads. The card used
+    // to say "to its log", which sent people to Settings -> Logs to find nothing (U-11).
+    window.history.pushState({}, "", "/recover");
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Login />
+      </QueryClientProvider>,
+    );
+
+    const note = await screen.findByText(/Reaper printed a recovery code/);
+    expect(note.textContent).toContain("console output");
+    expect(note.textContent).not.toContain("to its log");
+    window.history.pushState({}, "", "/");
+  });
+});

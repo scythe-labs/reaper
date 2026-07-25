@@ -356,6 +356,32 @@ class TestTheRunsApi:
         listed = client.get("/api/runs").json()
         assert any(r["id"] == created["id"] for r in listed)
 
+    def test_the_run_list_carries_only_what_is_stored(self, client: TestClient) -> None:
+        """The history is stored rows, nothing derived.
+
+        Deriving a run's counts, totals and phrase means re-reading the whitelist, the
+        profile and the whole condemned set of that run's snapshot -- per run, so a list of
+        fifty read the same thousands of rows fifty times on every visit to the Reap page
+        (P-3). It was dishonest as well as slow: a finished run's phrase was recomputed
+        against TODAY's overrides, describing a plan nobody ever approved. Opening a run
+        goes to the detail route, which derives them for that one.
+        """
+        client.post("/api/runs")
+        row = client.get("/api/runs").json()[0]
+        assert set(row) == {
+            "id",
+            "snapshot_id",
+            "state",
+            "approved_by",
+            "approved_at",
+            "aborted_reason",
+            "held_back_unknown_size",
+        }
+        # ...and the detail route still answers with the whole thing.
+        full = client.get(f"/api/runs/{row['id']}").json()
+        assert full["confirmation_phrase"].startswith("REAP ")
+        assert isinstance(full["steps"], list)
+
     def test_dry_running_a_missing_run_is_a_404(self, client: TestClient) -> None:
         assert client.post("/api/runs/9999/dry-run").status_code == 404
 

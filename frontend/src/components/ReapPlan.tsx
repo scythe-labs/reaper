@@ -16,10 +16,33 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, type Run, type RunReport } from "../api";
 import { bytes, count, date, souls } from "../format";
+import { useSafety } from "../useSafety";
 import { ReapBreakdown } from "./ReapBreakdown";
 import { ReapConfirm } from "./ReapConfirm";
 
+/** A stored run state, in the words the rest of the app uses for it. "Stopped", never
+ *  "aborted" -- one word for one mechanism, the same as the reap bar and the report above
+ *  (U-15). An unknown state (an older or newer build) reads through unchanged rather than
+ *  being hidden. */
+function runState(state: string): string {
+  if (state === "planned") return "not run";
+  if (state === "executing") return "running";
+  if (state === "completed") return "done";
+  if (state === "aborted") return "stopped";
+  return state;
+}
+
+/** How many rows either long list on this page draws before saying how many more there are.
+ *  One number for both, so the step table and the practice-run outcomes cut off together. */
+const LIST_CAP = 50;
+
 function Steps({ run }: { run: Run }) {
+  // A first cleanup of 500 items is 1500 rows, each with a path and a stringified body, and
+  // the table used to render every one of them synchronously -- on plan build, and again on
+  // every history-row click (P-9). The first 50 are the ones that matter: the plan is ordered
+  // smallest first, so step 0 is the canary the whole run turns on.
+  const shown = run.steps.slice(0, LIST_CAP);
+  const more = run.steps.length - shown.length;
   return (
     // The Request column holds a full API path and a JSON body, so the table has a wider
     // minimum than a phone. The wrapper keeps that scroll sideways inside the table instead
@@ -35,7 +58,7 @@ function Steps({ run }: { run: Run }) {
           </tr>
         </thead>
         <tbody>
-          {run.steps.map((step) => (
+          {shown.map((step) => (
             // A TV season emits three steps sharing one media_key AND ordinal (unmonitor,
             // verify, delete-files), so media_key alone collides. kind is unique within a
             // season, so media_key+kind is stable per row and reconciles states correctly.
@@ -56,38 +79,60 @@ function Steps({ run }: { run: Run }) {
           ))}
         </tbody>
       </table>
+      {more > 0 && (
+        <p className="muted">
+          …and {count(more)} more {more === 1 ? "step" : "steps"}, not shown. The run still
+          covers every one of them.
+        </p>
+      )}
     </div>
   );
 }
 
 function Report({ report }: { report: RunReport }) {
+  // "stopped", not "aborted": one word for one mechanism. The docs say caps stop the whole
+  // run, and the app-wide reap bar already reports this exact state as "Stopped." (App.tsx).
+  // "Abort" was operator vocabulary nowhere else in the product (U-15).
   if (report.state === "aborted") {
     return (
       <div className="sim sim-info">
-        <h3>The run aborted. Nothing was touched</h3>
+        <h3>The run stopped. Nothing was touched</h3>
         <p>{report.aborted_reason}</p>
       </div>
     );
   }
   return (
     <div className="sim">
+      {/* What the practice run PROVED, which is the only thing an operator can act on. It
+          used to lead with "N souls were actually reaped", a number that is zero by
+          construction here and so says nothing, and then called the per-item outcomes
+          "steps" -- a plan of 3 seasons read "3 steps were walked" over the 9 journalled
+          steps in the table below it (I-1). */}
       <p className="blurb">
-        Dry run complete. Every safety check ran; <strong>{souls(report.would_delete_items)}</strong>{" "}
-        were actually reaped (it is a dry run, so this is zero), and{" "}
-        {count(report.outcomes.length)} steps were walked.
+        Practice run complete. Every safety check ran and nothing was sent.{" "}
+        {report.skipped > 0 ? (
+          <>
+            <strong>{souls(report.outcomes.length)}</strong> were walked, and{" "}
+            <strong>{count(report.skipped)}</strong> of them would be skipped.
+          </>
+        ) : (
+          <>
+            <strong>{souls(report.outcomes.length)}</strong> were walked end to end.
+          </>
+        )}
       </p>
       <ul className="dryrun-outcomes">
-        {report.outcomes.slice(0, 50).map((o, i) => (
-          // Outcomes can repeat a media_key (a season walks several steps), so pair it with
-          // the index to keep sibling keys unique.
-          <li key={`${o.media_key}-${i}`}>
+        {report.outcomes.slice(0, LIST_CAP).map((o) => (
+          // One outcome per item, never more: executor._run_deletes records exactly one
+          // StepOutcome per delete, so the item's own key is unique among siblings.
+          <li key={o.media_key}>
             <span className="gate-mark">✓</span>
             <code>{o.detail}</code>
           </li>
         ))}
       </ul>
-      {report.outcomes.length > 50 && (
-        <p className="muted">…and {count(report.outcomes.length - 50)} more.</p>
+      {report.outcomes.length > LIST_CAP && (
+        <p className="muted">…and {count(report.outcomes.length - LIST_CAP)} more.</p>
       )}
     </div>
   );
@@ -106,20 +151,35 @@ export function ReapPlan({
   onGoToReview: () => void;
 }) {
   const queryClient = useQueryClient();
-  const [run, setRun] = useState<Run | null>(null);
+  // The plan shown is held by ID and read through the cache, never captured as a local copy.
+  // A captured run goes stale the moment the reap it describes finishes: its state stays
+  // "planned" and its Execute button stays live over a run the server has already spent, and
+  // clicking it dry-runs a completed run for no explanation but "the dry run failed".
+  const [runId, setRunId] = useState<number | null>(null);
+  const { data: run } = useQuery({
+    queryKey: ["run", runId],
+    queryFn: () => api.run(runId!),
+    enabled: runId != null,
+  });
   const [report, setReport] = useState<RunReport | null>(null);
   const [confirming, setConfirming] = useState(false);
 
-  // The same query key the deletion toggle and the banner use, so arming updates all
-  // three in one render pass. Unknown must gate like off: a plan must not offer Execute
-  // on a safety state we could not read.
-  const safety = useQuery({ queryKey: ["safety"], queryFn: api.safety });
+  /** Show a plan we already hold in full: seed the cache, then point at it. */
+  const showRun = (r: Run) => {
+    queryClient.setQueryData(["run", r.id], r);
+    setRunId(r.id);
+  };
+
+  // The same query the deletion toggle and the banner use, so arming updates all three in
+  // one render pass. Unknown must gate like off: a plan must not offer Execute on a safety
+  // state we could not read.
+  const safety = useSafety();
   const armed = safety.data?.destructive_enabled ?? false;
 
   const plan = useMutation({
-    mutationFn: () => api.createRun(),
+    mutationFn: () => api.createRun("all"),
     onSuccess: (r) => {
-      setRun(r);
+      showRun(r);
       setReport(null);
       void queryClient.invalidateQueries({ queryKey: ["runs"] });
     },
@@ -150,18 +210,35 @@ export function ReapPlan({
   const staleRun = run != null && latestSnapshot != null && run.snapshot_id !== latestSnapshot.id;
   const staleUnknown = run != null && latestSnapshot == null;
 
+  // The planner refuses a degraded snapshot outright, so offering Build over one only trades
+  // a click for a 422. Said here, in the same words the scan job uses, before the ledger
+  // below reads as a list Reaper is ready to act on.
+  const degraded = latestSnapshot?.degraded === true;
+
   return (
     <section className="reap">
       <div className="reap-head">
         <h2>Reap plan</h2>
-        <button className="primary" onClick={() => plan.mutate()} disabled={plan.isPending}>
+        <button
+          className="primary"
+          onClick={() => plan.mutate()}
+          disabled={plan.isPending || degraded}
+        >
           {plan.isPending ? "Planning…" : "Build a plan from the last scan"}
         </button>
       </div>
       <p className="blurb">
         A plan records exactly what a reap <em>would</em> do: the literal request behind every
-        deletion. It can be dry-run end to end. Nothing here deletes anything.
+        deletion. You can practice it end to end. Nothing here deletes anything.
       </p>
+
+      {degraded && (
+        <p className="notice notice-warn">
+          <strong>This scan came back incomplete.</strong> {latestSnapshot?.degraded_reason} You
+          can still look at it, but Reaper won't act on it, so a plan can't be built. Fix the
+          source and scan again.
+        </p>
+      )}
 
       <ReapBreakdown onGoToPlexSettings={onGoToPlexSettings} onGoToReview={onGoToReview} />
 
@@ -209,7 +286,7 @@ export function ReapPlan({
               </p>
             )}
             <button onClick={() => dry.mutate(run.id)} disabled={dry.isPending}>
-              {dry.isPending ? "Dry-running…" : "Dry run"}
+              {dry.isPending ? "Checking…" : "Practice run"}
             </button>
             {run.state === "planned" && (
               <button
@@ -244,13 +321,9 @@ export function ReapPlan({
         </>
       )}
 
-      {confirming && run && (
-        <ReapConfirm
-          run={run}
-          onClose={() => setConfirming(false)}
-          onDone={() => void queryClient.invalidateQueries({ queryKey: ["runs"] })}
-        />
-      )}
+      {/* No onDone: what a finished reap invalidates -- this run, the history, the queue, the
+          ledger -- is refreshed by the app-wide reap bar, which cannot be closed mid-run. */}
+      {confirming && run && <ReapConfirm run={run} onClose={() => setConfirming(false)} />}
 
       {history && history.length > 0 && (
         <div className="run-history">
@@ -260,18 +333,21 @@ export function ReapPlan({
               // Clicking a row swaps the plan shown above, so the row that is open says
               // so rather than leaving the swap silent. Whether that plan came from an
               // older scan is said once, up beside Execute, where the fix lives.
-              const open = run?.id === r.id;
+              const open = runId === r.id;
               return (
                 <li key={r.id} className={open ? "open" : undefined}>
+                  {/* Only the id: the row carries no plan of its own, so opening one asks
+                      the server for it (the ["run", id] query above). A list that came with
+                      every plan in full cost a whole snapshot's candidates per row (P-3). */}
                   <button
                     className="link"
-                    onClick={() => setRun(r)}
+                    onClick={() => setRunId(r.id)}
                     aria-current={open ? "true" : undefined}
                   >
                     #{r.id}
                   </button>{" "}
                   <span className="muted">
-                    {date(r.approved_at)} · {r.state} · {r.confirmation_phrase}
+                    {date(r.approved_at)} · {runState(r.state)}
                     {open && " · open above"}
                   </span>
                 </li>

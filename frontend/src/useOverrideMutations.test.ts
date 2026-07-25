@@ -119,4 +119,23 @@ describe("useOverrideMutations", () => {
     expect(api.clearOverride).toHaveBeenCalledWith("radarr:1:404");
     expect(queueRefetchType(invalidateSpy)).toBe("active");
   });
+
+  // B-14: the scan summary shifts lanes by the overrides and the Scales figures count only
+  // the effective reap set, so a spare that does not reach them leaves Jobs still counting
+  // the title as reclaimable and that person still carrying its weight.
+  it.each([["a single decision"], ["a bulk decision"]])(
+    "refreshes every override-aware surface after %s",
+    async (which) => {
+      const { invalidateSpy, hook } = setup();
+      await act(async () => {
+        await hook.result.current.setOverride.mutateAsync({ key: "radarr:1:1", decision: "spare" });
+        if (which === "a bulk decision") hook.result.current.refresh();
+      });
+      const invalidated = (invalidateSpy.mock.calls as unknown[][]).map(
+        (c) => (c[0] as { queryKey: unknown[] }).queryKey[0],
+      );
+      for (const key of ["candidates", "group", "candidate", "reap-breakdown", "snapshot", "fairness"])
+        expect(invalidated).toContain(key);
+    },
+  );
 });

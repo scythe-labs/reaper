@@ -152,6 +152,15 @@ class ChipOut(BaseModel):
 
     text: str
 
+    why: str | None = None
+    """The same fact as ``text``, worded as a lowercase clause that can follow
+    "Reap requested · kept for now:" -- or None when this chip names no reason a reap
+    would be refused (an item under the threshold is reaped on request, not held).
+
+    It ships beside ``text`` because the frontend must never parse ``text`` to recover
+    it: the clause is ours to word, and a reworded chip would silently drop every
+    held-reap explanation back to the generic fallback (H-1)."""
+
 
 class GroupSeasonMarkOut(BaseModel):
     """One square of a show card's season strip: the lightest possible per-season mark.
@@ -420,6 +429,29 @@ class RunOut(BaseModel):
     approved_at: str
 
     steps: list[ActionStepOut]
+
+
+class RunSummaryOut(BaseModel):
+    """One line of the run history: what a list of past plans can honestly say cheaply.
+
+    Every field is read straight off the stored row. The full ``RunOut`` is a different
+    shape on purpose -- its ``item_count``, ``total_bytes`` and ``confirmation_phrase``
+    are all derived from the effective condemned set, re-read NOW, which costs the whole
+    candidate table of that run's snapshot per run. Producing them for a list of fifty
+    loaded the same thousands of rows dozens of times on every visit to the Reap page
+    (P-3). It was also dishonest for a finished run: recomputing the phrase against
+    today's overrides describes a plan that never existed.
+
+    Open a run to see what it holds; the detail route derives those numbers for one.
+    """
+
+    id: int
+    snapshot_id: int
+    state: str
+    approved_by: str
+    approved_at: str
+    aborted_reason: str | None = None
+    held_back_unknown_size: int = 0
 
 
 class RunCheckOut(BaseModel):
@@ -730,7 +762,12 @@ class ReapBreakdownOut(BaseModel):
     will_reap_bytes: int
     will_reap_unknown: int
     movies: int
+    movies_unknown: int = 0
+    """The unmeasured share of ``movies``, so the page can subtract exactly the rows the
+    planner holds back and keep its split in step with its total."""
     seasons: int
+    seasons_unknown: int = 0
+    """The unmeasured share of ``seasons``; see ``movies_unknown``."""
     condemned_by: list[SignalCountOut]
 
 

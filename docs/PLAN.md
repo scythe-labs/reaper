@@ -7,10 +7,58 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-24 (a hand reap on a keep-rule conflict is now honored, and a held reap
-is no longer mislabeled "Sanctuary")
+Last updated: 2026-07-24 (the whole-frontend UI/UX review, remediated in seven batches)
 
-### Newest — a hand reap on a keep-rule conflict is honored, and a held reap stops calling itself "Sanctuary"
+### Newest — the whole-frontend UI/UX review, remediated in seven batches
+
+`docs/UI_REVIEW.md` (dev @ `a7d7659`) swept every file under `frontend/src` with six parallel
+agents and landed **94 findings**: 1 critical, 18 high, 45 medium, 30 low. Worked in seven
+batches along the document's own fix order, compacting between each. **77 are checked off.** R1
+and R2 (the two big file splits) are annotated in place with exactly what landed and what did
+not; 15 more were never scheduled into a batch and are listed at the end of that file.
+
+The batches were the deletion path, the queue's control grammar, the number-input family, the
+unknown-state and stale-cache sweep, contrast and motion, copy, and refactor plus performance.
+Almost all of it is frontend; three changes crossed into the backend (`ChipOut.why`, the run
+list's `RunSummaryOut`, and `/api/logs*` joining the API-key read denylist).
+
+**What the assumptions got wrong, which is the part worth keeping:**
+
+- **Prose is not an interface, but it was being used as one.** `StatusChip` recovered a held
+  reap's reason by slicing a prefix off the chip's own text and looking the remainder up in a
+  hand-copy of the backend's wording. Rewording one chip server-side would have dropped every
+  explanation to a generic fallback -- with the tests green, because both sides asserted the
+  same transcription. The chip now ships `why` beside `text` and the frontend parses nothing.
+  The fixtures deliberately word the two differently, so a return to parsing fails.
+- **An approval record was being recomputed after the fact.** `GET /api/runs` rebuilt every
+  stored run from scratch, and rebuilt each finished run's confirmation phrase against
+  *today's* overrides -- describing a plan nobody ever approved. The list is now stored fields
+  only. It was slow for the same reason it was dishonest: 570 ms -> 6 ms over a dozen rows.
+- **A correctness guarantee depended on the render schedule.** `useReviewFreshness` decided "a
+  silent refresh failed, so nudge" by catching a transient `isFetching` flag between renders. A
+  refetch that rejects in the same microtask flush never renders as fetching at all, so the
+  guarantee held only while the queue re-rendered freely -- and stopped the moment the perf work
+  stopped that. It now waits on the promise the refresh returns. The perf work exposed this bug;
+  it did not cause it.
+- **A sentence read before arming asserted clauses whose switches were off.** The keep-summary
+  concatenated every rule it knew about rather than every rule in force, so a floor left at zero
+  read as a promise to keep zero seasons. Each clause is now pushed only by its own switch --
+  the same shape as rule 53, arrived at again from the other end.
+- **Half-typed is not zero.** Every number box coerced with `Number(value) || 0`, so an empty
+  box emitted `0` to the policy, and re-floors elsewhere existed only to paper over it. One
+  `useTypedNumber` now holds the text while a box has focus and emits only what parses; the
+  re-floors are gone.
+- **Color was chosen by eye and never measured.** The accent failed 4.5:1 as ink on its own
+  tinted grounds; `--faint` carried text in 18 places its own comment forbade. `--accent-text`
+  is now the one accent ink, and a custom accent derives its own via `accentText()` in both
+  themes. Verified by walking every element with text on every route in both themes, not by
+  looking.
+
+Performance came out of the same pass: the entry bundle is **159.6 kB -> 94.8 kB gzipped** with
+six routes behind `React.lazy`, and the expanded queue holds two query subscriptions where it
+opened roughly a thousand (one per control, on two keys).
+
+### Earlier — a hand reap on a keep-rule conflict is honored, and a held reap stops calling itself "Sanctuary"
 
 A tester hand-reaped two seasons; Reaper said they would be kept anyway, under a panel that
 read "Sanctuary ... nothing can change that." One root confusion, wearing two faces.
@@ -45,9 +93,9 @@ browser: the pill's right edge lands exactly on the title column, never over the
 ### Earlier — fourth-pass review remediation, phased (all five phases landed)
 
 The fourth diff review (`docs/CODE_REVIEW.md`, dev @ `cea72d1`) found 36 findings (0 critical,
-2 high, 11 medium, 23 low). Broken into five subsystem-cohesive phases in
-`docs/CODE_REVIEW_PHASES.md` (the living tracker; the conversation is compacted between phases,
-so that file carries the hand-off). **All five are now landed on `dev` (uncommitted).**
+2 high, 11 medium, 23 low). Broken into five subsystem-cohesive phases, tracked while the work
+ran in `docs/CODE_REVIEW_PHASES.md` (since removed, its job done). **All five landed on `dev`
+in `718ec41`.**
 
 **Phase 5 landed** — platform, logging, settings, docs (PR-2, U-1, S-6, S-5, B-8, B-9, PR-4, U-6,
 I-4, I-6). The log-file mirror stopped failing silently: a steady-state write failure (a read-only

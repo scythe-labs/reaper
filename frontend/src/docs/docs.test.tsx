@@ -123,13 +123,15 @@ describe("useDocs / DocsProvider", () => {
     return null;
   }
 
-  it("opens the requested doc from anywhere under the provider", () => {
+  it("opens the requested doc from anywhere under the provider", async () => {
+    // `await`, because the documents are their own chunk now: nothing of them is fetched until
+    // the first Help press, so the modal arrives a tick after openDoc (P-4).
     render(
       <DocsProvider>
         <Opener id="arming" />
       </DocsProvider>,
     );
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Turning deletion on" })).toBeInTheDocument();
   });
 

@@ -58,9 +58,14 @@ class ReapBreakdown:
     will_reap: int
     will_reap_bytes: int
     will_reap_unknown: int
-    # The movie/season split of the net set.
+    # The movie/season split of the net set, with the unmeasured share of each. The planner
+    # holds unmeasured items back while the unknown-size allowance is 0, so the page needs
+    # both halves to subtract the same rows the headline does -- otherwise the split and the
+    # total state two different numbers for one reap (rule 30).
     movies: int
+    movies_unknown: int
     seasons: int
+    seasons_unknown: int
     # Why the policy condemned them: participation over the frozen condemned rows.
     condemned_by: list[SignalCount]
 
@@ -80,7 +85,9 @@ def _empty() -> ReapBreakdown:
         will_reap_bytes=0,
         will_reap_unknown=0,
         movies=0,
+        movies_unknown=0,
         seasons=0,
+        seasons_unknown=0,
         condemned_by=[],
     )
 
@@ -149,7 +156,9 @@ async def reap_breakdown(session: AsyncSession) -> ReapBreakdown:
     will_bytes = sum(c.size_bytes for c in effective if c.size_bytes is not None)
     will_unknown = sum(1 for c in effective if c.size_bytes is None)
     movies = sum(1 for c in effective if c.media_type == "movie")
+    movies_unknown = sum(1 for c in effective if c.media_type == "movie" and c.size_bytes is None)
     seasons = sum(1 for c in effective if c.media_type == "season")
+    seasons_unknown = sum(1 for c in effective if c.media_type == "season" and c.size_bytes is None)
 
     # A hand reap is a net row the policy did not condemn on its own.
     hand_reaped_rows = [c for c in effective if c.verdict != "condemn"]
@@ -195,6 +204,8 @@ async def reap_breakdown(session: AsyncSession) -> ReapBreakdown:
         will_reap_bytes=will_bytes,
         will_reap_unknown=will_unknown,
         movies=movies,
+        movies_unknown=movies_unknown,
         seasons=seasons,
+        seasons_unknown=seasons_unknown,
         condemned_by=condemned_by,
     )

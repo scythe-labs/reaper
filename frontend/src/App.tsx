@@ -1,28 +1,48 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { applyAccent } from "./accent";
 import { api, ApiError, type AuthUser, type Snapshot, type Verdict } from "./api";
-import { BackNavProvider, useBackGuard, useBackNav } from "./backnav";
-import { Fairness } from "./components/Fairness";
+import { BackNavProvider, useBackGuard, useBackNav, useModalOpen } from "./backnav";
 import { Login } from "./components/Login";
 import { ModalShell } from "./components/ModalShell";
 import { NotInScanPanel } from "./components/NotInScanPanel";
-import { PolicyEditor, type PolicySectionId } from "./components/PolicyEditor";
+import type { PolicySectionId } from "./components/PolicyEditor";
 import { ReapConfirm } from "./components/ReapConfirm";
-import { ReapPlan } from "./components/ReapPlan";
 import { ReviewQueue } from "./components/ReviewQueue";
 import { ScalesPanel, ScalesPanelFallback } from "./components/ScalesPanel";
 import { ScytheGlyph } from "./components/ScytheGlyph";
-import { Settings, type Panel } from "./components/Settings";
-import { SetupWizard } from "./components/SetupWizard";
+import type { Panel } from "./components/Settings";
 import { ShowPanel } from "./components/ShowPanel";
 import { WhyClose, WhyPanel } from "./components/WhyPanel";
 import { DocsProvider } from "./docs/DocsContext";
 import { bytes, count, date, souls } from "./format";
 import { usePageScrollLock } from "./pageScrollLock";
 import { useMediaQuery } from "./useMediaQuery";
+import { useSafety } from "./useSafety";
+
+// The review queue is the landing view and stays in the first chunk. Every other route is
+// its own, fetched the first time it is opened: the whole app used to ship as one 551 kB
+// script, so a first paint of the queue paid for the policy editor, the simulator, every
+// settings panel and the docs before it could draw a single card (P-4). Each is a default
+// export from a thin wrapper below, because these modules export more than one thing.
+const PolicyEditor = lazy(async () => ({ default: (await import("./components/PolicyEditor")).PolicyEditor }));
+const ReapPlan = lazy(async () => ({ default: (await import("./components/ReapPlan")).ReapPlan }));
+const Fairness = lazy(async () => ({ default: (await import("./components/Fairness")).Fairness }));
+const Settings = lazy(async () => ({ default: (await import("./components/Settings")).Settings }));
+const SetupWizard = lazy(async () => ({ default: (await import("./components/SetupWizard")).SetupWizard }));
+
+/** What a route shows while its chunk is on the way. The app's own spinner, announced, so a
+ *  slow network reads as loading rather than as a blank page. */
+function RouteLoading() {
+  return (
+    <div className="fair-loading" role="status" aria-live="polite">
+      <span className="spinner spinner-xl" aria-hidden="true" />
+      <p className="fair-loading-lead">Loading…</p>
+    </div>
+  );
+}
 
 type View = "review" | "policy" | "reap" | "fairness" | "settings";
 
@@ -46,10 +66,11 @@ const NAV: { id: View; label: string }[] = [
  *  always, because "can this thing delete my library right now?" should never require
  *  reading a settings page to answer. */
 function SafetyBanner({ onGoToDeletion }: { onGoToDeletion: () => void }) {
-  // The same authenticated query key the deletion toggle invalidates, so arming or
-  // disarming updates this banner in the same render pass. (/api/health is a bare
-  // liveness probe now; it deliberately says nothing about the armed state.)
-  const { data, isLoading, isError } = useQuery({ queryKey: ["safety"], queryFn: api.safety });
+  // The same authenticated query the deletion toggle invalidates, so arming or disarming
+  // updates this banner in the same render pass -- and polled, so arming it somewhere else
+  // reaches this tab too (useSafety says why). (/api/health is a bare liveness probe now;
+  // it deliberately says nothing about the armed state.)
+  const { data, isLoading, isError } = useSafety();
 
   // On the very first fetch we genuinely know nothing yet -- stay quiet rather than flash a
   // state we might immediately contradict.
@@ -110,15 +131,49 @@ function SafetyBanner({ onGoToDeletion }: { onGoToDeletion: () => void }) {
 function ReapBar({ onView }: { onView: (runId: number) => void }) {
   const queryClient = useQueryClient();
   const [dismissed, setDismissed] = useState<number | null>(null);
+  // Idle still polls, slowly. A reap can be started from a phone or a second tab, and this
+  // bar carries the only Stop on most screens: going silent when nothing is running here
+  // would leave an open tab dark through someone else's deletion (the scan line idle-polls
+  // at 15s for the same reason).
   const { data: status } = useQuery({
     queryKey: ["reapStatus"],
     queryFn: api.reapStatus,
-    refetchInterval: (q) => (q.state.data?.running ? 1000 : false),
+    refetchInterval: (q) => (q.state.data?.running ? 1000 : 15000),
   });
   const stop = useMutation({
     mutationFn: (id: number) => api.stopRun(id),
     onSuccess: (s) => queryClient.setQueryData(["reapStatus"], s),
   });
+
+  // A finished reap invalidates half the app -- the queue lists titles that are gone, the
+  // ledger promises to remove them, the snapshot's reclaimable figure counts them. That
+  // refresh belongs HERE, on the one component a reap cannot unmount: the confirmation sheet
+  // is explicitly designed to be closed mid-run, and everything it invalidated went with it.
+  // Fired once, on the running-to-ended edge of a run this mount actually saw running, so a
+  // page opened after the fact does not re-invalidate what it just fetched.
+  const ranRef = useRef<number | null>(null);
+  const settledRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!status || status.run_id == null) return;
+    if (status.running) {
+      ranRef.current = status.run_id;
+      return;
+    }
+    if (ranRef.current !== status.run_id || settledRef.current === status.run_id) return;
+    settledRef.current = status.run_id;
+    // ["run"] as well as ["runs"]: the plan surface reads one run by id, and that key does
+    // not match the list's.
+    for (const key of [
+      ["runs"],
+      ["run"],
+      ["candidates"],
+      ["reap-breakdown"],
+      ["snapshot"],
+      ["fairness"],
+    ]) {
+      void queryClient.invalidateQueries({ queryKey: key });
+    }
+  }, [status, queryClient]);
 
   if (!status || status.run_id == null) return null;
   const runId = status.run_id;
@@ -182,6 +237,13 @@ function ReapBar({ onView }: { onView: (runId: number) => void }) {
           {status.stopping ? "Stopping…" : "Stop"}
         </button>
       </span>
+      {/* A Stop that failed must say so. Swallowed, it reads as a run that is halting while
+          it keeps deleting -- and this is the only Stop on every screen but the sheet. */}
+      {stop.error && (
+        <p className="notice notice-error reap-bar-error">
+          Reaper couldn't stop the reap: {stop.error.message}
+        </p>
+      )}
       <span className="reap-bar-fill" style={{ width: `${pct}%` }} />
     </div>
   );
@@ -643,6 +705,7 @@ function Dashboard({ user }: { user: AuthUser }) {
   // back a way to walk that order instead of this component guessing at it.
   const stepRef = useRef<((delta: 1 | -1) => void) | null>(null);
   const hasSelection = selected !== null;
+  const modalOpen = useModalOpen();
   useEffect(() => {
     if (view !== "review" || !hasSelection) return;
     const onKey = (e: KeyboardEvent) => {
@@ -654,8 +717,9 @@ function Dashboard({ user }: { user: AuthUser }) {
         return;
       }
       // While a modal is up it owns the keyboard: its own Escape closes it, and the panel
-      // behind it must not move underneath.
-      if (document.querySelector('[role="dialog"]')) return;
+      // behind it must not move underneath. Read from state (ModalShell says so on mount),
+      // not probed for in the DOM on every keypress (H-2).
+      if (modalOpen) return;
       if (e.key === "Escape") {
         setSelected(null);
         return;
@@ -672,7 +736,7 @@ function Dashboard({ user }: { user: AuthUser }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [view, hasSelection]);
+  }, [view, hasSelection, modalOpen]);
 
   // Back-button layers for the side panels and the app-wide reap sheet (the tab changes are
   // recorded by changeView/changeVerdict above). Each is gated on the view that actually shows
@@ -736,6 +800,9 @@ function Dashboard({ user }: { user: AuthUser }) {
       )}
 
       <main className={splitOpen ? "split" : ""}>
+        {/* One boundary for every route: the queue below is already in this chunk, so only
+            a first visit to another view ever shows the fallback. */}
+        <Suspense fallback={<RouteLoading />}>
         {view === "review" ? (
           <>
             <ReviewQueue
@@ -824,6 +891,7 @@ function Dashboard({ user }: { user: AuthUser }) {
             initialPanel={settingsFocus?.panel}
           />
         )}
+        </Suspense>
       </main>
       {reapSheetRun !== null && (
         <ReapSheetLoader runId={reapSheetRun} onClose={() => setReapSheetRun(null)} />
@@ -856,7 +924,11 @@ function Authed({ user }: { user: AuthUser }) {
   // Dashboard directly.
   const needsSetup = isError || (setup !== undefined && !setup.complete);
   if (needsSetup && !skipped) {
-    return <SetupWizard onSkip={() => setSkipped(true)} />;
+    return (
+      <Suspense fallback={<RouteLoading />}>
+        <SetupWizard onSkip={() => setSkipped(true)} />
+      </Suspense>
+    );
   }
   return (
     <BackNavProvider>

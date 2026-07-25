@@ -5,9 +5,9 @@
 // sentinel is parked -- so the unwinding order is pinned regardless of jsdom's history timing.
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BackNavProvider, useBackGuard, useBackNav } from "./backnav";
+import { BackNavProvider, useBackGuard, useBackNav, useModalLayer, useModalOpen } from "./backnav";
 
 afterEach(() => {
   // Clear any sentinel left in history.state so the next test's provider mounts clean (its
@@ -204,5 +204,82 @@ describe("backnav", () => {
     // A later Back has nothing of ours to unwind and must not throw or reopen anything.
     pressBack();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("whether a modal is up", () => {
+  // The keyboard handlers that walk a list (↑/↓/j/k in the review queue, Escape in the two
+  // side panels) have to stand down while a modal owns the keyboard. They used to answer that
+  // by probing the DOM for a `[role="dialog"]` element on every keypress -- markup standing in
+  // for state React already owned, so any future overlay that was modal without the attribute,
+  // or carried it without being modal, silently gained or lost the keyboard (H-2).
+  function Readout() {
+    return <span>modal: {useModalOpen() ? "up" : "none"}</span>;
+  }
+
+  /** Anything ModalShell wraps. The hook, not the markup, is what declares it. */
+  function Modal({ children }: { children?: ReactNode }) {
+    useModalLayer();
+    return <div>{children}</div>;
+  }
+
+  function Harness() {
+    const [outer, setOuter] = useState(false);
+    const [inner, setInner] = useState(false);
+    return (
+      <>
+        <Readout />
+        <button onClick={() => setOuter((v) => !v)}>toggle outer</button>
+        <button onClick={() => setInner((v) => !v)}>toggle inner</button>
+        {outer && <Modal>{inner && <Modal />}</Modal>}
+      </>
+    );
+  }
+
+  it("is false with nothing open, and true while a modal is mounted", async () => {
+    render(
+      <BackNavProvider>
+        <Harness />
+      </BackNavProvider>,
+    );
+    expect(screen.getByText(/^modal:/)).toHaveTextContent("modal: none");
+
+    await userEvent.click(screen.getByText("toggle outer"));
+    expect(screen.getByText(/^modal:/)).toHaveTextContent("modal: up");
+
+    await userEvent.click(screen.getByText("toggle outer"));
+    expect(screen.getByText(/^modal:/)).toHaveTextContent("modal: none");
+  });
+
+  it("counts modals, so closing a stacked one does not hand the keyboard back early", async () => {
+    render(
+      <BackNavProvider>
+        <Harness />
+      </BackNavProvider>,
+    );
+    await userEvent.click(screen.getByText("toggle outer"));
+    await userEvent.click(screen.getByText("toggle inner"));
+    expect(screen.getByText(/^modal:/)).toHaveTextContent("modal: up");
+
+    // The stacked one closes; the first is still up and still owns the keyboard.
+    await userEvent.click(screen.getByText("toggle inner"));
+    expect(screen.getByText(/^modal:/)).toHaveTextContent("modal: up");
+
+    await userEvent.click(screen.getByText("toggle outer"));
+    expect(screen.getByText(/^modal:/)).toHaveTextContent("modal: none");
+  });
+
+  it("is not moved by an overlay that merely carries dialog markup", async () => {
+    // `Overlay` renders role="dialog" and registers with Back, like a menu or a side panel
+    // would. Neither makes it modal, and the old probe could not tell the difference.
+    render(
+      <BackNavProvider>
+        <Readout />
+        <Overlay />
+      </BackNavProvider>,
+    );
+    await userEvent.click(screen.getByText("open"));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText(/^modal:/)).toHaveTextContent("modal: none");
   });
 });

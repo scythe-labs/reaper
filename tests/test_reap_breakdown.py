@@ -120,6 +120,27 @@ async def test_ledger_without_overrides(session: AsyncSession) -> None:
     assert report.will_reap_bytes == 11 * GB
     assert report.movies == 1
     assert report.seasons == 1
+    assert report.movies_unknown == 0
+    assert report.seasons_unknown == 0
+
+
+async def test_the_split_carries_its_unmeasured_share(session: AsyncSession) -> None:
+    """The page subtracts the held-back rows from the split as well as the total, so the
+    split needs its own unmeasured counts -- otherwise one reap gets two numbers."""
+    snap = await _snapshot(session)
+    await _add(session, snapshot_id=snap, media_key="radarr:1:1", size=3 * GB)
+    await _add(session, snapshot_id=snap, media_key="radarr:1:2", size=None)
+    await _add(
+        session, snapshot_id=snap, media_key="sonarr:1:2:s1", media_type="season", size=8 * GB
+    )
+    await _add(session, snapshot_id=snap, media_key="sonarr:1:2:s2", media_type="season", size=None)
+
+    report = await breakdown.reap_breakdown(session)
+
+    assert (report.movies, report.movies_unknown) == (2, 1)
+    assert (report.seasons, report.seasons_unknown) == (2, 1)
+    # And they add up to the whole unmeasured tail the headline subtracts.
+    assert report.movies_unknown + report.seasons_unknown == report.will_reap_unknown
 
 
 async def test_a_hand_spare_leaves_the_net(session: AsyncSession) -> None:

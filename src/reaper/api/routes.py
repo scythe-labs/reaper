@@ -633,6 +633,10 @@ def _chip(explanation_json: str, verdict: str, score: int) -> ChipOut | None:
     Pure display extraction from the stored explanation: never a re-decision, and
     never an error that drops a row off the queue. Condemned rows get no chip here;
     their card leads with the amber dormancy pill (``dormant_for``).
+
+    Each chip carries its ``why`` clause (see ``ChipOut``) so the refused-reap chip can
+    say the same fact mid-sentence without the frontend re-parsing ``text``. Reword a
+    chip here and reword its clause in the same line.
     """
     try:
         exp = json.loads(explanation_json)
@@ -646,16 +650,27 @@ def _chip(explanation_json: str, verdict: str, score: int) -> ChipOut | None:
             return None
         gate = str(first.get("gate") or "")
         detail = str(first.get("detail") or "")
-        return ChipOut(tone="kept", text=f"Kept · {_kept_phrase(gate, detail)}")
+        phrase = _kept_phrase(gate, detail)
+        # The kept phrase is already a lowercase clause, so the chip and its why say the
+        # same words with and without the "Kept · " lead.
+        return ChipOut(tone="kept", text=f"Kept · {phrase}", why=phrase)
 
     if verdict != "abstain":
         return None
 
     status = (exp.get("match") or {}).get("status")
     if status == "unmatched":
-        return ChipOut(tone="quiet", text="Couldn't be found in Plex")
+        return ChipOut(
+            tone="quiet",
+            text="Couldn't be found in Plex",
+            why="it couldn't be found in Plex",
+        )
     if status == "ambiguous":
-        return ChipOut(tone="quiet", text="Looks like two different things in Plex")
+        return ChipOut(
+            tone="quiet",
+            text="Looks like two different things in Plex",
+            why="it looks like two different things in Plex",
+        )
 
     unknown = [e for e in exp.get("protections_unknown") or [] if isinstance(e, dict)]
     for entry in unknown:
@@ -667,10 +682,19 @@ def _chip(explanation_json: str, verdict: str, score: int) -> ChipOut | None:
                 return ChipOut(
                     tone="look",
                     text="Needs a look · watched more than a season your rule keeps",
+                    why="watched more than a season your rule keeps",
                 )
-            return ChipOut(tone="look", text="Needs a look · left for you to decide")
+            return ChipOut(
+                tone="look",
+                text="Needs a look · left for you to decide",
+                why="a check on it couldn't be settled",
+            )
     if unknown:
-        return ChipOut(tone="quiet", text="Some checks couldn't run")
+        return ChipOut(
+            tone="quiet",
+            text="Some checks couldn't run",
+            why="some checks couldn't run",
+        )
 
     threshold = exp.get("threshold")
     if isinstance(threshold, int):

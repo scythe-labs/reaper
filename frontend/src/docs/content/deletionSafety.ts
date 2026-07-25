@@ -29,7 +29,7 @@ export const deletionSafety: Doc = {
         { node: { text: "Review the three lists", sub: "condemned · protected · left alone" }, enter: { label: "yes" } },
         { node: { text: "Read each item's reason", sub: "score, and every protection checked" } },
         { node: { text: "Build the plan", sub: "unmeasured held back · smallest first" } },
-        { node: { text: "Dry run", sub: "a full rehearsal of the run" } },
+        { node: { text: "Practice run", sub: "a full rehearsal, nothing sent" } },
         {
           node: { text: "Deletion armed?", shape: "decision" },
           branch: { label: "off · the default", node: { text: "Delete off", shape: "terminal" } },

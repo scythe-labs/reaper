@@ -70,11 +70,29 @@ _OPEN_PREFIX = "/api/auth/"
 #: header must not be a free brute-force channel just because it skips the login form.
 api_key_throttle = Throttle(threshold=5, base_delay=2.0, max_delay=300.0, decay=900.0)
 
-#: Reads an API key must never see: they hand back a stored secret in the clear. Every
-#: other read is open to the key (it is for scripts), so this stays a tiny denylist. The
-#: backup download is here because it is the crown jewels -- the whole database plus the
-#: master key that decrypts every credential -- so a leaked automation key cannot pull it.
-_API_KEY_READ_DENY = frozenset({"/api/settings/general/api-key", "/api/settings/backup/download"})
+#: Reads an API key must never see. Every other read is open to the key (it is for
+#: scripts), so this stays a tiny denylist -- but "open to scripts" is not the same as
+#: "safe to hand out", and the two things here are the ones that carry more than they
+#: appear to:
+#:
+#: * The key itself, and the backup download -- they hand back a stored secret in the
+#:   clear. The backup is the crown jewels: the whole database plus the master key that
+#:   decrypts every credential.
+#: * The logs. They are not a secret store, but they are a running transcript of the
+#:   library -- titles, the people who watched them, root folders -- and the download
+#:   concatenates every rotating file, so one GET is the whole history. The operator is
+#:   told a key can "read your library"; that has to mean the catalog, not everyone's
+#:   viewing. Denied for the same reason the backup is (S-3).
+#:
+#: ``PUT /api/logs/level`` is a write, so the allowlist below already refuses it.
+_API_KEY_READ_DENY = frozenset(
+    {
+        "/api/settings/general/api-key",
+        "/api/settings/backup/download",
+        "/api/logs",
+        "/api/logs/download",
+    }
+)
 
 #: The only writes an API key may drive: scanning, planning, and editing the policy and
 #: reap profile. Everything else that changes state stays behind the signed-in browser --
