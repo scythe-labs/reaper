@@ -209,10 +209,14 @@ describe("the unit a value is shown in", () => {
     expect(size).toHaveValue(0.5);
   });
 
-  it("clamps a typed 0 to a floor the box can actually show", async () => {
-    // The floor is in base units (1 byte), and the box draws two decimals of GB, so the clamp
+  it("clamps a typed 0 down to the smallest unit, not up to the shown one", async () => {
+    // The floor is in base units (1 byte) and the box draws two decimals of GB, so the clamp
     // stored 1 byte and drew it as "0": a box reading zero beside a sentence saying "at most
-    // 1 B per run". The floor is lifted to the smallest amount the unit can express instead.
+    // 1 B per run". Lifting the floor to the SHOWN unit fixed the display by raising the
+    // stored cap -- 0.01 GB, then 0.01 TB in a TB box, ten gigabytes of permitted deletion
+    // where the operator asked for none. So the floor drops to what the smallest unit can
+    // draw and the box switches to that unit (rule 31: the bound with less deletion
+    // pressure). 0.01 MB is 10 KB, which no media file fits inside.
     const user = userEvent.setup();
     const emit = vi.fn();
     function Sized() {
@@ -237,6 +241,7 @@ describe("the unit a value is shown in", () => {
     await user.tab();
 
     expect(size).toHaveValue(0.01);
-    expect(emit).toHaveBeenLastCalledWith(1e7);
+    expect(screen.getByLabelText("Most disk freed per run unit")).toHaveValue("MB");
+    expect(emit).toHaveBeenLastCalledWith(1e4);
   });
 });

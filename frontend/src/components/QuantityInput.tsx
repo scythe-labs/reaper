@@ -44,6 +44,16 @@ function bestUnit(value: number, units: Unit[]): Unit {
  *  and you change the other (rule 67). */
 const SHOWN_MIN = 0.01;
 
+/** The smallest base value ANY of these units can draw at two decimals. A clamp stops
+ *  here rather than at the current unit's own smallest step: flooring in the shown unit
+ *  meant a byte cap typed as 0 in a TB box became 0.01 TB, ten gigabytes, a cap that
+ *  permits real deletion where the operator asked for none. Rule 31 says a precision
+ *  reduction on a field that can add deletion pressure takes the bound producing LESS
+ *  pressure, so the floor drops to the smallest unit on offer and the box switches to it. */
+function drawableFloor(units: Unit[]): number {
+  return Math.min(...units.map((u) => u.factor)) * SHOWN_MIN;
+}
+
 /** Two decimals of the shown unit -- see SHOWN_MIN. */
 function trim(n: number): number {
   return Math.round(n * 100) / 100;
@@ -131,25 +141,45 @@ export function QuantityInput({
   }
 
   const shown = String(trim(value / unit.factor));
-  // The floor the box enforces, in the unit it is showing. `min` is in BASE units and can sit
-  // far below anything this unit can draw: a 1-byte floor in a GB box clamped a typed 0 to
-  // 1 byte and then rendered it as "0" -- a box reading zero over a stored value the sentence
-  // beside it called "1 B". So the floor is lifted to the smallest amount this unit can
-  // express, and what the box shows is what it stored.
-  const shownMin = Math.max(min / unit.factor, SHOWN_MIN);
+  // The floor the box enforces. `min` is in BASE units and can sit below anything the SHOWN
+  // unit can draw: a 1-byte floor in a GB box clamped a typed 0 to 1 byte and rendered it as
+  // "0" -- a box reading zero over a stored value the sentence beside it called "1 B".
+  //
+  // Two things fix that together, and only together. The floor never drops below what the
+  // smallest unit can draw (`drawableFloor`), and when the committed value is too small for
+  // the CURRENT unit the box switches to one that can show it. Lifting the floor to the
+  // current unit alone was the wrong half: it made the display honest by raising the stored
+  // number, which on a deletion cap is the direction rule 31 forbids.
+  const floor = Math.max(min, drawableFloor(units));
+  const shownMin = floor / unit.factor;
   const typed = useTypedNumber(
     shown,
     (n) => {
-      const base = Math.round(n * unit.factor);
+      const base = Math.max(floor, Math.round(n * unit.factor));
       mine.current = base;
       onChange(base);
     },
     { min: shownMin },
   );
+  // The unit drops only on the way OUT of the box, never mid-keystroke. Switching inside the
+  // emit above moved the dropdown while someone was still typing: "0.5" passes through "0",
+  // which clamps to the floor, and the box jumped to the smallest unit under the caret. The
+  // commit is the only honest moment to restate a number in different words.
+  const onBlur = () => {
+    typed.onBlur();
+    if (mine.current / unit.factor < SHOWN_MIN) setUnit(bestUnit(mine.current, units));
+  };
 
   return (
     <span className="qty">
-      <input type="number" min={shownMin} step="any" aria-label={ariaLabel} {...typed} />
+      <input
+          type="number"
+          min={shownMin}
+          step="any"
+          aria-label={ariaLabel}
+          {...typed}
+          onBlur={onBlur}
+        />
       <select
         value={unit.label}
         aria-label={ariaLabel ? `${ariaLabel} unit` : "Unit"}

@@ -85,6 +85,30 @@ export function showReapReach(
   return "some";
 }
 
+/** Whether a whole-show reap actually reaches this season, for the card's removal count.
+ *
+ *  A whole-show decision is not atomic. A season carrying its own spare keeps it (rule 50),
+ *  and one the engine refuses to reap -- streaming right now, an unreadable protection --
+ *  comes back `override_effective: false` and is dropped from BOTH the server's rollup and
+ *  the planner's group expansion. Counting the show whole put "3 of 3 would be removed"
+ *  above a chip reading "kept for now" and three dashed-red refused squares, and left it
+ *  there after the refetch settled (rules 49/61).
+ *
+ *  Routed through `handFate`, so the number and the colors beside it cannot disagree, and it
+ *  reads correctly in both states the card lives in. BEFORE the refetch the marks still carry
+ *  their pre-decision override (`patchShowOverride` writes only `show_override`, by design),
+ *  so nothing reads as spared or refused and the count moves the instant the operator clicks.
+ *  AFTER it, the inherited reap and its refusals are on the marks and the count settles to
+ *  what the server will really plan. */
+export function showReapReaches(season: {
+  verdict: Verdict;
+  override: Override | null;
+  override_effective: boolean | null;
+}): boolean {
+  const fate = handFate(season);
+  return fate !== "spare" && fate !== "refused";
+}
+
 /** Whether a whole-show Reap would change nothing -- the show analogue of rule 48's
  *  already-condemned test. It decides `hideReap` for a show on both the card and the panel,
  *  so the test lives here once rather than being reimplemented at each surface.

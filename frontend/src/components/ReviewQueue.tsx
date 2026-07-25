@@ -82,6 +82,7 @@ import {
   reapIsNoop,
   showReapIsNoop,
   showReapReach,
+  showReapReaches,
   type Fate,
 } from "./reviewFate";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
@@ -1070,25 +1071,28 @@ const ShowCard = memo(function ShowCard({
   // card on the reap side:
   //   - the scan's own condemnation: the server's whole-snapshot rollup, which is the exact
   //     set "Reap now" would plan (rule 30/62);
-  //   - a hand reap on the WHOLE show: the whole show, because that is what the decision
-  //     covers, while the rollup still describes the set from BEFORE it.
+  //   - a hand reap on the WHOLE show: the show's own season marks, because the rollup still
+  //     describes the set from BEFORE that decision and cannot catch up on its own.
   // The second case needs saying because `patchShowOverride` deliberately refetches nothing
-  // (refetchType "none"), so the rollup cannot catch up on its own: on a Sanctuary or Limbo
-  // show it is a real 0, and reading it printed "0 of 5 would be removed · 0 B" under a
-  // "will be removed" chip for the rest of the session. Refetching on a whole-show decision
-  // would fix every figure and re-bucket the show out from under the operator mid-review,
-  // the one thing the in-place patch exists to prevent -- so the card states the whole show
-  // instead. A season whose own decision opposes the show's is counted for the operator by
-  // the chip beside the title, and a reap reads as taking until the next fetch: the same
-  // over-warning direction the patch itself takes, and the safe one beside a removal count.
+  // (refetchType "none"): on a Sanctuary or Limbo show the rollup is a real 0, so reading it
+  // printed "0 of 5 would be removed · 0 B" under a "will be removed" chip for the rest of
+  // the session. Refetching instead would fix every figure and re-bucket the show out from
+  // under the operator mid-review, the one thing the in-place patch exists to prevent.
+  //
+  // The marks are filtered through `showReapReaches`, NOT counted whole: a whole-show
+  // decision does not take a season the operator spared individually, nor one the engine
+  // refuses to reap. That helper says why, and keeps this number, the chip and the strip
+  // squares reading the same `handFate` (rules 49/61).
   const reapsWholeShow = showOverride === "reap";
+  const reapedMarks = reapsWholeShow ? (marks ?? []).filter(showReapReaches) : [];
+  const reapedUnknown = reapedMarks.filter((m) => m.size_bytes === null).length;
   const condemnedCount = reapsWholeShow
-    ? totalSeasons - unknownSeasons
+    ? reapedMarks.length - reapedUnknown
     : (first.group_condemned_count ?? group.items.length);
   const condemnedBytes = reapsWholeShow
-    ? (wholeShowBytes ?? fetchedSize)
+    ? reapedMarks.reduce((sum, m) => sum + (m.size_bytes ?? 0), 0)
     : (first.group_condemned_bytes ?? fetchedSize);
-  const condemnedUnknown = reapsWholeShow ? unknownSeasons : (first.group_unknown_size ?? fetchedUnknown);
+  const condemnedUnknown = reapsWholeShow ? reapedUnknown : (first.group_unknown_size ?? fetchedUnknown);
   const state = showOverride === "spare" ? "card-spared" : showOverride === "reap" ? "card-reaped" : "";
   const { selectMode } = select;
 

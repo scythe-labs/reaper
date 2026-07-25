@@ -253,7 +253,7 @@ export function ReapPlan({
           unmount all of it silently and a click on a history row simply looked like it did
           nothing. Same two branches, same words, as the reap sheet's loader (App.tsx, rule 36). */}
       {runId != null && !run && (
-        <p className={runPending ? "blurb" : "notice notice-error"}>
+        <p className={runPending ? "help" : "notice notice-error"}>
           {runPending
             ? "Loading the plan…"
             : runError instanceof ApiError && runError.status === 404

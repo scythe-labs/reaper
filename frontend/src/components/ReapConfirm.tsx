@@ -130,12 +130,20 @@ export function ReapConfirm({
   // Skipped when reopening a run already in flight, finished, or failed (via the bar's View):
   // the executor refuses a dry run on a non-PLANNED run, and its "practice run" blurb must
   // never render over live progress, the report, or a failure.
+  // Keyed on the PHRASE, not just the run id. The phrase is content-bound (rule 73), so the
+  // server moving it is the server telling us this plan now covers different items -- which is
+  // exactly what the 409 recovery above refetches. Re-proving on that change is what stops the
+  // sheet showing "Practice run passed" from the plan the server has already rejected while
+  // every figure beside it describes the new one: a green tick asserting a practice run that
+  // never happened for this content (rule 85). The run id alone never changes here, so the
+  // effect ran once and the stale report sat there through the recovery.
   useEffect(() => {
     const s = queryClient.getQueryData<ReapStatus>(["reapStatus"]);
     const active = s?.run_id === run.id && (s.running || s.report != null || s.phase === "error");
+    setDryReport(null);
     if (!active) dry.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [run.id]);
+  }, [run.id, run.confirmation_phrase]);
 
   const dryClean = dryReport?.dry_run === true && dryReport.state === "completed";
   const phraseOk = typed.trim() === run.confirmation_phrase;

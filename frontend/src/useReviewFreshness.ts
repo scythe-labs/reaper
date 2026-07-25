@@ -114,9 +114,13 @@ export function useReviewFreshness(opts: {
   // up (a network blip): raise the nudge rather than leave the list silently stale -- the
   // reviewer is idle, so the bar is theirs to act on (PR-5).
   //
-  // `behind` is a dependency as well as a guard, so a swap that lands after this fires still
-  // reaches the effect above, which clears the nudge and confirms the catch-up. That ordering
-  // is what makes the settle safe to trust even if it arrives a commit early.
+  // `behind` is a dependency as well as a guard, so a swap landing after this fires still
+  // reaches the effect above and CLEARS the nudge. It does not also confirm the catch-up: this
+  // effect has already set `awaitingSilent` false, which is the flag that gate reads, so the
+  // toast is skipped for a refresh whose settle is observed a commit before its swap. Clearing
+  // is the part that matters -- the operator is not left with a stale nudge -- and a missing
+  // toast on that ordering is the cost. Said plainly here because the previous wording claimed
+  // a confirmation this cannot produce.
   useEffect(() => {
     // Only the refresh currently in flight: an id that has not caught up to the one just issued
     // is either the starting value or an earlier refresh's, and neither says anything about this

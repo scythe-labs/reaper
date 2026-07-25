@@ -887,6 +887,38 @@ describe("what a card says after a hand decision", () => {
     expect(screen.queryByText(/0 of 3 would be removed/)).not.toBeInTheDocument();
   });
 
+  it("counts only the seasons a whole-show reap actually reaches", async () => {
+    // The settled state, once the refetch has put the inherited reap and its refusals on the
+    // marks. A whole-show decision is not atomic: a season the operator spared individually
+    // keeps its own decision (rule 50), and one the engine refuses comes back
+    // override_effective false and is dropped from the server rollup AND the planner's
+    // expansion. Counting the show whole printed "3 of 3 would be removed" above a chip
+    // reading "kept for now" and dashed-red refused squares, and left it there (rules 49/61).
+    const gb = 1024 ** 3;
+    const marks: GroupSeasonMark[] = [
+      // Honored: the only one that will actually go.
+      { id: 1, season: 1, verdict: "protect", override: "reap", override_effective: true, size_bytes: gb },
+      // Refused by the engine -- a hand reap it cannot honor yet.
+      { id: 2, season: 2, verdict: "protect", override: "reap", override_effective: false, size_bytes: gb },
+      // The operator's own opposing spare.
+      { id: 3, season: 3, verdict: "protect", override: "spare", override_effective: null, size_bytes: gb },
+    ];
+    const extra = {
+      group_seasons: marks,
+      show_override: "reap" as const,
+      group_condemned_count: 1,
+      group_condemned_bytes: gb,
+      group_unknown_size: 0,
+    };
+    apiMock.candidates.mockResolvedValue(
+      page([season(1, "protect", extra), season(2, "protect", extra), season(3, "protect", extra)]),
+    );
+    renderQueue("protect");
+
+    expect(await screen.findByText(/1 of 3 would be removed · 1\.0 GiB/)).toBeInTheDocument();
+    expect(screen.queryByText(/3 of 3 would be removed/)).not.toBeInTheDocument();
+  });
+
   it("keeps the dormancy line when a condemned movie is spared", async () => {
     // A condemned row carries no chip by construction, so the spare flipped the card to the
     // chip branch and it lost a line and reflowed under the cursor (B-24).
