@@ -14,7 +14,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { api, type Run, type RunReport } from "../api";
+import { ApiError, api, type Run, type RunReport } from "../api";
 import { bytes, count, date, souls } from "../format";
 import { useSafety } from "../useSafety";
 import { ReapBreakdown } from "./ReapBreakdown";
@@ -156,7 +156,11 @@ export function ReapPlan({
   // "planned" and its Execute button stays live over a run the server has already spent, and
   // clicking it dry-runs a completed run for no explanation but "the dry run failed".
   const [runId, setRunId] = useState<number | null>(null);
-  const { data: run } = useQuery({
+  const {
+    data: run,
+    isPending: runPending,
+    error: runError,
+  } = useQuery({
     queryKey: ["run", runId],
     queryFn: () => api.run(runId!),
     enabled: runId != null,
@@ -243,6 +247,20 @@ export function ReapPlan({
       <ReapBreakdown onGoToPlexSettings={onGoToPlexSettings} onGoToReview={onGoToReview} />
 
       {plan.error && <p className="notice notice-error">{plan.error.message}</p>}
+
+      {/* A plan is asked for but not in hand. Never render nothing here: the whole block below
+          -- phrase, count, Execute, steps -- hangs off this one query, so a failed fetch used to
+          unmount all of it silently and a click on a history row simply looked like it did
+          nothing. Same two branches, same words, as the reap sheet's loader (App.tsx, rule 36). */}
+      {runId != null && !run && (
+        <p className={runPending ? "blurb" : "notice notice-error"}>
+          {runPending
+            ? "Loading the plan…"
+            : runError instanceof ApiError && runError.status === 404
+              ? "That plan is no longer available."
+              : "Reaper couldn't load this plan. Reload the page to try again."}
+        </p>
+      )}
 
       {run && (
         <>

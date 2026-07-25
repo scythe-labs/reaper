@@ -1062,9 +1062,33 @@ const ShowCard = memo(function ShowCard({
   // would be removed" one line below, all session (rule 61).
   const isReapTab =
     showOverride === "spare" ? false : showOverride === "reap" ? true : isCondemned(first);
-  const condemnedCount = first.group_condemned_count ?? group.items.length;
-  const condemnedBytes = first.group_condemned_bytes ?? fetchedSize;
-  const condemnedUnknown = first.group_unknown_size ?? fetchedUnknown;
+  // How many seasons carry no size, over whichever set the card is describing. The planner
+  // holds an unmeasured season back, so it is counted apart from the removal count rather
+  // than folded into it -- the same split the server's rollup makes.
+  const unknownSeasons = marks ? wholeShowUnknown : fetchedUnknown;
+  // What the removal line counts, and which source is right turns on whose decision put the
+  // card on the reap side:
+  //   - the scan's own condemnation: the server's whole-snapshot rollup, which is the exact
+  //     set "Reap now" would plan (rule 30/62);
+  //   - a hand reap on the WHOLE show: the whole show, because that is what the decision
+  //     covers, while the rollup still describes the set from BEFORE it.
+  // The second case needs saying because `patchShowOverride` deliberately refetches nothing
+  // (refetchType "none"), so the rollup cannot catch up on its own: on a Sanctuary or Limbo
+  // show it is a real 0, and reading it printed "0 of 5 would be removed · 0 B" under a
+  // "will be removed" chip for the rest of the session. Refetching on a whole-show decision
+  // would fix every figure and re-bucket the show out from under the operator mid-review,
+  // the one thing the in-place patch exists to prevent -- so the card states the whole show
+  // instead. A season whose own decision opposes the show's is counted for the operator by
+  // the chip beside the title, and a reap reads as taking until the next fetch: the same
+  // over-warning direction the patch itself takes, and the safe one beside a removal count.
+  const reapsWholeShow = showOverride === "reap";
+  const condemnedCount = reapsWholeShow
+    ? totalSeasons - unknownSeasons
+    : (first.group_condemned_count ?? group.items.length);
+  const condemnedBytes = reapsWholeShow
+    ? (wholeShowBytes ?? fetchedSize)
+    : (first.group_condemned_bytes ?? fetchedSize);
+  const condemnedUnknown = reapsWholeShow ? unknownSeasons : (first.group_unknown_size ?? fetchedUnknown);
   const state = showOverride === "spare" ? "card-spared" : showOverride === "reap" ? "card-reaped" : "";
   const { selectMode } = select;
 
@@ -1132,7 +1156,7 @@ const ShowCard = memo(function ShowCard({
             <span>
               {isReapTab
                 ? `${condemnedCount} of ${totalSeasons} would be removed · ${totalBytes(condemnedBytes, condemnedUnknown)}`
-                : totalBytes(wholeShowBytes ?? fetchedSize, wholeShowBytes === null ? fetchedUnknown : wholeShowUnknown)}
+                : totalBytes(wholeShowBytes ?? fetchedSize, unknownSeasons)}
             </span>
             {/* Ended, or a status we couldn't read. A show that is still going wears
                 nothing here: the quiet row is the common case. */}

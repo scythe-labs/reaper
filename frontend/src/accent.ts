@@ -88,7 +88,17 @@ function blend(hex: string, toward: string, weight: number): string {
 const AA_TEXT = 4.5;
 /** The tightest ground accent text lands on is not the plain surface but the accent's own
  *  22% tint -- the docs index's selected row, and --accent-soft in dark mode. Clearing that
- *  clears every lighter ground behind it. */
+ *  clears every lighter ground behind it.
+ *
+ *  These three mirror declarations in index.css, and the AA guarantee holds only while they
+ *  agree (rule 67). Their twins carry a comment back to here, so a retune of either side is
+ *  caught by the other:
+ *    TINT          -- the dark `--accent-soft` (both dark blocks) and `.docs-index-item
+ *                     .active:hover`, all `color-mix(... var(--accent) 22%, var(--surface))`
+ *    LIGHT_SURFACE -- `--surface` in `:root` and `:root[data-theme="light"]`
+ *    DARK_SURFACE  -- `--surface` in the dark media query and `:root[data-theme="dark"]`
+ *  Nothing derives them at runtime on purpose: index.html pre-paints these inks before the
+ *  stylesheet is applied, so the search cannot depend on computed CSS. */
 const TINT = 0.22;
 const LIGHT_SURFACE = "#ffffff";
 const DARK_SURFACE = "#191b21";

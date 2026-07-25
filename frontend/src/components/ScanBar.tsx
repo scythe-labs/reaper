@@ -141,6 +141,8 @@ export function ScanRow({
         ["run"], // one plan's counts, re-derived against the new condemned set
         ["fairness"], // Scales matches requests to the last scan
         ["season-shape"], // the policy editor's "from your last scan" advisory
+        ["simulate"], // "What this would do", re-decided against the new snapshot
+        ["vocabulary-values"], // the genre/library value lists, drawn from the scan's items
         ["schedule"], // the scan job's own last-run line
       ]) {
         void queryClient.invalidateQueries({ queryKey: key });

@@ -855,6 +855,38 @@ describe("what a card says after a hand decision", () => {
     await waitFor(() => expect(screen.queryByText(/would be removed/)).not.toBeInTheDocument());
   });
 
+  it("counts the whole show the moment it is reaped by hand", async () => {
+    // The reap direction of the case above. A Sanctuary show's rollup is a real 0, and the
+    // whole-show patch refetches nothing by design, so reading the rollup here printed
+    // "0 of 3 would be removed · 0 B" beneath a "will be removed" chip for the rest of the
+    // session, while the server would in fact plan every season it honors (B-1).
+    const marks: GroupSeasonMark[] = [
+      { id: 1, season: 1, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+      { id: 2, season: 2, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+      { id: 3, season: 3, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+    ];
+    const extra = {
+      group_seasons: marks,
+      group_condemned_count: 0,
+      group_condemned_bytes: 0,
+      group_unknown_size: 0,
+    };
+    apiMock.candidates.mockResolvedValue(
+      page([season(1, "protect", extra), season(2, "protect", extra), season(3, "protect", extra)]),
+    );
+    apiMock.override.mockResolvedValue({});
+    const user = userEvent.setup();
+    renderQueue("protect");
+    await screen.findByText("Example Show");
+    expect(screen.queryByText(/would be removed/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Reap" }));
+
+    // The whole show, sized from its own marks, not the stale rollup's 0.
+    expect(await screen.findByText(/3 of 3 would be removed · 3\.0 GiB/)).toBeInTheDocument();
+    expect(screen.queryByText(/0 of 3 would be removed/)).not.toBeInTheDocument();
+  });
+
   it("keeps the dormancy line when a condemned movie is spared", async () => {
     // A condemned row carries no chip by construction, so the spare flipped the card to the
     // chip branch and it lost a line and reflowed under the cursor (B-24).

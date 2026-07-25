@@ -143,6 +143,25 @@ describe("the plan the page is showing", () => {
     );
   });
 
+  it("says so when the plan behind a history row can't be loaded", async () => {
+    // Everything about a plan -- the phrase, the count, Execute, the steps -- hangs off this
+    // one query, so a failed fetch used to unmount all of it with no message and no retry, and
+    // clicking a history row simply looked like it did nothing (rule 36).
+    apiMock.run.mockRejectedValue(new Error("the server dropped it"));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ReapPlan onGoToDeletion={() => {}} onGoToPlexSettings={() => {}} onGoToReview={() => {}} />
+      </QueryClientProvider>,
+    );
+    const person = userEvent.setup();
+    await person.click(await screen.findByRole("button", { name: `#${run.id}` }));
+
+    expect(await screen.findByText(/couldn't load this plan/i)).toBeInTheDocument();
+  });
+
   it("won't offer to build a plan from a scan that came back incomplete", async () => {
     // The planner refuses a degraded snapshot outright, so the page says so up front rather
     // than trading the click for a 422 (PR-8).

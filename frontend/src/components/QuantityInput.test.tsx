@@ -208,4 +208,35 @@ describe("the unit a value is shown in", () => {
     expect(screen.getByLabelText("Most disk freed per run unit")).toHaveValue("GB");
     expect(size).toHaveValue(0.5);
   });
+
+  it("clamps a typed 0 to a floor the box can actually show", async () => {
+    // The floor is in base units (1 byte), and the box draws two decimals of GB, so the clamp
+    // stored 1 byte and drew it as "0": a box reading zero beside a sentence saying "at most
+    // 1 B per run". The floor is lifted to the smallest amount the unit can express instead.
+    const user = userEvent.setup();
+    const emit = vi.fn();
+    function Sized() {
+      const [value, setValue] = useState(1e9);
+      return (
+        <QuantityInput
+          value={value}
+          units={SIZE_UNITS}
+          onChange={(n) => {
+            setValue(n);
+            emit(n);
+          }}
+          ariaLabel="Most disk freed per run"
+        />
+      );
+    }
+    render(<Sized />);
+    const size = screen.getByLabelText("Most disk freed per run");
+
+    await user.clear(size);
+    await user.type(size, "0");
+    await user.tab();
+
+    expect(size).toHaveValue(0.01);
+    expect(emit).toHaveBeenLastCalledWith(1e7);
+  });
 });

@@ -35,6 +35,18 @@ export type QueueSettings = {
 
 export const QueueSettingsContext = createContext<QueueSettings | null>(null);
 
+/** Options that make a fallback query inert while the provider is supplying the value.
+ *
+ *  A hook cannot be called conditionally, so both hooks below open their query either way and
+ *  gate it with `enabled`. That stops the FETCH and nothing else: the observer is still
+ *  subscribed, so every write to the key re-renders every component holding one -- the exact
+ *  thousand-observer fan-out this file's provider exists to remove, left in place. Tracking no
+ *  props at all is what actually stops the notification. Outside the provider the query is the
+ *  real source, so it keeps the default tracking. */
+function silentInsideProvider(shared: QueueSettings | null): { notifyOnChangeProps?: [] } {
+  return shared === null ? {} : { notifyOnChangeProps: [] };
+}
+
 /** How long a plain Spare press keeps an item: the operator's General preference (0 = forever,
  *  N = N days). Read from the shared general-settings cache, so flipping it in Settings takes
  *  effect here without a reload. Unknown/error reads as 0 -- forever, the safe, unchanged
@@ -45,6 +57,7 @@ export function useDefaultSpareDays(): number {
     queryKey: ["general-settings"],
     queryFn: api.general,
     enabled: shared === null,
+    ...silentInsideProvider(shared),
   });
   return shared ? shared.defaultSpareDays : (data?.default_spare_days ?? 0);
 }
@@ -74,6 +87,7 @@ export function useHoldsBackUnmeasured(): {
     queryKey: ["profile"],
     queryFn: api.profile,
     enabled: shared === null,
+    ...silentInsideProvider(shared),
   });
   // Inside the queue this comes from the one subscription above, read state and all -- so a
   // surface that states a number still gets the honest pending/error it must render.

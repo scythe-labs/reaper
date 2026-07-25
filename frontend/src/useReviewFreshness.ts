@@ -64,13 +64,20 @@ export function useReviewFreshness(opts: {
   // caught-up confirmation (behind -> false) or, if its refetch settles without catching up,
   // a raised nudge.
   const awaitingSilent = useRef(false);
-  // Bumped once the silent refresh's own refetches have SETTLED -- the signal the effect below
-  // waits for. It used to watch the list's `isFetching` flag go true and then false instead,
-  // which only worked if a render happened to be committed during the fetch: a refetch that
-  // rejected in the same microtask flush never showed up as fetching at all, and the nudge
-  // silently never came (found when the queue stopped re-rendering so freely, P-1/P-7). What
-  // the refresh returns settles exactly when its work is done, whatever the render schedule.
-  const [settleTick, setSettleTick] = useState(0);
+  // Which silent refresh has SETTLED -- the signal the effect below waits for. It used to watch
+  // the list's `isFetching` flag go true and then false instead, which only worked if a render
+  // happened to be committed during the fetch: a refetch that rejected in the same microtask
+  // flush never showed up as fetching at all, and the nudge silently never came (found when the
+  // queue stopped re-rendering so freely, P-1/P-7). What the refresh returns settles exactly
+  // when its work is done, whatever the render schedule.
+  //
+  // Each refresh carries its own id, and the effect below acts only on the settle of the one
+  // still in flight. A bare monotonic tick compared against 0 protected only the FIRST refresh
+  // of a mount: on the second, the tick was already past 0, so the nudge went up in the very
+  // commit that issued the refresh -- and since that arm also clears `awaitingSilent`, the
+  // caught-up confirmation could never fire again for the rest of the session (B-2).
+  const silentId = useRef(0);
+  const [settledId, setSettledId] = useState(0);
 
   useEffect(() => {
     if (!behind) {
@@ -91,7 +98,15 @@ export function useReviewFreshness(opts: {
       setNudging(true);
     } else {
       awaitingSilent.current = true;
-      void Promise.resolve(refreshRef.current()).then(() => setSettleTick((n) => n + 1));
+      const id = ++silentId.current;
+      void Promise.resolve(refreshRef.current())
+        .then(() => setSettledId(id))
+        // A refresh that REJECTS has settled too, and settled without catching up, so it takes
+        // the same path: the effect below sees the list still behind and raises the nudge,
+        // rather than leaving the reviewer on a stale list with nothing to press. Today's
+        // caller cannot reject (query-core swallows each query's failure), but the declared
+        // return type invites one that can.
+        .catch(() => setSettledId(id));
     }
   }, [behind, latestSnapshotId]);
 
@@ -101,14 +116,17 @@ export function useReviewFreshness(opts: {
   //
   // `behind` is a dependency as well as a guard, so a swap that lands after this fires still
   // reaches the effect above, which clears the nudge and confirms the catch-up. That ordering
-  // is what makes the tick safe to trust even if it arrives a commit early.
+  // is what makes the settle safe to trust even if it arrives a commit early.
   useEffect(() => {
-    if (!awaitingSilent.current || settleTick === 0) return;
+    // Only the refresh currently in flight: an id that has not caught up to the one just issued
+    // is either the starting value or an earlier refresh's, and neither says anything about this
+    // one. Superseded settles are dropped for free, since a newer scan bumps the id again.
+    if (!awaitingSilent.current || settledId !== silentId.current) return;
     if (behind) {
       awaitingSilent.current = false;
       setNudging(true);
     }
-  }, [settleTick, behind]);
+  }, [settledId, behind]);
 
   return {
     showBar: nudging && behind && !dismissed,

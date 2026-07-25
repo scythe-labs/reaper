@@ -38,6 +38,13 @@ function bestUnit(value: number, units: Unit[]): Unit {
   return sorted.find((u) => value >= u.factor) ?? units[0]!;
 }
 
+/** The smallest positive number the box can draw in the unit it is showing. `trim` keeps two
+ *  decimals, so anything under this renders as "0" -- which is what the blur clamp below is
+ *  floored to, so a clamped box can never show a number it is not storing. Change one of these
+ *  and you change the other (rule 67). */
+const SHOWN_MIN = 0.01;
+
+/** Two decimals of the shown unit -- see SHOWN_MIN. */
 function trim(n: number): number {
   return Math.round(n * 100) / 100;
 }
@@ -124,6 +131,12 @@ export function QuantityInput({
   }
 
   const shown = String(trim(value / unit.factor));
+  // The floor the box enforces, in the unit it is showing. `min` is in BASE units and can sit
+  // far below anything this unit can draw: a 1-byte floor in a GB box clamped a typed 0 to
+  // 1 byte and then rendered it as "0" -- a box reading zero over a stored value the sentence
+  // beside it called "1 B". So the floor is lifted to the smallest amount this unit can
+  // express, and what the box shows is what it stored.
+  const shownMin = Math.max(min / unit.factor, SHOWN_MIN);
   const typed = useTypedNumber(
     shown,
     (n) => {
@@ -131,12 +144,12 @@ export function QuantityInput({
       mine.current = base;
       onChange(base);
     },
-    { min: min / unit.factor },
+    { min: shownMin },
   );
 
   return (
     <span className="qty">
-      <input type="number" min={min / unit.factor} step="any" aria-label={ariaLabel} {...typed} />
+      <input type="number" min={shownMin} step="any" aria-label={ariaLabel} {...typed} />
       <select
         value={unit.label}
         aria-label={ariaLabel ? `${ariaLabel} unit` : "Unit"}

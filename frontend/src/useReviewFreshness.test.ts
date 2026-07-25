@@ -153,6 +153,55 @@ describe("useReviewFreshness", () => {
     expect(hook.result.current.showBar).toBe(true);
   });
 
+  // Two silent refreshes on ONE mount. The settle signal used to be a monotonic counter guarded
+  // with "nothing has settled yet", which is true only before the FIRST refresh: from the second
+  // on, the nudge went up in the same commit that issued the refresh, and the arm that raised it
+  // also cleared the awaiting flag, so no swap was ever confirmed again for the rest of the
+  // session (B-2).
+  describe("a second silent refresh on the same mount", () => {
+    /** Idle, with each refresh's settle held so the test decides when it lands. */
+    const twoRefreshes = () => {
+      const onSilentCaughtUp = vi.fn();
+      const settles: Array<() => void> = [];
+      const onSilentRefresh = vi.fn(() => new Promise<void>((resolve) => settles.push(resolve)));
+      return { settles, base: { isBusy: () => false, onSilentRefresh, onSilentCaughtUp } };
+    };
+
+    it("is confirmed on its own catch-up, not nudged at issuance", async () => {
+      const { settles, base } = twoRefreshes();
+      // Scan 43 lands while idle: refresh #1, the list catches up, and it settles.
+      const { hook } = setup({ viewSnapshotId: 42, latestSnapshotId: 43, ...base });
+      act(() => hook.rerender({ viewSnapshotId: 43, latestSnapshotId: 43, ...base }));
+      await act(async () => settles[0]!());
+      expect(base.onSilentCaughtUp).toHaveBeenCalledTimes(1);
+
+      // Scan 44 lands, still idle: refresh #2 goes out and nothing is claimed about it yet.
+      act(() => hook.rerender({ viewSnapshotId: 43, latestSnapshotId: 44, ...base }));
+      expect(base.onSilentRefresh).toHaveBeenCalledTimes(2);
+      expect(hook.result.current.showBar).toBe(false);
+
+      // It lands snapshot 44 and settles: the swap is confirmed a second time.
+      act(() => hook.rerender({ viewSnapshotId: 44, latestSnapshotId: 44, ...base }));
+      await act(async () => settles[1]!());
+      expect(base.onSilentCaughtUp).toHaveBeenCalledTimes(2);
+      expect(hook.result.current.showBar).toBe(false);
+    });
+
+    it("still nudges when it settles with the list behind", async () => {
+      const { settles, base } = twoRefreshes();
+      const { hook } = setup({ viewSnapshotId: 42, latestSnapshotId: 43, ...base });
+      act(() => hook.rerender({ viewSnapshotId: 43, latestSnapshotId: 43, ...base }));
+      await act(async () => settles[0]!());
+
+      // Scan 44, and this time the refresh finishes with the list still on 43 (a network blip).
+      act(() => hook.rerender({ viewSnapshotId: 43, latestSnapshotId: 44, ...base }));
+      expect(hook.result.current.showBar).toBe(false);
+      await act(async () => settles[1]!());
+      expect(hook.result.current.showBar).toBe(true);
+      expect(base.onSilentCaughtUp).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("still nudges when the refresh never renders as fetching at all", async () => {
     // The regression this signal exists for: a refetch that rejects synchronously. There is no
     // window in which any flag reads "fetching", so a hook watching one would leave the reviewer

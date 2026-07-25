@@ -15,6 +15,7 @@ import { ReapConfirm } from "./ReapConfirm";
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     safety: vi.fn(),
+    run: vi.fn(),
     dryRun: vi.fn(),
     executeRun: vi.fn(),
     reapStatus: vi.fn(),
@@ -97,6 +98,7 @@ function renderSheet(onClose: () => void = () => {}, seedStatus?: ReapStatus) {
 beforeEach(() => {
   vi.restoreAllMocks();
   apiMock.safety.mockResolvedValue({ destructive_enabled: true });
+  apiMock.run.mockResolvedValue(run); // only ever fetched after a 409 moves the phrase
   apiMock.dryRun.mockResolvedValue(report());
   apiMock.reapStatus.mockResolvedValue(status()); // idle until a reap starts
   apiMock.executeRun.mockResolvedValue(runningStatus);
@@ -248,20 +250,27 @@ describe("the execute gate", () => {
     expect(apiMock.executeRun).toHaveBeenCalledWith(run.id, run.confirmation_phrase);
   });
 
-  it("pulls the run again when the server says the phrase has moved", async () => {
+  it("re-measures against the phrase the server moved to", async () => {
     const user = userEvent.setup();
     apiMock.executeRun.mockRejectedValue(new ApiError(409, "The plan changed."));
-    const { queryClient } = renderSheet();
-    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    // What the server holds now: a soul more, so a different phrase.
+    const moved = { ...run, item_count: 2, confirmation_phrase: "REAP 2 SOULS 1 GB" };
+    apiMock.run.mockResolvedValue(moved);
+    renderSheet();
 
     await screen.findByText(/Practice run passed/);
     await user.type(screen.getByRole("textbox"), run.confirmation_phrase);
     await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
+    await screen.findByText(/The plan changed./);
 
     // Otherwise the sheet deadlocks: it keeps lighting the button for the stale phrase the
-    // server now refuses, and typing the real one disables it (S-1).
-    await screen.findByText(/The plan changed./);
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["run", run.id] });
+    // server now refuses, and typing the real one disables it (S-1). This is rendered from a
+    // run the caller only CAPTURED -- what "Reap now" in the review queue hands over -- so
+    // nothing outside the sheet observes ["run", id], and the invalidation reached nobody at
+    // all until the sheet started watching that key itself.
+    const input = await screen.findByRole("textbox");
+    expect((input as HTMLInputElement).placeholder).toBe(moved.confirmation_phrase);
+    expect(screen.getByRole("button", { name: /^Reap 2 souls$/ })).toBeInTheDocument();
   });
 
   it("says a reap stopped on a problem, and never re-arms itself in silence", async () => {

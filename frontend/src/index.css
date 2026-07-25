@@ -24,6 +24,8 @@
 
   /* Neutrals — a page slightly off-white so elevated white surfaces read as raised. */
   --bg: #f4f5f8;
+  /* --surface is accent.ts's LIGHT_SURFACE: the ground its AA contrast search measures
+   * accent-colored text against. Change one, change both (rule 67). */
   --surface: #ffffff;
   --surface-2: #eef0f4; /* inset fills: code chips, abstain, quiet wells */
   --hover: #f0f2f6;
@@ -143,6 +145,8 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #0e0f13;
+    /* accent.ts's DARK_SURFACE -- the ground its AA contrast search measures against.
+     * Change one, change both (rule 67). */
     --surface: #191b21;
     --surface-2: #22242c;
     --hover: #23252d;
@@ -165,6 +169,8 @@
      * tint carries more of the accent over the darker surface. */
     --accent: #25c3ff;
     --accent-hover: color-mix(in srgb, var(--accent), #fff 16%);
+    /* 22% is accent.ts's TINT: the tightest ground its AA search clears accent-colored text
+     * against. Retune this and retune TINT with it, or the guarantee lapses silently. */
     --accent-soft: color-mix(in srgb, var(--accent) 22%, var(--surface));
     --accent-ring: color-mix(in srgb, var(--accent) 45%, transparent);
     --accent-ink: #06202c;
@@ -203,6 +209,7 @@
   color-scheme: dark;
 
   --bg: #0e0f13;
+  /* accent.ts's DARK_SURFACE, as above (rule 67). */
   --surface: #191b21;
   --surface-2: #22242c;
   --hover: #23252d;
@@ -222,6 +229,7 @@
 
   --accent: #25c3ff;
   --accent-hover: color-mix(in srgb, var(--accent), #fff 16%);
+  /* 22% is accent.ts's TINT, as above (rule 67). */
   --accent-soft: color-mix(in srgb, var(--accent) 22%, var(--surface));
   --accent-ring: color-mix(in srgb, var(--accent) 45%, transparent);
   --accent-ink: #06202c;
@@ -253,6 +261,7 @@
   color-scheme: light;
 
   --bg: #f4f5f8;
+  /* accent.ts's LIGHT_SURFACE, as above (rule 67). */
   --surface: #ffffff;
   --surface-2: #eef0f4;
   --hover: #f0f2f6;
@@ -1827,7 +1836,6 @@ a.rating-chip:hover {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-/* the inline "more" / "less" toggle after a clamped synopsis */
 /* A standalone text button, not a link inside a sentence, so SC 2.5.8's inline exception
    does not cover it and it carries --tap-min like any other control. Its three uses ("Clear
    all" beside the filter chips, the why-panel's show-more, back-to-show) all sit next to
@@ -7611,6 +7619,8 @@ button.danger:hover:not(:disabled) {
 /* The doc you are reading deepens under the pointer instead of swallowing its own selected
    wash: equal specificity with .active declared later would otherwise leave hover a no-op. */
 .docs-index-item.active:hover {
+  /* The other 22% accent tint, and the tightest ground accent-colored text lands on: it is
+     what accent.ts's TINT stands for. Change one, change both (rule 67). */
   background: color-mix(in srgb, var(--accent) 22%, var(--surface));
   color: var(--accent-text);
 }

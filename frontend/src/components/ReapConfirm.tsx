@@ -27,15 +27,35 @@ import { useSafety } from "../useSafety";
 import { ModalShell } from "./ModalShell";
 
 export function ReapConfirm({
-  run,
+  run: openedWith,
   onClose,
   onDone,
 }: {
+  /** The plan to confirm, as the caller holds it. It seeds the shared cache entry below; only
+   *  its id is relied on afterwards, so a caller holding a captured copy is not a problem. */
   run: Run;
   onClose: () => void;
   onDone?: () => void;
 }) {
   const queryClient = useQueryClient();
+  // The plan, read through the one cache key every surface uses for it. The caller's copy seeds
+  // it, so opening the sheet never waits on (or costs) a fetch.
+  //
+  // The observer is the point: the 409 recovery below invalidates ["run", id], and an
+  // invalidation only reaches a component WATCHING that key. The reap plan page happens to hold
+  // its run through it, but "Reap now" in the review queue hands over a captured object with no
+  // observer at all, so on that path the recovery changed nothing -- the sheet kept measuring
+  // against a phrase the server had already moved past, and typing the phrase the error itself
+  // quoted left the button disabled. Watching the key here fixes both paths at once, instead of
+  // one path getting the behavior the comment claims (rule 24).
+  const { data: run } = useQuery({
+    queryKey: ["run", openedWith.id],
+    queryFn: () => api.run(openedWith.id),
+    initialData: openedWith,
+    // Only an explicit invalidation refetches this: the phrase is re-derived server-side on
+    // execute anyway, so there is nothing to poll for.
+    staleTime: Infinity,
+  });
   const [typed, setTyped] = useState("");
   const [dryReport, setDryReport] = useState<RunReport | null>(null);
 
@@ -82,9 +102,10 @@ export function ReapConfirm({
     onError: (e) => {
       // The phrase moved while this sheet was open (a spare or reap elsewhere, a raised
       // unknown-size allowance). Pull the run again so the label, the placeholder, and the
-      // typed check all measure against the phrase the server will actually accept.
+      // typed check all measure against the phrase the server will actually accept. The query
+      // above is what makes this land, on every path that opens the sheet.
       if (e instanceof ApiError && e.status === 409) {
-        void queryClient.invalidateQueries({ queryKey: ["run", run.id] });
+        void queryClient.invalidateQueries({ queryKey: ["run", openedWith.id] });
       }
     },
   });
