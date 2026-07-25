@@ -42,7 +42,7 @@ verification `VERIFIED`, B2-8's fix changes freshly-built plans too. Every findi
 - [x] **Phase 6 — API routes, runs & query performance** (14 findings) — *done 2026-07-24*
 - [x] **Phase 7 — Security, auth, restore & infra** (18 findings) — *done 2026-07-24*
 - [x] **Phase 8 — Fairness, Leaving Soon & engine cleanup** (11 findings) — *done 2026-07-24*
-- [ ] **Phase 9 — Test suite**
+- [x] **Phase 9 — Test suite** (10 findings) — *done 2026-07-24*
 - [ ] **Phase 10 — Merge the review's Agent Rules into CLAUDE.md**
 
 Every finding in `docs/CODE_REVIEW.md` is assigned to exactly one phase below (100 total: 37
@@ -797,7 +797,7 @@ clean, `test` 268 passed (30 files), `build` clean.
 
 ---
 
-## Phase 9 — Test suite
+## Phase 9 — Test suite  ✅ DONE
 
 **Findings:** T-1 (**critical, coverage**), T-2 (high), T-3 (high), T-4 (medium), T-5 (medium),
 T-6 (medium), T-7 (medium), T-8 (medium-low), T-9 (low), T-10 (low).
@@ -805,7 +805,105 @@ T-6 (medium), T-7 (medium), T-8 (medium-low), T-9 (low), T-10 (low).
 **Theme.** Where the suite asserts a transcription of production instead of production itself
 (T-2, T-4, T-10), and the destructive paths with no route-level test at all (T-1, T-3, T-6).
 
-**Files:** `tests/**`, especially `tests/_policy_lab.py`, `tests/conftest.py`.
+### What was done
+
+**T-1 — `POST /api/runs` had no route-level selection test.** The route's ternary is the one
+place an explicit `[]` is translated for the planner, and rewriting it as the obvious
+`if payload and payload.media_keys` turns "nothing selected" into a plan over the whole
+condemned set. Added `TestTheRunSelectionIsExplicit` (`tests/test_api.py`) with four cases:
+`[]` → 422 and no journalled plan; a body-less POST and an explicit `null` → the whole set;
+one key of three → exactly that key; a key that is not condemned → refused whole rather than
+partially planned. The review said to use the existing `client` fixture, but that fixture has
+a *single* condemned item, which makes "planned what I asked for" and "fell through to
+everything" the same number -- so this carries its own `selection_client` fixture with three
+condemned movies and one protected, the smallest set that can tell them apart.
+
+**T-2 — the policy lab's hand-rebuilt judging pipeline.** Took the review's stronger option:
+extracted the pure half of `snapshot._judge_item` into `judge_facts` + `effective_fate`
+(returning a `PolicyJudgment`), and `tests/_policy_lab.py` now calls those. `_judge_item` is
+the same function minus its `session.add`. This closes both divergences at once -- the missing
+`blocked_holds_reap`, and the override pushed straight through `decide_verdict` instead of
+derived from the frozen explanation -- and there is no longer a second implementation to drift.
+Added `TestTheLabJudgesWithTheScansOwnCode` so the drift cannot come back silently: a season
+flagged for a keep-rule conflict abstains, and a hand reap on it condemns (the old lab
+protected). The third case, a reap held by an un-checkable protection, is labeled in-file as a
+guard-rail: the old lab answered it correctly too, because holding is what its missing
+parameter defaulted to.
+
+**T-3 — the byte-cap tripwire had zero coverage.** Two direct unit tests beside
+`TestAnApprovedSizeThatWasNeverConfirmed` (`tests/test_reap_loop.py`). Deleting the `raise`
+outright now fails. The review also asked for a mirror asserting the unmeasured item is
+*omitted* rather than summed as zero under the allowance -- that distinction is unfalsifiable
+at this function's interface (both produce the same total), so the test pins what it really
+can (the allowance does not abort, and the total is the measured bytes) and says so.
+
+**T-4 — `decide_verdict`'s tree transcribed as its own expectation.** Replaced the inline
+`expect` re-derivation with `_DECISION_TABLE`: 24 hand-written rows, one per sentence of the
+function's docstring, each answer a literal. `blocked_holds_reap` is now swept, including the
+two rows proving it is inert without a reap -- the dimension the old matrix never varied while
+claiming "every boundary". The exhaustive sweep survives as two one-directional *properties*
+(a fired protection is never condemned without a hand reap; below-floor coverage never condemns
+by itself), which assert what the spec states rather than recomputing the implementation.
+
+**T-5 — eight guard tests that asserted "not a `SafetyViolationError`".** Went past the
+review's fix. It proposed asserting `requests.exceptions.ConnectionError`, which keeps the
+dependency on TCP port 1 being closed that the finding itself flags. Instead the eight now
+stub `requests.Session.send` -- the one layer below the guard -- and assert the concrete
+method and URL that reached it. Positive proof instead of a negative one, and no socket. A
+`GuardedSession` broken outright fails all eight (verified).
+
+**T-6 — `wait_for_pin` untested.** The review asked for a new `tests/test_plex_auth.py`; that
+module already exists and covers `check_pin`, so the seven new tests are a
+`TestWaitingForAnApprovedPin` class inside it: a token on a later poll, a `Retry-After` honored
+verbatim, a bare 429 falling back to the fixed backoff, an extravagant `Retry-After` capped,
+the deadline clipping a server-chosen backoff, an unapproved pin returning `None`, and a 500
+propagating rather than being swallowed as back-pressure. Sleeps are recorded rather than
+waited out, which is what makes the pacing assertable at all. Corrected the `conftest.py`
+docstring, which named this loop among the ones its `asyncio.sleep` patch speeds up: the patch
+does not move `loop.time()`, so a deadline-bounded loop spins through its whole window in real
+wall-clock -- now stated, with the worked example named.
+
+**T-7 — the only real-filesystem permission test vanishes under root.** Kept the skip (root
+genuinely bypasses directory permissions) and added
+`test_a_real_unusable_data_dir_is_caught_whatever_the_uid`: a data dir under a regular file
+gets ENOTDIR from the kernel whoever asks. The module's subject is now verified on every
+runner rather than depending on the CI job's uid, which this repository does not pin.
+
+**T-8 — over-broad `pytest.raises(Exception)` on the protection-list sync.** Both are now
+`pytest.raises(IntegrationError, match="503")`, `noqa: B017` dropped. Verified: a failure
+raised before the atomic swap now fails both tests instead of satisfying them.
+
+**T-9 — a test mutating process-global logging with no restore.** Moved `_restore_logging`
+from `test_logging_quiet.py` into `conftest.py` and applied it to the `test_foundations`
+sibling. **Found a bug in the fixture while verifying it**: `logbuffer.set_level` sets the root
+logger's level too, so restoring the ring level *last* silently re-clobbered the root level the
+fixture had just put back. Ring first, root last. Measured with a probe hook: the test leaked
+`(level 30→20, handlers 4→5)` before, and `leaked=False` after.
+
+**T-10 — an assertion re-reading the wall clock.** `TestReleaseAgeRoundsTowardKeeping` freezes
+`snapshot.utcnow` (patched on the module under test, since it imported the name) and asserts a
+literal day count. Added the rule 31 property as its own test: a Jan-1 reading would add 365
+days of age to a title nobody can date more precisely.
+
+### Verification
+
+Every fix was reverted in place and its tests re-run. Discriminating failures confirmed for
+T-1 (the naive falsy rewrite planned all three instead of refusing), T-2 (lab re-mirrored),
+T-3 (`raise` removed), T-4 (`>=`→`>`, and `blocked_holds_reap` ignored), T-5 (transport
+unreachable: 8 failed), T-6 (429 not treated as back-pressure, `Retry-After` dropped, deadline
+unclipped), T-7 (only `PermissionError` mapped), T-8 (a failure before the swap), T-9 (probe
+hook, fixture removed), T-10 (Jan 1). T-3's allowance test and T-2's third case pass both ways
+and are labeled in-file as guard-rails rather than left looking like proofs.
+
+**Gates.** `ruff format`/`ruff check` clean; `mypy src/reaper` clean (96 files); **pytest 2300
+passed in 93s** (2257 before this phase, +43); `alembic upgrade head` + `alembic check` clean,
+no schema change; frontend `lint` clean, `test` 268 passed (30 files), `build` clean.
+
+**Files:** `services/snapshot.py` (the `judge_facts`/`effective_fate` extraction -- the only
+`src/` change in this phase), `tests/_policy_lab.py`, `tests/conftest.py`, `tests/test_api.py`,
+`tests/test_reap_loop.py`, `tests/test_policy_permutations.py`, `tests/test_plex_guard.py`,
+`tests/test_plex_auth.py`, `tests/test_data_dir_preflight.py`, `tests/test_lists.py`,
+`tests/test_foundations.py`, `tests/test_logging_quiet.py`, `tests/test_scan_pipeline.py`.
 
 ---
 

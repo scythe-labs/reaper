@@ -9,11 +9,21 @@ library. Maintainerr has no auth at all; Seerr trusts whoever logs in first.
 
 from __future__ import annotations
 
+import asyncio
+
 import httpx
 import pytest
 import respx
 
-from reaper.clients.plextv import PlexConnection, PlexTvClient, plex_headers
+from reaper.clients.base import IntegrationError
+from reaper.clients.plextv import (
+    PIN_POLL_INTERVAL,
+    PIN_RATE_LIMIT_BACKOFF,
+    PIN_RATE_LIMIT_MAX_BACKOFF,
+    PlexConnection,
+    PlexTvClient,
+    plex_headers,
+)
 from reaper.config import RuntimeSafety
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
@@ -21,6 +31,7 @@ pytestmark = pytest.mark.httpx2(assert_all_called=False)
 SAFETY = RuntimeSafety(destructive_enabled=False)
 CID = "reaper-uuid-1234"
 OUR_SERVER = "abc123machineid"
+PIN_URL = "https://plex.tv/api/v2/pins/77"
 
 
 def _resource(
@@ -234,6 +245,154 @@ class TestPinFlow:
         )
         async with PlexTvClient(CID, safety=SAFETY) as client:
             assert await client.check_pin(42) == "user-token"
+
+
+class TestWaitingForAnApprovedPin:
+    """The poll loop itself, which receives a full-power Plex account token.
+
+    ``wait_for_pin`` had no test at all while ``conftest.py`` named "the plex.tv pin-poll
+    loop" among the loops its global ``asyncio.sleep`` patch exists to speed up, implying a
+    coverage that did not exist. The two branches that carry the weight: a ``429`` is
+    back-pressure, not an error -- aborting on one would kill a sign-in the owner has not
+    finished, the failure that broke the very first link attempt -- and the deadline is a
+    real bound, not just a loop condition, so a server asking for a long wait cannot hold the
+    call past its timeout.
+
+    The sleeps are recorded rather than waited out, which is what makes the pacing assertable
+    at all: a honored ``Retry-After`` is invisible if the only observable is that the call
+    eventually returned.
+    """
+
+    @pytest.fixture
+    def slept(self, monkeypatch: pytest.MonkeyPatch) -> list[float]:
+        """Every delay the loop asks for, in order. Still instant (conftest already
+        replaced ``asyncio.sleep``); this only writes the number down on the way past."""
+        recorded: list[float] = []
+        instant = asyncio.sleep
+
+        async def _record(delay: float, result: object = None) -> object:
+            recorded.append(delay)
+            return await instant(0, result)
+
+        monkeypatch.setattr(asyncio, "sleep", _record)
+        return recorded
+
+    async def test_a_token_that_arrives_on_a_later_poll_is_returned(
+        self, httpx2_mock: respx.Router, slept: list[float]
+    ) -> None:
+        """The ordinary sign-in: the owner takes a few seconds to approve, and the loop
+        keeps asking at its own interval until the token appears."""
+        httpx2_mock.get(PIN_URL).mock(
+            side_effect=[
+                httpx.Response(200, json={"id": 77, "authToken": None}),
+                httpx.Response(200, json={"id": 77, "authToken": None}),
+                httpx.Response(200, json={"id": 77, "authToken": "user-token"}),
+            ]
+        )
+        async with PlexTvClient(CID, safety=SAFETY) as client:
+            token = await client.wait_for_pin(77, timeout=60.0)
+
+        assert token == "user-token"
+        assert slept == [PIN_POLL_INTERVAL, PIN_POLL_INTERVAL]
+
+    async def test_a_rate_limit_waits_the_time_the_server_asked_for_and_carries_on(
+        self, httpx2_mock: respx.Router, slept: list[float]
+    ) -> None:
+        """plex.tv named seven seconds, so the loop waits seven -- not its own fixed
+        fallback -- and then keeps polling instead of failing the sign-in."""
+        httpx2_mock.get(PIN_URL).mock(
+            side_effect=[
+                httpx.Response(429, headers={"Retry-After": "7"}, json={}),
+                httpx.Response(200, json={"id": 77, "authToken": "user-token"}),
+            ]
+        )
+        async with PlexTvClient(CID, safety=SAFETY) as client:
+            token = await client.wait_for_pin(77, timeout=60.0)
+
+        assert token == "user-token"
+        assert slept == [7.0]
+
+    async def test_a_bare_rate_limit_falls_back_to_the_fixed_backoff(
+        self, httpx2_mock: respx.Router, slept: list[float]
+    ) -> None:
+        """No ``Retry-After`` to honor, so the client picks its own pace. Polling straight
+        on would earn a second refusal."""
+        httpx2_mock.get(PIN_URL).mock(
+            side_effect=[
+                httpx.Response(429, json={}),
+                httpx.Response(200, json={"id": 77, "authToken": "user-token"}),
+            ]
+        )
+        async with PlexTvClient(CID, safety=SAFETY) as client:
+            token = await client.wait_for_pin(77, timeout=60.0)
+
+        assert token == "user-token"
+        assert slept == [PIN_RATE_LIMIT_BACKOFF]
+
+    async def test_an_extravagant_retry_after_is_capped(
+        self, httpx2_mock: respx.Router, slept: list[float]
+    ) -> None:
+        """The server's pacing is honored, not obeyed blindly: an hour would strand the
+        sign-in in a single sleep with the owner watching a code that expires first."""
+        httpx2_mock.get(PIN_URL).mock(
+            side_effect=[
+                httpx.Response(429, headers={"Retry-After": "3600"}, json={}),
+                httpx.Response(200, json={"id": 77, "authToken": "user-token"}),
+            ]
+        )
+        async with PlexTvClient(CID, safety=SAFETY) as client:
+            token = await client.wait_for_pin(77, timeout=600.0)
+
+        assert token == "user-token"
+        assert slept == [PIN_RATE_LIMIT_MAX_BACKOFF]
+
+    async def test_the_deadline_clips_a_backoff_the_server_chose(
+        self, httpx2_mock: respx.Router, slept: list[float]
+    ) -> None:
+        """A twenty-second backoff inside a short window sleeps what is LEFT of the window
+        and then reports the sign-in as not completed. It never sits inside a sleep the
+        server chose, past the deadline the caller set.
+
+        The window is a fifth of a second because the suite's global ``asyncio.sleep`` patch
+        makes every sleep instant while ``loop.time()`` keeps advancing for real -- so the
+        loop spins through the whole remaining window in wall-clock. Testing the deadline at
+        its 300s default would take 300 seconds.
+        """
+        window = 0.2
+        httpx2_mock.get(PIN_URL).mock(
+            return_value=httpx.Response(429, headers={"Retry-After": "20"}, json={})
+        )
+        async with PlexTvClient(CID, safety=SAFETY) as client:
+            token = await client.wait_for_pin(77, timeout=window)
+
+        assert token is None
+        assert slept, "it polled at least once before giving up"
+        assert all(delay <= window for delay in slept), slept
+
+    async def test_an_unapproved_pin_gives_up_at_the_deadline(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """Nobody approved it. The loop returns "not completed" rather than raising, so the
+        route above can tell the browser to keep waiting or start over."""
+        route = httpx2_mock.get(PIN_URL).mock(
+            return_value=httpx.Response(200, json={"id": 77, "authToken": None})
+        )
+        async with PlexTvClient(CID, safety=SAFETY) as client:
+            token = await client.wait_for_pin(77, timeout=0.05)
+
+        assert token is None
+        assert route.call_count >= 1
+
+    async def test_a_real_failure_is_not_swallowed_as_back_pressure(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """Only a 429 means "slow down". A 500 is plex.tv being broken, and polling it for
+        five minutes would hide the outage behind a sign-in that never completes."""
+        httpx2_mock.get(PIN_URL).mock(return_value=httpx.Response(500, json={}))
+
+        async with PlexTvClient(CID, safety=SAFETY) as client:
+            with pytest.raises(IntegrationError):
+                await client.wait_for_pin(77, timeout=60.0)
 
 
 class TestTheSignInExemptionIsNarrow:

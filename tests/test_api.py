@@ -448,6 +448,150 @@ class TestTheRunsApi:
 
 
 @pytest.fixture
+def selection_client(tmp_path: Path) -> Iterator[TestClient]:
+    """A client whose snapshot holds THREE condemned movies and one protected one.
+
+    The main ``client`` fixture has a single condemned item, which makes "planned just the
+    one I asked for" and "planned the whole set" the same number -- so the selection could
+    not be told from the fall-through. Three is the smallest count that distinguishes them.
+    """
+    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    engine = sa_create_engine(settings.sync_database_url)
+    Base.metadata.create_all(engine)
+
+    now = utcnow()
+    with Session(engine) as session:
+        snapshot = Snapshot(
+            created_at=now,
+            policy_hash=_fixture_policy_hash(),
+            scoring_hash=_fixture_scoring_hash(),
+            horizon_at=now,
+            item_count=4,
+            degraded=False,
+        )
+        session.add(snapshot)
+        session.flush()
+        session.add(
+            Instance(
+                id=1,
+                kind=InstanceKind.RADARR,
+                name="hd",
+                base_url="https://radarr.example",
+                api_key_enc="enc",
+                created_at=now,
+            )
+        )
+        session.add_all(
+            [
+                Candidate(
+                    snapshot_id=snapshot.id,
+                    media_key=f"radarr:1:{n}",
+                    title=f"Example Movie {n}",
+                    media_type="movie",
+                    size_bytes=1_000_000_000 * n,
+                    verdict="condemn",
+                    score=91,
+                    coverage_bp=10_000,
+                    explanation_json=_explanation(91),
+                    created_at=now,
+                )
+                for n in (10, 11, 12)
+            ]
+            + [
+                Candidate(
+                    snapshot_id=snapshot.id,
+                    media_key="radarr:1:13",
+                    title="Example Keeper",
+                    media_type="movie",
+                    size_bytes=4_000_000_000,
+                    verdict="protect",
+                    score=10,
+                    coverage_bp=10_000,
+                    explanation_json=_explanation(10),
+                    created_at=now,
+                )
+            ]
+        )
+        session.add_all(
+            FirstFlagged(
+                media_key=f"radarr:1:{n}", first_flagged_at=now, last_seen_condemned_at=now
+            )
+            for n in (10, 11, 12)
+        )
+        session.commit()
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+class TestTheRunSelectionIsExplicit:
+    """``POST /api/runs`` is where "nothing selected" is translated for the planner.
+
+    Golden rule 1 lives on this one ternary: an OMITTED ``media_keys`` means the whole
+    condemned set, an explicit ``[]`` means nothing, and the two must never collapse into
+    each other. ``[]`` is falsy, so the obvious-looking ``if payload and payload.media_keys``
+    turns a select-nothing request into a plan over every condemned item in the library --
+    which is the deletion this codebase exists to prevent. The planner's own side of the
+    contract is covered directly (test_review_reap), but this route is the only place the
+    empty list is ever translated, so it is tested here at the edge.
+    """
+
+    def test_an_empty_selection_plans_nothing_rather_than_everything(
+        self, selection_client: TestClient
+    ) -> None:
+        """The one that catches the falsy-collapse rewrite: refused, not expanded."""
+        refused = selection_client.post("/api/runs", json={"media_keys": []})
+
+        assert refused.status_code == 422
+        assert "no items were selected" in refused.json()["detail"].lower()
+        # And nothing was journalled: a refused selection leaves no plan behind at all.
+        assert selection_client.get("/api/runs").json() == []
+
+    def test_an_omitted_selection_plans_the_whole_condemned_set(
+        self, selection_client: TestClient
+    ) -> None:
+        """A body-less POST, and an explicit ``null``, both mean "reap everything condemned"
+        -- the distinction the empty list above must not be folded into."""
+        bare = selection_client.post("/api/runs").json()
+        explicit_null = selection_client.post("/api/runs", json={"media_keys": None}).json()
+
+        assert bare["item_count"] == 3
+        assert explicit_null["item_count"] == 3
+        assert {s["media_key"] for s in bare["steps"]} == {
+            "radarr:1:10",
+            "radarr:1:11",
+            "radarr:1:12",
+        }
+
+    def test_a_named_selection_plans_exactly_what_was_named(
+        self, selection_client: TestClient
+    ) -> None:
+        """One key of three, so a plan that quietly fell through to the whole set is a
+        different number rather than the same one."""
+        run = selection_client.post("/api/runs", json={"media_keys": ["radarr:1:11"]}).json()
+
+        assert run["item_count"] == 1
+        assert {s["media_key"] for s in run["steps"]} == {"radarr:1:11"}
+        # The confirmation phrase is bound to the selection, not to the condemned set.
+        assert run["confirmation_phrase"].startswith("REAP 1 SOUL")
+
+    def test_a_selection_naming_something_not_condemned_is_refused_whole(
+        self, selection_client: TestClient
+    ) -> None:
+        """Refuse loudly rather than plan the subset that happens to be valid: a plan that
+        silently covers fewer items than asked is how an operator approves one deletion and
+        gets another."""
+        refused = selection_client.post(
+            "/api/runs", json={"media_keys": ["radarr:1:10", "radarr:1:13"]}
+        )
+
+        assert refused.status_code == 422
+        assert selection_client.get("/api/runs").json() == []
+
+
+@pytest.fixture
 def armed_client(tmp_path: Path) -> Iterator[TestClient]:
     """A client armed at the host default (``destructive_actions_enabled=True``), with one
     condemned movie but no *arr/Plex/Tautulli instances configured. Enough to exercise the

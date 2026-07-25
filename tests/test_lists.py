@@ -334,14 +334,20 @@ class TestImdbTop250:
         self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:
         """The whole point of the atomic swap. A protection must never silently empty
-        itself because a third-party service had a bad minute."""
+        itself because a third-party service had a bad minute.
+
+        Both of these name the error the sync really raises. A bare
+        ``pytest.raises(Exception)`` is satisfied by one raised BEFORE the swap is reached
+        -- so the assertions below would be covering a path that never ran, on the one
+        rule 27 / rule 2 surface where an empty result is the failure being guarded.
+        """
         httpx2_mock.get(IMDB_TOP_250_URL).mock(
             return_value=httpx.Response(200, json=_top250_payload())
         )
         await sync(engine, ImdbTop250())
 
         httpx2_mock.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(503))
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(IntegrationError, match="503"):
             await sync(engine, ImdbTop250())
 
         # Still protected.
@@ -352,7 +358,7 @@ class TestImdbTop250:
     ) -> None:
         httpx2_mock.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(503))
 
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(IntegrationError, match="503"):
             await sync(engine, ImdbTop250())
 
         async with engine.connect() as conn:

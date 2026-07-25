@@ -1083,6 +1083,115 @@ _NO_DISPLAY = Display()
 HAND_SPARE_DETAIL = "you spared this by hand"
 
 
+@dataclass(frozen=True, slots=True)
+class PolicyJudgment:
+    """One item judged by policy alone: no session, no stored row, no hand override.
+
+    The pure half of :func:`_judge_item` -- everything it computes before the ``session.add``
+    -- lifted out so that a caller which only wants the *decision* is running the scan's own
+    code rather than a lookalike. The policy lab (``tests/_policy_lab.py``) sweeps hundreds of
+    de-identified real shapes through it; a lab that rebuilt this pipeline by hand would drift
+    from the scan and pin the drift as ground truth (rules 3/22).
+
+    ``verdict`` is the PURE POLICY verdict, hand override held out, exactly as stored on the
+    Candidate row; :func:`effective_fate` applies the override on top.
+    """
+
+    evaluation: Evaluation
+    item_score: Score
+    score: int
+    coverage_bp: int
+    verdict: str
+    explanation: str
+
+
+def judge_facts(
+    facts: Facts,
+    gates: list[Gate],
+    policy: PolicyBody,
+    *,
+    signals: list[SignalConfig],
+    custom_condemn: list[CustomSignalConfig],
+    keeps: list[KeepConfig],
+    window_days: int = 365,
+    extra_results: Sequence[GateResult] = (),
+    plex_rating_key: int | None = None,
+    matched_by: identity.MatchedBy | None = None,
+    match_detail: str | None = None,
+    match_status: identity.MatchStatus | None = None,
+    merged_rating_keys: tuple[int, ...] = (),
+) -> PolicyJudgment:
+    """Evaluate, score, round, decide, explain -- the whole judgment, storing nothing.
+
+    Round FIRST, then decide -- and the returned integers are exactly what decided. The
+    stored integers are what the table shows, what the why-panel explains, and what the
+    simulator re-decides; if the verdict were taken from the underlying float instead, an
+    item scoring 69.7 against a threshold of 70 would abstain while storing a 70, and the
+    simulator would later condemn the very item the queue said it was sparing. There must be
+    exactly one number, and everything must decide on it.
+
+    ``extra_results`` (the season-pruning guard's outcome) is merged AHEAD of the ordinary
+    gates: a guard PROTECT wins like any protection, and a guard *blocked* ABSTAIN (a
+    keep-rule conflict) forces the item to abstain for a human to look at.
+    """
+    evaluation = Evaluation(results=[*extra_results, *evaluate_all(gates, facts).results])
+    item_score = score(
+        signals,
+        facts,
+        custom_condemn=custom_condemn,
+        keeps=keeps,
+        window_days=window_days,
+    )
+
+    score_value = round(item_score.value)
+    coverage_bp = round(item_score.coverage * 10_000)
+
+    return PolicyJudgment(
+        evaluation=evaluation,
+        item_score=item_score,
+        score=score_value,
+        coverage_bp=coverage_bp,
+        verdict=_verdict(evaluation, score_value, coverage_bp, policy, override=None),
+        # One explanation, two uses: the frozen record stored on the row, and the same string
+        # the effective-reap fate is read back from -- so the scan and every read-time
+        # consumer replay the identical evidence.
+        explanation=_explain(
+            evaluation,
+            item_score,
+            policy,
+            plex_rating_key=plex_rating_key,
+            matched_by=matched_by,
+            match_detail=match_detail,
+            match_status=match_status,
+            merged_rating_keys=merged_rating_keys,
+        ),
+    )
+
+
+def effective_fate(judgment: PolicyJudgment, override: str | None) -> str:
+    """The item's fate with a hand override applied -- what the scan acts and counts on.
+
+    Never what is stored. The Candidate row keeps the pure-policy verdict so an un-spare /
+    un-reap falls back to the real policy result instead of the item taking the override on
+    as its identity; this is derived on top, and derived again downstream the same way.
+
+    A hand reap is read off the frozen EXPLANATION via the one shared decision
+    (``condemned.reap_override_verdict``), NOT off the live evaluation: a bad Plex match
+    holds a reap read-side but never reaches the gate evaluation, so deciding it live would
+    honor a reap the planner and grace-clock resync hold -- orphaning a grace clock the
+    delete set never claims (rules 3/4/22). A pure-policy condemn is trivially effective
+    (mirrors ``condemned.reap_is_effective``'s shortcut).
+    """
+    if override == "spare":
+        return "protect"
+    if override == "reap":
+        reap_condemns = judgment.verdict == "condemn" or (
+            reap_override_verdict(judgment.explanation, score=judgment.score) == "condemn"
+        )
+        return "condemn" if reap_condemns else "protect"
+    return judgment.verdict
+
+
 def _judge_item(
     session: AsyncSession,
     *,
@@ -1118,17 +1227,13 @@ def _judge_item(
     clock and condemned tally only. Storage stays override-free so an un-spare / un-reap falls
     back to the real policy result; the effective fate is recomputed downstream the same way.
 
-    Shared by the movie and season paths so both reach a verdict the same way. Seasons
-    pass ``extra_results`` -- the season-pruning guard's outcome -- which is merged ahead
-    of the ordinary gates: a guard PROTECT wins like any protection, and a guard *blocked*
-    ABSTAIN (a keep-rule conflict) forces the item to abstain for a human to look at.
+    Shared by the movie and season paths so both reach a verdict the same way, and the
+    judgment itself is :func:`judge_facts` -- shared further still, with the policy lab, so
+    a sweep of real library shapes exercises the scan's own pipeline rather than a copy.
 
-    Round FIRST, then decide -- and store exactly what decided. The stored integers are
-    what the table shows, what the why-panel explains, and what the simulator re-decides;
-    if the verdict were taken from the underlying float instead, an item scoring 69.7
-    against a threshold of 70 would abstain while storing a 70, and the simulator would
-    later condemn the very item the queue said it was sparing. There must be exactly one
-    number, and everything must decide on it.
+    Seasons pass ``extra_results`` -- the season-pruning guard's outcome -- which is merged
+    ahead of the ordinary gates: a guard PROTECT wins like any protection, and a guard
+    *blocked* ABSTAIN (a keep-rule conflict) forces the item to abstain for a human.
     """
     # The stored verdict and explanation are PURE POLICY: the scan never bakes a hand override
     # into them. A hand "spare"/"reap" lives only in the whitelist and is re-applied live at
@@ -1138,30 +1243,19 @@ def _judge_item(
     # after one -- instead of the item taking the override on as its identity. The season-
     # pruning guard (extra_results) is genuine policy and stays; only the hand override is held
     # out here and applied on top downstream. See rules 48-51.
-    evaluation = Evaluation(results=[*extra_results, *evaluate_all(gates, facts).results])
-    item_score = score(
-        signals,
-        facts,
-        custom_condemn=custom_condemn,
-        keeps=keeps,
-        window_days=window_days,
-    )
-
-    score_value = round(item_score.value)
-    coverage_bp = round(item_score.coverage * 10_000)
-
-    verdict = _verdict(evaluation, score_value, coverage_bp, policy, override=None)
+    #
     # The grace clock for a condemned item is set by the CALLER, batched across the whole
     # run (record_first_flagged_bulk) -- one query for every condemned key instead of a
     # read per item. The decision per key is unchanged: see _apply_first_flag.
-
-    # One explanation, two uses: the frozen record stored on the row, and the same string the
-    # effective-reap fate is read back from below -- so the scan and every read-time consumer
-    # replay the identical evidence.
-    explanation = _explain(
-        evaluation,
-        item_score,
+    judged = judge_facts(
+        facts,
+        gates,
         policy,
+        signals=signals,
+        custom_condemn=custom_condemn,
+        keeps=keeps,
+        window_days=window_days,
+        extra_results=extra_results,
         plex_rating_key=plex_rating_key,
         matched_by=matched_by,
         match_detail=match_detail,
@@ -1203,10 +1297,10 @@ def _judge_item(
             library_title=display.library,
             ratings_json=display.ratings_json,
             show_status=display.show_status,
-            verdict=verdict,
-            score=score_value,
-            coverage_bp=coverage_bp,
-            explanation_json=explanation,
+            verdict=judged.verdict,
+            score=judged.score,
+            coverage_bp=judged.coverage_bp,
+            explanation_json=judged.explanation,
             # The frozen scoring inputs: the Facts plus the season-pruning guard (extra_results,
             # NOT the hand-override, which is re-applied live at replay time from the override
             # map). This is what the simulator replays under an edited policy. See facts_codec.
@@ -1220,20 +1314,7 @@ def _judge_item(
     # caller uses it to set the grace clock and the condemned tally over the set that will
     # actually be removed: a honored hand reap earns a fresh grace window, a hand spare gives up
     # its clock (rules 4/50). The fate is derived, never stored.
-    if override == "spare":
-        return "protect"
-    if override == "reap":
-        # Read the effective-reap fate off the SAME frozen explanation the read side does, via
-        # the one shared decision (condemned.reap_override_verdict). NOT off the live evaluation:
-        # a bad Plex match holds a reap read-side but never reaches the gate evaluation, so
-        # `_verdict(override="reap")` would honor a reap the planner and grace-clock resync hold
-        # -- orphaning a grace clock the delete set never claims (rules 3/4/22). A pure-policy
-        # condemn is trivially effective (mirrors condemned.reap_is_effective's shortcut).
-        reap_condemns = verdict == "condemn" or (
-            reap_override_verdict(explanation, score=score_value) == "condemn"
-        )
-        return "condemn" if reap_condemns else "protect"
-    return verdict
+    return effective_fate(judged, override)
 
 
 def _verdict(

@@ -15,7 +15,7 @@ still produces the snapshot a sequential gather would have:
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import date, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -1219,15 +1219,44 @@ class TestARepairedPolicyCannotBeReapedFrom:
 
 class TestReleaseAgeRoundsTowardKeeping:
     """Only the release YEAR is known, so the derived age must take the bound that
-    produces LESS deletion pressure: the end of the year, not the start."""
+    produces LESS deletion pressure: the end of the year, not the start.
+
+    The clock is frozen for both of these. They used to re-read the wall clock in the
+    assertion while production read it again inside ``_release_age_days``, so the two
+    sampled different instants: straddling UTC midnight between them is an off-by-one-day
+    failure, microseconds wide but real under xdist on a slow runner, arriving once at
+    00:00 UTC with no obvious cause. A frozen instant also lets the expected day count be
+    a literal rather than the same subtraction production does.
+    """
+
+    #: An arbitrary fixed instant. Nothing depends on the date itself, only on both sides
+    #: of the comparison using the SAME one.
+    FROZEN = datetime(2026, 7, 24, 12, 0, tzinfo=UTC)
+
+    @pytest.fixture(autouse=True)
+    def _frozen_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Patched on the module under test, not on reaper.clock: snapshot.py imported the
+        # name, so rebinding the source module would leave production reading the real one.
+        monkeypatch.setattr("reaper.services.snapshot.utcnow", lambda: self.FROZEN)
 
     def test_a_year_only_date_reads_as_december_31(self) -> None:
         obs = _release_age_days(2000)
+
         assert isinstance(obs, Known)
-        assert obs.value == float((utcnow().date() - date(2000, 12, 31)).days)
+        assert obs.value == 9336.0  # 2000-12-31 -> 2026-07-24
+
+    def test_january_first_would_overstate_the_age_by_almost_a_year(self) -> None:
+        """The rule 31 property, stated as the comparison it exists to prevent. A Jan-1
+        reading adds 365 days of age to a title nobody can date more precisely, which
+        over-matches every "older than N" rule the owner writes."""
+        obs = _release_age_days(2000)
+
+        assert isinstance(obs, Known)
+        assert obs.value < 9701.0  # what 2000-01-01 -> 2026-07-24 would have given
 
     def test_the_current_year_clamps_to_zero_rather_than_negative(self) -> None:
-        obs = _release_age_days(utcnow().year)
+        obs = _release_age_days(self.FROZEN.year)
+
         assert isinstance(obs, Known)
         assert obs.value == 0.0
 

@@ -55,6 +55,8 @@ from reaper.services.executor import (
     ReapGateway,
     ReapProgress,
     RunReport,
+    _deletable_bytes,
+    _Delete,
     _grew_materially,
     _row_timestamp,
 )
@@ -1003,6 +1005,42 @@ class TestAnApprovedSizeThatWasNeverConfirmed:
         run = await _plan(session, snapshot_id)
 
         assert confirmation_phrase(await _planned_candidates(session, run)) == "REAP 1 SOUL 1 GB"
+
+    def test_an_unmeasured_item_reaching_the_byte_sum_aborts_the_run(self) -> None:
+        """The tripwire under every byte cap, tested directly because nothing can reach it.
+
+        ``_deletable`` filters unmeasured items out first, so this branch is unreachable
+        through ``execute()`` -- which is exactly why it needs its own test. Its docstring
+        calls it "the only thing standing between a future regression in the planner's
+        filter and a cap that silently stops working", and until now deleting the ``raise``
+        outright, or softening it to a log line, passed the whole suite. Note which way it
+        fails: a stand-in zero under-states the total, an under-stated total under-states
+        the cap, and a cap that does not fire deletes past what the owner approved. This is
+        the one lane where rounding toward keeping is backwards.
+        """
+        deletable = [
+            _Delete(steps=(), candidate=_fake_candidate("radarr:1:1", 10 * GB)),
+            _Delete(steps=(), candidate=_fake_candidate("radarr:1:2", None)),
+        ]
+
+        with pytest.raises(ExecutionError, match="couldn't measure the size"):
+            _deletable_bytes(deletable, allow_unmeasured=False)
+
+    def test_the_allowance_totals_what_it_could_measure_instead_of_aborting(self) -> None:
+        """The other arm: with the allowance open the unmeasured item is a legitimate member
+        of the set, so the sum reports the measured bytes rather than refusing the run.
+
+        It cannot tell "left out of the total" from "summed as the zero its stored size
+        implies" -- both produce 10 GB, so that distinction is unfalsifiable at this
+        function's interface. What bounds the unmeasured item is the item cap, not this
+        number, which is the whole reason the allowance is a count rather than a size.
+        """
+        deletable = [
+            _Delete(steps=(), candidate=_fake_candidate("radarr:1:1", 10 * GB)),
+            _Delete(steps=(), candidate=_fake_candidate("radarr:1:2", None)),
+        ]
+
+        assert _deletable_bytes(deletable, allow_unmeasured=True) == 10 * GB
 
 
 class TestTheUnmeasuredAllowance:

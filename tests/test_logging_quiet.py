@@ -12,29 +12,12 @@ because logbuffer.set_level only moves the root level.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
-
-import pytest
 
 from reaper import logbuffer
 from reaper.logging import _NOISY_LOGGERS, configure_logging
 
-
-@pytest.fixture
-def _restore_logging() -> Iterator[None]:
-    """Save and restore the global logger levels this test mutates, so calling
-    configure_logging / set_level here does not leak into the rest of the suite."""
-    root = logging.getLogger()
-    saved_root = root.level
-    saved = {name: logging.getLogger(name).level for name in _NOISY_LOGGERS}
-    saved_ring = logbuffer.level_name()
-    try:
-        yield
-    finally:
-        root.setLevel(saved_root)
-        for name, level in saved.items():
-            logging.getLogger(name).setLevel(level)
-        logbuffer.set_level(saved_ring)
+# ``_restore_logging`` is shared from conftest: these tests call configure_logging
+# in their own body, and every one of its effects is process-global.
 
 
 def test_aiosqlite_and_sql_stay_at_warning(_restore_logging: None) -> None:
