@@ -35,27 +35,18 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
   const [phase, setPhase] = useState<"idle" | "waiting" | "choose" | "error">("idle");
   const [error, setError] = useState("");
   const [authUrl, setAuthUrl] = useState("");
-  const popup = useRef<Window | null>(null);
 
   const pin = usePlexPinPoll<PlexPoll>({
     poll: (pinId, machineId) => api.plexPoll(pinId, machineId),
-    onOk: () => {
-      popup.current?.close();
-      onAuthed();
-    },
+    onOk: () => onAuthed(),
     // On first-run setup, an account owning several servers answers "choose_server": the
     // sign-in stays valid while the picker is up, and the pick carries the answer.
-    onChooseServer: () => {
-      popup.current?.close();
-      setPhase("choose");
-    },
+    onChooseServer: () => setPhase("choose"),
     onTimedOut: () => {
-      popup.current?.close();
       setPhase("error");
       setError("Plex sign-in timed out. Please try again.");
     },
     onFailed: (failure) => {
-      popup.current?.close();
       setPhase("error");
       setError(failure);
     },
@@ -67,7 +58,17 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
     try {
       const { pin_id, auth_url } = await api.plexStart();
       setAuthUrl(auth_url);
-      popup.current = window.open(auth_url, "reaper-plex-auth", "width=620,height=760");
+      // noopener, matching PlexPanel.startLink. Without it plex.tv gets a `window.opener`
+      // handle to the window this page is running in and can navigate it -- to a look-alike
+      // of the very page that takes the operator's Reaper password (S-4). The window is
+      // sized here only as a hint; noopener is what matters.
+      //
+      // We used to hold the returned handle and close the popup ourselves once the sign-in
+      // landed. noopener makes window.open return null, so that is gone, deliberately: the
+      // handle we held and the handle plex.tv held were the same relationship, and the
+      // browser grants close() *because* of it. The Plex window stays up until the operator
+      // closes it, which is already what the Settings link flow does.
+      window.open(auth_url, "_blank", "width=620,height=760,noopener");
       pin.begin(pin_id);
     } catch (e) {
       setPhase("error");
@@ -77,7 +78,6 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
 
   const cancel = () => {
     pin.cancel();
-    popup.current?.close();
     setPhase("idle");
   };
 

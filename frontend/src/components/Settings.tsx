@@ -929,9 +929,14 @@ function RestoreCard({ armed }: { armed: boolean }) {
     setError(null);
   };
 
+  // The admin password belongs to the summary it was typed against, so it goes whenever that
+  // summary does: here, and on a failed confirm below. Dropping the summary alone unmounted
+  // the field while the password stayed in state, and refilled it against a different backup
+  // once the next file staged (S-5).
   const choose = async (file: File) => {
     setError(null);
     setSummary(null);
+    setPassword("");
     setFileName(file.name);
     setBusy(true);
     try {
@@ -969,6 +974,7 @@ function RestoreCard({ armed }: { armed: boolean }) {
       reset();
       await refreshInfo();
     } catch (err) {
+      setPassword("");
       setError(err instanceof Error ? err.message : "The restore couldn't be confirmed.");
     } finally {
       setBusy(false);

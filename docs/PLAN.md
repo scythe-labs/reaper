@@ -9,13 +9,14 @@
 
 Last updated: 2026-07-24 (the whole-frontend UI/UX review, remediated in seven batches)
 
-### Newest — the whole-frontend UI/UX review, remediated in nine batches
+### Newest — the whole-frontend UI/UX review, remediated in ten batches
 
 `docs/UI_REVIEW.md` (dev @ `a7d7659`) swept every file under `frontend/src` with six parallel
 agents and landed **94 findings**: 1 critical, 18 high, 45 medium, 30 low. Worked in seven
-batches along the document's own fix order, then two more past its end. **87 are checked off.** R1
-and R2 (the two big file splits) are annotated in place with exactly what landed and what did
-not; five hygiene findings remain and are listed at the end of that file.
+batches along the document's own fix order, then three more past its end. **91 are checked off.**
+R1 and R2 (the two big file splits) are annotated in place with exactly what landed and what did
+not, and PR9 waits on an icon generator that was never committed; those three are all that remain,
+none of them operator-visible.
 
 The batches were the deletion path, the queue's control grammar, the number-input family, the
 unknown-state and stale-cache sweep, contrast and motion, copy, and refactor plus performance.
@@ -85,6 +86,22 @@ settings could not be loaded (rule 53 again, from the other end). One Save butto
 deliberately independent saves, so a policy off the point budget blocked a grace edit that has
 nothing to do with it. And the "not in the last scan" tile -- the one thing that explains an empty
 Scales page -- was nested inside the branch that renders only when the page is *not* empty.
+
+**Batch 10 closed the hygiene four,** none of them visible to an operator on a good day, two of
+them the same shape: something outliving what it was for. The Plex auth popup was opened without
+`noopener`, leaving plex.tv a handle on the window Reaper's sign-in page runs in -- and the page it
+could have navigated that window to is the one that takes the operator's Reaper password. The fix
+costs a real capability, which is the part worth recording: a browser permits `close()` on a
+cross-origin window *because* you are still its opener, so there was no version of this that kept
+both the popup-closing and the severed handle. The arming password had the same shape in miniature,
+sitting in component state after the form holding it closed and refilling the box on the way back
+in; it now clears on every path that unmounts the field, which turned up a third site the review
+had not found. The other two were a `vh` inside a container sized in `dvh` -- the third time that
+exact mismatch has been found, so it is a test now rather than a fourth comment saying not to --
+and a build flag shipping source maps with nothing recording whether that was a decision. It is
+one, and checking it corrected the review: maps cost nothing on first load, since a browser fetches
+them only with devtools open.
+
 
 ### Earlier — a hand reap on a keep-rule conflict is honored, and a held reap stops calling itself "Sanctuary"
 

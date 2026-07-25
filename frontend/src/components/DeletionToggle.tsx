@@ -136,7 +136,17 @@ export function DeletionToggle() {
             <button type="submit" className="primary sm" disabled={!password || toggle.isPending}>
               Confirm
             </button>
-            <button type="button" className="ghost sm" onClick={() => setConfirming(false)}>
+            {/* Cancel drops the typed password with the form. Closing the form alone left the
+                admin password sitting in component state for as long as this panel stayed
+                mounted, and refilled the field the next time it was opened (S-5). */}
+            <button
+              type="button"
+              className="ghost sm"
+              onClick={() => {
+                setConfirming(false);
+                setPassword("");
+              }}
+            >
               Cancel
             </button>
           </form>

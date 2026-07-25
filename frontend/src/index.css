@@ -9,6 +9,13 @@
  *     because "we could not look" is not "we looked and it was fine", and rendering
  *     them alike is the exact bug that gets libraries deleted during an API outage.
  *
+ * Viewport heights are always `dvh`, never `vh`. On a mobile browser `vh` resolves to the
+ * toolbar-hidden viewport, so a box sized in `vh` can reach past the part of the screen you
+ * can actually see — pushing a modal's actions off the bottom. The mismatch has been found
+ * and fixed three separate times now (`.why`, then `.log-console` and `.docs-index`, U-16),
+ * each time inside a container this file already sized in `dvh`, so viewport-units.test.ts
+ * holds the line: no bare `vh` in this file.
+ *
  * Nothing here is loaded from a CDN. The app ships with the container.
  */
 
@@ -1430,7 +1437,7 @@ tbody tr.selected {
   padding: 1rem 1.1rem 1.4rem;
   position: sticky;
   top: 1rem;
-  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
   overflow-y: auto;
   /* keep a boundary scroll from chaining out to the list behind the sheet (which App also
      freezes while this covers the whole screen on a phone), the same pairing `.modal` uses. */
@@ -1449,7 +1456,7 @@ tbody tr.selected {
   justify-content: center;
   gap: 0.75rem;
   text-align: center;
-  min-height: 45vh;
+  min-height: 45dvh;
   padding: 2rem 1rem;
   color: var(--muted);
   animation: why-loading-in 0.28s var(--ease) both;
@@ -6851,7 +6858,7 @@ button.danger:hover:not(:disabled) {
   padding: 0.6rem 0.9rem;
   height: 34rem;
   min-height: 16rem;
-  max-height: 82vh;
+  max-height: 82dvh;
   resize: vertical;
   overflow: auto;
 }
@@ -8085,6 +8092,6 @@ button.danger:hover:not(:disabled) {
   .docs-index {
     border-right: none;
     border-bottom: 1px solid var(--border);
-    max-height: 32vh;
+    max-height: 32dvh;
   }
 }

@@ -38,14 +38,15 @@ pattern, don't invent a new one.
 
 ## Progress (keep this current — it is the handoff between sessions)
 
-**87 of 94 findings are checked off.** The fix order's seven batches are done (batch 7 left R1
+**91 of 94 findings are checked off.** The fix order's seven batches are done (batch 7 left R1
 and R2 unchecked, annotated in place with exactly what landed and what did not), batch 8 took the
-four unscheduled findings that mislead or dead-end the operator, and batch 9 the six that put a
-wrong number or a wrong claim in front of them. All three are committed on
-`ui-review-remediation`.
+four unscheduled findings that mislead or dead-end the operator, batch 9 the six that put a wrong
+number or a wrong claim in front of them, and batch 10 the four cheap hygiene fixes. All are
+committed on `ui-review-remediation`.
 
-**Still open, all unscheduled:** S4, S5, PR9, PR11, U16, plus R1/R2's residue. Four cheap hygiene
-fixes (S4, S5, U16, PR11), one build-hygiene debt (PR9), and the two restructures.
+**Still open:** PR9, plus R1/R2's residue. One build-hygiene debt with no committed generator to
+hang it on, and two restructures with no behavior change. Nothing here is operator-visible; each
+is annotated in place with why it was left.
 
 **Run the gates with `set -o pipefail`.** Piping a step into `tail` returns `tail`'s status:
 batch 8 found `tsc` failing under a chain that reported success.
@@ -541,6 +542,47 @@ card and panel (both figures matched); the divergent case is the unit test's.
 
 ---
 
+### Batch 10, the hygiene four (S4, S5, U16, PR11)
+
+The last of the unscheduled findings, and the smallest: nothing here is visible to an operator on a
+good day. Two are about a secret or a handle living longer than the thing it was for, one is a unit
+mismatch that has now been found three times, and one is a build setting with no note saying whether
+it was a decision. All four carry a test proven to fail without them.
+
+- **S4** opened the plex.tv auth popup without `noopener`, so plex.tv held a `window.opener` handle
+  on the window Reaper's sign-in page runs in and could navigate it -- to a look-alike of the page
+  that takes the operator's Reaper password. `PlexPanel.startLink` already passed `noopener`; this
+  one kept the handle to close the popup itself. Those cannot both be had: a browser permits
+  `close()` on a cross-origin window *because* you are still its opener, so nulling `opener`
+  (the finding's second option) would have dropped the close too, while looking like it kept it.
+  `noopener` it is, and the ref and its five `?.close()` calls go with it. The cost is real and
+  named in the code: the Plex window now stays up until the operator closes it, which is already
+  what the Settings link flow does.
+- **S5** left the admin password in component state after the form holding it closed -- in
+  `DeletionToggle` on Cancel, where it refilled the box the next time deletion was armed, and in
+  `RestoreCard` on a failed confirm. The fix follows one rule: clear it on every path that unmounts
+  the field, because that is where it stops being visible and starts being retained. That turned up
+  a third site the finding did not name -- `RestoreCard.choose()`, where staging a second backup
+  dropped the summary and brought the box back holding a password typed against a different file.
+- **U16** sized `.docs-index` in `vh` inside a modal this file sizes in `dvh`, in a block that only
+  applies on the narrow screens where the two units differ. Both named sites are fixed, plus two the
+  finding missed (`.why`, `.why-loading`). Since no bare `vh` is left, the convention is now stated
+  once at the top of `index.css` and enforced by `viewport-units.test.ts` -- the same mismatch had
+  already been found and commented twice, and a third comment would not have stopped a fourth.
+- **PR11** shipped source maps with nothing saying whether that was a decision. It is, so the note
+  is what changed. Two of the reasons to drop them do not survive checking: a browser fetches a
+  `.map` only with devtools open, so first-load transfer is unaffected, and the sources are AGPL and
+  published with no build-time value in the bundle. That leaves ~2 MB in the image against an
+  operator's console being the only debugger available on a server we will never see.
+
+Not driven in a browser, deliberately: S4's popup and S5's arming form both terminate in a password
+prompt (plex.tv's, then Reaper's own), which is not mine to type, and U16/PR11 are a CSS unit and a
+build flag with no interactive surface. What the tests pin is exactly the changed behavior -- the
+features string passed to `window.open`, the value left in each password box, and the absence of a
+bare `vh` in the stylesheet.
+
+---
+
 ## 1. Security
 
 - [x] **S1 [critical]** `frontend/src/components/ReapConfirm.tsx:67` · The execute mutation posts
@@ -577,17 +619,26 @@ card and panel (both figures matched); the divergent case is the unit test's.
   exactly this reason; the log was not. **Fix:** add `/api/logs` and `/api/logs/download` to
   `_API_KEY_READ_DENY`, and keep the `GeneralPanel` copy in step with S2.
 
-- [ ] **S4 [low]** `frontend/src/components/Login.tsx:70` · The Plex login popup is opened without
+- [x] **S4 [low]** `frontend/src/components/Login.tsx:70` · The Plex login popup is opened without
   `noopener`, so plex.tv holds a `window.opener` handle to Reaper's origin window and can navigate
   it to a look-alike login. `PlexPanel.startLink` (`PlexPanel.tsx:126`) already passes `noopener`.
   **Fix:** match `PlexPanel` — open with `noopener` and drop the `popup.current?.close()` the handle
   exists for, or null the `opener` immediately after `window.open`.
+  **Done (batch 10), taking the first option.** The two are not interchangeable: nulling `opener`
+  disowns the popup, and a browser lets you `close()` a cross-origin window *because* it is still
+  your opener, so that route drops the close as well while looking like it kept it. The handle,
+  the ref and all five `?.close()` calls are gone; the Plex window now stays up until the operator
+  closes it, exactly as the Settings link flow already left it.
 
-- [ ] **S5 [low]** `frontend/src/components/DeletionToggle.tsx:100-102` · Cancel clears `confirming`
+- [x] **S5 [low]** `frontend/src/components/DeletionToggle.tsx:100-102` · Cancel clears `confirming`
   but not `password`, so the arming password stays in component state for the life of the panel and
   repopulates the field when the form reopens. `RestoreCard` (`Settings.tsx:937-940`) has the same
   gap on a failed confirm. **Fix:** `setPassword("")` in both cancel/catch handlers, matching what
   `onSuccess`/`reset()` already do.
+  **Done (batch 10).** The rule the fix follows: clear the password on every path that unmounts
+  the field, since that is where it becomes invisible-but-retained. In `RestoreCard` that is
+  `choose()` as well as the failed confirm the finding names -- staging a second backup drops the
+  summary, and the box came back holding a password typed against a different file.
 
 ## 2. Bugs
 
@@ -1166,11 +1217,18 @@ card and panel (both figures matched); the divergent case is the unit test's.
   only reachable from that bar. The scan line idle-polls at 15s for precisely this reason. **Fix:**
   `refetchInterval: (q) => (q.state.data?.running ? 1000 : 15000)` in both places.
 
-- [ ] **PR11 [low]** `frontend/vite.config.ts:25` · `build.sourcemap: true` ships full source maps from
+- [x] **PR11 [low]** `frontend/vite.config.ts:25` · `build.sourcemap: true` ships full source maps from
   the production Docker build with no comment saying that is intended, inflating the image and the
   first-load transfer, while the neighboring proxy block is heavily commented about why it is safe.
   **Fix:** state the intent beside it, or switch to `sourcemap: "hidden"` so stack traces stay
   resolvable in CI without shipping the maps.
+  **Done (batch 10): the intent is stated, the maps stay.** Two of the reasons to drop them do
+  not hold here. First-load transfer is unaffected: a browser fetches a `.map` only with devtools
+  open, so a normal load carries the `sourceMappingURL` comment and nothing else. And the sources
+  are AGPL and published, with no build-time value in the bundle (`src/` has no `import.meta.env`
+  use at all), so there is nothing to withhold. What is left is ~2 MB of `.map` files in the
+  image, against an operator's console being the only debugger we get on a server we will never
+  see. The comment says all of that, and names `"hidden"` as the fallback if the tradeoff shifts.
 
 ## 7. UI/UX consistency
 
@@ -1298,10 +1356,15 @@ card and panel (both figures matched); the divergent case is the unit test's.
   crossed" for the same mechanism. An operator meets "dry run" and "abort" only in the docs. **Fix:**
   "Practice run" / "a full rehearsal, nothing sent", and "Caps stop the whole run when crossed."
 
-- [ ] **U16 [low]** `frontend/src/index.css:8062` · `.docs-index { max-height: 32vh }` uses `vh` inside
+- [x] **U16 [low]** `frontend/src/index.css:8062` · `.docs-index { max-height: 32vh }` uses `vh` inside
   a modal explicitly sized in `dvh`, in a block that only applies below 720px — the devices where the
   two units differ. The `.modal` comment at :7141-7143 documents this exact hazard. **Fix:** `32dvh`;
   `.log-console`'s `max-height: 82vh` (:6860) has the same mismatch.
+  **Done (batch 10), and swept.** Both named sites, plus two the finding missed: `.why`'s
+  `calc(100vh - 2rem)` and `.why-loading`'s `min-height: 45vh`, the second of which renders inside
+  the `.why` mobile sheet this file already sizes in `dvh`. No bare `vh` is left, so the rule is
+  absolute now and enforced by `viewport-units.test.ts` rather than by a fourth comment -- this is
+  the third time the same mismatch has been found and fixed.
 
 - [x] **U17 [low]** `frontend/src/components/QuantityInput.tsx:58` · `QuantityInput` picks its display
   unit once, on mount, so a value replaced from outside — Discard, a preset, a media-type switch, the
@@ -1439,10 +1502,10 @@ a suggestion.
    bugs (B30-B35), I2.~~ Done, except the residue noted inline on R1 and R2.
 
 Nothing is left in the fix order. Batch 8 then took the four unscheduled findings that mislead or
-dead-end the operator (B6, B10, B11, B17), and batch 9 the six that state something untrue
-(B23, B26-B29, PR7). What remains open in the document above: S4, S5, PR9, PR11, U16, plus
-R1/R2's residue -- four cheap hygiene fixes, one build-hygiene debt, and two restructures with no
-behavior change.
+dead-end the operator (B6, B10, B11, B17), batch 9 the six that state something untrue
+(B23, B26-B29, PR7), and batch 10 the four cheap hygiene fixes (S4, S5, U16, PR11). What remains
+open in the document above: PR9, plus R1/R2's residue -- one build-hygiene debt with no committed
+generator to hang it on, and two restructures with no behavior change.
 
 Run `uv run ruff format .` before staging any backend change, and the full CLAUDE.md gate set before
 each commit -- with `set -o pipefail`, or a failing step will hide behind the `tail` you pipe it to. When a change is observable in the app, drive it end-to-end per the `verify` skill;

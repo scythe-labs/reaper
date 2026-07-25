@@ -80,3 +80,25 @@ describe("when the safety state can't be read", () => {
     expect(screen.queryByRole("button", { name: /Turn on/i })).not.toBeInTheDocument();
   });
 });
+
+describe("the arming password", () => {
+  beforeEach(() => {
+    apiMock.safety.mockResolvedValue({
+      destructive_enabled: false,
+      has_password: true,
+      note: null,
+    });
+  });
+
+  it("is gone once you cancel, not waiting in the field when you come back", async () => {
+    // S-5: Cancel closed the form and left the password in component state, so it was still
+    // there for as long as Settings stayed open -- and refilled the box on the way back in.
+    const person = renderToggle();
+    await person.click(await screen.findByRole("button", { name: /Turn on/i }));
+    await person.type(screen.getByLabelText(/password/i), "a-password");
+    await person.click(screen.getByRole("button", { name: /Cancel/i }));
+
+    await person.click(await screen.findByRole("button", { name: /Turn on/i }));
+    expect(screen.getByLabelText(/password/i)).toHaveValue("");
+  });
+});

@@ -4,7 +4,7 @@
 // so these pin the part it borrows from ModalShell: Tab stays inside the sheet, in both
 // directions, instead of landing on the sign-in buttons behind it.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { Login } from "./Login";
@@ -75,6 +75,32 @@ describe("the local-account sheet", () => {
       await person.tab();
       expect(sheet.contains(document.activeElement)).toBe(true);
     }
+  });
+});
+
+describe("the Plex sign-in popup", () => {
+  it("opens with noopener, so plex.tv gets no handle on the page that takes the password", async () => {
+    // S-4: without it the auth page holds `window.opener` pointing at this window and can
+    // navigate it -- and what it would be navigating away from is Reaper's own sign-in.
+    apiMock.plexStart.mockResolvedValue({ pin_id: 1, auth_url: "https://plex.test/link" });
+    apiMock.plexPoll.mockResolvedValue({ status: "pending" });
+    const open = vi.fn<typeof window.open>(() => null);
+    vi.stubGlobal("open", open);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <Login />
+      </QueryClientProvider>,
+    );
+    const person = userEvent.setup();
+    await person.click(await screen.findByRole("button", { name: /sign in with plex/i }));
+
+    await waitFor(() => expect(open).toHaveBeenCalled());
+    expect(open.mock.calls[0]?.[2] ?? "").toContain("noopener");
+    vi.unstubAllGlobals();
   });
 });
 

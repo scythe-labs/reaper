@@ -22,6 +22,15 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
+    // Source maps ship, on purpose (PR-11). Reaper runs on servers we will never see, so an
+    // operator's console is the only debugger we get, and a stack trace through minified
+    // chunk names is not a bug report. There is nothing to protect by withholding them: the
+    // sources are AGPL and published, and no build-time value reaches the bundle (there is
+    // no `import.meta.env` use in src/ -- every setting comes from the API at runtime).
+    // The cost is ~2 MB of .map files in the image; browsers fetch them only when devtools
+    // is open, so a normal first load transfers the `sourceMappingURL` comment and nothing
+    // else. Prefer "hidden" over false if that ever needs to change -- it keeps the maps
+    // for CI without pointing browsers at them.
     sourcemap: true,
   },
 });
