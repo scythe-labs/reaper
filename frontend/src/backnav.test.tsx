@@ -10,6 +10,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BackNavProvider, useBackGuard, useBackNav, useModalLayer, useModalOpen } from "./backnav";
 
 afterEach(() => {
+  // Restore first, and here rather than at the end of each test: a test that fails mid-way never
+  // reaches its own mockRestore, and a leaked history.state spy hands the NEXT test a browser
+  // that lies -- which reads as a second failure in code that is fine.
+  vi.restoreAllMocks();
   // Clear any sentinel left in history.state so the next test's provider mounts clean (its
   // B-12 reconcile keys on exactly that marker).
   history.replaceState(null, "");
@@ -65,6 +69,21 @@ function GuardedOverlay() {
       <button onClick={() => setLocked(true)}>lock</button>
       <button onClick={() => setLocked(false)}>unlock</button>
       {open && <div role="dialog">the overlay</div>}
+    </div>
+  );
+}
+
+/** Two overlays sharing one piece of state, so opening the second closes the first in a single
+ *  commit -- the swap that used to lose a history entry to its own queued step. */
+function SwapOverlays() {
+  const [which, setWhich] = useState<"a" | "b" | null>(null);
+  useBackGuard(which === "a", () => setWhich(null));
+  useBackGuard(which === "b", () => setWhich(null));
+  return (
+    <div>
+      <button onClick={() => setWhich("a")}>openA</button>
+      <button onClick={() => setWhich("b")}>swapToB</button>
+      {which && <div role="dialog">{which} open</div>}
     </div>
   );
 }
@@ -228,15 +247,47 @@ describe("backnav", () => {
 
     // Unmount while the mock still stands in for the browser: A is open, so its teardown hands
     // an entry back too, and a real history.back() here would land a stray popstate in whichever
-    // test runs next.
+    // test runs next. The step is deferred to the end of the tick (see `unpark`), so wait one
+    // microtask for it rather than reading the count straight after the unmount.
     unmount();
+    await Promise.resolve();
     expect(backSpy).toHaveBeenCalledTimes(2);
     backSpy.mockRestore();
   });
 
+  it("lets a layer opening in the same tick take over the entry of one closing", async () => {
+    // React runs every layout-effect cleanup before any setup, so a swap -- one overlay closing
+    // as another opens -- calls remove() first and register() second. Issuing the history.back()
+    // inline would then land it BEFORE the pushState in the same tick, and a browser resolves
+    // that traversal against the entry that was current when back() was called: the entry just
+    // pushed is discarded and we end a step lower than we count. The next close would then step
+    // off an entry we never parked and leave Reaper with the overlay still open. Nothing should
+    // move: the opening layer takes over the entry the closing one had not handed back yet.
+    const pushSpy = vi.spyOn(history, "pushState");
+    const backSpy = vi.spyOn(history, "back").mockImplementation(() => {});
+    render(
+      <BackNavProvider>
+        <SwapOverlays />
+      </BackNavProvider>,
+    );
+    await userEvent.click(screen.getByText("openA"));
+    expect(pushSpy).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByText("swapToB"));
+    expect(screen.getByRole("dialog")).toHaveTextContent("b open");
+    expect(backSpy).not.toHaveBeenCalled();
+    expect(pushSpy).toHaveBeenCalledTimes(1);
+
+    // And the one entry still unwinds the one open layer.
+    pressBack();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    backSpy.mockRestore();
+    pushSpy.mockRestore();
+  });
+
   it("reconciles a sentinel left parked before a reload, so the first Back is not dead", () => {
     // Post-reload: the sentinel entry is the current one (its pushState state survived), but the
-    // provider's in-memory parkedRef is fresh false. On mount it steps back over the stale entry.
+    // provider's in-memory count is fresh. On mount it steps back over the stale entry.
     history.pushState({ __reaperBack: true }, "");
     const backSpy = vi.spyOn(history, "back").mockImplementation(() => {});
     render(
@@ -248,12 +299,14 @@ describe("backnav", () => {
     backSpy.mockRestore();
   });
 
-  it("steps back over exactly one stale sentinel, never chasing the rest", () => {
-    // A reload with two layers open leaves two stale entries, and it is tempting to consume them
-    // all. It must not: stepping off the reloaded entry crosses a document boundary and loads the
-    // page again, which re-runs this reconcile with a fresh bound, walking the tab out of the app
-    // one load at a time. The mock stands in for that browser -- each back() reports the popstate
-    // that follows -- and one step is the whole contract.
+  it("walks off every stale sentinel, and stops at the first entry it did not park", () => {
+    // A reload with two layers open leaves two stale entries. Stepping over only the first leaves
+    // the second as a dead Back press, which is the very bug this reconcile exists to prevent.
+    // Driving the same shape in a real browser settled how far it is safe to walk: entries parked
+    // with pushState stay SAME-document with the reloaded page, so each step is a popstate and no
+    // step reloads anything. The walk therefore continues -- one settled step at a time -- and
+    // stops on the entry whose state is not ours, which is the app's own first entry.
+    history.pushState({ __reaperBack: true }, ""); // so history.length > 1 whatever ran before
     const stack: (object | null)[] = [null, { __reaperBack: true }, { __reaperBack: true }];
     const backSpy = vi.spyOn(history, "back").mockImplementation(() => {
       stack.pop();
@@ -268,11 +321,33 @@ describe("backnav", () => {
         <Overlay />
       </BackNavProvider>,
     );
-    expect(backSpy).toHaveBeenCalledTimes(1);
-    expect(stack).toHaveLength(2);
+    expect(backSpy).toHaveBeenCalledTimes(2);
+    // Standing on the entry it did not park, having left it alone.
+    expect(stack).toEqual([null]);
 
     stateSpy.mockRestore();
     backSpy.mockRestore();
+  });
+
+  it("never steps off an entry it did not park, however far its own count has drifted", async () => {
+    // A long-press on Back jumps several entries and reports a single popstate, so our count can
+    // run ahead of the stack. Closing a layer then owes an entry the browser does not have, and
+    // taking that step would navigate out of Reaper with a panel still open. The browser is asked
+    // first -- `history.state` carries our marker -- and a drift costs nothing instead.
+    history.replaceState(null, ""); // an entry that is not ours, under an open layer
+    const backSpy = vi.spyOn(history, "back").mockImplementation(() => {});
+    const pushSpy = vi.spyOn(history, "pushState").mockImplementation(() => {});
+    render(
+      <BackNavProvider>
+        <Overlay />
+      </BackNavProvider>,
+    );
+    await userEvent.click(screen.getByText("open"));
+    await userEvent.click(screen.getByText("close"));
+    await Promise.resolve();
+    expect(backSpy).not.toHaveBeenCalled();
+    backSpy.mockRestore();
+    pushSpy.mockRestore();
   });
 
   it("takes scroll restoration off auto while mounted, and restores it on unmount", () => {

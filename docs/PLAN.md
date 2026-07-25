@@ -3474,3 +3474,35 @@ simulator ~14 microseconds a row and is the price of rule 22's one decision func
 **Gates:** ruff format/check, mypy (96 files), full pytest, `alembic upgrade head` + `check`
 with no drift, eslint, vitest, vite build -- all clean. Every fix that could be reverted was
 reverted to confirm its tests actually catch it.
+
+## The iOS swipe-back paints a stale picture (dev @ TBD)
+
+Reported only in the home-screen PWA: swiping back from the why card landed on the top of the
+list, sat frozen for seconds, then snapped to where the reviewer had been. Two operator
+observations settled it before any code was read -- closing the same panel with its own ✕ always
+landed correctly, and the stalled screen was *frozen* -- so the app's state and scroll were right
+the whole time and what was on screen was not the live page. iOS keeps one back-forward snapshot
+per history entry and paints it during the gesture. `backnav.tsx` parked a single shared entry for
+every open layer, so once anything was open `park()` was a no-op: change a tab, then open a card,
+and the only entry's picture was taken at the tab change, which is the top of the list.
+
+**The model is now one parked entry per layer**, unwinding identically (N layers, N Back presses,
+newest first). Registration moved to a layout effect so the entry is parked before the overlay
+paints.
+
+**An assumption that was wrong, and two browser behaviors that cost more than the bug.** The first
+cut kept the old single-step reconcile for the sentinels a reload leaves behind, on the theory that
+stepping off the reloaded entry crosses a document boundary and reloads the page, making a loop a
+loop over page loads. Measured in a real browser: it does not. Those entries stay same-document
+with the reloaded page, each step is a popstate with no load, and the walk ends by itself on the
+app's own first entry -- so stopping after one step was leaving every sentinel past the first as a
+dead Back press, the exact B-12 bug the reconcile exists to prevent. Two further measurements
+changed the design: a `history.back()` issued before a `pushState` in the same tick resolves
+against the entry that was current when it was called, discarding the entry just pushed (and React
+runs every layout-effect cleanup before any setup, so a layer closing while another opens produces
+exactly that order); and a long-press on Back jumps several entries while reporting one popstate.
+Both drift an in-memory count ahead of the stack, and a later close then steps off an entry nobody
+parked -- which leaves Reaper with a panel still open. So an opening layer now takes over the entry
+a closing one has not handed back yet (nothing moves, no race), the step is deferred to the end of
+the tick and settled one at a time, and every step asks `history.state` for our own marker first.
+The count is advisory; the browser is the authority. Recorded in `docs/LEARNINGS.md` with the logs.

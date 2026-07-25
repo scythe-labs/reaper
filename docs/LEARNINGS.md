@@ -1135,11 +1135,35 @@ later it snaps back to where I was", only in the home-screen PWA.
   directly").
 - **The fix is one entry per layer**, which unwinds identically (N layers, N Back presses)
   and costs the browser N entries instead of one.
-- **Negative result: do not chase the leftovers.** One entry per layer means a reload with
-  several layers open leaves several stale sentinels, and consuming them in a loop is worse
-  than the dead Back press it saves: stepping off the reloaded entry crosses a document
-  boundary and loads the page again, which re-runs the reconcile with a fresh bound, walking
-  the tab out of the app one load at a time. Exactly one step, as before.
+- **Corrected: the leftovers must be chased, and it is cheap.** One entry per layer means a
+  reload with several layers open leaves several stale sentinels, and the first attempt kept
+  the old single step, on the theory that stepping off the reloaded entry crosses a document
+  boundary and reloads the page, so a loop would be a loop over page loads walking the tab out
+  of the app. **Measured, and it is not true.** Entries parked with `pushState` stay
+  *same-document* with the reloaded page: the step reports a popstate, no load, and the walk
+  ends by itself on the app's own first entry, whose state is not ours. Logged over a reload
+  with two parked:
+
+  ```
+  LOAD  state={"__reaperBack":true}
+    step -> popstate  state={"__reaperBack":true}    <- same document, no load
+    step -> popstate  state=null                     <- the app's own entry. stop.
+  ```
+
+  Stopping after one step is what costs the operator: every sentinel past the first is a dead
+  Back press, which is the bug the reconcile exists to prevent. It now walks the whole run, one
+  settled step at a time.
+- **The browser's own marker beats our count, and it is free.** Two measured browser behaviors
+  make an in-memory count of parked entries unsafe to act on. A `history.back()` issued *before*
+  a `pushState` in the same tick resolves against the entry that was current when it was called,
+  so the entry just pushed is discarded and the count ends a step ahead of the stack -- and
+  React runs every layout-effect cleanup before any setup, so a layer closing while another
+  opens produces exactly that order. A long-press on Back jumps several entries and reports one
+  popstate, which drifts the count the same way. Both end with a close stepping off an entry
+  nobody parked, which leaves the app with a panel still open. Two fixes, and the second is the
+  one that generalizes: an opening layer takes over the entry a closing one has not handed back
+  yet (nothing moves, no race), and every step asks `history.state` for our own marker first, so
+  a drift costs nothing instead of an exit.
 
 ## Prior art
 
