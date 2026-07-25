@@ -38,15 +38,14 @@ pattern, don't invent a new one.
 
 ## Progress (keep this current — it is the handoff between sessions)
 
-**91 of 94 findings are checked off.** The fix order's seven batches are done (batch 7 left R1
+**92 of 94 findings are checked off.** The fix order's seven batches are done (batch 7 left R1
 and R2 unchecked, annotated in place with exactly what landed and what did not), batch 8 took the
 four unscheduled findings that mislead or dead-end the operator, batch 9 the six that put a wrong
-number or a wrong claim in front of them, and batch 10 the four cheap hygiene fixes. All are
-committed on `ui-review-remediation`.
+number or a wrong claim in front of them, batch 10 the four cheap hygiene fixes, and batch 11 the
+missing icon generator. All are committed on `ui-review-remediation`.
 
-**Still open:** PR9, plus R1/R2's residue. One build-hygiene debt with no committed generator to
-hang it on, and two restructures with no behavior change. Nothing here is operator-visible; each
-is annotated in place with why it was left.
+**Still open:** R1/R2's residue, two restructures with no behavior change and nothing
+operator-visible in them. Both are annotated in place with what landed and what did not.
 
 **Run the gates with `set -o pipefail`.** Piping a step into `tail` returns `tail`'s status:
 batch 8 found `tsc` failing under a chain that reported success.
@@ -580,6 +579,48 @@ prompt (plex.tv's, then Reaper's own), which is not mine to type, and U16/PR11 a
 build flag with no interactive surface. What the tests pin is exactly the changed behavior -- the
 features string passed to `window.open`, the value left in each password box, and the absence of a
 bare `vh` in the stylesheet.
+
+### Batch 11, the generator that was only ever prose (PR9)
+
+Rule 68 says a generated asset ships with its generator and a drift test covers every artifact.
+Neither held: the five PNGs said they were rasterized from the SVG, no script in the repo could do
+that, and the test read each one's IHDR width and height under a comment claiming that caught a
+stale asset. It cannot. A brand change is exactly the thing that never changes a PNG's dimensions,
+so all five would keep the old drawing and pass.
+
+- **The generator** is `frontend/scripts/gen-icons.mjs`, wired as `npm run icons`. It renders in
+  headless Chrome, which is not a fallback: the tab favicon at runtime *is* this SVG handed to the
+  browser, so Blink rendering the rasters means the home-screen icon and the tab icon are one
+  drawing off one engine. It also keeps a native image library out of `package.json`, and therefore
+  out of the lockfile and the container build, for a script that runs when the brand changes.
+  ImageMagick is installed here and was tried first: its internal SVG renderer drops every gradient
+  and the whole scythe handle, which is what makes it a useful decoy in the test below.
+- **The content check** is a hash. The generator stamps each PNG with a `reaper-source` tEXt chunk
+  holding the sha256 of the exact SVG text it rendered; the test recomputes that from
+  `deepIconSvg`. A raster made from an older drawing is a valid PNG at the right size with entirely
+  plausible pixels -- there is nothing structurally wrong with it to find -- and this is what finds
+  it anyway.
+- **Three pixel probes** sit on top, because a hash says where an image came from and nothing about
+  what it looks like. The corner is the only thing that separates `icon-512` from
+  `icon-maskable-512`: same size, same drawing, differing only in whether the square is rounded, and
+  putting the rounded one in the maskable slot has Android round an already-rounded badge and clip
+  it. The other two are the platter (the accent) and the blade (white). The test carries a small PNG
+  reader for this -- the chunk walk, the five scanline filters, and node's zlib.
+- **The mapping is now data, not prose,** which is the part that had already gone wrong: the header
+  comment said apple-touch took the rounded badge, and the committed file has always been
+  full-bleed. `ICON_TARGETS` in `deepIcon.ts` is what the generator writes and what the test checks,
+  so the two cannot disagree, and `BADGE_RADIUS` replaces the `143` that was spelled out in three
+  places.
+
+Every check was proven live by mutation, since a test that claims a guard it does not have is the
+finding itself: change the drawing and skip the regeneration (only the hash check fails -- size,
+corner and platter all pass, which is the old test shipping it); put the rounded raster in the
+maskable slot (corner fails, and size passes, both being 512x512); feed in the gradient-less
+ImageMagick render stamped with the *correct* hash (only the platter fails, which is why the probes
+are there); drop a raster; truncate one's pixel data. All five rasters were regenerated, compared
+against the originals on screen at every size, and cost +30 KB in total after a lossless re-deflate
+that is verified to leave the decoded pixels byte-identical. Running it twice reports "unchanged",
+so the output is stable and a regeneration diff means a real change.
 
 ---
 
@@ -1201,7 +1242,7 @@ bare `vh` in the stylesheet.
   `latestSnapshot.degraded`/`.degraded_reason`, render the same `.notice.notice-warn` wording
   `ScanRow` uses, and disable Build while it is set.
 
-- [ ] **PR9 [medium]** `frontend/src/brand/deepIcon.ts:6-13` with `deepIcon.test.ts:49-62` · Rule 68 is
+- [x] **PR9 [medium]** `frontend/src/brand/deepIcon.ts:6-13` with `deepIcon.test.ts:49-62` · Rule 68 is
   unmet: the comment says the five committed PNGs are rasterized from the SVG variants but names no
   committed, runnable generator (none exists in `scripts/` or as an npm script), and the drift test
   only reads each PNG's IHDR width and height. A brand change regenerates `favicon.svg` — the vector
@@ -1209,6 +1250,17 @@ bare `vh` in the stylesheet.
   never change. The test's own comment claims it catches exactly this, which a size check structurally
   cannot do. **Fix:** commit `scripts/gen-icons.mjs`, name it in both comments, wire it as
   `npm run icons`, and replace the size assertion with a content check.
+  **Done (batch 11).** `frontend/scripts/gen-icons.mjs` renders every raster in headless Chrome,
+  which is the engine that draws the runtime favicon anyway, and needs no image library in
+  `package.json` (so nothing new reaches the lockfile or the container build). The content check is
+  a hash: the generator stamps each PNG with a `reaper-source` tEXt chunk holding the sha256 of the
+  exact SVG text it rendered, and the test recomputes it, so a raster made from an older drawing
+  fails even though its size and its pixels are beyond reproach. Three pixel probes sit on top,
+  because a hash cannot see a bad render: the corner (the ONLY thing separating icon-512 from
+  icon-maskable-512, which are the same size and differ nowhere else), the platter, and the blade.
+  The prose mapping in the header was carrying a real error while it sat there unexecutable, saying
+  apple-touch takes the rounded badge when the committed file was always full-bleed; it is now the
+  `ICON_TARGETS` table the generator writes and the test reads.
 
 - [x] **PR10 [medium]** `frontend/src/components/ReapConfirm.tsx:51-55` and `frontend/src/App.tsx:113-117` ·
   The `["reapStatus"]` query stops polling entirely when nothing is running, in both consumers, so a
@@ -1503,9 +1555,9 @@ a suggestion.
 
 Nothing is left in the fix order. Batch 8 then took the four unscheduled findings that mislead or
 dead-end the operator (B6, B10, B11, B17), batch 9 the six that state something untrue
-(B23, B26-B29, PR7), and batch 10 the four cheap hygiene fixes (S4, S5, U16, PR11). What remains
-open in the document above: PR9, plus R1/R2's residue -- one build-hygiene debt with no committed
-generator to hang it on, and two restructures with no behavior change.
+(B23, B26-B29, PR7), batch 10 the four cheap hygiene fixes (S4, S5, U16, PR11), and batch 11 the
+icon generator that rule 68 requires and nothing had (PR9). What remains
+open in the document above: R1/R2's residue, two restructures with no behavior change.
 
 Run `uv run ruff format .` before staging any backend change, and the full CLAUDE.md gate set before
 each commit -- with `set -o pipefail`, or a failing step will hide behind the `tail` you pipe it to. When a change is observable in the app, drive it end-to-end per the `verify` skill;

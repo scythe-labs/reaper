@@ -11,6 +11,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "icons": "node scripts/gen-icons.mjs",
     "lint": "eslint .",
     "test": "vitest run"
   },

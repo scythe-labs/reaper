@@ -7,16 +7,15 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-24 (the whole-frontend UI/UX review, remediated in seven batches)
+Last updated: 2026-07-25 (the whole-frontend UI/UX review, remediated in eleven batches)
 
-### Newest — the whole-frontend UI/UX review, remediated in ten batches
+### Newest — the whole-frontend UI/UX review, remediated in eleven batches
 
 `docs/UI_REVIEW.md` (dev @ `a7d7659`) swept every file under `frontend/src` with six parallel
 agents and landed **94 findings**: 1 critical, 18 high, 45 medium, 30 low. Worked in seven
-batches along the document's own fix order, then three more past its end. **91 are checked off.**
+batches along the document's own fix order, then four more past its end. **92 are checked off.**
 R1 and R2 (the two big file splits) are annotated in place with exactly what landed and what did
-not, and PR9 waits on an icon generator that was never committed; those three are all that remain,
-none of them operator-visible.
+not; those two are all that remain, neither operator-visible.
 
 The batches were the deletion path, the queue's control grammar, the number-input family, the
 unknown-state and stale-cache sweep, contrast and motion, copy, and refactor plus performance.
@@ -101,6 +100,21 @@ exact mismatch has been found, so it is a test now rather than a fourth comment 
 and a build flag shipping source maps with nothing recording whether that was a decision. It is
 one, and checking it corrected the review: maps cost nothing on first load, since a browser fetches
 them only with devtools open.
+
+**Batch 11 gave the app icons a generator,** which rule 68 has required all along and which never
+existed: five PNGs described as rasterized from the SVG, no script in the repo able to do it, and a
+drift test that read their width and height under a comment claiming that caught a stale asset. It
+cannot -- a brand change is precisely what never changes a PNG's dimensions. `npm run icons` renders
+them in headless Chrome, which is the same engine that draws the runtime favicon and needs no image
+library in `package.json`; ImageMagick was tried first and drops every gradient and the entire
+scythe handle. The drift check is provenance: each PNG carries the sha256 of the exact SVG text it
+was rendered from, so a stale raster fails while being a perfectly valid image. Three pixel probes
+cover what a hash cannot -- and one of them, the corner, is the only thing in existence that
+separates `icon-512` from `icon-maskable-512`, identical in size and drawing and differing only in
+whether the platform will round an already-rounded badge. The finding's own file had already gone
+wrong the way unexecutable prose does: its header said apple-touch took the rounded badge, and the
+committed file was always full-bleed. That mapping is now the table both the generator and the test
+read.
 
 
 ### Earlier — a hand reap on a keep-rule conflict is honored, and a held reap stops calling itself "Sanctuary"
