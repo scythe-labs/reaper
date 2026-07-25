@@ -1111,6 +1111,36 @@ Anomalies found, every one explained and none an ingest bug:
   is the *non*-default one, which is why the blocking warning keys on a count rather than
   on the setting.
 
+## iOS paints an edge-swipe back from a snapshot it took per history entry (2026-07-25)
+
+Reported as "swipe back from the why card lands at the top of the list, then a few seconds
+later it snaps back to where I was", only in the home-screen PWA.
+
+- **Nothing was wrong with the app's state or its scroll.** Closing the same panel with its
+  own ✕ always landed correctly, and the "wrong" screen was *frozen* -- touching it did
+  nothing until it snapped. Driving the same open/close in a phone-sized browser showed the
+  body un-freezing and the offset restored synchronously, before the popstate handler even
+  returned. What the reviewer was looking at for those seconds was not the page.
+- **It was a stale back-forward snapshot.** iOS keeps one picture per history entry, taken
+  around the navigation that leaves it, and paints it during the interactive swipe (the
+  incoming layer even parallaxes in, which is how it reads as a gesture layer rather than
+  the live page). It is dropped when the gesture's watchdog fires, which is the delay.
+- **The single shared sentinel is what made the picture wrong.** `backnav.tsx` parked one
+  history entry for *all* open layers, so `park()` was a no-op once anything was open. Open
+  a card with nothing else open and the entry was pushed right then, and the swipe painted
+  the panel's own background -- unremarkable. Change a tab first and the tab change owned
+  the only entry, so opening a card pushed nothing at all, and the swipe painted the list as
+  it looked at the tab change: scrolled to the top. Which is exactly the sequence the
+  operator found by hand ("I went to Sanctuary from Condemned and it stopped going back
+  directly").
+- **The fix is one entry per layer**, which unwinds identically (N layers, N Back presses)
+  and costs the browser N entries instead of one.
+- **Negative result: do not chase the leftovers.** One entry per layer means a reload with
+  several layers open leaves several stale sentinels, and consuming them in a loop is worse
+  than the dead Back press it saves: stepping off the reloaded entry crosses a document
+  boundary and loads the page again, which re-runs the reconcile with a fresh bound, walking
+  the tab out of the app one load at a time. Exactly one step, as before.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs

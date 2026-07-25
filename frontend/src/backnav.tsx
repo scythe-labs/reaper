@@ -7,11 +7,18 @@
 // "somewhere to go back to" onto browser history -- closing the topmost open thing first, and
 // only leaving the app once nothing is left open.
 //
-// The model is a SINGLE history sentinel, not one entry per layer. While anything is open we
-// keep exactly one extra history entry parked. A Back press pops it; we close the topmost layer
-// and, if more remain, park a fresh sentinel and wait for the next Back. So N open layers cost
-// one browser entry and take N Back presses to unwind -- the browser never sees our internal
-// depth, which keeps this robust however the layers nest.
+// The model is ONE parked history entry per open layer. N open layers cost N browser entries
+// and take N Back presses to unwind, newest-first.
+//
+// It was one shared entry for all layers, which unwound identically and cost the browser less --
+// but iOS keeps a back-forward SNAPSHOT per history entry, captured when the page navigates away
+// from that entry, and paints it during an edge-swipe back. One shared entry meant the picture
+// came from whenever the FIRST layer opened: open a tab, then scroll deep and open a card, and
+// the swipe back painted the list as it looked at the tab change -- scrolled to the top -- and
+// froze there for the seconds WebKit takes to drop a snapshot. The page underneath was correct
+// the whole time, which is why closing with the panel's own X always looked right. Parking an
+// entry per layer gives each layer a snapshot of the page as it looked when that layer opened,
+// which is exactly what Back reveals.
 //
 // Two kinds of "layer", unwound newest-first:
 //   - overlays (menus, modals, side panels): registered via `useBackGuard(open, close)` while
@@ -19,7 +26,15 @@
 //   - navigation frames (a tab / section change): recorded via `pushNav(undo)`; a Back runs the
 //     undo to restore the previous location. These persist until a Back consumes them.
 
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 
 /** One thing a Back press can unwind. `onBack` closes an overlay or restores a prior tab. */
 type Layer = { id: number; onBack: () => void };
@@ -48,16 +63,16 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
   // list synchronously. Newest layer last.
   const layersRef = useRef<Layer[]>([]);
   const seqRef = useRef(0);
-  // Whether our one sentinel entry is currently parked on the history stack.
-  const parkedRef = useRef(false);
-  // Set just before WE call history.back() ourselves (to un-park the sentinel when the last
-  // layer closes by non-Back means), so the resulting popstate is ignored rather than treated
-  // as a user Back.
-  const selfPopRef = useRef(false);
-  // A parked sentinel entry survives a page reload (its pushState state persists), but parkedRef
-  // resets to false on the fresh mount -- so on reload we would be sitting on a stale sentinel
-  // with no layer behind it, and the first Back would pop it as a dead press. Reconciled once at
-  // mount (below); StrictMode double-invokes effects, so this guards it to a single run.
+  // How many sentinel entries we have parked -- one per open layer.
+  const parkedRef = useRef(0);
+  // How many popstates WE caused (history.back() to un-park a layer that closed by non-Back
+  // means) and must swallow rather than treat as a user Back. A count, not a flag: two layers
+  // can close in one tick, and a flag would let the second popstate through as a real Back.
+  const selfPopRef = useRef(0);
+  // Parked sentinel entries survive a page reload (their pushState state persists), but the
+  // counter above resets to 0 on the fresh mount -- so on reload we would be sitting on stale
+  // sentinels with no layers behind them, and the first Back presses would be dead. Reconciled
+  // once at mount (below); StrictMode double-invokes effects, so this guards it to a single run.
   const reconciledRef = useRef(false);
 
   // State, not a ref, because things RENDER off it (see useModalOpen). It costs no re-render of
@@ -69,24 +84,25 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
   // stable instance is correct and keeps the context value from changing.
   const apiRef = useRef<BackNavApi | null>(null);
   if (apiRef.current === null) {
+    // One entry per layer, pushed as the layer opens -- which is also when the browser takes the
+    // snapshot it will paint during an edge-swipe back (see the note at the top of this file).
     const park = () => {
-      if (parkedRef.current) return;
       history.pushState(SENTINEL, "");
-      parkedRef.current = true;
+      parkedRef.current += 1;
     };
-    // Remove our parked sentinel by walking history back one step. The popstate it triggers is
+    // Give this layer's entry back by walking history back one step. The popstate it triggers is
     // swallowed via selfPopRef.
     const unpark = () => {
-      if (!parkedRef.current) return;
-      parkedRef.current = false;
-      selfPopRef.current = true;
+      if (parkedRef.current === 0) return;
+      parkedRef.current -= 1;
+      selfPopRef.current += 1;
       history.back();
     };
     apiRef.current = {
       register(onBack) {
         const id = ++seqRef.current;
         layersRef.current = [...layersRef.current, { id, onBack }];
-        park(); // idempotent: only the first open layer actually parks the sentinel
+        park(); // this layer's own entry, even if others are already parked
         return id;
       },
       remove(id) {
@@ -95,7 +111,8 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
         // Only the layer's own non-Back close reaches here for a still-present id. A Back press
         // slices the layer off first (below), so this is a no-op then -- no double-unpark.
         if (layersRef.current.length === before) return;
-        if (layersRef.current.length === 0) unpark();
+        // Give back this layer's entry, whether or not others remain open: each layer owns one.
+        unpark();
       },
       pushNav(undo) {
         const id = ++seqRef.current;
@@ -126,26 +143,22 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
     if (priorScrollRestoration !== null) history.scrollRestoration = "manual";
 
     const onPop = () => {
-      if (selfPopRef.current) {
-        // Our own unpark(); the sentinel is gone, nothing to unwind.
-        selfPopRef.current = false;
+      if (selfPopRef.current > 0) {
+        // Our own unpark(); that entry is gone, nothing to unwind.
+        selfPopRef.current -= 1;
         return;
       }
       const layers = layersRef.current;
       const top = layers[layers.length - 1];
       if (!top) {
         // Nothing open: the browser popped past our (absent) sentinel and is leaving. Let it.
-        parkedRef.current = false;
+        parkedRef.current = 0;
         return;
       }
-      // The browser just consumed our parked sentinel. Take the top layer off and, if more
-      // remain, park a fresh sentinel so the next Back keeps unwinding rather than leaving.
+      // The browser just consumed the top layer's entry. Take that layer off; the layers still
+      // open keep their own entries, so the next Back keeps unwinding rather than leaving.
       layersRef.current = layers.slice(0, -1);
-      if (layersRef.current.length > 0) {
-        history.pushState(SENTINEL, ""); // re-park; parkedRef stays true
-      } else {
-        parkedRef.current = false;
-      }
+      if (parkedRef.current > 0) parkedRef.current -= 1;
       top.onBack();
     };
     window.addEventListener("popstate", onPop);
@@ -159,7 +172,14 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
         if (history.length > 1) {
           // Step back over the stale sentinel, consuming it, so the first real Back press does
           // something instead of dead-popping to the identical URL beneath it (B-12).
-          selfPopRef.current = true;
+          //
+          // Exactly ONE step, never a loop over however many entries a reload left stacked
+          // (layers park one each). Stepping back off the reloaded entry crosses a document
+          // boundary and loads the page again, which re-runs this reconcile -- so a loop here
+          // is a loop over page loads, with its own bound reset by each one, walking the tab
+          // out of the app. The leftovers past the first are harmless by comparison: they pop
+          // to the same URL, costing a press each on the way out.
+          selfPopRef.current += 1;
           history.back();
         } else {
           // Nothing to step back to: just clear the stale marker in place.
@@ -226,7 +246,14 @@ export function useBackGuard(
   closeRef.current = close;
   const canCloseRef = useRef(canClose);
   canCloseRef.current = canClose;
-  useEffect(() => {
+  // A LAYOUT effect, so the entry is parked before the browser paints the overlay. The picture a
+  // browser files against the entry beneath is taken around the navigation that leaves it, and on
+  // iOS that picture is what an edge-swipe back paints; parking first gives it the page the
+  // reviewer is actually returning to rather than the overlay about to cover it. Driven in a real
+  // browser at phone width to confirm the earlier timing still holds: the phone sheet's scroll
+  // lock (App.tsx's usePageScrollLock, a passive effect) still captures the reviewer's offset,
+  // and a Back still lands them on it.
+  useLayoutEffect(() => {
     if (!ctx || !open) return;
     // `id` tracks the live registration. A refused Back -- the modal says it can't close yet,
     // the same guard the scrim/Escape/✕ honor -- re-registers, which re-parks the sentinel, so

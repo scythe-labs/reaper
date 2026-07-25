@@ -43,6 +43,7 @@ function TwoOverlays() {
     <div>
       <button onClick={() => setA(true)}>openA</button>
       <button onClick={() => setB(true)}>openB</button>
+      <button onClick={() => setB(false)}>closeB</button>
       {a && <span>A open</span>}
       {b && <span>B open</span>}
     </div>
@@ -63,6 +64,29 @@ function GuardedOverlay() {
       <button onClick={() => setOpen(true)}>open</button>
       <button onClick={() => setLocked(true)}>lock</button>
       <button onClick={() => setLocked(false)}>unlock</button>
+      {open && <div role="dialog">the overlay</div>}
+    </div>
+  );
+}
+
+/** A tab change and an overlay in one tree: the pairing that exposed the shared-entry bug. */
+function TabsThenOverlay() {
+  const [view, setView] = useState("first");
+  const [open, setOpen] = useState(false);
+  const { pushNav } = useBackNav();
+  useBackGuard(open, () => setOpen(false));
+  return (
+    <div>
+      <span>view: {view}</span>
+      <button
+        onClick={() => {
+          pushNav(() => setView("first"));
+          setView("second");
+        }}
+      >
+        go second
+      </button>
+      <button onClick={() => setOpen(true)}>open</button>
       {open && <div role="dialog">the overlay</div>}
     </div>
   );
@@ -155,6 +179,61 @@ describe("backnav", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("parks its own history entry per layer, so each Back reveals that layer's own snapshot", async () => {
+    // iOS files a back-forward snapshot against each history entry when the page navigates away
+    // from it, and paints that snapshot during an edge-swipe back. Sharing one entry across
+    // layers meant a card opened after a tab change swiped back to a picture of the list taken at
+    // the tab change -- the top of the list -- frozen there for seconds. Opening a layer must
+    // push an entry of its own even when one is already parked.
+    const pushSpy = vi.spyOn(history, "pushState");
+    render(
+      <BackNavProvider>
+        <TabsThenOverlay />
+      </BackNavProvider>,
+    );
+    await userEvent.click(screen.getByText("go second"));
+    expect(pushSpy).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByText("open"));
+    expect(pushSpy).toHaveBeenCalledTimes(2);
+
+    // Still one Back press per layer, newest-first: the overlay closes, the tab change survives.
+    pressBack();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByText("view: second")).toBeInTheDocument();
+
+    // And the tab change kept its own entry, so the next Back unwinds it rather than leaving.
+    pressBack();
+    expect(screen.getByText("view: first")).toBeInTheDocument();
+    pushSpy.mockRestore();
+  });
+
+  it("gives a layer's entry back when it closes by its own control, not only the last one", async () => {
+    // Each layer owns one entry now, so each non-Back close must hand exactly that one back --
+    // otherwise entries pile up and later Back presses are dead.
+    const backSpy = vi.spyOn(history, "back").mockImplementation(() => {});
+    const { unmount } = render(
+      <BackNavProvider>
+        <TwoOverlays />
+      </BackNavProvider>,
+    );
+    await userEvent.click(screen.getByText("openA"));
+    await userEvent.click(screen.getByText("openB"));
+    expect(backSpy).not.toHaveBeenCalled();
+
+    // B closes by its own control while A is still open: under the shared-entry model this
+    // un-parked nothing, because a layer remained.
+    await userEvent.click(screen.getByText("closeB"));
+    expect(backSpy).toHaveBeenCalledTimes(1);
+
+    // Unmount while the mock still stands in for the browser: A is open, so its teardown hands
+    // an entry back too, and a real history.back() here would land a stray popstate in whichever
+    // test runs next.
+    unmount();
+    expect(backSpy).toHaveBeenCalledTimes(2);
+    backSpy.mockRestore();
+  });
+
   it("reconciles a sentinel left parked before a reload, so the first Back is not dead", () => {
     // Post-reload: the sentinel entry is the current one (its pushState state survived), but the
     // provider's in-memory parkedRef is fresh false. On mount it steps back over the stale entry.
@@ -166,6 +245,33 @@ describe("backnav", () => {
       </BackNavProvider>,
     );
     expect(backSpy).toHaveBeenCalledTimes(1);
+    backSpy.mockRestore();
+  });
+
+  it("steps back over exactly one stale sentinel, never chasing the rest", () => {
+    // A reload with two layers open leaves two stale entries, and it is tempting to consume them
+    // all. It must not: stepping off the reloaded entry crosses a document boundary and loads the
+    // page again, which re-runs this reconcile with a fresh bound, walking the tab out of the app
+    // one load at a time. The mock stands in for that browser -- each back() reports the popstate
+    // that follows -- and one step is the whole contract.
+    const stack: (object | null)[] = [null, { __reaperBack: true }, { __reaperBack: true }];
+    const backSpy = vi.spyOn(history, "back").mockImplementation(() => {
+      stack.pop();
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    const stateSpy = vi
+      .spyOn(history, "state", "get")
+      .mockImplementation(() => stack[stack.length - 1]);
+
+    render(
+      <BackNavProvider>
+        <Overlay />
+      </BackNavProvider>,
+    );
+    expect(backSpy).toHaveBeenCalledTimes(1);
+    expect(stack).toHaveLength(2);
+
+    stateSpy.mockRestore();
     backSpy.mockRestore();
   });
 
