@@ -227,10 +227,9 @@ async def test_the_count_is_scoped_to_this_snapshot_s_condemned_rows(
     held back), and one that is not in the snapshot at all (a spare on a title since removed
     from the library). Counting either would send the operator scanning for no change.
 
-    What this does NOT pin: whether the sum walks the spared rows or all condemned rows. Those
-    are indistinguishable at this interface and always will be -- ``spare_expiries`` holds only
-    ``decision == "spare"`` entries, so ``effective_spare_expiry`` already returns None for
-    anything unspared, and the filter is for reading, not for behavior.
+    The ``spared_rows`` filter this walks is load-bearing, and the first row below pins it:
+    the sum asks "would this still be spared after the purge?", which an unspared condemned
+    row also answers no to. Walking all condemned rows would count every one of them.
     """
     snap = await _snapshot(session)
     await _add(session, snapshot_id=snap, media_key="radarr:1:1")  # condemned, no override
@@ -261,6 +260,61 @@ async def test_the_count_is_scoped_to_this_snapshot_s_condemned_rows(
 
     assert report.hand_spared == 0
     assert report.spares_expired == 0
+
+
+async def test_a_season_kept_by_a_second_spare_is_not_counted_as_released(
+    session: AsyncSession,
+) -> None:
+    """A title only counts when a scan would actually hand it back to policy.
+
+    Spares nest. A season spared for 10 days inside a show spared forever has a clock of its
+    own that has passed, but ``purge_expired_spares`` deletes only the season's row -- and the
+    show's forever spare goes on keeping it. Counting it would put "1 title is kept by a spare
+    that expired. A new scan judges it again" on the Reap page for a title that cannot move,
+    which is the false promise the notice exists to avoid (rule 61).
+    """
+    snap = await _snapshot(session)
+    await _add(session, snapshot_id=snap, media_key="sonarr:1:7:2", media_type="season")
+    await whitelist.set_override(
+        session, media_key="sonarr:1:7", title="show", decision="spare", note=None
+    )
+    await whitelist.set_override(
+        session,
+        media_key="sonarr:1:7:2",
+        title="season",
+        decision="spare",
+        note=None,
+        spare_days=10,
+        now=NOW - timedelta(days=30),
+    )
+
+    report = await breakdown.reap_breakdown(session)
+
+    assert report.hand_spared == 1
+    assert report.spares_expired == 0
+    assert report.will_reap == 0
+
+
+async def test_a_whole_show_spare_counts_every_season_it_holds(session: AsyncSession) -> None:
+    """The count is TITLES, not spares: one expired whole-show spare holding three condemned
+    seasons releases three titles, and the page says so in those words."""
+    snap = await _snapshot(session)
+    for n in (1, 2, 3):
+        await _add(session, snapshot_id=snap, media_key=f"sonarr:1:7:{n}", media_type="season")
+    await whitelist.set_override(
+        session,
+        media_key="sonarr:1:7",
+        title="show",
+        decision="spare",
+        note=None,
+        spare_days=10,
+        now=NOW - timedelta(days=30),
+    )
+
+    report = await breakdown.reap_breakdown(session)
+
+    assert report.hand_spared == 3
+    assert report.spares_expired == 3
 
 
 async def test_a_hand_reap_joins_the_net(session: AsyncSession) -> None:

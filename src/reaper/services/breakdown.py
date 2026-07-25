@@ -20,11 +20,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from reaper.clock import utcnow
 from reaper.db.models import Candidate, Snapshot
 from reaper.services import whitelist
 from reaper.services.condemned import effective_condemned, held_reaps
@@ -50,14 +50,22 @@ class ReapBreakdown:
     policy_condemned_unknown: int
     hand_spared: int
     spares_expired: int
-    """The share of ``hand_spared`` whose clock has already passed -- spares that are keeping a
-    condemned title out of this plan even though the operator's decision has run out.
+    """The share of ``hand_spared`` a scan would hand straight back to policy -- titles kept out
+    of this plan by a spare whose clock has already passed.
 
     A spare's expiry is realized ONLY by a scan (``whitelist.purge_expired_spares``), so between
     the clock passing and the next scan the planner, this ledger and the executor all still read
     it and the file is genuinely kept. Reported so the Reap page can say why those titles are
-    missing and that a scan releases them, instead of leaving them silently absent. Counted with
-    the same ``<= now`` boundary the purge uses, so this is exactly what a scan would let go."""
+    missing and that a scan releases them, instead of leaving them silently absent.
+
+    Counted as "still spared after the purge?", via ``whitelist.without_expired_spares`` -- the
+    same rule the scan judges on -- and not as "has its own clock passed?". The two differ where
+    spares nest: a season spared for 10 days inside a show spared forever has an expired clock,
+    but the purge deletes only the season's row and the show's spare keeps it anyway. That title
+    is not one a scan would release, and the page must not promise it is.
+
+    Titles, not spares: one whole-show spare holding five condemned seasons counts five, which
+    is what the operator's copy says."""
     hand_reaped: int
     hand_reaped_bytes: int
     hand_reaped_unknown: int
@@ -174,18 +182,23 @@ async def reap_breakdown(session: AsyncSession) -> ReapBreakdown:
     ]
     hand_spared = len(spared_rows)
 
-    # ...and of those, the ones whose clock has already passed. Counted over the SPARED
-    # condemned rows only, not every expired whitelist row, because the Reap page's claim is
-    # "these are not in this plan" -- true only of a title the policy condemned and a spare is
-    # holding back. The expiry read is the effective one (own key, else the show's), matching
-    # the spare that is actually doing the keeping.
-    now = datetime.now(UTC)
+    # ...and of those, the ones a scan would hand straight back to policy. Counted over the
+    # SPARED condemned rows only, not every expired whitelist row, because the Reap page's
+    # claim is "these are not in this plan" -- true only of a title the policy condemned and a
+    # spare is holding back.
+    #
+    # The test is "would this still be spared after the purge", not "has its own clock passed":
+    # the two differ when spares nest. A season spared for 10 days inside a show spared forever
+    # has an expired clock of its own, but the scan deletes only the season's row and the show's
+    # spare goes on keeping it -- so counting it would send the operator scanning for a title
+    # that cannot move, which is exactly the false promise the notice exists to avoid (rule 61).
+    # `without_expired_spares` is the same rule `overrides_effective_at` judges on, so this
+    # count is what the next scan really releases.
+    now = utcnow()
     expiries = await whitelist.spare_expiries(session)
+    surviving = whitelist.without_expired_spares(decisions, expiries, now)
     spares_expired = sum(
-        1
-        for c in spared_rows
-        if (exp := whitelist.effective_spare_expiry(c.media_key, decisions, expiries)) is not None
-        and exp <= now
+        1 for c in spared_rows if whitelist.effective_override(c.media_key, surviving) != "spare"
     )
 
     will_reap = len(effective)

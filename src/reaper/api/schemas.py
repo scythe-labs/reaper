@@ -806,10 +806,14 @@ class ReapBreakdownOut(BaseModel):
     policy_condemned_unknown: int
     hand_spared: int
     spares_expired: int = 0
-    """The share of ``hand_spared`` whose clock has already passed. Those titles are still being
-    kept -- only a scan realizes a spare's expiry -- so they are absent from this plan with
-    nothing on the page to explain it. The Reap page shows one line when nonzero, saying a scan
-    judges them again."""
+    """The share of ``hand_spared`` a scan would hand back to policy: titles kept out of this
+    plan by a spare whose clock has already passed. They are still being kept -- only a scan
+    realizes a spare's expiry -- so they are absent from this plan with nothing on the page to
+    explain it. The Reap page shows one line when nonzero, saying a scan judges them again.
+
+    A count of TITLES, not of spares: one whole-show spare can be holding several condemned
+    seasons. A title whose own clock has passed but which another spare still covers is not
+    counted, because a scan would not release it."""
     hand_reaped: int
     hand_reaped_bytes: int
     hand_reaped_unknown: int

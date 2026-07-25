@@ -128,6 +128,30 @@ async def purge_expired_spares(session: AsyncSession, now: datetime) -> list[str
     return keys
 
 
+def without_expired_spares(
+    decisions: dict[str, str], expiries: dict[str, datetime | None], now: datetime
+) -> dict[str, str]:
+    """``decisions`` with every hand-spare whose clock has passed dropped, as of ``now``.
+
+    The rule for what a purge leaves behind, as a pure function, so the scan that performs the
+    purge and any surface that wants to say what one WOULD release cannot drift apart on the
+    boundary (rule 104). ``<=`` is the boundary :func:`purge_expired_spares` deletes on.
+
+    Note the two maps are read together on purpose: ``expiries`` holds spare rows only, so a
+    reap can never be dropped here, and a spare missing from it is a forever spare, which has
+    no clock to pass.
+    """
+    return {
+        key: decision
+        for key, decision in decisions.items()
+        if not (
+            decision == "spare"
+            and (expires_at := expiries.get(key)) is not None
+            and expires_at <= now
+        )
+    }
+
+
 async def overrides_effective_at(session: AsyncSession, now: datetime) -> dict[str, str]:
     """Manual overrides with EXPIRED hand-spares dropped as of ``now`` -- what the scan judges on.
 
@@ -138,16 +162,20 @@ async def overrides_effective_at(session: AsyncSession, now: datetime) -> dict[s
     on a full grace window, never a spent one (rule 4). This drops the spare from the judged map
     only; :func:`purge_expired_spares`, called in the same transaction with the same ``now``,
     deletes the row so every live consumer converges. Reaps never expire.
+
+    One query, then :func:`without_expired_spares` applies the rule -- the same call the reap
+    ledger makes to count what a scan would let go.
     """
     rows = await session.execute(
         select(WhitelistEntry.media_key, WhitelistEntry.decision, WhitelistEntry.spare_expires_at)
     )
-    out: dict[str, str] = {}
+    decisions: dict[str, str] = {}
+    expiries: dict[str, datetime | None] = {}
     for media_key, decision, expires_at in rows.tuples().all():
-        if decision == "spare" and expires_at is not None and expires_at <= now:
-            continue
-        out[media_key] = decision
-    return out
+        decisions[media_key] = decision
+        if decision == "spare":
+            expiries[media_key] = expires_at
+    return without_expired_spares(decisions, expiries, now)
 
 
 async def spare_expiries(session: AsyncSession) -> dict[str, datetime | None]:

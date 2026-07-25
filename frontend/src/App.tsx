@@ -21,6 +21,7 @@ import { bytes, count, date, souls } from "./format";
 import { usePageScrollLock } from "./pageScrollLock";
 import { useMediaQuery } from "./useMediaQuery";
 import { useSafety } from "./useSafety";
+import { useScanSettled } from "./useScanSettled";
 
 // The review queue is the landing view and stays in the first chunk. Every other route is
 // its own, fetched the first time it is opened: the whole app used to ship as one 551 kB
@@ -668,6 +669,11 @@ function Dashboard({ user }: { user: AuthUser }) {
     queryFn: api.scanStatus,
     refetchInterval: (query) => (query.state.data?.running ? 1000 : 15000),
   });
+  // ...and when one ends, refresh what the new snapshot changed. Here, off the shell's own
+  // poll, for the same reason the finished-reap refresh above is here: a scan started from
+  // the Reap page, the scheduler or another device must refresh the screen the operator is
+  // on, not only the one screen that happens to mount the scan bar.
+  useScanSettled(scanStatus?.running ?? false);
 
   const { data: detail, isError: detailError } = useQuery({
     queryKey: ["candidate", selectedId],

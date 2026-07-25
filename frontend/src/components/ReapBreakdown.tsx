@@ -9,7 +9,7 @@
 // is the Review queue's job, and this links there rather than growing a second, weaker copy
 // of it. Deletes nothing; the plan is still built, dry-run, and executed below.
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type SignalCount } from "../api";
 import { bytes, count } from "../format";
 import { useHoldsBackUnmeasured } from "./queueSettings";
@@ -82,7 +82,21 @@ export function ReapBreakdown({
   // The one action the expired-spares notice below offers: a scan is what realizes a spare's
   // clock, so it is the only thing that hands those titles back to policy. Declared up here
   // with the other hooks -- the early returns below are what makes that necessary.
-  const startScan = useMutation({ mutationFn: () => api.startScan() });
+  //
+  // The shared `["scanStatus"]` cache, so this costs no request of its own: the shell already
+  // polls it, and a scan already running (the scheduler, another device) must show here rather
+  // than offer a button that starts a second one. What the finished scan then refreshes --
+  // this ledger included -- is the shell's `useScanSettled`, not this component, which the
+  // operator can navigate away from mid-scan.
+  const queryClient = useQueryClient();
+  const { data: scanStatus } = useQuery({ queryKey: ["scanStatus"], queryFn: api.scanStatus });
+  const scanning = scanStatus?.running ?? false;
+  const startScan = useMutation({
+    mutationFn: () => api.startScan(),
+    // Seed the cache with the returned status so the polling starts at once, rather than the
+    // shell's idle poll taking up to 15s to notice (the scan bar's own start does the same).
+    onSuccess: (started) => queryClient.setQueryData(["scanStatus"], started),
+  });
 
   if (isPending) return <p className="muted">Loading…</p>;
   // An unreadable breakdown must never look like "nothing to reap": say we couldn't look,
@@ -214,22 +228,28 @@ export function ReapBreakdown({
           held reaps use, which only points at Review. */}
       {data.spares_expired > 0 && (
         <p className="notice notice-warn">
+          {/* Titles, not spares: the server counts the rows a scan would hand back, and one
+              whole-show spare can be holding five condemned seasons. Calling those "5 spares"
+              named a thing the operator has one of (rule 21). */}
           <strong>
-            {plural(data.spares_expired, "spare has", "spares have")} expired.
+            {plural(data.spares_expired, "title is", "titles are")} kept by{" "}
+            {data.spares_expired === 1 ? "a spare that expired" : "spares that expired"}.
           </strong>{" "}
-          {data.spares_expired === 1 ? "That title is" : "Those titles are"} still being kept, so
-          this reap won't remove {data.spares_expired === 1 ? "it" : "them"}. A new scan judges{" "}
+          This reap won't remove {data.spares_expired === 1 ? "it" : "them"}. A new scan judges{" "}
           {data.spares_expired === 1 ? "it" : "them"} again.{" "}
-          <button className="link" onClick={() => startScan.mutate()} disabled={startScan.isPending}>
-            {startScan.isPending ? "Starting…" : "Scan now"}
+          <button
+            className="link"
+            onClick={() => startScan.mutate()}
+            disabled={startScan.isPending || scanning}
+          >
+            {scanning ? "Scanning…" : startScan.isPending ? "Starting…" : "Scan now"}
           </button>
-          {startScan.isError && (
-            <>
-              {" "}
-              <span className="error">The scan didn't start. Try again.</span>
-            </>
-          )}
         </p>
+      )}
+      {/* Its own notice in the shared error tone, not red text inside the warning above:
+          every action failure in the app reads the same way (rule 42). */}
+      {data.spares_expired > 0 && startScan.isError && (
+        <p className="notice notice-error">The scan didn't start. Try again.</p>
       )}
       {data.hand_reaped_held > 0 && (
         <div className="rb-line">

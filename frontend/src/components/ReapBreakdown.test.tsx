@@ -6,13 +6,28 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReapBreakdown as Breakdown } from "../api";
+import type { ReapBreakdown as Breakdown, ScanStatus } from "../api";
 import { ReapBreakdown } from "./ReapBreakdown";
 
-const { apiMock } = vi.hoisted(() => ({ apiMock: { reapBreakdown: vi.fn(), profile: vi.fn() } }));
+const { apiMock } = vi.hoisted(() => ({
+  apiMock: { reapBreakdown: vi.fn(), profile: vi.fn(), scanStatus: vi.fn(), startScan: vi.fn() },
+}));
 vi.mock("../api", () => ({ api: apiMock }));
 
 const GB = 1024 ** 3;
+
+/** A scan status with nothing running -- the shape `api.scanStatus` returns. */
+const idleScan: ScanStatus = {
+  running: false,
+  phase: "idle",
+  done: 0,
+  total: 0,
+  percent: 0,
+  detail: "",
+  error: null,
+  snapshot_id: 1,
+  followup_queued: false,
+};
 
 // The component consults the profile (via useHoldsBackUnmeasured) to know whether the planner
 // holds unmeasured items back. Default: allowance 0, so it does (the common case).
@@ -70,6 +85,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   apiMock.reapBreakdown.mockResolvedValue(full());
   apiMock.profile.mockResolvedValue(profileWith(0));
+  // Idle by default; the expired-spares notice reads this to know whether to offer a scan.
+  apiMock.scanStatus.mockResolvedValue(idleScan);
+  apiMock.startScan.mockResolvedValue({ ...idleScan, running: true });
 });
 
 describe("the ledger", () => {
@@ -175,9 +193,11 @@ describe("the ledger", () => {
     // them, because it will not.
     apiMock.reapBreakdown.mockResolvedValue(full({ hand_spared: 12, spares_expired: 3 }));
     renderBreakdown();
-    const notice = (await screen.findByText(/3 spares have expired/)).closest("p")!;
+    const notice = (await screen.findByText(/3 titles are kept by spares that expired/)).closest(
+      "p",
+    )!;
     expect(notice).toHaveClass("notice-warn");
-    expect(notice.textContent).toContain("still being kept");
+    expect(notice.textContent).toContain("This reap won't remove them");
     expect(notice.textContent).toContain("A new scan judges them again");
     expect(screen.getByRole("button", { name: "Scan now" })).toBeInTheDocument();
   });
@@ -185,7 +205,9 @@ describe("the ledger", () => {
   it("says it in the singular for one, and stays silent at zero", async () => {
     apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 1 }));
     const { unmount } = renderBreakdown();
-    expect(await screen.findByText(/1 spare has expired/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/1 title is kept by a spare that expired/),
+    ).toBeInTheDocument();
     unmount();
 
     apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 0 }));
@@ -193,6 +215,39 @@ describe("the ledger", () => {
     await screen.findByText("Will be reaped");
     expect(screen.queryByText(/expired/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Scan now" })).not.toBeInTheDocument();
+  });
+
+  it("starts the scan it offers, and says so while one is running", async () => {
+    // The notice offers exactly one action, so it has to work: a click starts a scan, and a
+    // scan already running (this one, the scheduler's, another device's) replaces the offer
+    // rather than inviting a second start. The refresh when it ends is the shell's job
+    // (useScanSettled), which is why this component may be navigated away from mid-scan.
+    apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 2 }));
+    const user = userEvent.setup();
+    renderBreakdown();
+
+    await user.click(await screen.findByRole("button", { name: "Scan now" }));
+
+    expect(apiMock.startScan).toHaveBeenCalledTimes(1);
+    // The started status is seeded into the shared cache, so the label flips without waiting
+    // for a poll to come back around.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Scanning…" })).toBeDisabled(),
+    );
+  });
+
+  it("says the scan didn't start, in the tone every other failure uses", async () => {
+    // An action that fails silently reads as an action that did nothing. Its own notice in
+    // the shared error tone, not red text tucked inside the warning (rule 42).
+    apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 2 }));
+    apiMock.startScan.mockRejectedValue(new Error("nope"));
+    const user = userEvent.setup();
+    renderBreakdown();
+
+    await user.click(await screen.findByRole("button", { name: "Scan now" }));
+
+    const failure = await screen.findByText("The scan didn't start. Try again.");
+    expect(failure).toHaveClass("notice-error");
   });
 
   it("shows the notice even when the reap would remove nothing", async () => {
@@ -203,7 +258,9 @@ describe("the ledger", () => {
       full({ will_reap: 0, will_reap_bytes: 0, hand_spared: 543, spares_expired: 4 }),
     );
     renderBreakdown();
-    expect(await screen.findByText(/4 spares have expired/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/4 titles are kept by spares that expired/),
+    ).toBeInTheDocument();
   });
 });
 

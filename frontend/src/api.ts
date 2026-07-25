@@ -654,9 +654,13 @@ export interface ReapBreakdown {
   policy_condemned_bytes: number;
   policy_condemned_unknown: number;
   hand_spared: number;
-  /** The share of `hand_spared` whose clock has already passed. Those titles are still being
-   *  kept -- only a scan realizes a spare's expiry -- so they are absent from the plan with
-   *  nothing else on the page to explain it. One notice when nonzero. */
+  /** The share of `hand_spared` a scan would hand back to policy: TITLES kept out of the plan
+   *  by a spare whose clock has already passed. They are still being kept -- only a scan
+   *  realizes a spare's expiry -- so they are absent from the plan with nothing else on the
+   *  page to explain it. One notice when nonzero.
+   *
+   *  Titles, not spares: one whole-show spare can be holding several condemned seasons. A
+   *  title another spare still covers is not counted, since a scan would not release it. */
   spares_expired: number;
   hand_reaped: number;
   hand_reaped_bytes: number;
