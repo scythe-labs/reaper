@@ -718,6 +718,12 @@ async def _run_scan_locked(
                 movie_keep_match=movie_policy.keep_tags_match,
                 tv_keep_tags=tv_policy.keep_tags,
                 tv_keep_match=tv_policy.keep_tags_match,
+                # Whether those four values are the operator's own. Under a repaired or
+                # fallen-back policy they are Reaper's defaults, and retiring the keep-tag
+                # lists against defaults would switch off every keep list the operator
+                # actually saved (rule 115). The sync itself still runs, so the lists in
+                # this configuration stay fresh; only the disabling write is held back.
+                keep_tags_trusted=not (active_movie.repaired or active_tv.repaired),
                 plex_server=plex_server,
             ),
             # Who requested what: each candidate's "requested by", and the review queue's

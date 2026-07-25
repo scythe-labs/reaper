@@ -199,6 +199,42 @@ _declared: ContextVar[bool] = ContextVar("reaper_plex_mutation_declared", defaul
 _benign_shelf: ContextVar[bool] = ContextVar("reaper_plex_benign_shelf", default=False)
 
 
+#: Where a read that came back INCOMPLETE reports itself, without throwing away the part
+#: it did read. The GUID sweep's batched metadata enrichment can be windowed by the server:
+#: the ids stay complete, the ratings do not, and a title with no rating is one the rating
+#: bar can no longer keep. That is a protection withdrawn, so it has to degrade the snapshot
+#: (rule 28) -- but raising would discard a perfectly good id sweep on top of it and drop the
+#: whole library to title-only matching, which is a much wider blast radius than the loss.
+#:
+#: A context variable rather than a parameter, for the same reason ``_declared`` is one: the
+#: movie and show sweeps run as concurrent tasks over one client, and each task's copy of the
+#: context keeps its own collector. The list is bound before those tasks are created, so
+#: appends from inside them land in the collector that opened it.
+_incomplete: ContextVar[list[str] | None] = ContextVar("reaper_plex_incomplete_reads", default=None)
+
+
+@contextlib.contextmanager
+def collecting_incomplete_reads() -> Iterator[list[str]]:
+    """Collect, for this task, the reasons any read here came back short.
+
+    Opened by ``services.library_index.build_index``, which degrades the snapshot for
+    every reason collected. Outside a collector the reasons are logged and dropped, which
+    is right for a one-off diagnostic read and never for a scan.
+    """
+    problems: list[str] = []
+    token = _incomplete.set(problems)
+    try:
+        yield problems
+    finally:
+        _incomplete.reset(token)
+
+
+def _report_incomplete(reason: str) -> None:
+    sink = _incomplete.get()
+    if sink is not None:
+        sink.append(reason)
+
+
 @contextlib.contextmanager
 def declared_mutation() -> Iterator[None]:
     """Permit mutating Plex calls on this task, having journalled the intent first.
@@ -485,6 +521,15 @@ class PlexClient:
         # requests does not promise a Session is safe to share across threads -- so the
         # sweeps take this lock and run one at a time, while still overlapping with the
         # Tautulli and *arr reads that dominate the wall clock.
+        #
+        # SCOPE, so nobody reads more into it than it does: it serializes the two SWEEPS
+        # (``library_guid_index``, ``library_season_index``), the long multi-page walks a
+        # scan issues in parallel. It is NOT a whole-client mutex. The Leaving Soon
+        # reconcile deliberately runs its per-library passes concurrently
+        # (``leaving_soon.sync_shelves``, bounded by ``SHELF_CONCURRENCY``), so several of
+        # its shelf reads and writes can be in flight on this same session; that pass owns
+        # its own client, touches no file, and taking this lock on its reads alone would
+        # look like a fix while leaving its writes exactly as concurrent as before.
         self._sweep_lock = asyncio.Lock()
         # And the "one server" premise itself needs a lock: two concurrent callers both
         # seeing _server is None would each build a connection, leaving one session
@@ -652,8 +697,18 @@ class PlexClient:
         the one hardened ``_iter_section_pages`` loop (raw-count advance, ``totalSize`` the
         sole authority, a truncated or unbounded page raised on), so a section can never
         end early with a silently partial map.
+
+        The *enrichment* read reports the same class of loss without throwing the whole
+        sweep away: a batched metadata read that comes back short files one reason with
+        :func:`collecting_incomplete_reads`, which ``services.library_index.build_index``
+        opens and degrades the snapshot from. The ratings that read carries are a
+        PROTECTION, and losing them quietly makes titles more deletable, not less
+        (rule 28).
         """
         server = await self._connect()
+        # Filled inside the worker thread, read back on the event loop below: a short
+        # metadata batch is a lost protection source, so the caller has to hear about it.
+        short_batches: list[tuple[int, int]] = []
 
         def read() -> dict[int, PlexItem]:
             out: dict[int, PlexItem] = {}
@@ -692,18 +747,24 @@ class PlexClient:
                 )
                 if len(batch) < len(chunk):
                     # A server that windows the multi-id response drops the tail of the
-                    # chunk. Said out loud rather than degraded, and the difference is
-                    # deliberate: unlike the sweep above, this read adds only evidence --
-                    # ratings and folder paths -- so losing it lowers pressure and widens
-                    # abstains. It can never make an item MORE deletable, which is why a
-                    # short batch is not one of rule 28's source failures. Silence was the
-                    # defect: the enrichment thinned out with nothing to read afterwards.
+                    # chunk, and those Rating children are the ONLY source of the
+                    # per-provider scores (for shows, of any score at all). Losing them
+                    # takes the keep bar off every title in the tail, which is a
+                    # protection WITHDRAWN -- so this is one of rule 28's source failures
+                    # and it degrades, through ``on_incomplete`` below.
+                    #
+                    # Reported rather than raised, deliberately, and this is the narrower
+                    # control: raising here would throw away a complete id sweep as well,
+                    # dropping the whole library to title-only matching on top of the
+                    # degradation. The map returned is exactly as complete as it was; the
+                    # snapshot simply cannot be executed.
                     log.warning(
                         "plex.metadata_batch_short",
                         section_type=section_type,
                         requested=len(chunk),
                         returned=len(batch),
                     )
+                    short_batches.append((len(chunk), len(batch)))
                 for el in batch:
                     rk = el.get("ratingKey")
                     if rk is None or int(rk) not in out:
@@ -738,11 +799,24 @@ class PlexClient:
 
         async with self._sweep_lock:
             try:
-                return await asyncio.to_thread(read)
+                out = await asyncio.to_thread(read)
             except Exception as exc:
                 raise PlexError(
                     f"Could not sweep Plex GUIDs for {section_type} sections: {exc}"
                 ) from exc
+
+        # Back on the event loop, with the worker thread joined, so the collector is
+        # appended to from one place. One reason for the whole sweep, however many chunks
+        # came back short.
+        if short_batches:
+            requested = sum(size for size, _ in short_batches)
+            returned = sum(got for _, got in short_batches)
+            what = "movie" if section_type == "movie" else "TV"
+            _report_incomplete(
+                f"Plex sent back only {returned} of {requested} titles when their ratings "
+                f"were read, so some {what} titles were judged without one"
+            )
+        return out
 
     async def item_count(self, section_key: int) -> int:
         """How many items a section holds. The input to the trash interlock: the executor

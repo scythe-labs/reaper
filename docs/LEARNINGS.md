@@ -73,6 +73,50 @@ Three states, never two: `Known` / `Absent` / `Unknown`.
 An empty list from a *failed* call must be `Unknown`, never `[]`. Every competitor
 that conflates them eventually deletes something during an API outage.
 
+### `Absent` keeps its weight in coverage: the one place the arithmetic got *less* conservative
+
+Every other change in this codebase's history moved toward keeping the file. This one
+moves the other way, in a narrow, bounded case, and it is worth writing down so nobody
+"fixes" it back.
+
+**What changed.** A signal whose input is genuinely `Absent` now returns
+`SignalState.NOT_APPLICABLE` with `evaluated=True` and its weight retained: the shared
+`Absent` tail in `evaluate_signal`, the `SEASON_RANK` special case, and
+`evaluate_custom`'s graded arm all end there. Previously those fell through to the
+`UNREADABLE` branch (`evaluated=False`), which is the only state that drops weight out
+of the coverage numerator. `Unknown` still routes to `UNREADABLE` and still lowers
+coverage: `Absent` and `Unknown` were being collapsed at exactly the point where the
+engine's whole design says they must not be (rule 93).
+
+**Why it is correct.** Coverage answers one question: how much of the condemnation
+evidence did we actually manage to look at? For an unrated show, a special that is not
+one of the numbered seasons, or a graded custom rule on a field a media type never
+carries, we *did* look. There is nothing there. Reporting it as unreadable printed a
+why-panel line asserting a check that never failed ("could not read the IMDb rating"
+about a title that simply has none) and dragged every one of those items toward the
+abstain floor for a value they were never going to have.
+
+**Direction, and its exact bound.** Pressure stays 0.0 and the denominator is unchanged,
+so *the score itself cannot move*. Only coverage rises, and coverage is consulted in
+exactly one place (`verdict.decide_verdict`, `coverage_bp < coverage_floor_bp` to
+abstain). So the sole reachable effect is: an item that previously abstained for thin
+coverage can now be decided on its score. That is a condemn-lane loosening.
+
+**When an operator would notice.** Not at shipped defaults. `coverage_floor_bp` ships at
+5000, and `condemn_at` is itself a coverage floor (a score cannot exceed
+`MAX_SCORE * coverage`), so the explicit floor decides nothing in a healthy scan, which
+the live-data pass confirmed: zero abstains in the snapshot came from it. It becomes
+visible only when the floor is raised above the share of weight a class of items
+genuinely lacks. With the shipped weights that share is 10 (`LOW_RATING`) for an unrated
+movie, so a floor above 9000 is where an unrated title flips from abstain to condemnable;
+for TV, a special lacking both a rating and a season rank sat at 75, so a floor above
+7500 reaches it. Below those, nothing changes.
+
+**The tradeoff, stated plainly.** The old behavior bought a little extra caution with a
+statement to the operator that was false. We took the honest arithmetic and kept the
+caution where it belongs: on `Unknown`, which is the state that actually means we could
+not see.
+
 ### `next(...)` over a multi-instance list is a silent half-scan
 
 The scan route did `next(r for r in rows if r.kind is RADARR)` and got whichever

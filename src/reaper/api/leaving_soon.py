@@ -34,6 +34,8 @@ async def sync_leaving_soon(request: Request) -> LeavingSoonOut:
         result = await leaving_soon.run_sync(request.app.state.session_factory, settings, box)
     except leaving_soon.LeavingSoonDisabledError as exc:
         raise HTTPException(400, str(exc)) from exc
+    except leaving_soon.LeavingSoonDegradedError as exc:
+        raise HTTPException(400, str(exc)) from exc
     except PlexError as exc:
         raise HTTPException(400, str(exc)) from exc
 

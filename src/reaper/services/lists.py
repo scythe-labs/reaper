@@ -196,6 +196,16 @@ def _tag_key(tag: str) -> str:
     return tag.strip().casefold()
 
 
+def _name_key(name: str) -> str:
+    """The comparison form for a Plex library or collection title.
+
+    Same rule as :func:`_tag_key` and ``plex.normalize_label`` (rule 88): both sides
+    case-folded, or a library the operator spells "movies" never matches the configured
+    "Movies" and their keep collection reads as a missing library.
+    """
+    return name.strip().casefold()
+
+
 @dataclass(frozen=True, slots=True)
 class ArrTagRule:
     """One or more *arr tags, combined -- the configurable "keep list".
@@ -262,13 +272,33 @@ class ArrTagRule:
         # A missing tag is a missing CONTAINER, not an empty one: nothing can carry a
         # tag that does not exist, so returning [] here would be indistinguishable from
         # "the owner un-tagged everything" and sync() would wipe the stored membership.
-        # Raise whenever the absence decides the outcome -- every tag gone, or any gone
-        # under ALL (one absent tag already rules every title out). Under ANY with some
-        # tags still present, the present tags' members still sync.
-        if missing and (not wanted or self.match == "all"):
-            raise ContainerMissingError(
-                f"keep tag {', '.join(repr(t) for t in missing)} does not exist in "
-                f"{self.client.service}"
+        # EVERY configured tag that will not resolve is a failure (rule 27), because the
+        # absence is indistinguishable from a tag the operator RENAMED upstream -- and a
+        # rename withdraws the protection from every title still carrying it.
+        #
+        # Two failures, because the two land in different places in ``sync``:
+        #
+        # * Nothing resolved at all, or ANY gone under ALL (one absent tag already rules
+        #   every title out): ContainerMissingError, which ``sync`` reads as genuinely
+        #   empty when nothing is stored yet. That is the first-run case -- the default
+        #   'reaper-keep' tag usually does not exist in a fresh *arr, and a brand-new
+        #   install must not be un-scannable because of it.
+        # * Some resolved and some did not, under ANY: a hard failure, whatever is
+        #   stored. Reading THIS as an empty first sync would store the surviving tags'
+        #   members as [] and report the keep-list healthy, so the tags that DO resolve
+        #   would protect nothing (rule 90's shape, one level up). The sync fails, the
+        #   stored membership survives untouched, and the scan degrades.
+        if missing:
+            names = ", ".join(repr(t) for t in missing)
+            if not wanted or self.match == "all":
+                raise ContainerMissingError(
+                    f"keep tag {names} does not exist in {self.client.service}"
+                )
+            raise IntegrationError(
+                self.client.service,
+                f"the keep tag {names} does not exist there, so anything that used to "
+                "carry it is no longer protected. The keep list was left as it was, so "
+                "add the tag back or take it out of your keep tags.",
             )
 
         def keeps(media: dict[str, Any]) -> bool:
@@ -345,7 +375,12 @@ class PlexCollection:
         from plexapi.exceptions import NotFound
 
         library = self.server.library  # type: ignore[attr-defined]
-        sections = [s for s in library.sections() if str(s.title) == self.section_name]
+        # Case-folded on BOTH sides (rule 88). ``library.section(title)`` -- the call this
+        # replaced -- matched case-insensitively, so an exact-match filter here silently
+        # stopped finding the keep collection of an operator whose library is spelled
+        # "movies": the sync then failed the whole HARD keep-list and every scan with it.
+        wanted = _name_key(self.section_name)
+        sections = [s for s in library.sections() if _name_key(str(s.title)) == wanted]
         if not sections:
             # Not a missing container but a missing LIBRARY: a mistyped name, or one the
             # operator removed. A hard failure, recorded against the slug, exactly as the

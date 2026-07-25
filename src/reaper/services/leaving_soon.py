@@ -45,7 +45,7 @@ from reaper.clients.plex import PlexClient, PlexError, benign_shelf_write
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.crypto import SecretBox
-from reaper.db.models import PlexServer
+from reaper.db.models import PlexServer, Snapshot
 from reaper.notify.discord import DiscordNotifier, build_notifier
 from reaper.services import app_settings
 from reaper.services.grace import GraceReport, grace_report
@@ -76,6 +76,34 @@ SHELF_CONCURRENCY = 4
 
 class LeavingSoonDisabledError(RuntimeError):
     """The shelf is turned off, so there is nothing to update."""
+
+
+class LeavingSoonDegradedError(RuntimeError):
+    """The last scan declared itself untrustworthy, so the shelf must not act on it."""
+
+
+async def _latest_scan_degraded(session: AsyncSession) -> bool:
+    """Did the most recent scan declare itself untrustworthy?
+
+    A degraded snapshot is un-plannable outright, and rule 116 says its side effects are
+    gated WITH its plan. The shelf and the Discord heads-up both read the same condemned
+    set the planner refuses to touch, so acting on it here is the same mistake as deleting
+    on it, minus the file: an operator is told in their own library, or in a room full of
+    people, that a title is about to go, on evidence Reaper has already said it cannot
+    stand behind.
+
+    ``scan_runner`` already skips the after-scan shelf on a degraded snapshot, but that
+    covered only the automatic path: ``POST /api/leaving-soon/sync`` still labeled items
+    and announced. Gating it here instead covers every caller of :func:`run_sync`, which
+    is the one place both paths converge.
+
+    No snapshot at all is not degraded. It is simply nothing to announce, and the grace
+    report below is empty on its own.
+    """
+    latest = (
+        await session.execute(select(Snapshot).order_by(Snapshot.id.desc()).limit(1))
+    ).scalar_one_or_none()
+    return latest is not None and bool(latest.degraded)
 
 
 @dataclass(frozen=True)
@@ -440,6 +468,11 @@ async def _run_pass(
                 "Leaving Soon is off. Turn it on in Settings, under Plex, "
                 "and Reaper will keep the shelf up to date."
             )
+        if await _latest_scan_degraded(session):
+            raise LeavingSoonDegradedError(
+                "The last scan couldn't be trusted, so the shelf wasn't updated. "
+                "Run a scan that finishes cleanly first."
+            )
         safety = await app_settings.runtime_safety(session, settings)
         libraries = await app_settings.enabled_plex_libraries(session)
         profile = await active_profile_settings(session)
@@ -537,6 +570,12 @@ async def after_scan(
             return
         except LeavingSoonDisabledError:
             pass  # shelf off
+        except LeavingSoonDegradedError:
+            # The scan that triggered this could not be trusted. There is deliberately NO
+            # fall-through to the heads-up below: it reads the same condemned set (rule
+            # 116), so "shelf off" and "scan untrustworthy" are not the same skip.
+            log.info("leaving_soon.skipped_degraded")
+            return
         except PlexError as exc:
             # Shelf on, but Plex is unlinked or unreachable. Fall through to the Discord
             # heads-up below, but do not swallow it silently: an operator who enabled the
@@ -554,6 +593,13 @@ async def after_scan(
         # run_sync has already released the lock by the time it raises its way to here.
         async with _pass_lock():
             async with session_factory() as session:
+                # Checked again on this path, because it is reached when the SHELF is off,
+                # which returns before the guard in _run_pass ever runs. Announcing is the
+                # only thing this branch does, and an announcement of a title about to be
+                # removed is exactly a side effect of the condemned set (rule 116).
+                if await _latest_scan_degraded(session):
+                    log.info("leaving_soon.announce_skipped_degraded")
+                    return
                 notifier = await build_notifier(session, box, settings)
                 if notifier is None:
                     return

@@ -27,13 +27,19 @@ listed yet).
 A plexapi sweep that fails **degrades** the snapshot (rule 2: never let the id
 signal vanish and silently fall the whole library back to title-only) and leaves
 ids empty, so items still match by title+year but no run may execute against the
-result. A deployment with no Plex configured simply gets no enrichment.
+result. A sweep that succeeds but could not read every item's *ratings* degrades
+too, without discarding the ids it did read (``plex.collecting_incomplete_reads``,
+opened around the gather below): a title whose ratings went missing is a title the
+rating bar can no longer keep. A deployment with no Plex configured simply gets no
+enrichment.
 
 The sweep and the spine read different services, so they run concurrently and are
 joined only afterwards; the pairing goes through ``aio.gather_reaped`` so a spine
 failure aborts the scan exactly as it did when the reads were sequential, with the
-sweep reaped rather than left running. Neither read raises: both degrade and return
-empty, so a failure of either costs the operator a plan, never the whole scan.
+sweep reaped rather than left running. Neither read raises: a failure, and every
+malformed row either can produce (a library with no id, an item with no usable
+rating key), degrades and is skipped instead. So a bad source costs the operator a
+plan, never the whole scan.
 """
 
 from __future__ import annotations
@@ -45,7 +51,7 @@ import structlog
 
 from reaper.aio import gather_reaped
 from reaper.clients.base import IntegrationError
-from reaper.clients.plex import PlexClient, PlexError
+from reaper.clients.plex import PlexClient, PlexError, collecting_incomplete_reads
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch
 from reaper.engine import identity
@@ -120,7 +126,20 @@ async def build_index(
         for library in await tautulli.libraries():
             if library.get("section_type") != section_type:
                 continue
-            section_id = int(library["section_id"])
+            try:
+                section_id = int(library["section_id"])
+            except (KeyError, TypeError, ValueError):
+                # A library row with no usable section id cannot be listed, so everything
+                # in that library would quietly fall out of the index and read as "Plex
+                # has not matched this" -- a whole library judged on nothing. Skip it and
+                # degrade (rule 28), rather than raising out of a read the module contract
+                # says never raises.
+                degrade(
+                    "one of your libraries came back from Tautulli without an id, so "
+                    "nothing in it could be matched and nothing may be deleted from "
+                    "this scan"
+                )
+                continue
             if allowed_sections is not None and section_id not in allowed_sections:
                 continue
             # The library title, stamped onto each of its rows so the item build loop has a
@@ -136,16 +155,32 @@ async def build_index(
                 start += 1000
         return collected
 
-    plex_items, spine_rows = await gather_reaped(_sweep(), _spine())
+    # The collector is opened around the gather so it is in place before the sweep task is
+    # created (the task copies this context). A sweep that succeeded but could not read
+    # every item's RATINGS files its reason here rather than raising: the ids it returned
+    # are complete, so matching is unharmed, but a title whose ratings went missing is one
+    # the rating bar can no longer keep, and a withdrawn protection degrades (rule 28).
+    with collecting_incomplete_reads() as incomplete:
+        plex_items, spine_rows = await gather_reaped(_sweep(), _spine())
+    for reason in incomplete:
+        degrade(f"{reason}, so nothing may be deleted from this scan")
 
     items: list[identity.PlexItem] = []
+    unusable = 0
     for row in spine_rows:
-        # A row with no rating key cannot become a candidate's join (its rating_key
-        # read would fail), so it is dropped -- identically for movies and shows.
+        # A row with no rating key -- or one that is not a number -- cannot become a
+        # candidate's join (its rating_key read would fail), so it is dropped, identically
+        # for movies and shows. Counted, and degraded once below: an item missing from the
+        # index resolves unmatched, which keeps it, but it also means this scan judged part
+        # of the library on nothing.
         rk = row.get("rating_key")
         if rk is None:
             continue
-        rating_key = int(rk)
+        try:
+            rating_key = int(rk)
+        except (TypeError, ValueError):
+            unusable += 1
+            continue
         enriched = plex_items.get(rating_key)
         items.append(
             identity.PlexItem(
@@ -172,6 +207,12 @@ async def build_index(
                     else row.get(_SPINE_LIBRARY)
                 ),
             )
+        )
+
+    if unusable:
+        degrade(
+            f"{unusable} items in your libraries came back from Tautulli without a usable "
+            "id, so they could not be matched and nothing may be deleted from this scan"
         )
 
     # Items Plex has that the Tautulli cache has not listed yet (fresh additions).

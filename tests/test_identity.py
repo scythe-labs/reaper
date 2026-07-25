@@ -1750,6 +1750,74 @@ class TestTheBasenameTier:
         assert "ambiguous" in res.detail.lower()
 
 
+class TestTheBasenameCrossChecksAnIdBind:
+    """The basename tier runs even when an id already bound, as a cross-check only.
+
+    It was promoted from "consulted only if nothing bound" to always-on so a corroborating
+    kind can raise an abstain it would otherwise have been structurally unable to raise
+    (rule 109). The cost of that is real and worth pinning: the window after an *arr renames
+    a file and before Plex rescans is exactly when the candidate's basename and Plex's
+    stored one disagree.
+
+    The cases below draw the line. Disagreement only abstains when the new name positively
+    names a DIFFERENT row; a name Plex has simply never heard of is silence, and silence
+    leaves the id bind standing. Otherwise every rename would cost a scan's worth of
+    deletability, which is a price this tier is not meant to charge.
+    """
+
+    def test_a_renamed_file_plex_has_not_rescanned_still_binds_by_id(self) -> None:
+        """The ordinary rename window: Plex still lists the old leaf, and the new one
+        matches nothing. The corroborator stands down rather than veto."""
+        index = PlexIndex.build(
+            [_item(100, title="Example Movie", tmdb=1001, basename="old name (2020).mkv")]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title=None,
+            year=None,
+            file_basename="/movies/new name (2020).mkv",
+            index=index,
+        )
+        assert res.rating_key == 100
+        assert res.matched_by is MatchedBy.TMDB
+
+    def test_a_basename_naming_a_different_row_vetoes_the_id_bind(self) -> None:
+        """Positive disagreement, which is the abstain this tier was promoted to catch:
+        the id says one row and the file on disk says another. No way to know which is
+        wrong, so keep the file."""
+        index = PlexIndex.build(
+            [
+                _item(100, title="Example Movie", tmdb=1001, basename="old name (2020).mkv"),
+                _item(200, title="Something Else", basename="new name (2020).mkv"),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title=None,
+            year=None,
+            file_basename="/movies/new name (2020).mkv",
+            index=index,
+        )
+        assert res.rating_key is None
+        assert "disagree" in res.detail.lower()
+
+    def test_the_cross_check_never_originates_a_bind(self) -> None:
+        """The corroborator may add an abstain; it may never be the thing that binds. With
+        the id agreeing, the bind is still credited to the id, not to the file name."""
+        index = PlexIndex.build(
+            [_item(100, title="Example Movie", tmdb=1001, basename="same (2020).mkv")]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title=None,
+            year=None,
+            file_basename="/movies/same (2020).mkv",
+            index=index,
+        )
+        assert res.rating_key == 100
+        assert res.matched_by is MatchedBy.TMDB
+
+
 # ---------------------------------------------------------------------------
 # Tier 3 -- title + year (migrated from the old _match_plex_movie fixtures so there is
 # exactly one implementation under test).

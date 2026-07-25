@@ -2015,6 +2015,7 @@ async def sync_protection_lists(
     movie_keep_match: str = "any",
     tv_keep_tags: tuple[str, ...] = ("reaper-keep",),
     tv_keep_match: str = "any",
+    keep_tags_trusted: bool = True,
     plex_server: object | None = None,
     section_name: str = "Movies",
     collection_name: str = "Never Reap",
@@ -2048,6 +2049,15 @@ async def sync_protection_lists(
     (``lists.retire_absent``), because the slug of a derived list changes when its setting
     does: without that, tightening "match ANY" to "match ALL" writes a new list while the
     old one keeps protecting everything it ever matched.
+
+    Retiring is a durable protection-DISABLING write, so each family is retired only when
+    the configuration it is judged against was actually readable (rule 115). The Plex
+    family needs a live ``plex_server``; the keep-tag family needs ``keep_tags_trusted``,
+    which the caller sets false when the policy in hand is not the one the operator saved
+    (``profiles.ActivePolicy.repaired``). A fallen-back policy carries the SHIPPED keep
+    tags and match mode, so its slugs are not the operator's -- and retiring against them
+    would switch off every keep list they actually configured, during a scan Reaper has
+    already declared un-executable.
     """
     synced: dict[str, int | str] = {}
 
@@ -2128,10 +2138,17 @@ async def sync_protection_lists(
     # the operator already replaced, so the tightening they saved never takes effect.
     # Slugs whose sync FAILED are in these sets and are never retired -- the atomic swap
     # kept their membership and it is still the right list, just stale.
-    for slug in await lists.retire_absent(
-        engine, family=lists.KEEP_TAG_SLUGS, current=keep_tag_slugs
-    ):
-        synced[slug] = "retired"
+    #
+    # The keep-tag family only when the tags and match mode came from the policy the
+    # operator saved. Under a repaired or fallen-back policy the slugs above are Reaper's
+    # defaults, not theirs, so retiring "everything this configuration no longer produces"
+    # would disable every keep list they DID configure -- and the scan holding that policy
+    # is already degraded, so it is the last moment to be writing protection off.
+    if keep_tags_trusted:
+        for slug in await lists.retire_absent(
+            engine, family=lists.KEEP_TAG_SLUGS, current=keep_tag_slugs
+        ):
+            synced[slug] = "retired"
     # The Plex family only when Plex actually answered. With no server there is no provider
     # and no slug, and retiring on that would unprotect every title on the "Never Reap"
     # collection because Plex was briefly unreachable.

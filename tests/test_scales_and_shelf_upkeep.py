@@ -526,3 +526,124 @@ class TestNoPlexClientIsLeftOpen:
             await leaving_soon.run_sync(factory, _settings(tmp_path), SecretBox("test-key"))
 
         assert all(c.closed for c in opened), "a client outlived the pass that owned it"
+
+
+class TestADegradedScanDoesNotReachTheShelf:
+    """A degraded snapshot is un-plannable, and its side effects are gated with its plan.
+
+    The shelf and the Discord heads-up both read the same condemned set the planner
+    refuses to touch. Labeling titles "leaving soon" in someone's library, or telling a
+    room of people a title is about to go, on evidence Reaper has already declared
+    untrustworthy is the same mistake as deleting on it, minus the file (rule 116).
+
+    ``scan_runner`` already skipped the after-scan shelf on a degraded snapshot, but that
+    covered only the automatic path: ``POST /api/leaving-soon/sync`` still labeled and
+    announced. The guard now sits in ``_run_pass``, where both paths converge.
+    """
+
+    async def _snapshot(self, factory: async_sessionmaker[AsyncSession], *, degraded: bool) -> None:
+        from reaper.db.models import Snapshot
+
+        async with factory() as session:
+            session.add(
+                Snapshot(
+                    created_at=utcnow(),
+                    horizon_at=utcnow(),
+                    policy_hash="h",
+                    degraded=degraded,
+                )
+            )
+            await session.commit()
+
+    async def test_the_manual_sync_refuses_on_a_degraded_scan(
+        self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
+    ) -> None:
+        async with factory() as session:
+            await app_settings.set_leaving_soon_enabled(session, enabled=True)
+            await session.commit()
+        await self._snapshot(factory, degraded=True)
+
+        with pytest.raises(leaving_soon.LeavingSoonDegradedError) as caught:
+            await leaving_soon.run_sync(factory, _settings(tmp_path), SecretBox("test-key"))
+        # Plain language, and it says what to do about it (rule 21).
+        assert "couldn't be trusted" in str(caught.value)
+
+    async def test_a_clean_scan_after_a_degraded_one_is_not_blocked(
+        self, factory: async_sessionmaker[AsyncSession], tmp_path: Path
+    ) -> None:
+        """The LATEST scan decides. A degraded run the operator has since re-scanned past
+        must not keep the shelf shut forever."""
+        async with factory() as session:
+            await app_settings.set_leaving_soon_enabled(session, enabled=True)
+            await session.commit()
+        await self._snapshot(factory, degraded=True)
+        await self._snapshot(factory, degraded=False)
+
+        # It gets past the degraded guard and fails later, on the missing Plex link --
+        # which is the proof: a different error means a different gate stopped it.
+        with pytest.raises(Exception) as caught:
+            await leaving_soon.run_sync(factory, _settings(tmp_path), SecretBox("test-key"))
+        assert not isinstance(caught.value, leaving_soon.LeavingSoonDegradedError)
+
+    async def test_no_snapshot_at_all_is_not_degraded(
+        self, factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """A fresh install has nothing to announce, which is not the same as untrustworthy."""
+        async with factory() as session:
+            assert await leaving_soon._latest_scan_degraded(session) is False
+
+    async def test_the_after_scan_hook_does_not_announce_either(
+        self,
+        factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """With the SHELF OFF, the hook falls through to a Discord-only heads-up that
+        never reaches ``_run_pass``'s guard. That fall-through reads the same condemned
+        set, so it carries the check too.
+
+        A notifier is forced in on purpose: without one the fall-through returns before it
+        would ever announce, and the test would pass with the guard deleted.
+        """
+        announced: list[object] = []
+
+        async def _spy(*args: object, **kwargs: object) -> tuple[bool, list[str]]:
+            announced.append(args)
+            return (False, [])
+
+        async def _notifier(*args: object, **kwargs: object) -> object:
+            return object()  # stands in for a configured Discord webhook
+
+        monkeypatch.setattr(leaving_soon, "announce_new", _spy)
+        monkeypatch.setattr(leaving_soon, "build_notifier", _notifier)
+        # Shelf off (the default), so run_sync raises Disabled and the hook falls through.
+        await self._snapshot(factory, degraded=True)
+
+        await leaving_soon.after_scan(factory, _settings(tmp_path), SecretBox("test-key"))
+
+        assert announced == [], "a degraded scan still announced titles as leaving soon"
+
+    async def test_the_after_scan_hook_still_announces_on_a_clean_scan(
+        self,
+        factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The control for the test above: same setup, clean snapshot, and the heads-up
+        goes out. Without this the one above would pass on a hook that never announces."""
+        announced: list[object] = []
+
+        async def _spy(*args: object, **kwargs: object) -> tuple[bool, list[str]]:
+            announced.append(args)
+            return (False, [])
+
+        async def _notifier(*args: object, **kwargs: object) -> object:
+            return object()
+
+        monkeypatch.setattr(leaving_soon, "announce_new", _spy)
+        monkeypatch.setattr(leaving_soon, "build_notifier", _notifier)
+        await self._snapshot(factory, degraded=False)
+
+        await leaving_soon.after_scan(factory, _settings(tmp_path), SecretBox("test-key"))
+
+        assert len(announced) == 1
