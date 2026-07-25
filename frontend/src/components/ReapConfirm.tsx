@@ -23,8 +23,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api, type ReapStatus, type Run, type RunReport } from "../api";
 import { bytes, count, souls } from "../format";
+import { usePlexTrash, trashWarning } from "../usePlexTrash";
 import { useSafety } from "../useSafety";
 import { ModalShell } from "./ModalShell";
+import { PlexTrashNotice } from "./PlexTrashNotice";
 
 export function ReapConfirm({
   run: openedWith,
@@ -58,6 +60,9 @@ export function ReapConfirm({
   });
   const [typed, setTyped] = useState("");
   const [dryReport, setDryReport] = useState<RunReport | null>(null);
+  // Consent to Plex purging trash this run did not cause. Reset with the phrase below, so
+  // it is always a decision about the plan actually on screen.
+  const [trashAcked, setTrashAcked] = useState(false);
 
   const safety = useSafety();
   const armed = safety.data?.destructive_enabled === true;
@@ -141,13 +146,26 @@ export function ReapConfirm({
     const s = queryClient.getQueryData<ReapStatus>(["reapStatus"]);
     const active = s?.run_id === run.id && (s.running || s.report != null || s.phase === "error");
     setDryReport(null);
+    // The phrase is content-bound, so it moving means this sheet now covers different
+    // items. A tick that survived that would be consent carried from a plan the operator
+    // is no longer looking at.
+    setTrashAcked(false);
     if (!active) dry.mutate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.id, run.confirmation_phrase]);
 
   const dryClean = dryReport?.dry_run === true && dryReport.state === "completed";
   const phraseOk = typed.trim() === run.confirmation_phrase;
-  const canExecute = armed && dryClean && phraseOk && !exec.isPending && !running && !failed;
+  // Emptying Plex's trash takes the records of everything already in there, not just what
+  // this run deleted, and the executor's count-delta gate structurally cannot see those
+  // items. So the operator is told and must tick before Reap enables. The tick is dropped
+  // whenever the plan's content changes (the effect below), so consent from one plan can
+  // never carry into a different one.
+  const trash = usePlexTrash();
+  const warn = trashWarning(trash.data, trash.isError);
+  const trashOk = !warn.show || trashAcked;
+  const canExecute =
+    armed && dryClean && phraseOk && trashOk && !exec.isPending && !running && !failed;
   const pct = status && status.total > 0 ? Math.round((status.done / status.total) * 100) : 0;
 
   return (
@@ -208,6 +226,19 @@ export function ReapConfirm({
         <p className="notice notice-warn">
           Another reap is running. Wait for it to finish, then reopen this to reap.
         </p>
+      )}
+
+      {/* Plex's trash takes more than this reap deletes, so say so before the phrase field
+          and hold Reap until it is acknowledged. Rendered in the same stage gate as the arm
+          block: it is a decision about sending, so it must not sit over live progress, a
+          finished report, or a failure. */}
+      {warn.show && !running && !report && !failed && !otherRunning && (
+        <PlexTrashNotice
+          known={warn.known}
+          unreadable={warn.unreadable}
+          acked={trashAcked}
+          onAck={setTrashAcked}
+        />
       )}
 
       {/* Stage 2 — arm + typed confirmation, shown once the practice run is clean and nothing is

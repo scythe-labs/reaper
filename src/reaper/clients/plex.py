@@ -839,6 +839,76 @@ class PlexClient:
         except Exception as exc:
             raise PlexError(f"Could not count items in section {section_key}: {exc}") from exc
 
+    async def trash_count(self, section_key: int) -> int:
+        """How many items are sitting in one section's trash, waiting to be purged.
+
+        What the operator is warned about before a reap. ``empty_trash`` is section-wide
+        (``PUT /library/sections/{key}/emptyTrash``), so it destroys the library records --
+        watch history, ratings, collection membership -- of everything already in there,
+        not just what this run deleted. Items trashed BEFORE a run are in the same state
+        before and after it, so they cancel out of the executor's count-delta gate and it
+        cannot see them. This read is the only thing that can.
+
+        A **count** read, not a listing read: the container window is zero-sized and only
+        ``totalSize`` is taken, so rule 89's complete-or-raise paging does not apply (same
+        shape as :meth:`item_count`, which reads ``totalSize`` off the section).
+
+        ``trash=1`` is a real Plex filter, confirmed against a live server against a
+        control: an unknown parameter comes back with the FULL library count, while
+        ``trash=1`` narrows. That control is why the caller can read 0 as "genuinely
+        nothing in the trash" rather than "the server ignored me". A server that DOES
+        ignore it returns the whole library, which the caller detects by comparing against
+        :meth:`item_count` and treats as unreadable rather than as a real count.
+
+        Raises ``PlexError`` on any failure (rule 110). The caller treats that as Unknown
+        and warns, never as "nothing there" (rule 93): an unreadable trash is exactly the
+        case where the operator most needs telling.
+        """
+        server = await self._connect()
+        # ``query`` is untyped in plexapi, same as it is for ``_iter_pages``.
+        raw_server: Any = server
+
+        def read() -> int:
+            container = raw_server.query(
+                f"/library/sections/{section_key}/all?trash=1"
+                "&X-Plex-Container-Start=0&X-Plex-Container-Size=0"
+            )
+            raw = container.get("totalSize")
+            if raw is None:
+                # No totalSize to read means the answer is not a count. Fail closed rather
+                # than fall back to ``size`` (rule 56) or guess at zero.
+                raise PlexError(f"trash listing for section {section_key} reported no totalSize")
+            return int(raw)
+
+        try:
+            return await asyncio.to_thread(read)
+        except PlexError:
+            raise
+        except Exception as exc:
+            raise PlexError(f"Could not count the trash in section {section_key}: {exc}") from exc
+
+    async def empties_trash_after_scan(self) -> bool:
+        """Does this server empty a section's trash by itself after every scan?
+
+        Plex's ``autoEmptyTrash`` preference, and it is server-wide, not per-library. It
+        ships **on by default**, which is why this is worth surfacing: when it is on, Plex
+        purges the trash itself after each scan Reaper's path refresh triggers, so the
+        executor's own trash interlock (the count-delta gate, the mount check, the settle
+        wait) never gets a say. The purge has already happened, inside Plex.
+
+        Raises ``PlexError`` if the preference cannot be read (rule 110), which the caller
+        reports as unknown rather than as "no".
+        """
+        server = await self._connect()
+
+        def read() -> bool:
+            return bool(server.settings.get("autoEmptyTrash").value)
+
+        try:
+            return await asyncio.to_thread(read)
+        except Exception as exc:
+            raise PlexError(f"Could not read the empty-trash-after-scan setting: {exc}") from exc
+
     async def aclose(self) -> None:
         """Close the underlying plexapi session, if one was ever built.
 

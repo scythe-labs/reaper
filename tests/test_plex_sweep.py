@@ -442,3 +442,78 @@ class TestSectionPaths:
 
         with pytest.raises(PlexError):
             await _client_with(server).section_paths()
+
+
+class TestTrashCount:
+    """What the operator is warned about before a reap.
+
+    ``empty_trash`` is section-wide, so it destroys the library records of everything
+    already in the trash, not just what the run deleted. Those items sit on both sides of
+    the executor's before/after count and cancel out of its gate, so this read is the only
+    thing that can see them. Every branch here therefore resolves toward telling the
+    operator something rather than reporting a reassuring zero.
+    """
+
+    def _server(self, xml: str) -> _FakeServer:
+        return _FakeServer([], {"/library/sections/7/all?trash=1": xml})
+
+    async def test_it_reads_the_total_the_container_reports(self) -> None:
+        server = self._server('<MediaContainer size="0" totalSize="12"/>')
+        assert await _client_with(server).trash_count(7) == 12
+        # Zero-sized window: a count read must never pull the listing itself.
+        assert "X-Plex-Container-Size=0" in server.queries[0]
+
+    async def test_a_genuinely_empty_trash_is_zero(self) -> None:
+        server = self._server('<MediaContainer size="0" totalSize="0"/>')
+        assert await _client_with(server).trash_count(7) == 0
+
+    async def test_a_container_with_no_total_fails_closed(self) -> None:
+        """No ``totalSize`` means the answer is not a count. Falling back to ``size`` (rule
+        56) would read a zero-sized window as an empty trash and print a fabricated number
+        beside the operator's most dangerous button."""
+        server = self._server('<MediaContainer size="0"/>')
+        with pytest.raises(PlexError, match="totalSize"):
+            await _client_with(server).trash_count(7)
+
+    async def test_a_failing_read_surfaces_as_plex_error(self) -> None:
+        """Rule 110: the caller catches ``PlexError`` and warns. A raw transport exception
+        would escape that and take the reap page down with it."""
+
+        class _Boom(_FakeServer):
+            def query(self, path: str) -> Any:
+                raise RuntimeError("Plex restarted")
+
+        with pytest.raises(PlexError):
+            await _client_with(_Boom([], {})).trash_count(7)
+
+
+class TestEmptiesTrashAfterScan:
+    """Plex's own ``autoEmptyTrash``, which is server-wide and ships ON. When it is on,
+    Plex purges the trash itself after every scan Reaper's refresh triggers, so the
+    executor's trash interlock never gets a say."""
+
+    class _Settings:
+        def __init__(self, value: Any) -> None:
+            self._value = value
+
+        def get(self, key: str) -> Any:
+            assert key == "autoEmptyTrash"
+            return type("Pref", (), {"value": self._value})()
+
+    async def test_it_reads_the_preference(self) -> None:
+        server = _FakeServer([], {})
+        server.settings = self._Settings(True)  # type: ignore[attr-defined]
+        assert await _client_with(server).empties_trash_after_scan() is True
+
+    async def test_an_unreadable_preference_is_an_error_not_a_no(self) -> None:
+        """Reporting "no" for a setting we could not read would tell the operator Reaper's
+        interlock is in force when it may not be."""
+
+        class _Boom:
+            def get(self, key: str) -> Any:
+                raise RuntimeError("no such setting")
+
+        server = _FakeServer([], {})
+        server.settings = _Boom()  # type: ignore[attr-defined]
+        with pytest.raises(PlexError):
+            await _client_with(server).empties_trash_after_scan()

@@ -20,6 +20,7 @@ const { apiMock } = vi.hoisted(() => ({
     executeRun: vi.fn(),
     reapStatus: vi.fn(),
     stopRun: vi.fn(),
+    plexTrash: vi.fn(),
   },
 }));
 
@@ -103,6 +104,14 @@ beforeEach(() => {
   apiMock.reapStatus.mockResolvedValue(status()); // idle until a reap starts
   apiMock.executeRun.mockResolvedValue(runningStatus);
   apiMock.stopRun.mockResolvedValue({ ...runningStatus, stopping: true });
+  // An empty, fully readable trash: the warning stays out of the way of every test that is
+  // about something else. The tests that are about it set their own value.
+  apiMock.plexTrash.mockResolvedValue({
+    configured: true,
+    trashed: 0,
+    sections_unreadable: 0,
+    empties_after_scan: false,
+  });
 });
 
 describe("the execute gate", () => {
@@ -121,6 +130,54 @@ describe("the execute gate", () => {
     await user.clear(input);
     await user.type(input, run.confirmation_phrase);
     expect(execute).toBeEnabled();
+  });
+
+  // Emptying Plex's trash takes the library records of everything already in there, not
+  // just what this run deleted, and those items cancel out of the executor's before/after
+  // count so its gate cannot see them. The operator is told, and must say yes on purpose.
+  it("holds Reap until the operator accepts that Plex's trash goes too", async () => {
+    apiMock.plexTrash.mockResolvedValue({
+      configured: true,
+      trashed: 40,
+      sections_unreadable: 0,
+      empties_after_scan: false,
+    });
+    const user = userEvent.setup();
+    renderSheet();
+
+    await screen.findByText(/Practice run passed/);
+    expect(await screen.findByText(/already holds 40 items/i)).toBeInTheDocument();
+
+    // The phrase alone is not enough while the warning stands.
+    await user.type(screen.getByRole("textbox"), run.confirmation_phrase);
+    const execute = screen.getByRole("button", { name: /^Reap 1 soul$/ });
+    expect(execute).toBeDisabled();
+
+    await user.click(screen.getByRole("checkbox"));
+    expect(execute).toBeEnabled();
+  });
+
+  it("warns when the trash can't be read, rather than reading silence as empty", async () => {
+    // Unreadable is Unknown, never Absent: "we could not look" is exactly when the operator
+    // most needs telling, so it warns and holds Reap the same way a definite count does.
+    apiMock.plexTrash.mockRejectedValue(new Error("plex is down"));
+    const user = userEvent.setup();
+    renderSheet();
+
+    await screen.findByText(/Practice run passed/);
+    expect(await screen.findByText(/couldn't read Plex's trash/i)).toBeInTheDocument();
+
+    await user.type(screen.getByRole("textbox"), run.confirmation_phrase);
+    expect(screen.getByRole("button", { name: /^Reap 1 soul$/ })).toBeDisabled();
+  });
+
+  it("says nothing at all when the trash is empty and readable", async () => {
+    // A warning that fires on every reap stops being read, so the quiet case is silent.
+    renderSheet();
+
+    await screen.findByText(/Practice run passed/);
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Plex/i)).not.toBeInTheDocument();
   });
 
   it("offers no phrase input at all while deletion is off", async () => {

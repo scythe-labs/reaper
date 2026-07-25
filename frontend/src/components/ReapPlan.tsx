@@ -16,7 +16,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { ApiError, api, type Run, type RunReport } from "../api";
 import { bytes, count, date, souls } from "../format";
+import { usePlexTrash, trashWarning } from "../usePlexTrash";
 import { useSafety } from "../useSafety";
+import { PlexTrashNotice } from "./PlexTrashNotice";
 import { ReapBreakdown } from "./ReapBreakdown";
 import { ReapConfirm } from "./ReapConfirm";
 
@@ -214,6 +216,11 @@ export function ReapPlan({
   const staleRun = run != null && latestSnapshot != null && run.snapshot_id !== latestSnapshot.id;
   const staleUnknown = run != null && latestSnapshot == null;
 
+  // Only asked once a plan exists: with nothing to reap there is nothing to warn about, and
+  // this read costs a round trip to Plex.
+  const plexTrash = usePlexTrash(run != null);
+  const planTrash = trashWarning(plexTrash.data, plexTrash.isError);
+
   // The planner refuses a degraded snapshot outright, so offering Build over one only trades
   // a click for a 422. Said here, in the same words the scan job uses, before the ledger
   // below reads as a list Reaper is ready to act on.
@@ -279,6 +286,11 @@ export function ReapPlan({
                 {run.held_back_unknown_size === 1 ? "its" : "their"} size, so it won't delete{" "}
                 {run.held_back_unknown_size === 1 ? "it" : "them"}.
               </p>
+            )}
+            {/* Informational here, and acknowledged in the sheet. Execute only opens the
+                sheet, so nothing irreversible is one click from this row. */}
+            {planTrash.show && (
+              <PlexTrashNotice known={planTrash.known} unreadable={planTrash.unreadable} />
             )}
             {staleRun && (
               <p className="notice notice-warn">

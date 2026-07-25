@@ -621,6 +621,27 @@ export interface SignalCount {
   unknown_size: number;
 }
 
+/** What Plex would remove besides the files a reap deletes.
+ *
+ *  Reaper's end-of-run purge empties a library's WHOLE trash, not just the part this run
+ *  caused, so anything already in there loses its watch history, ratings and collections
+ *  too. Those items sit on both sides of the executor's before/after count, so its gate
+ *  cannot see them. No file on disk is affected either way.
+ */
+export interface PlexTrash {
+  /** False when no Plex server is linked, in which case nothing purges. */
+  configured: boolean;
+  /** Items in the trash across the libraries included in scans. A FLOOR: it counts only
+   *  the libraries that answered, so read it with `sections_unreadable`. */
+  trashed: number;
+  /** Libraries whose trash could not be counted. Nonzero means `trashed` is incomplete,
+   *  and the page warns rather than reading silence as zero. */
+  sections_unreadable: number;
+  /** Plex's own server-wide "empty trash after every scan" preference, which ships ON.
+   *  When true Plex purges the trash itself, outside Reaper's interlock. Null if unread. */
+  empties_after_scan: boolean | null;
+}
+
 export interface ReapBreakdown {
   /** False before the first scan, when every figure is zero. */
   has_snapshot: boolean;
@@ -1515,6 +1536,7 @@ export const api = {
   person: (identity: string) =>
     request<PersonDetail>(`/api/fairness/people/${encodeURIComponent(identity)}`),
   reapBreakdown: () => request<ReapBreakdown>("/api/reap/breakdown"),
+  plexTrash: () => request<PlexTrash>("/api/reap/plex-trash"),
   syncLeavingSoon: () => post<LeavingSoonResult>("/api/leaving-soon/sync", {}),
 
   // The keep list has one pair of methods in the UI, `override` / `clearOverride` below.

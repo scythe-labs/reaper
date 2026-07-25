@@ -25,6 +25,7 @@ from reaper.api.fairness import router as fairness_router
 from reaper.api.leaving_soon import router as leaving_soon_router
 from reaper.api.logs import router as logs_router
 from reaper.api.middleware import AuthGuard
+from reaper.api.plex_trash import router as plex_trash_router
 from reaper.api.poster import close_artwork_client
 from reaper.api.poster import router as poster_router
 from reaper.api.routes import router
@@ -370,6 +371,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(whitelist_router)
     app.include_router(fairness_router)
     app.include_router(breakdown_router)
+    app.include_router(plex_trash_router)
     app.include_router(leaving_soon_router)
     app.include_router(logs_router)
 

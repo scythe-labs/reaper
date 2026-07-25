@@ -19,6 +19,7 @@ const { apiMock } = vi.hoisted(() => ({
     runs: vi.fn(),
     latestSnapshot: vi.fn(),
     reapBreakdown: vi.fn(),
+    plexTrash: vi.fn(),
   },
 }));
 
@@ -78,6 +79,14 @@ describe("ReapPlan staleness", () => {
     apiMock.createRun.mockResolvedValue(run);
     apiMock.run.mockResolvedValue(run);
     apiMock.runs.mockResolvedValue([run]);
+    // An empty, readable trash, so the Plex-trash warning stays out of the way of
+    // every test that is about something else.
+    apiMock.plexTrash.mockResolvedValue({
+      configured: true,
+      trashed: 0,
+      sections_unreadable: 0,
+      empties_after_scan: false,
+    });
     apiMock.reapBreakdown.mockResolvedValue({
       has_snapshot: true,
       policy_condemned: 2,
@@ -129,6 +138,14 @@ describe("the plan the page is showing", () => {
     apiMock.createRun.mockResolvedValue(run);
     apiMock.run.mockResolvedValue(run);
     apiMock.runs.mockResolvedValue([run]);
+    // An empty, readable trash, so the Plex-trash warning stays out of the way of
+    // every test that is about something else.
+    apiMock.plexTrash.mockResolvedValue({
+      configured: true,
+      trashed: 0,
+      sections_unreadable: 0,
+      empties_after_scan: false,
+    });
     apiMock.reapBreakdown.mockResolvedValue({ has_snapshot: false });
     apiMock.latestSnapshot.mockResolvedValue({ ...snapshot, id: run.snapshot_id });
   });
@@ -190,6 +207,14 @@ describe("what a practice run reports", () => {
     apiMock.createRun.mockResolvedValue(run);
     apiMock.run.mockResolvedValue(run);
     apiMock.runs.mockResolvedValue([run]);
+    // An empty, readable trash, so the Plex-trash warning stays out of the way of
+    // every test that is about something else.
+    apiMock.plexTrash.mockResolvedValue({
+      configured: true,
+      trashed: 0,
+      sections_unreadable: 0,
+      empties_after_scan: false,
+    });
     apiMock.reapBreakdown.mockResolvedValue({ has_snapshot: false });
     apiMock.latestSnapshot.mockResolvedValue({ ...snapshot, id: run.snapshot_id });
   });

@@ -1084,6 +1084,33 @@ Anomalies found, every one explained and none an ingest bug:
   floor pick up the slack. Defense-in-depth is real — single-gate misconfiguration is
   survivable in this library's shape.
 
+## Plex's trash, measured against a live server (2026-07-25)
+
+- **`autoEmptyTrash` is server-wide and ships ON** (read back with `default: True`). It is
+  not a per-library setting and not an unusual choice: it is what a stock install does.
+- **So the executor's trash interlock is largely decorative on a default server.**
+  `_trash_delta_is_ours`, `_mount_is_up` and `_wait_for_scan` all gate `empty_trash`, but
+  when Plex empties the trash itself after every scan, the path refresh Reaper fires per
+  deleted item has already triggered that purge, inside Plex, before the gated call
+  arrives. The interlock is still worth keeping (it is the only thing standing on a server
+  where the setting is off), but it was never the whole defense we described it as.
+- **The trash reads empty on every library of a default-configured server**, which is a
+  consequence of the above rather than a coincidence, and it means a count-based warning
+  stays quiet exactly where there is nothing to lose.
+- **`?trash=1` is a real filter on `/library/sections/{key}/all`.** Established against a
+  control rather than by assuming a 200 means agreement: an unknown parameter
+  (`?zzznotareal=1`) comes back with the FULL library count, while `trash=1` narrows. That
+  control is the only reason a zero can be read as "genuinely nothing there" instead of
+  "the server ignored the question", and a server that does ignore it answers with the
+  library size, which `api/plex_trash.py` detects by equality and reports as unreadable.
+  `?unavailable=1` and `?deletedAt>=1` are both ignored.
+- **The severity is the other way round from the intuition.** With the setting ON the trash
+  never accumulates, so there is little to lose and Reaper could not stop the purge anyway;
+  with it OFF the trash grows without bound and Reaper's own section-wide `emptyTrash`
+  destroys all of it behind a gate that structurally cannot see it. The catastrophic case
+  is the *non*-default one, which is why the blocking warning keys on a count rather than
+  on the setting.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs

@@ -818,6 +818,30 @@ class ReapBreakdownOut(BaseModel):
     condemned_by: list[SignalCountOut]
 
 
+class PlexTrashOut(BaseModel):
+    """What Plex would remove besides the files a reap deletes.
+
+    Reaper's end-of-run purge is section-wide, so it destroys the library records of
+    everything already in the trash, not just what the run caused. Those items sit on both
+    sides of the executor's before/after count and cancel out of its gate, so this read is
+    the only thing that can see them. No file on disk is affected either way.
+    """
+
+    configured: bool
+    """False when no Plex server is linked, in which case nothing purges and the page says
+    nothing at all."""
+    trashed: int = 0
+    """Items in the trash across the libraries included in scans. A FLOOR: it counts only
+    the libraries that answered, so read it with ``sections_unreadable``."""
+    sections_unreadable: int = 0
+    """Libraries whose trash could not be counted. Nonzero means ``trashed`` is incomplete,
+    and the page warns rather than reading silence as zero (rule 93)."""
+    empties_after_scan: bool | None = None
+    """Plex's own ``autoEmptyTrash`` preference, which is server-wide and ships ON. When
+    true, Plex purges the trash itself after every scan Reaper's refresh triggers, so the
+    executor's trash interlock never gets a say. ``None`` when it could not be read."""
+
+
 class ReclaimableTitleOut(BaseModel):
     """A reclaimable title on a requester's row: title, the disk it holds, and how to open
     it. Every entry is condemned by the last scan, so the verdict is implicit. Exactly one
