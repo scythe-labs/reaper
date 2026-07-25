@@ -397,6 +397,22 @@ class StepOutcome:
     needs no flag (``deleted_items`` already counts it), so this defaults False and is set
     only where a removal is proven under a failure."""
 
+    halts_run: bool = False
+    """Set on a FAILED outcome the executor could not classify, which stops the whole run.
+
+    A *mapped* failure is a known shape and one item's problem: an ``IntegrationError``, a
+    guard refusal, a missing instance route. The run records it and carries on, because the
+    canary already proved the mechanism works and one stubborn title is no reason to abandon
+    the rest.
+
+    An UNMAPPED exception is a different thing. Reaper does not know what just happened, nor
+    how far it got, and the only honest reading of "I do not understand this" on a deletion
+    path is to stop touching files. Funnelling it through :meth:`Executor._fail` alone
+    (so the journal records it and the run does not wedge in EXECUTING) let the run continue
+    into items 3..N after an unclassifiable failure at item 2 -- the wedge was fixed by
+    trading away the halt. This flag keeps both: the item is journalled FAILED and recorded
+    in the report, and then :meth:`Executor._run_deletes` aborts the run."""
+
 
 @dataclass
 class RunReport:
@@ -1242,6 +1258,23 @@ class Executor:
                 )
             # A later item failing is recorded and survivable: one stubborn item is not a
             # reason to abandon the rest, and the canary already proved the mechanism works.
+            # Unless Reaper could not tell what the failure WAS. Raised here rather than out
+            # of the send so this item is journalled, recorded in the report and counted in
+            # the progress tally first: the operator has to be able to read what happened up
+            # to the surprise, and an item whose file went before it failed still has to
+            # reach ``removed_unconfirmed`` and fire the post-run rescan.
+            if outcome.halts_run:
+                log.warning(
+                    "reap.unclassified_item_failure",
+                    media_key=delete.candidate.media_key,
+                    title=delete.candidate.title,
+                    detail=outcome.detail,
+                )
+                raise ExecutionError(
+                    f'The run stopped at "{delete.candidate.title}": {outcome.detail} '
+                    "Reaper could not tell what went wrong there, so it did not touch "
+                    "anything after it. Anything already removed stays removed."
+                )
 
     async def _refresh_overrides(self) -> None:
         """Re-read the owner's spare/reap decisions, mid-run, before the next item.
@@ -1561,6 +1594,23 @@ class Executor:
         except Exception as exc:  # a key that parsed at plan time should still parse now
             return self._fail(delete, f'could not route "{candidate.media_key}": {exc}')
 
+        def failed(reason: str, *, halts_run: bool = False) -> StepOutcome:
+            """Fail this item, reading whether its file is already gone off the journal.
+
+            The ``file_removed_at`` stamp is committed the moment a delete is confirmed
+            (:meth:`_mark_file_removed`), which is BEFORE the exclusion poll and the Plex
+            refresh that can each end the item FAILED. None of the handlers below used to
+            consult it, so a run whose items all deleted but failed afterwards reported
+            ``library_changed`` False, skipped the post-run rescan, and left the queue
+            offering files that were no longer on disk.
+            """
+            return self._fail(
+                delete,
+                reason,
+                file_removed=delete.terminal.file_removed_at is not None,
+                halts_run=halts_run,
+            )
+
         try:
             if ref.kind == "radarr":
                 return await self._send_movie(delete, ref, is_canary=is_canary)
@@ -1569,33 +1619,35 @@ class Executor:
         except IntegrationError as exc:
             # A hard client/transport error on this item. Recorded and (unless it is the
             # canary) survivable -- the run continues with the others.
-            return self._fail(delete, f"the *arr call failed: {exc}")
+            return failed(f"the *arr call failed: {exc}")
         except SafetyViolationError as exc:
             # The transport guard refused the mutation mid-send. The execute route hands
             # its own RuntimeSafety snapshot to build_reap_gateway, so the guard and this
             # executor decide from one switch state -- but if they ever disagreed, a clean
             # failed item (the canary aborts the run) is far better than a crash that
             # leaves the run in an unknown state.
-            return self._fail(delete, f"the transport guard blocked the delete: {exc}")
+            return failed(f"the transport guard blocked the delete: {exc}")
         except ExecutionError as exc:
             # A missing instance route. Same treatment: fail this item, not the world.
-            return self._fail(delete, str(exc))
+            return failed(str(exc))
         except Exception as exc:
             # The catch-all, one level below execute()'s. A surprise here can land AFTER the
             # file is already gone (a raw transport error out of a client on the re-read that
             # follows the delete), and letting it escape left the terminal step SENT forever
             # and the whole run wedged in EXECUTING with no report -- so the operator could
             # not even see which files had been removed. Funnelling through ``_fail`` marks
-            # the step FAILED with the reason, and the canary rule then decides whether one
-            # item's surprise stops the run. Whatever was already stamped ``file_removed_at``
-            # still counts against the rolling budget.
+            # the step FAILED with the reason. Whatever was already stamped
+            # ``file_removed_at`` still counts against the rolling budget.
+            #
+            # It also HALTS the run (``halts_run``), which the wedge fix originally traded
+            # away: with only the canary rule left, an unclassifiable failure at item 2 of 50
+            # let items 3..50 delete anyway. The three handlers above are known shapes and
+            # stay survivable; this one is by definition a shape Reaper does not recognize,
+            # and on the deletion path that resolves toward stopping.
             log.warning("reap.item_unexpected_error", media_key=candidate.media_key, error=str(exc))
-            return self._fail(delete, f"an unexpected error stopped this item: {exc}")
+            return failed(f"an unexpected error stopped this item: {exc}", halts_run=True)
 
-        return self._fail(
-            delete,
-            f'no live delete path for "{candidate.media_key}" ({candidate.media_type})',
-        )
+        return failed(f'no live delete path for "{candidate.media_key}" ({candidate.media_type})')
 
     async def _send_movie(self, delete: _Delete, ref: MediaRef, *, is_canary: bool) -> StepOutcome:
         """Delete a movie and, when the operator armed it, PROVE the import exclusion landed.
@@ -1903,6 +1955,10 @@ class Executor:
             # re-read above and this resolve (removed out of band, or re-numbered), and the
             # fail-closed reading of "no files" is a skip, not a confirmed delete. The
             # unmonitor already took and keeps its VERIFIED mark; only the delete is skipped.
+            # Which is also why the copy below does not say "nothing was sent": the
+            # unmonitor was sent, was verified, and is still in force. The skip is right;
+            # telling the operator their season is untouched when Sonarr has stopped
+            # tracking it is not.
             log.warning(
                 "reap.season_files_vanished",
                 media_key=candidate.media_key,
@@ -1911,9 +1967,9 @@ class Executor:
             )
             return self._mark_skipped(
                 delete,
-                f"Sonarr no longer lists any file for season {ref.season}, so there was "
-                "nothing to delete. Kept, and nothing was sent.",
-                check="No files left to remove. Nothing was deleted.",
+                f"Sonarr no longer lists any file for season {ref.season}, so nothing was "
+                "deleted. The season was left unmonitored.",
+                check="No files left to remove. The season was left unmonitored.",
             )
         await self._mark_sent(delete_step)
         await sonarr.delete_episode_files(file_ids)
@@ -1938,14 +1994,22 @@ class Executor:
                 file_removed=len(still_there) < len(file_ids),
             )
 
-        # The season's files are gone, so tell Plex -- the same nudge the movie path sends,
-        # and the reason the end-of-run trash purge can run for a TV section at all. Scoped
-        # to this series' own folder, never the whole library. ``plex_entries=1`` is the
-        # ceiling on what a season delete can remove from a section's item count: a TV
-        # section counts shows, so pruning one season of a multi-season show removes none
-        # (the count-delta gate then declines the purge, which is the safe answer) and
-        # pruning a show's last season removes exactly one.
-        await self._best_effort_refresh(str(series.get("path") or ""), plex_entries=1)
+        # The season's files are gone, so tell Plex -- the same nudge the movie path sends.
+        # Scoped to this series' own folder, never the whole library.
+        #
+        # ``plex_entries=0``, deliberately: a TV section counts SHOWS, and pruning a season
+        # of a multi-season show removes no show from it. Passing 1 (what this did) granted
+        # the trash purge an allowance of one section entry per season pruned, so a run
+        # pruning N seasons authorized a shrink of up to N shows on the most dangerous call
+        # in the application -- a shrink that could only have come from something OTHER than
+        # this run, since our own prunes move that count by zero. The comment here already
+        # said the gate should decline; now it does, because zero expected entries fails the
+        # ``expected <= 0`` guard in ``_trash_delta_is_ours``.
+        #
+        # Pruning a show's LAST season may well drop the show, and that purge is declined
+        # too. That is the cost, and it is the right way round: a lingering "unavailable"
+        # entry is cosmetic, and purging someone else's trashed items is not.
+        await self._best_effort_refresh(str(series.get("path") or ""), plex_entries=0)
 
         await self._mark_verified(delete_step, {"deleted_file_ids": file_ids, "remaining": 0})
         return StepOutcome(
@@ -2002,6 +2066,12 @@ class Executor:
         (a merged bind lists one file more than once) -- which feeds the purge's
         count-delta gate. When the path cannot be mapped it does nothing and says so; the
         file is already gone and Plex will notice on its next scheduled scan regardless.
+
+        ``plex_entries=0`` is a real and meaningful value: this delete removes no entry
+        from the section's own count, so it grants the purge NO allowance and the
+        count-delta gate declines for that section. A season prune of a show passes zero
+        for exactly that reason (a TV section counts shows), which is why this floors at
+        zero rather than at one.
         """
         gateway = self._gateway
         if gateway is None or gateway.plex is None or not arr_path:
@@ -2017,7 +2087,7 @@ class Executor:
                         self._affected_sections.add(section.key)
                         self._deleted_by_section[section.key] = self._deleted_by_section.get(
                             section.key, 0
-                        ) + max(1, plex_entries)
+                        ) + max(0, plex_entries)
                         return
             log.info("reap.refresh_unmapped", arr_path=arr_path)
         except Exception as exc:
@@ -2211,6 +2281,7 @@ class Executor:
         checks: list[StepCheck] | None = None,
         *,
         file_removed: bool = False,
+        halts_run: bool = False,
     ) -> StepOutcome:
         """Fail this item: mark any not-yet-terminal step FAILED, and record why.
 
@@ -2224,6 +2295,9 @@ class Executor:
         is a different thing from the failure itself: the step stays FAILED (its
         verification really did fail), but the run must still count the library as changed
         and kick the post-run rescan.
+
+        ``halts_run`` says the failure was one Reaper could not classify, so the run stops
+        after this item rather than carrying on to the next (see :class:`StepOutcome`).
         """
         # Every hard item failure -- a delete that could not be confirmed, a routing error,
         # an *arr call that raised -- funnels through here, so this is the one place to
@@ -2247,6 +2321,7 @@ class Executor:
             title=delete.candidate.title,
             checks=checks if checks is not None else [StepCheck(reason, False)],
             file_removed=file_removed,
+            halts_run=halts_run,
         )
 
     def _may_send_unmeasured(self, candidate: Candidate, comparable: frozenset[SizeSource]) -> bool:

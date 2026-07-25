@@ -253,14 +253,22 @@ class TestKeepRuleConflict:
         assert not plan.auto_approvable  # ...but it refuses to do so unattended
         assert any(c.pruned_season == 1 for c in plan.conflicts)
 
-    def test_an_unmeasured_season_is_not_read_as_nobody_watched_it(self) -> None:
-        """A season on disk that Plex never resolved has no watch history to read.
+    def test_an_unmeasured_kept_season_holds_the_prune_without_inventing_a_number(
+        self,
+    ) -> None:
+        """A season on disk that Plex never resolved has no watch history to read, and
+        neither reading it as 0 nor skipping it is right.
 
-        Reading that as 0 turned "we could not measure it" into "we measured it and
-        nobody watched", which invents a conflict out of nothing: the show sits in
-        permanent abstain, scan after scan, and the operator is told in plain words that
-        N people watched one season "more than watched" another -- against a number that
-        was never taken. Here season 3 is the unmeasured one the rule keeps.
+        Reading it as 0 turned "we could not measure it" into "we measured it and nobody
+        watched", so the operator was told in plain words that N people watched one season
+        more than another, against a number that was never taken. Skipping it, which
+        replaced that, threw away the hold along with the bad sentence: a well-watched
+        prunable season became auto-approvable purely because the season it would have
+        been measured against could not be read. That is unreadable evidence clearing a
+        protection (rule 93).
+
+        So the hold stays and only the arithmetic goes. Here season 3 is the unmeasured
+        one the rule keeps.
         """
         seasons = [_season(n) for n in range(1, 5)]  # 1..4
         plan = plan_series_prune(
@@ -271,11 +279,18 @@ class TestKeepRuleConflict:
             watchers_by_season={1: 40, 2: 5, 3: None, 4: 41},
         )
 
-        assert 1 in plan.prunable
-        # Season 4 was measured and beats season 1, so no conflict against it either; the
-        # only pair that could have fired is 1 vs the unmeasured 3, and it is skipped.
-        assert plan.conflicts == []
-        assert plan.auto_approvable
+        assert 1 in plan.prunable  # the rule would remove it
+        assert not plan.auto_approvable  # ...but not unattended, because 3 is unreadable
+
+        # Season 4 was measured and out-watches both prunable seasons, so it raises
+        # nothing. Each watched prunable season fires against the unreadable 3.
+        assert [(c.pruned_season, c.kept_season) for c in plan.conflicts] == [(1, 3), (2, 3)]
+        conflict = plan.conflicts[0]
+        assert conflict.kept_watchers is None
+        assert "could not check" in conflict.message
+        # And it never asserts the comparison it could not make. That phrase is the whole
+        # bug: it read as a measured fact about a number nobody ever took.
+        assert "more than watched" not in conflict.message
 
     def test_zero_still_means_measured_and_unwatched(self) -> None:
         """The three-state map must not collapse "nobody watched it" into "unmeasured":

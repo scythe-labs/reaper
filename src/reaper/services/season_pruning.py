@@ -96,7 +96,13 @@ class PruneConflict:
     pruned_season: int
     kept_season: int
     pruned_watchers: int
-    kept_watchers: int
+    kept_watchers: int | None
+    """How many watched the kept season, or ``None`` when that could not be read.
+
+    ``None`` is a conflict in its own right, not a missing one: the comparison could not
+    be made, so the season is held for the operator rather than cleared by default. It is
+    kept distinct from ``0`` (read, and nobody watched) because collapsing the two is what
+    produced a message asserting a count nobody ever took."""
     #: Why the kept season is being kept -- its ``ProtectedSeason.reason``, so the message
     #: can name the real protection ("still downloading") instead of a vague "keep rule."
     kept_reason: str
@@ -104,6 +110,13 @@ class PruneConflict:
     @property
     def message(self) -> str:
         viewers = "person" if self.pruned_watchers == 1 else "people"
+        if self.kept_watchers is None:
+            return (
+                f"{self.pruned_watchers} {viewers} watched Season {self.pruned_season}. "
+                f"Reaper could not check who watched Season {self.kept_season}, which it "
+                f"is keeping because {_because(self.kept_reason)}. Left for you to decide "
+                "instead of removing it."
+            )
         return (
             f"{self.pruned_watchers} {viewers} watched Season {self.pruned_season}, more "
             f"than watched Season {self.kept_season}, which Reaper is keeping because "
@@ -400,12 +413,27 @@ def _detect_conflicts(
     common when neither has been watched -- is not a conflict.
 
     A season with no watcher count (``None``: on disk, but never resolved in Plex, so
-    nobody could read its history) is skipped on BOTH sides. Reading it as 0 turned an
-    unmeasured season into a measured-and-unwatched one and invented conflicts out of
-    nothing: the show sat in permanent abstain, scan after scan, and the operator was
-    told in plain words that N people watched one season "more than watched" another --
-    a comparison against a number that was never taken. 0 stays a legitimate value for a
-    season Plex DID resolve and nobody watched, so the two cases must not be collapsed.
+    nobody could read its history) is NOT the same as one nobody watched, and the two
+    sides treat it differently on purpose.
+
+    Reading ``None`` as 0 turned an unmeasured season into a measured-and-unwatched one
+    and invented conflicts out of nothing: the show sat in permanent abstain, scan after
+    scan, and the operator was told in plain words that N people watched one season "more
+    than watched" another -- a comparison against a number that was never taken. But
+    *skipping* it on the kept side, which is what replaced that, threw the hold away with
+    the bad sentence: a well-watched prunable season became condemnable purely because the
+    season it would have been measured against could not be read. That is unreadable
+    evidence clearing a protection, which is the one direction this codebase never
+    resolves toward (rule 93).
+
+    So an unreadable kept season is a conflict, carried as ``kept_watchers=None`` and
+    worded "could not check" rather than dressed up as a count. The item is still held for
+    the operator; only the false arithmetic is gone.
+
+    On the pruned side ``None`` still passes, and that is not the same asymmetry: with no
+    readable count for the season being removed there is nothing to compare FROM, so no
+    conflict can be stated at all. A hold there would have to rest on some other signal,
+    not on this comparison.
     """
     conflicts: list[PruneConflict] = []
     kept_seasons = [p for p in protected if p.season_number != SPECIALS_SEASON]
@@ -413,13 +441,14 @@ def _detect_conflicts(
         if pruned == SPECIALS_SEASON:
             continue
         pruned_watchers = watchers_by_season.get(pruned)
-        if pruned_watchers is None:
+        if pruned_watchers is None or pruned_watchers == 0:
+            # Unreadable, or read and nobody watched. Either way this season cannot be
+            # shown to out-rank anything, so there is no comparison to make. Kept as two
+            # named cases rather than one falsy test: collapsing them is the bug above.
             continue
         for kept in kept_seasons:
             kept_watchers = watchers_by_season.get(kept.season_number)
-            if kept_watchers is None:
-                continue
-            if pruned_watchers > kept_watchers:
+            if kept_watchers is None or pruned_watchers > kept_watchers:
                 conflicts.append(
                     PruneConflict(
                         pruned_season=pruned,

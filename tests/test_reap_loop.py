@@ -3179,7 +3179,14 @@ class TestAnOverrideChangedMidRun:
 
     Each test hangs its change off the ARM re-check, which the executor runs at the top of
     every item, immediately before it re-reads the overrides. That is the moment a decision
-    committed from another screen has to land."""
+    committed from another screen has to land.
+
+    A Spare arrives on **another connection** -- it is an API request, handled by its own
+    session, while this run holds one of its own. So the change is committed from a separate
+    session here, which is the only shape that proves the property the fix rests on: the run
+    session commits after every item, so its next read starts a fresh transaction and sees
+    what the other one wrote. Committing on the run's OWN session (as this suite used to)
+    tests the executor against a decision it could never have missed."""
 
     @staticmethod
     def _on_second_item(action: Callable[[], Awaitable[None]]) -> Callable[[], Awaitable[bool]]:
@@ -3194,6 +3201,28 @@ class TestAnOverrideChangedMidRun:
 
         return recheck
 
+    @staticmethod
+    async def _decide_elsewhere(
+        session: AsyncSession, *, media_key: str, decision: str | None
+    ) -> None:
+        """Record (or withdraw) a decision on a SECOND session against the same database,
+        the way the review queue's own request does, and commit it there."""
+        factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
+            session.bind, expire_on_commit=False, autoflush=False
+        )
+        async with factory() as other:
+            if decision is None:
+                await whitelist.remove_override(other, media_key=media_key)
+            else:
+                await whitelist.set_override(
+                    other,
+                    media_key=media_key,
+                    title="Worthless 1",
+                    decision=decision,
+                    note=None,
+                )
+            await other.commit()
+
     async def test_a_spare_committed_mid_run_keeps_the_file(self, session: AsyncSession) -> None:
         snapshot_id = await _snapshot_many(
             session, [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 9 * GB, 702)]
@@ -3201,14 +3230,7 @@ class TestAnOverrideChangedMidRun:
         run = await _plan(session, snapshot_id)
 
         async def spare_it() -> None:
-            await whitelist.set_override(
-                session,
-                media_key="radarr:1:2",
-                title="Worthless 1",
-                decision="spare",
-                note=None,
-            )
-            await session.commit()
+            await self._decide_elsewhere(session, media_key="radarr:1:2", decision="spare")
 
         radarr = FakeRadarr()
         report = await _real(
@@ -3247,8 +3269,7 @@ class TestAnOverrideChangedMidRun:
         run = await _plan(session, snapshot_id)
 
         async def unreap_it() -> None:
-            await whitelist.remove_override(session, media_key="radarr:1:2")
-            await session.commit()
+            await self._decide_elsewhere(session, media_key="radarr:1:2", decision=None)
 
         radarr = FakeRadarr()
         report = await _real(
@@ -3288,14 +3309,7 @@ class TestAnOverrideChangedMidRun:
         await session.flush()
 
         async def re_reap_it() -> None:
-            await whitelist.set_override(
-                session,
-                media_key="radarr:1:2",
-                title="Worthless 1",
-                decision="reap",
-                note=None,
-            )
-            await session.commit()
+            await self._decide_elsewhere(session, media_key="radarr:1:2", decision="reap")
 
         radarr = FakeRadarr()
         await _real(
@@ -3334,6 +3348,38 @@ class TestAnOverrideChangedMidRun:
         assert report.state is RunState.ABORTED
         assert "could not re-check your keep and remove decisions" in (report.aborted_reason or "")
         assert radarr.delete_calls == [1]  # the first item went; the second was never sent
+
+    async def test_the_decisions_are_re_read_before_every_item(self, session: AsyncSession) -> None:
+        """The interlock's own tripwire (rule 118), and it pins ONE arm deliberately.
+
+        The behavioral tests above cannot tell this interlock's two arms apart: each fails
+        whether the per-item re-read is deleted or the per-item commit that lets another
+        session's write become visible is. This one fails only for the re-read, by counting
+        the reads: once before the first item, then once more before each. Hoisting it back
+        out of the loop -- the shape that shipped, and that made a Spare clicked during a
+        long reap invisible -- drops the count to one.
+        """
+        snapshot_id = await _snapshot_many(
+            session,
+            [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 1 * GB, 702), ("radarr:1:3", 1 * GB, 703)],
+        )
+        run = await _plan(session, snapshot_id)
+        radarr = FakeRadarr()
+
+        real_overrides = whitelist.overrides
+        reads = {"n": 0}
+
+        async def counted(sess: AsyncSession) -> dict[str, str]:
+            # Delegates to the real read: a test must never re-implement what it checks.
+            reads["n"] += 1
+            return await real_overrides(sess)
+
+        with mock.patch.object(executor_module.whitelist, "overrides", counted):
+            report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert report.state is RunState.COMPLETED
+        assert len(radarr.delete_calls) == 3
+        assert reads["n"] == 4  # the run-start load, then one before each of the three items
 
 
 # ---------------------------------------------------------------------------
@@ -3482,6 +3528,15 @@ class TestASeasonPruneTidiesPlexToo:
     piling up until Plex's own scheduled scan."""
 
     async def test_a_pruned_season_refreshes_its_series_folder(self, session: AsyncSession) -> None:
+        """The refresh is the point; the purge deliberately is NOT.
+
+        A Plex TV section counts SHOWS, so pruning one season of a multi-season show moves
+        that count by zero. The prune therefore claims no section entry, the count-delta
+        gate has no allowance to spend, and it declines. Claiming one per season instead
+        (what this did) authorized a shrink of up to N shows on the most dangerous call in
+        the application -- and a shrink of that size could only have come from something
+        OTHER than this run, since our own prunes move the count by nothing. The cost is a
+        lingering "unavailable" entry until Plex's own scan, which is cosmetic."""
         snapshot_id = await _snapshot_one(
             session, media_key="sonarr:1:42:3", rating_key=701, media_type="season"
         )
@@ -3497,8 +3552,27 @@ class TestASeasonPruneTidiesPlexToo:
         assert report.state is RunState.COMPLETED
         # Scoped to the series' own folder, never the whole library.
         assert plex.refreshed == [("Shows", "/tv/A Show")]
-        # ...and the section now qualifies for the end-of-run purge, behind the same gate.
-        assert plex.emptied == ["Shows"]
+        # ...and the section is left for Plex to tidy: a shrink this run cannot account for
+        # is never ours to purge, even when the numbers happen to look right.
+        assert plex.emptied == []
+
+    async def test_a_movie_delete_still_purges_its_section(self, session: AsyncSession) -> None:
+        """The scope check on the test above: TV claims no entry, movies still claim one, so
+        the count-delta gate still confirms and purges for the movie path. Without this, the
+        assertion above would pass just as well if purging had been disabled everywhere."""
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+        plex = FakePlex(sections={"Films": ["/movies"]}, item_counts={"Films": [50, 49]})
+
+        report = await _real(
+            session,
+            run,
+            _gateway(radarr={1: FakeRadarr(path="/movies/One")}, plex=plex),
+        )
+
+        assert report.state is RunState.COMPLETED
+        assert plex.refreshed == [("Films", "/movies/One")]
+        assert plex.emptied == ["Films"]
 
     async def test_a_series_with_no_path_simply_does_not_refresh(
         self, session: AsyncSession
@@ -3553,7 +3627,13 @@ class TestASeasonWithNothingLeftToDelete:
         assert sonarr.delete_calls == []  # no empty delete was even sent
         outcome = report.outcomes[0]
         assert outcome.state is StepState.SKIPPED
-        assert "nothing to delete" in outcome.detail
+        assert "nothing was deleted" in outcome.detail
+        # ...and the copy says what DID happen to the season. The unmonitor was sent, took,
+        # and is still in force (the next test), so a line reading "nothing was sent" told
+        # the operator the season was untouched when it was not.
+        assert "left unmonitored" in outcome.detail
+        assert "nothing was sent" not in outcome.detail
+        assert any("left unmonitored" in c.label for c in outcome.checks)
 
     async def test_the_verified_unmonitor_keeps_its_state(self, session: AsyncSession) -> None:
         """The unmonitor already took, and it is still in force. Overwriting its VERIFIED mark
@@ -3576,21 +3656,33 @@ class TestASeasonWithNothingLeftToDelete:
 # ---------------------------------------------------------------------------
 
 
-class TestAnUnmappedErrorDoesNotWedgeTheRun:
+class TestAnUnmappedErrorStopsTheRunWithoutWedgingIt:
     """A raw transport error out of a client -- Plex restarting between the connect and the
     read, say -- used to escape ``_send_for_real`` and ``execute()`` alike, AFTER a file was
     already deleted: the terminal step stuck SENT, the run stuck EXECUTING (which execute()
     refuses to re-enter and nothing reconciles), and no report at all, so the operator could
-    not even see which files had gone."""
+    not even see which files had gone.
 
-    async def test_a_raw_error_fails_the_item_and_the_run_carries_on(
-        self, session: AsyncSession
-    ) -> None:
+    Fixing the wedge originally traded the halt away: the item was journalled and the run
+    walked on into items 3..N after a failure nobody could classify. Both properties are
+    required, and they are what these tests pin apart. An UNMAPPED exception means Reaper
+    does not know what just happened or how far it got, and the only honest reading of that
+    on a deletion path is to stop touching files. A MAPPED one (an ``IntegrationError``) is
+    a known shape and one item's problem, so the run carries on -- the canary already proved
+    the mechanism works."""
+
+    @staticmethod
+    async def _three(session: AsyncSession) -> ReapRun:
         snapshot_id = await _snapshot_many(
             session,
             [("radarr:1:1", 1 * GB, 701), ("radarr:1:2", 2 * GB, 702), ("radarr:1:3", 3 * GB, 703)],
         )
-        run = await _plan(session, snapshot_id)
+        return await _plan(session, snapshot_id)
+
+    async def test_a_raw_error_journals_the_item_and_halts_the_run(
+        self, session: AsyncSession
+    ) -> None:
+        run = await self._three(session)
 
         class _SurprisingRadarr(FakeRadarr):
             async def exclusions(self) -> list[dict[str, Any]]:
@@ -3602,14 +3694,43 @@ class TestAnUnmappedErrorDoesNotWedgeTheRun:
         radarr = _SurprisingRadarr()
         report = await _real(session, run, _gateway(radarr={1: radarr}))
 
-        assert report.state is RunState.COMPLETED  # the run finished rather than escaping
-        assert radarr.delete_calls == [1, 2, 3]  # and reached the third item
+        # Stopped at the surprise: item three was never sent.
+        assert report.state is RunState.ABORTED
+        assert radarr.delete_calls == [1, 2]
+        assert "Worthless 1" in (report.aborted_reason or "")  # the item is named
+        # ...and the wedge stays fixed: the item is journalled, the report exists, and the
+        # run is in a terminal state rather than stuck EXECUTING with nothing to reconcile.
         hurt = next(o for o in report.outcomes if o.media_key == "radarr:1:2")
         assert hurt.state is StepState.FAILED
         assert "unexpected error" in hurt.detail
         steps = {s.media_key: s for s in await _steps(session, run.id)}
         assert steps["radarr:1:2"].state is StepState.FAILED  # not left SENT forever
         assert steps["radarr:1:2"].file_removed_at is not None  # and the removal is charged
+        stored = await session.get(ReapRun, run.id)
+        assert stored is not None and stored.state is RunState.ABORTED
+
+    async def test_a_mapped_failure_still_lets_the_run_carry_on(
+        self, session: AsyncSession
+    ) -> None:
+        """The contrast that makes the halt meaningful. The same failure point, raised as
+        the shape the executor DOES map: one stubborn title is recorded and the rest of the
+        run still happens."""
+        run = await self._three(session)
+
+        class _UnreachableAtItemTwo(FakeRadarr):
+            async def exclusions(self) -> list[dict[str, Any]]:
+                if self.delete_calls and self.delete_calls[-1] == 2:
+                    raise IntegrationError("radarr", "connection reset")
+                return await super().exclusions()
+
+        radarr = _UnreachableAtItemTwo()
+        report = await _real(session, run, _gateway(radarr={1: radarr}))
+
+        assert report.state is RunState.COMPLETED
+        assert radarr.delete_calls == [1, 2, 3]  # it reached the third item
+        hurt = next(o for o in report.outcomes if o.media_key == "radarr:1:2")
+        assert hurt.state is StepState.FAILED
+        assert "connection reset" in hurt.detail
 
     async def test_a_plex_surprise_during_the_refresh_is_swallowed(
         self, session: AsyncSession

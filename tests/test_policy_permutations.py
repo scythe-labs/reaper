@@ -847,7 +847,13 @@ class TestSeasonPlanPermutations:
                 if not flag:
                     assert plan.conflicts == []
                 for conflict in plan.conflicts:
-                    assert conflict.pruned_watchers > conflict.kept_watchers
+                    # Two shapes, and both are real conflicts: the kept season was read and
+                    # is out-watched, or it could not be read at all (kept_watchers None),
+                    # which holds the prune rather than clearing it.
+                    if conflict.kept_watchers is None:
+                        assert conflict.pruned_watchers > 0
+                    else:
+                        assert conflict.pruned_watchers > conflict.kept_watchers
                     assert conflict.kept_season != 0, "specials are not a meaningful comparison"
                     assert conflict.pruned_season != 0
         assert checked == len(SHOWS) * 32
