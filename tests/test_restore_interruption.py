@@ -164,6 +164,44 @@ class TestASwapKilledMidLoopDoesNotStrandAWal:
         assert (tmp_path / DB_ARCNAME).read_bytes() == restored
         assert not (recovery / DB_ARCNAME).exists()
 
+    def test_the_restored_databases_own_wal_is_left_where_it_is(self, tmp_path: Path) -> None:
+        """Once the staged database is in place, data/reaper.db-wal is ITS log.
+
+        _move_staged_in ends in an rmtree that swallows its own failure, so a completed
+        swap can still leave the marker behind: a read-only directory, or a held file on a
+        network mount. Every later boot then re-enters this branch with the app's own live
+        WAL sitting beside the restored database. Sweeping the sidecars "just in case"
+        looked harmless because the branch looked unreachable, and it is neither: it loses
+        every transaction still in that log, and drops it on top of the recovery copy's own
+        log, which is precisely the mismatched-WAL corruption the sweep exists to prevent.
+        """
+        settings = _settings(tmp_path)
+        settings.ensure_data_dir()
+        recovery = tmp_path / "pre-restore-20260724T000000Z"
+        recovery.mkdir()
+        _sqlite_file(recovery / DB_ARCNAME)
+        (recovery / f"{DB_ARCNAME}-wal").write_bytes(b"the-previous-databases-wal")
+        # The swap finished; only the staging cleanup did not.
+        _sqlite_file(tmp_path / DB_ARCNAME)
+        (tmp_path / f"{DB_ARCNAME}-wal").write_bytes(b"the-restored-databases-own-wal")
+        _stage(tmp_path, with_db=False, swapping=recovery.name)
+
+        assert restore.apply_pending_restore(settings) is True
+
+        assert (tmp_path / f"{DB_ARCNAME}-wal").read_bytes() == b"the-restored-databases-own-wal"
+        assert (recovery / f"{DB_ARCNAME}-wal").read_bytes() == b"the-previous-databases-wal"
+
+    def test_a_marker_naming_a_plain_file_still_finishes_the_restore(self, tmp_path: Path) -> None:
+        """A hand-edited marker must not be able to stop the restore it is describing."""
+        settings = _settings(tmp_path)
+        settings.ensure_data_dir()
+        (tmp_path / "pre-restore-not-a-directory").write_text("x\n")
+        _sqlite_file(tmp_path / DB_ARCNAME)
+        _stage(tmp_path, with_db=True, swapping="pre-restore-not-a-directory")
+
+        assert restore.apply_pending_restore(settings) is True
+        assert (tmp_path / KEY_FILENAME).read_text() == "staged-key\n"
+
     def test_an_unusable_marker_name_still_lands_inside_the_data_dir(self, tmp_path: Path) -> None:
         """The marker is written by this process, but it is read back off disk, so it is
         treated as untrusted: a name that is not one of ours gets a fresh folder rather

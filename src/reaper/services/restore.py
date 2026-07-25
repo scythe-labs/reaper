@@ -525,7 +525,7 @@ def _unique_dir(parent: Path, name: str) -> Path:
     while candidate.exists():
         candidate = parent / f"{name}-{suffix}"
         suffix += 1
-    candidate.mkdir(parents=True)
+    candidate.mkdir(parents=True, mode=0o700)
     return candidate
 
 
@@ -565,8 +565,13 @@ def _recovery_dir(data_dir: Path, marker: Path) -> Path:
         recovery = data_dir / named
         if recovery.is_dir():
             return recovery
-        recovery.mkdir(parents=True, exist_ok=True)
-        return recovery
+        if not recovery.exists():
+            # Named, prefixed, and simply not there any more: remake it. A marker naming
+            # something that exists but is NOT a directory falls through to a fresh one
+            # rather than raising, because refusing to boot over a hand-edited marker
+            # would strand the very restore this path exists to finish.
+            recovery.mkdir(parents=True, mode=0o700)
+            return recovery
     return _unique_dir(data_dir, f"{PRE_RESTORE_PREFIX}{utcnow().strftime('%Y%m%dT%H%M%SZ')}")
 
 
@@ -637,13 +642,24 @@ def apply_pending_restore(settings: Settings) -> bool:
         # and moving its write-ahead log left that log in data/, where the restored
         # database then landed beside it and SQLite replayed a foreign WAL into it.
         #
-        # How far to finish depends on whether the staged database is still staged. While
-        # it is, anything at data/reaper.db is the previous database and belongs in the
-        # recovery folder. Once _move_staged_in has moved it across, that same path is the
-        # RESTORED database, and moving it aside would undo the restore and leave nothing
-        # behind -- so only the sidecars are swept then.
-        names = _LIVE_FILES if (pending / DB_ARCNAME).is_file() else _DB_SIDECARS
-        _move_aside(data_dir, recovery, names)
+        # Whether to finish it at all depends on whether the staged database is still
+        # staged. While it is, nothing has been swapped in yet, so anything at
+        # data/reaper.db is the PREVIOUS database and it and its sidecars belong in the
+        # recovery folder.
+        #
+        # Once _move_staged_in has moved it across, this must do NOTHING but finish that
+        # move. data/reaper.db is then the RESTORED database, and data/reaper.db-wal is
+        # ITS log, not the previous one's. Sweeping the sidecars "just in case" here read
+        # as harmless because the branch looked unreachable, and it is not: _move_staged_in
+        # ends in an rmtree that swallows its own failure (a read-only directory, a held
+        # file on a network mount), so the marker can survive a swap that really did
+        # complete. Every later boot would then take this branch with the app's own live
+        # WAL sitting beside the restored database, and move it away -- losing every
+        # transaction still in it, and overwriting the recovery copy's own log with a
+        # foreign one. That is the exact corruption _DB_SIDECARS exists to prevent, so the
+        # only safe answer here is to leave data/ alone.
+        if (pending / DB_ARCNAME).is_file():
+            _move_aside(data_dir, recovery, _LIVE_FILES)
         _move_staged_in(data_dir, pending)
         sys.stderr.write(
             "reaper: finished a restore that was interrupted on an earlier start; the "
