@@ -32,9 +32,11 @@ import structlog
 from apscheduler.events import EVENT_JOB_ERROR, EVENT_JOB_EXECUTED, EVENT_JOB_SUBMITTED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from reaper.auth import sessions
 from reaper.clients.tautulli import TautulliClient
 from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings
@@ -64,6 +66,14 @@ MAINTENANCE_JOB_IDS: tuple[str, ...] = tuple(DEFAULT_MAINTENANCE_CRONS)
 
 #: Every job whose schedule the owner may edit, scan first. Drives the Jobs settings list.
 SCHEDULABLE_JOB_IDS: tuple[str, ...] = (SCAN_JOB_ID, *MAINTENANCE_JOB_IDS)
+
+#: Housekeeping that deliberately does NOT appear in that list. Deleting sessions whose
+#: 30-day window has already closed is not a choice an operator should have to make, and
+#: an off switch on it would only ever let the table grow (PR-13). It is on an interval
+#: rather than a cron for the same reason it has no switch: there is no hour of the day
+#: this belongs at, so it never has to be re-based when the server time zone changes.
+SESSION_SWEEP_JOB_ID = "sweep_expired_sessions"
+SESSION_SWEEP_INTERVAL_S = 12 * 60 * 60
 
 
 #: Skip a scheduled ratings refresh when the dataset was synced this recently. IMDb
@@ -216,6 +226,25 @@ async def full_history_sweep(
         await _record_run(
             session_factory, "full_history_sweep", ok=False, result="Couldn't update history"
         )
+
+
+async def sweep_expired_sessions(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Delete auth sessions whose window has closed. Not operator-schedulable (see the id).
+
+    Swallows its own failures like every other job here: a locked database must not stop
+    the scheduler, and nothing depends on this having run -- an expired session is refused
+    on sight whether or not its row is still there.
+    """
+    try:
+        async with session_factory() as session:
+            removed = await sessions.sweep_expired(session)
+            await session.commit()
+        if removed:
+            log.info("scheduler.sessions_swept", removed=removed)
+    except Exception as exc:
+        log.warning("scheduler.session_sweep_failed", error=str(exc))
 
 
 async def scheduled_scan(
@@ -437,6 +466,13 @@ def build_scheduler(
             id=job_id,
             replace_existing=True,
         )
+    scheduler.add_job(
+        sweep_expired_sessions,
+        IntervalTrigger(seconds=SESSION_SWEEP_INTERVAL_S),
+        args=[session_factory],
+        id=SESSION_SWEEP_JOB_ID,
+        replace_existing=True,
+    )
     return scheduler
 
 

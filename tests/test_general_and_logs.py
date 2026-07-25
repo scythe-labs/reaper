@@ -30,12 +30,8 @@ from sqlalchemy import create_engine as sa_create_engine
 from starlette.requests import Request
 
 from reaper import logbuffer
-from reaper.api.middleware import (
-    _api_key_allowed,
-    api_key_throttle,
-    client_ip,
-    parse_proxy_networks,
-)
+from reaper.api.middleware import _api_key_allowed, api_key_throttle
+from reaper.auth.proxy import client_ip, parse_proxy_networks
 from reaper.config import Settings, parse_trusted_proxies
 from reaper.db.base import Base
 from reaper.main import create_app

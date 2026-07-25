@@ -173,7 +173,15 @@ class TestTheSchedulerIsUpkeepOnly:
         # build_scheduler returns an unstarted scheduler; jobs are inspectable without
         # starting it, and there is nothing to shut down.
         job_ids = {job.id for job in sched.get_jobs()}
-        assert job_ids == {"refresh_ratings", "refresh_curated_lists", "full_history_sweep"}
+        assert job_ids == {
+            "refresh_ratings",
+            "refresh_curated_lists",
+            "full_history_sweep",
+            # Housekeeping, deliberately absent from the operator's Jobs list: deleting
+            # sessions whose window has already closed is not a choice to hand over, and an
+            # off switch on it could only ever let the table grow (PR-13).
+            scheduler.SESSION_SWEEP_JOB_ID,
+        }
         # Every job is a refresh/sweep. Nothing here touches the executor or an *arr
         # delete -- automated deletion is gated behind an autonomy grant, not a cron entry.
         for job in sched.get_jobs():

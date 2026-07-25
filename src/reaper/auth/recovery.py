@@ -23,6 +23,9 @@ string: the banner prints a bare ``/recover`` URL plus the code on its own line,
 the browser sends the code in the ``POST /recover`` body. Nothing carries the token in
 a request line, so a fronting reverse proxy's access log never records it -- closing
 the one residual exposure a ``GET /recover?token=...`` link would have left open.
+
+The URL's host comes from :func:`recovery_base_url`, not from the bind address --
+see there for why.
 """
 
 from __future__ import annotations
@@ -36,6 +39,27 @@ from reaper.clock import expiry, utcnow
 from reaper.db.models import RecoveryToken
 
 log = structlog.get_logger(__name__)
+
+#: Bind addresses that are not somewhere a browser can go. ``0.0.0.0`` (the default) and
+#: ``::`` mean "every interface" to the socket layer and nothing at all to a person.
+_UNROUTABLE_BINDS = frozenset({"", "0.0.0.0", "::", "[::]", "*"})  # noqa: S104
+
+#: Stands in for the bind address when it is one of the above. An operator in a lockout
+#: knows their own address; what they need from the banner is the port and the path.
+_HOST_PLACEHOLDER = "<your-reaper-address>"
+
+
+def recovery_base_url(host: str, port: int) -> str:
+    """Where to tell the operator to open the recovery page.
+
+    The banner used to interpolate ``settings.host`` straight in, which prints
+    ``http://0.0.0.0:8420/recover`` on a default install -- a bind address, not a place
+    (B-12). A bind that names every interface is replaced by a placeholder the operator
+    fills in; one that names a real address is kept, because then it IS the answer.
+    """
+    cleaned = (host or "").strip()
+    shown = _HOST_PLACEHOLDER if cleaned in _UNROUTABLE_BINDS else cleaned
+    return f"http://{shown}:{port}"
 
 
 async def mint_recovery_token(session: AsyncSession, *, base_url: str) -> str:

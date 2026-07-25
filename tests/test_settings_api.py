@@ -853,13 +853,18 @@ class TestPlexLinkChoice:
         server answers.
         """
         self._mock_plextv(httpx2_mock)
-        # Every advertised address refuses, then the server comes back.
-        httpx2_mock.get("https://x.plex.direct:32400/identity").mock(
-            side_effect=[
-                httpx2.ConnectError("connection refused"),
-                httpx.Response(200, json={}),
-            ]
-        )
+        # The server is down, then it comes back. Driven by a flag rather than a fixed
+        # list of responses: one probe may legitimately make several attempts (the shared
+        # client retries a transient transport error), and this scenario is "the server is
+        # not answering yet", not "it refuses exactly once".
+        server_down = {"value": True}
+
+        def identity(request: object) -> httpx.Response:
+            if server_down["value"]:
+                raise httpx2.ConnectError("connection refused")
+            return httpx.Response(200, json={})
+
+        httpx2_mock.get("https://x.plex.direct:32400/identity").mock(side_effect=identity)
         start = client.post("/api/settings/plex/link/start").json()
 
         blip = client.post(
@@ -873,6 +878,7 @@ class TestPlexLinkChoice:
         assert client.get("/api/settings/plex").json()["linked"] is False
 
         # The SAME sign-in finishes once the server answers. Nothing was burned.
+        server_down["value"] = False
         done = client.post(
             "/api/settings/plex/link/poll",
             json={"pin_id": start["pin_id"], "machine_identifier": "machine-b"},

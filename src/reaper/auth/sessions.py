@@ -22,10 +22,18 @@ from reaper.auth.tokens import SESSION_TTL, generate_token, hash_token
 from reaper.clock import expiry, utcnow
 from reaper.db.models import AppUser, AuthSession
 
-# The cookie is refreshed on the client every request, but rewriting the DB row's
-# ``last_seen`` on *every* authenticated request is a needless write per page load.
-# Bump it at most this often -- fresh enough to answer "when was this device last
-# used?", cheap enough not to be a write amplifier under WAL.
+# A session is a FIXED 30-day window from login, not a sliding one: the cookie is set at
+# login (and at a Plex poll or a recovery redemption, which are logins too) and never
+# re-set afterwards, so using the app does not extend it. Deliberate -- a stolen cookie
+# that is being used should still expire on schedule -- and stated here because the
+# comment that used to sit in this spot described a per-request refresh that no code does
+# (I-3), which would have made the throttle below look like a write-amplification guard
+# rather than what it is.
+#
+# What IS written per request is the row's ``last_seen``, and rewriting that on every
+# authenticated request would be a needless write per page load. Bump it at most this
+# often: fresh enough to answer "when was this device last used?", cheap enough not to be
+# a write amplifier under WAL.
 _LAST_SEEN_THROTTLE = timedelta(minutes=5)
 
 
@@ -98,6 +106,18 @@ async def close_session(session: AsyncSession, token: str | None) -> None:
     if not token:
         return
     await session.execute(delete(AuthSession).where(AuthSession.token_hash == hash_token(token)))
+
+
+async def sweep_expired(session: AsyncSession) -> int:
+    """Delete every session whose window has closed. Returns how many went. Caller commits.
+
+    :func:`resolve_session` already drops an expired row the moment its cookie is presented
+    again, but a device that is never opened again presents nothing -- so its row sat there
+    forever, and the table only grew on an install that had been used for a while (PR-13).
+    An expired row authorizes nothing either way; this is housekeeping, not a control.
+    """
+    result = await session.execute(delete(AuthSession).where(AuthSession.expires_at <= utcnow()))
+    return int(getattr(result, "rowcount", 0) or 0)
 
 
 async def close_all_for_user(

@@ -40,7 +40,7 @@ verification `VERIFIED`, B2-8's fix changes freshly-built plans too. Every findi
 - [x] **Phase 4 — Executor & the deletion path** (10 findings) — *done 2026-07-24*
 - [x] **Phase 5 — Snapshot & scan pipeline** (14 findings; B2-24 already fixed in Phase 2) — *done 2026-07-24*
 - [x] **Phase 6 — API routes, runs & query performance** (14 findings) — *done 2026-07-24*
-- [ ] **Phase 7 — Security, auth, restore & infra**
+- [x] **Phase 7 — Security, auth, restore & infra** (18 findings) — *done 2026-07-24*
 - [ ] **Phase 8 — Fairness, Leaving Soon & engine cleanup**
 - [ ] **Phase 9 — Test suite**
 - [ ] **Phase 10 — Merge the review's Agent Rules into CLAUDE.md**
@@ -558,7 +558,7 @@ clean.
 
 ---
 
-## Phase 7 — Security, auth, restore & infra
+## Phase 7 — Security, auth, restore & infra  ✅ DONE
 
 **Findings:** S2-1 (medium), S-1 (medium), S-2 (medium), S-3 (medium), S-4 (medium-low),
 S-5 (medium-low), S-6 (low-medium), S-7 (low-medium), B-12 (low-medium), S2-2 (low),
@@ -568,9 +568,133 @@ I-4 (low).
 **Theme.** Credential material in logs, unthrottled pre-auth endpoints, and the restore swap's
 interrupted-midway hole.
 
+**What was done**
+
+- **S2-1 + its untracked structlog twin** — `_RingHandler.emit` called `self.format(record)`
+  with no formatter set, so the stdlib fallback `"%(message)s"` re-rendered the message
+  UNREDACTED beneath the redacted copy: every stdlib record carrying `exc_info` reached the
+  ring, `data/logs/reaper.log`, and the Logs-tab download with its credentials in the clear,
+  and the operator saw every exception line twice. Now only the traceback is formatted, and
+  it is scrubbed. **The same hole existed on the structlog side and the review did not name
+  it** (rule 72): `redact_secrets` ran BEFORE `format_exc_info`, so the rendered `exception`
+  string was born after the only thing that would have cleaned it. The two processors are
+  swapped, which is what `_capture_to_ring`'s docstring already claimed. This matters because
+  `httpx2.HTTPStatusError.__str__` embeds the full request URL, so any `exc_info=True` around
+  an *arr/Tautulli call carried that query-string key to disk even with a clean message.
+- **S-2** — `_redact_str` gained a Discord webhook PATH pattern
+  (`/api/webhooks/<id>/<token>`), so a webhook URL is scrubbed however it is logged, not only
+  when it lands under a name in `_SECRET_KEYS`. Case-sensitive on purpose and documented as
+  such: `_validated_discord_webhook` refuses any path that does not literally start
+  `/api/webhooks/`, so the guard and the regex are exactly as complete as the stored data
+  allows, and an IGNORECASE regex behind a case-sensitive fast-path guard would only have
+  looked broader. Channel id kept, token gone.
+- **S-3** — scrypt `n` raised `2**14 → 2**16` (16 MiB → **64 MiB**, ~130 ms/guess/core). The
+  compatibility half is the real work: `SecretBox` now derives only the CURRENT variant up
+  front (one scrypt per key) and builds the superseded set — old cost, fixed v1 salt, legacy
+  SHA-256 — **lazily, on the first token the current derivation cannot open**. Deriving every
+  historical variant eagerly would have multiplied boot by the number of derivations ever
+  shipped. `rotate` became decrypt-then-encrypt, because `MultiFernet.rotate` can only re-key
+  a token one of ITS OWN fernets opens and the superseded ones deliberately sit outside that
+  set — yet old tokens are exactly the ones worth rotating. **Measured suite cost: 62s → 92s**
+  (625 derivations at 32 ms → 342 at 131 ms; the lazy split is what keeps it from being far
+  worse). Raising `n` again means appending to `_SUPERSEDED_SCRYPT_N`, never replacing it.
+- **S-4** — `ConcurrencyGate.acquire(slots)` now returns how many slots it took (0 = refused)
+  instead of a bool, and `admin_password.verify` takes **one slot per hash it is about to
+  run**. It runs one Argon2 verification per local admin, so charging the gate one slot for
+  the whole call left the CPU behind each slot unbounded. The gate moved into `verify` because
+  only it knows the hash count; a full gate raises `PasswordVerificationBusyError`, which the
+  routes turn into 503 and **never** into a lockout failure (a busy server must not lock out
+  the operator who typed the right password). Applied to all three call sites — arm, change
+  password, and the restore-arm twin in `api/backup.py` (rule 72).
+- **S-5** — key/salt material that is present but unreadable now raises `SecretMaterialError`
+  and refuses to boot. Regenerating read as recovery and was the opposite: it makes every
+  stored credential permanently unreadable, silently, and the operator finds out on the next
+  scan. Missing material still generates — an install with no key file has nothing to lose.
+- **S-6** — new `_OwnerOnlyRotatingFileHandler` clamps the umask around `_open`, so the live
+  log file **and every rotation** exist at 0600 from creation, and a file left loose by an
+  earlier version is tightened. The comment claimed owner-only-from-creation while only the
+  *directory* was chmod'd.
+- **S-7 (with a refactor)** — `X-Forwarded-Proto` was believed from any peer, deciding the
+  session cookie's `Secure` flag and `__Host-` name; over plain HTTP a caller could name its
+  own cookie and the browser then DROPS it, which is a sign-in that silently does nothing.
+  The peer-trust test now gates it, the same one `X-Forwarded-For` already used. Because
+  `cookie.py` cannot import `api.middleware` (that module imports cookie), the primitives
+  moved to a new **`auth/proxy.py`** — `parse_proxy_networks`, `peer_is_trusted_proxy`,
+  `client_ip` — so both consumers read one decision instead of two lookalike ones. All import
+  sites updated; no re-export left behind (rule 64).
+- **S-1** — new `RateLimiter` (fixed window, counts every call) beside `Throttle`, wired to
+  `plex/start` (15 per 5 min) and `plex/poll` (400 per 5 min). A consecutive-FAILURE lockout
+  cannot see a flood whose calls all succeed, which is exactly what these are: each `start`
+  writes a pending row and asks plex.tv for a PIN, so a script grows the table **and** can get
+  the install's egress address rate-limited by plex.tv — locking the real operator out of Plex
+  sign-in. The poll cap clears one honest sign-in (~150 polls) with room to spare. `ratelimit
+  .py`'s docstring claim that the login routes are all covered is now true (rule 7).
+- **S2-2** — `wait_for_pin` clips **every** sleep to the remaining deadline and caps a
+  server-supplied `Retry-After` at 30s, so `PIN_TIMEOUT` is finally binding. A `Retry-After`
+  of hours parked `reaper-admin link-plex` on a sleep with the terminal stuck on "Waiting...".
+  Checked the twins: this was the only uncapped sleep on an external header (`discord.py`
+  already caps; `base.py`'s retry uses its own bounded backoff).
+- **B-12** — new `recovery_base_url` replaces a bind address that names every interface with
+  `<your-reaper-address>`, keeping the port and path. The banner printed
+  `http://0.0.0.0:8420/recover` on a default install — a bind address, not a place.
+- **B-13** — the 409 "no admin to sign in as" path now **rolls back** the redemption instead of
+  committing it, so the operator's one 15-minute code is not burned on a failure that has
+  nothing to do with the code. A paired test pins that a *successful* redemption still spends
+  it, so the fix cannot have made the code multi-use.
+- **B2-21** — new `SWAP_MARKER`, written before the first rename and removed with the staging.
+  A kill mid-swap left the database replaced and the key still staged; the next boot read the
+  missing staged database as a broken staging, `rmtree`'d it — deleting the only copy of the
+  key for the database by then already live — and printed "current data kept", which was
+  false. A resumed boot now finishes the remaining moves and says so. Took the review's fuller
+  option, plus its minimum: the genuinely-unusable path parks `secret.key`/`secret.salt` in a
+  `pre-restore-*` directory rather than deleting them.
+- **R-3** — the auth-purge list moved to **`AUTH_BEARING_TABLES`** beside the models, with
+  `NOT_AUTH_BEARING_TABLES` recording what was considered and deliberately kept. A drift test
+  flags any table whose name or columns look credential-bearing and is in neither list. **It
+  found `plex_server` immediately** (and `instance` once the heuristic was widened); both are
+  now classified as considered-and-kept, with the reason (they hold credentials for OTHER
+  systems, and restoring them is the entire point of bundling the key).
+- **PR-11** — one shared `MAX_DB_BYTES` (raised to 64 GiB): the restore caps the extracted
+  member at it and the backup **refuses to write** an archive past it. Chose refuse-on-write
+  because a backup its own restore rejects is worse than no backup — the operator believes
+  they are covered right up until they are not.
+- **PR-12** — the startup catch-up task gets a done-callback that logs any non-cancellation
+  failure with the task name, instead of asyncio's bare "Task exception was never retrieved"
+  at GC time.
+- **PR-13** — new `sessions.sweep_expired`, run by an internal 12-hourly scheduler job.
+  **Deliberately NOT in `SCHEDULABLE_JOB_IDS`**: deleting rows whose window has already closed
+  is not a choice to hand an operator, and an off switch on it could only ever let the table
+  grow. On an interval, not a cron, so it never has to be re-based when the time zone changes.
+- **I-3** — the session-cookie comment described a per-request sliding refresh that no code
+  performs; it now states the fixed 30-day window and says why that is deliberate.
+- **I-4** — `probe_connection` routes through a small `_ProbeClient(BaseClient)`, gaining the
+  guarded transport, error mapping and retry. **`asyncio.timeout` bounds the whole probe**,
+  retries included, so adding the retry layer could not triple how long linking takes on a
+  server with a dead address to get past — the caller walks addresses one at a time.
+
+**Corrections to the review:** two. S2-1's write-up covers only the stdlib handler; the same
+defect existed in the structlog processor order and is fixed here as a twin. B2-21's "Fix"
+offers a minimum (never delete the staged key) and a fuller option (a progress marker); both
+landed, since the minimum alone still leaves the resumed boot printing that data was kept
+when it was not.
+
+**Gates run:** `ruff format`, `ruff check`, `mypy src/reaper` clean; **pytest 2236 passed**
+(2175 + 61 new) **in 92s, up from 62s** — the scrypt cost, measured and accepted above;
+`alembic upgrade head` + `alembic check` clean (no schema change); frontend `lint`, `test`
+(268 passed) and `build` clean.
+
+**Five existing tests changed**, each pinning behavior this phase deliberately replaced:
+`ConcurrencyGate.acquire`'s int return (×3), a blank key file now refusing to boot rather than
+regenerating, and the scheduler's job set gaining the session sweep. One more moved for a
+cause worth noting: `test_a_server_that_is_briefly_unreachable_keeps_the_sign_in_alive` drove
+its mock off a fixed list of responses, which broke once the probe could retry — it is now
+driven by a "server is down" flag, which is what the scenario actually means.
+
 **Files:** `logging.py`, `logbuffer.py`, `crypto.py`, `secrets.py`, `auth/cookie.py`,
-`auth/sessions.py`, `api/auth.py`, `services/admin_password.py`, `services/restore.py`,
-`services/backup.py`, `clients/plextv.py`, `main.py`.
+`auth/proxy.py` (new), `auth/ratelimit.py`, `auth/recovery.py`, `auth/sessions.py`,
+`api/auth.py`, `api/backup.py`, `api/middleware.py`, `api/settings.py`, `db/models.py`,
+`services/admin_password.py`, `services/backup.py`, `services/restore.py`,
+`services/scheduler.py`, `clients/plextv.py`, `main.py`.
 
 ---
 

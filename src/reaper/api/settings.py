@@ -31,9 +31,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from reaper.api.auth import _client_ip, _throttled
-from reaper.api.middleware import parse_proxy_networks
+from reaper.api.auth import _busy_hashing, _client_ip, _throttled, _verify_admin_password
 from reaper.auth.cookie import read_session_token
+from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.ratelimit import argon2_gate, password_throttle
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
@@ -1210,16 +1210,7 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
                     "Set an admin password first. It's what confirms turning deletion on.",
                 )
             _throttled(password_throttle, *keys)
-            if not argon2_gate.acquire():
-                raise HTTPException(
-                    503,
-                    "The server is busy checking passwords. Please try again shortly.",
-                    headers={"Retry-After": "2"},
-                )
-            try:
-                ok = await admin_password.verify(session, payload.password or "")
-            finally:
-                argon2_gate.release()
+            ok = await _verify_admin_password(session, payload.password or "")
             if not ok:
                 for key in keys:
                     password_throttle.record_failure(key)
@@ -1251,28 +1242,16 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict
     async with _factory(request)() as session:
         if await admin_password.has_password(session):
             _throttled(password_throttle, *keys)
-            if not argon2_gate.acquire():
-                raise HTTPException(
-                    503,
-                    "The server is busy checking passwords. Please try again shortly.",
-                    headers={"Retry-After": "2"},
-                )
-            try:
-                ok = await admin_password.verify(session, payload.current_password or "")
-            finally:
-                argon2_gate.release()
+            ok = await _verify_admin_password(session, payload.current_password or "")
             if not ok:
                 for key in keys:
                     password_throttle.record_failure(key)
                 raise HTTPException(403, "The current password didn't match. Nothing was changed.")
             for key in keys:
                 password_throttle.record_success(key)
+        # Hashing the NEW password is one more Argon2 run, so it takes its own slot.
         if not argon2_gate.acquire():
-            raise HTTPException(
-                503,
-                "The server is busy checking passwords. Please try again shortly.",
-                headers={"Retry-After": "2"},
-            )
+            raise _busy_hashing()
         try:
             username = await admin_password.set_password(
                 session, payload.password, keep_session_token=keep

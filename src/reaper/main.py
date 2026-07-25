@@ -24,7 +24,7 @@ from reaper.api.breakdown import router as breakdown_router
 from reaper.api.fairness import router as fairness_router
 from reaper.api.leaving_soon import router as leaving_soon_router
 from reaper.api.logs import router as logs_router
-from reaper.api.middleware import AuthGuard, parse_proxy_networks
+from reaper.api.middleware import AuthGuard
 from reaper.api.poster import close_artwork_client
 from reaper.api.poster import router as poster_router
 from reaper.api.routes import router
@@ -34,7 +34,8 @@ from reaper.api.settings import router as settings_router
 from reaper.api.setup import router as setup_router
 from reaper.api.whitelist import router as whitelist_router
 from reaper.auth.admins import count_local_admins
-from reaper.auth.recovery import mint_recovery_token
+from reaper.auth.proxy import parse_proxy_networks
+from reaper.auth.recovery import mint_recovery_token, recovery_base_url
 from reaper.buildinfo import build_version
 from reaper.config import (
     Settings,
@@ -70,6 +71,20 @@ class HealthResponse(BaseModel):
     status: str
 
 
+def _report_background_failure(task: asyncio.Task[Any]) -> None:
+    """Log why a detached startup task died, instead of letting asyncio mumble at GC time.
+
+    A task nobody awaits keeps its exception until it is garbage collected, and then all
+    the operator gets is a bare "Task exception was never retrieved" with no name attached
+    (PR-12). Cancellation is the normal shutdown path and says nothing.
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.warning("startup.background_task_failed", task=task.get_name(), error=str(exc))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings: Settings = app.state.settings
@@ -103,7 +118,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await seed_instances(session, parse_instance_seeds(load_raw_env(settings)), box)
 
         if settings.recovery:
-            await mint_recovery_token(session, base_url=f"http://{settings.host}:{settings.port}")
+            await mint_recovery_token(
+                session, base_url=recovery_base_url(settings.host, settings.port)
+            )
 
         # Warn loudly if Plex OAuth is the only way in: a plex.tv outage, a
         # revoked token, or a rebuilt server would then lock the owner out of
@@ -226,6 +243,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             log.warning("scheduler.bad_maintenance_cron", job=job_id, cron=cron)
 
     catch_up = asyncio.create_task(catch_up_on_startup(cache_engine, settings.data_dir))
+    catch_up.add_done_callback(_report_background_failure)
 
     try:
         yield

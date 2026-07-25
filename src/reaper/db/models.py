@@ -648,6 +648,34 @@ class RecoveryToken(Base):
     used_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
 
 
+#: Tables holding live proof of a sign-in: something that lets a caller in *now*, rather
+#: than the account it belongs to. A restore replaces the whole database and brings the
+#: backup's password hashes back with it, so everything here must be cleared out of the
+#: staged copy first, or a session or reset link that was valid when the backup was taken
+#: starts working again and defeats a later sign-out-everywhere (rule 75/12).
+#:
+#: Declared here, beside the models, rather than as a literal inside the restore code that
+#: consumes it (``services.restore._purge_auth_state``): a new auth-bearing table added
+#: over there would have been carried silently forward (R-3). ``tests/test_restore.py``
+#: fails when a table that looks auth-bearing is missing from this tuple.
+AUTH_BEARING_TABLES: tuple[str, ...] = (
+    "auth_session",
+    "recovery_token",
+    "pending_plex_login",
+)
+
+#: The exceptions, spelled out so the drift test can tell "considered and excluded" from
+#: "forgotten". Each of these holds a credential, and each is meant to come back:
+#:
+#: * ``app_user`` carries ``password_hash``, but it is the ACCOUNT, not a live session.
+#:   Restoring a backup restores its admins; purging them would lock the operator out of
+#:   the install they just restored.
+#: * ``plex_server`` and ``instance`` carry credentials for OTHER systems (the Plex admin
+#:   token, the *arr keys). Restoring them is the entire point of bundling the encryption
+#:   key with the backup, and none of them lets anyone into Reaper.
+NOT_AUTH_BEARING_TABLES: tuple[str, ...] = ("app_user", "plex_server", "instance")
+
+
 class AppSetting(Base):
     """Singleton key/value config that the admin edits in the web UI.
 
