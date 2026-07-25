@@ -751,7 +751,8 @@ class PlexClient:
                     # per-provider scores (for shows, of any score at all). Losing them
                     # takes the keep bar off every title in the tail, which is a
                     # protection WITHDRAWN -- so this is one of rule 28's source failures
-                    # and it degrades, through ``on_incomplete`` below.
+                    # and it degrades, through ``_report_incomplete`` below, which reaches the scan
+                    # via the ``collecting_incomplete_reads`` sink the caller opens.
                     #
                     # Reported rather than raised, deliberately, and this is the narrower
                     # control: raising here would throw away a complete id sweep as well,
@@ -813,8 +814,8 @@ class PlexClient:
             returned = sum(got for _, got in short_batches)
             what = "movie" if section_type == "movie" else "TV"
             _report_incomplete(
-                f"Plex sent back only {returned} of {requested} titles when their ratings "
-                f"were read, so some {what} titles were judged without one"
+                f"Plex sent back ratings for only {returned} of {requested} {what} titles, so "
+                "some were judged without a rating"
             )
         return out
 

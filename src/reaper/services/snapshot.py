@@ -2053,11 +2053,11 @@ async def sync_protection_lists(
     Retiring is a durable protection-DISABLING write, so each family is retired only when
     the configuration it is judged against was actually readable (rule 115). The Plex
     family needs a live ``plex_server``; the keep-tag family needs ``keep_tags_trusted``,
-    which the caller sets false when the policy in hand is not the one the operator saved
-    (``profiles.ActivePolicy.repaired``). A fallen-back policy carries the SHIPPED keep
-    tags and match mode, so its slugs are not the operator's -- and retiring against them
-    would switch off every keep list they actually configured, during a scan Reaper has
-    already declared un-executable.
+    which the caller sets false when the keep tags in hand are not the ones the operator
+    saved (``profiles.ActivePolicy.fell_back``). That case skips the keep-tag sync AND its
+    retire, because the slug does not carry the tag names: syncing shipped defaults would
+    overwrite the operator's own list under their own slug, and retiring would switch the
+    rest off, both during a scan Reaper has already declared un-executable.
     """
     synced: dict[str, int | str] = {}
 
@@ -2094,9 +2094,19 @@ async def sync_protection_lists(
     # unreachable instance is still in this list and its keep-list is never retired over a
     # network blip. Empty tags mean no provider AND no slug, which is exactly the case that
     # has to retire -- an emptied tag list otherwise leaves the whole stored keep-list in force.
+    #
+    # Under a fallen-back policy the whole family is left ALONE -- not synced, not retired.
+    # The slug carries the service, the instance and the match mode, but NOT the tag names,
+    # so syncing Reaper's default tags writes into the very slug the operator's tags own. If
+    # the default tag happens to exist in that *arr and tags nothing, ``fetch`` returns a
+    # genuine empty, no ContainerMissingError fires, and ``lists.sync``'s atomic swap wipes
+    # their stored membership. Holding back only the retire write does not prevent that; not
+    # running the sync does. The stored lists stay exactly as the operator's last good scan
+    # left them, which is the keep direction, and the scan is degraded and un-plannable
+    # anyway (rule 115).
     keep_tag_slugs: set[str] = set()
     for radarr in radarrs:
-        if movie_keep_tags:
+        if movie_keep_tags and keep_tags_trusted:
             movie_rule = lists.ArrTagRule(
                 radarr.client,
                 tuple(movie_keep_tags),
@@ -2107,7 +2117,7 @@ async def sync_protection_lists(
             keep_tag_slugs.add(movie_rule.slug)
             runs.append(_run(movie_rule, kind=lists.ListKind.WHITELIST))
     for sonarr in sonarrs:
-        if tv_keep_tags:
+        if tv_keep_tags and keep_tags_trusted:
             tv_rule = lists.ArrTagRule(
                 sonarr.client,
                 tuple(tv_keep_tags),
@@ -2140,10 +2150,11 @@ async def sync_protection_lists(
     # kept their membership and it is still the right list, just stale.
     #
     # The keep-tag family only when the tags and match mode came from the policy the
-    # operator saved. Under a repaired or fallen-back policy the slugs above are Reaper's
-    # defaults, not theirs, so retiring "everything this configuration no longer produces"
-    # would disable every keep list they DID configure -- and the scan holding that policy
-    # is already degraded, so it is the last moment to be writing protection off.
+    # operator saved. Under a fallen-back policy they are Reaper's defaults, so retiring
+    # "everything this configuration no longer produces" would disable every keep list they
+    # DID configure -- and the scan holding that policy is already degraded, so it is the
+    # last moment to be writing protection off. Nothing was synced there either (see above),
+    # so ``keep_tag_slugs`` is empty and retiring against it would disable the lot.
     if keep_tags_trusted:
         for slug in await lists.retire_absent(
             engine, family=lists.KEEP_TAG_SLUGS, current=keep_tag_slugs

@@ -1271,9 +1271,10 @@ class Executor:
                     detail=outcome.detail,
                 )
                 raise ExecutionError(
-                    f'The run stopped at "{delete.candidate.title}": {outcome.detail} '
-                    "Reaper could not tell what went wrong there, so it did not touch "
-                    "anything after it. Anything already removed stays removed."
+                    f'The run stopped at "{delete.candidate.title}". Reaper could not tell '
+                    "what went wrong there, so it did not touch anything after it. Anything "
+                    "already removed stays removed. The details are in the run's own list "
+                    "and in the log."
                 )
 
     async def _refresh_overrides(self) -> None:
@@ -2131,6 +2132,18 @@ class Executor:
 
         for section_key in sorted(self._affected_sections):
             title = self._section_title(section_key)
+            if self._deleted_by_section.get(section_key, 0) <= 0:
+                # Declined here rather than inside the gate, so a section whose count this
+                # run cannot move does not first pay the settle wait. A TV-only run reaches
+                # this for every section it touched (a TV section counts shows), and waiting
+                # up to _plex_settle_attempts x _plex_settle_delay apiece for a purge that
+                # can never pass the gate is time the operator waits for nothing.
+                log.info(
+                    "reap.trash_purge_declined",
+                    section=title,
+                    reason="this run removed no entries from this library's own count",
+                )
+                continue
             try:
                 await self._wait_for_scan(gateway.plex, section_key)
                 if not await self._trash_delta_is_ours(gateway.plex, section_key):
@@ -2163,7 +2176,20 @@ class Executor:
         title = self._section_title(section_key)
         pre = self._section_pre_counts.get(section_key)
         expected = self._deleted_by_section.get(section_key, 0)
-        if pre is None or expected <= 0:
+        if expected <= 0:
+            # Nothing this run deleted changes this section's own item count, so there is no
+            # allowance to compare a shrink against and the purge is declined. The ordinary
+            # case is a TV section: it counts shows, and pruning seasons of a show removes
+            # none (see _send_season). Reported at INFO and in its own words, because it is
+            # a normal outcome, not the "we could not read the baseline" failure below --
+            # which is what this branch used to claim for every season prune.
+            log.info(
+                "reap.trash_purge_declined",
+                section=title,
+                reason="this run removed no entries from this library's own count",
+            )
+            return False
+        if pre is None:
             log.warning(
                 "reap.trash_purge_skipped",
                 section=title,

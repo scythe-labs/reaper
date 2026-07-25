@@ -718,12 +718,15 @@ async def _run_scan_locked(
                 movie_keep_match=movie_policy.keep_tags_match,
                 tv_keep_tags=tv_policy.keep_tags,
                 tv_keep_match=tv_policy.keep_tags_match,
-                # Whether those four values are the operator's own. Under a repaired or
-                # fallen-back policy they are Reaper's defaults, and retiring the keep-tag
-                # lists against defaults would switch off every keep list the operator
-                # actually saved (rule 115). The sync itself still runs, so the lists in
-                # this configuration stay fresh; only the disabling write is held back.
-                keep_tags_trusted=not (active_movie.repaired or active_tv.repaired),
+                # Whether those four values are the operator's own. Only a FALLEN-BACK
+                # policy replaces them with Reaper's defaults: the other two repaired arms
+                # (rescaled, rating rules recovered) hand back the operator's own body with
+                # keep_tags and keep_tags_match untouched, so gating on the broader
+                # ``repaired`` would stop syncing lists that were never in doubt. False here
+                # holds back the keep-tag sync AND its retire, because the slug does not
+                # carry the tag names, so a sync of the defaults would overwrite the
+                # operator's own membership under their own slug (rule 115).
+                keep_tags_trusted=not (active_movie.fell_back or active_tv.fell_back),
                 plex_server=plex_server,
             ),
             # Who requested what: each candidate's "requested by", and the review queue's

@@ -215,7 +215,7 @@ class TestAShortRatingsReadDegradesTheScan:
             allowed_sections=None,
         )
 
-        assert any("ratings" in r and "nothing may be deleted" in r for r in reasons)
+        assert any("ratings" in r and "nothing may be deleted" in r.lower() for r in reasons)
         assert set(index.by_rating_key) == {41, 42}  # the sweep was kept, not thrown away
 
 

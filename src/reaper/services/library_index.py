@@ -37,9 +37,11 @@ The sweep and the spine read different services, so they run concurrently and ar
 joined only afterwards; the pairing goes through ``aio.gather_reaped`` so a spine
 failure aborts the scan exactly as it did when the reads were sequential, with the
 sweep reaped rather than left running. Neither read raises: a failure, and every
-malformed row either can produce (a library with no id, an item with no usable
-rating key), degrades and is skipped instead. So a bad source costs the operator a
-plan, never the whole scan.
+malformed shape either can produce, degrades and is skipped instead. That covers a
+listing entry that is not an object, a library with no usable id, a media row that
+is not an object, and an item with no usable rating key -- the four places a
+response Reaper did not write could otherwise throw straight through
+``gather_reaped``. So a bad source costs the operator a plan, never the whole scan.
 """
 
 from __future__ import annotations
@@ -123,7 +125,19 @@ async def build_index(
 
     async def _spine_rows() -> list[Mapping[str, Any]]:
         collected: list[Mapping[str, Any]] = []
-        for library in await tautulli.libraries():
+        malformed = 0
+        # Widened to Any deliberately: the client types this as a list of dicts, but the
+        # value is whatever the remote returned, so the type is a claim rather than a
+        # guarantee and the guard below has to stay reachable.
+        listing: list[Any] = list(await tautulli.libraries())
+        for library in listing:
+            if not isinstance(library, Mapping):
+                # A listing entry that is not an object at all. Counted rather than read,
+                # because ``library.get(...)`` on it raises AttributeError straight out of
+                # ``gather_reaped`` and kills the scan -- the one outcome this module's
+                # contract promises cannot happen.
+                malformed += 1
+                continue
             if library.get("section_type") != section_type:
                 continue
             try:
@@ -149,10 +163,20 @@ async def build_index(
             while True:
                 page = await tautulli.library_media_info(section_id, start=start, length=1000)
                 rows = page.get("data") or []
-                collected.extend({**row, _SPINE_LIBRARY: section_name} for row in rows)
+                # Paging still advances on the RAW page length, never the filtered one
+                # (rule 56): a malformed row must not shorten a page and end the walk early,
+                # silently truncating the library.
+                usable = [row for row in rows if isinstance(row, Mapping)]
+                malformed += len(rows) - len(usable)
+                collected.extend({**row, _SPINE_LIBRARY: section_name} for row in usable)
                 if len(rows) < 1000:
                     break
                 start += 1000
+        if malformed:
+            degrade(
+                f"{malformed} row(s) in your Plex library listing could not be read, so "
+                "nothing may be deleted from this scan"
+            )
         return collected
 
     # The collector is opened around the gather so it is in place before the sweep task is
@@ -163,16 +187,20 @@ async def build_index(
     with collecting_incomplete_reads() as incomplete:
         plex_items, spine_rows = await gather_reaped(_sweep(), _spine())
     for reason in incomplete:
-        degrade(f"{reason}, so nothing may be deleted from this scan")
+        degrade(f"{reason}. Nothing may be deleted from this scan.")
 
     items: list[identity.PlexItem] = []
     unusable = 0
     for row in spine_rows:
         # A row with no rating key -- or one that is not a number -- cannot become a
         # candidate's join (its rating_key read would fail), so it is dropped, identically
-        # for movies and shows. Counted, and degraded once below: an item missing from the
-        # index resolves unmatched, which keeps it, but it also means this scan judged part
-        # of the library on nothing.
+        # for movies and shows. An item missing from the index resolves unmatched, which
+        # keeps it.
+        #
+        # Only the MALFORMED arm is counted and degrades. A row with no rating_key at all
+        # is a row Tautulli has not tied to Plex yet, which is an ordinary state on a
+        # library mid-scan; a rating_key that is present and not a number is a row that
+        # should have joined and cannot, which is evidence this scan lost.
         rk = row.get("rating_key")
         if rk is None:
             continue

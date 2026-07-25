@@ -434,6 +434,14 @@ def _detect_conflicts(
     readable count for the season being removed there is nothing to compare FROM, so no
     conflict can be stated at all. A hold there would have to rest on some other signal,
     not on this comparison.
+
+    The cost, stated so nobody reads a routine hold as a bug: a season is unreadable here
+    exactly when it is on disk but not yet in Plex, and the commonest cause is benign. A
+    keep-last-N show whose newest season has just finished downloading, or a season
+    ``protect_incomplete`` is holding while Sonarr fills it, is kept AND unresolved, so
+    every watched prunable season below it conflicts against it and the show sits in
+    "Needs a look" until Plex catches up. That is fail-closed and it clears itself. It is
+    the price of not letting an unread number clear a hold, and it is the right way round.
     """
     conflicts: list[PruneConflict] = []
     kept_seasons = [p for p in protected if p.season_number != SPECIALS_SEASON]
