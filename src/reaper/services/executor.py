@@ -1875,11 +1875,16 @@ class Executor:
                 delete, _NO_APPROVED_SIZE_REASON, check=_NO_APPROVED_SIZE_CHECK
             )
 
-        live_sizes = [
-            _payload_size(f.get("size"))
+        # Keyed by file id, never a bare list of sizes. The delete below re-resolves this
+        # season's files from a SECOND, independent read, and the two have to describe the
+        # same files for the growth check to mean anything. Summing an anonymous list let a
+        # file that landed between the reads be deleted having never been weighed.
+        measured: dict[int, int | None] = {
+            int(f["id"]): _payload_size(f.get("size"))
             for f in await sonarr.episode_files(ref.arr_id)
-            if _season_number(f) == ref.season
-        ]
+            if f.get("id") is not None and _season_number(f) == ref.season
+        }
+        live_sizes = list(measured.values())
         # An EMPTY list is not a confirmation. `sum([])` is 0, which sails through the
         # growth check below and marks the step verified having proven nothing -- and
         # since the plan is ordered smallest-first, a zero-size season is exactly what
@@ -1943,11 +1948,37 @@ class Executor:
 
         # 2. Resolve this season's episode files LIVE, then delete them.
         files = await sonarr.episode_files(ref.arr_id)
-        file_ids = [
+        resolved = [
             int(f["id"])
             for f in files
             if f.get("id") is not None and _season_number(f) == ref.season
         ]
+        # A file here that the size re-read never weighed arrived in the window between the
+        # two reads -- a Sonarr import completing while the unmonitor round-tripped. The
+        # growth check above cannot catch it: it only refuses growth PAST
+        # ``_grew_materially``'s tolerance, so anything under that band used to pass the gate
+        # and then be deleted anyway. That deletes a file the owner never approved and never
+        # saw counted, and the run charges the frozen approved size, so its bytes are removed
+        # and charged to nothing (rules 5/30/97). Fail closed on the whole season -- the same
+        # answer the grew-since-approved branch gives, and what this method's docstring
+        # already promises.
+        unmeasured = [fid for fid in resolved if fid not in measured]
+        if unmeasured:
+            log.warning(
+                "reap.season_files_arrived_after_sizing",
+                media_key=candidate.media_key,
+                series_id=ref.arr_id,
+                season=ref.season,
+                arrived=len(unmeasured),
+            )
+            return self._mark_skipped(
+                delete,
+                f"{len(unmeasured)} more file(s) landed in season {ref.season} while Reaper "
+                "was working, so it is no longer what was approved. Kept. Run a new scan to "
+                "review it as it is now.",
+                check="It changed while Reaper was working. Kept.",
+            )
+        file_ids = resolved
         if not file_ids:
             # Nothing resolved. ``delete_episode_files([])`` is a documented no-op, so the
             # verification below would find nothing remaining and mark the season VERIFIED
@@ -1996,7 +2027,19 @@ class Executor:
             )
 
         # The season's files are gone, so tell Plex -- the same nudge the movie path sends.
-        # Scoped to this series' own folder, never the whole library.
+        # Scoped to the folder the deleted files actually sat in, NOT the series root.
+        #
+        # This used to pass ``series["path"]``, which rescans every season of the show. That
+        # is a mutation in effect: ``refresh_path``'s docstring says why -- on a server set
+        # to empty its trash after every scan, rescanning a path with missing files purges
+        # them, inside Plex, where none of ``_finalize_plex``'s interlocks can see it. So
+        # pruning one season made Plex destroy the library records (watch state, ratings,
+        # collections) of any OTHER season of that show whose files had gone missing out of
+        # band -- items this run never measured, never planned, and never showed the owner.
+        # Rescanning only the pruned season's own folder keeps the blast radius equal to
+        # what was approved. When the paths cannot be read we fall back to the old
+        # whole-series scope rather than skipping the refresh, since a stale entry is
+        # cosmetic and Plex will notice on its own scheduled scan either way.
         #
         # ``plex_entries=0``, deliberately: a TV section counts SHOWS, and pruning a season
         # of a multi-season show removes no show from it. Passing 1 (what this did) granted
@@ -2010,7 +2053,20 @@ class Executor:
         # Pruning a show's LAST season may well drop the show, and that purge is declined
         # too. That is the cost, and it is the right way round: a lingering "unavailable"
         # entry is cosmetic, and purging someone else's trashed items is not.
-        await self._best_effort_refresh(str(series.get("path") or ""), plex_entries=0)
+        series_path = str(series.get("path") or "")
+        deleted = set(file_ids)
+        scoped = _common_parent(
+            [
+                str(f.get("path") or "")
+                for f in files
+                if f.get("id") is not None and int(f["id"]) in deleted
+            ]
+        )
+        # An odd path set must never WIDEN the rescan past the show it belongs to, so a
+        # common parent that escapes the series folder is discarded rather than used.
+        if scoped and series_path and not _path_within(scoped, series_path):
+            scoped = ""
+        await self._best_effort_refresh(scoped or series_path, plex_entries=0)
 
         await self._mark_verified(delete_step, {"deleted_file_ids": file_ids, "remaining": 0})
         return StepOutcome(
@@ -2111,13 +2167,25 @@ class Executor:
           reports ``accessible``; if any does not, the volume may be gone and the trash is
           full of items that are merely *unreachable*, not deleted -- so we refuse to purge.
         * **Only path-scoped scans ran.** ``_best_effort_refresh`` rescans one directory at
-          a time, so the only items Plex could have freshly trashed are the ones under the
-          paths we deleted. Reaper never triggers a whole-section scan.
+          a time -- for a movie its own folder, for a season prune the folder its files sat
+          in (``_common_parent``) -- so the only items Plex could have *freshly* trashed are
+          the ones under the paths we deleted. Reaper never triggers a whole-section scan.
         * **The count-delta gate** (``_trash_delta_is_ours``). The section must have shrunk
           since the pre-delete baseline, and by no more than the entries this run deleted
           under it. A larger shrink means something else -- a mount flap on the Plex host, a
           nightly scan -- trashed items that are NOT ours, and purging would destroy their
           library records (watch states, collection membership).
+
+        **What these do NOT cover, stated plainly because the purge is section-wide.**
+        ``empty_trash`` is ``PUT /library/sections/{key}/emptyTrash``: it empties that
+        section's WHOLE trash, not the subset this run caused. Items already sitting in the
+        trash when ``_capture_section_counts`` read the baseline are in the same state
+        before and after, so they cancel out of ``pre - post`` and the count-delta gate
+        cannot see them -- and this call then destroys their library records too. The gate
+        bounds the *magnitude* of the shrink; it cannot attribute WHICH items account for
+        it. So the honest claim is "one section, on a run whose shrink looked like ours",
+        not "only our items". Scoping the purge to the items we actually deleted (per-item
+        ``DELETE`` rather than ``emptyTrash``) is the real fix and is not done here.
 
         Any check failing skips the purge and logs it -- the reap already succeeded, and a
         lingering "unavailable" entry is a cosmetic problem, never a lost file. Never raises.
@@ -2419,6 +2487,32 @@ def _path_within(path: str, location: str) -> bool:
     """
     root = location.rstrip("/")
     return path in (root, location) or path.startswith(root + "/")
+
+
+def _common_parent(paths: Sequence[str]) -> str:
+    """The deepest directory holding every one of ``paths``. Empty string when there is none.
+
+    Scopes the post-prune Plex rescan (:meth:`Executor._send_season`) to the season folder
+    the deleted files actually sat in, instead of the series root. Rescanning a path is a
+    mutation in effect on a server that empties its trash after every scan, so the narrower
+    the path, the smaller the set of other people's library records Plex can destroy.
+
+    Splits on ``/`` like :func:`_path_within`, which is the separator every *arr root folder
+    in this codebase is expressed in. Returns "" rather than ``/`` when the paths share no
+    real directory: the whole disk is not a scope, and the caller falls back instead.
+    """
+    dirs = [p.rsplit("/", 1)[0] for p in paths if p.startswith("/") and p.count("/") > 1]
+    if not dirs:
+        return ""
+    parts = dirs[0].split("/")
+    for other in (d.split("/") for d in dirs[1:]):
+        keep = 0
+        while keep < min(len(parts), len(other)) and parts[keep] == other[keep]:
+            keep += 1
+        parts = parts[:keep]
+    common = "/".join(parts)
+    # ``parts == [""]`` joins to "" and anything shallower than one real segment is root.
+    return common if common.count("/") >= 1 else ""
 
 
 def _row_timestamp(row: object) -> int | None:

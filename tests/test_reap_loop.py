@@ -55,6 +55,7 @@ from reaper.services.executor import (
     ReapGateway,
     ReapProgress,
     RunReport,
+    _common_parent,
     _deletable_bytes,
     _Delete,
     _grew_materially,
@@ -3590,6 +3591,133 @@ class TestASeasonPruneTidiesPlexToo:
         assert report.state is RunState.COMPLETED
         assert plex.refreshed == []
         assert plex.emptied == []
+
+
+class TestTheCommonParentOfTheDeletedFiles:
+    """``_common_parent`` decides how much of the library the post-prune rescan reaches.
+
+    A rescan is a mutation in effect on a Plex server that empties its trash after every
+    scan, so every segment this keeps is a folder whose other items Plex is not invited to
+    trash and purge. The refusals matter as much as the successes: returning the disk root
+    would scope the rescan to everything.
+    """
+
+    def test_it_finds_the_folder_the_files_share(self) -> None:
+        assert (
+            _common_parent(["/tv/Show/Season 03/a.mkv", "/tv/Show/Season 03/b.mkv"])
+            == "/tv/Show/Season 03"
+        )
+
+    def test_one_file_still_yields_its_own_folder(self) -> None:
+        assert _common_parent(["/tv/Show/Season 03/a.mkv"]) == "/tv/Show/Season 03"
+
+    def test_it_climbs_only_as_far_as_it_must(self) -> None:
+        """Files split across season folders share the show, and nothing narrower."""
+        assert (
+            _common_parent(["/tv/Show/Season 03/a.mkv", "/tv/Show/Season 04/b.mkv"]) == "/tv/Show"
+        )
+
+    def test_it_refuses_the_disk_root(self) -> None:
+        """Sharing nothing but ``/`` is not a scope. The caller falls back instead."""
+        assert _common_parent(["/one/a.mkv", "/two/b.mkv"]) == ""
+
+    def test_it_ignores_paths_it_cannot_read(self) -> None:
+        assert _common_parent(["", "not/absolute.mkv", "/atroot.mkv"]) == ""
+
+
+class TestTheSeasonRescanIsScopedToTheSeasonsOwnFolder:
+    """Pruning one season must not hand Plex the whole series to rescan.
+
+    This passed ``series["path"]``, so a prune of S03 rescanned every season of the show.
+    On a server set to empty its trash after every scan that is a purge: any OTHER season
+    whose files had gone missing out of band lost its library records -- watch state,
+    ratings, collections -- inside Plex, where none of ``_finalize_plex``'s interlocks can
+    see it. Reverting the fix makes this assert ``/tv/Show``.
+    """
+
+    class _PathfulSonarr(FakeSonarr):
+        """Reports file paths and a series root, the way a real Sonarr does."""
+
+        async def series_by_id(self, series_id: int) -> dict[str, Any]:
+            series = await super().series_by_id(series_id)
+            series["path"] = "/tv/Show"
+            return series
+
+    async def test_only_the_pruned_seasons_folder_is_rescanned(self, session: AsyncSession) -> None:
+        snapshot_id = await _snapshot_one(
+            session, media_key="sonarr:1:42:3", rating_key=701, media_type="season"
+        )
+        run = await _plan(session, snapshot_id)
+        sonarr = self._PathfulSonarr(
+            files=[
+                {
+                    "id": 101,
+                    "seasonNumber": 3,
+                    "size": 50 * 1024**2,
+                    "path": "/tv/Show/Season 03/e01.mkv",
+                },
+                {
+                    "id": 102,
+                    "seasonNumber": 3,
+                    "size": 50 * 1024**2,
+                    "path": "/tv/Show/Season 03/e02.mkv",
+                },
+                # A season this run never approved. Its folder must not be rescanned.
+                {
+                    "id": 900,
+                    "seasonNumber": 4,
+                    "size": 50 * 1024**2,
+                    "path": "/tv/Show/Season 04/e01.mkv",
+                },
+            ]
+        )
+        plex = FakePlex(sections={"TV": ["/tv"]})
+
+        report = await _real(session, run, _gateway(sonarr={1: sonarr}, plex=plex))
+
+        assert report.deleted_items == 1
+        assert plex.refreshed == [("TV", "/tv/Show/Season 03")]
+
+
+class TestAFileThatLandsWhileTheSeasonIsBeingPruned:
+    """The size gate weighs one read of the season's files; the delete resolves a second.
+
+    Nothing used to tie the two together, so a file that arrived in the window was deleted
+    having never been weighed. ``_grew_materially`` could not catch it either: it only
+    refuses growth past ``max(10%, 256 MiB)``, and the arrival here is far under that
+    floor, so the gate passed and the file was removed anyway. Worse for the books, the
+    run charges the frozen approved size, so those bytes were deleted and charged to
+    nothing (rules 5/30/97). The season is kept instead.
+    """
+
+    class _ImportingSonarr(FakeSonarr):
+        """A Sonarr import completes between the size re-read and the live resolve."""
+
+        def __init__(self, **kw: Any) -> None:
+            super().__init__(**kw)
+            self._reads = 0
+
+        async def episode_files(self, series_id: int) -> list[dict[str, Any]]:
+            self._reads += 1
+            files = await super().episode_files(series_id)
+            if self._reads >= 2:
+                # 10 MiB: nowhere near the growth interlock's 256 MiB floor.
+                files.append({"id": 103, "seasonNumber": self._season, "size": 10 * 1024**2})
+            return files
+
+    async def test_the_season_is_kept_and_nothing_is_deleted(self, session: AsyncSession) -> None:
+        snapshot_id = await _snapshot_one(
+            session, media_key="sonarr:1:42:3", rating_key=701, media_type="season"
+        )
+        run = await _plan(session, snapshot_id)
+        sonarr = self._ImportingSonarr()
+
+        report = await _real(session, run, _gateway(sonarr={1: sonarr}))
+
+        assert report.deleted_items == 0
+        assert report.deleted_bytes == 0
+        assert sonarr.delete_calls == []
+        assert "while Reaper was working" in report.outcomes[0].detail
 
 
 class TestASeasonWithNothingLeftToDelete:
