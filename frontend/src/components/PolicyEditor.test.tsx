@@ -297,13 +297,22 @@ describe("the caps switch and the copy that reads it", () => {
   });
 
   it("shows a recovery notice when the stored settings couldn't be read", async () => {
-    renderEditor({ body: body() }, { ...pace, settings_recovered: true });
+    const { container } = renderEditor({ body: body() }, { ...pace, settings_recovered: true });
 
     // The shipped defaults can be looser than what was saved, so the Pace page says so
     // rather than silently swapping them (PR-1).
     expect(
       await screen.findByText(/Your saved caps and grace couldn't be read/),
     ).toBeInTheDocument();
+
+    // And the notice's own instruction ("a scan won't remove anything until you check these
+    // and save") is followable: the savebar renders with a live Save. The pace half had no
+    // equivalent of the policy half's forced-dirty, so this told the operator to save while
+    // offering nothing to press, and the only escape was to change a value on purpose (B-6).
+    const savebar = container.querySelector(".savebar");
+    expect(savebar).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+    expect(savebar?.textContent ?? "").toContain("pace and limits");
   });
 });
 

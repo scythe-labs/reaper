@@ -56,6 +56,17 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
   const timerRef = useRef<number | null>(null);
   const pinRef = useRef<number | null>(null);
 
+  // Stopping the timer does not stop a request already in the air, so every poll carries the
+  // run it belongs to and a finished run ignores whatever lands late (B-11). Without this, two
+  // slow polls overlap: the second answers "ok" and signs the operator in, then the first
+  // rejects (the PIN is now consumed, or plex.tv rate-limited us) and paints "Plex sign-in
+  // failed" over a session that succeeded. Through `cancel` the mirror case signed the operator
+  // in after they pressed Cancel. `begin`, `stop` and `cancel` all bump the run.
+  const runRef = useRef(0);
+  // One request at a time. A poll slower than the two-second tick would otherwise stack up
+  // against plex.tv, and the pile is what makes the overlap above likely in the first place.
+  const inFlightRef = useRef(false);
+
   // The running timer reads the handlers through a ref, so a re-render never restarts the
   // poll and the callback never calls a stale closure.
   const handlersRef = useRef(handlers);
@@ -66,6 +77,8 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
   const stop = useCallback(() => {
     if (timerRef.current !== null) window.clearInterval(timerRef.current);
     timerRef.current = null;
+    runRef.current += 1;
+    inFlightRef.current = false;
   }, []);
 
   useEffect(() => stop, [stop]);
@@ -74,6 +87,7 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
     (pinId: number, machineId?: string) => {
       stop();
       pinRef.current = pinId;
+      const run = runRef.current;
       const deadline = Date.now() + DEADLINE_MS;
       timerRef.current = window.setInterval(() => {
         const h = handlersRef.current;
@@ -83,9 +97,15 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
           h.onTimedOut();
           return;
         }
+        if (inFlightRef.current) return;
+        inFlightRef.current = true;
         void (async () => {
           try {
             const result = await h.poll(pinId, machineId);
+            // Everything below settles the sign-in, so nothing may run for a run that has
+            // already ended: `stop` has bumped the counter, and this answer is about a PIN
+            // nobody is waiting on any more.
+            if (run !== runRef.current) return;
             if (result.status === "ok") {
               stop();
               setServers(null);
@@ -98,9 +118,12 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
               h.onChooseServer?.(result.servers ?? []);
             }
           } catch (e) {
+            if (run !== runRef.current) return;
             stop();
             setServers(null);
             h.onFailed(failureText(e));
+          } finally {
+            if (run === runRef.current) inFlightRef.current = false;
           }
         })();
       }, POLL_MS);
@@ -116,8 +139,12 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
       if (pinId == null) return;
       setServers(null);
       const h = handlersRef.current;
+      // The pick is a poll like any other, so it answers to the same run guard: Cancel while
+      // plex.tv is thinking must not sign the operator in a moment later.
+      const run = runRef.current;
       try {
         const result = await h.poll(pinId, machineId);
+        if (run !== runRef.current) return;
         if (result.status === "ok") {
           h.onOk(result);
         } else if (result.status === "choose_server") {
@@ -127,6 +154,7 @@ export function usePlexPinPoll<R extends PinPollResult>(handlers: PinPollHandler
           begin(pinId, machineId);
         }
       } catch (e) {
+        if (run !== runRef.current) return;
         h.onFailed(failureText(e));
       }
     },

@@ -38,14 +38,17 @@ pattern, don't invent a new one.
 
 ## Progress (keep this current — it is the handoff between sessions)
 
-**All seven batches are done: 77 of 94 findings checked off, and the two left unchecked (R1,
-R2) are annotated in place with exactly what landed and what did not. Nothing is committed
-yet.** Gates green at the time of writing: ruff format/check, mypy, 2062 pytest, eslint,
-tsc + vite build, 353 vitest (85 new), alembic upgrade + check.
+**81 of 94 findings are checked off.** The fix order's seven batches are done (batch 7 left R1
+and R2 unchecked, annotated in place with exactly what landed and what did not), and batch 8
+took the four unscheduled findings that mislead or dead-end the operator. Batches 1-7 are
+committed on `ui-review-remediation`; batch 8 follows it.
 
-The 15 findings never scheduled into a batch are the ones the review itself filed under
-"production readiness" and "improvements" beyond PR1-PR10/I1-I2; they were out of scope for
-the fix order and are still open.
+**Still open, all unscheduled:** S4, S5, B23, B26-B29, PR7, PR9, PR11, U16, plus R1/R2's
+residue. Roughly a batch of wording-and-number bugs (B26-B29, B23, PR7), four cheap hygiene
+fixes (S4, S5, U16, PR11), one build-hygiene debt (PR9), and the two restructures.
+
+**Run the gates with `set -o pipefail`.** Piping a step into `tail` returns `tail`'s status:
+batch 8 found `tsc` failing under a chain that reported success.
 
 - **Batch 1, the deletion path:** S1, B3, B4, B5, B15, B16, B25, PR1, PR8, PR10.
 - **Batch 2, the queue's control grammar:** B1, B2, B12, B24, B13, B36, U13. Each of the four
@@ -430,6 +433,57 @@ siblings -- `reviewFate.ts`, `OverrideControls.tsx`, `queueIcons.tsx`, `queueFil
 `reaper-accent-ink` back from the cache `applyAccent` writes (B34), and `accent.test.ts` fails
 if any luminance constant reappears in that file.
 
+### Batch 8, the four that mislead or dead-end (B6, B10, B11, B17)
+
+Off the fix order, which ended at batch 7. These are the unscheduled findings that either lie to
+the operator, strand them, or write somewhere nobody asked for. Each was reverted against and
+re-run: all six tests fail without their fix.
+
+- **B6** was a dead end with no exit. A profile that could not be read shows the shipped caps and
+  a notice saying a scan will remove nothing "until you check these and save" -- and `paceDirty`
+  was a plain JSON comparison, so nothing was dirty, the savebar never rendered, and there was no
+  Save to press. The only escape was to change some value on purpose; restoring the intended caps
+  and saving them was impossible. `settings_recovered` now forces dirty exactly as the policy
+  half's `fell_back` does, and the comment on each names the other.
+- **B10 was two bugs with one shape,** and the backend one was the dangerous half. In the panel,
+  `currentServer` fell back to `servers[0]`, so a partial plex.tv response promoted a *different*
+  server to "the one Reaper manages". Dropping the fallback was not enough on its own: a `<select>`
+  whose value matches no option displays its FIRST option, so the other server still read as
+  current, merely unsavable. The box now carries one option naming the linked server, both pickers
+  go quiet, and a notice says the list came back without it. **Server-side, `PUT
+  /api/settings/plex/connection` probed a typed address for a pulse and nothing else,** so an
+  address belonging to any other Plex on the network saved successfully -- and Reaper then wrote
+  Leaving Soon collections and labels into, and read Never-Reap from, a library nobody pointed it
+  at. It now asks who answered and refuses a mismatch with a 409. The revert proves it: without
+  the check the wrong server's address lands in `connection_uri`.
+- **Rule 24, same finding.** `probe_connection`'s docstring claimed `/identity` "doubles as a
+  check that we reached the server we think we did" and it never compared anything. Rather than
+  only correcting the prose, the check now exists as `connection_identity`, and `probe_connection`
+  keeps reachability-only semantics **on purpose**, with the reason written down: its caller is
+  the link flow walking addresses plex.tv just advertised for one resource, and requiring an
+  identity there would make a Plex that does not report one impossible to link at all.
+- **B11** let a poll that resolved after the sign-in settled call the handlers anyway, because
+  `stop()` cleared the timer and nothing else. Every poll now carries its run and a finished run
+  ignores late answers, plus an in-flight guard so ticks stop stacking requests. The two tests
+  cover both directions: a rejection after the run ended must not paint "sign-in failed", and a
+  success after Cancel must not sign anyone in.
+- **B17** closed the modal on any click whose release landed on the scrim, and a drag out of the
+  panel dispatches `click` on the scrim by definition (a click fires at the common ancestor of
+  press and release). The scrim now closes only when the press both began and ended on it.
+
+**Driven live in Chrome, deletion never armed.** B17 is the one this batch could prove on a
+screen: text typed into a service modal, then dragged from a field out onto the scrim -- the
+modal stays, the typed value survives, and the drag really does select text; a genuine outside
+click still closes it; and the API confirms nothing was written. The Plex tab was re-checked for a
+B10 regression in the ordinary case: no notice, both pickers live, the server select holding a
+real value. B6 needs an unreadable stored profile, B10 needs a filtered plex.tv response, and B11
+needs a slow plex.tv, so all three are covered by test rather than by unlinking the operator's
+real server.
+
+**One process note.** The gate command used through batches 1-7 piped each step into `tail`,
+which returns `tail`'s exit status, not the step's. `tsc` failed in this batch and the chain
+still reported success. Run the gates with `set -o pipefail`, or unpiped.
+
 ---
 
 ## 1. Security
@@ -535,7 +589,7 @@ if any luminance constant reappears in that file.
   `movies_unknown`/`seasons_unknown` in `services.breakdown.reap_breakdown`) and subtract them under
   `holdsBackUnmeasured` the way `reapCount` does; switch the empty-state test to `reapCount`.
 
-- [ ] **B6 [high]** `frontend/src/components/PolicyEditor.tsx:1462-1465` · A profile that fell back
+- [x] **B6 [high]** `frontend/src/components/PolicyEditor.tsx:1462-1465` · A profile that fell back
   to shipped defaults renders the recovery notice at :2238 telling the operator "a scan won't remove
   anything until you check these and save", but `paceDirty` has no equivalent of the policy path's
   forced-dirty on `fell_back`, so `dirty || paceDirty` is false, the savebar never appears, and there
@@ -573,7 +627,7 @@ if any luminance constant reappears in that file.
   with a comment saying exactly why. **Fix:** give `["safety"]` the same `refetchInterval: 15000` and
   `refetchOnWindowFocus: true`.
 
-- [ ] **B10 [high]** `frontend/src/components/PlexPanel.tsx:205-206` · `currentServer` falls back to
+- [x] **B10 [high]** `frontend/src/components/PlexPanel.tsx:205-206` · `currentServer` falls back to
   `resources.data.servers[0]` when no server carries `current: true`, so a partial or filtered
   plex.tv response silently presents a *different* server as the one Reaper manages, and the
   Connection row lists that server's addresses. Picking one saves it via `plexSetConnection`, and
@@ -584,7 +638,7 @@ if any luminance constant reappears in that file.
   compare the `/identity` machineIdentifier its docstring says it checks — fix or correct that
   comment in the same change (rule 24).
 
-- [ ] **B11 [high]** `frontend/src/components/PlexPin.tsx:86-105` · The PIN poll fires a new async
+- [x] **B11 [high]** `frontend/src/components/PlexPin.tsx:86-105` · The PIN poll fires a new async
   request every 2s with no in-flight guard and no generation token, and `stop()` only clears the
   timer, so a poll that resolves *after* a final outcome still calls the handlers. When plex.tv is
   slow the polls overlap: poll B returns "ok" and signs the operator in, then poll A rejects (PIN
@@ -643,7 +697,7 @@ if any luminance constant reappears in that file.
   (`{holdsBack, isPending, isError}`), keep `true` as the card default, and render an explicit
   "Reaper couldn't check your unknown-size allowance" notice here instead of an adjusted count.
 
-- [ ] **B17 [medium]** `frontend/src/components/ModalShell.tsx:115` · The scrim closes on any click
+- [x] **B17 [medium]** `frontend/src/components/ModalShell.tsx:115` · The scrim closes on any click
   whose mouseup lands on it. A text drag that starts inside the panel and ends outside dispatches
   `click` on the nearest common ancestor — the scrim — so the panel's `stopPropagation` never sees it
   and the modal tears down. Dragging across the mono confirmation phrase to read or copy it destroys
@@ -1329,11 +1383,12 @@ a suggestion.
 7. ~~**Batch 7, refactor and performance,** by severity: R1-R9, P1-P9, H1-H3, and the remaining low
    bugs (B30-B35), I2.~~ Done, except the residue noted inline on R1 and R2.
 
-Nothing is left in the fix order. What remains open in the document above was never scheduled
-into a batch: S4, S5, B6, B10, B11, B17, B23, B26-B29, PR7, PR9, PR11, U16, plus R1/R2's residue.
+Nothing is left in the fix order. Batch 8 then took the four unscheduled findings that mislead or
+dead-end the operator (B6, B10, B11, B17). What remains open in the document above: S4, S5, B23,
+B26-B29, PR7, PR9, PR11, U16, plus R1/R2's residue.
 
 Run `uv run ruff format .` before staging any backend change, and the full CLAUDE.md gate set before
-each commit. When a change is observable in the app, drive it end-to-end per the `verify` skill;
+each commit -- with `set -o pipefail`, or a failing step will hide behind the `tail` you pipe it to. When a change is observable in the app, drive it end-to-end per the `verify` skill;
 B2/B13 need a real keyboard and a real pointer (B13's twin was found in Safari alone), and a narrow
 viewport means a 375px `<iframe>` of the app, since Chrome will not size a window that small. In a
 background session the tab is hidden, so `scroll`, `requestAnimationFrame` and IntersectionObserver

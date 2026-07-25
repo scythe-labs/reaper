@@ -704,8 +704,19 @@ export function PolicyEditor({
       void queryClient.invalidateQueries({ queryKey: ["reap-breakdown"] });
     },
   });
+  // `settings_recovered` forces dirty for the same reason `fell_back` does on the policy half
+  // (see the comment on `dirty` below): the caps on screen are the shipped starting ones, not
+  // what is stored, and the recovery notice tells the operator a scan will remove nothing until
+  // they check these and save. Without this the savebar never appeared, so there was no Save to
+  // press and the only way out was to change some value deliberately -- restoring the intended
+  // caps and saving them was impossible (B-6). Discard cannot clear it, which is right: there is
+  // no stored profile to go back to.
   const paceDirty = useMemo(
-    () => pace !== null && savedPace !== undefined && JSON.stringify(pace) !== JSON.stringify(savedPace),
+    () =>
+      pace !== null &&
+      savedPace !== undefined &&
+      (Boolean(savedPace.settings_recovered) ||
+        JSON.stringify(pace) !== JSON.stringify(savedPace)),
     [pace, savedPace],
   );
 

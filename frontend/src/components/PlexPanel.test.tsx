@@ -123,6 +123,53 @@ describe("the connection picker", () => {
   });
 });
 
+describe("when plex.tv's list comes back without the linked server", () => {
+  it("says so and offers no picker, instead of presenting some other server as ours", async () => {
+    // B-10: `currentServer` fell back to `servers[0]`, so a partial or filtered plex.tv
+    // response silently promoted a DIFFERENT server to "the one Reaper manages" and the
+    // Connection row listed that server's addresses. Saving one pointed Reaper's Leaving
+    // Soon writes and its Never-Reap read at a library it was never linked to.
+    apiMock.plexResources.mockResolvedValue({
+      source: "plex.tv",
+      owner_username: "reaper-owner",
+      servers: [
+        {
+          name: "Someone else's server",
+          machine_identifier: "machine-other",
+          current: false,
+          connections: [discovered("https://10-0-0-9.abcdef.plex.direct:32400")],
+        },
+      ],
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PlexPanel />
+      </QueryClientProvider>,
+    );
+
+    // The row says what happened, and names the server Reaper is actually linked to.
+    const notice = await screen.findByText(/came back without the server Reaper uses/);
+    expect(notice).toHaveClass("notice-warn");
+    expect(notice.textContent).toContain("Example server");
+
+    // The other server is not offered at all -- not even as an option a browser would
+    // display: a select whose value matches nothing shows its first option, so listing it
+    // would still read as "this is your server", merely unsavable. The box names the
+    // linked server, and neither picker can act.
+    expect(screen.queryByRole("option", { name: "Someone else's server" })).not.toBeInTheDocument();
+    const server = screen.getByRole("option", { name: "Example server" }).closest("select");
+    expect(server).toBeDisabled();
+    expect(await connectionSelect()).toBeDisabled();
+
+    // And the other server's addresses are not on offer either.
+    expect(screen.queryByRole("option", { name: /10-0-0-9/ })).not.toBeInTheDocument();
+    expect(apiMock.plexSetConnection).not.toHaveBeenCalled();
+  });
+});
+
 describe("linking with Plex", () => {
   it("offers the approval link and a way out while it waits", async () => {
     const user = userEvent.setup();

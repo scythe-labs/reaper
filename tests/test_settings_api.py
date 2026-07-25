@@ -846,3 +846,75 @@ class TestPlexLinkChoice:
         assert retry.status_code == 400
 
         assert client.get("/api/settings/plex").json()["linked"] is False
+
+    def _link_machine_b(self, client: TestClient, httpx2_mock: respx.Router) -> None:
+        """Link the account's second server, so a connection can be saved against it."""
+        self._mock_plextv(httpx2_mock)
+        start = client.post("/api/settings/plex/link/start").json()
+        done = client.post(
+            "/api/settings/plex/link/poll",
+            json={"pin_id": start["pin_id"], "machine_identifier": "machine-b"},
+        )
+        assert done.status_code == 200, done.text
+
+    def test_a_typed_address_belonging_to_another_server_is_refused(
+        self, client: TestClient, httpx2_mock: respx.Router
+    ) -> None:
+        """The manual address box takes any host on the network, and the old probe only
+        asked whether *something* answered. Saving a neighbor's Plex would have pointed
+        Reaper's Leaving Soon writes and its Never-Reap read at a library nobody asked it
+        to touch, with the UI still naming the linked server (B-10)."""
+        self._link_machine_b(client, httpx2_mock)
+
+        # Something answers at the typed address -- it is simply not the linked server.
+        httpx2_mock.get("https://192.0.2.50:32400/identity").mock(
+            return_value=httpx.Response(
+                200, json={"MediaContainer": {"machineIdentifier": "machine-a"}}
+            )
+        )
+        refused = client.put(
+            "/api/settings/plex/connection", json={"uri": "https://192.0.2.50:32400"}
+        )
+        assert refused.status_code == 409, refused.text
+        assert "a different Plex server" in refused.json()["detail"]
+        # Nothing was written: the stored address is still the one linking found.
+        assert (
+            client.get("/api/settings/plex").json()["connection_uri"]
+            == "https://x.plex.direct:32400"
+        )
+
+    def test_an_address_that_will_not_say_who_it_is_is_refused_too(
+        self, client: TestClient, httpx2_mock: respx.Router
+    ) -> None:
+        """Unconfirmed is not confirmed. A 200 with no machineIdentifier is exactly the
+        shape a reverse proxy in front of the wrong thing produces, so it fails closed."""
+        self._link_machine_b(client, httpx2_mock)
+
+        httpx2_mock.get("https://192.0.2.51:32400/identity").mock(
+            return_value=httpx.Response(200, json={"MediaContainer": {}})
+        )
+        refused = client.put(
+            "/api/settings/plex/connection", json={"uri": "https://192.0.2.51:32400"}
+        )
+        assert refused.status_code == 502, refused.text
+        assert (
+            client.get("/api/settings/plex").json()["connection_uri"]
+            == "https://x.plex.direct:32400"
+        )
+
+    def test_the_linked_server_s_own_address_still_saves(
+        self, client: TestClient, httpx2_mock: respx.Router
+    ) -> None:
+        """The check must not cost the operator the thing the box is for."""
+        self._link_machine_b(client, httpx2_mock)
+
+        httpx2_mock.get("https://192.0.2.52:32400/identity").mock(
+            return_value=httpx.Response(
+                200, json={"MediaContainer": {"machineIdentifier": "machine-b"}}
+            )
+        )
+        saved = client.put(
+            "/api/settings/plex/connection", json={"uri": "https://192.0.2.52:32400"}
+        )
+        assert saved.status_code == 200, saved.text
+        assert saved.json()["connection_uri"] == "https://192.0.2.52:32400"

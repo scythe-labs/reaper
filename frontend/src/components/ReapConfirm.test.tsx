@@ -6,7 +6,7 @@
 // now detached on the server, the sheet closes freely (the app-wide bar keeps the count
 // and Stop), and reopening shows the report.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type ReapStatus, type Run, type RunReport } from "../api";
@@ -203,6 +203,28 @@ describe("the execute gate", () => {
 
     await screen.findByText(/Practice run passed/);
     await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("survives a drag that starts on the phrase and ends outside the panel", async () => {
+    // B-17: a click fires on the nearest common ancestor of press and release, so a drag
+    // out of the panel dispatched `click` on the SCRIM and the panel's stopPropagation
+    // never saw it. Selecting the confirmation phrase to read or copy it tore the sheet
+    // down, taking the practice-run result and anything typed with it.
+    const onClose = vi.fn();
+    const { container } = renderSheet(onClose);
+
+    const phrase = await screen.findByText(run.confirmation_phrase);
+    const scrim = container.querySelector(".modal-scrim")!;
+
+    fireEvent.mouseDown(phrase);
+    fireEvent.mouseUp(scrim);
+    fireEvent.click(scrim); // what the browser dispatches at the common ancestor
+    expect(onClose).not.toHaveBeenCalled();
+
+    // A real click outside still closes: pressed AND released on the scrim itself.
+    fireEvent.mouseDown(scrim);
+    fireEvent.mouseUp(scrim);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 

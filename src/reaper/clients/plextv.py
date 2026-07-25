@@ -315,23 +315,66 @@ class PlexTvClient(BaseClient):
         return any(s.client_identifier == machine_identifier for s in servers)
 
 
+async def _ask_identity(
+    connection: PlexConnection, token: str, *, timeout: float, verify: bool
+) -> httpx2.Response | None:
+    """GET ``/identity`` on this address, or ``None`` if the address does not answer.
+
+    ``/identity`` is the right probe: it is unauthenticated-ish, cheap, and names the
+    server that answered. ``verify`` defaults on at both callers; turning it off is the
+    operator's explicit choice for a self-signed HTTPS server (the same per-service
+    opt-out the *arr clients have), threaded through the link flow and stored on the
+    server row.
+    """
+    try:
+        async with httpx2.AsyncClient(timeout=timeout, verify=verify) as client:
+            return await client.get(
+                f"{connection.uri.rstrip('/')}/identity",
+                headers={"X-Plex-Token": token, "Accept": "application/json"},
+            )
+    except httpx2.HTTPError:
+        return None
+
+
 async def probe_connection(
     connection: PlexConnection, token: str, *, timeout: float = 5.0, verify: bool = True
 ) -> bool:
     """Is this connection actually reachable?
 
-    ``/identity`` is the right probe: it is unauthenticated-ish, cheap, and returns
-    the machineIdentifier, so it doubles as a check that we reached the server we
-    think we did. ``verify`` defaults on; turning it off is the operator's explicit
-    choice for a self-signed HTTPS server (the same per-service opt-out the *arr
-    clients have), threaded through the link flow and stored on the server row.
+    Reachability only, and deliberately so: it does NOT check *which* server answered.
+    Its caller is the link flow (``services/plex_link.reachable_connection``), which is
+    walking the addresses plex.tv itself just advertised for one resource, so the answer
+    is already scoped to the right server. Requiring an identity here would make a Plex
+    that does not report one impossible to link at all -- a real capability traded away
+    for a check this path does not need.
+
+    The caller that does need it is ``api/settings.plex_set_connection``, where the
+    address is typed by hand and could be any server on the network; it calls
+    ``connection_identity`` and compares. Rule 24: this docstring used to say the check
+    happened here, and it never did.
     """
+    response = await _ask_identity(connection, token, timeout=timeout, verify=verify)
+    return response is not None and response.status_code < 400
+
+
+async def connection_identity(
+    connection: PlexConnection, token: str, *, timeout: float = 5.0, verify: bool = True
+) -> str | None:
+    """Which server answers at this address, or ``None`` if none can be confirmed.
+
+    ``None`` covers four cases a caller must treat alike -- unreachable, an error
+    status, a body that will not parse, and a body that does not name a server --
+    because none of them is evidence that the expected server is there. A reachable
+    server that will not say who it is is exactly what an identity check exists to
+    refuse, so this is stricter than ``probe_connection`` on purpose.
+    """
+    response = await _ask_identity(connection, token, timeout=timeout, verify=verify)
+    if response is None or response.status_code >= 400:
+        return None
     try:
-        async with httpx2.AsyncClient(timeout=timeout, verify=verify) as client:
-            response = await client.get(
-                f"{connection.uri.rstrip('/')}/identity",
-                headers={"X-Plex-Token": token, "Accept": "application/json"},
-            )
-            return response.status_code < 400
-    except httpx2.HTTPError:
-        return False
+        body = response.json()
+    except ValueError:
+        return None
+    container = body.get("MediaContainer") if isinstance(body, dict) else None
+    identifier = container.get("machineIdentifier") if isinstance(container, dict) else None
+    return identifier if isinstance(identifier, str) and identifier else None

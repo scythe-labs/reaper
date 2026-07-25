@@ -58,6 +58,20 @@ Performance came out of the same pass: the entry bundle is **159.6 kB -> 94.8 kB
 six routes behind `React.lazy`, and the expanded queue holds two query subscriptions where it
 opened roughly a thousand (one per control, on two keys).
 
+**Batch 8, past the end of the fix order,** took the four unscheduled findings that mislead or
+strand the operator. One of them was worse than the review knew: `PUT
+/api/settings/plex/connection` probed a typed address for a pulse and nothing else, so an address
+belonging to *any other Plex on the network* saved successfully, and Reaper then wrote Leaving
+Soon collections and read Never-Reap from a library nobody pointed it at. It now asks who
+answered and refuses a mismatch. The same finding's frontend half taught a smaller lesson worth
+keeping: dropping a wrong `?? servers[0]` fallback was not enough, because a `<select>` whose
+value matches no option still *displays* its first one -- the misreading survived the fix that
+was supposed to remove it, merely no longer savable. Alongside those, a profile that could not be
+read told the operator to save while rendering no Save button; a Plex PIN poll that answered after
+the sign-in settled could paint "sign-in failed" over a good session or sign someone in after
+Cancel; and any modal closed on a text-drag that ended outside it, which over the reap sheet took
+the dry-run result and the typed confirmation phrase with it.
+
 ### Earlier — a hand reap on a keep-rule conflict is honored, and a held reap stops calling itself "Sanctuary"
 
 A tester hand-reaped two seasons; Reaper said they would be kept anyway, under a panel that

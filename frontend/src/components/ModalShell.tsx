@@ -117,8 +117,27 @@ export function ModalShell({
     if (canClose) onClose();
   };
 
+  // A click event fires on the nearest common ancestor of where the press began and where it
+  // ended, so a drag that starts inside the panel and ends outside it dispatches `click` on the
+  // SCRIM -- the panel never sees it, and its stopPropagation cannot help (B-17). Dragging
+  // across the reap confirmation phrase to read or copy it tore the modal down, taking the
+  // dry-run result and the typed phrase with it; the same gesture over a service form took the
+  // typed credentials. So the scrim closes only on a press that BEGAN and ENDED on the scrim
+  // itself, which is the only gesture that means "I clicked outside the panel".
+  const pressBeganOnScrim = useRef(false);
+
   return (
-    <div className="modal-scrim" onClick={close}>
+    <div
+      className="modal-scrim"
+      onMouseDown={(e) => {
+        pressBeganOnScrim.current = e.target === e.currentTarget;
+      }}
+      onMouseUp={(e) => {
+        const outside = pressBeganOnScrim.current && e.target === e.currentTarget;
+        pressBeganOnScrim.current = false;
+        if (outside) close();
+      }}
+    >
       <div
         ref={panelRef}
         className={className ? `modal ${className}` : "modal"}
@@ -126,6 +145,10 @@ export function ModalShell({
         aria-modal="true"
         aria-labelledby={headingId}
         tabIndex={-1}
+        // The scrim no longer closes on a bubbled click, so this no longer guards against it.
+        // It stays for what is above the scrim: these modals render inline in the React tree
+        // (see the note at the top), so without it a click inside a panel would reach the click
+        // handlers of whatever the modal happens to be rendered inside.
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => trapTab(e, panelRef.current)}
       >

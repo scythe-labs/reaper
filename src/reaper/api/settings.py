@@ -37,7 +37,7 @@ from reaper.auth.cookie import read_session_token
 from reaper.auth.ratelimit import argon2_gate, password_throttle
 from reaper.clients.base import IntegrationError
 from reaper.clients.plex import PlexClient, PlexError
-from reaper.clients.plextv import PlexConnection, PlexTvClient, probe_connection
+from reaper.clients.plextv import PlexConnection, PlexTvClient, connection_identity
 from reaper.clock import utcnow
 from reaper.config import RuntimeSafety, Settings
 from reaper.crypto import SecretBox
@@ -820,6 +820,12 @@ async def plex_set_connection(request: Request, payload: PlexConnectionIn) -> Pl
     The address is probed with the stored token before anything is written, so a typo
     or a dead address changes nothing. The certificate check rides along when given
     (a self-signed HTTPS server needs it off to be probed at all).
+
+    The probe also asks the server who it is and refuses anything but the linked one.
+    This address is typed by hand, so it can be any Plex on the network; saving one
+    that belongs to a different server would point Reaper's Leaving Soon writes and its
+    Never-Reap read at a library nobody asked it to touch (B-10). A server that will
+    not say who it is is refused for the same reason: unconfirmed is not confirmed.
     """
     uri = payload.uri.strip().rstrip("/")
     parts = urlsplit(uri)
@@ -832,6 +838,8 @@ async def plex_set_connection(request: Request, payload: PlexConnectionIn) -> Pl
         server = await _linked_server(session)
         token = _box(request).decrypt(server.token_enc)
         verify = payload.verify_tls if payload.verify_tls is not None else server.verify_tls
+        expected = server.machine_identifier
+        expected_name = server.name
 
     probe = PlexConnection(
         uri=uri,
@@ -841,11 +849,20 @@ async def plex_set_connection(request: Request, payload: PlexConnectionIn) -> Pl
         relay=False,
         protocol=parts.scheme,
     )
-    if not await probe_connection(probe, token, verify=verify):
+    answered = await connection_identity(probe, token, verify=verify)
+    if answered is None:
         raise HTTPException(
             502,
             "Couldn't reach a Plex server at that address, so nothing was changed. "
             "Check the address and port, and whether the certificate check should be off.",
+        )
+    if answered != expected:
+        log.warning("plex.connection_wrong_server")
+        raise HTTPException(
+            409,
+            f"That address is a different Plex server, so nothing was changed. Reaper is "
+            f"linked to {expected_name}; use an address for that server, or link the other "
+            f"one instead.",
         )
 
     async with _factory(request)() as session:
