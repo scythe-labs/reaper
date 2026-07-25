@@ -15,17 +15,16 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type CSSProperties,
-  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type RefObject,
+  memo,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { createPortal } from "react-dom";
 import {
   api,
   type Candidate,
@@ -37,15 +36,54 @@ import {
   type Run,
   type ShowStatus,
   type SortKey,
-  type SortOrder,
   type Verdict,
 } from "../api";
 import { useBackGuard } from "../backnav";
-import { bytes, count, itemBytes, spareRemaining, totalBytes } from "../format";
+import { bytes, count, itemBytes, totalBytes } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useReviewFreshness } from "../useReviewFreshness";
 import { ReapConfirm } from "./ReapConfirm";
-import { ScytheGlyph } from "./ScytheGlyph";
+import { KeptByShowNote, OverrideControls, OverrideMark } from "./OverrideControls";
+import {
+  CaretIcon,
+  CheckIcon,
+  CheckSquareIcon,
+  FunnelIcon,
+  GenreIcon,
+  LayersIcon,
+  LibraryIcon,
+  OverrideIcon,
+  PlusIcon,
+  ScytheIcon,
+  SpareGlyph,
+  SelectTick,
+  SortIcon,
+} from "./queueIcons";
+import {
+  DEFAULT_FILTERS,
+  loadFilters,
+  MEDIA_FILTERS,
+  OVERRIDE_FILTERS,
+  REQUESTED_FILTERS,
+  saveFilters,
+  SORTS,
+  type FilterDimension,
+  type QueueFilters,
+} from "./queueFilters";
+import {
+  QueueSettingsContext,
+  useHoldsBackUnmeasured,
+  type QueueSettings,
+} from "./queueSettings";
+import {
+  groupReapEffective,
+  handFate,
+  isCondemned,
+  reapIsNoop,
+  showReapIsNoop,
+  showReapReach,
+  type Fate,
+} from "./reviewFate";
 import { chipWhy, CondemnedChip, OverrideChip, StatusChip } from "./StatusChip";
 
 //: How many cards to *render* at a time. A tab can hold thousands, so we draw a screenful and
@@ -78,207 +116,13 @@ const TABS: { verdict: Verdict; label: string; blurb: string; empty: string }[] 
   },
 ];
 
-const MEDIA_FILTERS: { value: string; label: string }[] = [
-  { value: "", label: "Everything" },
-  { value: "movie", label: "Movies" },
-  { value: "season", label: "TV shows" },
-];
-
-const REQUESTED_FILTERS: { value: RequestedFilter; label: string }[] = [
-  { value: "any", label: "Anyone" },
-  { value: "yes", label: "Requested" },
-  { value: "no", label: "Not requested" },
-];
-
-const OVERRIDE_FILTERS: { value: OverrideFilter; label: string }[] = [
-  { value: "any", label: "Any override" },
-  { value: "spare", label: "Spared by hand" },
-  { value: "reap", label: "Reaped by hand" },
-  { value: "none", label: "No override" },
-];
-
-const SORTS: { value: SortKey; label: string }[] = [
-  { value: "score", label: "Score" },
-  { value: "size", label: "Size" },
-  { value: "year", label: "Year" },
-  { value: "title", label: "Title" },
-];
-
-/** One filterable dimension of the review queue: a queue-filter field paired with a value
- *  list, a label and an icon. The ＋ Filter menu and the active-filter chips are built from
- *  these, so adding a future filter is one more entry here -- never another toolbar control.
- *  `defaultValue` is the field's "off" value: a filter is active when its value differs from
- *  it, and clearing resets to it. Sort is deliberately not a dimension -- it orders the list
- *  and hides nothing, so it is never a removable chip. */
-interface FilterDimension {
-  id: string;
-  label: string;
-  icon: ReactNode;
-  defaultValue: string;
-  options: { value: string; label: string }[];
-  value: (f: QueueFilters) => string;
-  set: (f: QueueFilters, value: string) => QueueFilters;
-}
 
 // --- remembered filters --------------------------------------------------------------------
 // Each queue tab keeps its own filters and sort, on this device, until changed or cleared.
 
-export interface QueueFilters {
-  mediaType: string;
-  requested: RequestedFilter;
-  genre: string;
-  library: string;
-  override: OverrideFilter;
-  sort: SortKey;
-  order: SortOrder;
-}
-
-export const DEFAULT_FILTERS: QueueFilters = {
-  mediaType: "",
-  requested: "any",
-  genre: "",
-  library: "",
-  override: "any",
-  sort: "score",
-  order: "desc",
-};
-
-const filtersKey = (verdict: string) => `reaper.queue.filters.${verdict}`;
-
-/** The remembered filters for one tab, sanitized field by field: an unknown or outgrown
- *  stored value falls back to that field's default instead of poisoning the whole set. */
-export function loadFilters(verdict: string): QueueFilters {
-  let raw: string | null;
-  try {
-    // window.localStorage, never the bare global: Node exposes an experimental global
-    // of the same name, so the bare name is the wrong object under the test runner.
-    raw = window.localStorage.getItem(filtersKey(verdict));
-  } catch {
-    return { ...DEFAULT_FILTERS };
-  }
-  if (!raw) return { ...DEFAULT_FILTERS };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { ...DEFAULT_FILTERS };
-  }
-  const stored = (parsed ?? {}) as Partial<Record<keyof QueueFilters, unknown>>;
-  const pick = <T,>(value: unknown, allowed: readonly T[], fallback: T): T =>
-    allowed.includes(value as T) ? (value as T) : fallback;
-  return {
-    mediaType: pick(
-      stored.mediaType,
-      MEDIA_FILTERS.map((f) => f.value),
-      DEFAULT_FILTERS.mediaType,
-    ),
-    requested: pick(
-      stored.requested,
-      REQUESTED_FILTERS.map((f) => f.value),
-      DEFAULT_FILTERS.requested,
-    ),
-    genre: typeof stored.genre === "string" ? stored.genre : DEFAULT_FILTERS.genre,
-    library: typeof stored.library === "string" ? stored.library : DEFAULT_FILTERS.library,
-    override: pick(
-      stored.override,
-      OVERRIDE_FILTERS.map((f) => f.value),
-      DEFAULT_FILTERS.override,
-    ),
-    sort: pick(
-      stored.sort,
-      SORTS.map((s) => s.value),
-      DEFAULT_FILTERS.sort,
-    ),
-    order: pick(stored.order, ["asc", "desc"] as const, DEFAULT_FILTERS.order),
-  };
-}
-
-export function saveFilters(verdict: string, filters: QueueFilters): void {
-  try {
-    window.localStorage.setItem(filtersKey(verdict), JSON.stringify(filters));
-  } catch {
-    // Storage can be unavailable (private mode, full quota); filters simply stop being
-    // remembered, which is the pre-existing behavior, never an error.
-  }
-}
 
 // --- little inline icons for the filter/sort pills ------------------------------------------
 
-function LayersIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-      <path d="M8 2l6 3-6 3-6-3 6-3z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-      <path d="M2 8l6 3 6-3M2 11l6 3 6-3" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-    </svg>
-  );
-}
-function FunnelIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-      <path d="M2 3h12l-4.5 5.5V13L6.5 11V8.5L2 3z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-    </svg>
-  );
-}
-function SortIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-      <path d="M3 4h10M3 8h6M3 12h3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
-  );
-}
-function GenreIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-      <path
-        d="M8 2.2l1.5 4.3L13.8 8l-4.3 1.5L8 13.8 6.5 9.5 2.2 8l4.3-1.5z"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-function OverrideIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-      <rect x="2" y="5" width="12" height="6" rx="3" stroke="currentColor" strokeWidth="1.3" />
-      <circle cx="11" cy="8" r="1.8" stroke="currentColor" strokeWidth="1.3" />
-    </svg>
-  );
-}
-/** The Plex library (section) glyph -- a small shelf of spines, distinct from the media-type
- *  layers icon so a library never reads as a media type. Shared by the library filter and the
- *  library chip. */
-function LibraryIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-      <rect x="2.5" y="3" width="2.4" height="10" rx="0.6" stroke="currentColor" strokeWidth="1.2" />
-      <rect x="5.8" y="3" width="2.4" height="10" rx="0.6" stroke="currentColor" strokeWidth="1.2" />
-      <path d="M9.6 4l2.4.6-1.9 8.2-2.4-.6" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
-    </svg>
-  );
-}
-function PlusIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-      <path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-  );
-}
-function CaretIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" aria-hidden="true" className="fchip-caret">
-      <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-function CheckIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-      <path d="M3 8.5l3 3 7-7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
 
 /** The Plex library an item lives in, as a quiet neutral chip on the facts line -- the same
  *  placement and weight as the resolution badge, deliberately not a verdict color. Hidden when
@@ -400,24 +244,6 @@ export function Poster({ url, alt }: { url: string | null; alt: string }) {
   return <img className="poster" src={url} alt={alt} loading="lazy" onError={() => setBroken(true)} />;
 }
 
-/** Which color a score badge or strip square wears once a hand decision is in play.
- *  A hand SPARE, or a reap the engine honors, shows SOLID -- "you chose this" -- so the
- *  cell states the item's real fate, not just Reaper's first read. A reap the engine
- *  can't honor yet ("refused") reads DASHED RED, never solid: the ask is noted, the file is
- *  still held. Amber is no longer used here at all -- it means only "left for you to decide"
- *  (the abstain `status-look` chip). Anything untouched keeps its scan verdict. Shared by the
- *  score badge and the season strip so the two can never disagree with each other or with
- *  the row's chip. */
-export type Fate = Verdict | "reap" | "spare" | "refused";
-export function handFate(item: {
-  verdict: Verdict;
-  override: Override | null;
-  override_effective: boolean | null;
-}): Fate {
-  if (item.override === "spare") return "spare";
-  if (item.override === "reap") return item.override_effective === false ? "refused" : "reap";
-  return item.verdict;
-}
 
 /** The score chip. Color carries the item's fate so it reads without the label. */
 function Score({ item }: { item: Candidate }) {
@@ -428,13 +254,6 @@ function Score({ item }: { item: Candidate }) {
   );
 }
 
-/** The reap glyph: the brand scythe (see ScytheGlyph), shrunk into a reap ACTION -- the same
- *  drawing as the header mark, so the two never read as different icons. A heavier snath (5.5
- *  vs the header's 3.5) holds the shape's weight at button size, where the logo's own stroke
- *  would thin to a hairline. Only reap actions wear it -- close buttons keep ✕. */
-function ScytheIcon() {
-  return <ScytheGlyph className="scythe" width={13} height={13} strokeWidth={5.5} />;
-}
 
 /** The label the resolution badge wears: 4K, HD or SD. Null (no data) shows nothing. */
 function resolutionLabel(value: string | null): string | null {
@@ -483,475 +302,23 @@ function DormantPill({ dormantFor }: { dormantFor: string | null }) {
   );
 }
 
-/** How long a plain Spare press keeps an item: the operator's General preference (0 = forever,
- *  N = N days). Read from the shared general-settings cache, so flipping it in Settings takes
- *  effect here without a reload. Unknown/error reads as 0 -- forever, the safe, unchanged
- *  default. One query key, deduped, so every control on screen costs one request. */
-function useDefaultSpareDays(): number {
-  const { data } = useQuery({ queryKey: ["general-settings"], queryFn: api.general });
-  return data?.default_spare_days ?? 0;
-}
 
-/** A small clock, the dormancy pill's shape reused -- here in the spare's green to mean "kept,
- *  for now". It marks a TIMED spare, where ∞ marks a forever one. */
-function ClockGlyph() {
-  return (
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-      <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.4" />
-      <path d="M8 4.6V8l2.4 1.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
-  );
-}
 
-/** The Spare button's leading glyph: ∞ when a plain press keeps forever, the clock when it
- *  keeps for a set time -- so the button says what it will do before you open the menu. */
-function SpareGlyph({ days }: { days: number }) {
-  return days > 0 ? (
-    <ClockGlyph />
-  ) : (
-    <span className="infinity" aria-hidden="true">
-      ∞
-    </span>
-  );
-}
 
-function CaretDownGlyph() {
-  return (
-    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" aria-hidden="true">
-      <path
-        d="M4 6l4 4 4-4"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
 
-function PenGlyph() {
-  return (
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-      <path
-        d="M11 2.5l2.5 2.5L6 12.5 3 13l.5-3z"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
 
-//: The quick day-lengths the Spare menu always offers, above Forever and a Custom entry. The
-//  operator's own default is added to (and tagged in) this list when it is a different number.
-const SPARE_PRESETS = [30, 90];
 
-/** The hand-overrides, as a toggle: **Spare** (keep) and **Reap** (force onto the list). The
- *  active one is lit; clicking it again clears the override and lets Reaper judge the item
- *  again. Clicking the other switches. Stops the click from opening the panel.
- *
- *  Spare is a SPLIT button: the main press keeps the item for the operator's default length
- *  (Settings → General), and the chevron opens the other lengths -- a set number of days, or
- *  forever -- so a one-off choice is one click, never a settings trip. The leading glyph (∞ or
- *  a clock) says which the default is. On a spared item the chevron stays live, so the same
- *  menu extends or shortens the spare; the main button still toggles it off.
- *
- *  On the Condemned lane the item is already on the block, so Reap would change nothing:
- *  `hideReap` drops it there and leaves Spare (rescue) on its own. */
-/** Where the Spare length menu is pinned (fixed, viewport coords). Always `left`, plus exactly
- *  one vertical anchor: `top` when it opens below the caret, `bottom` when it flips above -- the
- *  bottom anchor keeps it snug to the caret whatever the menu's rendered height. */
-type MenuPos = { left: number; top?: number; bottom?: number };
-
-export function OverrideControls({
-  override,
-  onSet,
-  onClear,
-  pending,
-  hideReap = false,
-}: {
-  override: Override | null;
-  onSet: (decision: Override, spareDays?: number) => void;
-  onClear: () => void;
-  pending: boolean;
-  hideReap?: boolean;
-}) {
-  const defaultDays = useDefaultSpareDays();
-  const [menuAt, setMenuAt] = useState<MenuPos | null>(null);
-  const caretRef = useRef<HTMLButtonElement>(null);
-  // Back closes the open length menu before it does anything else (only the one open menu has a
-  // non-null position, so only it registers).
-  useBackGuard(menuAt !== null, () => setMenuAt(null));
-
-  // The menu is position:fixed so the card's overflow:hidden can't clip it. Anchor it to the
-  // chevron, right-aligned, and flip above when it would run off the bottom of the viewport.
-  // Below: pin the menu's TOP under the caret. Above: pin its BOTTOM just over the caret with the
-  // `bottom` property -- never a `top` computed from a guessed height, which floated the menu off
-  // the button when the real menu was shorter than the guess. HEIGHT is only the flip decision's
-  // upper bound now, not a coordinate.
-  const toggleMenu = (e: ReactMouseEvent) => {
-    e.stopPropagation();
-    if (menuAt) {
-      setMenuAt(null);
-      return;
-    }
-    const btn = caretRef.current;
-    if (!btn) return;
-    const r = btn.getBoundingClientRect();
-    const WIDTH = 224;
-    const HEIGHT = 250;
-    const left = Math.max(8, Math.min(r.right - WIDTH, window.innerWidth - WIDTH - 8));
-    const below = r.bottom + HEIGHT <= window.innerHeight;
-    setMenuAt(
-      below ? { left, top: r.bottom + 4 } : { left, bottom: window.innerHeight - r.top + 4 },
-    );
-  };
-
-  const clickSpare = (e: ReactMouseEvent) => {
-    e.stopPropagation();
-    override === "spare" ? onClear() : onSet("spare", defaultDays);
-  };
-  const clickReap = (e: ReactMouseEvent) => {
-    e.stopPropagation();
-    override === "reap" ? onClear() : onSet("reap");
-  };
-
-  return (
-    <div
-      className={`override-controls ${menuAt ? "menu-open" : ""}`}
-      role="group"
-      aria-label="Spare or reap this item"
-      // The buttons activate on Enter/Space natively; stop the key from bubbling to a row or
-      // card whose own handler calls preventDefault, which would cancel the button's
-      // activation and open the panel instead (B-7). Mirrors the SeasonStrip square guard.
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-      }}
-    >
-      <span className="ov-split">
-        <button
-          type="button"
-          className={`ov-btn ov-spare split-main ${override === "spare" ? "active" : ""}`}
-          disabled={pending}
-          aria-pressed={override === "spare"}
-          onClick={clickSpare}
-          title={
-            override === "spare"
-              ? "Spared. Click to let Reaper judge it again"
-              : defaultDays > 0
-                ? `Spare for ${defaultDays} days. Use the arrow for another length`
-                : "Spare forever. Use the arrow for a set time"
-          }
-        >
-          <SpareGlyph days={defaultDays} /> {override === "spare" ? "Spared" : "Spare"}
-        </button>
-        <button
-          ref={caretRef}
-          type="button"
-          className={`ov-btn ov-spare split-caret ${override === "spare" ? "active" : ""}`}
-          disabled={pending}
-          aria-haspopup="menu"
-          aria-expanded={menuAt !== null}
-          aria-label="Choose how long to keep it"
-          onClick={toggleMenu}
-        >
-          <CaretDownGlyph />
-        </button>
-      </span>
-      {menuAt && (
-        <SpareMenu
-          at={menuAt}
-          defaultDays={defaultDays}
-          triggerRef={caretRef}
-          onPick={(spareDays) => {
-            setMenuAt(null);
-            onSet("spare", spareDays);
-          }}
-          onClose={() => setMenuAt(null)}
-        />
-      )}
-      {!hideReap && (
-        <button
-          type="button"
-          className={`ov-btn ov-reap ${override === "reap" ? "active" : ""}`}
-          disabled={pending}
-          aria-pressed={override === "reap"}
-          onClick={clickReap}
-          title={
-            override === "reap"
-              ? "Marked for reaping. Click to undo"
-              : "Force this onto the reap list"
-          }
-        >
-          <ScytheIcon /> {override === "reap" ? "Reaping" : "Reap"}
-        </button>
-      )}
-    </div>
-  );
-}
-
-/** The length menu behind the Spare chevron: quick day-presets, Forever, and a Custom entry
- *  that expands to a days box. The operator's default is tagged. Picking a length spares the
- *  item at once -- the menu is the action, not a form. Portaled to <body> and rendered
- *  position:fixed at `at`: the card clips its overflow AND its `.card-side` is a z-index:2
- *  stacking context (`.card > *`), which a fixed child alone can't escape -- so a later card's
- *  score badge, spare button, or tooltip paints over an in-card menu. The portal lifts it to the
- *  root stacking context so its own z-index wins. Closed on an outside click, Escape, or a
- *  scroll that would strand it off its anchor. */
-function SpareMenu({
-  at,
-  defaultDays,
-  triggerRef,
-  onPick,
-  onClose,
-}: {
-  at: MenuPos;
-  defaultDays: number;
-  triggerRef: RefObject<HTMLButtonElement | null>;
-  onPick: (days: number) => void;
-  onClose: () => void;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [custom, setCustom] = useState(false);
-  // Held as free text so the box types and clears naturally; clamped to [1, 3650] only when
-  // Spare is pressed, never mid-keystroke (which would snap a half-typed number).
-  const [customText, setCustomText] = useState(String(defaultDays > 0 ? defaultDays : 30));
-  const spareCustom = () =>
-    onPick(Math.max(1, Math.min(3650, Math.floor(Number(customText) || 1))));
-
-  // Read fresh inside the scroll handler without re-subscribing the listeners on each keystroke
-  // (rule 19: useRef for a cross-render flag, stable effect deps).
-  const customRef = useRef(custom);
-  customRef.current = custom;
-
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as Node;
-      // The chevron is its own toggle; leave it out of the outside-close so a click there
-      // doesn't close-then-reopen the menu.
-      if (!ref.current?.contains(t) && !triggerRef.current?.contains(t)) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    const onScroll = () => {
-      // While the Custom-length input is open, ignore scroll: on a phone the virtual keyboard
-      // opening scrolls the viewport to reveal the focused field, and a scroll-close would then
-      // dismiss the menu before a digit is typed. Outside-click and Escape still close it (U-4).
-      if (customRef.current) return;
-      onClose();
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    window.addEventListener("scroll", onScroll, true);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-      window.removeEventListener("scroll", onScroll, true);
-    };
-  }, [onClose, triggerRef]);
-
-  // The day-rows: the presets, plus the operator's default when it is a custom number not
-  // already among them, sorted so the ladder reads low to high.
-  const dayRows = Array.from(
-    new Set([...(defaultDays > 0 ? [defaultDays] : []), ...SPARE_PRESETS]),
-  ).sort((a, b) => a - b);
-
-  return createPortal(
-    <div
-      ref={ref}
-      className="dur-menu"
-      role="menu"
-      aria-label="Spare this item for"
-      style={{
-        position: "fixed",
-        left: at.left,
-        ...(at.top !== undefined ? { top: at.top } : { bottom: at.bottom }),
-      }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className="dur-head">Spare for…</div>
-      {dayRows.map((d) => (
-        <button key={d} type="button" role="menuitem" className="dur-mi" onClick={() => onPick(d)}>
-          <span className="mi-glyph">
-            <ClockGlyph />
-          </span>
-          <span className="mi-label">{d} days</span>
-          {d === defaultDays && <span className="mi-tag">Default</span>}
-        </button>
-      ))}
-      <button type="button" role="menuitem" className="dur-mi" onClick={() => onPick(0)}>
-        <span className="mi-glyph">
-          <span className="infinity" aria-hidden="true">
-            ∞
-          </span>
-        </span>
-        <span className="mi-label">Forever</span>
-        {defaultDays === 0 && <span className="mi-tag">Default</span>}
-      </button>
-      <div className="dur-div" />
-      {custom ? (
-        <div className="dur-custom">
-          <span className="qty qty-narrow">
-            <input
-              type="number"
-              min={1}
-              max={3650}
-              value={customText}
-              autoFocus
-              aria-label="Custom spare length in days"
-              onChange={(e) => setCustomText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") spareCustom();
-              }}
-            />
-            <span className="qty-suffix" aria-hidden="true">
-              days
-            </span>
-          </span>
-          <button type="button" className="dur-spare-go" onClick={spareCustom}>
-            Spare
-          </button>
-        </div>
-      ) : (
-        <button type="button" role="menuitem" className="dur-mi" onClick={() => setCustom(true)}>
-          <span className="mi-glyph mi-pen">
-            <PenGlyph />
-          </span>
-          <span className="mi-label">Custom length…</span>
-        </button>
-      )}
-    </div>,
-    document.body,
-  );
-}
-
-/** The note beside a season's Spare/Reap when a *whole-show* decision is what keeps or
- *  reaps it -- so the operator knows the season control toggles only the season's OWN
- *  decision, not the show's. Its wording turns on how the season's own decision relates to
- *  the show's: absent (the show decides), the same (clearing this one changes nothing), or
- *  opposite (the season's own decision wins). Renders nothing when no show decision covers it,
- *  so a movie or an untouched-show season shows no note. The glyph tracks the item's REAL
- *  fate, so the note never contradicts the row's chip. */
-export function KeptByShowNote({
-  own,
-  showOverride,
-  effective,
-  className = "",
-}: {
-  own: Override | null;
-  showOverride: Override | null;
-  /** The row's ``override_effective``: false means a reap the engine can't honor yet (held). */
-  effective: boolean | null;
-  className?: string;
-}) {
-  if (!showOverride) return null;
-  const fate = own ?? showOverride; // an item's own decision wins over its show's
-  // A reap the engine can't honor yet (streaming now, a structural gate) is HELD, not done, so
-  // the note must never promise removal for it -- it matches the chip's "kept for now" (U-1).
-  const heldReap = fate === "reap" && effective === false;
-  let body;
-  if (!own) {
-    body =
-      showOverride === "spare" ? (
-        <>
-          <b>The whole show is spared</b>, so this season is kept. Undo it on the show.
-        </>
-      ) : heldReap ? (
-        <>
-          <b>The whole show is set to reap</b>, but this season is <b>kept for now</b>. Undo it
-          on the show.
-        </>
-      ) : (
-        <>
-          <b>The whole show is set to reap</b>, so this season will be removed. Undo it on the
-          show.
-        </>
-      );
-  } else if (own === showOverride) {
-    body =
-      showOverride === "spare" ? (
-        <>
-          The whole show is <b>also spared</b>, so clearing this one won't remove it.
-        </>
-      ) : (
-        <>
-          The whole show is <b>also set to reap</b>, so clearing this one won't keep it.
-        </>
-      );
-  } else {
-    body =
-      own === "reap" ? (
-        heldReap ? (
-          <>
-            You reaped this season, but it is <b>kept for now</b>, even though the whole show is
-            spared.
-          </>
-        ) : (
-          <>
-            You reaped this season, so it <b>will be removed</b> even though the whole show is
-            spared.
-          </>
-        )
-      ) : (
-        <>
-          You spared this season, so it <b>stays</b> even though the whole show is set to reap.
-        </>
-      );
-  }
-  return (
-    <p className={`kept-note kept-${fate} ${className}`.trim()}>
-      <span className="kept-note-mark" aria-hidden="true">
-        {fate === "spare" ? <span className="mk-inf">∞</span> : <ScytheIcon />}
-      </span>
-      <span>{body}</span>
-    </p>
-  );
-}
-
-/** The resting decision marker: when a hand override is in force, the card rests as a small
- *  icon of that decision (∞ spared, scythe reaped) where the buttons sit, bottom-right. The
- *  hover rules fade it out as the buttons arrive, so the two never show together. Decorative:
- *  the same decision is named by the card's override chip and by the buttons themselves. */
-function OverrideMark({
-  override,
-  spareExpiresAt = null,
-}: {
-  override: Override | null;
-  /** For a spare, when it stops keeping the item (ISO), or null for forever. A forever spare
-   *  rests as ∞; a timed one rests as the clock plus its days left ("27d"). */
-  spareExpiresAt?: string | null;
-}) {
-  if (!override) return null;
-  if (override !== "spare") {
-    return (
-      <span className="override-mark reap" aria-hidden="true">
-        <ScytheIcon />
-      </span>
-    );
-  }
-  const remaining = spareRemaining(spareExpiresAt);
-  return (
-    <span className="override-mark spare" aria-hidden="true">
-      {remaining.forever ? (
-        <span className="mk-inf">∞</span>
-      ) : (
-        <>
-          <ClockGlyph />
-          <span className="mk-count">{remaining.short}</span>
-        </>
-      )}
-    </span>
-  );
-}
 
 /** How a card participates in Select mode. When ``selectMode`` is off these are inert and the
  *  card behaves normally (click opens the why-panel); when on, the whole card is a selection
- *  target -- press to toggle, drag across to paint a run. */
+ *  target -- press to toggle, drag across to paint a run.
+ *
+ *  Everything here is the SAME for every card, so the queue builds one of these and passes it
+ *  to all of them. Whether a given card is picked is its own `isSelected` prop, not a field in
+ *  here: with it folded in, the object was rebuilt per card per render and no card could be
+ *  memoized -- so painting one card re-rendered every drawn card (P-1). */
 type CardSelect = {
   selectMode: boolean;
-  isSelected: boolean;
   onSelectDown: (key: string, e: ReactPointerEvent) => void;
   onSelectEnter: (key: string) => void;
   // Keyboard activation (Enter/Space) toggles a single card *without* arming a drag. A key
@@ -960,82 +327,10 @@ type CardSelect = {
   onSelectToggle: (key: string) => void;
 };
 
-/** The selection tick a card wears in Select mode: an empty ring until picked, a filled check
- *  once it is. Replaces the raw checkbox -- it reads as part of the card, not bolted on. */
-function SelectTick({ selected }: { selected: boolean }) {
-  return (
-    <span className={`select-tick ${selected ? "on" : ""}`} aria-hidden="true">
-      <svg viewBox="0 0 16 16" width="11" height="11">
-        <path
-          d="M3.5 8.5l3 3 6-7"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.3"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-    </span>
-  );
-}
 
-function CheckSquareIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-      <rect x="2" y="2" width="12" height="12" rx="3" stroke="currentColor" strokeWidth="1.4" />
-      <path
-        d="M5 8.2l2 2 4-4.4"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
 
-/** Whether the row a card leads with is on the block. One expression for both card
- *  shapes: a show card reads its first (highest-scoring) season, a movie card reads
- *  itself, and neither may drift into asking the question a different way. */
-export function isCondemned(item: {
-  verdict: Verdict;
-  override: Override | null;
-  override_effective: boolean | null;
-}): boolean {
-  // The item's EFFECTIVE fate (will it be removed), not its raw (now pure-policy) verdict: a hand
-  // spare and a held hand reap keep it, a honored hand reap condemns it. Routed through handFate so
-  // this and the colors can't disagree (rule 49). Drives the card's condemned styling and the
-  // which-tab proxy -- NOT hideReap, which asks a different question (see reapIsNoop).
-  const fate = handFate(item);
-  return fate === "condemn" || fate === "reap";
-}
 
-/** Whether a hand Reap on this row would change nothing, so its Reap control is dropped (rule 48).
- *  Reaping is a no-op only when POLICY already condemns the item (its pure verdict is "condemn")
- *  and the operator has not spared it: a spared row -- including a season kept by a whole-show
- *  spare -- can still be flipped to Reap, and a row condemned only by the operator's OWN reap
- *  keeps that control so the reap can be undone (its pure verdict is not "condemn"). The spare-
- *  aware form of rule 48's "own verdict === condemn"; never reimplement it inline. */
-export function reapIsNoop(item: { verdict: Verdict; override: Override | null }): boolean {
-  return item.verdict === "condemn" && item.override !== "spare";
-}
 
-/** One status line per card. Condemned leads with the amber dormancy pill, and the reason
- *  paragraph stands down WHENEVER the pill is present -- two status lines is noise whatever
- *  the reason says; the full sentences live in the panel. Sanctuary and Limbo wear their
- *  single short chip. */
-/** Whether an item with no size is actually being kept out of plans right now.
- *
- *  Only true while the allowance is off, which is its default. Above zero these items
- *  are reapable, and a card still promising "held back" would be telling the owner the
- *  opposite of what the plan will do. One shared query key, so this costs one request no
- *  matter how many cards ask. Unknown or failed reads answer TRUE: claiming an item is
- *  kept is the safe thing to be wrong about here, since the size cell already says the
- *  size is unknown either way. */
-export function useHoldsBackUnmeasured(): boolean {
-  const { data } = useQuery({ queryKey: ["profile"], queryFn: api.profile });
-  return (data?.max_unmeasured_per_run ?? 0) === 0;
-}
 
 function CardStatusLine({
   condemned,
@@ -1052,8 +347,12 @@ function CardStatusLine({
    *  count on the plan screen cannot name the item. */
   unmeasured?: boolean;
 }) {
-  const heldBack = useHoldsBackUnmeasured() && unmeasured;
-  if (!condemned) return <StatusChip chip={chip} />;
+  const heldBack = useHoldsBackUnmeasured().holdsBack && unmeasured;
+  // A condemned row carries no chip by construction, so the moment a hand spare flips
+  // `condemned` false the card would lose this line outright and reflow under the cursor --
+  // the live reflow the in-place patch exists to prevent. The dormancy fact is true on every
+  // lane, so it stands in when there is no chip to show.
+  if (!condemned) return chip ? <StatusChip chip={chip} /> : <DormantPill dormantFor={dormantFor} />;
   return (
     <>
       <DormantPill dormantFor={dormantFor} />
@@ -1063,54 +362,8 @@ function CardStatusLine({
   );
 }
 
-/** Whether a show-level reap actually takes anywhere: true when any season's reap is honored,
- *  false when every one is refused, undefined outside a reap override. Feeds the whole-show
- *  override chip's `effective` flag. Judges over the WHOLE show (`group_seasons`), every lane,
- *  never the tab-filtered page. */
-function groupReapEffective(
-  items: ReadonlyArray<{ override: Override | null; override_effective: boolean | null }>,
-): boolean | undefined {
-  const reaped = items.filter((s) => s.override === "reap");
-  if (reaped.length === 0) return undefined;
-  return reaped.some((s) => s.override_effective !== false);
-}
 
-/** How far a whole-show reap actually reaches across its seasons, for the inherit banner's
- *  wording (rule 61): "all" every inherited reap is honored, "none" every one is held for now,
- *  "some" a mix. Reads the same override/override_effective fields as groupReapEffective, over
- *  the seasons the panel already has. Only meaningful when the show's own override is reap. */
-function showReapReach(
-  seasons: ReadonlyArray<{ override: Override | null; override_effective: boolean | null }>,
-): "all" | "some" | "none" {
-  const reaped = seasons.filter((s) => s.override === "reap");
-  if (reaped.length === 0) return "all"; // no inherited reap to hold; nothing to qualify
-  const held = reaped.filter((s) => s.override_effective === false).length;
-  if (held === 0) return "all";
-  if (held === reaped.length) return "none";
-  return "some";
-}
 
-/** Whether a whole-show Reap would change nothing -- the show analogue of rule 48's
- *  already-condemned test. It decides `hideReap` for a show on both the card and the panel,
- *  so the test lives here once rather than being reimplemented at each surface.
- *
- *  A movie on the Condemned lane is atomically condemned, so its own Reap is a no-op and is
- *  hidden. A show is not atomic: it is on that lane because SOME season is condemned, and a
- *  whole-show Reap still takes the seasons the scan kept. So Reap only falls away once every
- *  season is already headed for removal -- scan-condemned and not hand-spared. A show holding
- *  any hand reap keeps Reap too, so that decision stays toggleable back off.
- *
- *  It must run over the WHOLE show, every lane -- the panel already passes `group.seasons`.
- *  The card once passed only the seasons on the current tab, so on the Condemned lane it saw
- *  a set that was all-condemned by construction and wrongly dropped Reap, hiding the one
- *  control that reaps the show's kept seasons. So the parameter takes the strip-mark shape
- *  too (`group_seasons`), not just a full `Candidate`. */
-export function showReapIsNoop(
-  seasons: ReadonlyArray<{ verdict: Verdict; override: Override | null }>,
-): boolean {
-  if (seasons.some((s) => s.override === "reap")) return false;
-  return seasons.every((s) => s.verdict === "condemn" && s.override !== "spare");
-}
 
 type Group = {
   key: string;
@@ -1355,6 +608,12 @@ function SeasonExpander({
         e.stopPropagation();
         onToggle();
       }}
+      onKeyDown={(e) => {
+        // The card head owns Enter/Space for "open the show" AND calls preventDefault, which
+        // cancels this button's own activation. Without this a keyboard user cannot expand a
+        // show at all: Enter on the pill opens the panel instead (rule 60).
+        if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+      }}
     >
       <svg
         className={`chevron ${open ? "open" : ""}`}
@@ -1496,9 +755,15 @@ function SeasonList({
   onClear: (key: string) => void;
   pending: boolean;
 }) {
+  // One request per expanded show, and with "Expand seasons by default" on that is one per
+  // drawn card -- unbounded as the render window grows, and fired all over again every time
+  // entering or leaving Select mode remounts the lists (P-2). The five minutes is the same
+  // staleTime the sibling vocabulary queries use: a show's seasons only change when a scan
+  // lands, and a scan invalidates ["group"] outright (ScanBar), as does every override.
   const { data, isPending, error } = useQuery({
     queryKey: ["group", groupKey],
     queryFn: () => api.group(groupKey),
+    staleTime: 5 * 60 * 1000,
   });
 
   // The list is an always-visible surface once expanded: say "loading" and "failed"
@@ -1614,9 +879,13 @@ function SeasonList({
   );
 }
 
-function MovieCard({
+// Memoized: with every prop below stable or scalar, a card re-renders only when something it
+// actually shows has changed. Painting a drag across a long list used to re-render every drawn
+// card once per `pointerenter` (P-1).
+const MovieCard = memo(function MovieCard({
   item,
   selected,
+  isSelected,
   select,
   onOpen,
   onSet,
@@ -1625,7 +894,11 @@ function MovieCard({
   hideReap,
 }: {
   item: Candidate;
+  /** The open card -- the one whose reasoning the panel is showing. */
   selected: boolean;
+  /** Picked in Select mode. A different question from `selected`, and the only per-card part
+   *  of selection, which is why it is not inside `select`. */
+  isSelected: boolean;
   select: CardSelect;
   onOpen: (id: number) => void;
   onSet: (key: string, decision: Override, spareDays?: number) => void;
@@ -1634,7 +907,7 @@ function MovieCard({
   hideReap: boolean;
 }) {
   const state = item.override === "spare" ? "card-spared" : item.override === "reap" ? "card-reaped" : "";
-  const { selectMode, isSelected } = select;
+  const { selectMode } = select;
   return (
     <article
       className={`card clickable ${state} ${selected ? "card-selected" : ""} ${
@@ -1713,13 +986,14 @@ function MovieCard({
       </div>
     </article>
   );
-}
+});
 
-function ShowCard({
+const ShowCard = memo(function ShowCard({
   group,
   defaultOpen,
   selectedId,
   selectedGroupKey,
+  isSelected,
   select,
   onOpen,
   onOpenGroup,
@@ -1733,6 +1007,8 @@ function ShowCard({
   defaultOpen: boolean;
   selectedId: number | null;
   selectedGroupKey: string | null;
+  /** Picked in Select mode -- the only per-card part of selection, hence not in `select`. */
+  isSelected: boolean;
   select: CardSelect;
   onOpen: (id: number) => void;
   onOpenGroup: (key: string) => void;
@@ -1771,10 +1047,6 @@ function ShowCard({
   // plan: the server's whole-snapshot totals (every condemned season minus hand-spares),
   // never a sum over the fetched pages, which on a long sorted list can hold only some
   // of a show's seasons. Other tabs describe the whole show, which the strip shows.
-  const isReapTab = isCondemned(first);
-  const condemnedCount = first.group_condemned_count ?? group.items.length;
-  const condemnedBytes = first.group_condemned_bytes ?? fetchedSize;
-  const condemnedUnknown = first.group_unknown_size ?? fetchedUnknown;
   // The whole show's marks, across every lane -- `marks`, not the tab-filtered `group.items`
   // (on the Condemned lane that holds only this show's reaped/condemned seasons). Used for the
   // strip and for whether a whole-show reap would change anything.
@@ -1784,8 +1056,17 @@ function ShowCard({
   // lighting it from an aggregate it cannot clear was a dead toggle. Seasons overridden one by
   // one keep their marks in the strip; this stays null until the whole show is decided.
   const showOverride = first.show_override;
+  // A whole-show decision settles the card's story before the seasons' verdicts do, because
+  // `patchShowOverride` deliberately leaves each season's own `override` alone. Reading the
+  // seasons here left a card tinted "spared", chipped "will be kept", and still saying "3 of 5
+  // would be removed" one line below, all session (rule 61).
+  const isReapTab =
+    showOverride === "spare" ? false : showOverride === "reap" ? true : isCondemned(first);
+  const condemnedCount = first.group_condemned_count ?? group.items.length;
+  const condemnedBytes = first.group_condemned_bytes ?? fetchedSize;
+  const condemnedUnknown = first.group_unknown_size ?? fetchedUnknown;
   const state = showOverride === "spare" ? "card-spared" : showOverride === "reap" ? "card-reaped" : "";
-  const { selectMode, isSelected } = select;
+  const { selectMode } = select;
 
   return (
     <article
@@ -1907,7 +1188,7 @@ function ShowCard({
       )}
     </article>
   );
-}
+});
 
 export function ReviewQueue({
   verdict,
@@ -1939,6 +1220,19 @@ export function ReviewQueue({
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<QueueFilters>(() => loadFilters(verdict));
+  // Each tab remembers its own filters, and the new tab's set is adopted DURING the render
+  // that brings the new verdict in -- React's supported "adjust state when a prop changes"
+  // pattern. Doing it in an effect instead paired the new verdict with the old tab's filters
+  // for one commit: switching from Condemned with Genre set to Sanctuary fired
+  // `?verdict=protect&genre=...`, drew that wrong list, and only then fired the right
+  // request, so every such switch flashed a wrong page and made the server answer twice
+  // (B-30). A render-phase update is discarded before it commits, so neither the query nor
+  // the DOM ever sees the mismatched pair.
+  const [filtersVerdict, setFiltersVerdict] = useState(verdict);
+  if (filtersVerdict !== verdict) {
+    setFiltersVerdict(verdict);
+    setFilters(loadFilters(verdict));
+  }
   // Which filter popover is open: a dimension id, "add" for the ＋ Filter menu, or null.
   // One at a time, so the list only ever renders one menu.
   const [openMenu, setOpenMenu] = useState<string | null>(null);
@@ -1985,17 +1279,10 @@ export function ReviewQueue({
     };
   }, [openMenu]);
 
-  // Each tab remembers its own filters. On a tab switch, adopt that tab's remembered set
-  // and skip the save below for that render -- otherwise the old tab's filters would be
-  // written under the new tab's key before the load lands. A ref, not state: it flips
-  // mid-effect and must not re-render anything (see the engineering rules on effect deps).
-  const filtersVerdict = useRef(verdict);
+  // Remembering is all this effect does now: the adoption happens during render above, so by
+  // the time any effect runs `filters` already belongs to `verdict` and there is no render to
+  // skip. Writing the pair unconditionally is what makes a tab's set stick.
   useEffect(() => {
-    if (filtersVerdict.current !== verdict) {
-      filtersVerdict.current = verdict;
-      setFilters(loadFilters(verdict));
-      return;
-    }
     saveFilters(verdict, filters);
   }, [verdict, filters]);
 
@@ -2013,7 +1300,6 @@ export function ReviewQueue({
     data: pages,
     isPending,
     error,
-    isFetching,
     hasNextPage,
     isFetchingNextPage,
     fetchNextPage,
@@ -2141,7 +1427,14 @@ export function ReviewQueue({
   // Build a plan for exactly the selected items and open the confirmation sheet. Nothing
   // deletes here -- the sheet is the gauntlet (dry run, arm check, typed phrase).
   const reapNow = useMutation({
-    mutationFn: (keys: string[]) => api.createRun(keys),
+    // Fails closed on an empty selection rather than posting one: an omitted key list means
+    // "the whole condemned set" to the route, so a selection that emptied out (a filter, a
+    // race with a refresh) must never widen into a whole-library plan. The disabled button
+    // above is a convenience, not the control.
+    mutationFn: (keys: string[]) => {
+      if (keys.length === 0) throw new Error("Nothing is selected, so there is nothing to reap.");
+      return api.createRun(keys);
+    },
     onSuccess: (run) => setReapRun(run),
   });
   const pending =
@@ -2153,9 +1446,16 @@ export function ReviewQueue({
     // operator asked for, under a button that says "everything matching".
     selectEverything.isPending;
 
-  const onSet = (key: string, decision: Override, spareDays?: number) =>
-    setOverride.mutate({ key, decision, spareDays: spareDays ?? 0 });
-  const onClear = (key: string) => clearOverride.mutate(key);
+  // Stable, so a memoized card is not re-rendered by a handler that is merely a new function.
+  // React Query's `mutate` is itself stable across renders, so these never change identity.
+  const setOverrideMutate = setOverride.mutate;
+  const clearOverrideMutate = clearOverride.mutate;
+  const onSet = useCallback(
+    (key: string, decision: Override, spareDays?: number) =>
+      setOverrideMutate({ key, decision, spareDays: spareDays ?? 0 }),
+    [setOverrideMutate],
+  );
+  const onClear = useCallback((key: string) => clearOverrideMutate(key), [clearOverrideMutate]);
 
   // --- Keeping the list in step with the latest scan ------------------------------------------
   // A scan finishing while this queue is open leaves it showing an older snapshot. Pull the
@@ -2166,14 +1466,22 @@ export function ReviewQueue({
   // refetches; the panel itself is also closed in showLatest, since its id is snapshot-bound
   // and a refetch of the old id can only return a stale row (B-7).
   const queryClient = useQueryClient();
-  const refreshReview = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ["candidates"] });
-    void queryClient.invalidateQueries({ queryKey: ["candidates-unfiltered"] });
-    void queryClient.invalidateQueries({ queryKey: ["candidate"] });
-    void queryClient.invalidateQueries({ queryKey: ["group"] });
-    void queryClient.invalidateQueries({ queryKey: ["snapshot"] });
-    void queryClient.invalidateQueries({ queryKey: ["reap-breakdown"] });
-  }, [queryClient]);
+  // Returns a promise that settles once these refetches have finished, which is what tells a
+  // failed silent refresh from one still in flight (useReviewFreshness).
+  const refreshReview = useCallback(
+    () =>
+      Promise.all(
+        [
+          ["candidates"],
+          ["candidates-unfiltered"],
+          ["candidate"],
+          ["group"],
+          ["snapshot"],
+          ["reap-breakdown"],
+        ].map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+      ),
+    [queryClient],
+  );
   // Mid-review, judged at the instant the newer scan appears: scrolled into the list, a why or
   // show panel open, a selection or a write in flight. Any of these means a quiet swap would
   // move the ground under the reviewer, so hold their place and nudge instead of refreshing.
@@ -2194,9 +1502,9 @@ export function ReviewQueue({
   // (PR-5, rule 85). A tick re-arms the fade each time, then it clears.
   const [toastTick, setToastTick] = useState(0);
   const [toastOn, setToastOn] = useState(false);
-  const onSilentRefresh = useCallback(() => {
-    refreshReview();
-  }, [refreshReview]);
+  // Passed straight through, promise and all: the hook waits on it to tell a failed silent
+  // refresh from one still in flight.
+  const onSilentRefresh = refreshReview;
   useEffect(() => {
     if (toastTick === 0) return;
     setToastOn(true);
@@ -2207,10 +1515,9 @@ export function ReviewQueue({
     viewSnapshotId: pages?.pages[0]?.snapshotId ?? null,
     latestSnapshotId: latestScanSnapshotId,
     isBusy,
-    onSilentRefresh,
     // A silent refresh whose refetch settles without catching up surfaces the nudge instead of a
     // phantom toast, so the list is never left silently stale (PR-5).
-    refreshFetching: isFetching,
+    onSilentRefresh,
     onSilentCaughtUp: () => setToastTick((n) => n + 1),
   });
   const showLatest = () => {
@@ -2218,7 +1525,7 @@ export function ReviewQueue({
     // refetch could only return a stale row. The show panel is keyed on a stable group key and
     // refreshes in place, so only the item selection is cleared (B-7).
     onClearItemSelection?.();
-    refreshReview();
+    void refreshReview();
     if (typeof window !== "undefined") window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -2231,23 +1538,37 @@ export function ReviewQueue({
       return next;
     });
   }, []);
+  // The live selection, for the two handlers that must read it without being rebuilt every time
+  // it changes -- a fresh handler would re-render every memoized card on every painted card,
+  // which is the loop P-1 is about. Same latest-ref pattern the modal shell uses for onClose.
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
   // A press begins a drag whose direction (add vs remove) is fixed by the card pressed: press an
   // unpicked card to paint selections, a picked one to rub them out. Then every card the pointer
   // enters follows suit -- so a tap toggles one, a drag sweeps a section.
-  const onSelectDown = (key: string, e: ReactPointerEvent) => {
-    e.preventDefault();
-    const mode: "add" | "remove" = selected.has(key) ? "remove" : "add";
-    dragRef.current = { mode };
-    applySelect(key, mode);
-  };
-  const onSelectEnter = (key: string) => {
-    if (dragRef.current) applySelect(key, dragRef.current.mode);
-  };
+  const onSelectDown = useCallback(
+    (key: string, e: ReactPointerEvent) => {
+      e.preventDefault();
+      const mode: "add" | "remove" = selectedRef.current.has(key) ? "remove" : "add";
+      dragRef.current = { mode };
+      applySelect(key, mode);
+    },
+    [applySelect],
+  );
+  const onSelectEnter = useCallback(
+    (key: string) => {
+      if (dragRef.current) applySelect(key, dragRef.current.mode);
+    },
+    [applySelect],
+  );
   // Keyboard toggle: flip one card and leave no drag armed -- the belt to onSelectDown's
   // pointer path, so tabbing through and pressing Space never strands a hover-painting mode.
-  const onSelectToggle = (key: string) => {
-    applySelect(key, selected.has(key) ? "remove" : "add");
-  };
+  const onSelectToggle = useCallback(
+    (key: string) => {
+      applySelect(key, selectedRef.current.has(key) ? "remove" : "add");
+    },
+    [applySelect],
+  );
   // End the drag wherever the button is released -- even off the list.
   useEffect(() => {
     const end = () => {
@@ -2271,7 +1592,11 @@ export function ReviewQueue({
   };
 
   const tab = TABS.find((t) => t.verdict === verdict) ?? TABS[0]!;
-  const groups = data ? toGroups(data) : [];
+  // Memoized on the loaded set. Without it, every render re-folded every fetched candidate
+  // into groups -- and a drag-select across a long list renders once per `pointerenter`
+  // (P-1). Everything derived from it is memoized on it, all the way to the card props.
+  const groups = useMemo(() => (data ? toGroups(data) : []), [data]);
+
   // The genre and library choices are what the latest scan actually saw, most common first --
   // the genre list is the same one the policy rule editors suggest from.
   const { data: genreValues } = useQuery({
@@ -2298,6 +1623,25 @@ export function ReviewQueue({
   // per-card menu offers other lengths; the bulk bar acts on the whole selection at once, so
   // it uses the default and its glyph (∞ or a clock) shows which that is.
   const defaultSpareDays = generalSettings?.default_spare_days ?? 0;
+  // The unmeasured allowance, read once here for the whole list. Together with the spare
+  // length above this is everything the rows share, and the two are handed down through
+  // QueueSettingsContext -- one subscription each, where there used to be one PER CONTROL:
+  // four hundred cards with their seasons expanded came to roughly a thousand observers on
+  // these two keys, and every write to either re-rendered all of them (P-7).
+  const profile = useQuery({ queryKey: ["profile"], queryFn: api.profile });
+  const queueSettings = useMemo<QueueSettings>(
+    () => ({
+      defaultSpareDays,
+      unmeasured: {
+        // Unknown reads as "held back", the safe answer on a card; the read's own state
+        // travels with it so a surface that states a NUMBER can refuse to state a wrong one.
+        holdsBack: (profile.data?.max_unmeasured_per_run ?? 0) === 0,
+        isPending: profile.isPending,
+        isError: profile.isError,
+      },
+    }),
+    [defaultSpareDays, profile.data, profile.isPending, profile.isError],
+  );
   // A remembered value the newest scan no longer has stays selectable: the row set it filters
   // is honest (empty), and the option must exist for the chip to show it.
   const genreOptions = useMemo(() => {
@@ -2386,16 +1730,54 @@ export function ReviewQueue({
     enabled: filtering && !isPending && !error && (data?.length ?? 0) === 0,
   });
   // The override key each shown card acts on: a show's group key, or a movie's media key.
-  const shownGroups = groups.slice(0, visible);
-  const shownKeys = shownGroups.map(groupKeyOf);
-  const shownItems = shownGroups.reduce((n, g) => n + g.items.length, 0);
+  const shownGroups = useMemo(() => groups.slice(0, visible), [groups, visible]);
+  const shownKeys = useMemo(() => shownGroups.map(groupKeyOf), [shownGroups]);
+  const shownItems = useMemo(
+    () => shownGroups.reduce((n, g) => n + g.items.length, 0),
+    [shownGroups],
+  );
   const allShownSelected = shownKeys.length > 0 && shownKeys.every((k) => selected.has(k));
+  // One object for every card (see CardSelect): identical for all of them, so it is built once
+  // rather than per card, and a memoized card is not re-rendered by a new object of the same
+  // shape. Whether a card is picked rides beside it as its own scalar prop.
+  const cardSelect = useMemo<CardSelect>(
+    () => ({ selectMode, onSelectDown, onSelectEnter, onSelectToggle }),
+    [selectMode, onSelectDown, onSelectEnter, onSelectToggle],
+  );
   // Whether picking everything the filters match is still worth offering: some card is
   // either unfetched or drawn-but-unpicked beyond the window the "Select all" button reaches.
   const moreToSelect =
     allShownSelected && (hasNextPage || !groups.every((g) => selected.has(groupKeyOf(g))));
   // Picked cards that are not on screen: the state "Select everything matching" leaves behind.
   const holdsUndrawn = selected.size > shownKeys.length;
+  // What the picked CARDS cover in the items a reap would plan: a show card stands for every
+  // actable season, so "3 selected" can sit beside a run of thirty (rule 30). A show's count
+  // is the server's own actable total, never the seasons this page happened to fetch. Null --
+  // and the bar says cards only -- off the condemned lane, where the bulk actions decide whole
+  // cards rather than seasons, and whenever a picked card is not drawn, since its size is
+  // unknown here.
+  let selectedItems: number | null = null;
+  if (verdict === "condemn" && selected.size > 0) {
+    const perKey = new Map(
+      groups.map(
+        (g) =>
+          [
+            groupKeyOf(g),
+            g.isShow ? (g.items[0]?.group_condemned_count ?? g.items.length) : g.items.length,
+          ] as const,
+      ),
+    );
+    let total = 0;
+    for (const key of selected) {
+      const n = perKey.get(key);
+      if (n == null) {
+        total = -1;
+        break;
+      }
+      total += n;
+    }
+    selectedItems = total >= 0 ? total : null;
+  }
   // How many cards match, but only when that is knowable: a show card stands for all of its
   // seasons, so the server's item total is the card count only when the list is movies alone.
   // Otherwise the button states no number rather than a wrong one.
@@ -2465,6 +1847,10 @@ export function ReviewQueue({
       : "";
 
   return (
+    // Every row below reads the operator's spare length and the unmeasured allowance, and
+    // reads them from HERE: one subscription for the whole list rather than one per control
+    // (P-7, see QueueSettingsContext).
+    <QueueSettingsContext.Provider value={queueSettings}>
     <section className="queue">
       {/* A view-level heading, for parity with Policy/Fairness/Settings so heading navigation
           can land on "Review queue" the way it lands on those views. */}
@@ -2776,13 +2162,6 @@ export function ReviewQueue({
           <div className={`card-list ${selectMode ? "card-list-selecting has-bulk-bar" : ""}`}>
             {shownGroups.map((group) => {
               const key = groupKeyOf(group);
-              const cardSelect: CardSelect = {
-                selectMode,
-                isSelected: selected.has(key),
-                onSelectDown,
-                onSelectEnter,
-                onSelectToggle,
-              };
               return group.isShow ? (
                 <ShowCard
                   key={group.key}
@@ -2790,6 +2169,7 @@ export function ReviewQueue({
                   defaultOpen={expandSeasonsByDefault}
                   selectedId={selectedId}
                   selectedGroupKey={selectedGroupKey}
+                  isSelected={selected.has(key)}
                   select={cardSelect}
                   onOpen={onSelect}
                   onOpenGroup={onSelectGroup}
@@ -2802,12 +2182,17 @@ export function ReviewQueue({
                   key={group.key}
                   item={group.items[0]!}
                   selected={group.items[0]!.id === selectedId}
+                  isSelected={selected.has(key)}
                   select={cardSelect}
                   onOpen={onSelect}
                   onSet={onSet}
                   onClear={onClear}
                   pending={pending}
-                  hideReap={verdict === "condemn"}
+                  // The ITEM's own verdict, through the one shared test -- never the tab's.
+                  // Lane membership is the effective verdict, so a movie sits on Condemned
+                  // with a stored abstain and an honored hand reap: Reap must stay, and a
+                  // spared condemnation must stay flippable (rule 48).
+                  hideReap={reapIsNoop(group.items[0]!)}
                 />
               );
             })}
@@ -2825,12 +2210,17 @@ export function ReviewQueue({
       {selectMode && (
         <div className="bulk-bar" role="region" aria-label="Bulk actions">
           <span className="bulk-count">
-            {selected.size > 0 ? (
+            {selected.size === 0 ? (
+              "Tap or drag to pick"
+            ) : selectedItems != null && selectedItems !== selected.size ? (
+              <>
+                <strong>{selected.size}</strong> {selected.size === 1 ? "card" : "cards"} ·{" "}
+                <strong>{count(selectedItems)}</strong> {selectedItems === 1 ? "item" : "items"}
+              </>
+            ) : (
               <>
                 <strong>{selected.size}</strong> selected
               </>
-            ) : (
-              "Tap or drag to pick"
             )}
           </span>
           <div className="bulk-actions">
@@ -2958,5 +2348,14 @@ export function ReviewQueue({
         />
       )}
     </section>
+    </QueueSettingsContext.Provider>
   );
 }
+
+// Re-exported so these keep their old import path while callers and tests move over to the
+// files that now own them (R-1). New code imports from ./queueFilters, ./queueSettings and
+// ./reviewFate directly.
+export { DEFAULT_FILTERS, loadFilters, saveFilters, type QueueFilters };
+export { useHoldsBackUnmeasured };
+export { handFate, isCondemned, reapIsNoop, showReapIsNoop, type Fate };
+export { KeptByShowNote, OverrideControls };

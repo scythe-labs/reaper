@@ -6,10 +6,10 @@
 // now detached on the server, the sheet closes freely (the app-wide bar keeps the count
 // and Stop), and reopening shows the report.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReapStatus, Run, RunReport } from "../api";
+import { ApiError, type ReapStatus, type Run, type RunReport } from "../api";
 import { ReapConfirm } from "./ReapConfirm";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -22,7 +22,12 @@ const { apiMock } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("../api", () => ({ api: apiMock }));
+// Everything but `api` is real -- the sheet reads `ApiError` to tell a moved phrase (409)
+// from any other refusal.
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  api: apiMock,
+}));
 
 const run = {
   id: 7,
@@ -74,10 +79,13 @@ function status(overrides: Partial<ReapStatus> = {}): ReapStatus {
 
 const runningStatus = status({ running: true, run_id: run.id, phase: "reaping", total: 1 });
 
-function renderSheet(onClose: () => void = () => {}) {
+function renderSheet(onClose: () => void = () => {}, seedStatus?: ReapStatus) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  // The status cache is shared with the app-wide bar and is already warm when this sheet is
+  // opened from it. Seeding it reproduces that, which is what the dry-run skip reads.
+  if (seedStatus) queryClient.setQueryData(["reapStatus"], seedStatus);
   const utils = render(
     <QueryClientProvider client={queryClient}>
       <ReapConfirm run={run} onClose={onClose} />
@@ -100,7 +108,7 @@ describe("the execute gate", () => {
     const user = userEvent.setup();
     renderSheet();
 
-    await screen.findByText(/Dry run passed/);
+    await screen.findByText(/Practice run passed/);
     const execute = screen.getByRole("button", { name: /^Reap 1 soul$/ });
     expect(execute).toBeDisabled();
 
@@ -117,7 +125,7 @@ describe("the execute gate", () => {
     apiMock.safety.mockResolvedValue({ destructive_enabled: false });
     renderSheet();
 
-    await screen.findByText(/Dry run passed/);
+    await screen.findByText(/Practice run passed/);
     expect(await screen.findByText(/Deletion is/)).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
@@ -126,7 +134,7 @@ describe("the execute gate", () => {
     apiMock.safety.mockImplementation(() => new Promise(() => {})); // never settles
     renderSheet();
 
-    await screen.findByText(/Dry run passed/);
+    await screen.findByText(/Practice run passed/);
     expect(await screen.findByText(/Checking whether deletion is on/)).toBeInTheDocument();
     expect(screen.queryByText(/Deletion is/)).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
@@ -137,20 +145,20 @@ describe("the execute gate", () => {
     apiMock.safety.mockRejectedValue(new Error("safety read failed"));
     renderSheet();
 
-    await screen.findByText(/Dry run passed/);
+    await screen.findByText(/Practice run passed/);
     expect(await screen.findByText(/couldn't confirm whether deletion is on/)).toBeInTheDocument();
     expect(screen.queryByText(/Deletion is/)).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Reap 1 soul$/ })).toBeDisabled();
   });
 
-  it("an aborted dry run never unlocks execution", async () => {
+  it("a practice run that stopped never unlocks execution", async () => {
     apiMock.dryRun.mockResolvedValue(
       report({ state: "aborted", aborted_reason: "over the cap" }),
     );
     renderSheet();
 
-    await screen.findByText(/The plan aborted/);
+    await screen.findByText(/The plan stopped/);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /^Reap 1 soul$/ }),
@@ -162,7 +170,7 @@ describe("the execute gate", () => {
     const user = userEvent.setup();
     const { container } = renderSheet(onClose);
 
-    await screen.findByText(/Dry run passed/);
+    await screen.findByText(/Practice run passed/);
     await user.type(screen.getByRole("textbox"), run.confirmation_phrase);
     await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
 
@@ -178,7 +186,7 @@ describe("the execute gate", () => {
     const user = userEvent.setup();
     renderSheet();
 
-    await screen.findByText(/Dry run passed/);
+    await screen.findByText(/Practice run passed/);
     await user.type(screen.getByRole("textbox"), run.confirmation_phrase);
     await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
 
@@ -193,8 +201,30 @@ describe("the execute gate", () => {
     const user = userEvent.setup();
     renderSheet(onClose);
 
-    await screen.findByText(/Dry run passed/);
+    await screen.findByText(/Practice run passed/);
     await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("survives a drag that starts on the phrase and ends outside the panel", async () => {
+    // B-17: a click fires on the nearest common ancestor of press and release, so a drag
+    // out of the panel dispatched `click` on the SCRIM and the panel's stopPropagation
+    // never saw it. Selecting the confirmation phrase to read or copy it tore the sheet
+    // down, taking the practice-run result and anything typed with it.
+    const onClose = vi.fn();
+    const { container } = renderSheet(onClose);
+
+    const phrase = await screen.findByText(run.confirmation_phrase);
+    const scrim = container.querySelector(".modal-scrim")!;
+
+    fireEvent.mouseDown(phrase);
+    fireEvent.mouseUp(scrim);
+    fireEvent.click(scrim); // what the browser dispatches at the common ancestor
+    expect(onClose).not.toHaveBeenCalled();
+
+    // A real click outside still closes: pressed AND released on the scrim itself.
+    fireEvent.mouseDown(scrim);
+    fireEvent.mouseUp(scrim);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -205,11 +235,62 @@ describe("the execute gate", () => {
     expect(dialog).toHaveAttribute("aria-modal", "true");
   });
 
+  it("sends the phrase the operator typed, not the copy it was handed", async () => {
+    const user = userEvent.setup();
+    renderSheet();
+
+    await screen.findByText(/Practice run passed/);
+    // Trailing whitespace is trimmed on the way out, which is only possible if what is
+    // posted comes from the input. Echoing the prop would make the human gate a `disabled`
+    // attribute the server cannot tell from a script (S-1).
+    await user.type(screen.getByRole("textbox"), `${run.confirmation_phrase}  `);
+    await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
+    expect(apiMock.executeRun).toHaveBeenCalledWith(run.id, run.confirmation_phrase);
+  });
+
+  it("pulls the run again when the server says the phrase has moved", async () => {
+    const user = userEvent.setup();
+    apiMock.executeRun.mockRejectedValue(new ApiError(409, "The plan changed."));
+    const { queryClient } = renderSheet();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+
+    await screen.findByText(/Practice run passed/);
+    await user.type(screen.getByRole("textbox"), run.confirmation_phrase);
+    await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
+
+    // Otherwise the sheet deadlocks: it keeps lighting the button for the stale phrase the
+    // server now refuses, and typing the real one disables it (S-1).
+    await screen.findByText(/The plan changed./);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["run", run.id] });
+  });
+
+  it("says a reap stopped on a problem, and never re-arms itself in silence", async () => {
+    // The executor raised mid-run: no report, and files may already be gone. The confirm
+    // stage must not come back live with the phrase still typed (B-3).
+    const failed = status({
+      run_id: run.id,
+      phase: "error",
+      error: "Deletion was switched off mid-run.",
+    });
+    apiMock.reapStatus.mockResolvedValue(failed);
+    apiMock.dryRun.mockClear();
+    renderSheet(() => {}, failed);
+
+    expect(await screen.findByText(/The reap stopped on a problem/)).toBeInTheDocument();
+    expect(screen.getByText(/Deletion was switched off mid-run./)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Reap 1 soul$/ })).not.toBeInTheDocument();
+    // And no dry run is fired over it: the executor refuses one on a non-planned run, and
+    // its blurb would render as the only explanation of a failed deletion.
+    expect(apiMock.dryRun).not.toHaveBeenCalled();
+  });
+
   it("shows the per-item checklist once the run finishes", async () => {
     const user = userEvent.setup();
     const { queryClient } = renderSheet();
 
-    await screen.findByText(/Dry run passed/);
+    await screen.findByText(/Practice run passed/);
     await user.type(screen.getByRole("textbox"), run.confirmation_phrase);
     await user.click(screen.getByRole("button", { name: /^Reap 1 soul$/ }));
     await screen.findByRole("button", { name: /^Stop$/ });

@@ -35,27 +35,18 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
   const [phase, setPhase] = useState<"idle" | "waiting" | "choose" | "error">("idle");
   const [error, setError] = useState("");
   const [authUrl, setAuthUrl] = useState("");
-  const popup = useRef<Window | null>(null);
 
   const pin = usePlexPinPoll<PlexPoll>({
     poll: (pinId, machineId) => api.plexPoll(pinId, machineId),
-    onOk: () => {
-      popup.current?.close();
-      onAuthed();
-    },
+    onOk: () => onAuthed(),
     // On first-run setup, an account owning several servers answers "choose_server": the
     // sign-in stays valid while the picker is up, and the pick carries the answer.
-    onChooseServer: () => {
-      popup.current?.close();
-      setPhase("choose");
-    },
+    onChooseServer: () => setPhase("choose"),
     onTimedOut: () => {
-      popup.current?.close();
       setPhase("error");
       setError("Plex sign-in timed out. Please try again.");
     },
     onFailed: (failure) => {
-      popup.current?.close();
       setPhase("error");
       setError(failure);
     },
@@ -67,7 +58,17 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
     try {
       const { pin_id, auth_url } = await api.plexStart();
       setAuthUrl(auth_url);
-      popup.current = window.open(auth_url, "reaper-plex-auth", "width=620,height=760");
+      // noopener, matching PlexPanel.startLink. Without it plex.tv gets a `window.opener`
+      // handle to the window this page is running in and can navigate it -- to a look-alike
+      // of the very page that takes the operator's Reaper password (S-4). The window is
+      // sized here only as a hint; noopener is what matters.
+      //
+      // We used to hold the returned handle and close the popup ourselves once the sign-in
+      // landed. noopener makes window.open return null, so that is gone, deliberately: the
+      // handle we held and the handle plex.tv held were the same relationship, and the
+      // browser grants close() *because* of it. The Plex window stays up until the operator
+      // closes it, which is already what the Settings link flow does.
+      window.open(auth_url, "_blank", "width=620,height=760,noopener");
       pin.begin(pin_id);
     } catch (e) {
       setPhase("error");
@@ -77,7 +78,6 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
 
   const cancel = () => {
     pin.cancel();
-    popup.current?.close();
     setPhase("idle");
   };
 
@@ -239,9 +239,12 @@ function LocalSheet({
           <form onSubmit={submit} className="local-form">
             <label className="field">
               <span className="field-label">Username</span>
+              {/* The lengths the server accepts, so a long pasted passphrase is stopped in
+                  the box rather than coming back as a validator's sentence. */}
               <input
                 ref={usernameRef}
                 autoComplete="username"
+                maxLength={128}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
               />
@@ -251,6 +254,7 @@ function LocalSheet({
               <input
                 type="password"
                 autoComplete="current-password"
+                maxLength={128}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
               />
@@ -298,9 +302,14 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
       <BrandBadge className="brand-badge" />
       <h1 className="brand-word">Recovery</h1>
       <p className="auth-tagline">Single-use admin access</p>
+      {/* The console, NOT "its log": mint_recovery_token prints the banner deliberately
+          (auth/recovery.py), so the code never reaches structlog, the in-app Logs tab, or
+          the log files that tab downloads. Sending a locked-out operator to Settings ->
+          Logs to find it left them concluding recovery was broken (U-11). */}
       <p className="auth-note">
-        Reaper printed a recovery code to its log. Paste it here to sign in as an admin so
-        you can reset a password or re-link Plex; the code expires the moment it is used.
+        Reaper printed a recovery code to the container's console output. Paste it here to
+        sign in as an admin so you can reset a password or re-link Plex; the code expires the
+        moment it is used.
       </p>
       <form onSubmit={submit} className="local-form">
         <label className="field">
@@ -309,6 +318,7 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
             autoFocus
             autoComplete="off"
             spellCheck={false}
+            maxLength={256}
             value={code}
             onChange={(e) => setCode(e.target.value)}
             placeholder="Paste the code from the log"

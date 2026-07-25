@@ -342,7 +342,7 @@ class PlexTvClient(BaseClient):
 
 
 class _ProbeClient(BaseClient):
-    """A one-shot reachability probe against a single advertised Plex address.
+    """A one-shot ``/identity`` probe against a single advertised Plex address.
 
     Its own client because it talks to a media server rather than plex.tv, at a URL that
     is not known until the resource list comes back. It exists so the probe rides the
@@ -353,25 +353,33 @@ class _ProbeClient(BaseClient):
 
     service: ClassVar[str] = "plex"
 
-    async def reachable(self) -> bool:
-        """Whether ``/identity`` answers. Any mapped failure reads as "no"."""
+    async def identity(self) -> httpx2.Response | None:
+        """The ``/identity`` response, or ``None`` when the address does not answer.
+
+        ``_send`` maps a 4xx/5xx to ``IntegrationError`` as well as a transport failure,
+        so every "it did not answer usefully" case arrives here as one thing and reads
+        as ``None``. Both callers below treat that alike.
+        """
         try:
-            await self._send("GET", "/identity")
+            return await self._send("GET", "/identity")
         except IntegrationError:
-            return False
-        return True
+            return None
 
 
-async def probe_connection(
-    connection: PlexConnection, token: str, *, timeout: float = 5.0, verify: bool = True
-) -> bool:
-    """Is this connection actually reachable?
+async def _ask_identity(
+    connection: PlexConnection, token: str, *, timeout: float, verify: bool
+) -> httpx2.Response | None:
+    """GET ``/identity`` on this address, or ``None`` if the address does not answer.
 
-    ``/identity`` is the right probe: it is unauthenticated-ish, cheap, and returns
-    the machineIdentifier, so it doubles as a check that we reached the server we
-    think we did. ``verify`` defaults on; turning it off is the operator's explicit
-    choice for a self-signed HTTPS server (the same per-service opt-out the *arr
-    clients have), threaded through the link flow and stored on the server row.
+    ``/identity`` is the right probe: it is unauthenticated-ish, cheap, and names the
+    server that answered. ``verify`` defaults on at both callers; turning it off is the
+    operator's explicit choice for a self-signed HTTPS server (the same per-service
+    opt-out the *arr clients have), threaded through the link flow and stored on the
+    server row.
+
+    It rides ``_ProbeClient`` rather than a bare ``httpx2.AsyncClient`` so the probe gets
+    the guarded transport, the retry on a transient blip, the same-origin redirect policy
+    and the mapped errors every other read in this package gets (I-4, rule 33).
 
     ``timeout`` bounds the WHOLE probe, retries included, not each attempt. The caller
     walks a server's advertised addresses one at a time (``plex_link
@@ -388,6 +396,50 @@ async def probe_connection(
     )
     try:
         async with client, asyncio.timeout(timeout):
-            return await client.reachable()
+            return await client.identity()
     except TimeoutError:
-        return False
+        return None
+
+
+async def probe_connection(
+    connection: PlexConnection, token: str, *, timeout: float = 5.0, verify: bool = True
+) -> bool:
+    """Is this connection actually reachable?
+
+    Reachability only, and deliberately so: it does NOT check *which* server answered.
+    Its caller is the link flow (``services/plex_link.reachable_connection``), which is
+    walking the addresses plex.tv itself just advertised for one resource, so the answer
+    is already scoped to the right server. Requiring an identity here would make a Plex
+    that does not report one impossible to link at all -- a real capability traded away
+    for a check this path does not need.
+
+    The caller that does need it is ``api/settings.plex_set_connection``, where the
+    address is typed by hand and could be any server on the network; it calls
+    ``connection_identity`` and compares. Rule 24: this docstring used to say the check
+    happened here, and it never did.
+    """
+    response = await _ask_identity(connection, token, timeout=timeout, verify=verify)
+    return response is not None and response.status_code < 400
+
+
+async def connection_identity(
+    connection: PlexConnection, token: str, *, timeout: float = 5.0, verify: bool = True
+) -> str | None:
+    """Which server answers at this address, or ``None`` if none can be confirmed.
+
+    ``None`` covers four cases a caller must treat alike -- unreachable, an error
+    status, a body that will not parse, and a body that does not name a server --
+    because none of them is evidence that the expected server is there. A reachable
+    server that will not say who it is is exactly what an identity check exists to
+    refuse, so this is stricter than ``probe_connection`` on purpose.
+    """
+    response = await _ask_identity(connection, token, timeout=timeout, verify=verify)
+    if response is None or response.status_code >= 400:
+        return None
+    try:
+        body = response.json()
+    except ValueError:
+        return None
+    container = body.get("MediaContainer") if isinstance(body, dict) else None
+    identifier = container.get("machineIdentifier") if isinstance(container, dict) else None
+    return identifier if isinstance(identifier, str) and identifier else None

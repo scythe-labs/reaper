@@ -133,6 +133,31 @@ describe("Fairness", () => {
     expect(screen.getByText("marlow")).toBeInTheDocument();
   });
 
+  // B-27: this is the state the tile exists for. A fresh portal, or ids the scan has not
+  // backfilled, leaves every request unmatched, so there are no people to show and the only
+  // thing explaining the empty page is the count of what did not line up. The tile used to be
+  // nested inside the has-people branch, so it was hidden exactly when it was needed.
+  it("still offers the not-in-the-last-scan tile when nobody is on the board", async () => {
+    const onOpenUnmatched = vi.fn();
+    apiMock.fairness.mockResolvedValue(report([], { not_in_scan: 40 }));
+    renderWithClient(<Fairness onOpenUnmatched={onOpenUnmatched} />);
+
+    expect(
+      await screen.findByText(/no available requests are in the last scan/i),
+    ).toBeInTheDocument();
+    const tile = screen.getByRole("button", { name: /not in the last scan/i });
+    expect(tile).toHaveTextContent("40");
+    await userEvent.click(tile);
+    expect(onOpenUnmatched).toHaveBeenCalled();
+  });
+
+  it("says nothing about unmatched requests when there are none", async () => {
+    apiMock.fairness.mockResolvedValue(report([], { not_in_scan: 0 }));
+    renderWithClient(<Fairness />);
+    await screen.findByText(/no available requests are in the last scan/i);
+    expect(screen.queryByRole("button", { name: /not in the last scan/i })).toBeNull();
+  });
+
   it("asks App to open a person when their card is clicked", async () => {
     const onSelectPerson = vi.fn();
     apiMock.fairness.mockResolvedValue(report([row()]));

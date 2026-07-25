@@ -172,6 +172,24 @@ export function Fairness({
   // scan. Invalidating the "fairness" prefix refetches the board and any open person panel.
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ["fairness"] });
 
+  // Defined once and rendered in BOTH states, because the state that needs it most is the one
+  // with no people on the board: a fresh portal, or ids the scan has not backfilled, leaves
+  // every request unmatched, and this tile is the only thing explaining why the page is empty.
+  // It used to live inside the has-people branch, so it was hidden exactly then (B-27).
+  const notInScanTile = data && data.not_in_scan > 0 && (
+    <button
+      type="button"
+      className={`fair-stat fair-stat-btn${unmatchedSelected ? " selected" : ""}`}
+      onClick={() => onOpenUnmatched?.()}
+      aria-expanded={unmatchedSelected ?? false}
+    >
+      <span className="fair-stat-num amber">{count(data.not_in_scan)}</span>
+      <span className="fair-stat-lbl">Not in the last scan</span>
+      <span className="fair-stat-sub">requested since, or filtered out</span>
+      <span className="fair-stat-more">See what these are ›</span>
+    </button>
+  );
+
   return (
     <section className="fair">
       <div className="fair-head">
@@ -210,7 +228,10 @@ export function Fairness({
       )}
 
       {data && !data.no_snapshot && data.rows.length === 0 && (
-        <p className="empty">No available requests are in the last scan yet.</p>
+        <>
+          <p className="empty">No available requests are in the last scan yet.</p>
+          {notInScanTile && <div className="fair-stats fair-stats-lone">{notInScanTile}</div>}
+        </>
       )}
 
       {data && !data.no_snapshot && data.rows.length > 0 && (
@@ -231,19 +252,7 @@ export function Fairness({
                 {data.total_reclaimable_items === 1 ? "title" : "titles"} the scan would remove
               </span>
             </div>
-            {data.not_in_scan > 0 && (
-              <button
-                type="button"
-                className={`fair-stat fair-stat-btn${unmatchedSelected ? " selected" : ""}`}
-                onClick={() => onOpenUnmatched?.()}
-                aria-expanded={unmatchedSelected ?? false}
-              >
-                <span className="fair-stat-num amber">{count(data.not_in_scan)}</span>
-                <span className="fair-stat-lbl">Not in the last scan</span>
-                <span className="fair-stat-sub">requested since, or filtered out</span>
-                <span className="fair-stat-more">See what these are ›</span>
-              </button>
-            )}
+            {notInScanTile}
           </div>
 
           {data.horizon_at && (

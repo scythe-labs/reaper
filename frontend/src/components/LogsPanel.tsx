@@ -7,7 +7,7 @@
 // scope (see _logStore) and the panel seeds from them on mount.
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type LogLine } from "../api";
 import { count } from "../format";
 import { Switch } from "./Switch";
@@ -34,11 +34,23 @@ function logTime(ts: string): string {
   return parsed.toLocaleTimeString([], { hour12: false });
 }
 
+/** One kept line, with the text the search box actually matches against folded in once.
+ *
+ *  The search used to lowercase `text` and `level` for every one of up to 2000 lines on every
+ *  render -- and this panel re-renders on each 2s poll and each keystroke (P-6). Lowercasing
+ *  is done once, when the line arrives and never changes again. */
+type KeptLine = LogLine & { haystack: string };
+
+const keep = (line: LogLine): KeptLine => ({
+  ...line,
+  haystack: `${line.text} ${line.level}`.toLowerCase(),
+});
+
 // The accumulated log window, kept at module scope so it survives navigating away from the
 // Logs tab and back. LogsPanel unmounts when you leave the tab; without this its lines would
 // reset to empty and the panel would show "Nothing yet" until the next poll. Seeded from
 // here on mount, so the last lines are on screen immediately.
-const _logStore: { lines: LogLine[]; cursor: number; wrap: boolean } = {
+const _logStore: { lines: KeptLine[]; cursor: number; wrap: boolean } = {
   lines: [],
   cursor: 0,
   wrap: false,
@@ -49,7 +61,7 @@ export function LogsPanel() {
   const [search, setSearch] = useState("");
   const [minLevel, setMinLevel] = useState("all");
   const [wrap, setWrap] = useState(_logStore.wrap);
-  const [lines, setLines] = useState<LogLine[]>(_logStore.lines);
+  const [lines, setLines] = useState<KeptLine[]>(_logStore.lines);
   const [recordLevel, setRecordLevel] = useState<string | null>(null);
   const cursor = useRef(_logStore.cursor);
   const consoleRef = useRef<HTMLDivElement | null>(null);
@@ -72,7 +84,7 @@ export function LogsPanel() {
     if (page.lines.length) {
       setLines((prev) => {
         const newest = prev.at(-1)?.seq ?? 0;
-        const fresh = page.lines.filter((l) => l.seq > newest);
+        const fresh = page.lines.filter((l) => l.seq > newest).map(keep);
         const next = fresh.length ? [...prev, ...fresh].slice(-2000) : prev;
         _logStore.lines = next;
         return next;
@@ -80,14 +92,16 @@ export function LogsPanel() {
     }
   }, [logs.data]);
 
-  const visible = lines.filter((line) => {
-    if (minLevel !== "all" && (LEVEL_RANK[line.level] ?? 20) < (LEVEL_RANK[minLevel] ?? 0)) {
-      return false;
-    }
-    if (search.trim() === "") return true;
+  // Memoized on exactly what the filter reads. Without it this whole pass ran on every
+  // render, and the panel re-renders on each 2s poll and each keystroke in the search box.
+  const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
-    return line.text.toLowerCase().includes(needle) || line.level.toLowerCase().includes(needle);
-  });
+    const floor = minLevel === "all" ? null : (LEVEL_RANK[minLevel] ?? 0);
+    return lines.filter((line) => {
+      if (floor !== null && (LEVEL_RANK[line.level] ?? 20) < floor) return false;
+      return needle === "" || line.haystack.includes(needle);
+    });
+  }, [lines, search, minLevel]);
 
   // Follow the newest line while Live; leave the scroll alone while paused so reading
   // is undisturbed.

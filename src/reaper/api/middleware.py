@@ -48,17 +48,15 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from ipaddress import IPv4Network, IPv6Network, ip_address, ip_network
 
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocketClose
 
 from reaper.auth.cookie import read_session_token
-from reaper.auth.proxy import client_ip
 from reaper.auth.ratelimit import Throttle
 from reaper.auth.sessions import resolve_session
-
-__all__ = ["AuthGuard", "api_key_throttle", "client_ip"]
 
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -72,13 +70,29 @@ _OPEN_PREFIX = "/api/auth/"
 #: header must not be a free brute-force channel just because it skips the login form.
 api_key_throttle = Throttle(threshold=5, base_delay=2.0, max_delay=300.0, decay=900.0)
 
-#: Reads an API key must never see: they hand back a stored secret in the clear. Every
-#: other read is open to the key (it is for scripts), so this stays a tiny denylist. The
-#: backup download is here because it is the crown jewels -- the whole database plus the
-#: master key that decrypts every credential -- so a leaked automation key cannot pull it.
-#: Managing the key itself (rotating it, or deleting it to close this lane entirely) is a
-#: WRITE, so it is already closed to the key by the deny-by-default rule below.
-_API_KEY_READ_DENY = frozenset({"/api/settings/general/api-key", "/api/settings/backup/download"})
+#: Reads an API key must never see. Every other read is open to the key (it is for
+#: scripts), so this stays a tiny denylist -- but "open to scripts" is not the same as
+#: "safe to hand out", and the two things here are the ones that carry more than they
+#: appear to:
+#:
+#: * The key itself, and the backup download -- they hand back a stored secret in the
+#:   clear. The backup is the crown jewels: the whole database plus the master key that
+#:   decrypts every credential.
+#: * The logs. They are not a secret store, but they are a running transcript of the
+#:   library -- titles, the people who watched them, root folders -- and the download
+#:   concatenates every rotating file, so one GET is the whole history. The operator is
+#:   told a key can "read your library"; that has to mean the catalog, not everyone's
+#:   viewing. Denied for the same reason the backup is (S-3).
+#:
+#: ``PUT /api/logs/level`` is a write, so the allowlist below already refuses it.
+_API_KEY_READ_DENY = frozenset(
+    {
+        "/api/settings/general/api-key",
+        "/api/settings/backup/download",
+        "/api/logs",
+        "/api/logs/download",
+    }
+)
 
 #: The only writes an API key may drive: scanning, planning, and editing the policy and
 #: reap profile. Everything else that changes state stays behind the signed-in browser --
@@ -117,6 +131,58 @@ def _api_key_allowed(method: str, path: str) -> bool:
 
 def _is_open(path: str) -> bool:
     return path in _OPEN_EXACT or path.startswith(_OPEN_PREFIX)
+
+
+def parse_proxy_networks(entries: list[str]) -> tuple[IPv4Network | IPv6Network, ...]:
+    """Parse stored trusted-proxy entries into networks, dropping anything malformed.
+
+    A single address becomes its /32 (or /128) network. Dropping rather than raising is
+    the fail-closed direction here: an unparseable entry trusts NOBODY extra.
+    """
+    networks: list[IPv4Network | IPv6Network] = []
+    for entry in entries:
+        cleaned = entry.strip()
+        if not cleaned:
+            continue
+        try:
+            networks.append(ip_network(cleaned, strict=False))
+        except ValueError:
+            continue
+    return tuple(networks)
+
+
+def client_ip(request: Request) -> str:
+    """The address rate limits key on.
+
+    The direct peer address, unless the operator turned on reverse-proxy trust in
+    Settings -> General AND the peer is one of the proxies they listed -- only then is
+    ``X-Forwarded-For`` consulted, walking from its rightmost hop and returning the
+    first address that is not a trusted proxy. Anyone else's forwarded header is
+    attacker-controlled noise and is ignored, so a stranger cannot rotate spoofed
+    addresses to dodge the per-IP lockout. Any parse trouble falls back to the peer.
+    """
+    client = request.client
+    peer = client.host if client is not None else "unknown"
+    proxies: tuple[IPv4Network | IPv6Network, ...] = getattr(
+        request.app.state, "trusted_proxies", ()
+    )
+    if not proxies:
+        return peer
+    try:
+        peer_ip = ip_address(peer)
+    except ValueError:
+        return peer
+    if not any(peer_ip in net for net in proxies):
+        return peer
+    hops = [h.strip() for h in request.headers.get("x-forwarded-for", "").split(",") if h.strip()]
+    for hop in reversed(hops):
+        try:
+            hop_ip = ip_address(hop)
+        except ValueError:
+            return peer
+        if not any(hop_ip in net for net in proxies):
+            return str(hop_ip)
+    return peer
 
 
 async def _refuse_scope(scope: Scope, receive: Receive, send: Send) -> None:

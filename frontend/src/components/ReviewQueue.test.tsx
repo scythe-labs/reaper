@@ -15,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type Candidate, type GroupSeasonMark, type Verdict } from "../api";
 import {
   compactSpan,
+  DEFAULT_FILTERS,
   KeptByShowNote,
   OverrideControls,
   ReviewQueue,
@@ -30,6 +31,7 @@ const { apiMock } = vi.hoisted(() => ({
     vocabularyValues: vi.fn(),
     reapBreakdown: vi.fn(),
     general: vi.fn(),
+    profile: vi.fn(),
   },
 }));
 
@@ -132,11 +134,12 @@ function renderQueue(verdict: Verdict = "condemn", latestScanSnapshotId: number 
   );
 }
 
-/** How many cards the bulk bar says are picked. Scoped to the bar: the queue header
- *  carries a count of its own, and the two are different numbers. */
+/** What the bulk bar says is picked -- "N selected", or "N cards · M items" once a show card
+ *  stands for more than itself. Scoped to the bar: the queue header carries a count of its
+ *  own, and the two are different numbers. */
 function pickedCount(): string {
   const bar = screen.getByRole("region", { name: "Bulk actions" });
-  return within(bar).getByText(/selected|Tap or drag/).textContent ?? "";
+  return within(bar).getByText(/selected|Tap or drag|cards? ·/).textContent ?? "";
 }
 
 /** Enter Select mode (the bulk bar only exists there) and pick every drawn card. */
@@ -164,6 +167,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   apiMock.vocabularyValues.mockResolvedValue({ values: [] });
   apiMock.group.mockResolvedValue(null);
+  apiMock.profile.mockResolvedValue({ max_unmeasured_per_run: 0 });
   apiMock.general.mockResolvedValue({
     application_name: "Reaper",
     application_url: null,
@@ -456,6 +460,33 @@ describe("the bulk Reap override", () => {
   });
 });
 
+describe("the bulk bar's count", () => {
+  it("states the items a show card stands for, not just the card", async () => {
+    // "1 selected" beside a Reap now that plans ten seasons is not the set the server acts
+    // on (U-13, rule 30). The show's count is the server's own actable total.
+    const marks: GroupSeasonMark[] = [
+      { id: 1, season: 1, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+      { id: 2, season: 2, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+    ];
+    apiMock.candidates.mockResolvedValue(
+      page([
+        season(1, "condemn", { group_seasons: marks, group_condemned_count: 10 }),
+        season(2, "condemn", { group_seasons: marks, group_condemned_count: 10 }),
+      ]),
+    );
+    renderQueue("condemn");
+    await selectAllDrawn();
+    expect(pickedCount()).toMatch(/1 card · 10 items/);
+  });
+
+  it("says plain 'selected' when every picked card is one item", async () => {
+    apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)]));
+    renderQueue("condemn");
+    await selectAllDrawn();
+    expect(pickedCount()).toMatch(/2 selected/);
+  });
+});
+
 describe("select everything matching", () => {
   it("selects nothing and says so when the rest of the list won't load", async () => {
     const first = [movie(1), movie(2)];
@@ -479,18 +510,26 @@ describe("select everything matching", () => {
 
 describe("a reap the engine refused", () => {
   it("reads as one sentence whichever lane kept the item", async () => {
-    // Two lanes refuse a hand reap: a safety stop that fired (its chip is "Kept · ...")
-    // and a protection that could not be checked (its chip is that lane's own wording,
-    // capitalized and carrying a middot). Both have to land in the same sentence.
+    // Two lanes refuse a hand reap: a safety stop that fired, and a protection that could
+    // not be checked. Their chips read nothing alike -- one leads "Kept · ", the other is
+    // capitalized and carries a middot -- and both have to land in the same sentence.
+    //
+    // The clause comes from the chip's own `why`, which the server words (H-1). These
+    // fixtures deliberately give `text` and `why` different words, so a test that passed by
+    // re-parsing the text would fail here: this asserts the field is read, not the prose.
     const streaming = movie(1, {
       override: "reap",
       override_effective: false,
-      chip: { tone: "kept", text: "Kept · playing right now" },
+      chip: { tone: "kept", text: "Kept · playing right now", why: "playing right now" },
     });
     const unchecked = movie(2, {
       override: "reap",
       override_effective: false,
-      chip: { tone: "look", text: "Needs a look · left for you to decide" },
+      chip: {
+        tone: "look",
+        text: "Needs a look · left for you to decide",
+        why: "a check on it couldn't be settled",
+      },
     });
     apiMock.candidates.mockResolvedValue(page([streaming, unchecked]));
     renderQueue();
@@ -740,6 +779,96 @@ describe("keyboard activation of a revealed Spare/Reap button", () => {
     // the panel) never ran.
     expect(rowKeyDown).not.toHaveBeenCalled();
   });
+
+  it("expands a show from the keyboard: the season pill's key never reaches the card head", async () => {
+    // The card head owns Enter/Space AND calls preventDefault, which cancels the pill's own
+    // activation. Without the guard a keyboard user cannot expand a show at all -- Enter
+    // opens the show panel instead (rule 60).
+    apiMock.candidates.mockResolvedValue(page([season(1, "condemn"), season(2, "condemn")]));
+    renderQueue("condemn");
+    const expander = await screen.findByRole("button", { name: "2 seasons" });
+    expect(expander).toHaveAttribute("aria-expanded", "false");
+
+    expander.focus();
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(expander).toHaveAttribute("aria-expanded", "true"));
+  });
+});
+
+// An item-level control asks the ITEM, never the tab: lane membership is the effective
+// verdict, so a row can sit on Condemned with a stored verdict that is not "condemn", and a
+// spared condemnation has to stay flippable.
+describe("a per-row control on the lane it does not match", () => {
+  it("keeps Reap on a spared condemned movie, so the decision can be reversed", async () => {
+    apiMock.candidates.mockResolvedValue(
+      page([movie(1, { override: "spare", override_own: "spare", spared: true })]),
+    );
+    renderQueue("condemn");
+    // `reapIsNoop` is false here (a spare is not already-condemned), so Reap stays. The tab
+    // test hid it and stranded the spare with nothing to undo it (B-1).
+    expect(await screen.findByRole("button", { name: "Spared" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Reap$/ })).toBeInTheDocument();
+  });
+
+  it("keeps the Reap control on a movie the lane holds by an honored hand reap", async () => {
+    // Stored verdict abstain, on Condemned because the hand reap is honored. Hiding Reap here
+    // left a resting scythe with no control to clear it.
+    apiMock.candidates.mockResolvedValue(
+      page([
+        movie(1, {
+          verdict: "abstain",
+          override: "reap",
+          override_own: "reap",
+          override_effective: true,
+        }),
+      ]),
+    );
+    renderQueue("condemn");
+    expect(await screen.findByRole("button", { name: "Reaping" })).toBeInTheDocument();
+  });
+});
+
+// A card's prose follows the decision in EFFECT. A whole-show decision settles the card's
+// story before its seasons' verdicts do, and a per-item spare must not silently drop a line.
+describe("what a card says after a hand decision", () => {
+  it("stops asserting removal the moment the whole show is spared", async () => {
+    const marks: GroupSeasonMark[] = [
+      { id: 1, season: 1, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+      { id: 2, season: 2, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+      { id: 3, season: 3, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+    ];
+    const extra = { group_seasons: marks, group_condemned_count: 2, group_condemned_bytes: 2 * 1024 ** 3 };
+    apiMock.candidates.mockResolvedValue(
+      page([season(1, "condemn", extra), season(2, "condemn", extra)]),
+    );
+    apiMock.override.mockResolvedValue({});
+    const user = userEvent.setup();
+    renderQueue("condemn");
+    await screen.findByText("Example Show");
+    expect(screen.getByText(/2 of 3 would be removed/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Spare" }));
+
+    // The whole-show patch touches `show_override` only, by design, so a card reading its
+    // seasons' verdicts kept promising removal under a "will be kept" chip, all session
+    // (B-12, rule 61).
+    await waitFor(() => expect(screen.queryByText(/would be removed/)).not.toBeInTheDocument());
+  });
+
+  it("keeps the dormancy line when a condemned movie is spared", async () => {
+    // A condemned row carries no chip by construction, so the spare flipped the card to the
+    // chip branch and it lost a line and reflowed under the cursor (B-24).
+    apiMock.candidates.mockResolvedValue(page([movie(1, { dormant_for: "3 years 2 months" })]));
+    apiMock.override.mockResolvedValue({});
+    const user = userEvent.setup();
+    renderQueue("condemn");
+    await screen.findByText(/Not watched in/);
+
+    await user.click(screen.getByRole("button", { name: "Spare" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Spared" })).toBeInTheDocument());
+    expect(screen.getByText(/Not watched in/)).toBeInTheDocument();
+  });
 });
 
 // The Spare chevron opens a length menu: quick day-presets, Forever, and a Custom entry. Each
@@ -839,5 +968,80 @@ describe("the unified filter bar", () => {
       expect.anything(),
       expect.anything(),
     );
+  });
+});
+
+describe("switching tabs", () => {
+  // Each tab remembers its own filters, and the new tab's set is adopted during the render
+  // that brings the new verdict in. When that adoption lived in an effect, the new verdict
+  // was paired with the OLD tab's filters for one commit: the queue drew a wrong list and
+  // the server answered the same switch twice (B-30).
+  const store = new Map<string, string>();
+
+  function installStorage(): void {
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: {
+        getItem: (key: string) => store.get(key) ?? null,
+        setItem: (key: string, value: string) => void store.set(key, String(value)),
+        removeItem: (key: string) => void store.delete(key),
+        clear: () => store.clear(),
+      },
+    });
+  }
+
+  function queue(verdict: Verdict) {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    return (
+      <QueryClientProvider client={queryClient}>
+        <ReviewQueue
+          verdict={verdict}
+          onVerdictChange={() => {}}
+          selectedId={null}
+          selectedGroupKey={null}
+          onSelect={() => {}}
+          onSelectGroup={() => {}}
+        />
+      </QueryClientProvider>
+    );
+  }
+
+  it("never asks the server for the new tab with the old tab's filters", async () => {
+    store.clear();
+    installStorage();
+    // Condemned remembers a genre; Sanctuary remembers nothing.
+    store.set(
+      "reaper.queue.filters.condemn",
+      JSON.stringify({ ...DEFAULT_FILTERS, genre: "Example Genre" }),
+    );
+    apiMock.candidates.mockResolvedValue(page([movie(1)]));
+
+    const { rerender } = render(queue("condemn"));
+    await waitFor(() =>
+      expect(apiMock.candidates).toHaveBeenCalledWith(
+        "condemn",
+        expect.objectContaining({ genre: "Example Genre" }),
+        expect.anything(),
+        expect.anything(),
+      ),
+    );
+
+    rerender(queue("protect"));
+    await waitFor(() =>
+      expect(apiMock.candidates).toHaveBeenLastCalledWith(
+        "protect",
+        expect.objectContaining({ genre: "" }),
+        expect.anything(),
+        expect.anything(),
+      ),
+    );
+    // The wrong pair is never requested at all -- not even for the one render it used to
+    // survive: it would have both drawn a list and cost the server a query.
+    const wrongPair = apiMock.candidates.mock.calls.filter(
+      (c) => c[0] === "protect" && (c[1] as { genre: string }).genre === "Example Genre",
+    );
+    expect(wrongPair).toEqual([]);
   });
 });

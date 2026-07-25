@@ -8,6 +8,7 @@
 
 import { useEffect } from "react";
 import type { UnmatchedRequest } from "../api";
+import { useModalOpen } from "../backnav";
 import { count } from "../format";
 import { UnmatchedList } from "./UnmatchedList";
 import { WhyClose } from "./WhyPanel";
@@ -27,15 +28,16 @@ export function NotInScanPanel({
   onClose: () => void;
 }) {
   // Escape closes, matching the why-panel; a modal, if one is up, owns the key first.
+  const modalOpen = useModalOpen();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (document.querySelector('[role="dialog"]')) return;
+      if (modalOpen) return;
       onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, modalOpen]);
 
   // The card counts requests; the panel merges co-requesters into one row per title. Reconcile
   // the two out loud so a smaller row count never reads as "some are missing".

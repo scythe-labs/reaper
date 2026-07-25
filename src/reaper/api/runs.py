@@ -37,6 +37,7 @@ from reaper.api.schemas import (
     RunOut,
     RunOutcomeOut,
     RunReportOut,
+    RunSummaryOut,
 )
 from reaper.config import Settings
 from reaper.crypto import SecretBox
@@ -257,20 +258,38 @@ async def list_runs(
     request: Request,
     # Bounded at the boundary, both ends. Without a lower bound a negative limit passed
     # straight through to ``LIMIT -1``, which SQLite reads as NO limit: one request
-    # returned every run ever made, each dragging its snapshot's whole condemned set
-    # through _run_out behind it (B-8).
+    # returned every run ever made (B-8). Cheap rows make that less costly than it was,
+    # not bounded -- so the bound stays here, where a bad value is refused rather than
+    # clamped silently.
     limit: int = Query(50, ge=1, le=200),
-) -> list[RunOut]:
+) -> list[RunSummaryOut]:
+    """The recent plans, as stored rows and nothing more (see ``RunSummaryOut``).
+
+    Deliberately NOT ``RunOut``: that shape's counts, totals and phrase are each derived
+    from the effective condemned set of the run's snapshot, so building it per run read
+    the whitelist, the profile and the whole candidate table once per row -- fifty times
+    on every visit to the Reap page (P-3). Opening a run goes to ``GET /runs/{id}``,
+    which derives them for the one run being looked at.
+    """
     async with _sessions(request)() as session:
         runs = list(
             (await session.execute(select(ReapRun).order_by(ReapRun.id.desc()).limit(limit)))
             .scalars()
             .all()
         )
-        # One memo across the whole page: the runs listed here nearly always share a
-        # snapshot, and its condemned set is the expensive read.
-        reads = _RunReads(session)
-        return [await _run_out(session, r, reads=reads) for r in runs]
+        # No memo needed: nothing here is derived, so there is no expensive read to share.
+        return [
+            RunSummaryOut(
+                id=r.id,
+                snapshot_id=r.snapshot_id,
+                state=r.state.value,
+                approved_by=r.approved_by,
+                approved_at=r.approved_at.isoformat(),
+                aborted_reason=r.aborted_reason,
+                held_back_unknown_size=r.held_back_unknown_size,
+            )
+            for r in runs
+        ]
 
 
 @router.get("/runs/{run_id}")

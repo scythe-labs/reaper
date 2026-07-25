@@ -11,6 +11,13 @@ import { api, type Candidate, type CandidatePage, type Override } from "./api";
 /** The exact day in ms, for an optimistic timed-spare countdown until the server confirms it. */
 const DAY_MS = 86_400_000;
 
+/** Everything the server answers override-aware, so no surface is left quoting a number a
+ *  hand decision has already changed. The queue and its panels are the obvious ones; the scan
+ *  summary shifts lanes by the overrides and the Scales figures count only the effective reap
+ *  set, so those two are just as wrong the moment a title is spared and just as easy to miss
+ *  (B-14). A surface that gains an override-aware number is added here, and only here. */
+const OVERRIDE_AWARE = [["group"], ["candidate"], ["reap-breakdown"], ["snapshot"], ["fairness"]];
+
 export function useOverrideMutations() {
   const queryClient = useQueryClient();
 
@@ -101,9 +108,7 @@ export function useOverrideMutations() {
       queryKey: ["candidates"],
       refetchType: patchedInPlace ? "none" : "active",
     });
-    void queryClient.invalidateQueries({ queryKey: ["group"] });
-    void queryClient.invalidateQueries({ queryKey: ["candidate"] });
-    void queryClient.invalidateQueries({ queryKey: ["reap-breakdown"] });
+    for (const queryKey of OVERRIDE_AWARE) void queryClient.invalidateQueries({ queryKey });
   };
 
   // A full refetch, including the active queue tab. Bulk actions apply a decision to a whole
@@ -111,9 +116,7 @@ export function useOverrideMutations() {
   // made mid-review. Exported for those callers (the bulk bar) that want the queue reloaded now.
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["candidates"] });
-    void queryClient.invalidateQueries({ queryKey: ["group"] });
-    void queryClient.invalidateQueries({ queryKey: ["candidate"] });
-    void queryClient.invalidateQueries({ queryKey: ["reap-breakdown"] });
+    for (const queryKey of OVERRIDE_AWARE) void queryClient.invalidateQueries({ queryKey });
   };
 
   const setOverride = useMutation({

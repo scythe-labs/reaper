@@ -66,18 +66,21 @@ const LIBRARIES: PlexLibrary[] = [
 function renderModal(
   instance: Instance,
   folders: RootFolder[] | Error,
-  libraries: PlexLibrary[] = LIBRARIES,
+  libraries: PlexLibrary[] | Error = LIBRARIES,
 ) {
   if (folders instanceof Error) apiMock.instanceRootFolders.mockRejectedValue(folders);
   else apiMock.instanceRootFolders.mockResolvedValue(folders);
-  apiMock.plexLibraries.mockResolvedValue(libraries);
+  if (libraries instanceof Error) apiMock.plexLibraries.mockRejectedValue(libraries);
+  else apiMock.plexLibraries.mockResolvedValue(libraries);
   apiMock.updateInstance.mockResolvedValue(instance);
+  const onClose = vi.fn();
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
-      <ServiceModal kind="sonarr" instance={instance} onClose={vi.fn()} />
+      <ServiceModal kind="sonarr" instance={instance} onClose={onClose} />
     </QueryClientProvider>,
   );
+  return { onClose };
 }
 
 /** The library select for one root-folder row, found by that row's folder label. */
@@ -138,6 +141,21 @@ describe("ServiceModal HD/4K library map", () => {
       await screen.findByText(/couldn't read this instance's folders/i),
     ).toBeInTheDocument();
   });
+
+  it("does not claim the operator has no libraries when the list can't be read", async () => {
+    // B-20: a failed fetch empties the options exactly as a genuinely-empty library list does,
+    // and the "none yet" sentence then states as fact something Reaper never learned -- and
+    // sends the operator off to re-sync a list that is already there.
+    renderModal(sonarr(), [{ path: "/tv", suggested_library: "TV" }], new Error("unreachable"));
+    expect(await screen.findByText(/couldn't read your Plex libraries/i)).toBeInTheDocument();
+    expect(screen.queryByText(/No Plex libraries yet/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the 'none yet' sentence for a list that really is empty", async () => {
+    renderModal(sonarr(), [{ path: "/tv", suggested_library: null }], []);
+    expect(await screen.findByText(/No Plex libraries yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/couldn't read your Plex libraries/i)).not.toBeInTheDocument();
+  });
 });
 
 describe("ServiceModal external URL", () => {
@@ -184,11 +202,12 @@ const ARR_INSTANCES: Instance[] = [
 function renderSeerrModal(
   instance: Instance,
   services: SeerrService[] | Error,
-  arrs: Instance[] = ARR_INSTANCES,
+  arrs: Instance[] | Error = ARR_INSTANCES,
 ) {
   if (services instanceof Error) apiMock.instanceSeerrServices.mockRejectedValue(services);
   else apiMock.instanceSeerrServices.mockResolvedValue(services);
-  apiMock.instances.mockResolvedValue(arrs);
+  if (arrs instanceof Error) apiMock.instances.mockRejectedValue(arrs);
+  else apiMock.instances.mockResolvedValue(arrs);
   apiMock.updateInstance.mockResolvedValue(instance);
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -265,5 +284,34 @@ describe("ServiceModal multi-Seerr service map", () => {
     expect(
       await screen.findByText(/couldn't read this portal's services/i),
     ).toBeInTheDocument();
+  });
+
+  it("does not claim there are no Sonarr or Radarr connections when the list can't be read", async () => {
+    // B-20, the same trap on the other picker: every `instanceOptions` comes back empty.
+    renderSeerrModal(
+      seerr(),
+      [{ service_id: 2, kind: "sonarr", name: "Main TV", is_4k: false, suggested_instance_id: 3 }],
+      new Error("unreachable"),
+    );
+    expect(
+      await screen.findByText(/couldn't read your Sonarr and Radarr connections/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/No Sonarr or Radarr connections yet/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("ServiceModal while a save is in flight", () => {
+  it("refuses to close, so the failure it is about to show survives", async () => {
+    // B-19: the scrim, Escape and ✕ used to tear the modal down mid-save. A 409 "a service with
+    // that name already exists" then landed on an unmounted component, the caches were never
+    // invalidated, and the operator walked away believing the change had saved.
+    const { onClose } = renderModal(sonarr(), [{ path: "/tv", suggested_library: "TV" }]);
+    apiMock.updateInstance.mockReturnValue(new Promise(() => {})); // in flight, forever
+    await userEvent.click(await screen.findByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled());
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await userEvent.keyboard("{Escape}");
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

@@ -202,8 +202,14 @@ export function PlexPanel() {
     onError: (e: Error) => setConnError(e.message),
   });
 
-  const currentServer =
-    resources.data?.servers.find((s) => s.current) ?? resources.data?.servers[0];
+  // Only the server plex.tv marks `current` is the one Reaper is linked to. This used to fall
+  // back to `servers[0]`, so a partial or filtered plex.tv response presented some OTHER server
+  // as the managed one and the Connection row listed that server's addresses: picking one saved
+  // it, and Reaper then wrote Leaving Soon collections and labels into, and read the Never-Reap
+  // collection from, a server it was never linked to (B-10). Unknown stays unknown -- the row
+  // says the list came back without it and both pickers go quiet until it is back.
+  const currentServer = resources.data?.servers.find((s) => s.current);
+  const linkedServerMissing = resources.data !== undefined && currentServer === undefined;
   const connections = currentServer?.connections ?? [];
   const savedUri = data?.connection_uri ?? "";
   const savedIsDiscovered = connections.some((c) => c.uri === savedUri);
@@ -427,9 +433,17 @@ export function PlexPanel() {
                   </>
                 ) : (
                   <>
+                    {linkedServerMissing && (
+                      <p className="notice notice-warn">
+                        Plex's list came back without the server Reaper uses
+                        {data?.name ? `, ${data.name}` : ""}. Nothing has changed. Refresh to
+                        look again; the server and connection stay as they are until it is
+                        back.
+                      </p>
+                    )}
                     <select
                       value={currentServer?.machine_identifier ?? ""}
-                      disabled={switchServer.isPending}
+                      disabled={switchServer.isPending || linkedServerMissing}
                       onChange={(e) => {
                         const next = e.target.value;
                         if (next && next !== currentServer?.machine_identifier) {
@@ -437,11 +451,19 @@ export function PlexPanel() {
                         }
                       }}
                     >
-                      {(resources.data?.servers ?? []).map((s) => (
-                        <option key={s.machine_identifier} value={s.machine_identifier}>
-                          {s.name}
-                        </option>
-                      ))}
+                      {linkedServerMissing ? (
+                        // A select whose value matches no option displays its FIRST option, so
+                        // listing the others here would still show one of them as the current
+                        // server -- the exact misreading this fix exists to stop, merely no
+                        // longer savable. The box names what Reaper actually uses instead.
+                        <option value="">{data?.name ?? "The linked server"}</option>
+                      ) : (
+                        (resources.data?.servers ?? []).map((s) => (
+                          <option key={s.machine_identifier} value={s.machine_identifier}>
+                            {s.name}
+                          </option>
+                        ))
+                      )}
                     </select>
                     <button
                       className="ghost sm"
@@ -467,7 +489,9 @@ export function PlexPanel() {
               <div className="set-control">
                 <select
                   value={connectionValue}
-                  disabled={setConnection.isPending || resources.isPending}
+                  // Without the linked server there is nothing to list but the saved address,
+                  // and every choice here would point at another server's addresses (B-10).
+                  disabled={setConnection.isPending || resources.isPending || linkedServerMissing}
                   onChange={(e) => {
                     const next = e.target.value;
                     if (next === MANUAL_CONNECTION) openManual();

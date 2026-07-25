@@ -45,7 +45,9 @@ export const cheatSheet: Doc = {
         ["Unknown-size items", "0 (held back)"],
       ],
     ),
-    p("Caps abort the whole run when crossed. They never remove just the part that fits."),
+    // "stop", matching understandingPolicy's line about the same mechanism. "Abort" was the
+    // only place in the product an operator met that word (U-15).
+    p("Caps stop the whole run when crossed. They never remove just the part that fits."),
 
     h2("Habits that keep you safe", "habits"),
     ul([

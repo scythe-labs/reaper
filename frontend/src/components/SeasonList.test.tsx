@@ -299,7 +299,16 @@ describe("the all-seasons list", () => {
       override: "reap",
       override_own: null,
       override_effective: false,
-      chip: { tone: "look", text: "Some checks couldn't run" },
+      // `text` and `why` deliberately say different things: the held-reap reason is the
+      // chip's own `why` field, which the server words beside the text (H-1). A frontend
+      // that went back to parsing `text` would render the wrong sentence here and fail,
+      // which is what this batch's predecessor could not do -- it transcribed the backend's
+      // prose on both sides of the contract, so drift was invisible (I-2).
+      chip: {
+        tone: "look",
+        text: "Some checks couldn't run",
+        why: "a rating source didn't answer",
+      },
     });
     const sparedAgainst = withShow(23, 3, {
       override: "spare",
@@ -332,7 +341,7 @@ describe("the all-seasons list", () => {
     expect(screen.queryByText(/Reaped by hand/)).not.toBeInTheDocument();
     // The held season says it is kept for now, and why.
     expect(screen.getByText("Kept for now")).toBeInTheDocument();
-    expect(screen.getByText("Some checks couldn't run.")).toBeInTheDocument();
+    expect(screen.getByText("A rating source didn't answer.")).toBeInTheDocument();
     // The season spared against the show says it goes its own way. ("Spared" is also the active
     // Spare button's label, so target the chip.)
     expect(screen.getByText("Spared", { selector: ".status-chip" })).toBeInTheDocument();

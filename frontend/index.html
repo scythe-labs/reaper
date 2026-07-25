@@ -25,24 +25,39 @@
         /* storage unavailable: fall back to the device preference */
       }
       // Apply the saved accent color before first paint too, so a custom color never
-      // flashes the built-in sky blue. Kept in step with accent.ts (its applyAccent writes
-      // this cache; the ink maths must match accentInk there).
+      // flashes the built-in sky blue. Every value here is READ BACK from a cache
+      // accent.ts's applyAccent writes; none of the color maths is repeated in this file.
+      // It used to re-implement accentInk with the dark ink's luminance rounded to 0.012
+      // (the real value is 0.0125359), so for accents around L = 0.2055 the two disagreed
+      // and the ink on every accent-filled button flipped at first paint -- the exact flash
+      // this script exists to prevent (B-34). On the first load after an upgrade the ink
+      // cache is not written yet, so the stylesheet default stands for that one paint.
       try {
         var reaperAccent = localStorage.getItem("reaper-accent");
         if (reaperAccent && /^#[0-9a-fA-F]{6}$/.test(reaperAccent)) {
-          var root = document.documentElement;
-          root.style.setProperty("--accent", reaperAccent);
-          var lin = function (i) {
-            var v = parseInt(reaperAccent.slice(i, i + 2), 16) / 255;
-            return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
-          };
-          var L = 0.2126 * lin(1) + 0.7152 * lin(3) + 0.0722 * lin(5);
-          var white = 1.05 / (L + 0.05);
-          var dark = (L + 0.05) / (0.012 + 0.05); // 0.012 ≈ luminance of #06202c
-          root.style.setProperty("--accent-ink", white >= dark ? "#ffffff" : "#06202c");
+          document.documentElement.style.setProperty("--accent", reaperAccent);
+        }
+        var reaperAccentInk = localStorage.getItem("reaper-accent-ink");
+        if (reaperAccentInk && /^#[0-9a-fA-F]{6}$/.test(reaperAccentInk)) {
+          document.documentElement.style.setProperty("--accent-ink", reaperAccentInk);
         }
       } catch (e) {
         /* storage unavailable: the stylesheet default accent stands */
+      }
+      // The accent's readable text inks, the same way. accent.ts searches for these
+      // (accentText), and the stylesheet's own fallback covers the built-in accent, so all
+      // that is missing before first paint is a CUSTOM accent's measured pair. Cached as
+      // "#light #dark".
+      try {
+        var reaperInk = localStorage.getItem("reaper-accent-text");
+        if (reaperInk && /^#[0-9a-fA-F]{6} #[0-9a-fA-F]{6}$/.test(reaperInk)) {
+          var inks = reaperInk.split(" ");
+          var inkRoot = document.documentElement;
+          inkRoot.style.setProperty("--accent-text-light", inks[0]);
+          inkRoot.style.setProperty("--accent-text-dark", inks[1]);
+        }
+      } catch (e) {
+        /* storage unavailable: the stylesheet's built-in fallback stands */
       }
       // Apply the saved tab favicon before first paint too, so a custom accent does not flash
       // the default sky icon. accent.ts caches the Deep icon as a data URI under this key; here

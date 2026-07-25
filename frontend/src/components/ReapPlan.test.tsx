@@ -4,7 +4,7 @@
 // that carries Execute, next to the button that rebuilds it. These pin that it is there, and
 // that "we could not check" is said out loud rather than rendering nothing.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Run, Snapshot } from "../api";
@@ -14,6 +14,7 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     safety: vi.fn(),
     createRun: vi.fn(),
+    run: vi.fn(),
     dryRun: vi.fn(),
     runs: vi.fn(),
     latestSnapshot: vi.fn(),
@@ -75,6 +76,7 @@ describe("ReapPlan staleness", () => {
   beforeEach(() => {
     apiMock.safety.mockResolvedValue({ destructive_enabled: false });
     apiMock.createRun.mockResolvedValue(run);
+    apiMock.run.mockResolvedValue(run);
     apiMock.runs.mockResolvedValue([run]);
     apiMock.reapBreakdown.mockResolvedValue({
       has_snapshot: true,
@@ -118,5 +120,102 @@ describe("ReapPlan staleness", () => {
     const { container } = await buildPlan();
     const history = container.querySelector(".run-history") as HTMLElement;
     expect(within(history).queryByText(/older scan/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("the plan the page is showing", () => {
+  beforeEach(() => {
+    apiMock.safety.mockResolvedValue({ destructive_enabled: true });
+    apiMock.createRun.mockResolvedValue(run);
+    apiMock.run.mockResolvedValue(run);
+    apiMock.runs.mockResolvedValue([run]);
+    apiMock.reapBreakdown.mockResolvedValue({ has_snapshot: false });
+    apiMock.latestSnapshot.mockResolvedValue({ ...snapshot, id: run.snapshot_id });
+  });
+
+  it("stops offering Execute once the run it shows has been spent", async () => {
+    // The plan is read through the cache, not captured: a run that has since completed
+    // must not keep a live Execute over it (B-15).
+    apiMock.run.mockResolvedValue({ ...run, state: "completed" });
+    const { summary } = await buildPlan();
+    await waitFor(() =>
+      expect(within(summary).queryByRole("button", { name: /execute/i })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("won't offer to build a plan from a scan that came back incomplete", async () => {
+    // The planner refuses a degraded snapshot outright, so the page says so up front rather
+    // than trading the click for a 422 (PR-8).
+    apiMock.latestSnapshot.mockResolvedValue({
+      ...snapshot,
+      id: run.snapshot_id,
+      degraded: true,
+      degraded_reason: "A source didn't answer.",
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ReapPlan onGoToDeletion={() => {}} onGoToPlexSettings={() => {}} onGoToReview={() => {}} />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText(/came back incomplete/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /build a plan/i })).toBeDisabled();
+  });
+});
+
+describe("what a practice run reports", () => {
+  beforeEach(() => {
+    apiMock.safety.mockResolvedValue({ destructive_enabled: false });
+    apiMock.createRun.mockResolvedValue(run);
+    apiMock.run.mockResolvedValue(run);
+    apiMock.runs.mockResolvedValue([run]);
+    apiMock.reapBreakdown.mockResolvedValue({ has_snapshot: false });
+    apiMock.latestSnapshot.mockResolvedValue({ ...snapshot, id: run.snapshot_id });
+  });
+
+  const report = (patch: Record<string, unknown> = {}) => ({
+    run_id: run.id,
+    dry_run: true,
+    state: "completed",
+    aborted_reason: null,
+    would_delete_items: 0,
+    deleted_bytes: 0,
+    deleted_unmeasured: 0,
+    skipped: 0,
+    outcomes: [
+      { media_key: "a", kind: "movie", state: "verified", detail: "one", title: "", checks: [] },
+      { media_key: "b", kind: "movie", state: "verified", detail: "two", title: "", checks: [] },
+    ],
+    ...patch,
+  });
+
+  it("says what was walked, and never leads with a zero it fixes by construction", async () => {
+    // The old summary led with "0 souls were actually reaped", which is zero for every
+    // practice run there has ever been and so proves nothing, then called the per-item
+    // outcomes "steps" -- a count that disagreed with the journalled steps below it (I-1).
+    apiMock.dryRun.mockResolvedValue(report());
+    const { person } = await buildPlan();
+
+    await person.click(screen.getByRole("button", { name: "Practice run" }));
+
+    const line = await screen.findByText(/Practice run complete/);
+    expect(line.textContent).toContain("2 souls were walked end to end");
+    expect(line.textContent).toContain("nothing was sent");
+    expect(line.textContent).not.toContain("steps");
+    expect(line.textContent).not.toContain("0 souls");
+  });
+
+  it("names the ones a check would hold back rather than counting them as walked", async () => {
+    apiMock.dryRun.mockResolvedValue(report({ skipped: 1 }));
+    const { person } = await buildPlan();
+
+    await person.click(screen.getByRole("button", { name: "Practice run" }));
+
+    const line = await screen.findByText(/Practice run complete/);
+    expect(line.textContent).toContain("2 souls were walked");
+    expect(line.textContent).toContain("1 of them would be skipped");
+    expect(line.textContent).not.toContain("end to end");
   });
 });

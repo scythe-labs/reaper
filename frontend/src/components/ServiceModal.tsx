@@ -15,7 +15,7 @@
 // not whole series), and the help text says so rather than pretending otherwise.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useState, type RefObject } from "react";
 import { api, type Instance, type InstanceTest, type SeerrService } from "../api";
 import { ModalShell } from "./ModalShell";
 import { Switch } from "./Switch";
@@ -127,10 +127,14 @@ export function ServiceModal({
   kind,
   instance,
   onClose,
+  savePendingRef,
 }: {
   kind: string;
   instance: Instance | null;
   onClose: () => void;
+  // Set by ServicesPanel so its Back guard can read the same canClose the scrim/Escape/✕ use,
+  // exactly as the schedule editor does (B-11, B-19).
+  savePendingRef?: RefObject<boolean>;
 }) {
   const queryClient = useQueryClient();
   const editing = instance !== null;
@@ -172,7 +176,10 @@ export function ServiceModal({
     enabled: mapEditable,
   });
   const plexLibraries = useQuery({
-    queryKey: ["plexLibraries"],
+    // The exact key the Plex panel refreshes after a sync (`PlexPanel`). Cached under a
+    // second spelling, this list went on offering libraries that had just been removed and
+    // hiding ones that had just been added, until the page was reloaded.
+    queryKey: ["plex-libraries"],
     queryFn: api.plexLibraries,
     enabled: mapEditable,
   });
@@ -376,6 +383,15 @@ export function ServiceModal({
     onError: (e: Error) => setError(e.message),
   });
 
+  // Mirror the save's pending state up to ServicesPanel's Back guard, and clear it on unmount
+  // so a stale true never lingers after the modal closes (B-11, B-19).
+  useEffect(() => {
+    if (savePendingRef) savePendingRef.current = save.isPending;
+    return () => {
+      if (savePendingRef) savePendingRef.current = false;
+    };
+  }, [save.isPending, savePendingRef]);
+
   const canTest = host.trim() !== "" && apiKey.trim() !== "" && !testConn.isPending;
   const ready =
     name.trim() !== "" && host.trim() !== "" && (editing || apiKey.trim() !== "");
@@ -389,6 +405,10 @@ export function ServiceModal({
         </>
       }
       onClose={onClose}
+      // A close mid-save unmounts the only place the failure is ever shown: the scrim swallows
+      // a 409 "a service with that name already exists", `invalidate()` never runs, and the
+      // operator walks away believing the change saved (B-19).
+      canClose={!save.isPending}
       className="service-modal"
     >
       <form
@@ -535,7 +555,15 @@ export function ServiceModal({
                     </Fragment>
                   ))}
                 </div>
-                {!plexLibraries.isPending && libOptions.length === 0 ? (
+                {/* A failed fetch also empties `libOptions`, and "no libraries yet" would then
+                    state as fact something we never learned -- and send the operator off to
+                    re-sync a list that is already there. The empty sentence is only for a list
+                    we genuinely read and found empty. */}
+                {plexLibraries.error ? (
+                  <p className="notice notice-warn">
+                    Reaper couldn't read your Plex libraries. Try again.
+                  </p>
+                ) : !plexLibraries.isPending && libOptions.length === 0 ? (
                   <p className="help">
                     No Plex libraries yet. Sync them in Plex settings first, then pick one per folder.
                   </p>
@@ -592,8 +620,14 @@ export function ServiceModal({
                     </Fragment>
                   ))}
                 </div>
-                {!arrInstances.isPending &&
-                seerrServices.data.every((s) => instanceOptions(s.kind).length === 0) ? (
+                {/* Same trap as the library picker above: a failed fetch leaves every
+                    `instanceOptions` empty, and "none yet" would be a claim we never checked. */}
+                {arrInstances.error ? (
+                  <p className="notice notice-warn">
+                    Reaper couldn't read your Sonarr and Radarr connections. Try again.
+                  </p>
+                ) : !arrInstances.isPending &&
+                  seerrServices.data.every((s) => instanceOptions(s.kind).length === 0) ? (
                   <p className="help">
                     No Sonarr or Radarr connections yet. Add them first, then map each service.
                   </p>
@@ -639,7 +673,7 @@ export function ServiceModal({
             </button>
           )}
           <span className="flex-spacer" />
-          <button type="button" className="ghost" onClick={onClose}>
+          <button type="button" className="ghost" onClick={onClose} disabled={save.isPending}>
             Cancel
           </button>
           <button type="submit" className="primary" disabled={!ready || save.isPending}>

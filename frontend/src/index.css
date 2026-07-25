@@ -9,6 +9,13 @@
  *     because "we could not look" is not "we looked and it was fine", and rendering
  *     them alike is the exact bug that gets libraries deleted during an API outage.
  *
+ * Viewport heights are always `dvh`, never `vh`. On a mobile browser `vh` resolves to the
+ * toolbar-hidden viewport, so a box sized in `vh` can reach past the part of the screen you
+ * can actually see — pushing a modal's actions off the bottom. The mismatch has been found
+ * and fixed three separate times now (`.why`, then `.log-console` and `.docs-index`, U-16),
+ * each time inside a container this file already sized in `dvh`, so viewport-units.test.ts
+ * holds the line: no bare `vh` in this file.
+ *
  * Nothing here is loaded from a CDN. The app ships with the container.
  */
 
@@ -24,10 +31,12 @@
   --border-strong: #d3d6df;
   --text: #16181d;
   --muted: #666b78;
-  /* Decorative only -- chevrons, the search glyph, the empty-poster mark, a disabled
-   * number, an unticked setup step. It clears no WCAG AA text ratio on any surface in
-   * either theme (light is 2.4-2.6:1, dark 3.2-3.9:1), so anything a person actually
-   * reads uses --muted, which clears 4.5:1 everywhere. Never put text on --faint. */
+  /* Decorative only -- chevrons, icon glyphs, the empty-poster mark, a disabled number,
+   * an unticked setup step. It clears no WCAG AA text ratio on any surface in either
+   * theme (light is 2.3-2.6:1, dark 3.2-3.9:1), so anything a person actually reads uses
+   * --muted, which clears 4.5:1 everywhere. Never put text on --faint. Every remaining
+   * use of it is one of the glyphs named above; a new one that carries a word is a
+   * regression, and the last review found eighteen of them (U-2, agent rule 17). */
   --faint: #9aa0ad;
 
   /* Semantic verdict language. */
@@ -52,6 +61,17 @@
    * accent is bright (white would fail WCAG AA on it); App recomputes it for a custom
    * color, picking dark or light by the accent's luminance so contrast always clears. */
   --accent-ink: #06202c;
+  /* Accent-colored TEXT -- the reverse direction, which --accent-ink never checked. The
+   * accent is a fill and a border color, not an ink: at the default sky it reads 2.03:1 on
+   * --surface and 1.72:1 on the docs index's active fill, so every link, chip and tag
+   * wearing it failed WCAG AA in light mode. Darkening 42% clears 4.5:1 on every ground it
+   * lands on (5.50 --surface, 5.04 --bg, 4.90 --accent-soft, 4.66 that tightest fill).
+   * Dark mode needs no correction -- the same sky reads 8.47:1 on --surface there -- so the
+   * dark blocks keep --accent unchanged. A CUSTOM accent is not covered by a fixed darken
+   * (a pale yellow still lands at 3.56:1), so accent.ts measures each theme's ink and writes
+   * it to --accent-text-light / --accent-text-dark; the fallback here is what the built-in
+   * accent needs, and what stands until that runs. Fills and borders keep --accent. */
+  --accent-text: var(--accent-text-light, color-mix(in srgb, var(--accent), #000 42%));
 
   /* Plex brand gold, for the sign-in button. */
   --plex: #e5a00d;
@@ -90,7 +110,7 @@
 
   /* Form control standard. Every text / number / select box shares this chrome, so the
      app reads as one surface (see .set-control, .rule-control, .field-sm, .condition-add,
-     .search-input, .log-search, .pw-form, .local-form, .qty, .caps-grid): padding
+     .search-input, .log-search, .pw-form, .local-form, .qty): padding
      0.42rem 0.6rem; border 1px solid var(--border-strong); border-radius var(--radius-sm);
      background var(--bg); color var(--text); font: inherit; and on :focus, outline 2px
      solid var(--accent) with outline-offset 1px. Width is the only thing that varies by
@@ -110,6 +130,14 @@
      the derived literals (H-1, rule 16). */
   --ov-btn-w: 6.25rem;
   --ov-btn-gap: 0.3rem;
+
+  /* The smallest a control a finger lands on is allowed to be: WCAG 2.2 SC 2.5.8 asks for
+     24x24 CSS px. The spacing exception that lets a smaller target pass needs 24px of
+     clearance around it, and a removable chip has none -- its x sits flush against the
+     body that EDITS the same filter, so an undersized pair means a touch meaning "change
+     this" lands on "remove it". .bar-x was already sized to this by hand; every chip x
+     derives from here so the standard moves in one place (U-6, agent rule 19). */
+  --tap-min: 24px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -140,6 +168,8 @@
     --accent-soft: color-mix(in srgb, var(--accent) 22%, var(--surface));
     --accent-ring: color-mix(in srgb, var(--accent) 45%, transparent);
     --accent-ink: #06202c;
+    /* The accent clears AA as text on this ground already, so it is its own ink here. */
+    --accent-text: var(--accent-text-dark, var(--accent));
 
     --plex: #e5a00d;
     --plex-hover: #f2ad1f;
@@ -195,6 +225,7 @@
   --accent-soft: color-mix(in srgb, var(--accent) 22%, var(--surface));
   --accent-ring: color-mix(in srgb, var(--accent) 45%, transparent);
   --accent-ink: #06202c;
+  --accent-text: var(--accent-text-dark, var(--accent));
 
   --plex: #e5a00d;
   --plex-hover: #f2ad1f;
@@ -244,6 +275,7 @@
   --accent-soft: color-mix(in srgb, var(--accent) 15%, var(--surface));
   --accent-ring: color-mix(in srgb, var(--accent) 42%, transparent);
   --accent-ink: #06202c;
+  --accent-text: var(--accent-text-light, color-mix(in srgb, var(--accent), #000 42%));
 
   --plex: #e5a00d;
   --plex-hover: #f2ad1f;
@@ -330,7 +362,7 @@ code {
 }
 
 a {
-  color: var(--accent);
+  color: var(--accent-text);
   text-decoration: none;
 }
 a:hover {
@@ -386,6 +418,9 @@ a:hover {
   gap: 0.6rem;
   min-width: 0;
 }
+/* The app mark keeps the raw --accent, not --accent-text: it is the logo, and a logotype
+   is the one graphic WCAG exempts from a contrast ratio. Everything a person READS in the
+   accent uses --accent-text (see the token). */
 .brand-mark {
   width: 34px;
   height: 34px;
@@ -552,7 +587,7 @@ button.ghost:hover:not(:disabled) {
 button.link {
   background: none;
   border: none;
-  color: var(--accent);
+  color: var(--accent-text);
   padding: 0;
 }
 button.link:hover:not(:disabled) {
@@ -589,6 +624,16 @@ button.link:hover:not(:disabled) {
   background: var(--surface);
   box-shadow: var(--shadow-sm);
   font-weight: 600;
+}
+/* Hovering the section, lane, or option you are ALREADY on keeps its raised pill: the plain
+   :hover rules above outrank .active (the :not() adds a class's weight) and would repaint the
+   fill to transparent, which in dark mode drops the pill to the track color and reads as a
+   deselect. Same hazard, same shape as the .ov-spare.active:hover block. */
+.tab.active:hover:not(:disabled),
+.seg.active:hover:not(:disabled) {
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  color: var(--text);
 }
 /* Reserve the ACTIVE (600) width at every weight, so selecting an item -- which bumps 500 -> 600
    -- never widens it and shoves its neighbors sideways (the tab/nav "wiggle"). A hidden,
@@ -749,6 +794,16 @@ button.link:hover:not(:disabled) {
 @keyframes drift {
   to {
     transform: translate(1.5%, -1.5%) scale(1.08);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Keep the depth, drop the drift. This is the largest and longest-running motion in the
+     app -- a full-bleed blurred layer, 22s, forever -- on the first screen a person sees
+     and the one they cannot skip past. Every smaller motion here already has an opt-out;
+     this one shipped without it (U-5, agent rule 18). The gradient alone still lifts the
+     card off the page. */
+  .auth-aurora {
+    animation: none;
   }
 }
 
@@ -1224,7 +1279,7 @@ main.split {
   background: var(--accent-soft);
 }
 .scan-behind-cta {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 .scan-behind .nudge-dot::after {
@@ -1330,12 +1385,6 @@ tbody tr.selected {
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
-.title-cell {
-  font-weight: 500;
-}
-.why-cell {
-  text-align: right;
-}
 
 .score {
   display: inline-block;
@@ -1388,7 +1437,7 @@ tbody tr.selected {
   padding: 1rem 1.1rem 1.4rem;
   position: sticky;
   top: 1rem;
-  max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
   overflow-y: auto;
   /* keep a boundary scroll from chaining out to the list behind the sheet (which App also
      freezes while this covers the whole screen on a phone), the same pairing `.modal` uses. */
@@ -1407,7 +1456,7 @@ tbody tr.selected {
   justify-content: center;
   gap: 0.75rem;
   text-align: center;
-  min-height: 45vh;
+  min-height: 45dvh;
   padding: 2rem 1rem;
   color: var(--muted);
   animation: why-loading-in 0.28s var(--ease) both;
@@ -1508,7 +1557,7 @@ tbody tr.selected {
 .show-reason {
   margin: 0.55rem 0 0;
   padding: 0.55rem 0.7rem;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: var(--surface-2);
   font-size: 0.86rem;
   line-height: 1.5;
@@ -1646,7 +1695,7 @@ tbody tr.selected {
 }
 .title-link:hover {
   text-decoration: underline;
-  text-decoration-color: var(--accent);
+  text-decoration-color: var(--accent-text);
 }
 .title-ext {
   margin-left: 0.3rem;
@@ -1654,7 +1703,7 @@ tbody tr.selected {
   color: var(--muted);
 }
 .title-link:hover .title-ext {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* The size · type line, now also carrying the jump pills. */
@@ -1672,7 +1721,7 @@ tbody tr.selected {
   padding: 0.06rem 0.55rem;
   border-radius: 999px;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   text-decoration: none;
   white-space: nowrap;
 }
@@ -1713,7 +1762,7 @@ tbody tr.selected {
   align-items: center;
   gap: 0.35rem;
   padding: 0.22rem 0.55rem;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--surface-2);
   font-size: 0.8rem;
@@ -1752,7 +1801,7 @@ a.rating-chip:hover {
   font-weight: 700;
   letter-spacing: 0.03em;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   vertical-align: 1px;
   white-space: nowrap;
 }
@@ -1764,7 +1813,7 @@ a.rating-chip:hover {
   color: var(--text);
 }
 .gates li.gate-custom .gate-mark {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .why-summary {
   margin: 0.6rem 0 0;
@@ -1779,10 +1828,17 @@ a.rating-chip:hover {
   overflow: hidden;
 }
 /* the inline "more" / "less" toggle after a clamped synopsis */
+/* A standalone text button, not a link inside a sentence, so SC 2.5.8's inline exception
+   does not cover it and it carries --tap-min like any other control. Its three uses ("Clear
+   all" beside the filter chips, the why-panel's show-more, back-to-show) all sit next to
+   other targets. */
 .link-btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap-min);
   border: none;
   background: none;
-  color: var(--accent);
+  color: var(--accent-text);
   font: inherit;
   font-size: 0.82rem;
   font-weight: 600;
@@ -1804,7 +1860,13 @@ a.rating-chip:hover {
    selector (0-1-0) lost every shared property to the right-hand-sheet rules (0-2-1) and
    the full-screen sheet silently never applied. Equal specificity plus later source order
    is what wins here, so keep this block below that one. `width: auto` is the one property
-   the 1100px block sets that `inset: 0` alone cannot undo. */
+   the 1100px block sets that `inset: 0` alone cannot undo.
+
+   COUPLED (rule 67): App.tsx's `fullSheet` -- `useMediaQuery("(max-width: 900px)")` -- asks
+   whether this rule is in force, so that it can stop tracking the list's scroll behind a
+   sheet that covers it. The two 900s must move together. App.tsx already carried the
+   reference this way; this side carried none, so someone editing the query here had nothing
+   telling them a hook depends on it (R-8). */
 @media (max-width: 900px) {
   main.split .why {
     position: fixed;
@@ -2405,8 +2467,8 @@ a.rating-chip:hover {
   color: var(--muted);
 }
 .bar-x {
-  width: 24px;
-  height: 24px;
+  width: var(--tap-min);
+  height: var(--tap-min);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2448,28 +2510,8 @@ a.rating-chip:hover {
   }
 }
 
-/* The owner's own protect conditions. Each stored rule reads as a green "keep it when…" chip
-   (protect-colored, because that is all it can do); the add row is field + operator + value. */
-.conditions {
-  margin-top: 1.25rem;
-}
-.condition-list {
-  list-style: none;
-  margin: 0.5rem 0;
-  padding: 0;
-}
-.condition-list li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.45rem 0.7rem;
-  margin-bottom: 0.4rem;
-  background: var(--protect-soft);
-  border: 1px solid var(--protect);
-  border-radius: var(--radius-sm);
-  font-size: 0.86rem;
-}
+/* The add row for one of the owner's own rules: field + operator + value. The stored rules
+   themselves render in the shared .rules-table above, not in a list of their own. */
 .condition-add {
   display: flex;
   flex-wrap: wrap;
@@ -2536,35 +2578,8 @@ a.rating-chip:hover {
 .rules-row + .rules-row {
   border-top: 1px solid var(--border);
 }
-.rules-row-head {
-  background: var(--surface-2, var(--surface));
-  color: var(--muted);
-  font-size: 0.76rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
 .rules-rule {
   color: var(--text);
-}
-.effect-pill {
-  justify-self: start;
-  padding: 0.12rem 0.55rem;
-  border-radius: 999px;
-  font-size: 0.76rem;
-  font-weight: 500;
-  white-space: nowrap;
-}
-.effect-remove {
-  background: var(--condemn-soft);
-  color: var(--condemn);
-}
-.effect-keep {
-  background: var(--protect-soft);
-  color: var(--protect);
-}
-.rules-weight-cell {
-  text-align: right;
-  font-variant-numeric: tabular-nums;
 }
 .rules-weight-remove {
   color: var(--condemn);
@@ -2653,7 +2668,10 @@ a.rating-chip:hover {
   padding-top: 0.4rem;
   margin-bottom: 0.9rem;
 }
-/* Jump targets land below the stuck rail, not under it. */
+/* Jump targets land below the stuck rail, not under it. This one number is also the line
+   the rail treats as "you are reading this section now" -- PolicyEditor's scroll effect
+   reads it straight back off this element with getComputedStyle, rather than keeping its
+   own copy, so a jump and the rail's highlight can never disagree (rule 67, U-18). */
 .policy-section {
   scroll-margin-top: 3.4rem;
 }
@@ -2743,18 +2761,29 @@ a.rating-chip:hover {
   background: var(--protect-soft);
   color: var(--protect);
   border-radius: 999px;
-  padding: 0.12rem 0.25rem 0.12rem 0.6rem;
+  padding: 0.12rem 0.2rem 0.12rem 0.6rem;
   font-size: 0.82rem;
   font-weight: 600;
 }
+/* Sized to --tap-min, which is why the chip's right padding is trimmed above: the button's
+   own hit area now supplies the inset the padding used to. */
 .tag-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap-min);
+  min-height: var(--tap-min);
   background: none;
   border: none;
   color: inherit;
   cursor: pointer;
   font-size: 1rem;
   line-height: 1;
-  padding: 0 0.2rem;
+  padding: 0;
+  border-radius: 999px;
+}
+.tag-chip button:hover {
+  background: color-mix(in srgb, var(--protect) 18%, transparent);
 }
 .tag-chips input {
   flex: 1;
@@ -2827,12 +2856,6 @@ a.rating-chip:hover {
 }
 .savebar-what strong {
   color: var(--text);
-}
-.savebar-hash {
-  flex-basis: 100%;
-  font-size: 0.75rem;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
 }
 
 /* The 100-point removal budget (PointsBudget in PolicyEditor). Lives inside .savebar-what
@@ -3139,14 +3162,10 @@ a.rating-chip:hover {
   font-size: 0.65rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--accent);
+  color: var(--accent-text);
   border: 1px solid var(--accent);
   border-radius: 4px;
   padding: 0 0.25rem;
-}
-
-.spare-cell {
-  text-align: right;
 }
 
 /* Reap breakdown: what a reap would remove, and why. The context above the plan. */
@@ -3265,7 +3284,7 @@ a.rating-chip:hover {
 }
 .rb-of {
   font-size: 0.78rem;
-  color: var(--faint);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 .rb-bar {
@@ -3350,6 +3369,11 @@ a.rating-chip:hover {
   gap: 0.6rem;
   margin: 0.2rem 0 0.9rem;
 }
+/* The same tiles, when "not in the last scan" is the only one there is (nobody on the
+   board). auto-fit would stretch the lone tile the full width of the page. */
+.fair-stats-lone {
+  grid-template-columns: minmax(160px, 22rem);
+}
 .fair-stat {
   display: flex;
   flex-direction: column;
@@ -3381,7 +3405,7 @@ a.rating-chip:hover {
 }
 .fair-stat-sub {
   font-size: 0.76rem;
-  color: var(--faint);
+  color: var(--muted);
   margin-top: 0.15rem;
 }
 .fair-stat-sub.red {
@@ -3401,29 +3425,17 @@ a.rating-chip:hover {
     border-color 0.15s var(--ease),
     background 0.15s var(--ease);
 }
-.fair-stat-btn:hover {
-  box-shadow: var(--shadow-md);
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
-}
-.fair-stat-btn:focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-ring);
-}
-.fair-stat-btn.selected {
-  border-color: var(--accent);
-  box-shadow: inset 3px 0 0 var(--accent), var(--shadow-sm);
-}
-.fair-stat-btn.selected:hover {
-  box-shadow: inset 3px 0 0 var(--accent), var(--shadow-md);
-}
+/* Its hover, focus ring, selection bar and additive selected+hover are NOT declared here:
+   they are byte-for-byte the card grammar, so this tile joins the four grouped selectors that
+   own it (search ".card:hover"). They used to be copied out in full, directly under the
+   comment on .card claiming that grammar "is declared once here ... so a card-hover tweak
+   lands in one place" -- the exact drift the comment said was impossible (R-5). */
 /* The "open me" affordance, so the tile doesn't rely on hover alone to read as a control. */
 .fair-stat-more {
   margin-top: 0.35rem;
   font-size: 0.72rem;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .fair-stat-btn:hover .fair-stat-more {
   text-decoration: underline;
@@ -3627,11 +3639,11 @@ a.rating-chip:hover {
 }
 .scales-name-link:hover h2 {
   text-decoration: underline;
-  text-decoration-color: var(--accent);
+  text-decoration-color: var(--accent-text);
   text-underline-offset: 2px;
 }
 .scales-name-link:hover .scales-ext {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .scales-name-link:focus-visible {
   outline: 2px solid var(--accent);
@@ -3680,7 +3692,7 @@ a.rating-chip:hover {
   text-align: right;
 }
 .scales-limit-sub {
-  color: var(--faint);
+  color: var(--muted);
 }
 .scales-limit.at {
   border-color: color-mix(in srgb, var(--unknown) 45%, var(--border));
@@ -3701,7 +3713,7 @@ a.rating-chip:hover {
 }
 .scales-count {
   font-size: 0.75rem;
-  color: var(--faint);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 .scales-titles {
@@ -3726,9 +3738,13 @@ a.rating-chip:hover {
 .scales-title:not(.static) {
   cursor: pointer;
 }
+/* The same accent wash the card grammar uses. It sat at 6% for no stated reason, one point
+   off every sibling, which reads as a mistake rather than a choice (R-5). This row is not a
+   card -- no shadow, no selection bar -- so it keeps its own rule; only the number is
+   brought into line. */
 .scales-title:not(.static):hover {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
 }
 .scales-poster {
   flex: none;
@@ -3782,7 +3798,7 @@ a.rating-chip:hover {
   align-items: center;
   gap: 0.4rem;
   font-size: 0.72rem;
-  color: var(--faint);
+  color: var(--muted);
 }
 .scales-dot {
   margin-right: 0.4rem;
@@ -3815,7 +3831,7 @@ a.rating-chip:hover {
   color: var(--protect);
 }
 .scales-watch.no {
-  color: var(--faint);
+  color: var(--muted);
 }
 /* "Kept" is the quiet, expected state: a plain gray label, not a green pill on every row.
    The loud, actionable fates (Reclaimable red, Left-to-decide amber) keep their chips. */
@@ -3862,7 +3878,7 @@ a.rating-chip:hover {
 }
 .nis-count {
   font-size: 0.75rem;
-  color: var(--faint);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 .nis-why {
@@ -3874,7 +3890,7 @@ a.rating-chip:hover {
 /* A row that names nothing (no id, or the lookup failed): the label reads as absent, not as a
    real title, so it is never mistaken for a film called "Name unavailable". */
 .nis-noname {
-  color: var(--faint);
+  color: var(--muted);
   font-style: italic;
   font-weight: 500;
 }
@@ -3925,7 +3941,7 @@ a.rating-chip:hover {
   letter-spacing: 0;
   font-weight: 500;
   font-size: 0.68rem;
-  color: var(--faint);
+  color: var(--muted);
 }
 .pace-matrix .row-h {
   white-space: nowrap;
@@ -3936,8 +3952,10 @@ a.rating-chip:hover {
   flex: none;
   width: 5rem;
 }
+/* Wide enough for the largest number the box will accept: the per-run title cap tops out
+   at 1,000, and a ceiling you can reach but not read is worse than no ceiling. */
 .pace-matrix .qty.qty-narrow input[type="number"] {
-  width: 3.6rem;
+  width: 4.3rem;
 }
 .pace-matrix .qty select {
   width: 4.6rem;
@@ -3989,7 +4007,7 @@ a.rating-chip:hover {
     width: 3.6rem;
   }
   .pace-matrix .qty.qty-narrow input[type="number"] {
-    width: 3rem;
+    width: 3.7rem; /* still four digits, see the note above */
   }
   .pace-matrix .qty select {
     width: 3.7rem;
@@ -4241,12 +4259,17 @@ a.rating-chip:hover {
   transition: box-shadow 0.15s var(--ease), border-color 0.15s var(--ease);
 }
 /* Hover speaks in the accent on every card -- accent edge + a faint accent wash -- so pointing
-   at any row reads the same way. Scales' .fair-card shares this whole interaction grammar
-   (hover, focus ring, selection bar, additive selected+hover); it is declared once here and on
-   the three rules below, so a card-hover tweak lands in one place (R-4). Every Scales card is
-   clickable (each opens its person panel), and a review card always is too. */
+   at any row reads the same way. Scales' .fair-card and its .fair-stat-btn tile share this
+   whole interaction grammar (hover, focus ring, selection bar, additive selected+hover); it is
+   declared once here and on the three rules below, so a card-hover tweak lands in one place
+   (R-4, R-5). Every Scales card is clickable (each opens its person panel), and a review card
+   always is too. Adding a surface to the grammar means adding its selector to all four of
+   these, never copying the declarations out: the copy is what drifts.
+
+   Declared AFTER .fair-stat-btn's own base rule, so these win on equal specificity. */
 .card:hover,
-.fair-card.clickable:hover {
+.fair-card.clickable:hover,
+.fair-stat-btn:hover {
   box-shadow: var(--shadow-md);
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 7%, var(--surface));
@@ -4255,13 +4278,15 @@ a.rating-chip:hover {
   cursor: pointer;
 }
 .card.clickable:focus-visible,
-.fair-card.clickable:focus-visible {
+.fair-card.clickable:focus-visible,
+.fair-stat-btn:focus-visible {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
 .card-selected,
-.fair-card.selected {
+.fair-card.selected,
+.fair-stat-btn.selected {
   border-color: var(--accent);
   box-shadow: inset 3px 0 0 var(--accent), var(--shadow-sm);
 }
@@ -4270,7 +4295,8 @@ a.rating-chip:hover {
    read as a deselect. After .card:hover in source, so this box-shadow wins; the accent border
    and wash still come from .card:hover. */
 .card-selected:hover,
-.fair-card.selected.clickable:hover {
+.fair-card.selected.clickable:hover,
+.fair-stat-btn.selected:hover {
   box-shadow: inset 3px 0 0 var(--accent), var(--shadow-md);
 }
 /* A spared card recedes -- but the dim must NOT be `opacity` on the card itself. An `opacity`
@@ -4368,16 +4394,6 @@ a.rating-chip:hover {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-.card-summary {
-  margin: 0.15rem 0 0;
-  font-size: 0.84rem;
-  color: var(--muted);
-  line-height: 1.45;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
 
 /* The reason a card leads with -- the protection keeping it, or the top reason it scored.
    Slightly stronger than a synopsis would be, because it is the point of the card. */
@@ -4414,16 +4430,6 @@ a.rating-chip:hover {
 button.sm {
   padding: 0.28rem 0.6rem;
   font-size: 0.82rem;
-}
-.spare-btn {
-  border-color: var(--protect);
-  color: var(--protect);
-  background: var(--protect-soft);
-  font-weight: 550;
-}
-.spare-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--protect) 16%, var(--protect-soft));
-  border-color: var(--protect);
 }
 
 /* When filters hide everything: a framed explanation instead of a bare empty page, so an
@@ -4464,20 +4470,30 @@ button.sm {
   align-items: center;
   gap: 0.25rem;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   border-radius: 999px;
-  padding: 0.12rem 0.25rem 0.12rem 0.6rem;
+  padding: 0.12rem 0.2rem 0.12rem 0.6rem;
   font-size: 0.82rem;
   font-weight: 600;
 }
+/* Same --tap-min sizing as .tag-chip, the shape this one borrows. */
 .filter-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--tap-min);
+  min-height: var(--tap-min);
   background: none;
   border: none;
   color: inherit;
   cursor: pointer;
   font-size: 1rem;
   line-height: 1;
-  padding: 0 0.2rem;
+  padding: 0;
+  border-radius: 999px;
+}
+.filter-chip button:hover {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 /* The unified filter bar: one ＋ Filter control adds any dimension, and each active filter is
@@ -4526,10 +4542,12 @@ button.sm {
   display: inline-flex;
   align-items: center;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
   border-radius: 999px;
-  padding: 0.06rem 0.15rem 0.06rem 0.5rem;
+  /* Trimmed to hold the chip's overall size steady now that both children carry their own
+     --tap-min hit area: the inset the padding used to supply comes from the buttons. */
+  padding: 0.06rem 0.1rem 0.06rem 0.35rem;
   font-size: 0.82rem;
   font-weight: 600;
 }
@@ -4537,17 +4555,20 @@ button.sm {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
+/* The body EDITS the filter and the x CLEARS it: two different outcomes, flush against each
+   other, so both have to reach --tap-min or a thumb aimed at one lands on the other. */
 .fchip-body {
   display: inline-flex;
   align-items: center;
   gap: 0.3rem;
+  min-height: var(--tap-min);
   background: none;
   border: none;
   color: inherit;
   font: inherit;
   font-weight: 600;
   cursor: pointer;
-  padding: 0.06rem 0.1rem;
+  padding: 0.06rem 0.25rem;
   border-radius: 999px;
 }
 .fchip-ic {
@@ -4568,13 +4589,16 @@ button.sm {
 .fchip-x {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  min-width: var(--tap-min);
+  min-height: var(--tap-min);
   background: none;
   border: none;
   color: inherit;
   cursor: pointer;
   font-size: 1rem;
   line-height: 1;
-  padding: 0 0.2rem;
+  padding: 0;
   border-radius: 999px;
   opacity: 0.75;
 }
@@ -4607,7 +4631,7 @@ button.sm {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--faint);
+  color: var(--muted);
 }
 .filter-mi {
   display: flex;
@@ -4628,7 +4652,7 @@ button.sm {
   background: var(--hover);
 }
 .filter-mi.sel {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 .filter-mi-ic {
@@ -4644,7 +4668,7 @@ button.sm {
 .filter-mi-tick {
   display: inline-flex;
   margin-left: auto;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* chips -- one family, one rhythm. Every chip is 1.35rem tall (square chips radius 5px,
@@ -4664,19 +4688,15 @@ button.sm {
 }
 .chip-requested {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .chip-tv {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .chip-movie {
   background: var(--media-movie-soft);
   color: var(--media-movie);
-}
-.chip-spared {
-  background: var(--protect-soft);
-  color: var(--protect);
 }
 .chip-reap {
   background: var(--condemn-soft);
@@ -5221,7 +5241,7 @@ button.sm {
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--faint);
+  color: var(--muted);
   padding: 0.4rem 0.55rem 0.3rem;
 }
 .dur-mi {
@@ -5265,7 +5285,7 @@ button.sm {
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--accent-text);
   background: var(--accent-soft);
   border: 1px solid var(--accent-ring);
   border-radius: 999px;
@@ -5329,7 +5349,7 @@ button.sm {
 }
 .select-toggle:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .select-toggle.active {
   background: var(--accent);
@@ -5489,7 +5509,7 @@ button.sm {
 }
 .season-expander:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .season-expander .chevron {
   color: var(--faint);
@@ -5794,7 +5814,7 @@ button.sm {
 .service-add:hover:not(:disabled) {
   background: none;
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 button.danger {
   color: var(--condemn);
@@ -5979,25 +5999,6 @@ button.danger:hover:not(:disabled) {
 }
 
 /* plex */
-.plex-status {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  flex-wrap: wrap;
-}
-.plex-status.linked {
-  border-color: color-mix(in srgb, var(--protect) 40%, var(--border));
-}
-.plex-status .btn-plex {
-  width: auto;
-  flex: none;
-}
-
 /* The Jobs page: one row per job inside a .set-rows card. Left is what it is, its stats and
    schedule; right is an Edit column and a run column, both fixed width so they line up down
    the list whatever a row's labels are (rule 51: the columns hold still). */
@@ -6037,12 +6038,12 @@ button.danger:hover:not(:disabled) {
 .jobrow-sched {
   margin: 0.2rem 0 0;
   font-size: 0.78rem;
-  color: var(--faint);
+  color: var(--muted);
 }
 .jobrow-run {
   margin: 0.35rem 0 0;
   font-size: 0.8rem;
-  color: var(--accent);
+  color: var(--accent-text);
   display: flex;
   align-items: center;
   gap: 0.45rem;
@@ -6152,7 +6153,7 @@ button.danger:hover:not(:disabled) {
   color: var(--condemn);
 }
 .jobrow-last.is-never {
-  color: var(--faint);
+  color: var(--muted);
 }
 /* The exact time trails the relative phrase on the same line, so a glance reads "when-ish"
    and the precise time is still there. Held at --muted (never --faint) so it clears WCAG as
@@ -6682,7 +6683,7 @@ button.danger:hover:not(:disabled) {
 }
 .dropzone .dz-hint {
   font-size: 0.78rem;
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .chosen {
@@ -6857,7 +6858,7 @@ button.danger:hover:not(:disabled) {
   padding: 0.6rem 0.9rem;
   height: 34rem;
   min-height: 16rem;
-  max-height: 82vh;
+  max-height: 82dvh;
   resize: vertical;
   overflow: auto;
 }
@@ -6892,7 +6893,7 @@ button.danger:hover:not(:disabled) {
   color: var(--muted);
 }
 .log-lv.info {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .log-lv.warning {
   color: var(--unknown);
@@ -7232,8 +7233,16 @@ button.danger:hover:not(:disabled) {
   font-size: 1rem;
   box-sizing: border-box;
 }
+/* The red border alone is NOT the focus indicator. This selector is 0-2-0, so it outranks
+   the global :focus-visible ring (0-1-0), and the `outline: none` that used to sit here
+   left a keyboard operator no visible focus at all on the one field that arms a real
+   removal. It now wears the control standard's own ring (see the top of this file), in the
+   accent rather than the red, so it reads as focus against the border rather than merging
+   with it (U-4, agent rule 18: every `outline: none` ships its replacement in the same
+   change). */
 .reap-confirm-input:focus {
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
   border-color: var(--condemn);
 }
 .reap-confirm-actions {
@@ -7331,6 +7340,9 @@ button.danger:hover:not(:disabled) {
   overflow: hidden;
   display: flex;
   align-items: center;
+  /* Wraps so a failed Stop can drop onto its own full-width line without squeezing the
+     count or moving the Stop button (.reap-bar-error below). */
+  flex-wrap: wrap;
   gap: 0.7rem;
   margin: 1rem 0;
   padding: 0.55rem 0.9rem;
@@ -7375,6 +7387,12 @@ button.danger:hover:not(:disabled) {
   min-width: 6.4rem;
   padding: 0.28rem 0.6rem;
   font-size: 0.82rem;
+}
+/* A failed Stop, stated in the bar itself: full width under the row, so the run's count and
+   its Stop keep their places while the reap keeps going. */
+.reap-bar-error {
+  flex-basis: 100%;
+  margin: 0;
 }
 .reap-bar-fill {
   position: absolute;
@@ -7502,7 +7520,7 @@ button.danger:hover:not(:disabled) {
   border-color: var(--accent-ring);
 }
 .doc-help svg {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 /* The four section headings become a row so "Learn more" sits at the far right. */
 .policy-section {
@@ -7515,7 +7533,7 @@ button.danger:hover:not(:disabled) {
   margin-left: auto;
   border: none;
   background: none;
-  color: var(--accent);
+  color: var(--accent-text);
   font: inherit;
   font-size: 0.82rem;
   font-weight: 520;
@@ -7565,7 +7583,7 @@ button.danger:hover:not(:disabled) {
   font-size: 0.64rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: var(--faint);
+  color: var(--muted);
 }
 .docs-index-item {
   display: block;
@@ -7587,18 +7605,27 @@ button.danger:hover:not(:disabled) {
 }
 .docs-index-item.active {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
+}
+/* The doc you are reading deepens under the pointer instead of swallowing its own selected
+   wash: equal specificity with .active declared later would otherwise leave hover a no-op. */
+.docs-index-item.active:hover {
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface));
+  color: var(--accent-text);
 }
 .docs-index-item small {
   display: block;
-  color: var(--faint);
+  color: var(--muted);
   font-weight: 400;
   font-size: 0.75rem;
   margin-top: 0.1rem;
 }
+/* Tinted toward the accent so it reads as part of the selected item, but mixed from the
+   readable ink, not the raw accent: on the active item's own fill the raw mix was 2.80:1
+   at 0.75rem. */
 .docs-index-item.active small {
-  color: color-mix(in srgb, var(--accent) 55%, var(--muted));
+  color: color-mix(in srgb, var(--accent-text) 55%, var(--muted));
 }
 .docs-index-sections {
   list-style: none;
@@ -7620,13 +7647,13 @@ button.danger:hover:not(:disabled) {
   cursor: pointer;
 }
 .docs-index-sections button:hover {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .docs-index-foot {
   margin: 0.5rem 0.1rem 0;
   padding-top: 0.6rem;
   border-top: 1px dashed var(--border-strong);
-  color: var(--faint);
+  color: var(--muted);
   font-size: 0.76rem;
 }
 
@@ -7644,7 +7671,7 @@ button.danger:hover:not(:disabled) {
   font-size: 0.66rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .docs-content h1 {
   margin: 0 0 0.4rem;
@@ -7722,7 +7749,7 @@ button.danger:hover:not(:disabled) {
   border-color: var(--accent-ring);
 }
 .doc-callout.note .doc-callout-ic {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .doc-callout.caution {
   background: var(--unknown-soft);
@@ -7768,7 +7795,7 @@ button.danger:hover:not(:disabled) {
   border-radius: 50%;
   background: var(--surface);
   border: 1px solid var(--accent-ring);
-  color: var(--accent);
+  color: var(--accent-text);
   font-family: var(--mono);
   font-size: 0.8rem;
   font-weight: 600;
@@ -7824,7 +7851,7 @@ button.danger:hover:not(:disabled) {
   font-weight: 560;
 }
 .docs-content .doc-table td.hi {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 620;
 }
 
@@ -8041,7 +8068,7 @@ button.danger:hover:not(:disabled) {
   font-size: 0.58rem;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--faint);
+  color: var(--muted);
 }
 .doc-diagram .dd-phase::before,
 .doc-diagram .dd-phase::after {
@@ -8051,7 +8078,13 @@ button.danger:hover:not(:disabled) {
   flex: 1;
 }
 
-@media (max-width: 720px) {
+/* On the file's 1100/900/640/560 grid, not a stop of its own. This was 720px, the one width
+   query off the grid and a reintroduction of the sort of one-off the previous review removed:
+   with two narrow breakpoints 80px apart, a change made at 640px silently missed the docs
+   modal (R-7). Below 900px the modal is already a full-screen sheet, so at 640px the split
+   still has the whole viewport to divide -- the 236px index and ~400px of prose -- and the
+   index only stacks above the text once even that runs out. */
+@media (max-width: 640px) {
   .docs-body {
     grid-template-columns: 1fr;
     grid-template-rows: auto minmax(0, 1fr);
@@ -8059,6 +8092,6 @@ button.danger:hover:not(:disabled) {
   .docs-index {
     border-right: none;
     border-bottom: 1px solid var(--border);
-    max-height: 32vh;
+    max-height: 32dvh;
   }
 }

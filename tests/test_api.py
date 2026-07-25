@@ -394,9 +394,9 @@ class TestTheRunsApi:
     def test_the_run_list_limit_is_bounded_at_both_ends(self, client: TestClient) -> None:
         """``?limit=-1`` rendered LIMIT -1, which SQLite reads as NO limit.
 
-        Every run returned then dragged its snapshot's whole condemned set through the
-        per-run output behind it, so one unbounded request was also the most expensive one
-        the route can serve. Bounded at the boundary now, in both directions.
+        One request then returned every run ever made. The rows are cheap now (see the
+        test below), which lowers the cost of that but does not bound it, so the limit is
+        still refused at the boundary in both directions rather than clamped in silence.
         """
         client.post("/api/runs")
         assert client.get("/api/runs", params={"limit": -1}).status_code == 422
@@ -405,32 +405,31 @@ class TestTheRunsApi:
         assert client.get("/api/runs", params={"limit": 200}).status_code == 200
         assert client.get("/api/runs", params={"limit": 1}).status_code == 200
 
-    def test_listing_many_runs_reads_the_condemned_set_once(
-        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """The expensive read per run was the snapshot's entire condemned set.
+    def test_the_run_list_carries_only_what_is_stored(self, client: TestClient) -> None:
+        """The history is stored rows, nothing derived.
 
-        Runs on one page nearly always share a snapshot, so it is read once per request
-        and handed to every run. This counts the reads rather than timing them, so it
-        fails if the memo is ever dropped.
+        Deriving a run's counts, totals and phrase means re-reading the whitelist, the
+        profile and the whole condemned set of that run's snapshot -- per run, so a list of
+        fifty read the same thousands of rows fifty times on every visit to the Reap page
+        (P-3). It was dishonest as well as slow: a finished run's phrase was recomputed
+        against TODAY's overrides, describing a plan nobody ever approved. Opening a run
+        goes to the detail route, which derives them for that one.
         """
-        from reaper.api import runs as runs_module
-
-        for _ in range(4):
-            assert client.post("/api/runs").status_code == 200
-
-        real = runs_module.effective_condemned
-        calls: list[int] = []
-
-        async def counted(session: object, snapshot_id: int, decisions: object) -> object:
-            calls.append(snapshot_id)
-            return await real(session, snapshot_id, decisions)  # type: ignore[arg-type]
-
-        monkeypatch.setattr(runs_module, "effective_condemned", counted)
-        listed = client.get("/api/runs").json()
-        assert len(listed) == 4
-        # Four runs, one snapshot, one read.
-        assert len(calls) == 1
+        client.post("/api/runs")
+        row = client.get("/api/runs").json()[0]
+        assert set(row) == {
+            "id",
+            "snapshot_id",
+            "state",
+            "approved_by",
+            "approved_at",
+            "aborted_reason",
+            "held_back_unknown_size",
+        }
+        # ...and the detail route still answers with the whole thing.
+        full = client.get(f"/api/runs/{row['id']}").json()
+        assert full["confirmation_phrase"].startswith("REAP ")
+        assert isinstance(full["steps"], list)
 
     def test_dry_running_a_missing_run_is_a_404(self, client: TestClient) -> None:
         assert client.post("/api/runs/9999/dry-run").status_code == 404
@@ -1501,6 +1500,54 @@ class TestPolicyValidation:
         assert response.status_code == 422
         # ...and the owner is TOLD WHY, not handed an Internal Server Error.
         assert "vote floor of 0" in json.dumps(response.json())
+
+
+class TestUnknownSizeWarningTracksTheDraft:
+    """B-26: the unknown-size warning renders directly beneath the box that sets it, and that
+    box shows an UNSAVED value. Every other warning the editor renders describes the draft, so
+    this one read the saved profile while sitting under the changed one: raise it and no
+    warning appeared until after a save, lower it and the old warning kept naming the old
+    number. The editor sends the drafted value; omitting it keeps the stored reading."""
+
+    def _unmeasured(self, client: TestClient, **extra: object) -> list[str]:
+        body = client.post(
+            "/api/policy/validate",
+            json={
+                "condemn_at": 70,
+                "gates": DEFAULT_GATES,
+                "signals": DEFAULT_SIGNALS,
+                **extra,
+            },
+        ).json()
+        return [w["message"] for w in body["warnings"] if w["field"] == "max_unmeasured_per_run"]
+
+    def test_the_stored_zero_is_quiet(self, client: TestClient) -> None:
+        """The shipped profile keeps every unmeasured item, so there is nothing to warn about."""
+        assert self._unmeasured(client) == []
+
+    def test_a_drafted_allowance_warns_before_it_is_saved(self, client: TestClient) -> None:
+        (message,) = self._unmeasured(client, draft_max_unmeasured_per_run=5)
+        assert "up to 5 items" in message
+
+    def test_drafting_it_back_to_zero_clears_the_warning(self, client: TestClient) -> None:
+        """Explicit 0 is a value, not an omission: it must not fall back to the stored one."""
+        assert self._unmeasured(client, draft_max_unmeasured_per_run=0) == []
+
+    def test_the_allowance_cannot_be_widened_past_what_a_save_accepts(
+        self, client: TestClient
+    ) -> None:
+        """The bound is on the wire, so a draft cannot talk the checker into describing an
+        allowance the profile route would refuse to store."""
+        response = client.post(
+            "/api/policy/validate",
+            json={
+                "condemn_at": 70,
+                "gates": DEFAULT_GATES,
+                "signals": DEFAULT_SIGNALS,
+                "draft_max_unmeasured_per_run": 26,
+            },
+        )
+        assert response.status_code == 422
 
 
 class TestVocabularyIsFilteredServerSide:

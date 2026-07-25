@@ -50,6 +50,7 @@ from reaper.api.schemas import (
     LinksOut,
     PolicyIn,
     PolicyOut,
+    PolicyValidateIn,
     PolicyWarningOut,
     RatingsOut,
     SeasonShapeOut,
@@ -773,6 +774,10 @@ def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | Non
     (``_decode_explanation``): never a re-decision, and never an error that drops a row
     off the queue. Condemned rows get no chip here; their card leads with the amber
     dormancy pill (``dormant_for``).
+
+    Each chip carries its ``why`` clause (see ``ChipOut``) so the refused-reap chip can
+    say the same fact mid-sentence without the frontend re-parsing ``text``. Reword a
+    chip here and reword its clause in the same line.
     """
     if not isinstance(exp, dict):
         return None
@@ -783,16 +788,27 @@ def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | Non
             return None
         gate = str(fired[0].get("gate") or "")
         detail = str(fired[0].get("detail") or "")
-        return ChipOut(tone="kept", text=f"Kept · {_kept_phrase(gate, detail)}")
+        phrase = _kept_phrase(gate, detail)
+        # The kept phrase is already a lowercase clause, so the chip and its why say the
+        # same words with and without the "Kept · " lead.
+        return ChipOut(tone="kept", text=f"Kept · {phrase}", why=phrase)
 
     if verdict != "abstain":
         return None
 
     status = _match_status(exp)
     if status == "unmatched":
-        return ChipOut(tone="quiet", text="Couldn't be found in Plex")
+        return ChipOut(
+            tone="quiet",
+            text="Couldn't be found in Plex",
+            why="it couldn't be found in Plex",
+        )
     if status == "ambiguous":
-        return ChipOut(tone="quiet", text="Looks like two different things in Plex")
+        return ChipOut(
+            tone="quiet",
+            text="Looks like two different things in Plex",
+            why="it looks like two different things in Plex",
+        )
 
     unknown = _entries(exp, "protections_unknown")
     for entry in unknown:
@@ -804,10 +820,19 @@ def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | Non
                 return ChipOut(
                     tone="look",
                     text="Needs a look · watched more than a season your rule keeps",
+                    why="watched more than a season your rule keeps",
                 )
-            return ChipOut(tone="look", text="Needs a look · left for you to decide")
+            return ChipOut(
+                tone="look",
+                text="Needs a look · left for you to decide",
+                why="a check on it couldn't be settled",
+            )
     if unknown:
-        return ChipOut(tone="quiet", text="Some checks couldn't run")
+        return ChipOut(
+            tone="quiet",
+            text="Some checks couldn't run",
+            why="some checks couldn't run",
+        )
 
     threshold = exp.get("threshold")
     if isinstance(threshold, int):
@@ -1394,7 +1419,7 @@ async def save_policy(request: Request, payload: PolicyIn) -> PolicyOut:
 
 
 @router.post("/policy/validate")
-async def validate_policy(request: Request, payload: PolicyIn) -> PolicyOut:
+async def validate_policy(request: Request, payload: PolicyValidateIn) -> PolicyOut:
     """Validate, hash, and inspect.
 
     Validation refuses what is *provably* wrong. ``inspect`` warns about what is merely
@@ -1410,6 +1435,14 @@ async def validate_policy(request: Request, payload: PolicyIn) -> PolicyOut:
     async with _sessions(request)() as session:
         has_requests_app = await _requests_app_configured(session)
         settings = await active_profile_settings(session)
+    if payload.draft_max_unmeasured_per_run is not None:
+        # The editor's unknown-size box is the one control whose warning renders beneath it
+        # while showing an unsaved value, so the check runs against what is on screen rather
+        # than what is stored (see PolicyValidateIn). Bounds are enforced on the wire by the
+        # field itself, so this cannot widen the allowance past what a save would accept.
+        settings = settings.model_copy(
+            update={"max_unmeasured_per_run": payload.draft_max_unmeasured_per_run}
+        )
     return _policy_out(
         _to_body(payload),
         payload.name,

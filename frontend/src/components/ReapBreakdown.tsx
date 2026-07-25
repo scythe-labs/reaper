@@ -12,7 +12,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, type SignalCount } from "../api";
 import { bytes, count } from "../format";
-import { useHoldsBackUnmeasured } from "./ReviewQueue";
+import { useHoldsBackUnmeasured } from "./queueSettings";
 
 // Built-in signals read as a policy question in the editor ("How long it's gone
 // unwatched"); here they name the reason a title was condemned, so they get their own
@@ -74,7 +74,11 @@ export function ReapBreakdown({
   // The planner holds unmeasured items back only while the unknown-size allowance is 0 (its
   // default). Above zero it admits them, so the "won't remove them" line and the count that
   // subtracts them would both be lies (B-8). One shared query key, so this is free here.
-  const holdsBackUnmeasured = useHoldsBackUnmeasured();
+  // Every number on this page turns on it, so a read that FAILED is said out loud rather
+  // than defaulted: the card's safe default (assume held back) would silently shrink a
+  // delete count here, which is the unsafe direction.
+  const allowance = useHoldsBackUnmeasured();
+  const holdsBackUnmeasured = allowance.holdsBack;
 
   if (isPending) return <p className="muted">Loading…</p>;
   // An unreadable breakdown must never look like "nothing to reap": say we couldn't look,
@@ -105,24 +109,53 @@ export function ReapBreakdown({
   const reapCount = holdsBackUnmeasured
     ? Math.max(0, data.will_reap - data.will_reap_unknown)
     : data.will_reap;
+  // The split runs over the same set as the total above it, subtracting the same held-back
+  // rows. Printing the raw figures beside an adjusted total had one page stating two
+  // different counts for one reap (rule 30).
+  const movies = holdsBackUnmeasured ? Math.max(0, data.movies - data.movies_unknown) : data.movies;
+  const seasons = holdsBackUnmeasured
+    ? Math.max(0, data.seasons - data.seasons_unknown)
+    : data.seasons;
+  // Without the allowance there is no honest count to print -- but only when something on
+  // the list is actually unmeasured; otherwise the two answers agree and the read doesn't
+  // matter.
+  const allowanceUnknown = allowance.isError && data.will_reap_unknown > 0;
+  // The unmeasured note is its own line only while a ledger is showing; the empty state
+  // says the same thing in one sentence rather than two.
+  const showUnmeasuredLine = data.will_reap_unknown > 0 && reapCount > 0 && !allowanceUnknown;
 
   return (
     <div className="reap-breakdown">
       <div className="rb-headline">
         <span className="rb-head">What this reap removes</span>
         <span className="rb-meta">
-          <strong>{count(reapCount)}</strong> {reapCount === 1 ? "title" : "titles"} ·{" "}
+          {!allowanceUnknown && (
+            <>
+              <strong>{count(reapCount)}</strong> {reapCount === 1 ? "title" : "titles"} ·{" "}
+            </>
+          )}
           <strong>{bytes(data.will_reap_bytes)}</strong>
         </span>
       </div>
       <p className="rb-sub">Your policy's verdict from the last scan, with your own changes on top.</p>
 
-      {data.will_reap === 0 ? (
+      {allowanceUnknown ? (
+        <>
+          <p className="notice notice-warn">
+            Reaper couldn't check your unknown-size allowance, so it can't say how many titles
+            this reap removes. {plural(data.will_reap_unknown, "title", "titles")} on the list
+            can't be measured. Reload to try again.
+          </p>
+          <Reasons rows={data.condemned_by} anchor={data.policy_condemned} />
+        </>
+      ) : reapCount === 0 ? (
         <p className="rb-empty">
           A reap would remove nothing right now.
-          {data.policy_condemned > 0 && data.hand_spared > 0
-            ? " You've spared everything the last scan condemned."
-            : " The last scan condemned nothing."}
+          {data.will_reap > 0
+            ? " Reaper couldn't measure any of the titles on the list, so it won't remove them."
+            : data.policy_condemned > 0 && data.hand_spared > 0
+              ? " You've spared everything the last scan condemned."
+              : " The last scan condemned nothing."}
         </p>
       ) : (
         <>
@@ -158,8 +191,8 @@ export function ReapBreakdown({
             </div>
           </div>
           <div className="rb-split">
-            {plural(data.movies, "movie", "movies")} · {plural(data.seasons, "TV season", "TV seasons")}{" "}
-            · smallest first, test item first.
+            {plural(movies, "movie", "movies")} · {plural(seasons, "TV season", "TV seasons")} ·
+            smallest first, test item first.
           </div>
 
           <Reasons rows={data.condemned_by} anchor={data.policy_condemned} />
@@ -168,14 +201,17 @@ export function ReapBreakdown({
 
       {data.hand_reaped_held > 0 && (
         <div className="rb-line">
-          {plural(data.hand_reaped_held, "reap you marked is", "reaps you marked are")} held back
-          for safety, so a scan won't remove {data.hand_reaped_held === 1 ? "it" : "them"} yet.{" "}
+          {/* "this reap", not "a scan": a scan never removes anything, and the Jobs page
+              says exactly that in the same product ("A scan only reads. It cannot
+              delete."). What holds these back is the reap this page is about (U-10). */}
+          {plural(data.hand_reaped_held, "reap you marked is", "reaps you marked are")} on hold, so
+          this reap won't remove {data.hand_reaped_held === 1 ? "it" : "them"} yet.{" "}
           <button className="link" onClick={onGoToReview}>
             See Review →
           </button>
         </div>
       )}
-      {data.will_reap_unknown > 0 &&
+      {showUnmeasuredLine &&
         (holdsBackUnmeasured ? (
           <div className="rb-line">
             {plural(data.will_reap_unknown, "title", "titles")} can't be measured, so Reaper won't

@@ -5,9 +5,22 @@
 // "linkable from within the app" contract: a Help button, a warning notice, or an empty
 // state can all deep-link into the same docs without each owning a modal.
 
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  lazy,
+  Suspense,
+  useCallback,
+  useContext,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useBackGuard } from "../backnav";
-import { DocsModal } from "./DocsModal";
+
+// Every word of every document, only once someone asks to read one. The docs are prose, not
+// app code, and they used to ride in the first chunk the queue waits on (P-4). Nothing is
+// rendered until `target` is set, so the fetch starts on the first Help press.
+const DocsModal = lazy(async () => ({ default: (await import("./DocsModal")).DocsModal }));
 
 type DocsApi = { openDoc: (id: string, anchor?: string) => void };
 
@@ -32,13 +45,19 @@ export function DocsProvider({ children }: { children: ReactNode }) {
     <DocsCtx.Provider value={api}>
       {children}
       {target && (
-        <DocsModal
-          docId={target.docId}
-          anchor={target.anchor}
-          nonce={target.nonce}
-          onClose={() => setTarget(null)}
-          onNavigate={(id, anchor) => setTarget((prev) => ({ docId: id, anchor, nonce: (prev?.nonce ?? 0) + 1 }))}
-        />
+        // No fallback: the docs are a modal over the page, and a spinner in the scrim for the
+        // moment it takes to fetch would flash more than it informs.
+        <Suspense fallback={null}>
+            <DocsModal
+            docId={target.docId}
+            anchor={target.anchor}
+            nonce={target.nonce}
+            onClose={() => setTarget(null)}
+            onNavigate={(id, anchor) =>
+              setTarget((prev) => ({ docId: id, anchor, nonce: (prev?.nonce ?? 0) + 1 }))
+            }
+          />
+        </Suspense>
       )}
     </DocsCtx.Provider>
   );

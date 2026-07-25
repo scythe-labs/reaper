@@ -19,7 +19,7 @@
 //   - navigation frames (a tab / section change): recorded via `pushNav(undo)`; a Back runs the
 //     undo to restore the previous location. These persist until a Back consumes them.
 
-import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
 /** One thing a Back press can unwind. `onBack` closes an overlay or restores a prior tab. */
 type Layer = { id: number; onBack: () => void };
@@ -30,9 +30,15 @@ type BackNavApi = {
   remove: (id: number) => void;
   /** Record a tab / section change so Back restores the previous one. */
   pushNav: (undo: () => void) => void;
+  /** Count one open modal; the returned function uncounts it. See `useModalOpen`. */
+  enterModal: () => () => void;
 };
 
 const BackNavContext = createContext<BackNavApi | null>(null);
+
+/** How many modals are open. Separate from the layer stack above, which also holds menus,
+ *  side panels and tab changes -- none of which take the keyboard away from the list. */
+const ModalDepthContext = createContext(0);
 
 // The history entry we park. Marked so a stray popstate from elsewhere is still safe to handle.
 const SENTINEL = { __reaperBack: true } as const;
@@ -53,6 +59,11 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
   // with no layer behind it, and the first Back would pop it as a dead press. Reconciled once at
   // mount (below); StrictMode double-invokes effects, so this guards it to a single run.
   const reconciledRef = useRef(false);
+
+  // State, not a ref, because things RENDER off it (see useModalOpen). It costs no re-render of
+  // the app: `children` arrives as an already-built element, so React skips that subtree when
+  // this component re-renders, and only the hook's consumers update.
+  const [modalDepth, setModalDepth] = useState(0);
 
   // Built once (lazily), not per render: every method touches only refs and globals, so a single
   // stable instance is correct and keeps the context value from changing.
@@ -90,6 +101,12 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
         const id = ++seqRef.current;
         layersRef.current = [...layersRef.current, { id, onBack: undo }];
         park();
+      },
+      enterModal() {
+        // The setter from useState is stable for the life of the component, so capturing the
+        // first one here is safe. Counted, not a boolean: modals can stack.
+        setModalDepth((n) => n + 1);
+        return () => setModalDepth((n) => n - 1);
       },
     };
   }
@@ -156,7 +173,30 @@ export function BackNavProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  return <BackNavContext.Provider value={api}>{children}</BackNavContext.Provider>;
+  return (
+    <BackNavContext.Provider value={api}>
+      <ModalDepthContext.Provider value={modalDepth}>{children}</ModalDepthContext.Provider>
+    </BackNavContext.Provider>
+  );
+}
+
+/** Count this component's lifetime as one open modal. Called by ModalShell, which is the one
+ *  modal in the app, so nothing else needs to call it. */
+export function useModalLayer(): void {
+  const ctx = useContext(BackNavContext);
+  useEffect(() => ctx?.enterModal(), [ctx]);
+}
+
+/** Whether a modal is up. Read by the keyboard handlers that let ↑/↓/j/k walk a list: while a
+ *  modal owns the keyboard, the list behind it must not move underneath.
+ *
+ *  This replaced `document.querySelector('[role="dialog"]')` in three of them -- a live DOM
+ *  probe, run on every keypress, standing in for state React already owned. It answered by
+ *  markup rather than by intent, so any future overlay that was modal without that attribute
+ *  (or carried it without being modal, like a popover) would silently gain or lose the
+ *  keyboard (H-2). */
+export function useModalOpen(): boolean {
+  return useContext(ModalDepthContext) > 0;
 }
 
 /** Record tab / section changes so Back restores the previous location. Returns `pushNav`. */

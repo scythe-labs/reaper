@@ -10,6 +10,7 @@
 
 import { useEffect, useState } from "react";
 import type { PersonDetail, PersonTitle, QuotaLine } from "../api";
+import { useModalOpen } from "../backnav";
 import { bytes, count, date, itemBytes } from "../format";
 import { UnmatchedList } from "./UnmatchedList";
 import { WhyClose } from "./WhyPanel";
@@ -52,7 +53,9 @@ function Poster({ url }: { url: string | null }) {
  *  "at limit" flag when they are capped there right now. */
 function limitText(line: QuotaLine): string {
   if (line.limit === null) return "unlimited";
-  const per = line.days ? ` per ${count(line.days)} days` : "";
+  // A daily quota read "1 per 1 days" while this same file and Fairness already say
+  // "person"/"people" and "title"/"titles" (U-19).
+  const per = line.days ? (line.days === 1 ? " per day" : ` per ${count(line.days)} days`) : "";
   return `${count(line.limit)}${per}`;
 }
 
@@ -188,15 +191,16 @@ export function ScalesPanel({
   onOpenGroup: (key: string) => void;
 }) {
   // Escape closes, matching the why-panel. A modal, if one is ever up, owns the key first.
+  const modalOpen = useModalOpen();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (document.querySelector('[role="dialog"]')) return;
+      if (modalOpen) return;
       onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, modalOpen]);
 
   const granted = detail.gb_granted_bytes;
   const reclaim = detail.reclaimable_bytes;

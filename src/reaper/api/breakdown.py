@@ -34,7 +34,9 @@ async def get_reap_breakdown(request: Request) -> ReapBreakdownOut:
         will_reap_bytes=report.will_reap_bytes,
         will_reap_unknown=report.will_reap_unknown,
         movies=report.movies,
+        movies_unknown=report.movies_unknown,
         seasons=report.seasons,
+        seasons_unknown=report.seasons_unknown,
         condemned_by=[
             SignalCountOut(id=s.id, count=s.count, bytes=s.bytes, unknown_size=s.unknown_size)
             for s in report.condemned_by
