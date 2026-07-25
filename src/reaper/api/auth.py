@@ -48,7 +48,7 @@ from reaper.services.login import (
     poll_plex_login,
     start_plex_login,
 )
-from reaper.services.plex_link import PlexServerChoiceNeededError
+from reaper.services.plex_link import PlexLinkRetryableError, PlexServerChoiceNeededError
 
 log = structlog.get_logger(__name__)
 
@@ -151,11 +151,14 @@ class PlexServerChoiceOut(BaseModel):
 
 
 class PlexPollOut(BaseModel):
-    status: str  # "pending" | "ok" | "choose_server"
+    status: str  # "pending" | "retrying" | "ok" | "choose_server"
     user: UserOut | None = None
     setup: bool = False
     # Present only with status "choose_server": the owned servers to pick from.
     servers: list[PlexServerChoiceOut] | None = None
+    # Present only with status "retrying": why this poll could not finish yet, in the
+    # operator's words. The sign-in is still good and the browser keeps polling.
+    reason: str | None = None
 
 
 class LocalLoginIn(BaseModel):
@@ -248,6 +251,13 @@ async def plex_poll(request: Request, payload: PlexPollIn, response: Response) -
                 for c in exc.candidates
             ],
         )
+    except PlexLinkRetryableError as exc:
+        # First-run setup: the sign-in was approved but the server did not answer this
+        # instant. ``poll_plex_login`` keeps the pending row for exactly this case, so
+        # answering with an error would strand a sign-in that is still good -- the browser
+        # aborts its poll loop on any thrown status (B2-14). A non-final status instead,
+        # so the loop keeps polling until the server is back or the deadline passes.
+        return PlexPollOut(status="retrying", reason=str(exc))
     except LoginError as exc:
         raise HTTPException(401, str(exc)) from exc
 

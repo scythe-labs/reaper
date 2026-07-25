@@ -84,7 +84,10 @@ class Explanation(BaseModel):
     score: float
     base_score: float | None = None
     keep_discount: float | None = None
-    threshold: int
+    threshold: int | None = None
+    """The score an item had to beat. ``None`` only when the stored explanation could not
+    be read at all and the panel is showing the degraded fallback (routes._explanation_out):
+    the panel omits its "your threshold is N" clause rather than print an invented figure."""
     coverage: float
     match: MatchOut | None = None
 
@@ -277,6 +280,10 @@ class CandidateOut(BaseModel):
 
 class CandidateDetail(CandidateOut):
     explanation: Explanation
+    explanation_unreadable: bool = False
+    """True when ``explanation`` above is the degraded fallback rather than what the scan
+    stored. The panel says so instead of rendering empty reason blocks, which would read as
+    "nothing protected this" when the truth is that nothing could be read."""
     links: LinksOut = Field(default_factory=LinksOut)
     ratings: RatingsOut | None = None
     content_rating: str | None = None

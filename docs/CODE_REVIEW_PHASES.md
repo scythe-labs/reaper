@@ -39,7 +39,7 @@ verification `VERIFIED`, B2-8's fix changes freshly-built plans too. Every findi
 - [x] **Phase 3 — Plex client hardening & protection lists** (3 highs) — *done 2026-07-24*
 - [x] **Phase 4 — Executor & the deletion path** (10 findings) — *done 2026-07-24*
 - [x] **Phase 5 — Snapshot & scan pipeline** (14 findings; B2-24 already fixed in Phase 2) — *done 2026-07-24*
-- [ ] **Phase 6 — API routes, runs & query performance**
+- [x] **Phase 6 — API routes, runs & query performance** (14 findings) — *done 2026-07-24*
 - [ ] **Phase 7 — Security, auth, restore & infra**
 - [ ] **Phase 8 — Fairness, Leaving Soon & engine cleanup**
 - [ ] **Phase 9 — Test suite**
@@ -459,7 +459,7 @@ clean; **pytest 2137 passed** (2114 + 23 new); `alembic upgrade head` + `alembic
 
 ---
 
-## Phase 6 — API routes, runs & query performance
+## Phase 6 — API routes, runs & query performance  ✅ DONE
 
 **Findings:** B-8 (medium), P-2 (medium), P-3 (medium), P-4 (medium), B-10 (low-medium),
 B2-13 (low), B2-14 (low), B-15 (low), P2-1 (low), P2-2 (low), P-5 (low), PR-7 (low),
@@ -469,11 +469,92 @@ PR2-2 (low), PR2-3 (low).
 unbounded `?limit=-1`, and the review-queue/runs hot paths.
 
 **Files:** `api/routes.py`, `api/runs.py`, `api/settings.py`, `api/poster.py`,
-`services/condemned.py`, `services/history_sync.py`, `services/instances.py`,
-`services/app_settings.py`, `services/seeding.py`.
+`api/auth.py`, `api/middleware.py`, `services/condemned.py`, `services/history_sync.py`,
+`services/instances.py`, `services/app_settings.py`, `services/seeding.py`,
+`services/login.py`, plus the frontend surfaces those changes reach.
 
-**Note:** P-4 needs an additive Alembic revision chained onto the current head for the
-`watch_event.parent_rating_key` index — never edit the frozen baseline.
+**Correction to this phase's plan.** The plan said P-4 needed an additive Alembic revision.
+It does not: `watch_event` lives in **`cache.db`**, which the golden rules keep disposable
+and unmigrated (raw DDL, rebuildable). No migration was written, and `alembic check` stays
+clean.
+
+**What was done**
+- **B2-13 + P2-2 + PR-7 (together, as the verifier asked -- they edit the same helpers'
+  signatures).** One guarded parse per row, `_decode_explanation`, feeding `_dormant_for`,
+  `_primary_reason`, `_chip` and the reap-override read; each still re-checks
+  `isinstance(dict)` itself, so calling one directly is no less defensive than calling it
+  through the queue. New `_entries` / `_match_status` / `_detail_of` helpers replace the
+  unguarded `fired[0]["detail"]` and `(exp.get("match") or {}).get(...)` indexing.
+  `candidate_detail` gained `_explanation_out`, which falls back to a minimal explanation
+  built from the row's own columns and reports `explanation_unreadable`; the panel says so
+  in the shared `.notice-warn` rather than rendering empty reason blocks that would read as
+  "nothing protected this". `Explanation.threshold` is now optional and the fallback leaves
+  it unset, so the panel drops its "your threshold is N" clause rather than print a number
+  that is not the operator's setting.
+- **B-10 -- and a correction to the review's own fix.** The review proposed reading a
+  non-dict `match` as *no* match status. That trades a crash for the inversion this
+  codebase exists to prevent: evidence nobody could read becoming evidence that nothing was
+  wrong, which REMOVES a hold on a deletion. A `match` that is present but unreadable is
+  now a BAD match (it holds the reap, like `unmatched`/`ambiguous`); a match that is
+  genuinely absent stays permissive, since the field is optional precisely so rows scored
+  before it shipped still read. Pinned both ways.
+- **B-8** -- `limit: int = Query(50, ge=1, le=200)` on `list_runs`, `min()` dropped.
+  `?limit=-1` rendered `LIMIT -1`, which SQLite reads as no limit.
+- **P-2** -- new `_RunReads` per-request memo: the hand overrides, the reap profile and
+  each snapshot's effective condemned set are read once per request instead of once per
+  run, and steps are fetched once and handed down instead of queried twice per run. A test
+  counts the `effective_condemned` calls rather than timing them.
+- **P-3** -- the `override` filter no longer materializes every media_key in the lane.
+  A row can only carry an effective override if its own key or its show's key is in the
+  whitelist, so `_decided_keys` narrows in SQL to that bounded set (chunked at 500) and the
+  real `whitelist.effective_override` still decides each one, so the precedence stays in
+  one function. `override=none` became a `notin_` over that small set instead of an `IN`
+  over nearly every row, which could run past SQLite's bound-variable ceiling into a 500.
+  The narrowing leans on `Candidate.group_key` being exactly `whitelist.show_key`'s value;
+  that invariant now has its own tripwire test.
+- **P-4** -- `ix_watch_event_parent_key` added, and indexes moved OUT of `SCHEMA` into a
+  new `INDEXES` map. The review said to bump `_WATCH_EVENT_COLUMNS` so existing caches
+  re-run the DDL; that would drop the whole mirror and cost a full re-sync from Tautulli
+  just to add an index. `ensure_schema` reconciles indexes by name instead (one
+  `sqlite_master` read on the existing no-write fast path) and creates a missing one in
+  place, leaving the mirrored rows alone.
+- **P2-1** -- `_replay_simulation` is async and yields every `_SIM_YIELD_EVERY` rows; the
+  threshold loop yields too (the verifier's correction: fixing only the replay branch
+  leaves most of the stall). The row load is narrowed with `load_only` to the ten columns
+  both loops actually read, which the verifier flagged as the larger share.
+- **P-5** -- one Tautulli client for the artwork proxy, cached on the app and keyed on the
+  instance's connection fingerprint, so rotating the key or editing the URL retires it
+  rather than leaving a stale client serving. Closed by the lifespan (rule 34).
+- **B2-14 -- fixed on both twins (rule 72).** The verifier's key point: a backend-only 502
+  changes nothing, because the browser aborts its poll loop on any thrown status. Both poll
+  routes now answer a non-throwing `status="retrying"` carrying the reason, and the hook
+  keeps polling and shows it. The login twin (`services/login.py`) had the same bug one
+  layer deeper: its `except PlexLinkError` arm consumed the pending sign-in, and the
+  retryable error is a subclass, so a server restarting at the instant of approval burned
+  the PIN during first-run setup. It now re-raises above that arm.
+- **B-15** -- a batch-local `(kind, name)` set in `seed_instances`, mirroring the existing
+  `seeded_singletons`.
+- **PR2-2** -- `DELETE /api/settings/general/api-key` closes the header-credential lane
+  (rotation only ever swaps one working key for another), clearing
+  `app.state.api_key_digest` so the removed key stops authenticating immediately rather
+  than at the next restart. Deny-by-default already fences it from the key itself; the POST
+  docstring and the middleware comment were corrected in the same change, and a Remove
+  control was added beside Replace using that row's existing two-step confirm.
+- **PR2-3** -- `api_path_prefix` is now passed in `instances._client`, so Test Connection
+  and the scan probe the same path. Both "version gate" claims (the `test_connection`
+  docstring and `ArrClient.system_status`) and the model comment were corrected per rule
+  24; per the verifier, `detected_version` is NOT dead (the UI renders it) and was left
+  alone.
+
+**Tests.** 38 added across `test_review_malformed_rows.py` (new), `test_poster_proxy.py`
+(new), `test_api.py`, `test_candidate_filters.py`, `test_history_sync.py`,
+`test_config_and_seeding.py`, `test_general_and_logs.py`, `test_settings_api.py` and
+`test_sessions.py`; `test_review_chips.py` updated where the helpers changed shape.
+
+**Gates.** `ruff format --check` (181 files) and `ruff check` clean; `mypy src/reaper`
+clean (95 files); **pytest 2175 passed**; `alembic upgrade head` + `alembic check` clean
+(no migration, see the correction above); frontend `lint`, `test` (268 passed) and `build`
+clean.
 
 ---
 

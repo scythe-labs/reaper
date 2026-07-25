@@ -41,6 +41,12 @@ async def seed_instances(
 
     imported = skipped = 0
     seeded_singletons: set[InstanceKind] = set()
+    #: ``(kind, name)`` pairs already added in THIS batch. The duplicate check below is a
+    #: query, and nothing is flushed until the end, so two seeds naming the same instance
+    #: both read "not there yet" and both get added -- one instance the operator declared,
+    #: two rows the scan would walk (B-15). The singleton path has always had its own
+    #: in-batch set for exactly this; this is the same guard for every other kind.
+    seeded_pairs: set[tuple[InstanceKind, str]] = set()
     for seed in seeds:
         try:
             kind = InstanceKind(seed.kind)
@@ -62,9 +68,10 @@ async def seed_instances(
         existing = await session.scalar(
             select(Instance).where(Instance.kind == kind, Instance.name == seed.name)
         )
-        if existing is not None:
+        if existing is not None or (kind, seed.name) in seeded_pairs:
             # Never clobber the database from the environment: the UI is where
-            # credentials are managed once they exist.
+            # credentials are managed once they exist. The in-batch set covers the repeat
+            # that this session has added but not yet flushed, which the query cannot see.
             skipped += 1
             continue
 
@@ -80,6 +87,7 @@ async def seed_instances(
         )
         if kind in SINGLETON_KINDS:
             seeded_singletons.add(kind)
+        seeded_pairs.add((kind, seed.name))
         imported += 1
         log.info("seed.imported", kind=kind.value, name=seed.name, base_url=seed.base_url)
 

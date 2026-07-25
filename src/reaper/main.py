@@ -25,6 +25,7 @@ from reaper.api.fairness import router as fairness_router
 from reaper.api.leaving_soon import router as leaving_soon_router
 from reaper.api.logs import router as logs_router
 from reaper.api.middleware import AuthGuard, parse_proxy_networks
+from reaper.api.poster import close_artwork_client
 from reaper.api.poster import router as poster_router
 from reaper.api.routes import router
 from reaper.api.runs import router as runs_router
@@ -247,6 +248,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             with suppress(asyncio.CancelledError, TimeoutError):
                 await asyncio.wait_for(reap_task, timeout=20)
         scheduler.shutdown(wait=False)
+        # The artwork proxy keeps one Tautulli client alive across requests (api/poster.py).
+        # It is built lazily on the first poster request, so it may never exist; closing it
+        # here is what gives it an owner (rule 34).
+        await close_artwork_client(app)
         await engine.dispose()
         await cache_engine.dispose()
         log.info("reaper.stopped")

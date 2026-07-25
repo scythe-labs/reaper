@@ -15,19 +15,21 @@ Two routes carry most of the product:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections import Counter
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import ValidationError
 from sqlalchemy import and_, asc, desc, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import load_only
 
 if TYPE_CHECKING:
     from sqlalchemy import ColumnElement
@@ -83,6 +85,7 @@ from reaper.services.condemned import (
     effective_verdict,
     overridden_lane_shifts,
     reap_is_effective,
+    reap_is_effective_decoded,
     reap_override_verdict,
 )
 from reaper.services.deep_links import build_links
@@ -290,21 +293,35 @@ async def list_candidates(
         if override in {"spare", "reap", "none"}:
             # Hand overrides resolve in Python: whitelist.effective_override is the one
             # decision function (an item's own key beats its show's), and re-stating that
-            # precedence in SQL is how the copies would drift. So the candidate keys under
-            # the conditions built so far are resolved through the real function, and the
-            # filter becomes an IN over the ones in the asked-for state. Totals below use
-            # the same final conditions, so count, bytes and page describe one set.
-            keys = (
-                (await session.execute(select(Candidate.media_key).where(*conditions)))
-                .scalars()
-                .all()
-            )
-            wanted = [
-                key
-                for key in keys
-                if (whitelist.effective_override(key, decisions) or "none") == override
-            ]
-            conditions.append(Candidate.media_key.in_(wanted))
+            # precedence in SQL is how the copies would drift. Totals below use the same
+            # final conditions, so count, bytes and page describe one set.
+            #
+            # Only the rows that could POSSIBLY carry a decision are resolved, not every
+            # row in the lane. An item's effective override is non-null exactly when its
+            # OWN key is in the whitelist or its SHOW's key is -- so a row that matches
+            # neither is "none" without asking. That set is bounded by how many overrides
+            # the operator has made, where the old form materialized every media_key in
+            # the lane into Python and bound them all into one IN: on a large library
+            # `override=none` bound nearly every row and could blow past SQLite's
+            # bound-variable ceiling into a 500 (P-3).
+            #
+            # `group_key` is the show's key for a season row and null for a movie -- the
+            # same value whitelist.show_key derives from a season's media_key (both are
+            # `sonarr:{instance}:{series}`; pinned by a test). It is used ONLY to select
+            # which rows are worth resolving; effective_override still makes the decision.
+            decided = await _decided_keys(session, conditions, decisions)
+            if override == "none":
+                conditions.append(Candidate.media_key.notin_(decided))
+            else:
+                conditions.append(
+                    Candidate.media_key.in_(
+                        [
+                            k
+                            for k in decided
+                            if whitelist.effective_override(k, decisions) == override
+                        ]
+                    )
+                )
 
         # The byte total is a SUM, which skips NULL rows without saying so, and COALESCE
         # cannot tell that from a real zero. So the unmeasured count is taken in the same
@@ -491,47 +508,171 @@ async def _group_rollups(
     return totals, marks
 
 
-def _primary_reason(explanation_json: str, verdict: str) -> str | None:
-    """The single line the card shows: *why* Reaper judged this, not what it is about.
+#: How many keys ride in one ``IN`` expansion. SQLite caps bound variables per statement,
+#: so every list-shaped filter here is fed in chunks, the way ``_group_rollups`` does.
+_KEY_CHUNK = 500
 
-    A spared item leads with the protection that saved it; a reaped one with its strongest
-    reason; an abstained one with what stopped it short. All of these are already plain
-    English in the stored explanation -- this only picks which one to surface.
+
+async def _decided_keys(
+    session: AsyncSession,
+    conditions: list[ColumnElement[bool]],
+    decisions: dict[str, str],
+) -> list[str]:
+    """The media_keys under ``conditions`` that carry a hand decision, own or inherited.
+
+    The candidate set is narrowed in SQL to rows whose own key, or whose show key, appears
+    in the whitelist -- nothing else can have an effective override -- and the real
+    :func:`whitelist.effective_override` then decides each one. So the expensive part
+    scales with the operator's overrides rather than with the size of their library, and
+    the precedence between a season's decision and its show's still lives in exactly one
+    function.
+    """
+    if not decisions:
+        return []
+    keys = sorted(decisions)
+    found: list[str] = []
+    for start in range(0, len(keys), _KEY_CHUNK):
+        chunk = keys[start : start + _KEY_CHUNK]
+        rows = (
+            await session.execute(
+                select(Candidate.media_key).where(
+                    *conditions,
+                    or_(Candidate.media_key.in_(chunk), Candidate.group_key.in_(chunk)),
+                )
+            )
+        ).scalars()
+        found.extend(k for k in rows if whitelist.effective_override(k, decisions) is not None)
+    # A season whose own key sits in one chunk and whose show key sits in another is found
+    # twice; dedupe so the IN below carries each key once.
+    return list(dict.fromkeys(found))
+
+
+class _PanelExplanation(NamedTuple):
+    """The why-panel's explanation block plus whether it had to be invented."""
+
+    body: Explanation
+    unreadable: bool
+
+
+def _explanation_out(row: Candidate) -> _PanelExplanation:
+    """The why-panel's explanation, degrading instead of erroring the panel (PR-7).
+
+    Every sibling display extractor here treats an unreadable stored explanation as
+    nothing to show; this one used to build ``Explanation(**json.loads(...))`` bare, so a
+    corrupt or legacy row 500ed the panel instead. Now a row that will not decode, or
+    will not validate against the current schema, falls back to what the row itself still
+    knows -- its score and how much of it could be checked -- and says so.
+
+    The fallback deliberately leaves ``threshold`` unset rather than filling a number in.
+    The panel prints "your threshold is N" beside the score, and an invented N would state
+    a policy setting that is not the operator's. Unset, the panel omits the clause.
+    """
+    decoded = _decode_explanation(row.explanation_json)
+    if decoded is not None:
+        try:
+            return _PanelExplanation(Explanation(**decoded), False)
+        except ValidationError:
+            pass
+    log.warning("candidate.explanation_unreadable", media_key=row.media_key)
+    return _PanelExplanation(
+        Explanation(
+            score=float(row.score),
+            coverage=row.coverage_bp / 10_000,
+            signals=[],
+            protections_fired=[],
+            protections_checked=[],
+            protections_unknown=[],
+        ),
+        True,
+    )
+
+
+def _decode_explanation(explanation_json: str) -> dict[str, Any] | None:
+    """One guarded parse of a stored explanation, shared by every display extractor.
+
+    ``_candidate_out`` decodes each row here ONCE and hands the result to
+    ``_dormant_for``, ``_primary_reason``, ``_chip`` and the reap-override read, instead
+    of each running its own ``json.loads`` over the same multi-KB document (P2-2).
+
+    Returns ``None`` for anything that is not a JSON object, so a corrupted or
+    hand-edited row degrades to a card with no reason line rather than 500-ing the whole
+    review queue. Each extractor re-checks that it was handed a dict, so calling one
+    directly is exactly as defensive as calling it through here.
     """
     try:
         exp = json.loads(explanation_json)
     except (ValueError, TypeError):
         return None
+    return exp if isinstance(exp, dict) else None
+
+
+def _entries(exp: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    """The dict entries under ``key``, dropping anything that is not one.
+
+    Every protection/signal list in an explanation is a list of objects. A stored row
+    that says otherwise loses the malformed entries rather than raising out of a display
+    extractor -- ``exp["protections_fired"][0]["detail"]`` on a string entry is a
+    TypeError, and one such row would blank the entire queue (B2-13).
+    """
+    value = exp.get(key)
+    return [e for e in value if isinstance(e, dict)] if isinstance(value, list) else []
+
+
+def _match_status(exp: dict[str, Any]) -> str | None:
+    """The Plex match status, or ``None`` when the row does not carry a readable one."""
+    match = exp.get("match")
+    return str(match.get("status")) if isinstance(match, dict) and match.get("status") else None
+
+
+def _detail_of(entry: dict[str, Any]) -> str | None:
+    """One entry's plain-English detail line, or ``None`` when it has none."""
+    detail = entry.get("detail")
+    return str(detail) if detail else None
+
+
+def _primary_reason(exp: dict[str, Any] | None, verdict: str) -> str | None:
+    """The single line the card shows: *why* Reaper judged this, not what it is about.
+
+    A spared item leads with the protection that saved it; a reaped one with its strongest
+    reason; an abstained one with what stopped it short. All of these are already plain
+    English in the stored explanation -- this only picks which one to surface.
+
+    Takes the DECODED explanation (``_decode_explanation``), and like every sibling
+    extractor treats an unreadable one as "no reason to show", never as an error: display
+    extraction must never drop a row off the queue.
+    """
+    if not isinstance(exp, dict):
+        return None
 
     if verdict == "protect":
-        fired = exp.get("protections_fired") or []
+        fired = _entries(exp, "protections_fired")
         if fired:
-            return str(fired[0]["detail"])
+            return _detail_of(fired[0])
         # A protect with nothing fired is a hand reap the engine refused to honor: the item
         # was blocked (e.g. the season keep-rule conflict), so a "reap" override resolves to
         # protect. Surface that blocked reason so the held row says WHY, not a generic line.
-        unknown = exp.get("protections_unknown") or []
-        return str(unknown[0]["detail"]) if unknown else None
+        unknown = _entries(exp, "protections_unknown")
+        return _detail_of(unknown[0]) if unknown else None
     if verdict == "condemn":
-        signals = [s for s in exp.get("signals") or [] if s.get("evaluated")]
+        signals = [s for s in _entries(exp, "signals") if s.get("evaluated")]
         signals.sort(key=lambda s: s.get("contribution", 0), reverse=True)
-        return signals[0]["detail"] if signals else None
+        return _detail_of(signals[0]) if signals else None
     # abstain: lead with the match problem when there is one -- it is the single cause
     # behind every "could not check" that follows, and the raw gate detail ("could not
     # check the watch horizon: ...") repeats it in engineer-speak. Otherwise fall back to
     # the first unchecked protection, whose detail is already a plain sentence.
-    status = (exp.get("match") or {}).get("status")
+    status = _match_status(exp)
     if status == "unmatched":
         return "Kept to be safe: it couldn't be found in Plex."
     if status == "ambiguous":
         return "Kept to be safe: it looks like more than one thing in Plex."
-    unknown = exp.get("protections_unknown") or []
+    unknown = _entries(exp, "protections_unknown")
     if unknown:
-        return str(unknown[0]["detail"])
+        return _detail_of(unknown[0])
     return "Scored below your threshold."
 
 
-def _dormant_for(explanation_json: str) -> str | None:
+def _dormant_for(exp: dict[str, Any] | None) -> str | None:
     """The humanized dormancy span ("5 years, 9 months") for the card's amber pill.
 
     Read from the stored explanation's UNWATCHED signal, whose detail has exactly one
@@ -541,12 +682,10 @@ def _dormant_for(explanation_json: str) -> str | None:
     ``_primary_reason``: display extraction must never error a row off the queue.
     """
     prefix = "not watched in "
-    try:
-        exp = json.loads(explanation_json)
-    except (ValueError, TypeError):
+    if not isinstance(exp, dict):
         return None
-    for signal in exp.get("signals") or []:
-        if not isinstance(signal, dict) or signal.get("id") != "unwatched":
+    for signal in _entries(exp, "signals"):
+        if signal.get("id") != "unwatched":
             continue
         detail = signal.get("detail")
         if signal.get("evaluated") and isinstance(detail, str) and detail.startswith(prefix):
@@ -624,40 +763,38 @@ def _kept_phrase(gate: str, detail: str) -> str:
     return "a protection applies"
 
 
-def _chip(explanation_json: str, verdict: str, score: int) -> ChipOut | None:
+def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | None:
     """The card's one short status chip -- Sanctuary and Limbo lanes only.
 
     Follows decide_verdict's own precedence (match trouble, then a deliberate
     left-for-you flag, then checks that couldn't run, then the coverage floor, then
     the score) so the chip names the fact that actually put the item in its lane.
-    Pure display extraction from the stored explanation: never a re-decision, and
-    never an error that drops a row off the queue. Condemned rows get no chip here;
-    their card leads with the amber dormancy pill (``dormant_for``).
+    Pure display extraction from the DECODED stored explanation
+    (``_decode_explanation``): never a re-decision, and never an error that drops a row
+    off the queue. Condemned rows get no chip here; their card leads with the amber
+    dormancy pill (``dormant_for``).
     """
-    try:
-        exp = json.loads(explanation_json)
-    except (ValueError, TypeError):
+    if not isinstance(exp, dict):
         return None
 
     if verdict == "protect":
-        fired = exp.get("protections_fired") or []
-        first = fired[0] if fired and isinstance(fired[0], dict) else None
-        if first is None:
+        fired = _entries(exp, "protections_fired")
+        if not fired:
             return None
-        gate = str(first.get("gate") or "")
-        detail = str(first.get("detail") or "")
+        gate = str(fired[0].get("gate") or "")
+        detail = str(fired[0].get("detail") or "")
         return ChipOut(tone="kept", text=f"Kept · {_kept_phrase(gate, detail)}")
 
     if verdict != "abstain":
         return None
 
-    status = (exp.get("match") or {}).get("status")
+    status = _match_status(exp)
     if status == "unmatched":
         return ChipOut(tone="quiet", text="Couldn't be found in Plex")
     if status == "ambiguous":
         return ChipOut(tone="quiet", text="Looks like two different things in Plex")
 
-    unknown = [e for e in exp.get("protections_unknown") or [] if isinstance(e, dict)]
+    unknown = _entries(exp, "protections_unknown")
     for entry in unknown:
         detail = str(entry.get("detail") or "")
         if detail and not detail.startswith("could not check"):
@@ -719,6 +856,10 @@ def _candidate_out(
         else None
     )
     show_spare_exp = expiries.get(_show_key) if (_show_key and show_override == "spare") else None
+    # ONE parse of the stored explanation, shared by the pill, the reason line, the chip
+    # and the reap-override read below. Each used to run its own json.loads over the same
+    # multi-KB document, three or four times per row and up to 500 rows per page (P2-2).
+    explanation = _decode_explanation(r.explanation_json)
     return CandidateOut(
         id=r.id,
         media_key=r.media_key,
@@ -747,8 +888,8 @@ def _candidate_out(
         group_unknown_size=group_condemned[2] if group_condemned is not None else None,
         video_resolution=r.video_resolution,
         library=r.library_title,
-        dormant_for=_dormant_for(r.explanation_json),
-        reason=_primary_reason(r.explanation_json, r.verdict),
+        dormant_for=_dormant_for(explanation),
+        reason=_primary_reason(explanation, r.verdict),
         spared=override == "spare",
         override=override,
         override_own=override_own,
@@ -757,10 +898,12 @@ def _candidate_out(
         # protections but never past a safety stop or an unchecked protection. The UI
         # colors the row red only when this is True, so it never promises a removal
         # the engine will refuse.
-        override_effective=reap_is_effective(r) if override == "reap" else None,
+        override_effective=(
+            reap_is_effective_decoded(r, explanation) if override == "reap" else None
+        ),
         spare_expires_at=spare_exp.isoformat() if spare_exp is not None else None,
         show_spare_expires_at=show_spare_exp.isoformat() if show_spare_exp is not None else None,
-        chip=_chip(r.explanation_json, r.verdict, r.score),
+        chip=_chip(explanation, r.verdict, r.score),
         season_number=_season_number(r.media_key),
         group_seasons=group_seasons,
         show_status=r.show_status,
@@ -885,9 +1028,11 @@ async def candidate_detail(request: Request, candidate_id: int) -> CandidateDeta
             decisions,
             expiries=expiries,
         )
+        explanation = _explanation_out(row)
         return CandidateDetail(
             **base.model_dump(),
-            explanation=Explanation(**json.loads(row.explanation_json)),
+            explanation=explanation.body,
+            explanation_unreadable=explanation.unreadable,
             links=await _deep_links(session, row),
             ratings=_ratings_out(row.ratings_json),
             content_rating=row.content_rating,
@@ -1273,7 +1418,15 @@ async def validate_policy(request: Request, payload: PolicyIn) -> PolicyOut:
     )
 
 
-def _replay_simulation(
+#: How many candidates a simulation loop walks before handing the event loop back. The
+#: simulator is pure computation over rows already in memory, so without a yield it holds
+#: the single loop for the whole library -- and the policy editor fires this on a 250 ms
+#: debounce, so dragging a weight slider queues one full-library replay after another and
+#: every other request (scan status, the review queue, auth) stalls behind them (P2-1).
+_SIM_YIELD_EVERY = 500
+
+
+async def _replay_simulation(
     rows: list[Candidate], policy: PolicyBody, decisions: dict[str, str]
 ) -> SimulationOut:
     """Re-decide the governed rows by replaying the REAL engine over each row's frozen Facts.
@@ -1305,7 +1458,9 @@ def _replay_simulation(
     newly_rows: list[tuple[Candidate, int]] = []
     spared_by: Counter[str] = Counter()
 
-    for row in rows:
+    for index, row in enumerate(rows):
+        if index % _SIM_YIELD_EVERY == 0:
+            await asyncio.sleep(0)
         facts, extra = facts_codec.facts_from_dict(json.loads(row.facts_json or "{}"))
         override = whitelist.effective_override(row.media_key, decisions)
 
@@ -1433,8 +1588,28 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         rows = (
             (
                 await session.execute(
-                    select(Candidate).where(
-                        Candidate.snapshot_id == snapshot.id, Candidate.media_type == target
+                    select(Candidate)
+                    .where(
+                        Candidate.snapshot_id == snapshot.id,
+                        Candidate.media_type == target,
+                    )
+                    # Only the columns both loops below actually read. A full entity load
+                    # dragged every row's summary, genres and artwork keys through the
+                    # request as well, and on a large library that materialization is a
+                    # bigger share of the stall than the scoring itself (P2-1).
+                    .options(
+                        load_only(
+                            Candidate.media_key,
+                            Candidate.media_type,
+                            Candidate.title,
+                            Candidate.year,
+                            Candidate.score,
+                            Candidate.coverage_bp,
+                            Candidate.verdict,
+                            Candidate.size_bytes,
+                            Candidate.facts_json,
+                            Candidate.explanation_json,
+                        )
                     )
                 )
             )
@@ -1456,7 +1631,7 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
                 PolicyBody.evidence_hash
             )
             if replayable and rows and all(r.facts_json for r in rows):
-                return _replay_simulation(list(rows), body, decisions)
+                return await _replay_simulation(list(rows), body, decisions)
             kind = "movies" if body.media_type == "movie" else "TV"
             return SimulationOut(
                 exact=False,
@@ -1482,7 +1657,11 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
     newly_rows: list[Candidate] = []
     spared_by: Counter[str] = Counter()
 
-    for row in rows:
+    for index, row in enumerate(rows):
+        # The threshold path is cheaper per row than the replay above, but it still parses
+        # an explanation per protect/abstain row over the whole library, so it yields too.
+        if index % _SIM_YIELD_EVERY == 0:
+            await asyncio.sleep(0)
         histogram[min(row.score // 10, 9)] += 1
 
         was_condemned = row.verdict == "condemn"

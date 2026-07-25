@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
-from reaper.api.routes import _chip, _kept_phrase, _season_number
+from reaper.api.routes import _chip, _decode_explanation, _kept_phrase, _season_number
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -43,7 +43,7 @@ def _exp(
     fired: list[dict[str, str]] | None = None,
     unknown: list[dict[str, str]] | None = None,
     match_status: str | None = None,
-) -> str:
+) -> dict[str, object]:
     body: dict[str, object] = {
         "score": score,
         "threshold": threshold,
@@ -55,7 +55,12 @@ def _exp(
     }
     if match_status is not None:
         body["match"] = {"status": match_status}
-    return json.dumps(body)
+    return body
+
+
+def _exp_json(*args: object, **kwargs: object) -> str:
+    """The same explanation as a stored JSON string, for building candidate rows."""
+    return json.dumps(_exp(*args, **kwargs))  # type: ignore[arg-type]
 
 
 class TestKeptChipWording:
@@ -239,8 +244,14 @@ class TestChip:
         assert (chip.tone, chip.text) == ("quiet", "Scored 42, under your 70")
 
     def test_malformed_explanation_never_errors_a_row_off_the_queue(self) -> None:
-        assert _chip("not json", "abstain", 50) is None
-        assert _chip("not json", "protect", 50) is None
+        # The parse happens once per row now (_decode_explanation), and anything that is
+        # not a JSON object arrives here as None. Every extractor re-checks that itself,
+        # so calling one directly is exactly as defensive as calling it through the queue.
+        for raw in ("not json", "[1, 2]", "null", '"a string"'):
+            assert _decode_explanation(raw) is None
+            assert _chip(_decode_explanation(raw), "abstain", 50) is None
+            assert _chip(_decode_explanation(raw), "protect", 50) is None
+        assert _chip(None, "abstain", 50) is None
 
 
 class TestSeasonNumber:
@@ -306,7 +317,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     3,
                     "abstain",
                     82,
-                    _exp(
+                    _exp_json(
                         82,
                         unknown=[{"gate": "season_progression", "detail": CONFLICT_SENTENCE}],
                     ),
@@ -316,7 +327,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     1,
                     "protect",
                     34,
-                    _exp(
+                    _exp_json(
                         34,
                         fired=[
                             {
@@ -330,7 +341,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     year=2012,
                     summary="A placeholder synopsis.",
                 ),
-                season(2, "condemn", 88, _exp(88), year=2013),
+                season(2, "condemn", 88, _exp_json(88), year=2013),
                 Candidate(
                     snapshot_id=snapshot.id,
                     media_key="radarr:1:10",
@@ -340,7 +351,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     verdict="condemn",
                     score=91,
                     coverage_bp=10_000,
-                    explanation_json=_exp(91),
+                    explanation_json=_exp_json(91),
                     created_at=now,
                 ),
             ]

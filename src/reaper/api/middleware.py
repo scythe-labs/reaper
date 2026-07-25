@@ -74,6 +74,8 @@ api_key_throttle = Throttle(threshold=5, base_delay=2.0, max_delay=300.0, decay=
 #: other read is open to the key (it is for scripts), so this stays a tiny denylist. The
 #: backup download is here because it is the crown jewels -- the whole database plus the
 #: master key that decrypts every credential -- so a leaked automation key cannot pull it.
+#: Managing the key itself (rotating it, or deleting it to close this lane entirely) is a
+#: WRITE, so it is already closed to the key by the deny-by-default rule below.
 _API_KEY_READ_DENY = frozenset({"/api/settings/general/api-key", "/api/settings/backup/download"})
 
 #: The only writes an API key may drive: scanning, planning, and editing the policy and

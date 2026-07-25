@@ -253,7 +253,10 @@ export interface Explanation {
    *  this shipped still parses. */
   base_score?: number;
   keep_discount?: number;
-  threshold: number;
+  /** The score the item had to beat. Null only when the stored explanation could not be
+   *  read and the server sent the degraded fallback: the panel omits its "your threshold
+   *  is N" clause rather than print a number that is not the operator's setting. */
+  threshold: number | null;
   coverage: number;
   signals: SignalContribution[];
   keeps?: KeepContribution[];
@@ -300,6 +303,10 @@ export interface Ratings {
 
 export interface CandidateDetail extends Candidate {
   explanation: Explanation;
+  /** True when `explanation` is the server's degraded fallback rather than what the scan
+   *  stored. The panel says so, instead of rendering empty reason blocks that would read
+   *  as "nothing protected this" when the truth is that nothing could be read. */
+  explanation_unreadable?: boolean;
   links: Links;
   ratings: Ratings | null;
   content_rating: string | null;
@@ -898,11 +905,14 @@ export interface PlexServerChoice {
 }
 
 export interface PlexPoll {
-  status: "pending" | "ok" | "choose_server";
+  status: "pending" | "retrying" | "ok" | "choose_server";
   user: AuthUser | null;
   setup: boolean;
   /** Present only with status "choose_server". */
   servers: PlexServerChoice[] | null;
+  /** Present only with status "retrying": why this poll couldn't finish yet. The sign-in
+   *  is still good, so the browser keeps polling instead of failing. */
+  reason?: string | null;
 }
 
 // --- setup + settings ------------------------------------------------------
@@ -989,10 +999,13 @@ export interface PlexLinkStart {
 }
 
 export interface PlexLinkPoll {
-  status: "pending" | "ok" | "choose_server";
+  status: "pending" | "retrying" | "ok" | "choose_server";
   server: PlexStatus | null;
   /** Present only with status "choose_server". */
   servers: PlexServerChoice[] | null;
+  /** Present only with status "retrying": why this poll couldn't finish yet. The sign-in
+   *  is still good, so the browser keeps polling instead of failing. */
+  reason?: string | null;
 }
 
 export interface ScheduledJob {
@@ -1268,6 +1281,9 @@ export const api = {
   revealApiKey: () => request<{ key: string }>("/api/settings/general/api-key"),
   /** Generate the key, replacing any previous one, which stops working immediately. */
   generateApiKey: () => post<{ key: string }>("/api/settings/general/api-key", {}),
+  /** Close the header-credential lane entirely. Rotating only replaces one working key
+   *  with another; this leaves none, so X-Api-Key stops being a way in. */
+  removeApiKey: () => del<{ removed: boolean }>("/api/settings/general/api-key"),
 
   /** The log lines newer than `after`, oldest first, plus the recording level. */
   logs: (after: number) => request<LogsPage>(`/api/logs?after=${after}`),

@@ -17,8 +17,11 @@ Read-only, like everything Reaper does to Tautulli and Plex.
 
 from __future__ import annotations
 
+import asyncio
+from typing import cast
+
 import structlog
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from sqlalchemy import select
 
 from reaper.clients.tautulli import TautulliClient
@@ -29,6 +32,69 @@ from reaper.db.models import Instance, InstanceKind
 log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api")
+
+#: What makes one artwork client different from another: the instance it talks to and
+#: every parameter of that connection. Rotating the key, editing the URL, turning the
+#: certificate check off, or pointing at a different Tautulli all change this, and a
+#: changed fingerprint retires the cached client instead of leaving a stale one serving.
+_Fingerprint = tuple[int, str, str, bool]
+
+
+def _fingerprint(row: Instance) -> _Fingerprint:
+    return (row.id, row.base_url, row.api_key_enc, row.verify_tls)
+
+
+async def _artwork_client(app: FastAPI, row: Instance, box: SecretBox) -> TautulliClient:
+    """The shared, read-only Tautulli client this route proxies artwork through.
+
+    A cold review queue asks for a few hundred posters at once, and each request used to
+    build a whole new client -- new connection pool, new TLS handshake -- and tear it down
+    again (P-5). One client is kept on the app instead and reused across requests; the
+    lifespan closes it at shutdown (:func:`close_artwork_client`), so it has an owner
+    (rule 34).
+    """
+    lock: asyncio.Lock | None = getattr(app.state, "artwork_client_lock", None)
+    if lock is None:
+        # No await between the read and the write, so two concurrent requests cannot both
+        # install a lock. Created here rather than in the lifespan so a test app that
+        # never ran one still gets a client bound to its own running loop.
+        lock = asyncio.Lock()
+        app.state.artwork_client_lock = lock
+
+    want = _fingerprint(row)
+    cached: tuple[_Fingerprint, TautulliClient] | None = getattr(app.state, "artwork_client", None)
+    if cached is not None and cached[0] == want:
+        return cached[1]
+
+    async with lock:
+        # Re-read under the lock: another request may have built it while we waited.
+        cached = cast(
+            "tuple[_Fingerprint, TautulliClient] | None",
+            getattr(app.state, "artwork_client", None),
+        )
+        if cached is not None and cached[0] == want:
+            return cached[1]
+        # Read-only: this only ever GETs an image.
+        client = TautulliClient(
+            row.base_url,
+            box.decrypt(row.api_key_enc),
+            safety=RuntimeSafety(),
+            verify=row.verify_tls,
+        )
+        app.state.artwork_client = (want, client)
+        if cached is not None:
+            # The instance changed under us. Close the client for the old one; nothing new
+            # can reach it now that state points at the replacement.
+            await cached[1].aclose()
+        return client
+
+
+async def close_artwork_client(app: FastAPI) -> None:
+    """Close the cached artwork client, if one was ever built. Called by the lifespan."""
+    cached: tuple[_Fingerprint, TautulliClient] | None = getattr(app.state, "artwork_client", None)
+    app.state.artwork_client = None
+    if cached is not None:
+        await cached[1].aclose()
 
 
 @router.get("/poster/{rating_key}")
@@ -60,12 +126,8 @@ async def poster(request: Request, rating_key: int, kind: str = "poster") -> Res
     if row is None:
         raise HTTPException(404, "No Tautulli configured to fetch artwork from.")
 
-    # Read-only: this only ever GETs an image.
-    client = TautulliClient(
-        row.base_url, box.decrypt(row.api_key_enc), safety=RuntimeSafety(), verify=row.verify_tls
-    )
-    async with client:
-        result = await (client.art(rating_key) if kind == "art" else client.poster(rating_key))
+    client = await _artwork_client(request.app, row, box)
+    result = await (client.art(rating_key) if kind == "art" else client.poster(rating_key))
 
     if result is None:
         raise HTTPException(404, "No artwork for this item.")

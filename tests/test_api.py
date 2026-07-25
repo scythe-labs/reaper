@@ -391,6 +391,47 @@ class TestTheRunsApi:
         listed = client.get("/api/runs").json()
         assert any(r["id"] == created["id"] for r in listed)
 
+    def test_the_run_list_limit_is_bounded_at_both_ends(self, client: TestClient) -> None:
+        """``?limit=-1`` rendered LIMIT -1, which SQLite reads as NO limit.
+
+        Every run returned then dragged its snapshot's whole condemned set through the
+        per-run output behind it, so one unbounded request was also the most expensive one
+        the route can serve. Bounded at the boundary now, in both directions.
+        """
+        client.post("/api/runs")
+        assert client.get("/api/runs", params={"limit": -1}).status_code == 422
+        assert client.get("/api/runs", params={"limit": 0}).status_code == 422
+        assert client.get("/api/runs", params={"limit": 201}).status_code == 422
+        assert client.get("/api/runs", params={"limit": 200}).status_code == 200
+        assert client.get("/api/runs", params={"limit": 1}).status_code == 200
+
+    def test_listing_many_runs_reads_the_condemned_set_once(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The expensive read per run was the snapshot's entire condemned set.
+
+        Runs on one page nearly always share a snapshot, so it is read once per request
+        and handed to every run. This counts the reads rather than timing them, so it
+        fails if the memo is ever dropped.
+        """
+        from reaper.api import runs as runs_module
+
+        for _ in range(4):
+            assert client.post("/api/runs").status_code == 200
+
+        real = runs_module.effective_condemned
+        calls: list[int] = []
+
+        async def counted(session: object, snapshot_id: int, decisions: object) -> object:
+            calls.append(snapshot_id)
+            return await real(session, snapshot_id, decisions)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(runs_module, "effective_condemned", counted)
+        listed = client.get("/api/runs").json()
+        assert len(listed) == 4
+        # Four runs, one snapshot, one read.
+        assert len(calls) == 1
+
     def test_dry_running_a_missing_run_is_a_404(self, client: TestClient) -> None:
         assert client.post("/api/runs/9999/dry-run").status_code == 404
 

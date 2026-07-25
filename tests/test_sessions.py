@@ -14,6 +14,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import httpx
+import httpx2
 import pytest
 import respx
 from sqlalchemy import select
@@ -34,7 +35,10 @@ from reaper.db.base import Base
 from reaper.db.models import AppUser, AuthProvider, AuthSession, PendingPlexLogin, PlexServer
 from reaper.db.session import create_engine, create_session_factory
 from reaper.services.login import PLEX_LOGIN_TTL, LoginError, login_local, poll_plex_login
-from reaper.services.plex_link import PlexServerChoiceNeededError
+from reaper.services.plex_link import (
+    PlexLinkRetryableError,
+    PlexServerChoiceNeededError,
+)
 
 pytestmark = pytest.mark.httpx2(assert_all_called=False)
 
@@ -400,6 +404,39 @@ class TestFirstRunServerChoice:
             # The pick consumed the pending row: the token cannot be replayed.
             assert (await session.execute(select(PendingPlexLogin))).first() is None
             assert await resolve_session(session, result.session_token) is not None
+
+    async def test_a_briefly_unreachable_server_keeps_the_pin(
+        self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router
+    ) -> None:
+        """The twin of the in-app link flow's transient blip, on the setup path.
+
+        ``complete_link`` raises the retryable error when no advertised address answers
+        right now. It is NOT a refusal, so it must not consume the sign-in -- but it is a
+        subclass of the permanent link error, and the arm that consumes the PIN used to
+        catch it first. Getting this wrong forces the owner through the whole OAuth round
+        trip again over a server that was merely restarting.
+        """
+        await _pending(factory, 42)
+        resources = [_resource("machine-a", "Den"), _resource("machine-b", "Attic")]
+        self._mock_signin(httpx2_mock, resources)
+        httpx2_mock.get("https://x.plex.direct:32400/identity").mock(
+            side_effect=httpx2.ConnectError("connection refused")
+        )
+
+        with pytest.raises(PlexLinkRetryableError):
+            await poll_plex_login(factory, _box(), pin_id=42, safety=SAFETY, choice="machine-b")
+
+        async with factory() as session:
+            assert (await session.execute(select(PlexServer))).first() is None
+            # The sign-in survives, so the same PIN can finish once the server is back.
+            assert (await session.execute(select(PendingPlexLogin))).first() is not None
+
+        # And it does.
+        self._mock_signin(httpx2_mock, resources)
+        result = await poll_plex_login(
+            factory, _box(), pin_id=42, safety=SAFETY, choice="machine-b"
+        )
+        assert result is not None and result.setup is True
 
     async def test_a_choice_matching_nothing_owned_is_refused(
         self, factory: async_sessionmaker[AsyncSession], httpx2_mock: respx.Router

@@ -146,6 +146,7 @@ function GeneralPanel() {
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [confirmReplace, setConfirmReplace] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
 
   // Seed the editable fields from the server once per load (and re-seed after saves,
   // which return the canonical stored values -- rule 39).
@@ -204,6 +205,14 @@ function GeneralPanel() {
     setTimeout(() => setCopied(false), 2000);
   };
   const copy = useMutation({ mutationFn: copyKey });
+  const removeKey = useMutation({
+    mutationFn: api.removeApiKey,
+    onSuccess: () => {
+      setRevealedKey(null);
+      setConfirmRemove(false);
+      void queryClient.invalidateQueries({ queryKey: ["general-settings"] });
+    },
+  });
 
   if (general.isPending) {
     return <p className="muted">Loading…</p>;
@@ -542,6 +551,29 @@ function GeneralPanel() {
                       Replace…
                     </button>
                   )}
+                  {/* Replacing swaps one working key for another, so it never closes this
+                      lane. Remove does: afterwards nothing gets in on the header at all.
+                      Same two-step confirm the Replace control uses. */}
+                  {confirmRemove ? (
+                    <>
+                      <button
+                        className="danger"
+                        disabled={removeKey.isPending}
+                        onClick={() => removeKey.mutate()}
+                      >
+                        Confirm remove
+                      </button>
+                      <button onClick={() => setConfirmRemove(false)}>Cancel</button>
+                    </>
+                  ) : (
+                    <button
+                      className="ghost"
+                      title="Anything using this key stops working immediately"
+                      onClick={() => setConfirmRemove(true)}
+                    >
+                      Remove…
+                    </button>
+                  )}
                 </>
               ) : (
                 <button
@@ -567,9 +599,9 @@ function GeneralPanel() {
             </div>
           </div>
         </div>
-        {(reveal.error || generate.error || copy.error) && (
+        {(reveal.error || generate.error || copy.error || removeKey.error) && (
           <p className="notice notice-error">
-            {(reveal.error ?? generate.error ?? copy.error)?.message}
+            {(reveal.error ?? generate.error ?? copy.error ?? removeKey.error)?.message}
           </p>
         )}
       </div>

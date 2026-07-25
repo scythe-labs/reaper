@@ -130,10 +130,6 @@ CREATE TABLE IF NOT EXISTS watch_event (
     -- synced before this column existed. Powers episode-precise mid-binge protection.
     media_index            INTEGER
 );
-CREATE INDEX IF NOT EXISTS ix_watch_event_rating_key ON watch_event (rating_key, watched_at);
-CREATE INDEX IF NOT EXISTS ix_watch_event_gp_key
-    ON watch_event (grandparent_rating_key, watched_at);
-CREATE INDEX IF NOT EXISTS ix_watch_event_watched_at ON watch_event (watched_at);
 
 -- Tautulli's own reported total at each sync. The regression check compares against
 -- this, not our mirror's count (which never shrinks -- see the module docstring).
@@ -143,6 +139,35 @@ CREATE TABLE IF NOT EXISTS history_sync_state (
     synced_at      INTEGER NOT NULL
 );
 """
+
+#: Every index on ``watch_event``, by name. Kept OUT of ``SCHEMA`` on purpose: an index can
+#: be added to a cache that already holds rows, where a column change cannot. The shape
+#: check below compares COLUMNS, so an index added to ``SCHEMA`` would look current on
+#: every existing install and simply never be created -- and the only way to force it would
+#: be to bump the column tuple, which drops the whole mirror and costs a full re-sync from
+#: Tautulli to land an index. ``ensure_schema`` instead notices a missing index by name and
+#: creates it in place, leaving the mirrored rows alone.
+#:
+#: Every column a fairness query filters on wants one here: the board and the person drawer
+#: run ``WHERE ... IN (:keys)`` per 500-key chunk, and an unindexed column turns each chunk
+#: into a full scan of a table that holds every play the server has ever recorded (P-4).
+INDEXES = {
+    "ix_watch_event_rating_key": (
+        "CREATE INDEX IF NOT EXISTS ix_watch_event_rating_key ON watch_event "
+        "(rating_key, watched_at)"
+    ),
+    "ix_watch_event_parent_key": (
+        "CREATE INDEX IF NOT EXISTS ix_watch_event_parent_key ON watch_event "
+        "(parent_rating_key, watched_at)"
+    ),
+    "ix_watch_event_gp_key": (
+        "CREATE INDEX IF NOT EXISTS ix_watch_event_gp_key ON watch_event "
+        "(grandparent_rating_key, watched_at)"
+    ),
+    "ix_watch_event_watched_at": (
+        "CREATE INDEX IF NOT EXISTS ix_watch_event_watched_at ON watch_event (watched_at)"
+    ),
+}
 
 
 async def _last_tautulli_total(engine: AsyncEngine) -> int | None:
@@ -170,11 +195,12 @@ async def _store_tautulli_total(engine: AsyncEngine, total: int) -> None:
 #: ``watched_status`` nullable moved no name and no position, so a name-only comparison
 #: would call an upgraded install's table current and leave the old ``0.0`` rows in place.
 #: ``row_id INTEGER PRIMARY KEY`` is a rowid alias, which sqlite reports as ``notnull=0``.
-#: Keep this and ``SCHEMA`` together. The fast path in ``ensure_schema`` returns as soon as
-#: THIS tuple matches, so it only ever runs the full ``SCHEMA`` (the companion
-#: ``history_sync_state`` table, the three indexes) when the tuple mismatches. Any addition to
-#: ``SCHEMA`` -- a new index, a new companion table -- must therefore also change this tuple
-#: (bump a column, add one), or existing caches will never execute the new DDL.
+#: Keep this and ``SCHEMA`` together. The fast path in ``ensure_schema`` only runs ``SCHEMA``
+#: (and its companion ``history_sync_state`` table) when THIS tuple mismatches, so a new
+#: table added to ``SCHEMA`` must also change this tuple (bump a column, add one) or existing
+#: caches will never execute it. Indexes are the exception and live in ``INDEXES``, which
+#: ``ensure_schema`` reconciles by name on every call -- adding one there needs no change
+#: here and costs no rebuild.
 _WATCH_EVENT_COLUMNS = (
     ("row_id", "INTEGER", 0),
     ("rating_key", "INTEGER", 1),
@@ -241,8 +267,29 @@ async def ensure_schema(engine: AsyncEngine) -> None:
     # transaction on cache.db purely to re-run idempotent DDL that changed nothing.
     async with engine.connect() as conn:
         cols = (await conn.execute(text("PRAGMA table_info(watch_event)"))).all()
-    live = tuple((row[1], str(row[2]).upper(), int(row[3])) for row in cols)
-    if cols and live == _WATCH_EVENT_COLUMNS:
+        live = tuple((row[1], str(row[2]).upper(), int(row[3])) for row in cols)
+        shape_ok = bool(cols) and live == _WATCH_EVENT_COLUMNS
+        # An index can be added to a cache that already holds rows, so a shape that is
+        # otherwise current still gets checked for one that is missing -- that is how a new
+        # entry in INDEXES reaches an install that synced before it existed, without
+        # dropping the mirror. Reading sqlite_master costs one indexed lookup.
+        missing = (
+            set(INDEXES)
+            - {
+                str(row[0])
+                for row in (
+                    await conn.execute(
+                        text(
+                            "SELECT name FROM sqlite_master "
+                            "WHERE type = 'index' AND tbl_name = 'watch_event'"
+                        )
+                    )
+                ).all()
+            }
+            if shape_ok
+            else set(INDEXES)
+        )
+    if shape_ok and not missing:
         return
 
     # Only here do we take the write transaction: the table is missing (fresh or cleared
@@ -261,15 +308,19 @@ async def ensure_schema(engine: AsyncEngine) -> None:
     async with _rebuild_lock(), engine.begin() as conn:
         cols = (await conn.execute(text("PRAGMA table_info(watch_event)"))).all()
         live = tuple((row[1], str(row[2]).upper(), int(row[3])) for row in cols)
-        if cols and live == _WATCH_EVENT_COLUMNS:
-            # A concurrent caller rebuilt it between our pre-lock read and this lock.
-            return
-        if cols:  # present but stale -> rebuild, never migrate (see the docstring)
-            log.info("history.cache.rebuilding", reason="watch_event shape is stale")
-            await conn.execute(text("DROP TABLE watch_event"))
-        for statement in SCHEMA.strip().split(";"):
-            if statement.strip():
-                await conn.execute(text(statement))
+        if not cols or live != _WATCH_EVENT_COLUMNS:
+            if cols:  # present but stale -> rebuild, never migrate (see the docstring)
+                log.info("history.cache.rebuilding", reason="watch_event shape is stale")
+                await conn.execute(text("DROP TABLE watch_event"))
+            for statement in SCHEMA.strip().split(";"):
+                if statement.strip():
+                    await conn.execute(text(statement))
+        # Always, and last: after a rebuild the table has no indexes at all, and on a
+        # current table this is what back-fills one added since the install last synced.
+        # Every statement is IF NOT EXISTS, so re-running them costs nothing. Named in a
+        # stable order so two callers racing here issue the same statements.
+        for name in sorted(INDEXES):
+            await conn.execute(text(INDEXES[name]))
 
 
 async def _state(engine: AsyncEngine) -> HistoryState:

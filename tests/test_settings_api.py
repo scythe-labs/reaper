@@ -17,6 +17,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import httpx
+import httpx2
 import pytest
 import respx
 from fastapi.testclient import TestClient
@@ -374,7 +375,12 @@ class TestConnectionTestsHonorTheTlsChoice:
                 return {"version": "1.0", "appName": "Radarr"}
 
         def fake_client(
-            kind: InstanceKind, base_url: str, api_key: str, *, verify: bool = True
+            kind: InstanceKind,
+            base_url: str,
+            api_key: str,
+            *,
+            verify: bool = True,
+            api_path_prefix: str | None = None,
         ) -> FakeClient:
             seen.append(verify)
             return FakeClient()
@@ -401,17 +407,27 @@ class TestConnectionTestsHonorTheTlsChoice:
         ).json()
 
         seen: list[bool] = []
+        prefixes: list[str | None] = []
 
         async def fake_test(
-            kind: InstanceKind, base_url: str, api_key: str, *, verify: bool = True
+            kind: InstanceKind,
+            base_url: str,
+            api_key: str,
+            *,
+            verify: bool = True,
+            api_path_prefix: str | None = None,
         ) -> instances_service.TestResult:
             seen.append(verify)
+            prefixes.append(api_path_prefix)
             return instances_service.TestResult(ok=True, detail="Connected.")
 
         monkeypatch.setattr(instances_service, "test_connection", fake_test)
         resp = client.post(f"/api/settings/instances/{created['id']}/test")
         assert resp.status_code == 200
         assert seen == [False]
+        # The stored API path rides along too, so Test Connection probes the path the scan
+        # will use rather than whichever one the client defaults to.
+        assert prefixes == ["/api/v3"]
 
     def test_the_pre_save_test_carries_the_checkbox_value(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -824,6 +840,46 @@ class TestPlexLinkChoice:
         flipped = client.put("/api/settings/plex", json={"web_url": "", "verify_tls": True})
         assert flipped.status_code == 200
         assert flipped.json()["verify_tls"] is True
+
+    def test_a_server_that_is_briefly_unreachable_keeps_the_sign_in_alive(
+        self, client: TestClient, httpx2_mock: respx.Router
+    ) -> None:
+        """The operator approves the sign-in at the instant their server is restarting.
+
+        ``poll_link`` deliberately keeps the pending sign-in for this case, but the route
+        used to answer 400 -- and the browser stops polling for good on any thrown status,
+        so the preserved sign-in was never re-polled and the whole approval round trip had
+        to be redone. It is a non-final status now, and the same sign-in finishes once the
+        server answers.
+        """
+        self._mock_plextv(httpx2_mock)
+        # Every advertised address refuses, then the server comes back.
+        httpx2_mock.get("https://x.plex.direct:32400/identity").mock(
+            side_effect=[
+                httpx2.ConnectError("connection refused"),
+                httpx.Response(200, json={}),
+            ]
+        )
+        start = client.post("/api/settings/plex/link/start").json()
+
+        blip = client.post(
+            "/api/settings/plex/link/poll",
+            json={"pin_id": start["pin_id"], "machine_identifier": "machine-b"},
+        )
+        assert blip.status_code == 200, blip.text
+        assert blip.json()["status"] == "retrying"
+        # And it says why, so a longer wait reads as a wait rather than a hang.
+        assert "could not reach it" in blip.json()["reason"]
+        assert client.get("/api/settings/plex").json()["linked"] is False
+
+        # The SAME sign-in finishes once the server answers. Nothing was burned.
+        done = client.post(
+            "/api/settings/plex/link/poll",
+            json={"pin_id": start["pin_id"], "machine_identifier": "machine-b"},
+        )
+        assert done.status_code == 200, done.text
+        assert done.json()["status"] == "ok"
+        assert client.get("/api/settings/plex").json()["linked"] is True
 
     def test_a_pick_matching_nothing_owned_fails_closed(
         self, client: TestClient, httpx2_mock: respx.Router

@@ -69,8 +69,12 @@ class Instance(Base):
     # not an Instance, so it is untouched here.
     external_url: Mapped[str | None] = mapped_column(String(500), default=None)
 
-    # Discovered from GET /api/v3/system/status, never hardcoded: Sonarr's
-    # v5-develop ships a real /api/v5 with a different SeriesResource shape.
+    # The API path every request to this instance is built on. Held against the day an
+    # *arr serves a different one -- Sonarr's v5-develop ships a real /api/v5 with a
+    # different SeriesResource shape -- and passed to the client by both the scan and Test
+    # Connection, so the two always probe the same path. Nothing WRITES it yet: it has
+    # only ever held its default, and there is no UI or probe that derives it (rule 24 --
+    # this comment used to say it was discovered from system/status, which it is not).
     api_path_prefix: Mapped[str] = mapped_column(String(20), default="/api/v3")
     detected_version: Mapped[str | None] = mapped_column(String(50), default=None)
 

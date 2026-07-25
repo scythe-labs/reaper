@@ -219,10 +219,13 @@ class PlexServerChoiceOut(BaseModel):
 
 
 class PlexLinkPollOut(BaseModel):
-    status: str  # "pending" | "ok" | "choose_server"
+    status: str  # "pending" | "retrying" | "ok" | "choose_server"
     server: PlexStatusOut | None = None
     # Present only with status "choose_server": the owned servers to pick from.
     servers: list[PlexServerChoiceOut] | None = None
+    # Present only with status "retrying": why this poll could not finish yet, in the
+    # operator's words. The sign-in is still good and the browser keeps polling.
+    reason: str | None = None
 
 
 class PlexResourceConnectionOut(BaseModel):
@@ -686,6 +689,15 @@ async def plex_link_poll(request: Request, payload: PlexLinkPollIn) -> PlexLinkP
                 for c in exc.candidates
             ],
         )
+    except PlexLinkRetryableError as exc:
+        # The sign-in was approved but the server could not be reached this instant -- it
+        # may just be restarting. ``poll_link`` deliberately KEEPS the pending login for
+        # exactly this case, so the answer must not be an error: the browser aborts its
+        # poll loop on any thrown status, which would strand the still-valid sign-in and
+        # send the operator back through the whole approval round trip (B2-14). Answered
+        # as a non-final status instead, so the loop keeps polling until it works or the
+        # deadline passes.
+        return PlexLinkPollOut(status="retrying", reason=str(exc))
     except PlexLinkError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -1543,7 +1555,9 @@ async def reveal_api_key(request: Request) -> ApiKeyOut:
 @router.post("/general/api-key")
 async def generate_api_key(request: Request) -> ApiKeyOut:
     """Generate the key, replacing any previous one. The old key stops working the
-    moment this returns -- rotation IS revocation, there is nothing to clean up."""
+    moment this returns, so rotating revokes the previous key. It does not CLOSE the
+    header-credential lane, though: there is always a working key afterwards. Turning the
+    lane off is what ``DELETE`` below is for."""
     key = secrets.token_urlsafe(32)
     async with _factory(request)() as session:
         await app_settings.set_api_key(session, _box(request), key)
@@ -1551,3 +1565,23 @@ async def generate_api_key(request: Request) -> ApiKeyOut:
     request.app.state.api_key_digest = hashlib.sha256(key.encode("utf-8")).digest()
     log.info("settings.api_key_rotated")
     return ApiKeyOut(key=key)
+
+
+@router.delete("/general/api-key")
+async def remove_api_key(request: Request) -> dict[str, bool]:
+    """Close the header-credential lane: delete the key, and stop honoring it now.
+
+    Rotating replaces one working key with another, so an operator who generated a key for
+    a one-off script had no way to shut the lane again (PR2-2). This is that way.
+
+    The stored digest on the app is cleared in the same breath. Auth reads that digest, not
+    the database, so a deleted key would otherwise keep working until the next restart.
+    Session-only, like every write here: the middleware is deny-by-default for anything
+    that is not a safe method, so a key cannot delete itself or anyone else's.
+    """
+    async with _factory(request)() as session:
+        await app_settings.clear_api_key(session)
+        await session.commit()
+    request.app.state.api_key_digest = None
+    log.info("settings.api_key_removed")
+    return {"removed": True}
