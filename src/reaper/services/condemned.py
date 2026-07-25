@@ -25,6 +25,8 @@ keeping the file.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
+from typing import Any
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +34,46 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from reaper.db.models import Candidate
 from reaper.engine.verdict import STRUCTURAL_GATES, block_holds_reap, decide_verdict
 from reaper.services import whitelist
+
+#: A stored ``match`` block that is present but is not an object. Distinct from a match
+#: that is genuinely absent, and it is not a status Plex ever reports: it is what
+#: :func:`match_state` returns for a record it cannot read.
+MATCH_UNREADABLE = "unreadable"
+
+#: Match states that HOLD a hand reap. Unmatched and ambiguous are the two Plex reports
+#: meaning "we could not tie this to one thing"; unreadable is the same not-checked state
+#: arrived at differently, so it belongs with them.
+BAD_MATCH_STATES = frozenset({MATCH_UNREADABLE, "unmatched", "ambiguous"})
+
+
+def match_state(explanation: Mapping[str, Any]) -> str | None:
+    """The Plex match state a stored explanation records, or ``None`` if it records none.
+
+    The one derivation of this three-way answer (rule 104). Both the reap-override
+    decision below and the review queue's chips and card reasons read it, and they used to
+    disagree: the decision treated an unreadable match as a hold while the card told the
+    operator the item had merely "scored below your threshold", which is the opposite of
+    the decision actually in force (rule 61).
+
+    Three answers, and the middle one is the whole point:
+
+    * a status Plex reported (``matched`` / ``unmatched`` / ``ambiguous``);
+    * :data:`MATCH_UNREADABLE`, when the block is THERE but is not an object. That is "we
+      cannot tell what this was tied to in Plex", the same not-checked state ``unmatched``
+      and ``ambiguous`` describe, and it holds a reap. Reading it as absent would be the
+      inversion this codebase exists to avoid: evidence we could not read becoming
+      evidence that nothing was wrong, which REMOVES a hold on a deletion (B-10, rule 96);
+    * ``None``, when the block is genuinely absent (missing, or null). That stays
+      permissive, because the field is optional precisely so a row scored before it
+      shipped still reads, and those rows were judged fine without it.
+    """
+    match = explanation.get("match")
+    if match is None:
+        return None
+    if not isinstance(match, dict):
+        return MATCH_UNREADABLE
+    status = match.get("status")
+    return str(status) if status else None
 
 
 def reap_override_verdict(explanation_json: str, *, score: int) -> str:
@@ -83,21 +125,7 @@ def reap_override_verdict_decoded(explanation: object, *, score: int) -> str:
 
     fired = [e for e in exp.get("protections_fired") or [] if isinstance(e, dict)]
     unknown = [e for e in exp.get("protections_unknown") or [] if isinstance(e, dict)]
-    # A ``match`` that is there but is not an object used to raise an AttributeError,
-    # which escaped this function's "unreadable means blocked" contract entirely (B-10).
-    # It is now read as a BAD match, not as a missing one: an unreadable match block is
-    # "we cannot tell what this was tied to in Plex", which is the same not-checked state
-    # unmatched and ambiguous describe, and it holds the reap. Reading it as absent would
-    # be the inversion this codebase exists to avoid -- evidence we could not read
-    # becoming evidence that nothing was wrong, which REMOVES a hold on a deletion.
-    #
-    # A match block that is genuinely ABSENT (null, or missing) is different and stays
-    # permissive: the field is optional precisely so a row scored before it shipped still
-    # reads, and those rows were judged fine without it.
-    match = exp.get("match")
-    match_unreadable = match is not None and not isinstance(match, dict)
-    match_status = match.get("status") if isinstance(match, dict) else None
-    bad_match = match_unreadable or match_status in ("unmatched", "ambiguous")
+    bad_match = match_state(exp) in BAD_MATCH_STATES
 
     return decide_verdict(
         protected=bool(fired),

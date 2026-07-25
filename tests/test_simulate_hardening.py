@@ -1,0 +1,595 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+"""An unreadable stored explanation degrades one row of the simulation, toward KEEPING.
+
+The policy editor's live preview replays the last snapshot on a 250 ms debounce, so every
+row of it is read on every keystroke of a threshold drag. Two of its readers used to guard
+the ``json.loads`` and then call ``.get`` on whatever came back: a stored top level that is
+a list, a null or a number raised an ``AttributeError`` out of ``POST /api/policy/simulate``
+and 500ed the preview, while the review queue rendered the same row fine.
+
+Guarding them is only half of it. The value they fall back to decides which way an
+unreadable row lands, and the two fall opposite ways on purpose (rule 96):
+
+* ``_has_blocked_protections`` is the only thing standing between a row and a score-based
+  condemn, so an explanation nobody can read reads as BLOCKED. The row abstains and stays
+  out of the previewed deletion count.
+* ``_fired_gates`` only attributes a row the caller has ALREADY counted as protected, so an
+  unreadable one contributes no attribution and cannot move anything toward deletion.
+
+A third reader, ``_primary_reason``, sorted the condemned lane's signals on a raw stored
+value; two entries of different types raised a ``TypeError`` and blanked the lane.
+
+The last class covers the simulator's OTHER tier, the frozen-Facts replay, which had no
+route-level test at all: it now judges through ``snapshot.judge_facts`` and applies the hand
+override through ``snapshot.effective_fate`` rather than assembling that pipeline itself
+(rules 3/22), and the case that matters is a hand reap the engine cannot honor.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Any, NamedTuple
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy.orm import Session
+
+from reaper.api.routes import _contribution, _fired_gates, _has_blocked_protections, _to_body
+from reaper.api.schemas import GateSettingIn, PolicyIn, SignalSettingIn
+from reaper.clock import utcnow
+from reaper.config import Settings
+from reaper.db.base import Base
+from reaper.db.models import Candidate, Snapshot, WhitelistEntry
+from reaper.engine import facts_codec
+from reaper.engine.gates import Facts
+from reaper.engine.observation import Absent, Known
+from reaper.engine.policy import (
+    DEFAULT_MOVIE_POLICY,
+    DEFAULT_TV_POLICY,
+    GateSetting,
+    PolicyBody,
+    SignalSetting,
+    combine_hashes,
+)
+from reaper.main import create_app
+
+from ._auth import login
+
+#: The draft policy every simulation below is run under. Its scoring hash has to be the one
+#: the fixture snapshot was "scored" with, or the route refuses to re-decide at all -- so
+#: the gates and signals here and in ``_fixture_scoring_hash`` are the same list.
+GATES: list[dict[str, Any]] = [
+    {"gate": "whitelisted"},
+    {"gate": "min_dormancy", "threshold": 1095},
+    {"gate": "rating_floor", "threshold": 75, "secondary": 1000},
+]
+SIGNALS: list[dict[str, Any]] = [
+    {"signal": "unwatched", "weight": 100, "saturate_at": 1825, "floor": 365}
+]
+
+#: The size on every row, so the reclaimable total is a plain multiple of the condemned
+#: count rather than a number that needs its own arithmetic.
+SIZE = 1_000_000_000
+
+
+def _fixture_scoring_hash() -> str:
+    """The combined movie+TV scoring hash of the policies the fixture was scored with."""
+    movie = PolicyBody(
+        condemn_at=70,
+        gates=tuple(GateSetting.model_validate(g) for g in GATES),
+        signals=tuple(SignalSetting.model_validate(s) for s in SIGNALS),
+    )
+    return combine_hashes(movie.scoring_hash(), DEFAULT_TV_POLICY.scoring_hash())
+
+
+def _healthy(**overrides: Any) -> str:
+    """A stored explanation shaped exactly as ``snapshot._explain`` writes one."""
+    body: dict[str, Any] = {
+        "score": 95.0,
+        "base_score": 95.0,
+        "keep_discount": 0.0,
+        "threshold": 70,
+        "coverage": 1.0,
+        "match": {"status": "matched", "by": "tmdb", "detail": None, "rating_key": 1},
+        "signals": [
+            {
+                "id": "unwatched",
+                "contribution": 95.0,
+                "weight": 100,
+                "detail": "not watched in 5 years",
+                "evaluated": True,
+                "state": "adds",
+            }
+        ],
+        "protections_fired": [],
+        "protections_checked": [],
+        "protections_unknown": [],
+    }
+    return json.dumps({**body, **overrides})
+
+
+#: Signals whose contributions are stored as three different types. Only one is a number,
+#: and it is deliberately not first: a sort that cannot compare the three raised a
+#: TypeError, and one that silently kept the stored order would pick the wrong reason.
+MIXED_SIGNALS = [
+    {
+        "id": "unwatched",
+        "contribution": "not a number",
+        "weight": 40,
+        "detail": "not watched in 5 years",
+        "evaluated": True,
+        "state": "adds",
+    },
+    {
+        "id": "few_watchers",
+        "contribution": None,
+        "weight": 30,
+        "detail": "nobody here has watched it",
+        "evaluated": True,
+        "state": "adds",
+    },
+    {
+        "id": "low_rating",
+        "contribution": 12.5,
+        "weight": 30,
+        "detail": "poorly rated where it is rated",
+        "evaluated": True,
+        "state": "adds",
+    },
+]
+
+BLOCKED_ENTRY = {"gate": "server_popularity", "detail": "could not check who watched it"}
+
+
+class Row(NamedTuple):
+    """One fixture row, and what the simulator owes it.
+
+    ``bucket`` is written from the contract in this module's docstring, not from the
+    branches that implement it: an unreadable explanation keeps, a readable one is judged
+    on its own merits.
+    """
+
+    media_key: str
+    verdict: str
+    explanation: str
+    bucket: str
+    why: str
+
+
+ROWS: tuple[Row, ...] = (
+    Row(
+        "radarr:1:1",
+        "abstain",
+        "[1, 2, 3]",
+        "abstained",
+        "top level is a list: unreadable, so it holds",
+    ),
+    Row("radarr:1:2", "abstain", "null", "abstained", "top level is null: unreadable, so it holds"),
+    Row(
+        "radarr:1:3", "abstain", "7", "abstained", "top level is a number: unreadable, so it holds"
+    ),
+    Row(
+        "radarr:1:4",
+        "abstain",
+        _healthy(),
+        "condemned",
+        "the control: readable, nothing blocking, and it scores over the draft threshold",
+    ),
+    Row(
+        "radarr:1:5",
+        "abstain",
+        _healthy(protections_unknown=[BLOCKED_ENTRY]),
+        "abstained",
+        "genuinely blocked, and unchanged by any of this",
+    ),
+    Row(
+        "radarr:1:6",
+        "protect",
+        "[1, 2, 3]",
+        "protected",
+        "a protection fired, but which one cannot be read",
+    ),
+    Row(
+        "radarr:1:7",
+        "protect",
+        _healthy(protections_fired=[{"gate": "rating_floor", "detail": "well rated"}]),
+        "protected",
+        "the attribution control: this is the one row the spared-by tally can name",
+    ),
+    Row(
+        "radarr:1:8",
+        "condemn",
+        "null",
+        "abstained",
+        "stored condemned, but the explanation is unreadable, so the reap is given up",
+    ),
+    Row(
+        "radarr:1:9",
+        "condemn",
+        _healthy(signals=MIXED_SIGNALS),
+        "condemned",
+        "readable, and its mixed-type contributions must not blank the lane",
+    ),
+)
+
+#: The counts the table above adds up to. Spelled out rather than derived, so a change to
+#: the fixture has to be reckoned with here too.
+EXPECTED = {"condemned": 2, "protected": 2, "abstained": 5}
+
+
+@pytest.fixture
+def client(tmp_path: Path) -> Iterator[TestClient]:
+    """A snapshot carrying every explanation shape in ``ROWS``."""
+    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    engine = sa_create_engine(settings.sync_database_url)
+    Base.metadata.create_all(engine)
+
+    now = utcnow()
+    with Session(engine) as session:
+        snapshot = Snapshot(
+            created_at=now,
+            policy_hash=combine_hashes(
+                DEFAULT_MOVIE_POLICY.policy_hash(), DEFAULT_TV_POLICY.policy_hash()
+            ),
+            scoring_hash=_fixture_scoring_hash(),
+            horizon_at=now,
+            item_count=len(ROWS),
+            degraded=False,
+        )
+        session.add(snapshot)
+        session.flush()
+        for index, row in enumerate(ROWS, start=1):
+            session.add(
+                Candidate(
+                    snapshot_id=snapshot.id,
+                    media_key=row.media_key,
+                    title=f"Example Movie {index}",
+                    media_type="movie",
+                    size_bytes=SIZE,
+                    verdict=row.verdict,
+                    score=95,
+                    coverage_bp=10_000,
+                    explanation_json=row.explanation,
+                    created_at=now,
+                )
+            )
+        session.commit()
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+def _simulate(client: TestClient, condemn_at: int = 70) -> dict[str, Any]:
+    response = client.post(
+        "/api/policy/simulate",
+        json={
+            "condemn_at": condemn_at,
+            "coverage_floor_bp": 0,
+            "gates": GATES,
+            "signals": SIGNALS,
+        },
+    )
+    assert response.status_code == 200, response.text
+    body: dict[str, Any] = response.json()
+    return body
+
+
+class TestTheSimulationSurvivesABrokenRow:
+    def test_the_route_answers_at_all(self, client: TestClient) -> None:
+        """The bug, at its plainest: one legacy row 500ed the preview on every keystroke.
+
+        ``_simulate`` asserts the 200, so this pins that the answer is a real simulation
+        (``exact``) rather than the refusal the route returns when it cannot replay.
+        """
+        assert _simulate(client)["exact"] is True
+
+    def test_every_row_lands_in_the_bucket_the_table_gives_it(self, client: TestClient) -> None:
+        result = _simulate(client)
+        assert {k: result[k] for k in EXPECTED} == EXPECTED
+
+    def test_the_unreadable_rows_are_kept_and_the_readable_one_is_not(
+        self, client: TestClient
+    ) -> None:
+        """The discriminating assertion, and the reason the control row exists.
+
+        At a threshold of 1 with no coverage floor, every row here scores over the line.
+        Only the two rows whose explanations are readable and clear may be previewed as
+        deletions; the three unreadable ones and the genuinely blocked one must not be. A
+        fallback of "nothing was blocking" would report six.
+        """
+        result = _simulate(client, condemn_at=1)
+        assert result["condemned"] == 2
+        assert result["reclaimable_bytes"] == 2 * SIZE
+
+    def test_a_stored_condemn_it_cannot_read_is_reported_as_no_longer_condemned(
+        self, client: TestClient
+    ) -> None:
+        """Giving up a reap is a change the owner is owed a number for.
+
+        The row was condemned when they last reviewed it; the preview no longer condemns
+        it, so it belongs in the delta, not silently missing from both counts.
+        """
+        assert _simulate(client)["no_longer_condemned"] == 1
+
+    def test_an_unreadable_protection_still_counts_as_protected(self, client: TestClient) -> None:
+        """The other direction. The row keeps its place in the protected count; all that is
+        lost is the name of the protection that saved it, which is the cautious thing to
+        lose. Dropping the row instead would under-report what the draft policy keeps."""
+        result = _simulate(client)
+        assert result["protected"] == 2
+        assert result["protected_by"] == [{"gate": "rating_floor", "count": 1}]
+
+
+class TestTheQueueSurvivesAMixedSignalBlock:
+    def test_the_condemned_lane_renders_and_names_the_readable_signal(
+        self, client: TestClient
+    ) -> None:
+        """Sorting a number against a string used to raise a TypeError, which blanked every
+        condemned card, not just this one. The reason line now falls back to the entries it
+        can read."""
+        response = client.get("/api/candidates", params={"verdict": "condemn"})
+        assert response.status_code == 200
+        rows = {str(r["media_key"]): r for r in response.json()}
+        assert rows["radarr:1:9"]["reason"] == "poorly rated where it is rated"
+
+
+class TestTheHelpersThemselves:
+    """The fallbacks, asserted directly. Each table is the spec: the shape, the value it
+    must produce, and which direction that value resolves toward."""
+
+    @pytest.mark.parametrize(
+        ("stored", "expected"),
+        [
+            ("[1, 2, 3]", True),
+            ("null", True),
+            ("7", True),
+            ('"a string"', True),
+            ("not json at all", True),
+            (json.dumps({"protections_unknown": [BLOCKED_ENTRY]}), True),
+            (json.dumps({"protections_unknown": ["a bare string"]}), True),
+            (json.dumps({"protections_unknown": "nope"}), True),
+            (json.dumps({"protections_unknown": []}), False),
+            (json.dumps({"protections_unknown": None}), False),
+            (json.dumps({"score": 95.0}), False),
+        ],
+    )
+    def test_unreadable_holds_and_genuinely_absent_does_not(
+        self, stored: str, expected: bool
+    ) -> None:
+        """True keeps the file out of the previewed deletion count, so True is the
+        cautious answer everywhere the record cannot be read -- including a block that is
+        there but malformed, which is why the raw list is consulted and not ``_entries``
+        (which drops the malformed entries and would read it as empty)."""
+        assert _has_blocked_protections(stored) is expected
+
+    @pytest.mark.parametrize(
+        ("stored", "expected"),
+        [
+            ("[1, 2, 3]", []),
+            ("null", []),
+            ("7", []),
+            ("not json at all", []),
+            (json.dumps({"protections_fired": ["a bare string"]}), []),
+            (json.dumps({"protections_fired": [{"detail": "no gate key"}]}), []),
+            (json.dumps({"protections_fired": "nope"}), []),
+            (
+                json.dumps({"protections_fired": [{"gate": "rating_floor", "detail": "well"}]}),
+                ["rating_floor"],
+            ),
+        ],
+    )
+    def test_an_unreadable_explanation_names_no_protection(
+        self, stored: str, expected: list[str]
+    ) -> None:
+        assert _fired_gates(stored) == expected
+
+    @pytest.mark.parametrize(
+        ("stored", "expected"),
+        [
+            ({"contribution": 12.5}, 12.5),
+            ({"contribution": 3}, 3.0),
+            ({"contribution": "3.0"}, 0.0),
+            ({"contribution": None}, 0.0),
+            ({"contribution": [1]}, 0.0),
+            ({"contribution": {"value": 1}}, 0.0),
+            ({}, 0.0),
+        ],
+    )
+    def test_a_contribution_that_is_not_a_number_sorts_last(
+        self, stored: dict[str, Any], expected: float
+    ) -> None:
+        assert _contribution(stored) == expected
+
+    def test_the_sort_key_orders_a_mixed_block_without_raising(self) -> None:
+        """The whole point of the coercion: the three types in one block are comparable."""
+        ordered = sorted(MIXED_SIGNALS, key=_contribution, reverse=True)
+        assert [s["id"] for s in ordered] == ["low_rating", "unwatched", "few_watchers"]
+
+
+def test_the_draft_policy_matches_the_fixture(client: TestClient) -> None:
+    """Without this, every simulation above could be silently answering the refusal path.
+
+    A gates or signals list that drifts from ``_fixture_scoring_hash`` makes the route
+    return ``exact: false`` and all-zero counts, which would pass a "nothing was condemned"
+    assertion for entirely the wrong reason.
+    """
+    result = _simulate(client)
+    assert result["stale_reason"] is None
+    assert sum(int(n) for n in result["histogram"]) == len(ROWS)
+
+
+def test_the_fixture_gates_and_signals_are_the_wire_shapes() -> None:
+    """The two lists are dicts on the wire, so a typo in one is a 422, not a bad hash."""
+    assert [GateSettingIn.model_validate(g).gate for g in GATES] == [
+        "whitelisted",
+        "min_dormancy",
+        "rating_floor",
+    ]
+    assert [SignalSettingIn.model_validate(s).weight for s in SIGNALS] == [100]
+
+
+# ---------------------------------------------------------------------------
+# The other tier: the frozen-Facts replay
+# ---------------------------------------------------------------------------
+
+
+#: The draft the replay fixture is built for: the wire payload, the domain body it becomes,
+#: and the evidence hash that body would gather under. Built through the route's own
+#: ``_to_body`` so the fixture cannot drift from what the request produces.
+REPLAY_PAYLOAD = PolicyIn(
+    condemn_at=70,
+    coverage_floor_bp=0,
+    gates=[GateSettingIn.model_validate(g) for g in GATES],
+    signals=[SignalSettingIn.model_validate(s) for s in SIGNALS],
+)
+REPLAY_BODY = _to_body(REPLAY_PAYLOAD)
+
+
+def _facts(**overrides: Any) -> Facts:
+    """One item's evidence, readable end to end unless a test says otherwise."""
+    base: dict[str, Any] = {
+        "title": "item",
+        "days_observed_unwatched": Known(value=2000.0, source="test"),
+        "distinct_watchers": Known(value=0, source="test"),
+        "distinct_watchers_all_time": Known(value=0, source="test"),
+        "size_bytes": Known(value=SIZE, source="test"),
+        "imdb_rating_tenths": Known(value=60, source="test"),
+        "imdb_votes": Known(value=5_000, source="test"),
+        "season_rank": Absent(source="test"),
+        "is_streaming_now": Known(value=False, source="test"),
+        "is_managed": Known(value=True, source="test"),
+        "in_curated_list": Absent(source="test"),
+        "is_whitelisted": Known(value=False, source="test"),
+    }
+    return Facts(**{**base, **overrides})
+
+
+@pytest.fixture
+def replay_client(tmp_path: Path) -> Iterator[TestClient]:
+    """A snapshot the simulator must REPLAY: same evidence, different scoring.
+
+    The stored scoring hash is deliberately not the draft's, so the route cannot answer from
+    stored scores; the stored evidence hash is exactly the draft's, so the frozen Facts are
+    still what a scan would gather and the replay is allowed.
+    """
+    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    engine = sa_create_engine(settings.sync_database_url)
+    Base.metadata.create_all(engine)
+
+    now = utcnow()
+    rows = {
+        # Dormant, unprotected, fully observed: the draft condemns it.
+        "radarr:1:1": _facts(),
+        # On the keep list: protected, whatever it scores.
+        "radarr:1:2": _facts(is_whitelisted=Known(value=True, source="test")),
+    }
+    with Session(engine) as session:
+        snapshot = Snapshot(
+            created_at=now,
+            policy_hash=combine_hashes(
+                DEFAULT_MOVIE_POLICY.policy_hash(), DEFAULT_TV_POLICY.policy_hash()
+            ),
+            scoring_hash="b" * 64,
+            evidence_hash=combine_hashes(
+                REPLAY_BODY.evidence_hash(), DEFAULT_TV_POLICY.evidence_hash()
+            ),
+            horizon_at=now,
+            item_count=len(rows) + 1,
+            degraded=False,
+        )
+        session.add(snapshot)
+        session.flush()
+        for index, (media_key, facts) in enumerate(rows.items(), start=1):
+            session.add(
+                Candidate(
+                    snapshot_id=snapshot.id,
+                    media_key=media_key,
+                    title=f"Example Movie {index}",
+                    media_type="movie",
+                    size_bytes=SIZE,
+                    verdict="abstain",
+                    score=50,
+                    coverage_bp=10_000,
+                    explanation_json=_healthy(),
+                    facts_json=json.dumps(facts_codec.facts_to_dict(facts)),
+                    created_at=now,
+                )
+            )
+        # Nothing about this one could be observed, so every protection is blocked -- and the
+        # owner has hand-reaped it anyway. An empty body is what a row scored before a field
+        # shipped thaws to: every fact Unknown.
+        session.add(
+            Candidate(
+                snapshot_id=snapshot.id,
+                media_key="radarr:1:3",
+                title="Example Movie 3",
+                media_type="movie",
+                size_bytes=SIZE,
+                verdict="abstain",
+                score=95,
+                coverage_bp=10_000,
+                explanation_json=_healthy(protections_unknown=[BLOCKED_ENTRY]),
+                facts_json="{}",
+                created_at=now,
+            )
+        )
+        session.add(
+            WhitelistEntry(
+                media_key="radarr:1:3",
+                title="Example Movie 3",
+                decision="reap",
+                created_at=now,
+            )
+        )
+        session.commit()
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+class TestTheFrozenFactsReplay:
+    """The tier that re-runs the real engine over each row's frozen evidence.
+
+    It judges through the scan's own ``judge_facts`` and applies the hand override through
+    the scan's own ``effective_fate``, so what it previews is what a scan would do.
+    """
+
+    def _replay(self, client: TestClient) -> dict[str, Any]:
+        response = client.post("/api/policy/simulate", json=REPLAY_PAYLOAD.model_dump())
+        assert response.status_code == 200, response.text
+        body: dict[str, Any] = response.json()
+        # Without this the class would pass on the refusal path's all-zero counts.
+        assert body["exact"] is True, body.get("stale_reason")
+        return body
+
+    def test_it_replays_rather_than_refusing(self, replay_client: TestClient) -> None:
+        assert sum(int(n) for n in self._replay(replay_client)["histogram"]) == 3
+
+    def test_the_dormant_row_is_condemned_and_the_kept_one_is_named(
+        self, replay_client: TestClient
+    ) -> None:
+        result = self._replay(replay_client)
+        assert result["condemned"] == 1
+        assert result["reclaimable_bytes"] == SIZE
+        assert result["protected_by"] == [{"gate": "whitelisted", "count": 1}]
+
+    def test_a_hand_reap_the_engine_cannot_honor_is_not_previewed_as_a_deletion(
+        self, replay_client: TestClient
+    ) -> None:
+        """The reap-held case, and the one the refactor turns on.
+
+        Every protection on that row is blocked, so the engine refuses the reap and the file
+        is kept. Counting it as a deletion would promise the owner a removal the planner
+        holds back, at the exact moment they are choosing a threshold.
+        """
+        result = self._replay(replay_client)
+        assert result["condemned"] == 1  # the dormant row, never the held reap
+        assert result["protected"] == 2  # the keep-list row AND the held reap
+        assert result["abstained"] == 0

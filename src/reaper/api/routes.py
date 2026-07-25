@@ -67,7 +67,7 @@ from reaper.db.models import Candidate, FirstFlagged, Instance, InstanceKind, Pl
 from reaper.db.models import Policy as PolicyModel
 from reaper.engine import facts_codec
 from reaper.engine.fields import Lane, MediaType, vocabulary
-from reaper.engine.gates import PROTECT, Evaluation, GateId, GateResult, evaluate_all
+from reaper.engine.gates import PROTECT, GateId, GateResult
 from reaper.engine.policy import (
     ConditionSpec,
     GateSetting,
@@ -78,12 +78,13 @@ from reaper.engine.policy import (
     inspect,
 )
 from reaper.engine.signals import SignalConfig
-from reaper.engine.signals import score as score_facts
-from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict, reap_held_by_blocks
+from reaper.engine.verdict import decide_verdict
 from reaper.services import app_settings, backup, whitelist
 from reaper.services.condemned import (
+    MATCH_UNREADABLE,
     effective_condemned,
     effective_verdict,
+    match_state,
     overridden_lane_shifts,
     reap_is_effective,
     reap_is_effective_decoded,
@@ -93,7 +94,7 @@ from reaper.services.deep_links import build_links
 from reaper.services.display_meta import parse_ratings_json
 from reaper.services.planner import MediaRef, PlanError
 from reaper.services.profiles import active_policy, active_policy_row, active_profile_settings
-from reaper.services.snapshot import HAND_SPARE_DETAIL
+from reaper.services.snapshot import HAND_SPARE_DETAIL, effective_fate, judge_facts
 
 log = structlog.get_logger(__name__)
 
@@ -620,15 +621,33 @@ def _entries(exp: dict[str, Any], key: str) -> list[dict[str, Any]]:
 
 
 def _match_status(exp: dict[str, Any]) -> str | None:
-    """The Plex match status, or ``None`` when the row does not carry a readable one."""
-    match = exp.get("match")
-    return str(match.get("status")) if isinstance(match, dict) and match.get("status") else None
+    """The Plex match state, straight from the one function that derives it.
+
+    Kept as a thin alias so the queue's chips and card reasons cannot drift from the
+    reap-override decision that reads the same block: an unreadable match HOLDS a reap
+    (:data:`~reaper.services.condemned.MATCH_UNREADABLE`), and the copy beside it has to
+    say so rather than falling through to "Scored below your threshold" (rule 61).
+    """
+    return match_state(exp)
 
 
 def _detail_of(entry: dict[str, Any]) -> str | None:
     """One entry's plain-English detail line, or ``None`` when it has none."""
     detail = entry.get("detail")
     return str(detail) if detail else None
+
+
+def _contribution(entry: dict[str, Any]) -> float:
+    """One signal entry's contribution, as a number safe to sort on.
+
+    ``_entries`` guarantees the entry is a dict; it promises nothing about the values
+    inside it. Two stored entries whose contributions are a number and a string make
+    ``list.sort`` raise a TypeError comparing them, which would blank the whole condemned
+    lane over one hand-edited row. Anything that is not a number reads as 0.0 and sorts
+    last, so a readable signal is always preferred as the card's reason.
+    """
+    value = entry.get("contribution")
+    return float(value) if isinstance(value, int | float) else 0.0
 
 
 def _primary_reason(exp: dict[str, Any] | None, verdict: str) -> str | None:
@@ -656,7 +675,7 @@ def _primary_reason(exp: dict[str, Any] | None, verdict: str) -> str | None:
         return _detail_of(unknown[0]) if unknown else None
     if verdict == "condemn":
         signals = [s for s in _entries(exp, "signals") if s.get("evaluated")]
-        signals.sort(key=lambda s: s.get("contribution", 0), reverse=True)
+        signals.sort(key=_contribution, reverse=True)
         return _detail_of(signals[0]) if signals else None
     # abstain: lead with the match problem when there is one -- it is the single cause
     # behind every "could not check" that follows, and the raw gate detail ("could not
@@ -667,6 +686,11 @@ def _primary_reason(exp: dict[str, Any] | None, verdict: str) -> str | None:
         return "Kept to be safe: it couldn't be found in Plex."
     if status == "ambiguous":
         return "Kept to be safe: it looks like more than one thing in Plex."
+    if status == MATCH_UNREADABLE:
+        # The row records a match Reaper cannot read. That HOLDS a hand reap, so falling
+        # through to the below-threshold line below stated the opposite of the decision in
+        # force on this very row (rule 61).
+        return "Kept to be safe: Reaper couldn't read what this matched in Plex."
     unknown = _entries(exp, "protections_unknown")
     if unknown:
         return _detail_of(unknown[0])
@@ -808,6 +832,12 @@ def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | Non
             tone="quiet",
             text="Looks like two different things in Plex",
             why="it looks like two different things in Plex",
+        )
+    if status == MATCH_UNREADABLE:
+        return ChipOut(
+            tone="quiet",
+            text="Couldn't read its Plex match",
+            why="Reaper couldn't read what it matched in Plex",
         )
 
     unknown = _entries(exp, "protections_unknown")
@@ -1466,10 +1496,18 @@ async def _replay_simulation(
 
     Reached only when the edit left the evidence hash unchanged, so the frozen Facts (and the
     season guard) still describe what a scan would gather. For each row we rebuild its Facts,
-    run the same ``evaluate_all`` / ``score`` / ``decide_verdict`` the scan runs
-    (services.snapshot._judge_item), and apply any live hand override -- so the counts are
+    hand them to the scan's own judging function (``snapshot.judge_facts``) and apply any live
+    hand override through the scan's own ``snapshot.effective_fate`` -- so the counts are
     bit-identical to a fresh scan under this policy, with zero API calls. Exact for weight,
     rating-bar, custom-rule, protect-condition and threshold edits.
+
+    Both calls are production's, never a lookalike (rules 3/22). This loop used to assemble
+    the evaluate / score / round / decide pipeline itself and push the hand override straight
+    through ``decide_verdict``; that is the same drift the policy lab had to be pulled back
+    from, and the second half of it matters on its own: every other read-side consumer derives
+    a hand reap's fate from the frozen explanation (``condemned.reap_override_verdict``), so
+    deciding it live here was one edit away from the simulator promising a deletion the
+    planner holds.
     """
     from reaper.services.scan_runner import build_gates
 
@@ -1500,31 +1538,24 @@ async def _replay_simulation(
         # A hand spare enters as an extra PROTECT so the simulator applies it LIVE -- the stored
         # verdict is pure policy now, so the override is re-applied here, never read off the row.
         # The frozen season guard rides in `extra`. The reap override is carried into
-        # decide_verdict, which honors it only past the cautious cases.
+        # effective_fate, which honors it only past the cautious cases.
         merged_extra = list(extra)
         if override == "spare":
             merged_extra.insert(
                 0, GateResult(GateId.WHITELISTED, PROTECT, detail=HAND_SPARE_DETAIL)
             )
-        evaluation = Evaluation(results=[*merged_extra, *evaluate_all(gates, facts).results])
-        item_score = score_facts(
-            signals, facts, custom_condemn=custom, keeps=keeps, window_days=window
+        judged = judge_facts(
+            facts,
+            gates,
+            policy,
+            signals=signals,
+            custom_condemn=custom,
+            keeps=keeps,
+            window_days=window,
+            extra_results=merged_extra,
         )
-        score_value = round(item_score.value)
-        coverage_bp = round(item_score.coverage * 10_000)
-        verdict = decide_verdict(
-            protected=evaluation.protected,
-            blocked=evaluation.blocked,
-            blocked_holds_reap=reap_held_by_blocks(evaluation.results),
-            safety_protected=any(
-                r.fired and r.gate in STRUCTURAL_GATES for r in evaluation.results
-            ),
-            score=score_value,
-            coverage_bp=coverage_bp,
-            condemn_at=policy.condemn_at,
-            coverage_floor_bp=policy.coverage_floor_bp,
-            override=override,
-        )
+        score_value = judged.score
+        verdict = effective_fate(judged, override)
 
         histogram[min(score_value // 10, 9)] += 1
         # The pre-edit fate is the EFFECTIVE one (override applied), matching the effective "now"
@@ -1542,7 +1573,7 @@ async def _replay_simulation(
                 newly_rows.append((row, score_value))
         elif verdict == "protect":
             protected += 1
-            spared_by.update(r.gate.value for r in evaluation.protectors)
+            spared_by.update(r.gate.value for r in judged.evaluation.protectors)
         else:
             abstained += 1
             if was_condemned:
@@ -1737,6 +1768,11 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
         # exactly the plausible wrong answer this route promises to refuse.
         if _has_blocked_protections(row.explanation_json):
             abstained += 1
+            # A stored condemn cannot also carry a blocking protection (decide_verdict
+            # abstains on one), so this only fires for a row whose explanation is
+            # unreadable -- and if that row was condemned, it genuinely is not any more.
+            if was_condemned:
+                gone += 1
             continue
 
         now_condemned = (
@@ -1793,28 +1829,49 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
 def _fired_gates(explanation_json: str) -> list[str]:
     """The gates that fired in one stored explanation, for the spared-by tally.
 
-    Defensive like ``_primary_reason``: an unreadable explanation contributes nothing
-    rather than failing the whole simulation.
+    Parsed by ``_decode_explanation`` and read through ``_entries``, the same two guards
+    every display extractor above goes through. It used to guard only the ``json.loads``
+    and then call ``.get`` on whatever came back, so a stored top level that is a list, a
+    null or a number raised an AttributeError out of the whole simulation -- one legacy row
+    500-ing the policy editor's live preview on every drag of a threshold.
+
+    The unreadable fallback is an EMPTY tally, and here that is the cautious direction: the
+    caller has already counted the row in ``protected`` before asking this, so losing the
+    attribution under-credits the "what saved these" list and can never move an item toward
+    deletion. ``_has_blocked_protections`` reads the opposite way for exactly that reason.
     """
-    try:
-        exp = json.loads(explanation_json)
-    except (ValueError, TypeError):
+    exp = _decode_explanation(explanation_json)
+    if exp is None:
         return []
-    return [str(entry["gate"]) for entry in exp.get("protections_fired") or [] if "gate" in entry]
+    return [str(entry["gate"]) for entry in _entries(exp, "protections_fired") if entry.get("gate")]
 
 
 def _has_blocked_protections(explanation_json: str) -> bool:
     """Did this row store any protection that could not be checked?
 
-    Read from the stored explanation's ``protections_unknown`` block -- the same record
-    the why-panel renders amber -- and defensive like ``_fired_gates``: an unreadable
-    explanation reads as unblocked rather than failing the simulation.
+    Read from the stored explanation's ``protections_unknown`` block, the same record the
+    why-panel renders amber, and parsed by ``_decode_explanation`` so a stored top level
+    that is a list, a null or a number degrades instead of raising out of the simulation.
+
+    The unreadable fallback HOLDS the row (rule 96). This answer is the only thing standing
+    between a row and a score-based condemn in the loop below, so reading an explanation we
+    could not parse as "nothing was blocking" would turn evidence we cannot see into
+    evidence that nothing was wrong, and preview a deletion the scan would refuse. Present
+    but unreadable is blocked; genuinely absent stays permissive, since a readable
+    explanation with no ``protections_unknown`` (or an empty one) is a scan that looked and
+    found nothing holding the item.
+
+    ``_entries`` is deliberately not used to read the list: it drops entries that are not
+    objects, which would read a malformed block as an empty one -- the permissive
+    direction. Any entry at all holds, readable or not.
     """
-    try:
-        exp = json.loads(explanation_json)
-    except (ValueError, TypeError):
+    exp = _decode_explanation(explanation_json)
+    if exp is None:
+        return True
+    unknown = exp.get("protections_unknown")
+    if unknown is None:
         return False
-    return bool(exp.get("protections_unknown"))
+    return bool(unknown) if isinstance(unknown, list) else True
 
 
 # ---------------------------------------------------------------------------

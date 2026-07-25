@@ -97,8 +97,15 @@ def _adds_signals(explanation_json: str) -> set[str]:
 
     A signal "adds" when it contributed pressure. Rows frozen since the ``state`` field
     shipped carry it explicitly; older rows fall back to a positive contribution, which is
-    the same fact. Defensive like ``_fired_gates`` in routes: an unreadable explanation
-    contributes nothing rather than failing the whole breakdown.
+    the same fact.
+
+    Guarded at all four layers a stored explanation can be corrupt at (rule 96): the parse,
+    the top-level shape, each entry's shape, and the contribution value itself, which is
+    read as a number or not at all -- ``float("")`` on a hand-edited row raises a ValueError
+    the same way the parse does. An unreadable explanation contributes nothing rather than
+    failing the whole breakdown, and empty is the cautious reading here: this tally only
+    explains rows the planner has ALREADY put on the removal list, so a missing entry
+    under-explains a removal and can never cause one.
     """
     try:
         exp = json.loads(explanation_json)
@@ -111,7 +118,10 @@ def _adds_signals(explanation_json: str) -> set[str]:
         if not isinstance(entry, dict) or "id" not in entry:
             continue
         state = entry.get("state")
-        adds = state == "adds" or (state is None and float(entry.get("contribution") or 0) > 0)
+        contribution = entry.get("contribution")
+        adds = state == "adds" or (
+            state is None and isinstance(contribution, int | float) and contribution > 0
+        )
         if adds:
             out.add(str(entry["id"]))
     return out

@@ -246,12 +246,21 @@ class TestTheExtractorsThemselves:
         assert exp is not None
         assert _primary_reason(exp, "protect") is None
 
-    def test_a_non_dict_match_reads_as_no_match_status(self) -> None:
+    def test_a_non_dict_match_says_it_could_not_be_read(self) -> None:
+        """A match block that is THERE but unreadable holds a hand reap
+        (``condemned.match_state``), so the card has to say that, not something else.
+
+        It used to fall through to "Scored below your threshold" -- a confident sentence
+        asserting the opposite of the decision in force on the very same row: the queue
+        said the item merely scored low while the reap-override read was holding it as a
+        bad match (rule 61).
+        """
         exp = _decode_explanation(MALFORMED["radarr:1:6"])
         assert exp is not None
-        # Not "unmatched", not "ambiguous", and above all not an AttributeError: it falls
-        # through to the ordinary below-threshold line.
-        assert _primary_reason(exp, "abstain") == "Scored below your threshold."
+        reason = _primary_reason(exp, "abstain")
+        assert reason == "Kept to be safe: Reaper couldn't read what this matched in Plex."
+        # Still not an AttributeError, and still not claiming a status Plex reported.
+        assert "threshold" not in (reason or "")
 
     def test_a_signals_block_that_is_not_a_list_hides_the_pill(self) -> None:
         exp = _decode_explanation(json.dumps({"signals": "nope"}))
