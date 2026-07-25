@@ -539,3 +539,95 @@ extend the rules above; where one sharpens an earlier rule (52 → 6/29, 53 → 
 69. **The icon link the app rewrites at runtime is declared last in `index.html`.** Static
     fallback icons precede the dynamic one; adding an icon link after `#favicon` is a
     blocker (B-11).
+
+## Blockers from the fourth review pass
+
+Direct constraints from the fourth diff review (dev @ `cea72d1`, 2026-07-23; its 36 findings
+are remediated, and the review itself is preserved in this file's git history at `a7d7659`).
+Written as blockers, not suggestions; where one sharpens an earlier rule (70 → 23, 71 → 4/50,
+72 → 56/64, 74 → 27, 75 → 12, 77 → 61, 79 → 64, 82 → 24/28, 83 → 14, 86 → 21/53), the newer,
+more specific obligation governs.
+
+70. **Time-bounded state has exactly one durable realization point, shipped with the
+    feature.** Any stored decision that expires (a timed spare, a deadline, a TTL) must be
+    realized by code that WRITES the transition — an in-memory filter at read time is not
+    a realization — and every live consumer must converge after it. A docstring saying
+    "the next scan realizes it" requires the scan to actually persist that realization in
+    the same change; shipping the read half without the write half is a blocker (B-1;
+    extends rule 23: "expired" is a stored verdict state every consumer must handle).
+71. **Clearing a protective override always restarts the grace clock.** When an override
+    that kept an item off the reap list is removed, the FirstFlagged row is deleted before
+    `record_first_flagged_bulk` runs, unconditionally — never trust `last_seen_condemned_at`
+    continuity across a period when the item was invisible to the operator (B-2; sharpens
+    rules 4/50).
+72. **A hardening fix lands on every twin of the fixed function in the same change.**
+    Before closing a fix to a copied pattern (paging loops, section resolution, error
+    mapping), grep for the pattern's siblings and fix or explicitly defer each in writing;
+    "when next touched" deferrals are honored the moment ANY commit touches the twin, not
+    only when someone remembers (B-3, I-1; sharpens rules 56/64).
+73. **A password-gated destructive confirm is content-bound.** The confirm request carries
+    a server-verified token derived from the exact content the operator reviewed
+    (recomputed or stored server-side at stage time), and the action refuses if the
+    content changed since review. The execute route's phrase is the model; any new
+    stage-review-confirm flow (restore, import, bulk apply) must carry the same binding
+    (S-1).
+74. **A gate on an uploaded or restored artifact validates the artifact, never its
+    manifest.** Any property a safety check depends on (schema revision, version, counts)
+    is read from the artifact itself; a manifest or header claim may be cross-checked but
+    never trusted alone (S-2; extends rule 27's spirit to imports).
+75. **Restoring or importing an auth-bearing database is a credential change.** Purge
+    session rows, recovery tokens, and pending logins in the staged data at arm time, in
+    the same function that forces deletion off (S-3; extends rule 12).
+76. **Provenance and self-sufficiency fields derive from runtime precedence, not file
+    existence.** Anything reporting where a key/credential comes from or whether an
+    artifact is self-contained must consult the same resolution order the runtime uses
+    (`resolve_secret_key` precedence), never a bare `is_file()` (B-4).
+77. **Backend reporting surfaces consult effective overrides.** Any service that
+    summarizes items as removable/reclaimable/kept (Scales, breakdowns, exports) merges
+    live override state the same way the review routes do, or its copy explicitly states
+    it shows scan verdicts only (B-5; extends rule 61 from frontend prose to backend
+    aggregation).
+78. **Attribution honors the request's scope.** When a request carries a season (or any
+    partial) scope, per-person figures bind only the scoped subset; whole-title binding is
+    allowed only for unscoped requests or with the granularity stated in the copy beside
+    the number (B-6).
+79. **A cache-invalidation helper that claims completeness is grep-verified against every
+    query key, and a detail panel keyed on a row id is closed or re-resolved when its
+    snapshot is replaced.** Invalidation alone is insufficient when the key itself points
+    at superseded data (B-7; sharpens rule 64).
+80. **Every close affordance runs the modal's close guard.** Browser Back, gestures, and
+    any new dismissal path must honor the same `canClose` the scrim/Escape/✕ honor; a
+    back-layer close that bypasses a declared guard is a blocker (B-11; extends rule 60's
+    spirit to the history layer).
+81. **A baseline edit — even one reverted within hours — obligates a guarded migration.**
+    If the frozen baseline was ever wrong in a merged commit, every additive migration
+    covering that window carries the heal migration's reflection guard so in-window
+    databases upgrade instead of boot-looping. Never edit the baseline, and when the rule
+    is broken anyway, the follow-up is guarded, not plain (B-8; extends the frozen-
+    baseline golden rule).
+82. **A persistent sink degrades loudly, once.** Any always-on writer (log file mirror,
+    export stream) that can fail after setup carries a one-shot degradation flag surfaced
+    where its output is consumed; a bare `suppress(Exception)` around a steady-state write
+    whose output is documented as an audit trail is a blocker (PR-2; extends rules 24/28
+    to infrastructure sinks).
+83. **Owner-only-from-creation applies to every copy of a secret and to decision-trail
+    dirs.** Restored/extracted key material and newly created log directories get 0600 /
+    0700 at creation, not after a later chmod window (S-4, S-6; extends rule 14 beyond
+    first creation).
+84. **Operator-supplied URLs validate scheme http/https at the API edge, everywhere, via
+    one shared check.** Any new URL-shaped setting reuses the same validator the sibling
+    fields use; a `type="url"` input is not validation (S-5; extends rule 13's boundary
+    discipline).
+85. **Success copy fires on settled state.** A toast, timestamp, or "done" indicator is
+    set only after the operation it describes has actually completed (refetch settled,
+    final chunk streamed) — never at issuance (PR-5, I-2; extends rule 21's honesty to
+    timing).
+86. **Copy describing a clock, zone, or schedule renders the effective stored setting.**
+    Any help text that tells the operator what time base applies must read the setting
+    that governs it, not a static guess about the deployment (U-1; sharpens rules 53/55
+    for time).
+87. **A guarded startup replay is mirrored on every runtime replay of the same data.**
+    When startup wraps a stored-value replay in a tolerant guard (malformed cron, bad
+    zone), every settings-save or reschedule path replaying the same stored values carries
+    the same guard, so a save can never 500-and-half-apply what boot survives (PR-4;
+    extends rule 55's side-entrance principle in the other direction).

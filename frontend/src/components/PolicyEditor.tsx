@@ -705,7 +705,11 @@ function coerceValue(field: VocabField, raw: string): number | string | boolean 
   if (field.type === "bool") return raw === "true";
   if (field.type === "rating_tenths") return Math.round(Number(raw) * 10);
   if (field.type === "bytes") return Math.round(Number(raw) * 1e9);
-  if (field.type === "text") return raw;
+  // Trimmed, so a typed space cannot compose a rule that matches everything: "contains"
+  // with an empty target is true for every title that has the field at all. The server
+  // refuses it too (engine/fields.py Condition._validate_value_type); this keeps the UI
+  // from offering it in the first place.
+  if (field.type === "text") return raw.trim();
   return Math.round(Number(raw));
 }
 
@@ -1079,7 +1083,7 @@ function RemoveRulesEditor({
             <button
               className="ghost sm"
               onClick={add}
-              disabled={!isRamp && field.type !== "bool" && rValue === ""}
+              disabled={!isRamp && field.type !== "bool" && rValue.trim() === ""}
             >
               Add rule
             </button>
@@ -1271,7 +1275,7 @@ function KeepRulesEditor({
                 <button
                   className="ghost sm"
                   onClick={addHard}
-                  disabled={hardField.type !== "bool" && hValue === ""}
+                  disabled={hardField.type !== "bool" && hValue.trim() === ""}
                 >
                   Add rule
                 </button>
@@ -1502,6 +1506,7 @@ export function PolicyEditor({
     (f) => f.startsWith("gates."),
     (f) => f === "keep_rating_rules",
     (f) => f === "keep_last_seasons" || f === "keep_last_scope",
+    (f) => f === "signals",
     (f) => f === "custom_condemn",
     (f) => f === "graded_keeps",
     (f) => f === "max_unmeasured_per_run",
@@ -1560,19 +1565,22 @@ export function PolicyEditor({
     },
   });
 
-  // BOTH load-time recoveries force dirty, because in either case what is on screen is not
-  // what is stored and the savebar has to offer the Save that replaces it. The two are
+  // EVERY load-time recovery forces dirty, because in each case what is on screen is not
+  // what is stored and the savebar has to offer the Save that replaces it. The three are
   // mutually exclusive server-side (services/profiles.py active_policy): `needs_save` is an
   // old policy rescaled to the 100-point budget, `fell_back` is a body that could not be
-  // read at all, so this shows the shipped default instead. Missing the second one left the
-  // only way out of the fallback behind a gate that never opened. Discard cannot clear
-  // either, which is right: there is no stored body to go back to that this build can load.
+  // read at all, so this shows the shipped default instead, and `rating_rules_restored` is
+  // a rating bar put back after it stopped keeping anything. Missing the second one left
+  // the only way out of the fallback behind a gate that never opened. Discard cannot clear
+  // any of them, which is right: there is no stored body to go back to that this build can
+  // load, or (for the restored bar) none that still protects what the operator set.
   const dirty = useMemo(
     () =>
       draft !== null &&
       saved !== undefined &&
       (Boolean(saved.needs_save) ||
         Boolean(saved.fell_back) ||
+        Boolean(saved.rating_rules_restored) ||
         JSON.stringify(draft) !== JSON.stringify(saved.body)),
     [draft, saved],
   );
@@ -1768,6 +1776,12 @@ export function PolicyEditor({
             replace it.
           </div>
         )}
+        {saved?.rating_rules_restored && (
+          <div className="notice notice-warn">
+            Keep well-rated titles had stopped keeping anything. Your saved rating is back
+            below, unsaved. Reaper won't remove anything until you check it and save.
+          </div>
+        )}
         {pendingSwitch !== null && (
           <div className="notice notice-warn">
             You have unsaved {kind} policy changes. Switching to{" "}
@@ -1926,6 +1940,7 @@ export function PolicyEditor({
             />
           ))}
         </ul>
+        <WarnBlock warnings={warningsFor((f) => f === "signals")} />
 
         <RemoveRulesEditor
           condemn={draft.custom_condemn}

@@ -467,12 +467,26 @@ class RunReportOut(BaseModel):
     which (if any) failed."""
 
 
+#: A media_key's storage bound (``ActionStep.media_key`` / ``WhitelistEntry.media_key`` are
+#: ``String(100)``), applied at the edge so an over-long key is a 422 rather than something
+#: that reaches a plan build or a whitelist query first. A real key is well under it:
+#: ``sonarr:<instance>:<series>:<season>``.
+_MAX_MEDIA_KEY = 100
+
+#: The most items one "reap selected" request may name. Far above any real selection -- a
+#: first big cleanup is hundreds, not thousands -- and low enough that a leaked API key
+#: cannot push a multi-megabyte list into a plan build and the whitelist queries under it.
+#: The whole condemned set is requested by OMITTING the field, so this never truncates a
+#: legitimate "reap everything".
+_MAX_SELECTED_ITEMS = 5000
+
+
 class CreateRunIn(BaseModel):
     """Optional body for building a plan. Omit for a plan over the whole condemned set;
     pass ``media_keys`` to reap just those items -- the safe path for a first, single,
     hand-picked deletion, and the future 'reap selected' action."""
 
-    media_keys: list[str] | None = None
+    media_keys: list[str] | None = Field(default=None, max_length=_MAX_SELECTED_ITEMS)
 
 
 class ExecuteRunIn(BaseModel):
@@ -573,9 +587,18 @@ class PolicyOut(BaseModel):
 
     Louder than ``needs_save``: these are numbers the operator never chose.
 
-    Both flags are fields rather than ``warnings`` entries on purpose. The editor builds
-    its warning list by re-validating the *draft*, so anything attached to this response
-    is never read -- a load-time warning put there is silently dropped."""
+    All three recovery flags are fields rather than ``warnings`` entries on purpose. The
+    editor builds its warning list by re-validating the *draft*, so anything attached to
+    this response is never read -- a load-time warning put there is silently dropped."""
+
+    rating_rules_restored: bool = False
+    """The rating bar was restored from an older saved setting
+    (``policy.recover_rating_rules``), so this body is NOT what is stored.
+
+    Its own flag, not ``needs_save``, because the two recoveries read completely
+    differently to an operator: one moved their points into new units, this one put back a
+    protection that had stopped keeping anything. The editor opens on it dirty and says
+    which."""
     warnings: list[PolicyWarningOut]
     """Things that are legal but probably not what you meant. A validator cannot tell
     an IMDb floor of 96 (meaning 9.6) from a Rotten Tomatoes 96 typed into the wrong
@@ -890,7 +913,7 @@ class SpareIn(BaseModel):
     """Spare an item. The title is looked up server-side from the latest snapshot, so
     the client sends only what identifies the file and, optionally, why."""
 
-    media_key: str
+    media_key: str = Field(max_length=_MAX_MEDIA_KEY)
     note: str | None = Field(default=None, max_length=500)
     spare_days: int = Field(default=0, ge=0, le=_MAX_SPARE_DAYS)
     """How long to keep it: ``0`` (default) keeps it forever, a positive count keeps it that
@@ -904,7 +927,7 @@ class OverrideIn(BaseModel):
     only the identity, the decision, and optionally a note. A ``media_key`` may be a whole
     show's, in which case the decision applies to every one of its seasons."""
 
-    media_key: str
+    media_key: str = Field(max_length=_MAX_MEDIA_KEY)
     decision: Literal["spare", "reap"]
     note: str | None = Field(default=None, max_length=500)
     spare_days: int = Field(default=0, ge=0, le=_MAX_SPARE_DAYS)

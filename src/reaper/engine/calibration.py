@@ -1,6 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """Deriving the rewatch prior from *this* server's own history.
 
+**Engine-complete, not yet reachable.** :func:`derive` has no production caller: only
+``engine.backtest`` imports it, and nothing routes, schedules or CLIs a backtest. So no
+number an operator sees today comes from here, and no gate threshold is fitted by it --
+``MinDormancyGate`` enforces the operator's own stored number, and the backtest falls
+back to ``backtest.FALLBACK_REWATCH_PRIOR``. Nothing operator-facing may claim otherwise
+until :func:`derive` is wired (rule 24). This note mirrors the one at the top of
+``engine.backtest``, which was written and this module then went without.
+
 The prior -- "how likely is a film dormant for N days to be watched again this year" --
 is the baseline the scorer must beat. It is **not a constant**, and shipping it as one
 is a bug: every library has its own rhythm. A household of three has a different curve

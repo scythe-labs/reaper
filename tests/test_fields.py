@@ -43,7 +43,6 @@ def _facts(**overrides: object) -> Facts:
         "is_managed": Known(value=True, source="radarr"),
         "in_curated_list": Absent(source="lists"),
         "is_whitelisted": Known(value=False, source="plex"),
-        "others_watching": Absent(source="tautulli"),
     }
     return Facts(**{**base, **overrides})  # type: ignore[arg-type]
 

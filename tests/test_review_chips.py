@@ -87,16 +87,6 @@ class TestKeptChipWording:
                 "1 person watched it in the last 90 days",
             ),
             ("server_popularity", "some future wording", "people here still watch it"),
-            (
-                "others_watching",
-                "1 other person is watching it. Removing it would punish them",
-                "someone else is watching it",
-            ),
-            (
-                "others_watching",
-                "3 other people are watching it. Removing it would punish them",
-                "3 others are watching it",
-            ),
             ("curated_list", "on a protected list: A Curated List", "on a protected list"),
             (
                 "min_dormancy",

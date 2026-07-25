@@ -39,7 +39,6 @@ _OBS_FIELDS: tuple[str, ...] = (
     "is_managed",
     "in_curated_list",
     "is_whitelisted",
-    "others_watching",
     "requested",
     "genres",
     "release_age_days",

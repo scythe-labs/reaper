@@ -24,6 +24,7 @@ from reaper.db.models import Policy as PolicyModel
 from reaper.db.models import Profile
 from reaper.db.session import create_engine, create_session_factory
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY, ProfileSettings
+from reaper.ratings import RatingSource
 from reaper.services.profiles import (
     active_policy,
     active_profile,
@@ -246,6 +247,48 @@ class TestACorruptPolicyBodyNeverRaises:
         assert active.rescaled is True
         assert active.name == "stored"
         assert sum(s.weight for s in active.body.signals) == 100
+
+    async def test_a_lost_rating_bar_is_restored_and_flagged(self, session: AsyncSession) -> None:
+        """The one recovery that runs on a body which validates PERFECTLY WELL.
+
+        A body written before the rating bar moved off the gate row loads clean and keeps
+        nothing, so validation cannot see the loss. It is restored, and flagged: restoring
+        it changes what the scan decides, so the run degrades until the operator saves.
+        """
+        legacy = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+        del legacy["keep_rating_rules"]
+        for gate in legacy["gates"]:
+            if gate["gate"] == "rating_floor":
+                gate["enabled"], gate["threshold"], gate["secondary"] = True, 75, 1000
+
+        await _store_policy(session, json.dumps(legacy))
+
+        active = await active_policy(session, "movie")
+
+        assert active.rating_rules_recovered is True
+        assert active.repaired is True  # the scan degrades on it
+        assert active.rescaled is False and active.fell_back is False
+        assert active.name == "stored"
+        assert [(r.source, r.floor, r.min_votes) for r in active.body.keep_rating_rules] == [
+            (RatingSource.IMDB, 75, 1000)
+        ]
+
+    async def test_a_deliberately_empty_rating_bar_is_left_alone(
+        self, session: AsyncSession
+    ) -> None:
+        """An explicit empty list is an operator who cleared their bars, not a lost one
+        (rule 1: omitted is not the same as explicitly empty). Restoring it would put back a
+        protection they deliberately removed, and degrade every scan telling them so."""
+        stored = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+        stored["keep_rating_rules"] = []
+
+        await _store_policy(session, json.dumps(stored))
+
+        active = await active_policy(session, "movie")
+
+        assert active.rating_rules_recovered is False
+        assert active.repaired is False
+        assert active.body.keep_rating_rules == ()
 
 
 class TestInvariantsHoldThroughTheService:

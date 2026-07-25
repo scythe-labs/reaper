@@ -75,10 +75,13 @@ class Regret:
     score: float
 
 
-# A FALLBACK ONLY. The real prior is DERIVED from the owner's own history at scan
-# time -- see reaper.engine.calibration. These figures are what this one library
-# happened to show, and a different library will have a different curve: a household
-# of three has nothing in common with a server used by a hundred people.
+# THE ONLY PRIOR ANYTHING ACTUALLY USES TODAY. reaper.engine.calibration.derive can
+# compute one from the owner's own history, and should, but it has no production caller
+# (only this module imports it, and nothing calls this module) -- so a backtest run from
+# a test or a REPL is measured against these figures unless the caller passes its own.
+# They are what one real library happened to show, and a different library will have a
+# different curve: a household of three has nothing in common with a server used by a
+# hundred people.
 #
 # They are retained so the engine has a shape to reason about in tests and in the
 # absence of history, and NOT because they are meaningful anywhere else.
@@ -383,7 +386,6 @@ def facts_as_of(
         is_whitelisted=Known(value=item.is_whitelisted, source="plex"),
         # Not applicable outside the requester rule: with no requester, "others" is
         # everyone, and the gate would protect anything ever played.
-        others_watching=Absent(source="backtest"),
         # The custom-rule fields, spelled out rather than left to their defaults: every
         # builder names every field, so adding one cannot silently change scores here.
         # The historical reconstruction carries none of them -- the dataset is the movie

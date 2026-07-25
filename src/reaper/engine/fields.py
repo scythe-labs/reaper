@@ -447,6 +447,12 @@ REGISTRY: tuple[FieldSpec, ...] = (
         type=FieldType.DAYS,
         unit_suffix="days",
         lanes=(Lane.CONDEMN, Lane.PROTECT),
+        # Movie-only, because ``season_scan.build_season_facts`` has no clean per-season
+        # release date and writes Absent for every season. Offering it on a TV policy sold
+        # a protection that could never keep anything, and a TV *condemn* rule on it was
+        # worse than inert: removal weights total exactly 100 over a fixed denominator, so
+        # a rule that never fires permanently removes its points from every TV score.
+        media_types=("movie",),
         ops=NUMERIC_OPS,
         read=lambda f: f.release_age_days,
         value_phrase="Released {} ago",
@@ -461,6 +467,9 @@ REGISTRY: tuple[FieldSpec, ...] = (
         ),
         type=FieldType.TEXT,
         lanes=(Lane.CONDEMN, Lane.PROTECT),
+        # Movie-only for the same reason as ``release_age``: a season mixes episode
+        # qualities, so ``build_season_facts`` writes Absent for every season.
+        media_types=("movie",),
         ops=TEXT_OPS,
         read=lambda f: f.quality,
     ),
@@ -547,6 +556,16 @@ class Condition:
         honest failure. It also closes the quieter half: ``in``/``contains`` with a
         non-text value can never match, so a protection the owner believes exists
         would silently do nothing.
+
+        An empty or whitespace-only text value is refused for the same reason, and it is
+        the more dangerous of the two. ``contains ""`` is ``"" in anything`` -- True for
+        every item whose text fact is Known -- so a removal rule written that way adds its
+        full weight to the ENTIRE library and renders as the unfinished sentence "Genre
+        contains ". A single space is the same rule wherever the text holds a space. The
+        mirror on the protect lane is quiet instead of loud: ``in ""`` splits to no
+        elements, so it can never match and the protection reads green forever. Both are
+        refused here, at the save boundary, so a stored policy cannot carry a rule that
+        matches everything or nothing.
         """
         value = self.value
         if spec.type is FieldType.BOOL:
@@ -555,6 +574,12 @@ class Condition:
         elif spec.type is FieldType.TEXT:
             if not isinstance(value, str):
                 raise ValueError(f'"{spec.label}" expects text, got {value}.')
+            if not value.strip():
+                raise ValueError(f'"{spec.label}" needs a value.')
+            if self.op is Op.IN and not _split_csv(value):
+                # A comma-only list ("," / " , ") survives the strip above but splits to
+                # nothing, which is the same never-matches protection by another spelling.
+                raise ValueError(f'"{spec.label}" needs at least one value to match.')
         # Numeric field types (days, bytes, count, rating tenths). bool is an int
         # subclass in Python, so it must be rejected explicitly.
         elif isinstance(value, bool) or not isinstance(value, int):

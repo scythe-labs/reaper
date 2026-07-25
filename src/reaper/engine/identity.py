@@ -69,7 +69,11 @@ regional titles). The ladder, top to bottom:
    name or size on either side included) **abstains**, exactly as
    ``season_scan.resolve_season_keys`` drops both rows on a duplicate season number.
 2. **File basename** -- the file's (movie) or folder's (show) name, compared across the
-   mount-root difference Plex and the *arr disagree on.
+   mount-root difference Plex and the *arr disagree on. With no id bound it binds on its
+   own; with one bound it still speaks, as a cross-check the id has to agree with -- the
+   row carrying the *arr's own file name is evidence about which row holds that file, so
+   an id pointing somewhere else is a contradiction, not a tiebreak (only a name naming
+   exactly one listing; several is the merged-twins shape tier 1 already narrowed).
 3. **Title + year** -- the original fail-closed rule, kept verbatim as the backstop.
 
 The reconcile is the load-bearing rule: a title *not resolving* is **silence**, and an id
@@ -85,7 +89,7 @@ from __future__ import annotations
 
 import enum
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Container, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -693,12 +697,10 @@ def _twin_group(
     """
     if file_size is None:
         return ()
-    twins = [
-        rk
-        for rk in matched
-        if _plex_size_of(rk, basename, index) is not None
-        and _plex_size_of(rk, basename, index) == file_size
-    ]
+    # One size read per candidate: each call re-scans that listing's whole file list. An
+    # unknown size is None here, and file_size is not (the guard above), so the equality
+    # test alone carries the "Plex reported a size" half of the qualifying test.
+    twins = [rk for rk in matched if _plex_size_of(rk, basename, index) == file_size]
     return tuple(twins) if len(twins) >= 2 else ()
 
 
@@ -1032,8 +1034,20 @@ def _earliest_listed(rating_keys: Sequence[int], index: PlexIndex) -> int:
     return min(rating_keys, key=sort_key)
 
 
-_MOVIE_ID_PRIORITY: tuple[str, ...] = ("tmdb", "imdb")
-_SHOW_ID_PRIORITY: tuple[str, ...] = ("tvdb",)
+# The id kinds each media type consults, in order, and which of them may ORIGINATE a bind.
+# A movie trusts either of its ids to bind: Radarr is tmdb-native, but an imdb-only library
+# is ordinary, and both kinds cross-check whichever bound first. A show consults imdb too,
+# but only as a CROSS-CHECK -- Sonarr's primary key is tvdb, and letting imdb bind on its
+# own would create *new* binds (new deletable shows) where today there is an abstain, which
+# is the wrong direction. As a cross-check it can only ever add abstains: a stale tvdb id
+# naming a different Plex show now contradicts the imdb id both sides carry, and the series
+# is kept. The diagnostics helpers take the same tuples (:func:`candidate_libraries`,
+# :func:`libraries_for_ids`), so the libraries an operator is shown are the ones the
+# resolver actually looked at.
+MOVIE_ID_PRIORITY: tuple[str, ...] = ("tmdb", "imdb")
+SHOW_ID_PRIORITY: tuple[str, ...] = ("tvdb", "imdb")
+_MOVIE_BINDING_IDS: frozenset[str] = frozenset(MOVIE_ID_PRIORITY)
+_SHOW_BINDING_IDS: frozenset[str] = frozenset({"tvdb"})
 
 
 def resolve(
@@ -1049,12 +1063,15 @@ def resolve(
     plex_library: str | None = None,
     index: PlexIndex,
     id_priority: Sequence[str],
+    binding_ids: Container[str],
 ) -> Resolution:
     """Bind one *arr item to its Plex rating key, failing closed on every ambiguity.
 
     See the module docstring for the ladder and the contradiction veto. ``id_priority`` is
-    the order external ids are tried (movies: tmdb then imdb; shows: tvdb) -- callers use
-    :func:`resolve_movie` / :func:`resolve_show` so they cannot pass the wrong order.
+    the order external ids are tried (movies: tmdb then imdb; shows: tvdb then imdb) and
+    ``binding_ids`` is which of them may *originate* a bind rather than only cross-check
+    one (shows: tvdb alone) -- callers use :func:`resolve_movie` / :func:`resolve_show` so
+    they cannot pass the wrong pair.
     ``file_size`` is the exact byte count the *arr records for its file (movies only;
     a show is bound by its folder, which has no size) and is consulted only when the file
     name alone cannot narrow an ambiguous id. ``file_path`` is that file or folder's full
@@ -1081,6 +1098,12 @@ def resolve(
         hits = index._by_id(kind).get(value, [])
         if not hits:
             # This id kind names nothing in Plex -> consult the next kind.
+            continue
+
+        if tier1 is None and kind not in binding_ids:
+            # A cross-check-only kind with nothing yet to check. It may never originate a
+            # bind of its own (that would make items deletable this ladder keeps today),
+            # so it stands down and the weaker tiers decide, exactly as before.
             continue
 
         if tier1 is not None:
@@ -1153,13 +1176,20 @@ def resolve(
             tier1_kind = kind
             # Keep going: the remaining kinds cross-check this bind.
 
-    # -- Tier 2: file basename (only if no id bound) -------------------------
+    # -- Tier 2: file basename -----------------------------------------------
+    # With no id bound this tier binds or abstains on its own. With an id bound it is a
+    # CROSS-CHECK, exactly like a second id kind and like tier 3: the listing whose file
+    # name is the *arr's own file is strong evidence about which row holds that file, so
+    # an id that resolved somewhere else is a positive contradiction and abstains. Only a
+    # name naming exactly ONE listing speaks here -- a name naming several is silence,
+    # because a shared id whose listings share a file name is the merged-twins shape tier
+    # 1 has already narrowed (and re-deciding it here would undo that narrowing).
     tier2: int | None = None
-    if tier1 is None and basename is not None:
+    if basename is not None:
         hits = index.by_basename.get(basename, [])
         if len(hits) == 1:
             tier2 = hits[0]
-        elif len(hits) >= 2:
+        elif len(hits) >= 2 and tier1 is None:
             return Resolution.abstain(
                 f"Kept: file name {basename!r} names {len(hits)} Plex items (ambiguous)"
             )
@@ -1173,6 +1203,9 @@ def resolve(
         # The title resolved to another listing of the very file the merged bind covers.
         # That is agreement with the group, not a contradiction with its canonical key.
         tier3 = tier1_rk
+    if tier1 is not None and tier2 in tier1[3]:
+        # Same for the file name: a listing inside the merged group is that group.
+        tier2 = tier1_rk
     resolved = {rk for rk in (tier1_rk, tier2, tier3) if rk is not None}
     if len(resolved) >= 2:
         parts: list[str] = []
@@ -1242,7 +1275,8 @@ def resolve_movie(
         # Radarr writes <root>/<Title>/<file>: two segments below the root.
         arr_layout_depth=2,
         index=index,
-        id_priority=_MOVIE_ID_PRIORITY,
+        id_priority=MOVIE_ID_PRIORITY,
+        binding_ids=_MOVIE_BINDING_IDS,
     )
 
 
@@ -1257,7 +1291,13 @@ def resolve_show(
     plex_library: str | None = None,
     index: PlexIndex,
 ) -> Resolution:
-    """Bind a show: id priority tvdb (Sonarr's primary key).
+    """Bind a show by tvdb (Sonarr's primary key), cross-checked by imdb.
+
+    Only tvdb may bind a show. An imdb id both sides carry is consulted after it, purely to
+    veto: a stale or mis-matched tvdb id naming some *other* Plex show contradicts the imdb
+    id, and the series is kept rather than judged on a stranger's watch history. Letting
+    imdb bind on its own would instead make shows deletable that abstain today, so it never
+    does (see :data:`SHOW_ID_PRIORITY`).
 
     No ``file_size``: a show is bound by its folder, and a folder has no one size -- so
     two same-name folder listings under one id can never be told apart by size, and never
@@ -1293,5 +1333,6 @@ def resolve_show(
         # the path.
         arr_layout_depth=1,
         index=index,
-        id_priority=_SHOW_ID_PRIORITY,
+        id_priority=SHOW_ID_PRIORITY,
+        binding_ids=_SHOW_BINDING_IDS,
     )

@@ -266,9 +266,7 @@ class TestEffectiveCondemned:
                     session, media_key=key, title="t", decision="reap", note=None
                 )
 
-            run = await build_plan(
-                session, snapshot_id=snap, policy_hash="p" * 64, approved_by="test"
-            )
+            run = await build_plan(session, snapshot_id=snap, approved_by="test")
             await session.flush()
 
             planned_keys = {
@@ -287,7 +285,6 @@ class TestEffectiveCondemned:
                 await build_plan(
                     session,
                     snapshot_id=snap,
-                    policy_hash="p" * 64,
                     approved_by="test",
                     only_media_keys={"radarr:1:8"},
                 )

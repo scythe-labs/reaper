@@ -793,4 +793,16 @@ class ActionStep(Base):
     sent_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
     verified_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
 
+    file_removed_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
+    """When Reaper confirmed this step's file was really gone from disk -- recorded
+    separately from ``state`` because the two can disagree.
+
+    A movie deleted through Radarr whose import exclusion never appeared inside the poll
+    window ends FAILED: the verification genuinely did fail, and the state must keep saying
+    so. But the file IS gone and its bytes ARE reclaimed, so the rolling 30-day budget has
+    to charge it or a flaky *arr silently buys the operator unlimited deletions
+    (``Executor._rolling_30d_deletions`` counts VERIFIED **or** this, never both twice).
+    NULL on every row written before this column existed, which reads exactly as it did
+    then: only its VERIFIED state counts it."""
+
     run: Mapped[ReapRun] = relationship(back_populates="steps")

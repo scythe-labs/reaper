@@ -38,7 +38,6 @@ from reaper.engine.gates import (
     GateConfig,
     GateId,
     MinDormancyGate,
-    OthersWatchingGate,
     RatingFloorGate,
     ServerPopularityGate,
     StreamingNowGate,
@@ -101,7 +100,6 @@ GATE_TYPES: dict[GateId, type] = {
     GateId.WHITELISTED: WhitelistGate,
     GateId.STREAMING_NOW: StreamingNowGate,
     GateId.SERVER_POPULARITY: ServerPopularityGate,
-    GateId.OTHERS_WATCHING: OthersWatchingGate,
     GateId.CURATED_LIST: CuratedListGate,
     GateId.DATA_HORIZON: DataHorizonGate,
     GateId.UNMANAGED: UnmanagedGate,
@@ -560,11 +558,20 @@ async def _run_scan_locked(
         # execute against one nobody approved. Degrade, so the scan still produces a
         # viewable snapshot and the fix is one visit to the policy page.
         for label, active in (("movie", active_movie), ("tv", active_tv)):
-            if active.repaired:
-                pre_scan_degradations.append(
-                    f"your {label} policy needs saving again before anything can be removed: "
-                    "open the policy page, check the points, and save"
-                )
+            if not active.repaired:
+                continue
+            # Name the part that was recovered, so the operator checks the right thing: a
+            # rescale moved their points, the rating recovery put back a protection that
+            # had stopped keeping anything.
+            what = (
+                "check Keep well-rated titles"
+                if active.rating_rules_recovered
+                else "check the points"
+            )
+            pre_scan_degradations.append(
+                f"your {label} policy needs saving again before anything can be removed: "
+                f"open the policy page, {what}, and save"
+            )
 
         # Same reasoning for the profile's caps and grace: when the stored settings blob was
         # unreadable, the run is holding the shipped defaults, which can be LOOSER than what

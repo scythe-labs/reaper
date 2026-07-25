@@ -78,6 +78,18 @@ def _fixture_scoring_hash() -> str:
     return combine_hashes(movie.scoring_hash(), DEFAULT_TV_POLICY.scoring_hash())
 
 
+def _fixture_policy_hash() -> str:
+    """The POLICY hash of the same pair, for the same reason the scoring hash exists.
+
+    The executor refuses to run a plan whose policy hash is not the one in force -- an
+    operator who tightens their policy after approving a plan must not have it delete the
+    files they just protected -- so a fixture snapshot has to carry the hash of the policies
+    actually in force in that test app (no saved rows, so both defaults) or every dry run
+    against it is (correctly) refused as out of date.
+    """
+    return combine_hashes(DEFAULT_MOVIE_POLICY.policy_hash(), DEFAULT_TV_POLICY.policy_hash())
+
+
 def _explanation(score: float) -> str:
     return json.dumps(
         {
@@ -115,7 +127,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
     with Session(engine) as session:
         snapshot = Snapshot(
             created_at=now,
-            policy_hash="a" * 64,
+            policy_hash=_fixture_policy_hash(),
             scoring_hash=_fixture_scoring_hash(),
             horizon_at=now,
             item_count=4,
@@ -319,6 +331,29 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
 class TestTheRunsApi:
     """Building, reviewing and dry-running a plan through the API. Nothing deletes."""
 
+    def test_an_unbounded_selection_is_refused_at_the_edge(self, client: TestClient) -> None:
+        """``media_keys`` is the destructive path's list input, and it had no length bound at
+        all: an authenticated caller (or a leaked API key -- POST /api/runs is in the write
+        allow-list) could push an arbitrarily large list straight into a plan build and the
+        whitelist queries under it. Note the two are different requests: OMITTING the field
+        still means the whole condemned set, so the bound never truncates a real reap."""
+        refused = client.post("/api/runs", json={"media_keys": ["radarr:1:1"] * 5001})
+
+        assert refused.status_code == 422
+
+    def test_an_oversized_media_key_is_refused_at_the_edge(self, client: TestClient) -> None:
+        """The key columns are 100 characters. A multi-megabyte one is not a key; it is a
+        payload, and it should never reach a query."""
+        long_key = "radarr:1:" + "9" * 200
+
+        assert client.post("/api/whitelist", json={"media_key": long_key}).status_code == 422
+        assert (
+            client.post(
+                "/api/override", json={"media_key": long_key, "decision": "spare"}
+            ).status_code
+            == 422
+        )
+
     def test_a_plan_shows_the_literal_steps_and_the_confirmation_phrase(
         self, client: TestClient
     ) -> None:
@@ -386,7 +421,7 @@ def armed_client(tmp_path: Path) -> Iterator[TestClient]:
     with Session(engine) as session:
         snapshot = Snapshot(
             created_at=now,
-            policy_hash="a" * 64,
+            policy_hash=_fixture_policy_hash(),
             scoring_hash=_fixture_scoring_hash(),
             horizon_at=now,
             item_count=1,

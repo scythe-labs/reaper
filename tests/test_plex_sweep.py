@@ -97,6 +97,7 @@ class _FakeSection:
         # every item as its ``library``. Defaulted from the key so existing call sites need
         # not spell one out.
         self.title = title if title is not None else f"Section {key}"
+        self.locations: list[str] = []
 
 
 class _FakeLibrary:
@@ -352,3 +353,92 @@ class TestTwinsHardenedPaging:
         )
         keys = await _client_with(server).section_rating_keys(1, kind="movie")
         assert keys == {1, 2}
+
+
+class TestTheShelfReadsPageToo:
+    """B-4: the two collection reads were issued raw, one request, iterate what comes back.
+    Windowed by the server, each one fails a different way and neither says so."""
+
+    async def test_a_collection_past_the_first_window_is_still_found(self) -> None:
+        """Read unpaged, a shelf sitting past the first window reads as ABSENT, and the
+        caller then creates a SECOND "Leaving Soon" collection: the reconcile splits across
+        two shelves and neither one is right."""
+        page0 = (
+            '<MediaContainer size="1" totalSize="2">'
+            '<Directory ratingKey="10" title="Other"/>'
+            "</MediaContainer>"
+        )
+        page1 = (
+            '<MediaContainer size="1" totalSize="2">'
+            '<Directory ratingKey="11" title="Leaving Soon"/>'
+            "</MediaContainer>"
+        )
+        server = _FakeServer(
+            [_FakeSection(1, "movie")],
+            {
+                "/library/sections/1/collections?X-Plex-Container-Start=0": page0,
+                "/library/sections/1/collections?X-Plex-Container-Start=1": page1,
+            },
+        )
+
+        assert await _client_with(server).find_collection(1, "leaving soon") == 11
+
+    async def test_a_truncated_member_list_is_never_read_as_the_whole_shelf(self) -> None:
+        """The reconcile detaches ``current - wanted``, so a short read leaves titles marked
+        "Leaving Soon" long after they were reprieved."""
+        page0 = '<MediaContainer size="1" totalSize="2"><Video ratingKey="1"/></MediaContainer>'
+        page1 = '<MediaContainer size="1" totalSize="2"><Video ratingKey="2"/></MediaContainer>'
+        server = _FakeServer(
+            [_FakeSection(1, "movie")],
+            {
+                "/library/collections/9/children?X-Plex-Container-Start=0": page0,
+                "/library/collections/9/children?X-Plex-Container-Start=1": page1,
+            },
+        )
+
+        assert await _client_with(server).collection_children(9) == {1, 2}
+
+    async def test_an_unbounded_full_page_of_members_raises(self) -> None:
+        """The same fail-closed rule the sweeps run on: a full page with no ``totalSize``
+        cannot be told from a truncated one, so it is never guessed to be the last."""
+        rows = "".join(f'<Video ratingKey="{i}"/>' for i in range(SWEEP_PAGE_SIZE))
+        server = _FakeServer(
+            [_FakeSection(1, "movie")],
+            {"/library/collections/9/children": f"<MediaContainer>{rows}</MediaContainer>"},
+        )
+
+        with pytest.raises(PlexError):
+            await _client_with(server).collection_children(9)
+
+
+class TestSectionPaths:
+    """B-2/B2-2: the path table addresses sections by KEY, and its failures are PlexError."""
+
+    async def test_two_libraries_sharing_a_title_both_survive(self) -> None:
+        """Keyed by title, one of these silently overwrote the other -- and the dropped
+        library's post-reap refresh then mapped to nothing at all."""
+        hd, four_k = _FakeSection(1, "movie", "Movies"), _FakeSection(2, "movie", "Movies")
+        hd.locations, four_k.locations = ["/media/hd"], ["/media/4k"]
+
+        rows = await _client_with(_FakeServer([hd, four_k], {})).section_paths()
+
+        assert [(r.key, r.title, r.locations) for r in rows] == [
+            (1, "Movies", ("/media/hd",)),
+            (2, "Movies", ("/media/4k",)),
+        ]
+
+    async def test_a_failing_read_surfaces_as_plex_error(self) -> None:
+        """The only Plex read that did not map its failures. Plex can answer the connect
+        handshake and still fail this one path, and the raw exception escaped the executor's
+        ``except PlexError`` mid-run: the file already deleted, its journal step stuck at
+        SENT, the run stuck EXECUTING, and every remaining approved deletion never tried."""
+
+        class _Boom:
+            def sections(self) -> list[_FakeSection]:
+                raise RuntimeError("Plex restarted")
+
+        server = _FakeServer([], {})
+        server.library = _Boom()  # type: ignore[assignment]
+
+        with pytest.raises(PlexError):
+            await _client_with(server).section_paths()

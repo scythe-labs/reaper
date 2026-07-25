@@ -3814,9 +3814,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -3894,9 +3891,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -3998,9 +3992,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -4083,9 +4074,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -4166,9 +4154,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -4253,9 +4238,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -4296,7 +4278,7 @@
   },
   {
    "baseline": {
-    "coverage_bp": 9000,
+    "coverage_bp": 10000,
     "score": 20,
     "verdict": "protect"
    },
@@ -4337,9 +4319,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -4415,9 +4394,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -4499,9 +4475,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -4582,9 +4555,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -4662,9 +4632,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -4745,9 +4712,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -4840,9 +4804,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -4923,9 +4884,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -5002,9 +4960,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -5083,9 +5038,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -5120,7 +5072,7 @@
   },
   {
    "baseline": {
-    "coverage_bp": 9000,
+    "coverage_bp": 10000,
     "score": 75,
     "verdict": "condemn"
    },
@@ -5162,9 +5114,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -5200,7 +5149,7 @@
   },
   {
    "baseline": {
-    "coverage_bp": 9000,
+    "coverage_bp": 10000,
     "score": 58,
     "verdict": "abstain"
    },
@@ -5242,9 +5191,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -5280,7 +5226,7 @@
   },
   {
    "baseline": {
-    "coverage_bp": 9000,
+    "coverage_bp": 10000,
     "score": 80,
     "verdict": "condemn"
    },
@@ -5321,9 +5267,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -5407,9 +5350,6 @@
      "state": "known",
      "value": true
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -5486,9 +5426,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": true
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -5567,9 +5504,6 @@
      "state": "known",
      "value": true
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -5602,7 +5536,7 @@
   },
   {
    "baseline": {
-    "coverage_bp": 9000,
+    "coverage_bp": 10000,
     "score": 12,
     "verdict": "protect"
    },
@@ -5643,9 +5577,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -5725,9 +5656,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": true
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -5809,9 +5737,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -5888,9 +5813,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": true
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -5972,9 +5894,6 @@
      "state": "known",
      "value": true
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -6051,9 +5970,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": true
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -6134,9 +6050,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": true
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -6220,9 +6133,6 @@
      "state": "known",
      "value": true
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -6297,9 +6207,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -6380,9 +6287,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -6465,9 +6369,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -6555,9 +6456,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -6637,9 +6535,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -6716,9 +6611,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -6798,9 +6690,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -6875,9 +6764,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -6956,9 +6842,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-720p"
@@ -7036,9 +6919,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -7132,9 +7012,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -7214,9 +7091,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -7312,9 +7186,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -7398,9 +7269,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -7483,9 +7351,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "SDTV"
@@ -7562,9 +7427,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -7648,9 +7510,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -7739,9 +7598,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -7836,9 +7692,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -7920,9 +7773,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-720p"
@@ -8001,9 +7851,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -8084,9 +7931,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -8179,9 +8023,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -8258,9 +8099,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -8350,9 +8188,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -8466,9 +8301,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -8546,9 +8378,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -8637,9 +8466,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -8716,9 +8542,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -8806,9 +8629,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -8887,9 +8707,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -8996,9 +8813,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -9083,9 +8897,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -9188,9 +8999,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -9267,9 +9075,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -9348,9 +9153,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -9431,9 +9233,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -9520,9 +9319,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -9597,9 +9393,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -9678,9 +9471,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -9761,9 +9551,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -9850,9 +9637,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -9931,9 +9715,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -10020,9 +9801,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -10114,9 +9892,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -10215,9 +9990,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-1080p"
@@ -10294,9 +10066,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -10401,9 +10170,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -10490,9 +10256,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -10569,9 +10332,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -10650,9 +10410,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -10730,9 +10487,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -10827,9 +10581,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -10908,9 +10659,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -11010,9 +10758,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -11105,9 +10850,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -11187,9 +10929,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -11277,9 +11016,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -11359,9 +11095,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -11439,9 +11172,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -11527,9 +11257,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-720p"
@@ -11610,9 +11337,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -11689,9 +11413,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -11774,9 +11495,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-720p"
@@ -11854,9 +11572,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -11964,9 +11679,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -12045,9 +11757,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -12144,9 +11853,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -12225,9 +11931,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -12309,9 +12012,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -12398,9 +12098,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -12496,9 +12193,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -12608,9 +12302,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -12697,9 +12388,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -12784,9 +12472,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -12865,9 +12550,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "HDTV-720p"
@@ -12945,9 +12627,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -13032,9 +12711,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -13111,9 +12787,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -13195,9 +12868,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -13299,9 +12969,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-720p"
@@ -13378,9 +13045,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -13468,9 +13132,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -13553,9 +13214,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -13647,9 +13305,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -13726,9 +13381,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -13823,9 +13475,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -13913,9 +13562,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -14007,9 +13653,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -14104,9 +13747,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -14190,9 +13830,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -14270,9 +13907,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -14352,9 +13986,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -14431,9 +14062,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -14513,9 +14141,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -14597,9 +14222,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -14688,9 +14310,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -14769,9 +14388,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -14866,9 +14482,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -14952,9 +14565,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -15034,9 +14644,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -15132,9 +14739,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -15218,9 +14822,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -15308,9 +14909,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -15394,9 +14992,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -15479,9 +15074,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -15563,9 +15155,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -15644,9 +15233,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -15740,9 +15326,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -15820,9 +15403,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -15911,9 +15491,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -16001,9 +15578,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -16090,9 +15664,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -16171,9 +15742,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -16257,9 +15825,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -16351,9 +15916,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -16432,9 +15994,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -16521,9 +16080,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -16613,9 +16169,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -16718,9 +16271,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-1080p"
@@ -16807,9 +16357,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -16890,9 +16437,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -16976,9 +16520,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -17060,9 +16601,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -17143,9 +16681,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -17225,9 +16760,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -17311,9 +16843,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -17394,9 +16923,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -17476,9 +17002,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -17553,9 +17076,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -17641,9 +17161,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -17724,9 +17241,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -17810,9 +17324,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -17898,9 +17409,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -17979,9 +17487,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -18068,9 +17573,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "HDTV-720p"
@@ -18149,9 +17651,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -18255,9 +17754,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -18339,9 +17835,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -18446,9 +17939,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -18542,9 +18032,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -18622,9 +18109,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -18704,9 +18188,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -18792,9 +18273,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -18877,9 +18355,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -18958,9 +18433,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -19048,9 +18520,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -19143,9 +18612,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -19245,9 +18711,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -19342,9 +18805,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -19422,9 +18882,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -19514,9 +18971,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -19601,9 +19055,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-720p"
@@ -19687,9 +19138,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -19776,9 +19224,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -19856,9 +19301,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -19963,9 +19405,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -20054,9 +19493,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -20136,9 +19572,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -20233,9 +19666,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -20314,9 +19744,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -20400,9 +19827,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -20482,9 +19906,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -20574,9 +19995,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -20658,9 +20076,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -20739,9 +20154,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -20825,9 +20237,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -20907,9 +20316,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -20992,9 +20398,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -21086,9 +20489,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -21175,9 +20575,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -21268,9 +20665,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -21355,9 +20749,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-720p"
@@ -21438,9 +20829,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -21523,9 +20911,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -21602,9 +20987,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -21686,9 +21068,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -21772,9 +21151,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -21861,9 +21237,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -21943,9 +21316,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-720p"
@@ -22023,9 +21393,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -22105,9 +21472,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -22196,9 +21560,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -22280,9 +21641,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -22362,9 +21720,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -22452,9 +21807,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -22539,9 +21891,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -22618,9 +21967,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -22723,9 +22069,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -22817,9 +22160,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -22904,9 +22244,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -22996,9 +22333,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -23080,9 +22414,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -23159,9 +22490,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -23240,9 +22568,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -23327,9 +22652,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "Bluray-720p"
@@ -23411,9 +22733,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -23491,9 +22810,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -23575,9 +22891,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -23694,9 +23007,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -23783,9 +23093,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -23866,9 +23173,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -23963,9 +23267,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -24048,9 +23349,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-720p"
@@ -24132,9 +23430,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -24219,9 +23514,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "HDTV-720p"
@@ -24300,9 +23592,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -24391,9 +23680,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -24472,9 +23758,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -24555,9 +23838,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -24653,9 +23933,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-1080p"
@@ -24736,9 +24013,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "known",
@@ -24833,9 +24107,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "known",
      "value": "WEBDL-720p"
@@ -24913,9 +24184,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -24995,9 +24263,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -25097,9 +24362,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -25184,9 +24446,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -25269,9 +24528,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -25375,9 +24631,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -25456,9 +24709,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -25556,9 +24806,6 @@
      "state": "known",
      "value": true
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -25634,9 +24881,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -25722,9 +24966,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -25804,9 +25045,6 @@
      "state": "known",
      "value": true
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -25884,9 +25122,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": true
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -25968,9 +25203,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -26050,9 +25282,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -26136,9 +25365,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -26219,9 +25445,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -26297,9 +25520,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -26391,9 +25611,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -26476,9 +25693,6 @@
      "state": "known",
      "value": true
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -26554,9 +25768,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -26643,9 +25854,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -26730,9 +25938,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -26808,9 +26013,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -26893,9 +26095,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -26975,9 +26174,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -27089,9 +26285,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -27177,9 +26370,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -27258,9 +26448,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -27341,9 +26528,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -27427,9 +26611,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -27518,9 +26699,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -27598,9 +26776,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -27699,9 +26874,6 @@
      "state": "known",
      "value": true
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -27777,9 +26949,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -27859,9 +27028,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -27939,9 +27105,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -28044,9 +27207,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -28125,9 +27285,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -28212,9 +27369,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -28290,9 +27444,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -28375,9 +27526,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -28464,9 +27612,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -28551,9 +27696,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -28646,9 +27788,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -28730,9 +27869,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -28809,9 +27945,6 @@
      "state": "known",
      "value": true
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -28887,9 +28020,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -28977,9 +28107,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -29063,9 +28190,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -29144,9 +28268,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -29227,9 +28348,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -29318,9 +28436,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -29398,9 +28513,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -29481,9 +28593,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -29568,9 +28677,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -29652,9 +28758,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -29690,7 +28793,7 @@
   },
   {
    "baseline": {
-    "coverage_bp": 9000,
+    "coverage_bp": 10000,
     "score": 78,
     "verdict": "condemn"
    },
@@ -29731,9 +28834,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -29812,9 +28912,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -29896,9 +28993,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -29990,9 +29084,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -30070,9 +29161,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -30152,9 +29240,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -30240,9 +29325,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -30321,9 +29403,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -30401,9 +29480,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -30492,9 +29568,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -30575,9 +29648,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -30657,9 +29727,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -30746,9 +29813,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -30827,9 +29891,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -30918,9 +29979,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -31002,9 +30060,6 @@
      "state": "known",
      "value": true
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -31080,9 +30135,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -31165,9 +30217,6 @@
      "state": "known",
      "value": true
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -31245,9 +30294,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -31344,9 +30390,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -31427,9 +30470,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -31507,9 +30547,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -31590,9 +30627,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -31671,9 +30705,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -31751,9 +30782,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -31841,9 +30869,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -31925,9 +30950,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -32008,9 +31030,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -32094,9 +31113,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -32201,9 +31217,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -32281,9 +31294,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -32365,9 +31375,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -32446,9 +31453,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -32536,9 +31540,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -32619,9 +31620,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -32697,9 +31695,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": true
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -32784,9 +31779,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -32869,9 +31861,6 @@
      "state": "known",
      "value": true
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -32947,9 +31936,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -33031,9 +32017,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -33112,9 +32095,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -33199,9 +32179,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -33283,9 +32260,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -33365,9 +32339,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -33446,9 +32417,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -33531,9 +32499,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -33613,9 +32578,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -33706,9 +32668,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -33795,9 +32754,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -33879,9 +32835,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -33960,9 +32913,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -34046,9 +32996,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -34127,9 +33074,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -34207,9 +33151,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -34294,9 +33235,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -34377,9 +33315,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -34465,9 +33400,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -34548,9 +33480,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -34636,9 +33565,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -34718,9 +33644,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -34804,9 +33727,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -34887,9 +33807,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -34973,9 +33890,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -35053,9 +33967,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -35136,9 +34047,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -35221,9 +34129,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -35303,9 +34208,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -35387,9 +34289,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -35470,9 +34369,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -35557,9 +34453,6 @@
      "state": "known",
      "value": true
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -35635,9 +34528,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": true
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -35718,9 +34608,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -35800,9 +34687,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -35880,9 +34764,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -35964,9 +34845,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -36050,9 +34928,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -36132,9 +35007,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -36217,9 +35089,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -36298,9 +35167,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -36382,9 +35248,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -36462,9 +35325,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -36545,9 +35405,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -36623,9 +35480,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -36707,9 +35561,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -36788,9 +35639,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -36871,9 +35719,6 @@
      "state": "known",
      "value": true
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -36951,9 +35796,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -37033,9 +35875,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -37130,9 +35969,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -37210,9 +36046,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -37307,9 +36140,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -37390,9 +36220,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -37470,9 +36297,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -37552,9 +36376,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -37660,9 +36481,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -37745,9 +36563,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -37825,9 +36640,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -37912,9 +36724,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -37992,9 +36801,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -38076,9 +36882,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -38156,9 +36959,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": true
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -38240,9 +37040,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -38327,9 +37124,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -38411,9 +37205,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -38492,9 +37283,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -38575,9 +37363,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -38653,9 +37438,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -38737,9 +37519,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -38815,9 +37594,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -38906,9 +37682,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -38987,9 +37760,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -39082,9 +37852,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -39170,9 +37937,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -39255,9 +38019,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -39333,9 +38094,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -39427,9 +38185,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -39513,9 +38268,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -39594,9 +38346,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -39680,9 +38429,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -39760,9 +38506,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -39848,9 +38591,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -39933,9 +38673,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -40017,9 +38754,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -40095,9 +38829,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -40178,9 +38909,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -40258,9 +38986,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -40340,9 +39065,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -40434,9 +39156,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -40517,9 +39236,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -40599,9 +39315,6 @@
      "state": "known",
      "value": true
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -40679,9 +39392,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -40761,9 +39471,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -40841,9 +39548,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -40925,9 +39629,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -41006,9 +39707,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -41086,9 +39784,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -41170,9 +39865,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -41250,9 +39942,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -41337,9 +40026,6 @@
      "state": "known",
      "value": false
     },
-    "others_watching": {
-     "state": "absent"
-    },
     "quality": {
      "state": "absent"
     },
@@ -41415,9 +40101,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"
@@ -41496,9 +40179,6 @@
     "is_whitelisted": {
      "state": "known",
      "value": false
-    },
-    "others_watching": {
-     "state": "absent"
     },
     "quality": {
      "state": "absent"

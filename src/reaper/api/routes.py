@@ -1087,12 +1087,14 @@ def _policy_out(
     settings: ProfileSettings,
     needs_save: bool = False,
     fell_back: bool = False,
+    rating_rules_restored: bool = False,
 ) -> PolicyOut:
     return PolicyOut(
         policy_hash=body.policy_hash(),
         name=name,
         needs_save=needs_save,
         fell_back=fell_back,
+        rating_rules_restored=rating_rules_restored,
         body=PolicyIn(
             name=name,
             media_type=body.media_type,
@@ -1172,14 +1174,20 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
        until they look at it and press Save. Their approvals stay valid until they do.
     2. **Fall back.** Anything we cannot repair opens on the shipped default, saying so,
        so nobody mistakes it for what is in force.
+
+    A third recovery runs on a body that loads perfectly: a rating bar written before the
+    bar moved off the gate row is restored (``policy.recover_rating_rules``), because that
+    body loads cleanly while keeping nothing. It comes back as an unsaved draft too.
     """
     async with _sessions(request)() as session:
         active = await active_policy(session, media_type)
         body, name = active.body, active.name
-        # The two recoveries read very differently to an operator -- "your policy, in new
-        # units" versus "your policy is gone" -- so they are separate flags, never inferred
-        # from the name (an operator's own policy is often called "default").
+        # The recoveries read very differently to an operator -- "your policy, in new
+        # units" versus "your policy is gone" versus "a protection was put back" -- so they
+        # are separate flags, never inferred from the name (an operator's own policy is
+        # often called "default").
         needs_save, fell_back = active.rescaled, active.fell_back
+        rating_rules_restored = active.rating_rules_recovered
         has_requests_app = await _requests_app_configured(session)
         settings = await active_profile_settings(session)
     return _policy_out(
@@ -1189,6 +1197,7 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
         settings=settings,
         needs_save=needs_save,
         fell_back=fell_back,
+        rating_rules_restored=rating_rules_restored,
     )
 
 

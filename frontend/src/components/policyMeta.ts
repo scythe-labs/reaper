@@ -24,11 +24,6 @@ export const GATE_META: Record<string, GateMeta> = {
     label: "Keep well-rated titles",
     help: "A title well rated on any source you trust is kept.",
   },
-  others_watching: {
-    label: "Protect what other people watch",
-    help: "If someone other than the requester has played it, keep it. Removing it would punish them for a request that wasn't theirs.",
-    unit: "people",
-  },
   streaming_now: {
     label: "Never touch something playing right now",
     help: "Re-checked in the seconds before any removal, not just at scan time.",

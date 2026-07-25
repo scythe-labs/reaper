@@ -939,7 +939,6 @@ class TestARepairedPolicyCannotBeReapedFrom:
                     await build_plan(
                         s,
                         snapshot_id=snapshot.id,
-                        policy_hash=snapshot.policy_hash,
                         approved_by="test",
                     )
         finally:
@@ -963,7 +962,6 @@ class TestARepairedPolicyCannotBeReapedFrom:
                 run = await build_plan(
                     s,
                     snapshot_id=snapshot.id,
-                    policy_hash=snapshot.policy_hash,
                     approved_by="test",
                 )
                 assert run.id is not None

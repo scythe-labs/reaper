@@ -129,7 +129,6 @@ def to_facts(vector: dict[str, Any]) -> Facts:
         is_managed=to_observation("is_managed", f["is_managed"]),
         in_curated_list=to_observation("in_curated_list", f["in_curated_list"]),
         is_whitelisted=to_observation("is_whitelisted", f["is_whitelisted"]),
-        others_watching=to_observation("others_watching", f["others_watching"]),
         requested=to_observation("requested", f["requested"]),
         genres=to_observation("genres", f["genres"]),
         release_age_days=to_observation("release_age_days", f["release_age_days"]),

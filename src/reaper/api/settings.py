@@ -541,6 +541,9 @@ async def instance_root_folders(request: Request, instance_id: int) -> list[Root
     """
     # The Plex side of the suggestion: {library title: folder paths}. Best-effort -- if Plex is
     # not linked or is unreachable the folders still come back, just with no suggestions.
+    # Titled, not keyed, because the stored library map itself is titled; two libraries
+    # sharing a title contribute BOTH their folder lists here rather than one dropping the
+    # other, so the prefill considers everything under that name.
     section_paths: dict[str, list[str]] = {}
     async with _factory(request)() as session:
         server = (await session.execute(select(PlexServer))).scalars().first()
@@ -553,7 +556,8 @@ async def instance_root_folders(request: Request, instance_id: int) -> list[Root
             verify=server.verify_tls,
         )
         try:
-            section_paths = await plex.section_paths()
+            for section in await plex.section_paths():
+                section_paths.setdefault(section.title, []).extend(section.locations)
         except PlexError:
             section_paths = {}
         finally:

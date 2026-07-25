@@ -589,7 +589,6 @@ def build_season_facts(
         is_managed=Known(value=True, source="sonarr"),
         in_curated_list=in_curated,
         is_whitelisted=Known(value=whitelisted, source="lists"),
-        others_watching=Absent(source="tautulli"),
         # --- fields authorable in custom rules ---------------------------------
         requested=requested,
         genres=genres,
@@ -1122,7 +1121,7 @@ async def gather(
         if plex_library is not None:
             key = (item.source.instance_id, plex_library)
             if plex_library.strip().casefold() in identity.libraries_for_ids(
-                ids, tv_index, ("tvdb", "imdb")
+                ids, tv_index, identity.SHOW_ID_PRIORITY
             ):
                 mapped_lib_hits.add(key)
             elif resolution.status is identity.MatchStatus.AMBIGUOUS:
@@ -1170,7 +1169,9 @@ async def gather(
                 match_status=str(resolution.status),
                 detail=resolution.detail,
                 mapped_library=plex_library,
-                candidate_libraries=identity.candidate_libraries(ids, tv_index, ("tvdb", "imdb"))
+                candidate_libraries=identity.candidate_libraries(
+                    ids, tv_index, identity.SHOW_ID_PRIORITY
+                )
                 or None,
             )
 

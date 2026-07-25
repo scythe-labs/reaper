@@ -49,7 +49,6 @@ def _facts(days_dormant: float | None) -> Facts:
         is_managed=Known(value=True, source="radarr"),
         in_curated_list=Absent(source="lists"),
         is_whitelisted=Known(value=False, source="plex"),
-        others_watching=Absent(source="t"),
     )
 
 

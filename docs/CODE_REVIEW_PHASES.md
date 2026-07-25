@@ -1,315 +1,452 @@
-# Fourth-pass review remediation — phase plan & tracker
+# Backend review remediation — phase plan & tracker
 
-The fourth diff review (`docs/CODE_REVIEW.md`, dev @ `cea72d1`, 2026-07-23) found **36
-findings**: 0 critical, 2 high, 11 medium, 23 low. This file breaks them into five
-subsystem-cohesive phases and tracks progress. Each phase is sized to one agent context and
-ends by running the CLAUDE.md verification gates for the files it touched.
+The whole-backend review in `docs/CODE_REVIEW.md` (dev @ `d3c3839`, 2026-07-24) holds **two
+passes**: Part I (second pass, 37 code findings + 10 test findings) and Part II (first pass,
+53 findings, all still open). **100 findings total.** This file breaks them into subsystem-
+cohesive phases and tracks progress.
 
-**The conversation is compacted between phases.** Whoever picks up the next phase: read this
-file, read the named findings in `docs/CODE_REVIEW.md`, then implement that phase end to end.
-Fix *twins together* (rule 72) — the phases are grouped so twins land in one change.
+> The previous tracker in this file covered the *fourth-pass diff review*; all five of its
+> phases had landed. It is preserved in git history at `d3c3839`.
+
+**The conversation is compacted between phases.** Whoever picks up next: read this file, read
+the named findings in `docs/CODE_REVIEW.md`, then implement that phase end to end. Fix *twins
+together* — the phases are grouped so twins land in one change.
+
+**Read `docs/CODE_REVIEW.md`'s "Read this first" section before touching anything.** Three
+traps it names: B2-5's obvious fix breaks 11 tests, B2-10's first-listed fix marks a failed
+verification `VERIFIED`, B2-8's fix changes freshly-built plans too. Every finding's
+**Verifier's correction** paragraph governs over its **Fix** paragraph.
+
+**Working agreement for this remediation**
+- Work happens in the `backend-code-review` worktree, on branch `worktree-backend-code-review`.
+- **Do not commit** (CLAUDE.md: commit only when asked). Leave the working tree dirty; the
+  operator commits between phases.
+- End every phase by running the CLAUDE.md verification gates for the files touched
+  (`uv run ruff format .`, `ruff check .`, `mypy src/reaper`, `pytest`) and record the real
+  result in that phase's section — including anything left failing.
+- When a phase is finished, tick its box below, change its heading to `✅ DONE`, and replace its
+  **Planned work** section with **What was done**. A phase section that still says "Planned
+  work" has not been implemented, whatever the box says.
 
 ## Progress
 
-- [x] **Phase 1 — Timed-spare expiry + grace** (the two highs) — *done 2026-07-23*
-- [x] **Phase 2 — Backup & restore security** — *done 2026-07-23*
-- [x] **Phase 3 — Plex client hardening + Seerr/Scales attribution** — *done 2026-07-23*
-- [x] **Phase 4 — Frontend (review queue + shell)** — *done 2026-07-23*
-- [x] **Phase 5 — Platform, logging, settings, docs, misc** — *done 2026-07-23*
+- [x] **Phase 1 — Engine: protections that silently do nothing** (the critical + 2 highs) — *done 2026-07-24*
+- [x] **Phase 2 — Identity binds & keep-list joins** (2 highs) — *done 2026-07-24*
+- [x] **Phase 3 — Plex client hardening & protection lists** (3 highs) — *done 2026-07-24*
+- [x] **Phase 4 — Executor & the deletion path** (10 findings) — *done 2026-07-24*
+- [ ] **Phase 5 — Snapshot & scan pipeline**
+- [ ] **Phase 6 — API routes, runs & query performance**
+- [ ] **Phase 7 — Security, auth, restore & infra**
+- [ ] **Phase 8 — Fairness, Leaving Soon & engine cleanup**
+- [ ] **Phase 9 — Test suite**
+- [ ] **Phase 10 — Merge the review's Agent Rules into CLAUDE.md**
 
-**All five phases are landed.** The 36 fourth-pass findings are remediated on `dev` (uncommitted).
-
----
-
-## Phase 1 — Timed-spare expiry + grace  ✅ DONE
-
-**Findings:** B-1 (high), B-2 (high). One root cause; one fix closes both.
-
-**What was wrong:** `overrides_effective_at` dropped an expired spare only in the scan's
-in-memory map; nothing ever deleted the `WhitelistEntry` row, so every live consumer
-(planner, executor, grace, review queue — all read `overrides()`) kept the expired spare in
-force forever. The item became permanently unplannable/un-executable (B-1), and the grace
-window burned down invisibly so a later clear landed it on "ready" with no countdown (B-2).
-
-**What was done:**
-- `services/whitelist.py` — added `purge_expired_spares(session, now)`: the durable half of
-  expiry. Selects then deletes `decision == "spare" AND spare_expires_at <= now` by predicate
-  (no `IN`-list, no variable-limit risk), returns the purged keys for logging. Updated the
-  `overrides()` docstring to name it as the durable realization.
-- `services/snapshot.py` — `scan()` calls `whitelist.purge_expired_spares(session, now)` right
-  after `overrides_effective_at(session, now)`, same `now`, same session the snapshot commits
-  (scan_runner commits at `scan_runner.py:697`). Emits `scan.spares_expired` (count only).
-  The existing `record_first_flagged_bulk` over `condemned_keys` already writes the fresh grace
-  clock for the re-condemned item (its clock was deleted when the spare was set).
-- `api/whitelist.py` — defense in depth for B-2 / rule 71: `_sync_grace_clocks` gained a
-  `cleared_spare` param; the two removal routes capture the prior decision and pass
-  `cleared_spare=(prior == "spare")`, forcing a fresh grace clock when a protective spare is
-  cleared (never coast on a timestamp accrued while the item was invisibly condemned).
-- `db/models.py` — updated the `spare_expires_at` docstring to describe the durable purge.
-- Tests: `tests/test_whitelist.py::TestPurgeExpiredSpares`; scan-level realization test in
-  `tests/test_snapshot_*` (see the phase-1 test note in that file).
-
-**Rules this satisfies:** 70 (one durable realization point, shipped with the feature),
-71 (clearing a protective override restarts the grace clock), 7/24 (docstrings match code),
-23 (every consumer converges).
+Every finding in `docs/CODE_REVIEW.md` is assigned to exactly one phase below (100 total: 37
+Part I code + 10 Part I test + 53 Part II).
 
 ---
 
-## Phase 2 — Backup & restore security  ✅ DONE
+## Phase 1 — Engine: protections that silently do nothing  ✅ DONE
 
-**Findings:** S-1, S-2, S-3 (all medium), B-4 (medium), S-4 (low), PR-3 (low), I-2 (low).
+**Findings:** B2-1 (**critical**), B2-3 (high), B2-4 (high), B-7 (medium), PR-2 (medium),
+B2-15 (low), B2-16 (low), I2-1 (low), I2-2 (low).
 
-**What was done:**
-- **S-1** (rule 73): `restore.stage_upload` now mints a per-staging token (`pysecrets.token_hex`),
-  writes it beside the staged files (`TOKEN_MARKER`) so it travels with the atomic rename, and
-  returns it on `RestoreSummary`. `arm(settings, token)` verifies it (`hmac.compare_digest`)
-  before forcing deletion off, refusing with 409 if the staging was replaced since review.
-  Threaded end to end: `RestoreSummaryOut.token`, `RestoreConfirmIn.token`,
-  `restore_confirm` → `arm`. **Frontend was touched here too** (see "Deviation" below).
-- **S-2** (rule 74): `_summarize` reads the staged database's OWN `alembic_version`
-  (`backup._read_revision`), refuses a None, and refuses a manifest revision that disagrees with
-  it; the schema gate now runs on the artifact's revision, and `RestoreSummary.revision` reports
-  it. Never trusts the manifest's claim alone.
-- **S-3** (rule 75/12): `_purge_auth_state` clears `auth_session`, `recovery_token`, and
-  `pending_plex_login` from the staged db in `arm`, each guarded by an existence check (an older
-  backup may predate a table). Uses literal `DELETE` statements (no interpolation → no S608).
-- **B-4** (rule 76): new `secrets.env_key_active(settings)` mirrors `resolve_secret_key`
-  precedence. `backup._build_into` sets `key_included = key_path.is_file() and not env_key` (so a
-  stale file is never bundled and `key_source` reads "env"); `api/backup.backup_info` computes
-  `key_in_backup` the same way.
-- **S-4** (rule 83/14): `restore._member_writer` opens the key/salt via
-  `os.open(..., O_CREAT|O_WRONLY|O_EXCL, 0o600)` under a clamped umask; `_copy_capped` takes
-  `owner_only`, set for `secret.key`/`secret.salt`. The 0600 mode survives the boot `shutil.move`.
-- **PR-3**: `_build_sync` wraps the build in try/except that rmtrees the temp dir and re-raises;
-  `download_backup` cleans the archive on any pre-response exception; `backup.sweep_stale_temp`
-  clears `.backup-tmp-*`/`.restore-tmp-*`/`.restore-upload-*` at boot from `preflight.main`
-  (prefix constants now live in `backup.py`; restore + api import them). Sweep never touches
-  `pending-restore` or `pre-restore-*` (no leading dot).
-- **I-2** (rule 85): `download_backup` records `last_backup_at` from a Starlette `BackgroundTask`
-  that runs after the stream completes, never before — a byte-zero-death no longer claims a copy.
+**Theme.** Every finding here is a protection the operator believes is running that either
+cannot fire or has been silently withdrawn — plus the engine honesty defects around them.
+B2-1 is live on every tester DB right now.
 
-**Tests:** `tests/test_restore.py` — token replaced/refused (service + API, 409), db-revision-not-
-manifest gate, no-revision-db refused, auth purge, 0600 key/salt; arm calls thread the token, and
-`_tiny_sqlite`/`_make_archive` gained `revision`/`db_revision`/`with_auth` knobs.
-`tests/test_backup.py` — stale-key-not-bundled (B-4), `sweep_stale_temp` (PR-3). 1990 pass.
+**What was done**
+- **I2-2** — rules **70–87 restored into `CLAUDE.md`** under "Blockers from the fourth review
+  pass", recovered verbatim from `git show a7d7659:docs/CODE_REVIEW.md`. They had been written
+  as that pass's "Agent Rules" and never merged, then left the tree when `d3c3839` replaced the
+  review file. All 16 rule numbers cited across `src/` and `frontend/src` (70–78, 80, 82–87)
+  now resolve; verified by grepping every citation against the file.
+- **B2-1** — new `policy.recover_rating_rules(raw)` beside `rebalance`, called from
+  `profiles.active_policy` **before** validation (a legacy body validates cleanly, so
+  validation cannot see the loss). Trigger is exactly: raw key `keep_rating_rules` **absent**
+  (an explicit `[]` is left alone, rule 1) **and** an **enabled** `rating_floor` gate carrying
+  numbers the old validator would have accepted (`1 <= threshold <= 100`, `secondary >= 1`).
+  It synthesizes the equivalent IMDb `RatingRuleSpec` and stamps `schema_version` at the new
+  `SCHEMA_VERSION = 3`. Not keyed on `schema_version` (affected bodies already carry 2).
+  A **disabled** gate is deliberately left alone: nothing was protecting anything either way,
+  so there is nothing to restore and no reason to degrade a scan over it.
+  New `ActivePolicy.rating_rules_recovered` feeds `repaired`, so `scan_runner` degrades the
+  snapshot (its message now names *which* part was recovered), and a new `PolicyOut
+  .rating_rules_restored` opens the editor dirty with its own notice ("Keep well-rated titles
+  had stopped keeping anything…"). Not folded into `needs_save`, whose copy is about the
+  points rescale and would have been a lie here.
+- **B2-3** — `media_types=("movie",)` on the `release_age` and `quality` FieldSpecs (both
+  lanes, per the verifier: a dead TV *condemn* rule keeps its share of the fixed 100-point
+  denominator and holds down every TV score). Stored rules that name a field their media type
+  cannot read now raise a `danger` warning in `policy.inspect` — covering
+  `protect_conditions`, `custom_condemn` and `graded_keeps`, each anchored to its own section —
+  so an existing rule is *told*, not silently dropped from the editor.
+- **B2-4** — `Condition._validate_value_type` refuses a TEXT value whose `.strip()` is empty,
+  and for `Op.IN` a target whose `_split_csv` yields nothing (a comma-only list). Editor side:
+  `coerceValue` trims and both Add buttons test `.trim()`, so the UI cannot compose one.
+- **B-7** — `evaluate_signal` now carries the observation it read into the shared tail: an
+  `Absent` input returns `NOT_APPLICABLE`/`evaluated=True` (weight kept, coverage intact) like
+  `SEASON_RANK` and the graded custom arm already did, and the "could not read" details are
+  split from the "there is none" ones. **Six of 440 policy-lab vectors moved, all coverage
+  9000 → 10000, no score and no verdict changed** — re-pinned with a new
+  `scripts/policy_lab_extract.py --rebaseline` mode that re-judges the committed fixture
+  without needing a real library (so CI and any contributor can reproduce it, and it prints
+  every vector that moved).
+- **PR-2** — an enabled built-in `SIZE` signal now raises the same `danger` warning the
+  hand-written size rule does, anchored to a new `signals` warning slot in the editor; the
+  `SignalId.SIZE` docstring's "the UI warns about it" claim now cites the code that does it.
+- **B2-15** — `OthersWatchingGate` **retired** (rule 38): no builder ever produced a `Known`
+  `others_watching`, so it could not protect anything while reading as a check that ran. Gone:
+  the gate class, its `GATE_TYPES` entry (a policy still enabling it now refuses to scan with
+  the existing "no implementation for it" `ScanConfigError` — loud and fail-closed), the
+  `Facts` field, all three builders' assignments, the `_OBS_FIELDS` entry, the frontend
+  `policyMeta` copy, and the fixture/generator entries. `GateId.OTHERS_WATCHING` **survives**,
+  documented as retired, so an explanation stored while it was built still decodes.
+- **B2-16** — `ratings.from_radarr` guards the votes parse like its sibling score parse, so a
+  non-integer votes field costs that one rating instead of raising out of the scan (rule 32).
+- **I2-1** — `MinDormancyGate`'s docstring now says what is true: the cliff positions are
+  documented defaults and the threshold is the operator's own stored number. The false
+  "derived from your history" claim is gone from `backtest.py`'s prior comment too, and
+  `calibration.py` gained the "engine-complete, not yet reachable" header it lacked.
 
-**Deviation from the phase split (read before Phase 4):** S-1 makes the confirm token
-*required*, so it had to be threaded through the frontend in the SAME change or restore would
-break across the compaction boundary (rule 64: a contract change carries its whole supply chain).
-Done: `frontend/src/api.ts` (`RestoreSummary.token`, `restoreConfirm(password, token)`) and
-`frontend/src/components/Settings.tsx` (`RestoreCard.restore` passes `summary.token`). **Phase 4
-does NOT need to touch the restore token** — it is already wired. All frontend gates were run.
-
----
-
-## Phase 3 — Plex client hardening + Seerr/Scales attribution  ✅ DONE
-
-**Findings:** B-3 (medium), I-1 (low) [Plex client twins]; B-5 (medium), B-6 (medium),
-B-10 (low), I-3 (low), P-1 (low) [fairness / requested_by].
-
-**What was done:**
-- **B-3** (rule 72/56): extracted the season sweep's hardened paging into one module-level
-  `clients/plex._iter_section_pages(server, section_key, query, *, what)` — raw-count advance,
-  a child without a `ratingKey` raises, `totalSize` is the sole paging authority (a clamped page
-  is followed to the end, a full page with no `totalSize` raises), never `totalSize`→`size`. All
-  four sweeps now run through it: `library_guid_index`, `library_season_index` (refactored to the
-  helper too, so the four can never drift), `labeled_in_section`, `section_rating_keys`. New
-  `tests/test_plex_sweep.py::TestTwinsHardenedPaging` pins clamped-follow and the two raise cases
-  on the twins.
-- **I-1** (rule 6/57): `add_label`/`remove_label` now take `section_key: int` and resolve via
-  `server.library.sectionByID(section_key)`, dropping the `section_title` param; `leaving_soon.
-  sync_section` passes `section_key`. `tests/test_plex_labels.py` asserts `section_ids == [7]`.
-  **Deferred in writing (rule 72):** `item_count`, `is_refreshing`, `refresh_path`, `empty_trash`
-  still resolve by title — they are single named-section operations outside the shelf-write pass,
-  not twins of the label writes the review scoped. Left as-is this pass; convert when one is next
-  touched.
-- **B-5** (rule 77/61/3): `CandidateInfo` gained `override` and `effective_condemn`;
-  `_load_candidates` merges `whitelist.overrides` + the ONE production `condemned.effective_
-  condemned` (never a re-derived verdict), so a hand spare drops a scan-condemned title off the
-  board and an engine-honored hand reap adds one. `roll_up` and `build_person_detail` gate
-  reclaimable on `effective_condemn`. Module + `roll_up` docstrings corrected. Tests:
-  `TestOverrideAwareReclaimable` (spare / honored-reap / held-reap) + a DB test proving the
-  wiring (`test_a_hand_spared_condemned_title_drops_off_the_board`).
-- **B-6** (rule 78): new `CandidateInfo.season_number` (parsed via the one `MediaRef` parser)
-  and `fairness._scope_to_request(cands, req)`; per-PERSON granted/reclaimable/watched/link now
-  bind only the seasons a request asked for (co-requesters scope independently). The deduped
-  report totals stay over the whole matched title (documented; B-6 is per-person). Tests:
-  `TestScopeToRequest`, `TestSeasonScopedAttribution`, and a drawer DB test
-  (`test_a_season_scoped_request_charges_only_its_season`).
-- **B-10** (rule 6/29): extracted `season_scan.season_requester(...)` (pure, testable) with the
-  corrected precedence — season-precise `season_key(tvdb, n)` now outranks the show-level
-  `rating_key_key`, which still beats the whole-show union. `TestSeasonRequester` pins that two
-  people asking for different seasons attribute to their own season.
-- **I-3**: new `SeerrClient.plex_machine_id()` (reads `/settings/plex`); `build_map(sources, *,
-  reaper_plex_machine_id=None)` files the `plex:rk` tier only when the portal shares Reaper's
-  Plex (reaper id read off the already-open connection in `scan_runner`, no extra round-trip).
-  Unknown on either side keeps today's behavior. Docstrings corrected. `TestBuildMapRatingKey
-  Namespace` covers match / foreign / unknown-either-side.
-- **P-1**: `_fetch_available` fetches portals CONCURRENTLY (`asyncio.gather`, fail-hard preserved);
-  new app-scoped `fairness.RequestCache` (created lazily on `app.state` in `api/fairness.py`, one
-  per app so tests stay hermetic — rule 37) is shared by the board and the drawer.
-  `test_the_shared_cache_reuses_one_portal_read_across_calls` proves 3 loads → 1 read.
-
-**Gates:** ruff check/format ✓, mypy ✓ (95 files), pytest **2012 passed** (+22 new), alembic
-upgrade+check ✓ (no schema change this phase). Frontend untouched, so its gates were not run.
-
-**Assumptions that held / notes for later:**
-- B-5's expired-spare permanent-disagreement is already closed by Phase 1's scan-time purge; this
-  fix covers the *live* hand-spare-between-scans case, which is real and now correct.
-- B-6 report-total scoping is deliberately whole-matched-title (per-person is scoped); a reviewer
-  wanting season-scoped *totals* would be a follow-up, not a gap.
+**Gates run:** `ruff format`, `ruff check`, `mypy src/reaper` clean; **pytest 2062 passed**;
+`alembic upgrade head` + `alembic check` clean (no schema change); frontend `lint`, `test`
+(268 passed) and `build` clean.
 
 ---
 
-## Phase 4 — Frontend (review queue + shell)  ✅ DONE
+## Phase 2 — Identity binds & keep-list joins  ✅ DONE
 
-**Findings:** B-7 (medium), PR-1 (medium), B-11 (low), B-12 (low), PR-5 (low), U-2 (low),
-U-3 (low), U-4 (low), U-5 (low), I-5 (low). All in `frontend/src/`.
+**Findings:** B2-5 (high), B2-6 (high), B2-7 (medium), P-6 (low).
 
-**What was done:**
-- **B-7** (rule 79/64): `refreshReview` (`ReviewQueue.tsx`) now also invalidates `["candidate"]`,
-  so its "names every review cache" comment is true. But invalidation alone can't fix the open
-  why-panel: its `selectedId` is a candidate row id bound to the OLD snapshot, so a refetch of
-  that id can only return a stale row. `showLatest` therefore calls a new `onClearItemSelection`
-  prop (App wires it to clear ONLY an item selection — the show panel is keyed on a stable group
-  key and refreshes in place, so it is left open). Test: `ReviewQueue.test` "Show latest closes
-  an open why-panel."
-- **PR-1** (rule 36): `ReapSheetLoader` (`App.tsx`) destructures `isPending`/`error` and renders a
-  `ModalShell` fallback (loading line, or a plain-language error, 404 worded specially) instead of
-  `return null`. ModalShell's own ✕ is the working close, and the `useBackGuard(reapSheetRun)`
-  no longer keys a dead press on an invisible sheet.
-- **B-11** (rule 80): `useBackGuard` gained an optional `canClose` predicate; a refused Back
-  re-registers (re-parks the sentinel) so Back stays armed rather than being spent on a close that
-  never happened. `JobsPanel` holds a `savePendingRef` that `ScheduleModal` mirrors `save.isPending`
-  into, and passes `() => !savePendingRef.current` as the guard — the same condition the modal's
-  scrim/Escape/✕ already honor. Tests: `backnav.test` "Back refuses a guarded overlay while locked,
-  then closes once unlocked."
-- **B-12**: `BackNavProvider` reconciles a sentinel left parked before a reload — on mount it reads
-  `history.state`, and if it is our sentinel, steps back over it (`history.back()` swallowed by
-  `selfPopRef`) or, with nothing to step to, `replaceState(null)`. Guarded by a `reconciledRef` so
-  StrictMode's double-effect runs it once. Test: `backnav.test` "reconciles a sentinel left parked
-  before a reload."
-- **PR-5** (rule 85): the "Updated to the latest scan" toast no longer fires synchronously with the
-  invalidation. `useReviewFreshness` gained `onSilentCaughtUp` (fired only when a silent refresh's
-  swap actually lands, `behind` → false) and `refreshFetching` (React Query keeps old data on a
-  refetch error, so error flags stay clear; a fetch that went and *settled* while still behind is
-  how a failed silent refresh is told from one in flight — it raises the nudge instead of a phantom
-  toast). Tests: hook-level (caught-up + settled-still-behind) and `ReviewQueue.test` (toast only
-  after catch-up; nudge, not toast, on a failed refetch).
-- **U-2** (rule 61): new `showReapReach(seasons)` returns all/some/none over the same
-  `override`/`override_effective` fields as `groupReapEffective`; `ShowInheritBanner` branches on it
-  so a whole-show reap the engine holds on every season reads "the reap is noted, but the seasons
-  are kept for now," a mix qualifies, and only all-effective keeps the blanket "removed" wording.
-  Test: `SeasonList.test` "qualifies the whole-show reap banner when the engine holds every season."
-- **U-3** (rule 17/36): `NotInScanPanel` accepts `isPending`/`error` and renders a loading line and
-  a `notice-error` before the empty-state all-clear; `App` passes the fairness query's own
-  `isPending`/`isError`. The definite "Every available request is in the last scan" now renders only
-  when the report loaded and was genuinely empty. Tests in `NotInScanPanel.test`.
-- **U-4**: `SpareMenu`'s capture-phase scroll-close now skips while the Custom-length input is open
-  (read through a `customRef` so the listeners are not re-subscribed per keystroke, rule 19).
-  **The code half is done and correct; the device half (a phone's keyboard-open scroll actually
-  closing the menu) still wants the verify skill on real hardware — the review rescoped it that way
-  and it is NOT reproduced here.**
-- **U-5**: the nav tab handler (`App.tsx`) now clears `setScalesUnmatched(false)` beside
-  `setScalesUser(null)`, so leaving and returning to Scales never re-shows the unmatched panel.
-- **I-5** (rule 24): `ModalShell`'s header comment now cites the schedule editor as the `canClose`
-  user and notes the reap sheet is deliberately closable (its run is detached, carried by the
-  ReapBar).
+**Theme.** Cross-system joins that bind the wrong item or drop an id the item carries. All
+resolve toward deleting something the operator protected or never meant to touch.
 
-**Gates:** `npm --prefix frontend run lint` ✓, `test` **239 passed** (+10 new), `build`
-(tsc --noEmit + vite) ✓. No backend files touched, so the Python gates and alembic were not run.
+**Files:** `engine/identity.py`, `services/snapshot.py`, `services/season_scan.py`.
 
-**Notes for later / assumptions:**
-- B-7 was fixed by *closing* the item panel, not re-resolving it to the new snapshot's row (both
-  were sanctioned by the review). Closing is the fail-safe choice — the operator re-opens the item
-  on the fresh scan rather than acting on evidence that may have moved. The show panel self-updates
-  and is left open.
-- PR-5's failure path keys on `isFetching` (a fetch that started and settled while still behind),
-  NOT on `error`/`isError`, because React Query retains the last-good data on a background refetch
-  error and leaves those flags clear. This is the load-bearing subtlety and is pinned by tests.
-- U-4's on-device confirmation is the one open item; treat it as the verify-skill follow-up the
-  review named, not a silent gap.
-- Phase 2 already wired the restore token through the frontend, so Phase 4 did not touch it (as the
-  Phase 2 deviation note promised).
+**What was done**
+- **B2-5** — the basename tier is now a **cross-check** of a bound id, not just a fallback for
+  when no id bound. The verifier's variant, not the Fix paragraph: the bind-or-abstain branch
+  is kept verbatim for `tier1 is None`, and when an id bound, only `len(hits) == 1` sets
+  `tier2` — a name naming several listings is silence, because under a shared id that is the
+  merged-twins shape tier 1 has already narrowed, and re-deciding it here destroys that
+  narrowing (this is what fails 11 tests in the naive variant). A `tier2` landing inside the
+  merged group normalizes to the canonical key, mirroring the tier-3 normalization two lines
+  above it: agreement with a merged group, not a contradiction. The reconcile is untouched, so
+  the only new outcome is an abstain, which keeps the file. Module docstring's tier-2 paragraph
+  rewritten to describe the two roles.
+- **B2-7** — shows consult imdb, but only as a cross-check. `resolve` gained a `binding_ids`
+  argument beside `id_priority`: `SHOW_ID_PRIORITY` is now `("tvdb", "imdb")` while
+  `_SHOW_BINDING_IDS` is `{"tvdb"}` alone, so a cross-check-only kind with nothing yet to check
+  stands down instead of originating a bind. Deliberately **not** the bare priority-tuple
+  change the Fix paragraph offers first: that lets imdb bind a show on its own, creating new
+  deletable shows where the ladder abstains today. Both tuples are now public and the
+  diagnostics helpers (`candidate_libraries`, `libraries_for_ids`) in `season_scan` and
+  `snapshot` take them instead of their own literal copies, so the libraries an operator is
+  shown cannot drift from the ones the resolver looked at.
+- **B2-6** — the movie keep-list lookup passes `item.imdb_id or item.plex_imdb_id`, mirroring
+  the TV path's `show_imdb_id` (rule 29). The exposed case is narrow but real: Radarr is
+  tmdb-native, so a blank `imdbId` is ordinary, and a "Never Reap" collection on a legacy-agent
+  Plex library is stored under an imdb id and nothing else.
+- **P-6** — `_twin_group` reads each candidate's size once. The `is not None` half of the test
+  was redundant under the `file_size is None` guard above it (an unknown size is `None`, and
+  `None == file_size` is already False), so the equality test alone carries it; noted in a
+  comment so it does not read as a dropped check.
+
+**Tests added (9).** Three in `TestTheContradictionVeto` for the id-vs-basename cross-check —
+the finding's own repro (the id binds the matched listing, the file name names the row that
+actually holds the *arr's file) asserting the exact detail string, plus the agreeing case and
+the multi-hit-is-silence case. A new `TestAShowsImdbIdCrossChecksItsTvdbBind` (4) covering the
+stale-tvdb abstain, the agreeing bind, imdb-alone-never-binds, and imdb-alone-still-leaves-the-
+title-backstop-intact. Two in `TestAKeepListRowIsFoundByEveryIdTheMovieCarries` for B2-6, both
+directions (a Plex-matched imdb id finds the keep-list row; neither id present does not invent
+a match).
+
+**Gates run:** `ruff format` (2 files reformatted), `ruff check`, `mypy src/reaper` clean;
+**pytest 2071 passed** (2062 + the 9 new); `alembic upgrade head` + `alembic check` clean (no
+schema change). Frontend untouched this phase, so its gates were not re-run.
 
 ---
 
-## Phase 5 — Platform, logging, settings, docs, misc  ✅ DONE
+## Phase 3 — Plex client hardening & protection lists  ✅ DONE
 
-**Findings:** PR-2 (medium), U-1 (medium), S-6 (low), S-5 (low), B-8 (low), B-9 (low),
-PR-4 (low), U-6 (low), I-4 (low), I-6 (low).
+**Findings:** B-1 (high), B-2 (high), B2-2 (high), B-3 (medium), B-4 (medium), B-5 (medium),
+B2-25 (low), I-1 (low-medium), I-2 (low-medium).
 
-**What was done:**
-- **PR-2** (rule 82): `logbuffer._FileSink.write` replaced its `suppress(Exception)` with a
-  one-shot degraded flag. On the first steady-state write failure it flips
-  `_file_sink_healthy` and announces once through the ring (`_mark_file_sink_degraded`; the
-  re-entry the announcement causes finds the flag already down and no-ops, so no recursion or
-  re-spam). New `logbuffer.file_sink_healthy()`; `configure_file_logging` resets the flag on a
-  fresh sink. `api/logs.download_logs` appends the in-memory ring behind a marker line when the
-  sink is degraded, so a read-only-remount trail is never silently truncated.
-- **U-1** (rule 86): `ScheduleModal` (`Settings.tsx`) now reads the effective zone from the
-  shared `["general-settings"]` query and renders "Times use your server time zone: {zone}.
-  Change it in Settings, General." (generic phrasing only while it loads), instead of the static
-  "often UTC in Docker" guess.
-- **S-6** (rules 83/14): `configure_file_logging` creates `logs/` with `mkdir(mode=0o700)` and an
-  unconditional `chmod(0o700)`, so a dir left world-readable by an earlier version is tightened
-  too. The 0700 dir confines the files (no other account can traverse in); the optional
-  per-file 0600 opener was dropped because `RotatingFileHandler` has no `opener` param and rule
-  83 mandates the *directory*, which is covered.
-- **S-5** (rules 84/13): new `api/settings._validate_external_url` (http/https + hostname, the
-  same `urlsplit` check the Plex/server-address fields use) runs at the edge of
-  `create_instance`/`update_instance`; a scheme-less paste or `javascript:` value 422s and is
-  never stored. Mirrored client-side in `ServiceModal` (`isWebUrl`) so the save is blocked
-  before the round-trip. Blank still clears; an omitted field still keeps.
-- **B-8** (rule 81): `20260721_2000_add_instance_import_exclusion` gained the sibling heal
-  migration's reflection guard (`_has_column`); it skips the `add_column` when the column is
-  already present, so a database created during the ~30-minute baseline-edit window upgrades
-  instead of boot-looping on "duplicate column name." Editing this additive migration is safe
-  (databases that ran it never re-run it); the frozen baseline `22777b2b5015` was NOT touched.
-- **B-9** (rules 24/58): `history_sync.ensure_schema`'s rebuild is serialized behind a
-  per-event-loop `asyncio.Lock` (`_rebuild_lock`, a `WeakKeyDictionary` keyed on the running
-  loop, because a single module-level lock would bind to the first test's loop and break every
-  other — the suite runs a fresh loop per test). The false "SQLite serializes writers, so the
-  read under the write lock is the authority" comment is corrected to name the lock as the real
-  mutual exclusion (pysqlite runs the PRAGMA + DDL in autocommit with no `BEGIN IMMEDIATE`).
-- **PR-4** (rule 87): `scheduler.reschedule_timezone` wraps each `apply_scan_schedule` /
-  `apply_maintenance_schedule` in the same `try/except ValueError` (`+ KeyError` for
-  maintenance) guard startup uses, logging `scheduler.bad_scan_cron` /
-  `scheduler.bad_maintenance_cron`. A stored-but-malformed cron can no longer 500 the timezone
-  save or half-apply the zone (some jobs moved, some not).
-- **U-6**: the pace table's per-run disk floor (`understandingPolicy.ts`) changed from a
-  unitless "1" to "Any amount."
-- **I-4** (rule 24): the four profile-fallback degradation citations (`profiles.py:59`/`:123`,
-  `scan_runner.py`, `api/runs.py`) now cite rule 65 (silent recovery on operator-configured
-  safety values), not rule 14 (atomic secret files).
-- **I-6** (rules 66/67): `LogsOut` returns `files_kept` (`logbuffer.files_retained()` =
-  `LOG_BACKUP_COUNT + 1`); `LogsPanel` renders that count instead of the hardcoded "3," so the
-  copy tracks the backend constant, which now carries a cross-reference comment.
+**Theme.** The Plex client's remaining title-keyed lookups and unpaged reads, plus the
+protection-list sync that can wipe stored membership. B-1 is the keep tag that silently
+protects nothing for any operator whose tag has an uppercase letter.
 
-**Gates:** ruff check ✓, ruff format --check ✓, mypy ✓ (95 files), pytest **2023 passed** (+11
-new), alembic upgrade head + check ✓ (no schema drift — B-8 edits an existing migration, adds no
-revision). Frontend: eslint ✓, vitest **241 passed** (+2 new), build (tsc --noEmit + vite) ✓.
+**Files:** `clients/plex.py`, `services/lists.py`, `services/snapshot.py`,
+`services/executor.py`, `api/settings.py`.
 
-**Notes for later / assumptions:**
-- B-9 was rescoped by the review to a false-comment/no-real-lock defect (the reachable outcomes
-  are a redundant double rebuild or a loud `no such table`, both non-lossy; the nightly full
-  sweep refills regardless). The per-loop-lock fix makes the serialization real *and* corrects
-  the comment; it is modest-stakes, not a data-loss fix.
-- S-6's per-file 0600 was intentionally NOT added: `RotatingFileHandler` exposes no `opener`
-  hook (verified), subclassing `_open` was judged more risk than value, and the 0700 dir already
-  confines the files. Rule 83 mandates the directory, which is done.
-- The `os.chmod` → `Path.chmod` and constant-`.encode()` → bytes-literal changes were lint-driven
-  (ruff PTH/S103/UP012); behavior is unchanged.
+**What was done**
+- **B-1** — new `lists._tag_key` (strip + casefold, the *arr side's `normalize_label`) is
+  applied on **both** sides of the tag-id map, so the operator's own capitalization matches
+  the label Sonarr/Radarr stored. Was live for anyone whose keep tag is not already
+  lowercase: the tag read as missing, the first sync stored an empty membership with
+  `last_error = NULL` (a reported success), and every keep-tagged title stayed deletable
+  forever with the list showing as healthy.
+- **B-2 / B-3** — `section_paths` now returns a list of `PlexSectionPaths(key, title,
+  locations)` instead of `{title: paths}` (a title-keyed dict silently dropped one of two
+  same-titled libraries, so its post-reap refresh mapped to nothing), and `item_count`,
+  `is_refreshing`, `refresh_path` and `empty_trash` take a **section key** resolved through
+  `sectionByID`, like `add_label` / `remove_label` / `remove_collection_members` already did.
+  The executor's whole trash interlock (`_affected_sections`, `_section_pre_counts`,
+  `_deleted_by_section`) is keyed by section key, with a `_section_titles` map so log lines
+  still name the library; `_section_title` is the one place that falls back to the number.
+  `api/settings.py` builds its title-keyed prefill map from the new rows, merging duplicate
+  titles' folders instead of dropping one. **No `library.section(title)` call survives in
+  `src/`** (rule 72's twin sweep) — including `lists.PlexCollection`, which now asks every
+  library of that title in turn for the keep collection, since reading it off the wrong twin
+  looks exactly like the collection having been deleted.
+- **B2-2** — `section_paths` maps failures to `PlexError` like every sibling read. It was the
+  one that did not, and the raw plexapi exception escaped `_best_effort_refresh`'s
+  `except PlexError` *after* a file was already deleted: step stuck at SENT, run stuck
+  EXECUTING, every remaining approved deletion never attempted. `refresh_path` was confirmed
+  to map already.
+- **B-4** — `_iter_section_pages` generalized to `_iter_pages(server, path, query)` (the
+  section form is now a two-line wrapper), and `find_collection` / `collection_children` run
+  through it. Unpaged, a windowed server made a shelf past the first window read as absent
+  (the caller then creates a *second* "Leaving Soon" collection) and truncated the member set
+  the reconcile computes `current - wanted` from. The loop's ratingKey contract also replaces
+  `collection_children`'s old silent `if el.get("ratingKey")` filter.
+- **B-5** — `lists.sync` distinguishes "the container came back empty" from "the container
+  came back full and nothing in it could be identified" (rule 27). The second is now a
+  `ContainerMissingError`, so a Plex agent change whose guids stop parsing keeps the stored
+  membership instead of wiping it and unprotecting every title on the list.
+- **B2-25** — new `lists.retire_absent(engine, family=, current=)` disables every enabled row
+  in a slug family the current configuration no longer produces, called from
+  `sync_protection_lists` for the keep-tag and Plex-collection families. Covers all three
+  triggers the verifier named: flipping any→all, clearing the tags entirely (no provider is
+  built at all, so nothing else touches the list), renaming the collection, plus a removed
+  instance. Three deliberate constraints: a **failed** sync's slug is still in `current` and
+  is never retired (its stored copy is the right list, just stale); the Plex family is only
+  retired when `plex_server` is not None, so an unreachable Plex cannot unprotect a "Never
+  Reap" collection; and `sync`'s upsert now sets `enabled = 1` on conflict, so flipping back
+  resumes the old list instead of leaving a synced-but-disabled keep-list protecting nothing.
+  Read and write share one transaction (rule 58).
+- **I-1** — the batched `/library/metadata/{ids}` enrichment logs `plex.metadata_batch_short`
+  when a server returns fewer elements than requested. Deliberately a log, not a degrade, and
+  the comment says why: unlike the sweep, this read only *adds* evidence (ratings, folder
+  paths), so losing it lowers pressure and widens abstains rather than making anything more
+  deletable. Silence was the defect.
+- **I-2** — `add_label`'s docstring no longer claims a runtime assertion that was never
+  written (rules 7/24). It now says plainly that label preservation is verified against a
+  live server and **assumed at runtime**, and where the read-back would go if it is ever to
+  be enforced.
+
+**Tests added (19).** `test_lists.py`: three parametrized mixed-case keep tags plus the
+genuinely-absent tag still raising (B-1); the collection found in the second library of that
+name, a missing library as a hard failure, and a populated collection whose ids all fail
+never wiping the list (B-5). `test_protection_sync.py`: any→all actually tightening, flipping
+back protecting again, clearing the tags retiring the whole keep-list, a failed sync never
+retired, a renamed collection retiring the old one, and an unreachable Plex never retiring
+(B2-25). `test_plex_sweep.py`: a collection past the first window still found, a truncated
+member list never read as the whole shelf, an unbounded full page raising (B-4), two
+same-titled libraries both surviving `section_paths`, and a failing read surfacing as
+`PlexError` (B-2/B2-2). `test_reap_loop.py`: two libraries sharing a title refreshed and
+purged by key, which the old title-keyed fake could not even express.
+
+**Gates run:** `ruff format`, `ruff check`, `mypy src/reaper` clean; **pytest 2090 passed**
+(2071 + the 19 new); `alembic upgrade head` + `alembic check` clean (no schema change).
+Frontend untouched this phase (`lists.configured` has no route and no UI reads the table), so
+its gates were not re-run.
 
 ---
 
-## Notes for every phase
+## Phase 4 — Executor & the deletion path  ✅ DONE
 
-- Run the CLAUDE.md verification gates for the surface you touched before calling the phase
-  done. Backend phase: `ruff check`, `ruff format .`, `mypy src/reaper`, `pytest`,
-  `alembic upgrade head` + `alembic check`. Frontend phase: `npm --prefix frontend run lint`,
-  `test`, `build`. Always `ruff format .` (not `--check`) before staging.
-- No identifying info anywhere (golden rule). American English. No em dashes in operator copy.
-- Update the Progress checklist above when a phase lands, and record any assumption that turned
-  out wrong in `docs/PLAN.md` / `docs/LEARNINGS.md`.
-- Commit only when the user asks.
+**Findings:** PR2-1 (medium), B2-8 (medium), B2-9 (medium), B2-10 (medium), B-6 (medium),
+B-9 (low-medium), B2-17 (low), I2-3 (low), PR-8 (low), PR-9 (low).
+
+**Theme.** What happens once the operator has armed and pressed the button: staleness checks,
+mid-flight overrides, honest accounting, and the catch-all that keeps a half-finished run from
+wedging.
+
+**Files:** `services/executor.py`, `services/planner.py`, `services/profiles.py`,
+`services/whitelist.py`, `api/runs.py`, `api/schemas.py`, `db/models.py`, one new migration.
+
+**What was done**
+
+- **B2-8 — a policy edit now voids a pending plan.** `execute()` compares `run.policy_hash`
+  against the policy in force (new `profiles.live_policy_hash`, the one place that combination
+  is spelled) and refuses with plain copy telling the operator to re-scan. Checked in the dry
+  run too, so the simulation proves the same refusal before they type the phrase.
+  - **The product decision the tracker flagged.** As the verifier warned, this also refuses a
+    plan built *after* the edit, because a policy change does not trigger a rescan. That is
+    deliberate: both plans were scored under the old policy, the Policy page already says a
+    saved policy takes effect on the next scan, and the prime directive settles the tie toward
+    keeping the file. The remedy is one scan either way. The alternative (delete the claim in
+    `planner.build_plan`'s docstring) would have left the hazard the finding is about: an
+    operator adds a protection, then deletes the very files it protects.
+  - **Removed the drift hazard that made the interlock untrustworthy.** `build_plan` took a
+    `policy_hash` argument that every caller filled with `snapshot.policy_hash` and nothing
+    checked; a caller free to pass a different value could feed the new interlock the wrong
+    number. It now reads the hash off its own snapshot, and the parameter is gone (51 test
+    call sites and the one route updated).
+- **B2-9 — overrides reach a run already in flight.** `_refresh_overrides` re-reads the
+  decisions before every item of a real run (a plain re-query: `whitelist.overrides` is a
+  two-column Core select, so the run session sees other sessions' committed rows), and the
+  per-item check now routes through the production `condemned.effective_verdict` rather than a
+  second copy of the membership rule. Intersected with the run-start effective set, which stays
+  frozen as the ceiling, so a refresh can only ever **remove** items — a reap added mid-run
+  cannot smuggle in an item outside what the operator confirmed. Fail-closed: an unreadable
+  re-read stops the run. `whitelist.overrides`'s docstring and the executor's field comments
+  updated to the new contract, as the finding required.
+- **B2-10 + the second half of PR2-1 — a removal is charged even when the step fails.** New
+  nullable `action_step.file_removed_at` (migration `8192a3b4c5d6`, chained onto the frozen
+  baseline's head; epoch-integer like every other timestamp here). Stamped and committed the
+  moment `gone` is proven, **before** anything that could fail, so the exclusion poll, the Plex
+  refresh and any surprise all happen after the record exists. `_rolling_30d_deletions` counts
+  `VERIFIED OR file_removed_at`, so an intermittently slow Radarr can no longer buy unlimited
+  deletions. The step stays FAILED — the verifier's correction, taken: marking it VERIFIED would
+  make the journal claim a verification that explicitly failed. Same stamp on the season path
+  when fewer files remain than were sent. `RunReport.removed_unconfirmed` /
+  `library_changed` drive the post-run rescan, which `deleted_items` alone was skipping.
+- **PR2-1 — no surprise wedges a run.** Catch-alls in `_send_for_real` (funnels through
+  `_fail`, so one item's surprise fails that item, not the world) and in `execute()` (records
+  ABORTED and **returns the report** rather than re-raising — the report is the only record of
+  which files actually went, and the finding's real complaint was the operator seeing a bare
+  error string). Rule 72 twins swept: `_best_effort_refresh`, `_finalize_plex` and
+  `_mount_is_up` all widened from their narrow handlers to `except Exception`, since all three
+  are documented as never fatal / fail-closed. (The `section_paths` error mapping this finding
+  names as the root cause landed in Phase 3 as B2-2.)
+- **B-6 — season pruning tidies Plex.** `_send_season` calls `_best_effort_refresh` on the
+  series folder after a verified prune, so a TV section finally joins the affected set and the
+  trash purge covers what the class docstring always claimed. `plex_entries=1` is the honest
+  ceiling: a TV section counts shows, so pruning one season of a multi-season show removes
+  none and the count-delta gate declines — the safe answer, not a wrong purge.
+- **B-9 — a season with no files resolved is skipped, not verified.** An empty live resolve
+  made `delete_episode_files([])` a no-op, found nothing remaining, and marked the item
+  VERIFIED with the full approved size charged to the budget. It is now a visible skip.
+  `_mark_skipped` also stopped overwriting already-VERIFIED steps (mirroring `_fail`), so the
+  unmonitor that really took keeps its mark.
+- **B2-17 — the progress bar counts what the operator authorized.** `total` is now
+  `_deletable(...)` — the executor's own acted-on set, the same one the confirmation phrase and
+  the caps count — and `done` advances only over that set, so the denominator no longer flips
+  mid-run to a number larger than the one they typed. Items kept by an override are still
+  walked and still reported; they land in `report.skipped`, which the UI already renders beside
+  the bar as "spared". No new wire field and no frontend change: the two numbers the verifier
+  asked for were both already carried.
+- **PR-9 — shutdown no longer waits on Plex.** `_commit_and_finalize(cancelled=…)` commits the
+  run's final state on the cancel path but skips the settle-wait and purge, which could hold
+  shutdown open ~20s per section and purge trash mid-teardown.
+- **PR-8 — bounds on the destructive path's inputs.** `CreateRunIn.media_keys` capped at 5000
+  (omitting the field still means the whole set, so nothing is truncated) and both `media_key`
+  fields at 100, the storage bound.
+- **I2-3 — the docstring stopped inviting a maintainer to disable an interlock.**
+  `_row_timestamp`'s None now says "no readable time", names `_watched_since_approval` as the
+  consumer that spares on it, and says not to "fix" the caller.
+
+**21 tests added** across `tests/test_reap_loop.py` (policy-edit refusal incl. the dry run and
+the edit-then-undo case; spare / un-reap / re-reap mid-run plus the fail-closed unreadable
+read; the failed-but-removed stamp, its rolling-budget charge and the rescan trigger; the
+progress denominator; the season Plex refresh; the vanished-season skip; the unmapped-error
+paths) and `tests/test_api.py` (both length bounds). Four existing tests were updated where
+Phase 4 deliberately changed behavior — the hard-cancel test now asserts the purge is
+*deferred*, the rolling-window test ages both stamps, the journal-durability test raises a
+`BaseException` (an ordinary exception is now handled, which is the point), and the two
+migration tests stopped pinning a hand-written head.
+
+**Gates run:** `ruff format --check`, `ruff check`, `mypy src/reaper` clean; **pytest 2111
+passed** (2090 + the 21 new); `alembic upgrade head`, `alembic downgrade -1` and `alembic
+check` all clean. Frontend re-run for confidence after the incident below: eslint clean,
+**vitest 268 passed**, build clean.
+
+> **Incident, recorded so the next agent does not repeat it.** Mid-phase I ran
+> `git checkout -- tests/` to undo an over-broad sed, which discarded every uncommitted test
+> change from Phases 1–3 as well. All of it was recovered by replaying the Edit/Write tool
+> calls out of the session transcripts in `~/.claude/projects/…/*.jsonl` plus the two helper
+> scripts still in the job tmp dir, and verified by the suite returning to exactly its
+> pre-loss count of 2090 before Phase 4's own tests were added. **The working tree is the only
+> copy of this remediation until the operator commits — never `git checkout --` a directory,
+> and prefer a targeted `git checkout -- <file>` or a re-edit.**
+
+---
+
+## Phase 5 — Snapshot & scan pipeline
+
+**Findings:** PR-1 (medium), H-1 (medium), B2-11 (medium), B2-12 (medium), P-1 (medium),
+B-11 (low-medium), PR-5 (low-medium), B2-22 (low), B2-23 (low), B2-24 (low), B2-26 (low),
+PR-4 (low), PR-6 (low), PR2-4 (low).
+
+**Theme.** Evidence sources that fail without degrading the snapshot (rule 28), the degradation
+signal itself being detected by substring-matching free text (H-1), and the season/binge guards
+that read missing data as a definite value.
+
+**Files:** `services/snapshot.py`, `services/scan_runner.py`, `services/season_scan.py`,
+`services/season_pruning.py`, `clients/tautulli.py`, the IMDb dataset service.
+
+**Planned work:** H-1 first (it is the typed-flag foundation the others read), then the
+degradation findings, then the season guards, then the paging/leak/perf items.
+
+---
+
+## Phase 6 — API routes, runs & query performance
+
+**Findings:** B-8 (medium), P-2 (medium), P-3 (medium), P-4 (medium), B-10 (low-medium),
+B2-13 (low), B2-14 (low), B-15 (low), P2-1 (low), P2-2 (low), P-5 (low), PR-7 (low),
+PR2-2 (low), PR2-3 (low).
+
+**Theme.** Router-level robustness (one malformed stored row must not 500 a page), the
+unbounded `?limit=-1`, and the review-queue/runs hot paths.
+
+**Files:** `api/routes.py`, `api/runs.py`, `api/settings.py`, `api/poster.py`,
+`services/condemned.py`, `services/history_sync.py`, `services/instances.py`,
+`services/app_settings.py`, `services/seeding.py`.
+
+**Note:** P-4 needs an additive Alembic revision chained onto the current head for the
+`watch_event.parent_rating_key` index — never edit the frozen baseline.
+
+---
+
+## Phase 7 — Security, auth, restore & infra
+
+**Findings:** S2-1 (medium), S-1 (medium), S-2 (medium), S-3 (medium), S-4 (medium-low),
+S-5 (medium-low), S-6 (low-medium), S-7 (low-medium), B-12 (low-medium), S2-2 (low),
+B-13 (low), B2-21 (low), PR-11 (low), PR-12 (low), PR-13 (low), R-3 (low), I-3 (low),
+I-4 (low).
+
+**Theme.** Credential material in logs, unthrottled pre-auth endpoints, and the restore swap's
+interrupted-midway hole.
+
+**Files:** `logging.py`, `logbuffer.py`, `crypto.py`, `secrets.py`, `auth/cookie.py`,
+`auth/sessions.py`, `api/auth.py`, `services/admin_password.py`, `services/restore.py`,
+`services/backup.py`, `clients/plextv.py`, `main.py`.
+
+---
+
+## Phase 8 — Fairness, Leaving Soon & engine cleanup
+
+**Findings:** PR-3 (medium), R-1 (low-medium), B2-18 (low), B2-19 (low), B2-20 (low),
+B-14 (low), H-2 (low), R-2 (low), I-5 (low), I-6 (low), I-7 (low).
+
+**Theme.** The read-only surfaces (Scales, Leaving Soon) plus the engine's leftover parallel
+implementations.
+
+**Files:** `services/fairness.py`, `services/leaving_soon.py`, `engine/requester.py`,
+`engine/facts_codec.py`, `engine/calibration.py`, `engine/backtest.py`, `clients/public.py`,
+`services/history_sync.py`.
+
+---
+
+## Phase 9 — Test suite
+
+**Findings:** T-1 (**critical, coverage**), T-2 (high), T-3 (high), T-4 (medium), T-5 (medium),
+T-6 (medium), T-7 (medium), T-8 (medium-low), T-9 (low), T-10 (low).
+
+**Theme.** Where the suite asserts a transcription of production instead of production itself
+(T-2, T-4, T-10), and the destructive paths with no route-level test at all (T-1, T-3, T-6).
+
+**Files:** `tests/**`, especially `tests/_policy_lab.py`, `tests/conftest.py`.
+
+---
+
+## Phase 10 — Merge the review's Agent Rules into CLAUDE.md
+
+Not a code finding: `docs/CODE_REVIEW.md` ends with 41 Agent Rules (23 from the first pass, 18
+new in the second). Once phases 1–9 land, merge them into `CLAUDE.md` as rules **88–128**,
+continuing after the 70–87 block Phase 1 restores, and reconcile any that sharpen an existing
+rule (the newer, more specific obligation governs — say which older rule each sharpens). Drop
+or reword any rule whose finding was fixed differently than the review proposed.

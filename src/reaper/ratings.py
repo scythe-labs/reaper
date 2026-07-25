@@ -260,7 +260,14 @@ def from_radarr(ratings: dict[str, Any] | None, *, provider: str = "radarr") -> 
         # concept", not "zero people voted" -- conflating them would make a vote
         # floor reject every Rotten Tomatoes score.
         raw_votes = entry.get("votes")
-        votes = int(raw_votes) if raw_votes and source not in _PERCENTAGE_SOURCES else None
+        try:
+            votes = int(raw_votes) if raw_votes and source not in _PERCENTAGE_SOURCES else None
+        except (TypeError, ValueError):
+            # A fork, a proxy, or a future schema serializing votes as "1,234" or a list
+            # must cost this one rating, never the operator's whole scan: a bare int() here
+            # raised straight out of the fact build (rule 32). None already fails a vote
+            # floor closed in ``Rating.meets``, so the safe reading is preserved.
+            votes = None
 
         out.append(
             Rating(

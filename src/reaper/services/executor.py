@@ -26,15 +26,25 @@ Two independent layers guard every mutation, on purpose:
 
 The interlocks, in order, and why each exists:
 
-1. **Manifest re-check -- a frozen-snapshot integrity check.** The condemned candidate
-   rows are frozen per snapshot and never mutated, and this re-hashes those same rows, so
-   what it actually detects is *loss or tampering of the frozen set* (e.g. a candidate row
+1. **Approval re-check -- the frozen set, and the policy that judged it.** Two halves,
+   because an approval can be voided from either side.
+
+   The *manifest* half is a frozen-snapshot integrity check. The condemned candidate rows
+   are frozen per snapshot and never mutated, and this re-hashes those same rows, so what
+   it actually detects is *loss or tampering of the frozen set* (e.g. a candidate row
    deleted out from under the run by retention GC), not live library drift -- the executor
    does not re-read the *arr here, so a movie deleted or resized in Radarr after approval
    would not change this hash. Live drift is caught elsewhere, by the per-item interlocks
    below (the streaming veto, the played-since-approval check, and the per-item
    existence and size re-reads at delete time); a stale tab replaying yesterday's plan is
    stopped by the route's confirmation-phrase recompute and the "executes once" guard.
+
+   The *policy* half catches what the manifest structurally cannot: an operator who adds a
+   protection or raises the condemn threshold changes no candidate row, so the fingerprint
+   still matches while the plan now targets files the new policy keeps. The run carries the
+   policy hash its snapshot was scored under, and this compares it against the policy in
+   force right now. Anything scored under a superseded policy is refused, and the remedy is
+   one scan.
 2. **Manual spare re-check, per item.** The owner may spare an item by hand *after* the
    plan is built -- during the grace window this executor exists for. A spare does not
    change the frozen candidate row (still ``condemn``) or the manifest hash, so this is a
@@ -95,12 +105,12 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.clients.base import IntegrationError, SafetyViolationError
-from reaper.clients.plex import PlexError, declared_mutation
+from reaper.clients.plex import declared_mutation
 from reaper.clock import utcnow
 from reaper.config import RuntimeSafety
 from reaper.db.models import (
@@ -113,11 +123,12 @@ from reaper.db.models import (
 )
 from reaper.engine.policy import ProfileSettings
 from reaper.services import whitelist
-from reaper.services.condemned import effective_condemned
+from reaper.services.condemned import effective_condemned, effective_verdict
 from reaper.services.planner import MediaRef, manifest_hash
+from reaper.services.profiles import live_policy_hash
 
 if TYPE_CHECKING:
-    from reaper.clients.plex import ActiveStream
+    from reaper.clients.plex import ActiveStream, PlexSectionPaths
 
 log = structlog.get_logger(__name__)
 
@@ -289,14 +300,18 @@ class PlexOps(Protocol):
     ``is_refreshing`` lets the executor wait for that scan to settle, ``item_count`` feeds
     the trash interlock's count-delta gate, and ``empty_trash`` purges the now-missing
     item so no stale entry lingers.
+
+    Every section is addressed by its **key**, never its title: two Plex libraries may
+    share a title, and the count-delta interlock comparing the wrong library's size is
+    exactly how a purge would be approved that this run never earned (rule 6/57).
     """
 
     async def active_streams(self) -> list[ActiveStream]: ...
-    async def section_paths(self) -> dict[str, list[str]]: ...
-    async def refresh_path(self, section_title: str, path: str) -> None: ...
-    async def is_refreshing(self, section_title: str) -> bool: ...
-    async def item_count(self, section_title: str) -> int: ...
-    async def empty_trash(self, section_title: str) -> None: ...
+    async def section_paths(self) -> list[PlexSectionPaths]: ...
+    async def refresh_path(self, section_key: int, path: str) -> None: ...
+    async def is_refreshing(self, section_key: int) -> bool: ...
+    async def item_count(self, section_key: int) -> int: ...
+    async def empty_trash(self, section_key: int) -> None: ...
 
 
 class HistorySource(Protocol):
@@ -372,6 +387,16 @@ class StepOutcome:
     title: str = ""
     checks: list[StepCheck] = field(default_factory=list)
 
+    file_removed: bool = False
+    """Set on a FAILED outcome whose file is nonetheless really off disk.
+
+    A movie Radarr deleted whose import exclusion never landed is a genuine failure -- the
+    verification did not pass -- and it is also a file that is gone. The run's bookkeeping
+    needs both facts: the state drives the canary and the checklist, this drives the post-run
+    rescan, which exists because removed files leave the queue stale. A VERIFIED outcome
+    needs no flag (``deleted_items`` already counts it), so this defaults False and is set
+    only where a removal is proven under a failure."""
+
 
 @dataclass
 class RunReport:
@@ -391,10 +416,29 @@ class RunReport:
     story."""
 
     skipped: int = 0
+
+    removed_unconfirmed: int = 0
+    """Items whose file is gone but whose step ended FAILED -- a delete Radarr honored whose
+    import exclusion could not be verified. They are not ``deleted_items`` (nothing about
+    them is confirmed) but they DID change the library, so the post-run rescan has to fire
+    on them or the queue keeps offering files that no longer exist."""
+
     aborted_reason: str | None = None
+
+    @property
+    def library_changed(self) -> bool:
+        """Did this run remove anything at all? The rescan trigger.
+
+        Confirmed deletions plus the ones whose removal is proven under a failed
+        verification. Reading ``deleted_items`` alone skipped the rescan for a run whose
+        every item deleted but failed its exclusion check, leaving the queue showing files
+        that were already gone."""
+        return self.deleted_items > 0 or self.removed_unconfirmed > 0
 
     def record(self, outcome: StepOutcome) -> None:
         self.outcomes.append(outcome)
+        if outcome.state == StepState.FAILED and outcome.file_removed:
+            self.removed_unconfirmed += 1
 
 
 @dataclass(frozen=True)
@@ -669,18 +713,29 @@ class Executor:
         self._plex_settle_attempts = max(1, plex_settle_attempts)
         self._plex_settle_delay = plex_settle_delay
         # Plex movie sections whose path we refreshed this run -- the ones to purge trash
-        # from at the end, once, if the mount is confirmed up.
-        self._affected_sections: set[str] = set()
+        # from at the end, once, if the mount is confirmed up. Keyed by section KEY, not
+        # title: two libraries may share a title, and the interlock below must not read one
+        # library's size while purging another's trash (rule 6/57).
+        self._affected_sections: set[int] = set()
         # The trash interlock's inputs: each section's item count BEFORE anything was
         # deleted, and how many Plex entries this run removed under each section. The
         # purge runs only when a section shrank by no more than what we deleted there.
-        self._section_pre_counts: dict[str, int] = {}
-        self._deleted_by_section: dict[str, int] = {}
-        # The manual spare/reap overrides, loaded fresh at the top of execute(). An item
-        # spared by hand AFTER the plan was built must not be deleted -- the planner filters
-        # spares at plan time, but the owner can spare during the grace window too, so the
-        # executor re-checks per item. Loaded per run, not per item, so one query serves all.
+        self._section_pre_counts: dict[int, int] = {}
+        self._deleted_by_section: dict[int, int] = {}
+        # Section key -> title, filled as sections are read, so the log lines an operator
+        # reads still name the library rather than a number.
+        self._section_titles: dict[int, str] = {}
+        # The manual spare/reap overrides. Loaded at the top of execute() and RE-READ before
+        # every item of a real run (``_refresh_overrides``): an item spared by hand after the
+        # plan was built must not be deleted, and the owner can spare at any point in the
+        # grace window -- including while the reap is in flight, which is exactly when they
+        # are watching a title they want back go past. Per item, not per run, because a run
+        # takes minutes and a decision made in minute two must reach minute three.
         self._decisions: dict[str, str] = {}
+        # The effective condemned set as it stood when the run was claimed. Deliberately NOT
+        # refreshed: it is the ceiling on what this run may send (the caps and the operator's
+        # typed confirmation both counted it), so the per-item checks intersect against it
+        # and can only ever remove items, never add one that was never authorized.
         self._effective_keys: set[str] = set()
 
     async def execute(self, run_id: int) -> RunReport:
@@ -737,14 +792,16 @@ class Executor:
         # The owner's manual overrides, read fresh: a spare added since the plan was built
         # must still stop the delete, and a hand reap withdrawn since must stop its item
         # too. This is the layer that enforces both at the point of no return (see the
-        # per-item checks in ``_one_delete``). The effective set is what THIS run may
-        # send; the frozen ``condemned`` dict above stays untouched for the manifest.
+        # per-item checks in ``_one_delete``, which re-read this map before every item of a
+        # real run). The effective set is what THIS run may send, fixed here as the ceiling;
+        # the frozen ``condemned`` dict above stays untouched for the manifest.
         self._decisions = await whitelist.overrides(self._session)
         effective = await effective_condemned(self._session, run.snapshot_id, self._decisions)
         self._effective_keys = set(effective)
         self._affected_sections = set()
         self._section_pre_counts = {}
         self._deleted_by_section = {}
+        self._section_titles = {}
 
         # -- interlock 1: the frozen condemned set must still be intact ----
         # Hashed over the WHOLE condemned set -- spared or not -- so that sparing an item
@@ -764,6 +821,28 @@ class Executor:
                 "The condemned set changed since this plan was approved: an item was "
                 "added, removed, or resized. The approval was for a different plan and "
                 "is void. Re-scan, re-review, and approve the new plan."
+            )
+
+        # -- interlock 1, second half: the policy must still be the one in force ----
+        # The manifest above cannot catch a policy edit: it hashes frozen candidate rows,
+        # which a policy change never touches. So an operator who adds a protection --
+        # exactly the act that should void a pending approval -- would otherwise come back
+        # to the Reap page and delete the very items they just protected.
+        #
+        # A plan carries the policy hash of the snapshot it was built from, and a policy
+        # edit does NOT trigger a rescan, so this refuses a plan built AFTER the edit as
+        # well as one built before it. That is deliberate, not collateral: both were
+        # scored under the old policy, and the Policy page already says a saved policy
+        # takes effect on the next scan. The remedy is one scan, and it is the same
+        # remedy either way.
+        #
+        # Checked in the dry run too, so the simulation proves the same refusal. A policy
+        # Reaper had to recover reads as the shipped default here (``active_policy`` never
+        # raises), which will not match and so refuses -- the same direction rule 65 wants.
+        if run.policy_hash != await live_policy_hash(self._session):
+            raise ExecutionError(
+                "Your policy changed after this plan was approved, so the plan is out of "
+                "date and nothing was deleted. Run a new scan, then review and plan again."
             )
 
         # Group every step by the item it belongs to, keeping every planned item that
@@ -841,6 +920,9 @@ class Executor:
             # gets its trash purged (see _trash_delta_is_ours), which is the safe failure.
             await self._capture_section_counts()
 
+        # Set by the cancel path so the finally below commits the run's state but does NOT
+        # sit in Plex's settle-wait. See _commit_and_finalize.
+        cancelled = False
         try:
             # -- interlock 3: caps abort the whole run ----------------------
             # Inside the guarded block, so a breach becomes a visible ABORTED report the
@@ -863,15 +945,38 @@ class Executor:
         except asyncio.CancelledError:
             # A hard cancel -- the app shutting down, or a force-stop that did not go
             # through the graceful Stop (which raises ExecutionError above). Record it as an
-            # abort so the run does not linger in EXECUTING, then let the finally tidy Plex
-            # before the cancellation propagates. Every removed file is already journalled
-            # per item, so nothing is lost by aborting here.
+            # abort so the run does not linger in EXECUTING, then let the finally make that
+            # durable before the cancellation propagates. Every removed file is already
+            # journalled per item, so nothing is lost by aborting here. The Plex tidy-up is
+            # deliberately NOT run: see _commit_and_finalize.
+            cancelled = True
             report.state = RunState.ABORTED
             report.aborted_reason = "The run was stopped before it finished."
             if not self._dry_run:
                 run.state = RunState.ABORTED
                 run.aborted_reason = report.aborted_reason
             raise
+        except Exception as exc:
+            # The catch-all, and the last thing standing between a surprise and a wedged
+            # run. Anything not mapped above -- a raw transport error out of a client, a bug
+            # -- used to escape with run.state left EXECUTING, which execute() refuses to
+            # re-enter and nothing in the app reconciles: the run row stuck forever with no
+            # reason recorded, and the operator shown a bare error string with no way to see
+            # which files had actually been removed.
+            #
+            # So it becomes an ordinary abort, the same shape a cap breach produces, and the
+            # report is RETURNED rather than re-raised -- the report is the only record of
+            # the per-item outcomes, and a run that deleted files before something surprising
+            # happened is exactly when the operator most needs to read it. Nothing is
+            # swallowed: the reason carries the error text into the UI, and the traceback is
+            # logged here. Files already deleted keep their committed marks.
+            log.warning("reap.unexpected_error", run_id=run_id, error=str(exc), exc_info=True)
+            report.state = RunState.ABORTED
+            report.aborted_reason = f"The run stopped on an unexpected error: {exc}"
+            if not self._dry_run:
+                run.state = RunState.ABORTED
+                run.aborted_reason = report.aborted_reason
+            return report
         finally:
             # Runs on EVERY exit -- COMPLETED, a graceful abort, and a hard cancel alike --
             # because whatever ended the run, the files already removed must have their
@@ -880,11 +985,11 @@ class Executor:
             # backgrounding the run) skipped it, orphaning Plex entries and leaving the run
             # EXECUTING. See _commit_and_finalize for why it is best-effort.
             if not self._dry_run:
-                await self._commit_and_finalize()
+                await self._commit_and_finalize(cancelled=cancelled)
 
         return report
 
-    async def _commit_and_finalize(self) -> None:
+    async def _commit_and_finalize(self, *, cancelled: bool = False) -> None:
         """Make the run's final state durable, then purge Plex's now-stale entries.
 
         The final state is committed BEFORE the purge: the purge can wait on Plex scans for
@@ -897,11 +1002,24 @@ class Executor:
         Purge runs on a COMPLETED or an ABORTED run alike, because a canary can fail its
         exclusion check *after* its file is already gone; it is gated on a section actually
         having been refreshed (a file really was removed), and _finalize_plex never raises.
+
+        ``cancelled`` is the one case it is skipped. A hard cancel is the container going
+        down, and the purge polls ``is_refreshing`` for up to
+        ``_plex_settle_attempts * _plex_settle_delay`` PER affected section before it can
+        even decide -- so honoring it here would hold shutdown open for tens of seconds
+        inside the cancellation, and might empty a section's trash while the process is
+        being torn down. The state commit above still runs, so the run ends ABORTED and
+        recorded; only the cosmetic tidy-up is deferred, to Plex's own scheduled scan or to
+        the next run over the same section.
         """
         try:
             await self._session.commit()
         except Exception as exc:  # pragma: no cover - defensive; a failed final commit re-plans
             log.warning("reap.final_commit_failed", error=str(exc))
+        if cancelled:
+            if self._affected_sections:
+                log.info("reap.trash_purge_deferred", sections=len(self._affected_sections))
+            return
         if self._affected_sections:
             await self._finalize_plex()
 
@@ -945,10 +1063,19 @@ class Executor:
     async def _rolling_30d_deletions(self) -> tuple[int, int]:
         """What real runs verifiably deleted in the trailing 30 days: (items, bytes).
 
-        Counted over VERIFIED terminal delete steps -- files that are actually gone --
-        joined back to their frozen candidate rows for sizes, whatever state their run
-        ended in: a crashed or aborted run's verified deletions are still deletions, and
-        leaving them out would let repeated aborts spend past the budget.
+        Counted over terminal delete steps whose file is gone -- joined back to their
+        frozen candidate rows for sizes, whatever state their run ended in: a crashed or
+        aborted run's verified deletions are still deletions, and leaving them out would
+        let repeated aborts spend past the budget.
+
+        "Gone" is VERIFIED **or** ``file_removed_at`` set, and the two are deliberately not
+        the same question. A movie Radarr really did delete, whose import exclusion never
+        appeared inside the poll window, ends FAILED -- correctly, the verification failed
+        -- but its bytes are off disk all the same. Counting state alone let every such
+        item spend nothing, so an intermittently slow Radarr bought unlimited deletions
+        while the cap check reported a number it knew to be short. The stamp records the
+        removal independently of the verification's outcome; the ``OR`` counts each row
+        once, whichever signal it carries (rule 5/30).
 
         An unmeasured past deletion is a normal outcome once the operator's allowance is
         above zero, and it is permanent: the candidate row keeps its NULL forever, so
@@ -976,8 +1103,11 @@ class Executor:
                     )
                     .where(
                         ActionStep.kind.in_(_TERMINAL_DELETE_KINDS),
-                        ActionStep.state == StepState.VERIFIED,
-                        ActionStep.verified_at >= cutoff,
+                        or_(
+                            (ActionStep.state == StepState.VERIFIED)
+                            & (ActionStep.verified_at >= cutoff),
+                            ActionStep.file_removed_at >= cutoff,
+                        ),
                     )
                 )
             )
@@ -1002,7 +1132,24 @@ class Executor:
         # (deleted, but the exclusion did not land), so plowing on after the first surprise
         # is exactly what the canary exists to prevent.
         real_attempt_made = False
-        total = len(deletes)
+        # The progress denominator is the set this run will ACT on -- the same set
+        # ``_planned_candidates`` counts for the confirmation phrase and the caps count for
+        # enforcement (rule 30/62). ``deletes`` is deliberately wider: an item spared after
+        # the plan was built keeps its steps so the report can say it was kept, and counting
+        # those would flip the bar mid-run to a number LARGER than the one the operator typed
+        # to authorize, disagreeing with the header in the same window. They are still walked
+        # and still reported; they just land in ``report.skipped`` (which the UI shows beside
+        # the bar as "spared") rather than in the denominator.
+        acted_on = {
+            d.candidate.media_key
+            for d in _deletable(
+                deletes,
+                self._effective_keys,
+                allow_unmeasured=self._settings.max_unmeasured_per_run > 0,
+            )
+        }
+        total = len(acted_on)
+        done = 0
         for index, delete in enumerate(deletes):
             # The mid-run kill switch, re-read before EVERY item (the first included --
             # the route's own check is seconds stale by now). Aborting mid-list is safe
@@ -1022,6 +1169,15 @@ class Executor:
                     "You stopped this run, so it halted here. Anything already removed "
                     "stays removed; nothing further was sent."
                 )
+            # The owner's overrides, re-read before EVERY item of a real run. Loading them
+            # once at run start meant a Spare clicked while a long reap was in flight was
+            # invisible to it and the file was deleted anyway -- with Stop the only mid-run
+            # control that actually worked. Used ONLY by the two per-item checks below; the
+            # caps stay on the run-start set (they must be fixed), and the run-start
+            # effective set stays the ceiling, so a refresh can only ever REMOVE items from
+            # what is sent, never add one the operator never authorized.
+            if not self._dry_run:
+                await self._refresh_overrides()
             outcome = await self._one_delete(delete, is_canary=index == 0, approved_at=approved_at)
             if not self._dry_run:
                 # Every item's step marks (VERIFIED, FAILED, SKIPPED) are made durable
@@ -1029,6 +1185,8 @@ class Executor:
                 # the record of files that are already gone.
                 await self._session.commit()
             report.record(outcome)
+            if delete.candidate.media_key in acted_on:
+                done += 1
             # A per-item trace of the run's decisions -- verified, skipped or failed -- so a
             # reap can be followed line by line with Debug on. At debug, not info: a capped
             # run is bounded, but a big first cleanup still lists many items, and the failures
@@ -1043,7 +1201,7 @@ class Executor:
 
             if outcome.state == StepState.SKIPPED:
                 report.skipped += 1
-                self._emit_progress(index + 1, total, report, delete.candidate.title)
+                self._emit_progress(done, total, report, delete.candidate.title)
                 continue  # a skip touched no file, so it does not consume the canary
 
             # From here the item was really acted on (verified or failed).
@@ -1065,7 +1223,7 @@ class Executor:
             # Emit AFTER this item's counters update, so the polled status shows the real
             # running tally, and BEFORE the canary halt below, so a failed test item's count
             # is reported before the run aborts.
-            self._emit_progress(index + 1, total, report, delete.candidate.title)
+            self._emit_progress(done, total, report, delete.candidate.title)
 
             if outcome.state == StepState.FAILED and first_real_attempt:
                 # The canary -- the first real deletion -- misbehaved. Halt the whole run:
@@ -1084,6 +1242,33 @@ class Executor:
                 )
             # A later item failing is recorded and survivable: one stubborn item is not a
             # reason to abandon the rest, and the canary already proved the mechanism works.
+
+    async def _refresh_overrides(self) -> None:
+        """Re-read the owner's spare/reap decisions, mid-run, before the next item.
+
+        A 200-item reap takes minutes, and the whole point of the grace window is that the
+        owner may change their mind inside it. They watch the bar, see a title they want to
+        keep, click Spare in the review queue -- and that decision has to reach this run.
+
+        A plain re-query is enough: ``whitelist.overrides`` is a two-column Core select, not
+        an ORM entity load, so the identity-map staleness that forced ``armed_recheck`` onto
+        a fresh session does not apply here, and the run session commits after every item,
+        so it sees another session's committed rows.
+
+        Fail-closed. If the decisions cannot be read we cannot prove the next file is still
+        one the owner wants gone, so the run stops rather than falling back on a map that
+        may be minutes old. (Everything already deleted keeps its committed marks; this only
+        refuses what has not been sent.)
+        """
+        try:
+            self._decisions = await whitelist.overrides(self._session)
+        except Exception as exc:
+            log.warning("reap.override_recheck_unreadable", error=str(exc))
+            raise ExecutionError(
+                "Reaper could not re-check your keep and remove decisions, so the run "
+                "stopped here rather than risk deleting something you just kept. Anything "
+                "already deleted stays deleted; nothing further was sent."
+            ) from exc
 
     async def _one_delete(
         self, delete: _Delete, *, is_canary: bool, approved_at: datetime
@@ -1114,7 +1299,16 @@ class Executor:
         # The mirror case: an item that was in the plan only because of a hand reap, whose
         # override has since been removed. It is no longer in the effective set, so it is
         # kept -- visibly, not silently dropped from the report.
-        if candidate.media_key not in self._effective_keys:
+        #
+        # Both halves are consulted, and an item must pass BOTH. ``_effective_keys`` is the
+        # set as it stood when the run was claimed -- the ceiling, so a reap added mid-run
+        # cannot smuggle in an item outside what the operator confirmed. ``effective_verdict``
+        # is the same production function ``effective_condemned`` decides membership with
+        # (rule 3/22), applied to the freshly re-read decisions, so a reap withdrawn DURING
+        # the run also drops its item. Intersecting the two makes the set only ever shrink.
+        if candidate.media_key not in self._effective_keys or (
+            effective_verdict(candidate, self._decisions) != "condemn"
+        ):
             return self._mark_skipped(
                 delete,
                 "the hand reap on this was removed, so it is kept",
@@ -1386,6 +1580,17 @@ class Executor:
         except ExecutionError as exc:
             # A missing instance route. Same treatment: fail this item, not the world.
             return self._fail(delete, str(exc))
+        except Exception as exc:
+            # The catch-all, one level below execute()'s. A surprise here can land AFTER the
+            # file is already gone (a raw transport error out of a client on the re-read that
+            # follows the delete), and letting it escape left the terminal step SENT forever
+            # and the whole run wedged in EXECUTING with no report -- so the operator could
+            # not even see which files had been removed. Funnelling through ``_fail`` marks
+            # the step FAILED with the reason, and the canary rule then decides whether one
+            # item's surprise stops the run. Whatever was already stamped ``file_removed_at``
+            # still counts against the rolling budget.
+            log.warning("reap.item_unexpected_error", media_key=candidate.media_key, error=str(exc))
+            return self._fail(delete, f"an unexpected error stopped this item: {exc}")
 
         return self._fail(
             delete,
@@ -1483,6 +1688,16 @@ class Executor:
         gone = await self._movie_is_gone(radarr, ref.arr_id)
         checks.append(StepCheck("Removed the file through Radarr", gone))
 
+        # Stamp the removal the moment it is proven, and BEFORE anything else that could
+        # fail. Everything below -- the exclusion poll, the Plex refresh -- can end this item
+        # FAILED or raise, and the file is off disk either way. The stamp is what charges
+        # those bytes to the rolling 30-day budget regardless of how the step's state ends
+        # up, so a Radarr that is slow to add exclusions cannot quietly buy unlimited
+        # deletions (rule 5/30). Committed here, not at the end: an audit record of a
+        # deleted file is not something to hold in a transaction (rule 26).
+        if gone:
+            await self._mark_file_removed(step)
+
         # The exclusion is polled only when it was armed: Radarr adds it a moment after the
         # delete returns 200, so a single immediate read is a false negative. With it off,
         # there is no exclusion to prove and the item is done once the file is gone -- so
@@ -1523,6 +1738,9 @@ class Executor:
                     else "Radarr returned 200 but the movie is still present."
                 ),
                 checks=checks,
+                # The file is gone even though this item failed, so the library changed and
+                # the queue is now stale: the post-run rescan has to fire.
+                file_removed=gone,
             )
 
         await self._mark_verified(step, {"tmdb_id": tmdb_id, "excluded": excluded, "gone": True})
@@ -1677,6 +1895,26 @@ class Executor:
             for f in files
             if f.get("id") is not None and _season_number(f) == ref.season
         ]
+        if not file_ids:
+            # Nothing resolved. ``delete_episode_files([])`` is a documented no-op, so the
+            # verification below would find nothing remaining and mark the season VERIFIED
+            # -- claiming a deletion that never happened, and charging the whole approved
+            # size against the rolling budget. The files went somewhere between the size
+            # re-read above and this resolve (removed out of band, or re-numbered), and the
+            # fail-closed reading of "no files" is a skip, not a confirmed delete. The
+            # unmonitor already took and keeps its VERIFIED mark; only the delete is skipped.
+            log.warning(
+                "reap.season_files_vanished",
+                media_key=candidate.media_key,
+                series_id=ref.arr_id,
+                season=ref.season,
+            )
+            return self._mark_skipped(
+                delete,
+                f"Sonarr no longer lists any file for season {ref.season}, so there was "
+                "nothing to delete. Kept, and nothing was sent.",
+                check="No files left to remove. Nothing was deleted.",
+            )
         await self._mark_sent(delete_step)
         await sonarr.delete_episode_files(file_ids)
 
@@ -1686,13 +1924,28 @@ class Executor:
         checks.append(
             StepCheck(f"Deleted the season's {len(file_ids)} episode file(s)", not still_there)
         )
+        if len(still_there) < len(file_ids):
+            # At least one file really went, so the bytes are reclaimed and the rolling
+            # budget must be charged whichever way the step below ends. Same reasoning as
+            # the movie path: the removal is recorded independently of the verification.
+            await self._mark_file_removed(delete_step)
         if still_there:
             return self._fail(
                 delete,
                 f"{len(still_there)} episode file(s) for season {ref.season} remain after "
                 "the delete; not confirmed.",
                 checks=checks,
+                file_removed=len(still_there) < len(file_ids),
             )
+
+        # The season's files are gone, so tell Plex -- the same nudge the movie path sends,
+        # and the reason the end-of-run trash purge can run for a TV section at all. Scoped
+        # to this series' own folder, never the whole library. ``plex_entries=1`` is the
+        # ceiling on what a season delete can remove from a section's item count: a TV
+        # section counts shows, so pruning one season of a multi-season show removes none
+        # (the count-delta gate then declines the purge, which is the safe answer) and
+        # pruning a show's last season removes exactly one.
+        await self._best_effort_refresh(str(series.get("path") or ""), plex_entries=1)
 
         await self._mark_verified(delete_step, {"deleted_file_ids": file_ids, "remaining": 0})
         return StepOutcome(
@@ -1731,11 +1984,12 @@ class Executor:
         except Exception as exc:
             log.warning("reap.section_counts_unreadable", error=str(exc))
             return
-        for title in sections:
+        for section in sections:
+            self._section_titles[section.key] = section.title
             try:
-                self._section_pre_counts[title] = await gateway.plex.item_count(title)
+                self._section_pre_counts[section.key] = await gateway.plex.item_count(section.key)
             except Exception as exc:
-                log.warning("reap.section_count_unreadable", section=title, error=str(exc))
+                log.warning("reap.section_count_unreadable", section=section.title, error=str(exc))
 
     async def _best_effort_refresh(self, arr_path: str, *, plex_entries: int = 1) -> None:
         """Nudge Plex to rescan the deleted item's directory. Never fatal.
@@ -1754,18 +2008,26 @@ class Executor:
             return
         try:
             sections = await gateway.plex.section_paths()
-            for title, locations in sections.items():
-                for location in locations:
+            for section in sections:
+                self._section_titles.setdefault(section.key, section.title)
+                for location in section.locations:
                     if _path_within(arr_path, location):
                         with declared_mutation():
-                            await gateway.plex.refresh_path(title, arr_path)
-                        self._affected_sections.add(title)
-                        self._deleted_by_section[title] = self._deleted_by_section.get(
-                            title, 0
+                            await gateway.plex.refresh_path(section.key, arr_path)
+                        self._affected_sections.add(section.key)
+                        self._deleted_by_section[section.key] = self._deleted_by_section.get(
+                            section.key, 0
                         ) + max(1, plex_entries)
                         return
             log.info("reap.refresh_unmapped", arr_path=arr_path)
-        except PlexError as exc:
+        except Exception as exc:
+            # Broad, because "never fatal" has to mean it. This runs immediately after a
+            # file has been deleted, and a raw transport error out of plexapi (a Plex
+            # restart between the connect and the read) used to escape a PlexError-only
+            # handler, past _send_for_real and past execute(), leaving the terminal step
+            # SENT and the whole run wedged in EXECUTING. Nothing here can affect the
+            # item's verdict: the file is already gone, and a missed refresh costs a
+            # lingering "unavailable" entry until Plex's own scheduled scan.
             log.warning("reap.refresh_failed", arr_path=arr_path, error=str(exc))
 
     async def _finalize_plex(self) -> None:
@@ -1797,18 +2059,28 @@ class Executor:
             log.warning("reap.trash_purge_skipped", reason="a root folder is not accessible")
             return
 
-        for section in sorted(self._affected_sections):
+        for section_key in sorted(self._affected_sections):
+            title = self._section_title(section_key)
             try:
-                await self._wait_for_scan(gateway.plex, section)
-                if not await self._trash_delta_is_ours(gateway.plex, section):
+                await self._wait_for_scan(gateway.plex, section_key)
+                if not await self._trash_delta_is_ours(gateway.plex, section_key):
                     continue
                 with declared_mutation():
-                    await gateway.plex.empty_trash(section)
-                log.info("reap.trash_purged", section=section)
-            except PlexError as exc:
-                log.warning("reap.trash_purge_failed", section=section, error=str(exc))
+                    await gateway.plex.empty_trash(section_key)
+                log.info("reap.trash_purged", section=title)
+            except Exception as exc:
+                # Same reasoning as _best_effort_refresh: the docstring above promises this
+                # never raises, and a PlexError-only handler did not deliver that. This runs
+                # in execute()'s finally, where an escape would replace the run's real
+                # outcome with a Plex error the operator can do nothing about.
+                log.warning("reap.trash_purge_failed", section=title, error=str(exc))
 
-    async def _trash_delta_is_ours(self, plex: PlexOps, section: str) -> bool:
+    def _section_title(self, section_key: int) -> str:
+        """What to call a section in a log line. The key is the address; the title is for
+        the operator reading the line, and falls back to the key when we never saw one."""
+        return self._section_titles.get(section_key) or f"section {section_key}"
+
+    async def _trash_delta_is_ours(self, plex: PlexOps, section_key: int) -> bool:
         """Did this section shrink by what this run deleted under it, and no more?
 
         The confirmation the purge requires: ``pre - post`` must be at least 1 (Plex has
@@ -1818,21 +2090,22 @@ class Executor:
         confirmation is exactly the mistake this gate exists to prevent, so it refuses and
         the trash is left to the owner or to Plex's own maintenance. Never raises.
         """
-        pre = self._section_pre_counts.get(section)
-        expected = self._deleted_by_section.get(section, 0)
+        title = self._section_title(section_key)
+        pre = self._section_pre_counts.get(section_key)
+        expected = self._deleted_by_section.get(section_key, 0)
         if pre is None or expected <= 0:
             log.warning(
                 "reap.trash_purge_skipped",
-                section=section,
+                section=title,
                 reason="no pre-delete item count to compare against",
             )
             return False
         try:
-            post = await plex.item_count(section)
+            post = await plex.item_count(section_key)
         except Exception as exc:
             log.warning(
                 "reap.trash_purge_skipped",
-                section=section,
+                section=title,
                 reason=f"could not re-read the item count: {exc}",
             )
             return False
@@ -1840,7 +2113,7 @@ class Executor:
         if shrink < 1 or shrink > expected:
             log.warning(
                 "reap.trash_purge_skipped",
-                section=section,
+                section=title,
                 pre=pre,
                 post=post,
                 deleted_here=expected,
@@ -1867,14 +2140,17 @@ class Executor:
         for client in clients:
             try:
                 folders = await client.root_folders()
-            except IntegrationError as exc:
+            except Exception as exc:
+                # Any failure at all, not just a mapped IntegrationError: this is the "is
+                # the volume really mounted" proxy, so anything we cannot read is assumed
+                # to be the worst case and the purge is refused.
                 log.warning("reap.rootfolder_unreadable", error=str(exc))
                 return False
             if not folders or not all(f.get("accessible") is True for f in folders):
                 return False
         return True
 
-    async def _wait_for_scan(self, plex: PlexOps, section: str) -> None:
+    async def _wait_for_scan(self, plex: PlexOps, section_key: int) -> None:
         """Wait (bounded) for a section's scan to settle before emptying its trash.
 
         A refresh fires an asynchronous scan; emptying the trash before Plex has noticed the
@@ -1882,7 +2158,7 @@ class Executor:
         the window either way, since the purge is best-effort.
         """
         for attempt in range(self._plex_settle_attempts):
-            if not await plex.is_refreshing(section):
+            if not await plex.is_refreshing(section_key):
                 return
             if attempt < self._plex_settle_attempts - 1 and self._plex_settle_delay > 0:
                 await asyncio.sleep(self._plex_settle_delay)
@@ -1904,6 +2180,22 @@ class Executor:
         step.verification_json = json.dumps(verification)
         await self._session.commit()
 
+    async def _mark_file_removed(self, step: ActionStep) -> None:
+        """Record that this step's file is really gone, whatever the step's state ends up.
+
+        Separate from ``_mark_verified`` on purpose: a movie whose delete succeeded but
+        whose import exclusion never landed ends FAILED, and that state must keep saying so
+        -- marking it VERIFIED would make the journal and the after-action report claim a
+        verification that explicitly failed. The bytes are still reclaimed, so they are
+        still charged: ``_rolling_30d_deletions`` reads this alongside VERIFIED.
+
+        Committed immediately, like ``_mark_sent``: this is the durable record that a file
+        is gone, and a flush inside the run-long transaction would roll back with a crash
+        that happened after the file was already deleted (rule 26).
+        """
+        step.file_removed_at = utcnow()
+        await self._session.commit()
+
     def _mark_step_failed(self, step: ActionStep, reason: str) -> None:
         step.state = StepState.FAILED
         step.error = reason
@@ -1913,7 +2205,12 @@ class Executor:
         step.error = reason
 
     def _fail(
-        self, delete: _Delete, reason: str, checks: list[StepCheck] | None = None
+        self,
+        delete: _Delete,
+        reason: str,
+        checks: list[StepCheck] | None = None,
+        *,
+        file_removed: bool = False,
     ) -> StepOutcome:
         """Fail this item: mark any not-yet-terminal step FAILED, and record why.
 
@@ -1922,6 +2219,11 @@ class Executor:
         so the journal reflects reality for a future reconciler. ``checks`` carries the
         after-action checklist (what got done, and which check failed); when absent, the
         reason itself is the single failed line.
+
+        ``file_removed`` says this failure happened AFTER the file was already gone, which
+        is a different thing from the failure itself: the step stays FAILED (its
+        verification really did fail), but the run must still count the library as changed
+        and kick the post-run rescan.
         """
         # Every hard item failure -- a delete that could not be confirmed, a routing error,
         # an *arr call that raised -- funnels through here, so this is the one place to
@@ -1944,6 +2246,7 @@ class Executor:
             detail=reason,
             title=delete.candidate.title,
             checks=checks if checks is not None else [StepCheck(reason, False)],
+            file_removed=file_removed,
         )
 
     def _may_send_unmeasured(self, candidate: Candidate, comparable: frozenset[SizeSource]) -> bool:
@@ -1975,16 +2278,25 @@ class Executor:
         return False
 
     def _mark_skipped(self, delete: _Delete, reason: str, check: str | None = None) -> StepOutcome:
-        """Spare the whole item. In a REAL run, mark every one of its steps SKIPPED (not
-        just the last): a season sparing that left its unmonitor step PENDING would read to
-        a future reconciler as an interrupted run with work still to do. In a dry run, mutate
-        nothing -- the simulation must leave the plan runnable -- and only report the skip.
+        """Spare the whole item. In a REAL run, mark every one of its not-yet-terminal steps
+        SKIPPED (not just the last): a season sparing that left its unmonitor step PENDING
+        would read to a future reconciler as an interrupted run with work still to do. In a
+        dry run, mutate nothing -- the simulation must leave the plan runnable -- and only
+        report the skip.
+
+        A step that already reached VERIFIED keeps its state, exactly as in ``_fail``: it
+        really did happen, and overwriting it would make the journal deny a reversible edit
+        that is still in force. Every skip decided before anything is sent leaves no such
+        step, so this only bites where a season is spared part-way -- its unmonitor took,
+        then Sonarr listed no file to delete.
 
         The checklist gets one ``✓`` line for the protection that fired: a spare is not a
         failure, it is a protection working, so it reads as a pass, not a cross.
         """
         if not self._dry_run:
             for step in delete.steps:
+                if step.state == StepState.VERIFIED:
+                    continue
                 step.state = StepState.SKIPPED
                 step.error = reason
         return StepOutcome(
@@ -2012,8 +2324,14 @@ def _row_timestamp(row: object) -> int | None:
     """The unix time a history row was played, from ``stopped`` (preferred) or ``date``.
 
     Tautulli rows carry both; ``stopped`` is when the view ended, which is the most
-    conservative 'was this watched' signal. Returns None for a row we cannot read a time
-    from, which the caller treats as 'no evidence of a play' rather than crashing.
+    conservative 'was this watched' signal.
+
+    None means "no readable time", NOT "no play". The caller
+    (:meth:`Executor._watched_since_approval`) treats it as a possible post-approval play
+    and SPARES the item: the row was returned by a query already filtered to on-or-after
+    the approval date, so a time we cannot read is a play we cannot rule out. Do not
+    "repair" the caller to skip such rows -- that would silently disable the
+    played-since-approval interlock for every Tautulli row with an unreadable timestamp.
     """
     if not isinstance(row, dict):
         return None

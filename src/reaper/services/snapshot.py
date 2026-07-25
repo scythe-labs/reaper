@@ -280,8 +280,15 @@ def build_facts(
     # Whitelist and curated are DIFFERENT reasons to keep a file, and collapsing them
     # would tell the owner "whitelisted" about a film they never touched. The why-panel
     # must be able to say which.
+    # Every id the movie carries is passed together, the TV path's rule (rule 29): Radarr is
+    # tmdb-native and a blank imdbId is ordinary, so the imdb id may be the one Plex matched.
+    # A keep-list row stored under imdb alone -- what a legacy-agent Plex library yields for
+    # a "Never Reap" collection -- must still protect it. Matching on one id kind alone fails
+    # open on the deletion path.
     memberships = membership_index.lookup(
-        media_type="movie", imdb_id=item.imdb_id, tmdb_id=item.tmdb_id
+        media_type="movie",
+        imdb_id=item.imdb_id or item.plex_imdb_id,
+        tmdb_id=item.tmdb_id,
     )
     hard = [m for m in memberships if m.mode is lists.ListMode.HARD]
 
@@ -332,7 +339,6 @@ def build_facts(
         is_whitelisted=is_whitelisted,
         # Not applicable outside the requester rule: with no requester, "others" is
         # everyone, and the gate would protect anything ever played.
-        others_watching=Absent(source="tautulli"),
         # --- fields authorable in custom rules ---------------------------------
         requested=(
             request_index.movie_requested(item.tmdb_id)
@@ -1580,7 +1586,7 @@ def _raw_items(
         )
         if plex_library is not None:
             if plex_library.strip().casefold() in identity.libraries_for_ids(
-                ids, plex_index, ("tmdb", "imdb")
+                ids, plex_index, identity.MOVIE_ID_PRIORITY
             ):
                 mapped_lib_hits.add(plex_library)
             elif resolution.status is identity.MatchStatus.AMBIGUOUS:
@@ -1608,7 +1614,9 @@ def _raw_items(
                 match_status=str(resolution.status),
                 detail=resolution.detail,
                 mapped_library=plex_library,
-                candidate_libraries=identity.candidate_libraries(ids, plex_index, ("tmdb", "imdb"))
+                candidate_libraries=identity.candidate_libraries(
+                    ids, plex_index, identity.MOVIE_ID_PRIORITY
+                )
                 or None,
             )
         else:
@@ -1859,6 +1867,11 @@ async def sync_protection_lists(
     degraded rather than delete something the list would have protected. The atomic-swap
     in ``lists.sync`` guarantees a failed refresh leaves the previous membership intact
     rather than emptying it.
+
+    This pass also **retires** the lists the current configuration no longer produces
+    (``lists.retire_absent``), because the slug of a derived list changes when its setting
+    does: without that, tightening "match ANY" to "match ALL" writes a new list while the
+    old one keeps protecting everything it ever matched.
     """
     synced: dict[str, int | str] = {}
 
@@ -1889,50 +1902,68 @@ async def sync_protection_lists(
     # titles, since a sync atomically replaces its slug's whole membership.
     movie_match: Literal["any", "all"] = "all" if movie_keep_match == "all" else "any"
     tv_match: Literal["any", "all"] = "all" if tv_keep_match == "all" else "any"
+    # Every keep-tag slug this configuration produces, collected as the providers are built.
+    # The retire pass below reads it as the whole truth about that family, which is why it is
+    # built from the *arr rows and the policy alone: both are local settings, so a briefly
+    # unreachable instance is still in this list and its keep-list is never retired over a
+    # network blip. Empty tags mean no provider AND no slug, which is exactly the case that
+    # has to retire -- an emptied tag list otherwise leaves the whole stored keep-list in force.
+    keep_tag_slugs: set[str] = set()
     for radarr in radarrs:
         if movie_keep_tags:
-            runs.append(
-                _run(
-                    lists.ArrTagRule(
-                        radarr.client,
-                        tuple(movie_keep_tags),
-                        movie_match,
-                        instance_id=radarr.instance_id,
-                        instance_name=radarr.name,
-                    ),
-                    kind=lists.ListKind.WHITELIST,
-                )
+            movie_rule = lists.ArrTagRule(
+                radarr.client,
+                tuple(movie_keep_tags),
+                movie_match,
+                instance_id=radarr.instance_id,
+                instance_name=radarr.name,
             )
+            keep_tag_slugs.add(movie_rule.slug)
+            runs.append(_run(movie_rule, kind=lists.ListKind.WHITELIST))
     for sonarr in sonarrs:
         if tv_keep_tags:
-            runs.append(
-                _run(
-                    lists.ArrTagRule(
-                        sonarr.client,
-                        tuple(tv_keep_tags),
-                        tv_match,
-                        instance_id=sonarr.instance_id,
-                        instance_name=sonarr.name,
-                    ),
-                    kind=lists.ListKind.WHITELIST,
-                )
+            tv_rule = lists.ArrTagRule(
+                sonarr.client,
+                tuple(tv_keep_tags),
+                tv_match,
+                instance_id=sonarr.instance_id,
+                instance_name=sonarr.name,
             )
+            keep_tag_slugs.add(tv_rule.slug)
+            runs.append(_run(tv_rule, kind=lists.ListKind.WHITELIST))
 
+    collection_slug: str | None = None
     if plex_server is not None:
-        runs.append(
-            _run(
-                lists.PlexCollection(
-                    server=plex_server, section_name=section_name, collection_name=collection_name
-                ),
-                kind=lists.ListKind.WHITELIST,
-            )
+        collection = lists.PlexCollection(
+            server=plex_server, section_name=section_name, collection_name=collection_name
         )
+        collection_slug = collection.slug
+        runs.append(_run(collection, kind=lists.ListKind.WHITELIST))
 
     # gather_reaped, not bare gather: _run swallows every per-provider failure, so only
     # something unexpected (a cache-database fault) can raise here -- and when it does,
     # the surviving providers are canceled and drained rather than left refreshing
     # lists for a scan that is already dead.
     await gather_reaped(*runs)
+
+    # Retire the lists this configuration no longer produces. A stored list outlives the
+    # setting that made it: flipping the keep-tag match, clearing the tags, renaming the
+    # collection or deleting an instance all leave a row that keeps protecting from a rule
+    # the operator already replaced, so the tightening they saved never takes effect.
+    # Slugs whose sync FAILED are in these sets and are never retired -- the atomic swap
+    # kept their membership and it is still the right list, just stale.
+    for slug in await lists.retire_absent(
+        engine, family=lists.KEEP_TAG_SLUGS, current=keep_tag_slugs
+    ):
+        synced[slug] = "retired"
+    # The Plex family only when Plex actually answered. With no server there is no provider
+    # and no slug, and retiring on that would unprotect every title on the "Never Reap"
+    # collection because Plex was briefly unreachable.
+    if plex_server is not None and collection_slug is not None:
+        for slug in await lists.retire_absent(
+            engine, family=lists.PLEX_COLLECTION_SLUGS, current={collection_slug}
+        ):
+            synced[slug] = "retired"
     return synced
 
 

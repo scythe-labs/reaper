@@ -434,6 +434,10 @@ export interface Policy {
   /** The stored body could not be repaired, so this is the shipped default: numbers the
    *  operator never chose. Louder than needs_save. */
   fell_back?: boolean;
+  /** The rating bar was restored from an older saved setting, so this body is NOT what is
+   *  stored. Its own flag rather than needs_save: that one moved points into new units,
+   *  this one put back a protection that had stopped keeping anything. */
+  rating_rules_restored?: boolean;
 }
 
 /** One title the draft would newly flag, for the simulator's "New on the list" block. */

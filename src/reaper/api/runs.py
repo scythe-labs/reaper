@@ -188,7 +188,6 @@ async def create_run(request: Request, payload: CreateRunIn | None = None) -> Ru
             run = await build_plan(
                 session,
                 snapshot_id=snapshot.id,
-                policy_hash=snapshot.policy_hash,
                 approved_by="api",
                 only_media_keys=only,
                 max_unmeasured=(await active_profile_settings(session)).max_unmeasured_per_run,
@@ -485,7 +484,10 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
             # Removing files leaves the last snapshot's queue and policy preview stale, so
             # kick a fresh scan -- on a completed OR a stopped run alike, as long as at least
             # one file was actually removed. Nothing removed means nothing went stale.
-            if report.deleted_items > 0:
+            # ``library_changed``, not ``deleted_items``: a movie Radarr deleted whose import
+            # exclusion never landed ends FAILED, and reading the confirmed count alone left
+            # the queue offering files that were already gone.
+            if report.library_changed:
                 launch_scan(app)
         except ExecutionError as exc:
             # A refused run the executor raised rather than executed (changed manifest, not

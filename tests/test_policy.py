@@ -21,6 +21,7 @@ from reaper.engine.observation import Absent, Known
 from reaper.engine.policy import (
     DEFAULT_MOVIE_POLICY,
     DEFAULT_TV_POLICY,
+    SCHEMA_VERSION,
     GateSetting,
     PolicyBody,
     ProfileSettings,
@@ -28,6 +29,7 @@ from reaper.engine.policy import (
     SignalSetting,
     inspect,
     rebalance,
+    recover_rating_rules,
 )
 from reaper.engine.signals import Score, SignalConfig, SignalId, score
 from reaper.engine.verdict import decide_verdict
@@ -508,7 +510,6 @@ def _evidence(days: float, watchers: int, rank: int, rating: int, size_gb: float
         is_managed=Known(value=True, source="r"),
         in_curated_list=Absent(source="l"),
         is_whitelisted=Known(value=False, source="l"),
-        others_watching=Known(value=0, source="t"),
     )
 
 
@@ -651,3 +652,102 @@ class TestRebalancingAnOldPolicy:
         truncated row can hold, and it leans on this returning ``None``. Valid JSON that is
         not an object used to reach ``body.get`` and raise ``AttributeError``."""
         assert rebalance(raw) is None
+
+
+def _legacy_rating_body(**gate: object) -> dict[str, object]:
+    """A stored body from before the rating bar moved off the RATING_FLOOR gate row.
+
+    The shape that matters: no ``keep_rating_rules`` key at all, and the bar still on the
+    gate as ``threshold`` (tenths) + ``secondary`` (minimum votes).
+    """
+    raw = _policy(
+        gates=(GateSetting(gate=GateId.RATING_FLOOR),),
+        keep_rating_rules=(RatingRuleSpec(source=RatingSource.IMDB, floor=75, min_votes=1000),),
+    ).model_dump(mode="json")
+    del raw["keep_rating_rules"]
+    raw["gates"] = [{**raw["gates"][0], "threshold": 75, "secondary": 1000, **gate}]
+    return raw
+
+
+class TestRestoringALostRatingBar:
+    """The rating bar moved off the gate row into ``keep_rating_rules`` with no backfill.
+
+    A body written before that move still VALIDATES -- the gate keeps its now-meaningless
+    numbers and the new field defaults to empty -- and an empty rule set makes the gate
+    abstain on every item. So the operator's bar silently protects nothing, on a healthy,
+    executable snapshot. These pin what is restored and, just as importantly, what is not.
+    """
+
+    def test_the_bar_comes_back_as_an_imdb_rule(self) -> None:
+        restored = recover_rating_rules(_legacy_rating_body())
+
+        assert restored is not None
+        assert restored["keep_rating_rules"] == [
+            {"source": RatingSource.IMDB.value, "floor": 75, "min_votes": 1000}
+        ]
+        # It loads, and the restored bar is what the gate will actually read.
+        body = PolicyBody.model_validate(restored)
+        assert body.rating_rules()[0].floor == 75
+        assert body.rating_rules()[0].min_votes == 1000
+
+    def test_the_restored_body_is_stamped_with_the_current_schema(self) -> None:
+        """So a body that has been through the editor since can be told apart, and this
+        shim can eventually retire."""
+        restored = recover_rating_rules(_legacy_rating_body())
+
+        assert restored is not None
+        assert restored["schema_version"] == SCHEMA_VERSION
+
+    def test_an_explicitly_empty_rule_list_is_left_alone(self) -> None:
+        """Rule 1: omitted is not the same as explicitly empty. An operator who cleared
+        their bars must keep an empty set, or a protection they removed comes back."""
+        raw = _legacy_rating_body()
+        raw["keep_rating_rules"] = []
+
+        assert recover_rating_rules(raw) is None
+
+    def test_a_disabled_gate_is_left_alone(self) -> None:
+        """Nothing was protecting anything either way, so there is nothing to restore -- and
+        no reason to degrade a scan over it."""
+        assert recover_rating_rules(_legacy_rating_body(enabled=False)) is None
+
+    @pytest.mark.parametrize(
+        "gate",
+        [
+            {"threshold": 0, "secondary": 1000},
+            {"threshold": 101, "secondary": 1000},
+            {"threshold": 75, "secondary": 0},
+            {"threshold": True, "secondary": 1000},
+            {"threshold": 75, "secondary": True},
+            {"threshold": "75", "secondary": 1000},
+            {"threshold": None, "secondary": None},
+        ],
+        ids=[
+            "no-floor",
+            "floor-over-100",
+            "no-vote-floor",
+            "floor-is-a-bool",
+            "votes-is-a-bool",
+            "floor-is-a-string",
+            "both-missing",
+        ],
+    )
+    def test_numbers_the_old_validator_would_have_refused_are_not_restored(
+        self, gate: dict[str, object]
+    ) -> None:
+        """Only a bar the old gate would have accepted is put back. Anything else would be
+        inventing a protection value on the operator's behalf, and ``RatingRuleSpec`` would
+        refuse it anyway -- ``bool`` is an ``int`` subclass, so ``true`` must not read as 1."""
+        assert recover_rating_rules(_legacy_rating_body(**gate)) is None
+
+    def test_a_body_with_no_rating_gate_at_all_is_left_alone(self) -> None:
+        raw = _policy().model_dump(mode="json")
+        del raw["keep_rating_rules"]
+
+        assert recover_rating_rules(raw) is None
+
+    @pytest.mark.parametrize("raw", [[], 42, "a string", None, True, {}, {"gates": "text"}])
+    def test_anything_unreadable_returns_none_rather_than_raising(self, raw: object) -> None:
+        """``services.profiles.active_policy`` must not raise on anything a hand-edited row
+        can hold: it keeps the one page that fixes a broken policy reachable."""
+        assert recover_rating_rules(raw) is None

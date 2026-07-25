@@ -343,6 +343,20 @@ class PlexSection:
 
 
 @dataclass(frozen=True)
+class PlexSectionPaths:
+    """One library section and the folders it covers, addressed by its own key.
+
+    The key rides along because everything downstream of this table -- the partial
+    refresh, the item count, the trash purge -- addresses a section by key, never by
+    title. Two libraries may share a title; only the key is unique.
+    """
+
+    key: int
+    title: str
+    locations: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class PlexSeasonRow:
     """One season as a listing sweep sees it: its number, its own rating key, its added-at.
 
@@ -363,37 +377,37 @@ class PlexSeasonRow:
 _PLEX_TYPE_CODES = {"movie": 1, "season": 3}
 
 
-def _iter_section_pages(
-    server: Any, section_key: int, query: str, *, what: str
-) -> Iterator[list[Any]]:
-    """Yield each raw page of one section listing, hardened against silent truncation.
+def _iter_pages(server: Any, path: str, query: str, *, what: str) -> Iterator[list[Any]]:
+    """Yield each raw page of one Plex listing, hardened against silent truncation.
 
-    The single paging loop every section sweep runs on, so the four (``library_guid_index``,
-    ``library_season_index``, ``labeled_in_section``, ``section_rating_keys``) can never drift
-    (rule 72). ``query`` is the ``/all`` query string BEFORE the container-window params
-    (``"?includeGuids=1"``, ``"?type=3&label=..."``); this appends the start/size.
+    The single paging loop every listing read runs on, so none of them can drift (rule 72):
+    the four section sweeps (``library_guid_index``, ``library_season_index``,
+    ``labeled_in_section``, ``section_rating_keys``) through :func:`_iter_section_pages`, and
+    the two shelf reads (``find_collection``, ``collection_children``) directly. ``query`` is
+    the listing's own query string BEFORE the container-window params (``"?includeGuids=1"``,
+    ``"?type=3&label=..."``, or ``""``); this appends the start/size.
 
     Pages and terminates on the RAW child count, never a filtered one: advancing or ending a
-    section on the count of children that survived a ``ratingKey`` filter would let one dropped
-    child end the section a page early. A child without a ``ratingKey`` is an anomaly the
-    contract raises on (so the caller degrades), not a shorter page. ``totalSize`` is the sole
-    paging authority -- a server that clamps a page below the requested size is still followed
-    to the end, and a full page with no ``totalSize`` to bound it is failed closed rather than
-    guessed to be the last. Never falls back ``totalSize`` -> ``size`` (rule 56).
+    listing on the count of children that survived a ``ratingKey`` filter would let one dropped
+    child end it a page early. A child without a ``ratingKey`` is an anomaly the contract
+    raises on (so the caller degrades), not a shorter page. ``totalSize`` is the sole paging
+    authority -- a server that clamps a page below the requested size is still followed to the
+    end, and a full page with no ``totalSize`` to bound it is failed closed rather than guessed
+    to be the last. Never falls back ``totalSize`` -> ``size`` (rule 56).
     """
     start = 0
+    joiner = "&" if query else "?"
     while True:
         container = server.query(
-            f"/library/sections/{section_key}/all{query}"
-            f"&X-Plex-Container-Start={start}&X-Plex-Container-Size={SWEEP_PAGE_SIZE}"
+            f"{path}{query}"
+            f"{joiner}X-Plex-Container-Start={start}&X-Plex-Container-Size={SWEEP_PAGE_SIZE}"
         )
         raw = list(container)
         if any(el.get("ratingKey") is None for el in raw):
             # A child the paging math cannot advance over: not the container shape the loop
             # assumes. Raise so the caller falls back / degrades, never end on a filtered page.
             raise PlexError(
-                f"{what} of section {section_key} returned a child with no ratingKey; "
-                "refusing to read the page as complete"
+                f"{what} returned a child with no ratingKey; refusing to read the page as complete"
             )
         yield raw
         start += len(raw)
@@ -405,18 +419,28 @@ def _iter_section_pages(
                 return
             if not raw:
                 # start < total but the page was empty: no progress. Fail closed.
-                raise PlexError(
-                    f"{what} of section {section_key} stalled at {start} of {int(total_attr)}"
-                )
+                raise PlexError(f"{what} stalled at {start} of {int(total_attr)}")
         elif len(raw) < SWEEP_PAGE_SIZE:
             # No totalSize to lean on: a short raw page is the last page.
             return
         else:
             # A full page with no totalSize -- we cannot tell whether more remains.
             raise PlexError(
-                f"{what} of section {section_key} returned a full page with no totalSize; "
+                f"{what} returned a full page with no totalSize; "
                 "refusing to guess it is the last page"
             )
+
+
+def _iter_section_pages(
+    server: Any, section_key: int, query: str, *, what: str
+) -> Iterator[list[Any]]:
+    """The section-sweep form of :func:`_iter_pages`: one section's ``/all`` listing."""
+    yield from _iter_pages(
+        server,
+        f"/library/sections/{section_key}/all",
+        query,
+        what=f"{what} of section {section_key}",
+    )
 
 
 @dataclass(frozen=True)
@@ -552,19 +576,39 @@ class PlexClient:
                 "not being able to see who is watching is not the same as nobody watching."
             ) from exc
 
-    async def section_paths(self) -> dict[str, list[str]]:
-        """Every library section and the paths it covers.
+    async def section_paths(self) -> list[PlexSectionPaths]:
+        """Every library section and the paths it covers, each carrying its own key.
 
         The raw material for the path-mapping table. Radarr says ``/movies``; Plex says
         ``/media/movies``. The partial-refresh path comes from the *arr, so without a
         mapping the refresh silently rescans nothing at all.
+
+        A **list keyed by section key**, not a ``{title: paths}`` dict: two Plex libraries
+        may legally share a title, and a title-keyed map silently drops one of them
+        (rule 6/57). The dropped library's post-reap refresh would then map to nothing --
+        the exact "silently rescans nothing at all" this table exists to prevent -- and the
+        trash interlock behind it would compare against a library nobody deleted from.
+
+        Failures map to ``PlexError`` like every other read here. Plex can answer the
+        connect handshake and still fail this one path (a restart between the two calls, a
+        proxy 502), and the raw plexapi exception would escape the executor's ``except
+        PlexError`` mid-run: the file already deleted, its journal step stuck at SENT, the
+        run stuck EXECUTING, and every remaining approved deletion never attempted.
         """
         server = await self._connect()
 
-        def read() -> dict[str, list[str]]:
-            return {s.title: list(s.locations) for s in server.library.sections()}
+        def read() -> list[PlexSectionPaths]:
+            return [
+                PlexSectionPaths(
+                    key=int(s.key), title=str(s.title or ""), locations=tuple(s.locations)
+                )
+                for s in server.library.sections()
+            ]
 
-        return await asyncio.to_thread(read)
+        try:
+            return await asyncio.to_thread(read)
+        except Exception as exc:
+            raise PlexError(f"Could not read Plex section paths: {exc}") from exc
 
     async def library_guid_index(
         self, *, section_type: str, allowed_sections: set[int] | None = None
@@ -641,9 +685,25 @@ class PlexClient:
             # and children disagree keeps the value the rest of the scan already froze.
             for chunk_start in range(0, len(batch_keys), METADATA_BATCH_SIZE):
                 chunk = batch_keys[chunk_start : chunk_start + METADATA_BATCH_SIZE]
-                batch = server.query(  # type: ignore[no-untyped-call]
-                    "/library/metadata/" + ",".join(str(k) for k in chunk)
+                batch = list(
+                    server.query(  # type: ignore[no-untyped-call]
+                        "/library/metadata/" + ",".join(str(k) for k in chunk)
+                    )
                 )
+                if len(batch) < len(chunk):
+                    # A server that windows the multi-id response drops the tail of the
+                    # chunk. Said out loud rather than degraded, and the difference is
+                    # deliberate: unlike the sweep above, this read adds only evidence --
+                    # ratings and folder paths -- so losing it lowers pressure and widens
+                    # abstains. It can never make an item MORE deletable, which is why a
+                    # short batch is not one of rule 28's source failures. Silence was the
+                    # defect: the enrichment thinned out with nothing to read afterwards.
+                    log.warning(
+                        "plex.metadata_batch_short",
+                        section_type=section_type,
+                        requested=len(chunk),
+                        returned=len(batch),
+                    )
                 for el in batch:
                     rk = el.get("ratingKey")
                     if rk is None or int(rk) not in out:
@@ -684,19 +744,25 @@ class PlexClient:
                     f"Could not sweep Plex GUIDs for {section_type} sections: {exc}"
                 ) from exc
 
-    async def item_count(self, section_title: str) -> int:
+    async def item_count(self, section_key: int) -> int:
         """How many items a section holds. The input to the trash interlock: the executor
         reads this before its first delete and again before purging, and refuses the purge
-        unless the section shrank by no more than what the run deleted under it."""
+        unless the section shrank by no more than what the run deleted under it.
+
+        Addressed by **key** via ``sectionByID`` (rule 6/57). A by-title lookup returns
+        whichever of two same-titled libraries plexapi saw first, so the interlock that is
+        meant to catch an over-large trash purge would be comparing the wrong library's
+        size against this run's deletions.
+        """
         server = await self._connect()
 
         def read() -> int:
-            return int(server.library.section(section_title).totalSize)
+            return int(server.library.sectionByID(section_key).totalSize)
 
         try:
             return await asyncio.to_thread(read)
         except Exception as exc:
-            raise PlexError(f"Could not count items in {section_title!r}: {exc}") from exc
+            raise PlexError(f"Could not count items in section {section_key}: {exc}") from exc
 
     async def aclose(self) -> None:
         """Close the underlying plexapi session, if one was ever built.
@@ -722,24 +788,25 @@ class PlexClient:
     async def __aexit__(self, *exc: object) -> None:
         await self.aclose()
 
-    async def is_refreshing(self, section_title: str) -> bool:
+    async def is_refreshing(self, section_key: int) -> bool:
         """Is a scan currently running on this section?
 
         A refresh (``section.update(path=...)``) fires an asynchronous scan; the executor
         polls this so it does not empty the trash before Plex has actually noticed the
-        deleted file is gone. A read. On any error it reports ``True`` (still busy), so the
-        caller waits rather than racing ahead."""
+        deleted file is gone. A read, addressed by **key** via ``sectionByID`` (rule 6/57)
+        so it cannot report on the wrong one of two same-titled libraries. On any error it
+        reports ``True`` (still busy), so the caller waits rather than racing ahead."""
         server = await self._connect()
 
         def read() -> bool:
-            section = server.library.section(section_title)
+            section = server.library.sectionByID(section_key)
             section.reload()
             return bool(getattr(section, "refreshing", False))
 
         try:
             return await asyncio.to_thread(read)
         except Exception as exc:
-            log.warning("plex.refresh_state_unreadable", section=section_title, error=str(exc))
+            log.warning("plex.refresh_state_unreadable", section=section_key, error=str(exc))
             return True
 
     async def labeled_in_section(self, section_key: int, *, kind: str, label: str) -> set[int]:
@@ -895,20 +962,26 @@ class PlexClient:
         """The rating key of the collection called ``name`` in one section, or ``None``.
 
         Matched casefolded, because Plex title-cases tags and titles on the way in. A
-        read.
+        read, paged through the one hardened ``_iter_pages`` loop like every other
+        listing (rule 72). Windowed by the server and read unpaged, a shelf sitting past
+        the first window reads as absent, and the caller then CREATES a second "Leaving
+        Soon" collection: the reconcile splits across two shelves and neither is right.
         """
         server = await self._connect()
         wanted = normalize_label(name)
 
         def read() -> int | None:
-            container = server.query(  # type: ignore[no-untyped-call]
-                f"/library/sections/{section_key}/collections"
-            )
-            for el in container:
-                title = str(el.get("title") or "")
-                key = el.get("ratingKey")
-                if key and normalize_label(title) == wanted:
-                    return int(key)
+            for raw in _iter_pages(
+                server,
+                f"/library/sections/{section_key}/collections",
+                "",
+                what=f"collection list of section {section_key}",
+            ):
+                for el in raw:
+                    title = str(el.get("title") or "")
+                    key = el.get("ratingKey")
+                    if key and normalize_label(title) == wanted:
+                        return int(key)
             return None
 
         try:
@@ -919,14 +992,25 @@ class PlexClient:
             ) from exc
 
     async def collection_children(self, collection_key: int) -> set[int]:
-        """The rating keys currently on one collection. A read."""
+        """The rating keys currently on one collection. A read.
+
+        Paged through the one hardened ``_iter_pages`` loop (rule 72), so a truncated
+        response can never be read as the whole membership: the reconcile computes the
+        items to DETACH as ``current - wanted``, so a short read leaves stale titles
+        marked "Leaving Soon" long after they were reprieved.
+        """
         server = await self._connect()
 
         def read() -> set[int]:
-            container = server.query(  # type: ignore[no-untyped-call]
-                f"/library/collections/{collection_key}/children"
-            )
-            return {int(el.get("ratingKey") or 0) for el in container if el.get("ratingKey")}
+            keys: set[int] = set()
+            for raw in _iter_pages(
+                server,
+                f"/library/collections/{collection_key}/children",
+                "",
+                what=f"members of collection {collection_key}",
+            ):
+                keys.update(int(el.get("ratingKey")) for el in raw)
+            return keys
 
         try:
             return await asyncio.to_thread(read)
@@ -949,9 +1033,15 @@ class PlexClient:
         **Verified against a live server: this PRESERVES existing labels.** Adding a
         second label leaves the first in place, so Reaper's "Leaving Soon" mark does not
         wipe whatever the owner had already put on their own media. That was the single
-        most dangerous open question about this feature and the answer is the safe one --
-        but it is asserted here rather than assumed, because if a future Plex release
-        changed it, the failure would be silent and would destroy user data.
+        most dangerous open question about this feature and the answer is the safe one.
+
+        It is **assumed at runtime, not re-checked**: this method adds the label and does
+        not read the item back. Said plainly because the docstring used to claim an
+        assertion that was never written (rules 7/24), which is worse than no check at all
+        -- a reader would have believed a future Plex release could not silently take the
+        owner's own labels away. Re-reading every edited item to prove it is a cost the
+        shelf write does not carry today; if that property is ever to be enforced rather
+        than trusted, the read-back belongs here.
         """
         if not rating_keys:
             return
@@ -1195,13 +1285,18 @@ class PlexClient:
         except Exception as exc:
             raise PlexError(f"Could not delete collection {collection_key}: {exc}") from exc
 
-    async def refresh_path(self, section_title: str, path: str) -> None:
+    async def refresh_path(self, section_key: int, path: str) -> None:
         """Rescan **one directory**, not the whole section.
 
         ``section.update(path=...)`` is a cheap partial scan. ``section.refresh()`` is a
         full metadata re-download for every item in the library. They are one word apart
         and differ by orders of magnitude, and confusing them on a large library is an
         outage.
+
+        Addressed by **key** via ``sectionByID`` (rule 6/57), like every other write here:
+        a title lookup with two same-titled libraries scans the wrong one, which both
+        misses the deleted file and leaves the trash interlock reading a library this run
+        never touched.
 
         plexapi issues this as a **GET**, but it is a mutation in effect: on a server set
         to empty trash after every scan, rescanning a path with missing files purges those
@@ -1212,7 +1307,7 @@ class PlexClient:
         server = await self._connect()
 
         def write() -> None:
-            server.library.section(section_title).update(path=path)
+            server.library.sectionByID(section_key).update(path=path)
 
         try:
             await asyncio.to_thread(write)
@@ -1221,7 +1316,7 @@ class PlexClient:
         except Exception as exc:
             raise PlexError(f"Could not refresh {path!r}: {exc}") from exc
 
-    async def empty_trash(self, section_title: str) -> None:
+    async def empty_trash(self, section_key: int) -> None:
         """Purge one section's trash: the items Plex marked missing after a refresh.
 
         The single most dangerous call in the whole application. An unmounted library, a
@@ -1232,16 +1327,19 @@ class PlexClient:
         out of here so the interlock cannot be bypassed by calling the client directly.
 
         A mutation, so it is guarded like a delete: it needs arming plus the executor's
-        ``declared_mutation``. Scoped to one section, never the whole library.
+        ``declared_mutation``. Scoped to one section, never the whole library, and that
+        section is addressed by **key** via ``sectionByID`` (rule 6/57): purging the trash
+        of whichever same-titled library plexapi happened to return first is a whole
+        library's worth of blast radius on the app's single most dangerous call.
         """
         server = await self._connect()
 
         def write() -> None:
-            server.library.section(section_title).emptyTrash()
+            server.library.sectionByID(section_key).emptyTrash()
 
         try:
             await asyncio.to_thread(write)
         except SafetyViolationError:
             raise
         except Exception as exc:
-            raise PlexError(f"Could not empty trash for {section_title!r}: {exc}") from exc
+            raise PlexError(f"Could not empty trash for section {section_key}: {exc}") from exc
