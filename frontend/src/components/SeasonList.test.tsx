@@ -382,4 +382,59 @@ describe("the all-seasons list", () => {
     // It must not claim blanket removal when nothing is actually going.
     expect(screen.queryByText(/Every season below is removed/i)).not.toBeInTheDocument();
   });
+  it("describes the whole-show spare in force, not the shape of a spare in general", async () => {
+    // The banner's mark and words come from the spare actually on the show. A fixed ∞ said
+    // "kept forever" directly above a control counting down, and went on saying it after the
+    // clock passed -- the same bug the Spare button had. Expired is its own wording: the
+    // seasons really are still kept until a scan judges them, so it must not read as a
+    // removal (rule 61).
+    const spared = (id: number, n: number): Candidate => ({
+      ...season(id, n, "abstain", 80, null),
+      show_override: "spare",
+      override: "spare",
+      override_own: null,
+    });
+    const group = (showSpareExpiresAt: string | null) =>
+      ({
+        group_key: "sonarr:5:42",
+        title: "Example Show",
+        year: 2012,
+        poster_url: null,
+        summary: null,
+        size_bytes: 1024 ** 3,
+        unknown_size_seasons: 0,
+        reason: null,
+        library: null,
+        chip: null,
+        show_override: "spare",
+        show_spare_expires_at: showSpareExpiresAt,
+        links: {} as Group["links"],
+        show_status: null,
+        seasons: [spared(41, 1)],
+      }) as Group;
+
+    // Forever: ∞, and the plain claim.
+    apiMock.group.mockResolvedValue(group(null));
+    const forever = renderQueue();
+    await expandSeasons();
+    expect(await screen.findByText(/The whole show is spared\./)).toBeInTheDocument();
+    expect(document.querySelector(".show-inherit-mark .mk-inf")).not.toBeNull();
+    forever.unmount();
+
+    // Timed: no ∞, and the banner carries how long is left.
+    apiMock.group.mockResolvedValue(group(new Date(Date.now() + 27 * 86_400_000).toISOString()));
+    const timed = renderQueue();
+    await expandSeasons();
+    expect(await screen.findByText(/The whole show is spared, 27 days left\./)).toBeInTheDocument();
+    expect(document.querySelector(".show-inherit-mark .mk-inf")).toBeNull();
+    timed.unmount();
+
+    // Expired: says the spare ran out, and that the seasons are still kept.
+    apiMock.group.mockResolvedValue(group(new Date(Date.now() - 3 * 86_400_000).toISOString()));
+    renderQueue();
+    await expandSeasons();
+    expect(await screen.findByText(/The whole show's spare has run out\./)).toBeInTheDocument();
+    expect(screen.getByText(/still kept until the next scan judges them again/)).toBeInTheDocument();
+    expect(document.querySelector(".show-inherit-mark .mk-inf")).toBeNull();
+  });
 });

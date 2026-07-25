@@ -39,7 +39,7 @@ import {
   type Verdict,
 } from "../api";
 import { useBackGuard } from "../backnav";
-import { bytes, count, itemBytes, totalBytes } from "../format";
+import { bytes, count, itemBytes, spareRemaining, totalBytes } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useReviewFreshness } from "../useReviewFreshness";
 import { ReapConfirm } from "./ReapConfirm";
@@ -48,6 +48,7 @@ import {
   CaretIcon,
   CheckIcon,
   CheckSquareIcon,
+  ClockGlyph,
   FunnelIcon,
   GenreIcon,
   LayersIcon,
@@ -653,19 +654,37 @@ function capitalizeSentence(text: string): string {
  *  its seasons. It states that decision once so the rows below no longer each repeat it -- every
  *  inheriting season used to carry an identical `KeptByShowNote`, which read as a wall of the
  *  same red sentence. The mark and tint track the inherited fate (green spare, red reap) so the
- *  banner never disagrees with the scores beneath it. Shown only when `show_override` is set. */
+ *  banner never disagrees with the scores beneath it. Shown only when `show_override` is set.
+ *
+ *  A spare's mark and words describe the spare actually IN FORCE, not the shape of a spare in
+ *  general: ∞ only for a forever one, the clock (dashed once its time is up) for a timed one.
+ *  A fixed ∞ said "kept forever" directly above a control reading "30d", and went on saying it
+ *  after the clock passed. The expired wording is the one that has to be careful: the seasons
+ *  really are still kept, because only a scan realizes a spare's expiry, so it says what
+ *  happened without claiming the seasons are back on the block (rule 61). */
 function ShowInheritBanner({
   override,
+  spareExpiresAt,
   reapReach,
 }: {
   override: Override;
+  /** When the SHOW's own spare stops keeping its seasons (ISO), null for a forever spare.
+   *  Read only on a spare banner, alongside the show decision it belongs to. */
+  spareExpiresAt: string | null;
   reapReach: "all" | "some" | "none";
 }) {
   const reap = override === "reap";
+  const remaining = spareRemaining(spareExpiresAt);
   return (
     <div className={`show-inherit ${reap ? "show-inherit-reap" : "show-inherit-spare"}`}>
       <span className="show-inherit-mark" aria-hidden="true">
-        {reap ? <ScytheIcon /> : <span className="mk-inf">∞</span>}
+        {reap ? (
+          <ScytheIcon />
+        ) : remaining.forever ? (
+          <span className="mk-inf">∞</span>
+        ) : (
+          <ClockGlyph dashed={remaining.expired} />
+        )}
       </span>
       <span>
         {reap ? (
@@ -688,9 +707,17 @@ function ShowInheritBanner({
               it here.
             </>
           )
+        ) : remaining.expired ? (
+          // Still kept, and it must say so: only a scan realizes a spare's clock, so until one
+          // runs nothing will remove these seasons (rule 61). What has run out is the decision.
+          <>
+            <b>The whole show's spare has run out.</b> The seasons are still kept until the next
+            scan judges them again.
+          </>
         ) : (
           <>
-            <b>The whole show is spared.</b> Every season below is kept unless you reap it here.
+            <b>The whole show is spared{remaining.short ? `, ${remaining.phrase}` : ""}.</b> Every
+            season below is kept unless you reap it here.
           </>
         )}
       </span>
@@ -798,7 +825,13 @@ function SeasonList({
   return (
     <>
       {showOverride && (
-        <ShowInheritBanner override={showOverride} reapReach={showReapReach(data.seasons)} />
+        <ShowInheritBanner
+          override={showOverride}
+          // The SHOW's own spare, matching the show decision the banner states -- never a
+          // season's, which the rows below carry themselves (rule 50).
+          spareExpiresAt={data.show_spare_expires_at}
+          reapReach={showReapReach(data.seasons)}
+        />
       )}
       <ul
         className="season-list"
