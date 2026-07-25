@@ -144,6 +144,77 @@ class TestIncrementalSyncFetchesOnlyTheDelta:
         assert await _count(engine) == 2  # the live session was not recorded
 
 
+class TestThePageLoopFetchesEveryRow:
+    """The mirror's depth is what the horizon gate reads, and a shallow horizon is the
+    single largest mass-deletion vector this codebase has: every item older than the
+    mirror looks never-played. So the paging loop must not truncate on a source that is
+    merely less tidy than expected."""
+
+    async def test_a_source_that_reports_no_total_is_still_paged_to_the_end(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`int(page.get("recordsFiltered") or 0)` made "not told" identical to "none",
+        and 0 ended the loop after page one, silently keeping a single page of history."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 2)
+
+        class _NoTotal(FakeTautulli):
+            async def history(self, **kwargs: Any) -> dict[str, Any]:
+                page = await super().history(**kwargs)
+                page.pop("recordsFiltered")
+                return page
+
+        rows = [_row(n, days_ago=n) for n in range(1, 8)]
+        await sync(engine, _NoTotal(rows), full=True)  # type: ignore[arg-type]
+
+        assert await _count(engine) == 7
+
+    async def test_a_short_middle_page_does_not_skip_the_rest(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Advancing by the constant walked `start` past rows nobody had fetched."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 4)
+
+        class _ShortSecondPage(FakeTautulli):
+            def __init__(self, rows: list[dict[str, Any]]) -> None:
+                super().__init__(rows)
+                self.pages = 0
+
+            async def history(self, **kwargs: Any) -> dict[str, Any]:
+                page = await super().history(**kwargs)
+                if kwargs.get("length", 100) > 1:
+                    self.pages += 1
+                    if self.pages == 2:
+                        # A page that came back short without being the last one.
+                        page["data"] = page["data"][:1]
+                return page
+
+        rows = [_row(n, days_ago=n) for n in range(1, 13)]
+        await sync(engine, _ShortSecondPage(rows), full=True)  # type: ignore[arg-type]
+
+        assert await _count(engine) == 12
+
+    async def test_a_source_that_never_ends_is_stopped(
+        self, engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Terminating on an empty page alone would spin forever against a source that
+        ignores `start` and reports no total. Bounded, and the shorter mirror keeps."""
+        monkeypatch.setattr(history_sync, "PAGE_SIZE", 2)
+        monkeypatch.setattr(history_sync, "MAX_HISTORY_PAGES", 3)
+
+        class _Endless(FakeTautulli):
+            async def history(self, **kwargs: Any) -> dict[str, Any]:
+                page = await super().history(**kwargs)
+                if kwargs.get("length", 100) > 1:
+                    page["data"] = self.rows[:2]  # same page, forever
+                    page.pop("recordsFiltered")
+                return page
+
+        rows = [_row(n, days_ago=n) for n in range(1, 8)]
+        await sync(engine, _Endless(rows), full=True)  # type: ignore[arg-type]
+
+        assert await _count(engine) == 2  # it stopped, and kept what it read
+
+
 class TestRegressionDetection:
     async def test_the_first_sync_sets_a_baseline_and_does_not_raise(
         self, engine: AsyncEngine
@@ -340,6 +411,70 @@ class TestEnsureSchema:
         # Rebuilt to the current shape, and the untrustworthy pre-change row is gone.
         assert await self._live_columns(engine) == history_sync._WATCH_EVENT_COLUMNS
         assert await _count(engine) == 0
+
+    async def _live_indexes(self, engine: AsyncEngine) -> set[str]:
+        async with engine.connect() as conn:
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT name FROM sqlite_master "
+                        "WHERE type = 'index' AND tbl_name = 'watch_event'"
+                    )
+                )
+            ).all()
+        return {str(row[0]) for row in rows}
+
+    async def test_every_declared_index_lands_on_a_fresh_cache(self, engine: AsyncEngine) -> None:
+        await history_sync.ensure_schema(engine)
+        assert set(history_sync.INDEXES) <= await self._live_indexes(engine)
+
+    async def test_a_missing_index_is_added_without_dropping_the_mirror(
+        self, engine: AsyncEngine
+    ) -> None:
+        """An index added after an install synced must reach that install.
+
+        Indexes are not columns, so the shape check cannot see one missing -- an index
+        declared in the table DDL would have looked current forever and simply never been
+        created, leaving every fairness query full-scanning. The only way to force it
+        through the shape check would be to bump the column tuple, which drops the whole
+        mirror and costs a full re-sync from Tautulli just to add an index. So a missing
+        index is noticed by name and created in place instead.
+        """
+        await history_sync.ensure_schema(engine)
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO watch_event (rating_key, user_id, watched_at, "
+                    "percent_complete, media_type) VALUES (1, 1, 1, 100, 'movie')"
+                )
+            )
+            # An install that synced before this index was declared.
+            await conn.execute(text("DROP INDEX ix_watch_event_parent_key"))
+        assert "ix_watch_event_parent_key" not in await self._live_indexes(engine)
+
+        await history_sync.ensure_schema(engine)
+
+        assert "ix_watch_event_parent_key" in await self._live_indexes(engine)
+        assert await _count(engine) == 1  # and the mirror survived
+
+    async def test_the_parent_key_filter_uses_its_index(self, engine: AsyncEngine) -> None:
+        """The Scales board and the person drawer both filter on ``parent_rating_key``.
+
+        Unindexed, each 500-key chunk was a full scan of a table holding every play the
+        server ever recorded. This asserts the planner picks the index rather than timing
+        the query, so it fails if the index is ever dropped from ``INDEXES``.
+        """
+        await history_sync.ensure_schema(engine)
+        async with engine.connect() as conn:
+            plan = (
+                await conn.execute(
+                    text(
+                        "EXPLAIN QUERY PLAN SELECT row_id FROM watch_event "
+                        "WHERE parent_rating_key IN (1, 2, 3)"
+                    )
+                )
+            ).all()
+        assert "ix_watch_event_parent_key" in " ".join(str(row[3]) for row in plan)
 
     async def test_a_current_table_is_left_untouched(self, engine: AsyncEngine) -> None:
         await history_sync.ensure_schema(engine)  # creates it at the current shape

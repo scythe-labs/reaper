@@ -294,7 +294,10 @@ def test_heal_migration_relaxes_old_not_null_size_bytes(
     assert _held_back_default(engine) is not None
 
     command.stamp(config, _PRIOR_HEAD)
-    command.upgrade(config, "head")
+    # To the heal, not to head: this database is hand-built with only the two tables the
+    # heal touches, so a later additive migration against some other table would fail here
+    # for a reason that has nothing to do with what is being tested.
+    command.upgrade(config, _HEAL_HEAD)
 
     # Healed to the model shape.
     assert _size_bytes_nullable(engine) is True
@@ -337,6 +340,9 @@ def test_heal_migration_is_noop_on_corrected_schema(
     assert _held_back_default(engine) is None
     with engine.connect() as conn:
         version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-    assert version == _HEAL_HEAD
+    # Whatever head is today -- read from the script directory, never a second copy of the
+    # revision id that has to be hand-edited every time a migration lands.
+    script = ScriptDirectory.from_config(Config(str(PROJECT_ROOT / "alembic.ini")))
+    assert version == script.get_current_head()
 
     engine.dispose()

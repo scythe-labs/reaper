@@ -160,6 +160,68 @@ class TestSequentialProgression:
         # alice is partway on 2 -> {2}; bob finished 5 -> {6}.
         assert sequential_protections({"alice": {2: 3}, "bob": {5: 8}}, {2: 10, 5: 8}) == {2, 6}
 
+    def test_a_rewatcher_is_anchored_where_they_actually_are(self) -> None:
+        """The bug this rule exists for: someone who finished the show and started again.
+
+        By season NUMBER they are anchored on the finale, judged ready for a season that
+        does not exist, and protected nowhere -- so the season they are working through
+        today is prunable, and the conflict detector does not catch it either (every
+        season shares the same all-time watcher count). By TIME they are exactly where
+        they are.
+        """
+        progress = {"alice": {1: 10, 2: 3, 3: 10, 4: 10, 5: 10, 6: 10}}
+        finals = dict.fromkeys(range(1, 7), 10)
+        times = {
+            "alice": {
+                1: datetime(2024, 1, 1, tzinfo=UTC),
+                2: datetime(2026, 7, 20, tzinfo=UTC),  # today: they are on season 2
+                3: datetime(2024, 3, 1, tzinfo=UTC),
+                4: datetime(2024, 4, 1, tzinfo=UTC),
+                5: datetime(2024, 5, 1, tzinfo=UTC),
+                6: datetime(2024, 6, 1, tzinfo=UTC),
+            }
+        }
+
+        assert 2 in sequential_protections(progress, finals, last_play_by_user=times)
+
+    def test_the_number_anchor_survives_a_dip_into_an_old_season(self) -> None:
+        """Recency alone is not enough either: someone mid-binge on the newest season who
+        watches one old episode today must not lose the hold on the season they are on."""
+        progress = {"alice": {2: 10, 6: 4}}  # finished 2 long ago, part-way through 6
+        finals = {2: 10, 6: 10}
+        times = {
+            "alice": {
+                2: datetime(2026, 7, 20, tzinfo=UTC),  # dipped back in today
+                6: datetime(2026, 7, 18, tzinfo=UTC),
+            }
+        }
+
+        protected = sequential_protections(progress, finals, last_play_by_user=times)
+
+        assert 6 in protected  # still their binge
+        assert 3 in protected  # and they are ready for what follows the one they re-watched
+
+    def test_no_readable_times_keeps_exactly_the_old_anchor(self) -> None:
+        """Unreadable is not evidence that they are somewhere else."""
+        progress = {"alice": {3: 5}}
+        assert sequential_protections(progress, {3: 10}, last_play_by_user={}) == {3}
+        assert sequential_protections(
+            progress, {3: 10}, last_play_by_user={"alice": {3: None}}
+        ) == {3}
+
+    def test_specials_anchor_only_when_they_can_be_pruned(self) -> None:
+        """A viewer part-way through the specials gets no hold at all unless the operator
+        turned keep_specials off, which is the one setting that can remove them."""
+        progress = {"alice": {0: 3}}
+        finals = {0: 10}
+
+        assert sequential_protections(progress, finals) == set()
+        assert sequential_protections(progress, finals, include_specials=True) == {0}
+
+    def test_finishing_the_specials_does_not_protect_season_one(self) -> None:
+        """Season 1 is not "the next special". Specials are not a sequence."""
+        assert sequential_protections({"a": {0: 10}}, {0: 10}, include_specials=True) == set()
+
     def test_a_mid_binge_season_is_not_deleted(self) -> None:
         """The bug: 'keep last 2' would delete season 3 out from under someone still watching it."""
         seasons = [_season(n) for n in range(1, 7)]  # 1..6
@@ -190,6 +252,44 @@ class TestKeepRuleConflict:
         assert 1 in plan.prunable  # the rule would remove it
         assert not plan.auto_approvable  # ...but it refuses to do so unattended
         assert any(c.pruned_season == 1 for c in plan.conflicts)
+
+    def test_an_unmeasured_season_is_not_read_as_nobody_watched_it(self) -> None:
+        """A season on disk that Plex never resolved has no watch history to read.
+
+        Reading that as 0 turned "we could not measure it" into "we measured it and
+        nobody watched", which invents a conflict out of nothing: the show sits in
+        permanent abstain, scan after scan, and the operator is told in plain words that
+        N people watched one season "more than watched" another -- against a number that
+        was never taken. Here season 3 is the unmeasured one the rule keeps.
+        """
+        seasons = [_season(n) for n in range(1, 5)]  # 1..4
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=seasons,
+            keep_last=2,  # keeps 3, 4
+            keep_first_season=False,
+            watchers_by_season={1: 40, 2: 5, 3: None, 4: 41},
+        )
+
+        assert 1 in plan.prunable
+        # Season 4 was measured and beats season 1, so no conflict against it either; the
+        # only pair that could have fired is 1 vs the unmeasured 3, and it is skipped.
+        assert plan.conflicts == []
+        assert plan.auto_approvable
+
+    def test_zero_still_means_measured_and_unwatched(self) -> None:
+        """The three-state map must not collapse "nobody watched it" into "unmeasured":
+        a resolved season nobody watched is exactly what the detector compares against."""
+        seasons = [_season(n) for n in range(1, 5)]
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=seasons,
+            keep_last=2,  # keeps 3, 4
+            keep_first_season=False,
+            watchers_by_season={1: 40, 2: 5, 3: 0, 4: 0},
+        )
+
+        assert any(c.pruned_season == 1 and c.kept_season == 3 for c in plan.conflicts)
 
     def test_equal_watchers_are_not_a_conflict(self) -> None:
         seasons = [_season(n) for n in range(1, 5)]

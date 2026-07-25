@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import re
 import sys
+import traceback
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -48,11 +49,34 @@ _SECRET_KEYS = frozenset(
 # Keys smuggled into a URL query string, e.g. Tautulli's ?apikey= and MDBList's.
 _SECRET_QS = re.compile(r"([?&](?:apikey|api_key|token|X-Plex-Token)=)[^&\s]+", re.IGNORECASE)
 
+# A Discord webhook carries its secret in the URL *path*, not a query string:
+# ``https://discord.com/api/webhooks/<id>/<token>``. Key-name matching (``_SECRET_KEYS``)
+# only catches it when the URL happens to be logged under one of those keys, and a URL is
+# just as likely to arrive as a bare string -- inside an exception message, or under a
+# neutral ``url=``. Match the shape itself so the token is scrubbed however it is logged
+# (S-2). The id is left visible: it identifies the channel, it is not the credential.
+#
+# Case-sensitive on purpose, matching the marker guard below exactly: the only webhook URL
+# that can reach a log is one the operator stored, and ``_validated_discord_webhook``
+# (api/settings.py) refuses anything whose path does not literally start "/api/webhooks/".
+# An IGNORECASE regex behind a case-sensitive guard would look broader than it is.
+_SECRET_PATH = re.compile(r"(/api/webhooks/\d+/)[^/\s?\"'&]+")
+
+#: The cheap pre-test that decides whether a string can possibly hold a secret. Every
+#: string leaf of every event passes through here, so the common case must not run two
+#: regexes: a query-string secret needs an ``=``, and a webhook path needs the literal
+#: below. Anything with neither is returned untouched.
+_WEBHOOK_MARKER = "/api/webhooks/"
+
 REDACTED = "[redacted]"
 
 
 def _redact_str(text: str) -> str:
-    return _SECRET_QS.sub(rf"\1{REDACTED}", text) if "=" in text else text
+    if "=" in text:
+        text = _SECRET_QS.sub(rf"\1{REDACTED}", text)
+    if _WEBHOOK_MARKER in text:
+        text = _SECRET_PATH.sub(rf"\1{REDACTED}", text)
+    return text
 
 
 def _redact_value(value: Any) -> Any:
@@ -149,9 +173,10 @@ def _drop_below_level(_logger: WrappedLogger, _method: str, event_dict: EventDic
 def _capture_to_ring(_logger: WrappedLogger, _method: str, event_dict: EventDict) -> EventDict:
     """Copy the (already redacted) event into the UI's log ring, render-ready.
 
-    Sits after ``redact_secrets`` and ``format_exc_info`` on purpose: the ring must
-    never hold a secret the console would not, and a traceback should arrive as text.
-    Read-only on the event dict -- the real renderer still runs after this.
+    Sits after ``format_exc_info`` AND then ``redact_secrets``, in that order, on purpose:
+    a traceback should arrive as text, and the scrubber has to run on it once it is text,
+    or the ring holds a secret the console would not. Read-only on the event dict -- the
+    real renderer still runs after this.
     """
     parts = [str(event_dict.get("event", ""))]
     parts += [f"{k}={event_dict[k]}" for k in event_dict if k not in _RING_STRUCTURAL_KEYS]
@@ -171,7 +196,7 @@ class _RingHandler(logging.Handler):
     """The stdlib bridge: uvicorn, alembic, apscheduler and friends land in the same
     ring the structlog pipeline feeds, so the Logs tab shows one merged stream.
 
-    Redacts query-string credentials itself -- these records never pass the structlog
+    Redacts credentials itself -- these records never pass the structlog
     processors -- and, like any logging handler, must never raise.
     """
 
@@ -180,7 +205,16 @@ class _RingHandler(logging.Handler):
             ts = datetime.fromtimestamp(record.created, tz=UTC).isoformat()
             text = f"{record.name}: {_redact_str(record.getMessage())}"
             if record.exc_info and record.exc_info[0] is not None:
-                text = f"{text}\n{self.format(record)}"
+                # Format ONLY the traceback, and scrub it. This used to call
+                # ``self.format(record)``, which -- with no formatter set on this handler --
+                # falls back to "%(message)s" and re-rendered the message UNREDACTED beneath
+                # the redacted copy, so every exception line landed in the ring and on disk
+                # with its credentials in the clear (S2-1). The traceback needs the scrubber
+                # in its own right: httpx2.HTTPStatusError's str() embeds the full request
+                # URL, so any library reporting an *arr/Tautulli HTTP error with exc_info
+                # carries the query-string key even when the message itself is clean.
+                trace = "".join(traceback.format_exception(*record.exc_info))
+                text = f"{text}\n{_redact_str(trace)}"
             logbuffer.RING.append(ts=ts, level=record.levelname, text=text)
         except Exception:
             self.handleError(record)
@@ -218,9 +252,17 @@ def configure_logging(
             structlog.processors.add_log_level,
             _drop_below_level,
             structlog.processors.TimeStamper(fmt="iso", utc=True),
-            redact_secrets,
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
+            # AFTER format_exc_info, not before. That processor replaces ``exc_info`` with
+            # a rendered ``exception`` string, and running the scrubber first meant the
+            # traceback was born after the only thing that would have cleaned it -- the
+            # structlog twin of the stdlib handler's S2-1 leak. It matters because an
+            # httpx2.HTTPStatusError's str() embeds the full request URL, so any
+            # ``log.warning(..., exc_info=True)`` around an *arr/Tautulli call carried that
+            # query-string key into the ring and onto disk. Everything else in the event
+            # dict is scrubbed exactly as before; this only widens what is covered.
+            redact_secrets,
             _capture_to_ring,
             renderer,
         ],

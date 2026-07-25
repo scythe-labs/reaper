@@ -66,6 +66,16 @@ BACKUP_FORMAT_VERSION = 1
 #: Streamed to the browser in modest chunks so a large archive never sits in memory.
 DOWNLOAD_CHUNK = 64 * 1024
 
+#: The largest ``reaper.db`` that can travel in a backup, enforced on BOTH sides from this
+#: one constant: the restore caps the extracted member here, and :func:`_build_into`
+#: refuses to write an archive past it. A backup its own restore would reject is worse
+#: than no backup, because the operator believes they are covered until the day they are
+#: not (PR-11). 64 GiB is far above any real install -- ``reaper.db`` holds decisions and
+#: credentials, never media, and the rebuildable cache is not in here at all -- and the
+#: restore's extraction is streamed and capped as it runs, so the ceiling costs nothing to
+#: raise. It is a decompression-bomb bound, not a sizing estimate.
+MAX_DB_BYTES = 64 * 1024 * 1024 * 1024
+
 #: Temp-entry prefixes under ``data/``. A backup builds in :data:`BACKUP_TMP_PREFIX`; the
 #: restore side stages in :data:`RESTORE_TMP_PREFIX` and spools its upload in
 #: :data:`RESTORE_UPLOAD_PREFIX` (both used by :mod:`reaper.services.restore` and
@@ -76,6 +86,14 @@ BACKUP_TMP_PREFIX = ".backup-tmp-"
 RESTORE_TMP_PREFIX = ".restore-tmp-"
 RESTORE_UPLOAD_PREFIX = ".restore-upload-"
 _STALE_TEMP_PREFIXES = (BACKUP_TMP_PREFIX, RESTORE_TMP_PREFIX, RESTORE_UPLOAD_PREFIX)
+
+
+class BackupTooLargeError(RuntimeError):
+    """The database is past :data:`MAX_DB_BYTES`, so no archive was written.
+
+    Refusing beats writing a file the restore side will not accept: the operator finds out
+    now, while they still have every option, rather than during a recovery (PR-11).
+    """
 
 
 @dataclass(frozen=True)
@@ -166,6 +184,13 @@ def _build_into(settings: Settings, created_at: str, tmp_dir: Path) -> BackupArc
     # bundle it, and report key_source "env" so the target is told it still needs the env
     # var (rule 76). The salt is install state, minted even for an env key, so it travels
     # whenever it exists.
+    snapshot_bytes = snapshot.stat().st_size
+    if snapshot_bytes > MAX_DB_BYTES:
+        raise BackupTooLargeError(
+            "Reaper's database is larger than a backup can hold, so this backup was not "
+            "written. A backup that can't be restored is worse than none."
+        )
+
     env_key = env_key_active(settings)
     key_path = key_file_path(settings)
     salt_path = salt_file_path(settings)
@@ -179,7 +204,7 @@ def _build_into(settings: Settings, created_at: str, tmp_dir: Path) -> BackupArc
         "created_at": created_at,
         "app_version": build_version(),
         "alembic_revision": revision,
-        "reaper_db_bytes": snapshot.stat().st_size,
+        "reaper_db_bytes": snapshot_bytes,
         "key_source": "file" if key_included else "env",
         "contents": {
             "reaper_db": True,

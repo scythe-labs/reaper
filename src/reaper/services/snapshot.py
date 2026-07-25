@@ -50,6 +50,7 @@ from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
 from reaper.db.models import Candidate, FirstFlagged, SizeSource, Snapshot
 from reaper.engine import facts_codec, identity
+from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.gates import Evaluation, Facts, Gate, GateResult, evaluate_all
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
@@ -103,6 +104,31 @@ class ScanContext:
     horizon: datetime
     active_rating_keys: set[int] = field(default_factory=set)
     degraded_reasons: list[str] = field(default_factory=list)
+
+    activity_degraded: bool = False
+    """True when we could not read what is playing right now.
+
+    ``active_rating_keys`` being empty is ambiguous on its own: it is what a healthy
+    server with nobody watching looks like, and also what an unreachable or malformed
+    Tautulli looks like. Anything that vetoes a deletion on "nothing is streaming" must
+    read this flag, never the emptiness of the set. Set it wherever the activity read
+    fails; ``_gather`` is the only writer today.
+
+    This is a typed field and not a substring of ``degraded_reasons`` on purpose: the
+    veto used to be coupled to the wording of a free-text reason, so rewording the
+    message would have silently turned "we could not check" into "nothing is playing".
+    """
+
+    imdb_degraded: bool = False
+    """True when the IMDb ratings data could not be read at all.
+
+    Same shape of trap as ``activity_degraded``: the lookup map comes back empty, which
+    is indistinguishable from "every one of these titles is genuinely unrated" unless
+    something says so. ``build_facts`` reads this to emit Unknown rather than Absent for
+    the rating and vote count, because Absent withdraws every rating-based keep -- the
+    protection is REMOVED by the missing evidence, which is the inverted direction this
+    codebase fails closed against.
+    """
 
     @property
     def degraded(self) -> bool:
@@ -218,9 +244,14 @@ def build_facts(
         )
         dormancy = Unknown(reason="no added-at date", source="tautulli")
     else:
-        played = last_played.get(rating_key)
-        reference = played or max(item.added_at, context.horizon)
-        dormancy = Known(value=(utcnow() - reference).days, source="tautulli")
+        # Through the one shared derivation (engine/dormancy.py), so the season scan, the
+        # backtest and the prior calibration all measure this the same way (rule 3).
+        reference = reference_instant(
+            last_played=last_played.get(rating_key),
+            added_at=item.added_at,
+            horizon=context.horizon,
+        )
+        dormancy = Known(value=dormancy_days(reference, now=utcnow()), source="tautulli")
 
     # --- popularity ---------------------------------------------------------
     recent: Observation[int]
@@ -242,10 +273,22 @@ def build_facts(
     if entry is not None:
         rating = Known(value=int(entry.average_rating * 10), source="imdb")
         votes = Known(value=int(entry.num_votes), source="imdb")
+    elif context.imdb_degraded:
+        # We never got to ask about THIS title either: the dataset as a whole was
+        # unreadable, so the empty map below is not an answer about any film in it.
+        # ``looked_up`` is still True here (the item does carry an imdb id), and taking
+        # the Absent branch on that would tell the keep lane "checked, and it is unrated"
+        # for the entire library at once -- every rating floor reporting
+        # checked-and-did-not-fire, every graded rating keep withdrawn, on evidence
+        # Reaper has already declared untrustworthy.
+        unreadable = Unknown(reason="the IMDb ratings data could not be read", source="imdb")
+        rating = unreadable
+        votes = unreadable
     elif looked_up:
         # Absent, not Unknown: we looked and this title genuinely has no IMDb rating.
-        # (A *degraded* dataset is different, and is caught upstream -- it degrades the
-        # whole snapshot rather than silently unprotecting every film.)
+        # (A *degraded* dataset is different, and is caught by the branch above -- it
+        # degrades the snapshot AND reads Unknown, because degrading alone would still
+        # have left every film here silently unprotected.)
         rating = Absent(source="imdb")
         votes = Absent(source="imdb")
     else:
@@ -280,8 +323,15 @@ def build_facts(
     # Whitelist and curated are DIFFERENT reasons to keep a file, and collapsing them
     # would tell the owner "whitelisted" about a film they never touched. The why-panel
     # must be able to say which.
+    # Every id the movie carries is passed together, the TV path's rule (rule 29): Radarr is
+    # tmdb-native and a blank imdbId is ordinary, so the imdb id may be the one Plex matched.
+    # A keep-list row stored under imdb alone -- what a legacy-agent Plex library yields for
+    # a "Never Reap" collection -- must still protect it. Matching on one id kind alone fails
+    # open on the deletion path.
     memberships = membership_index.lookup(
-        media_type="movie", imdb_id=item.imdb_id, tmdb_id=item.tmdb_id
+        media_type="movie",
+        imdb_id=item.imdb_id or item.plex_imdb_id,
+        tmdb_id=item.tmdb_id,
     )
     hard = [m for m in memberships if m.mode is lists.ListMode.HARD]
 
@@ -300,7 +350,7 @@ def build_facts(
 
     # --- streaming right now ------------------------------------------------
     streaming: Observation[bool]
-    if "tautulli-activity" in " ".join(context.degraded_reasons):
+    if context.activity_degraded:
         # We could not check. Never assume False -- that is how a tool deletes a file
         # somebody is watching.
         streaming = Unknown(reason="could not read active sessions", source="tautulli")
@@ -332,7 +382,6 @@ def build_facts(
         is_whitelisted=is_whitelisted,
         # Not applicable outside the requester rule: with no requester, "others" is
         # everyone, and the gate would protect anything ever played.
-        others_watching=Absent(source="tautulli"),
         # --- fields authorable in custom rules ---------------------------------
         requested=(
             request_index.movie_requested(item.tmdb_id)
@@ -476,14 +525,33 @@ async def scan(
     emit(Progress("gathering", 1, 5, "active streams"))
     try:
         activity = await tautulli.activity()
-        for session_data in activity.get("sessions") or []:
-            for key in ("rating_key", "parent_rating_key", "grandparent_rating_key"):
-                value = session_data.get(key)
-                if value:
-                    context.active_rating_keys.add(int(value))
+        sessions = activity.get("sessions")
+        if not isinstance(sessions, list) or not all(isinstance(s, dict) for s in sessions):
+            # A 200 carrying a null or wrong-shaped body is NOT "nobody is watching". Coercing
+            # it to an empty list reads as a measured "nothing is streaming" and defeats the
+            # veto on every item. Same treatment as an unreachable server: we could not check.
+            context.degrade("could not read what is playing right now")
+            context.activity_degraded = True
+        else:
+            unreadable = False
+            for session_data in sessions:
+                for key in ("rating_key", "parent_rating_key", "grandparent_rating_key"):
+                    value = session_data.get(key)
+                    if not value:
+                        continue
+                    try:
+                        context.active_rating_keys.add(int(value))
+                    except (TypeError, ValueError):
+                        # One stream we cannot identify. It may well be an item this scan
+                        # is about to judge, so this is "we could not check", not "not it".
+                        unreadable = True
+            if unreadable:
+                context.degrade("could not read what is playing right now")
+                context.activity_degraded = True
     except IntegrationError as exc:
         # Do NOT assume nothing is playing. That is how you delete a file mid-stream.
-        context.degrade(f"tautulli-activity unreachable: {exc}")
+        context.degrade(f"could not read what is playing right now: {exc}")
+        context.activity_degraded = True
 
     # Manual spares are applied via the override, not the whitelist gate, so the gate is left to
     # the *arr-tag / collection whitelists alone. An empty set keeps that path tag-only.
@@ -538,7 +606,6 @@ async def scan(
     # movie-only deployment (no Sonarr) skips it entirely.
     season_task: asyncio.Task[list[season_scan.SeasonJudgment]] | None = None
     if sonarrs:
-        activity_degraded = "tautulli-activity" in " ".join(context.degraded_reasons)
         season_task = _spawn(
             season_scan.gather(
                 engine,
@@ -547,7 +614,7 @@ async def scan(
                 plex=plex,
                 horizon=context.horizon,
                 active_rating_keys=context.active_rating_keys,
-                activity_degraded=activity_degraded,
+                activity_degraded=context.activity_degraded,
                 keep_last_seasons=tv_policy.keep_last_seasons,
                 keep_first_season=tv_policy.keep_first_season,
                 window_days=tv_policy.popularity_window_days(),
@@ -647,9 +714,13 @@ async def scan(
                 "scan.imdb_coverage", media="movie", requested=len(imdb_ids), resolved=len(imdb)
             )
         except DatasetDegradedError as exc:
-            # The inverted failure: a missing rating REMOVES protection. Degrade loudly.
+            # The inverted failure: a missing rating REMOVES protection. Degrade loudly,
+            # and flag it so build_facts reads every title as "we could not check" rather
+            # than "we checked and it is unrated" -- degrading alone does not stop the
+            # condemn set from being built on ratings nobody could read.
             context.degrade(str(exc))
             imdb = {}
+            context.imdb_degraded = True
         last_played, watchers_window, watchers_all_time = await _watch_stats(
             engine,
             rating_keys={i.plex_rating_key for i in items if i.plex_rating_key},
@@ -910,7 +981,25 @@ async def scan(
 
     # Grace clocks for everything condemned this run, in one batched pass -- the
     # _apply_first_flag decision per key, without a database round trip per item.
-    await record_first_flagged_bulk(session, condemned_keys, now, grace_days=grace_days)
+    #
+    # Not on a degraded run. The condemn set here was built on evidence Reaper itself
+    # declared untrustworthy, and planner.build_plan already refuses it outright -- but
+    # the clock write does not go through the planner, so it would start (or silently
+    # continue) a countdown for files a healthy scan would have kept. Worse, because
+    # _apply_first_flag restarts a clock only after a gap longer than a whole grace
+    # window, a run of consecutive degraded scans keeps refreshing last_seen_condemned_at
+    # and the window never restarts: the first healthy scan then finds it already spent,
+    # and the item's warning time is gone. Skipping can only ever cause an EXTRA restart,
+    # which is more grace, the safe direction.
+    if context.degraded:
+        log.info(
+            "scan.grace_clocks_skipped",
+            snapshot=snapshot.id,
+            condemned=len(condemned_keys),
+            reason="degraded",
+        )
+    else:
+        await record_first_flagged_bulk(session, condemned_keys, now, grace_days=grace_days)
 
     await session.flush()
     score_ms = round((time.monotonic() - score_started) * 1000)
@@ -977,6 +1066,11 @@ class Display:
     show_status: str | None = None
 
 
+#: How many rating keys go into one expanding ``IN`` against the watch mirror. Well under
+#: SQLite's bound-variable ceiling, and the same 500 the sibling batched reads use
+#: (``record_first_flagged_bulk``, ``season_watch_stats``).
+_WATCH_KEY_CHUNK = 500
+
 #: The "no display fields" default, as a singleton so it is not constructed per call.
 _NO_DISPLAY = Display()
 
@@ -987,6 +1081,115 @@ _NO_DISPLAY = Display()
 #: entry by this exact string. Every producer and that one reader import this constant;
 #: never re-type the literal.
 HAND_SPARE_DETAIL = "you spared this by hand"
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyJudgment:
+    """One item judged by policy alone: no session, no stored row, no hand override.
+
+    The pure half of :func:`_judge_item` -- everything it computes before the ``session.add``
+    -- lifted out so that a caller which only wants the *decision* is running the scan's own
+    code rather than a lookalike. The policy lab (``tests/_policy_lab.py``) sweeps hundreds of
+    de-identified real shapes through it; a lab that rebuilt this pipeline by hand would drift
+    from the scan and pin the drift as ground truth (rules 3/22).
+
+    ``verdict`` is the PURE POLICY verdict, hand override held out, exactly as stored on the
+    Candidate row; :func:`effective_fate` applies the override on top.
+    """
+
+    evaluation: Evaluation
+    item_score: Score
+    score: int
+    coverage_bp: int
+    verdict: str
+    explanation: str
+
+
+def judge_facts(
+    facts: Facts,
+    gates: list[Gate],
+    policy: PolicyBody,
+    *,
+    signals: list[SignalConfig],
+    custom_condemn: list[CustomSignalConfig],
+    keeps: list[KeepConfig],
+    window_days: int = 365,
+    extra_results: Sequence[GateResult] = (),
+    plex_rating_key: int | None = None,
+    matched_by: identity.MatchedBy | None = None,
+    match_detail: str | None = None,
+    match_status: identity.MatchStatus | None = None,
+    merged_rating_keys: tuple[int, ...] = (),
+) -> PolicyJudgment:
+    """Evaluate, score, round, decide, explain -- the whole judgment, storing nothing.
+
+    Round FIRST, then decide -- and the returned integers are exactly what decided. The
+    stored integers are what the table shows, what the why-panel explains, and what the
+    simulator re-decides; if the verdict were taken from the underlying float instead, an
+    item scoring 69.7 against a threshold of 70 would abstain while storing a 70, and the
+    simulator would later condemn the very item the queue said it was sparing. There must be
+    exactly one number, and everything must decide on it.
+
+    ``extra_results`` (the season-pruning guard's outcome) is merged AHEAD of the ordinary
+    gates: a guard PROTECT wins like any protection, and a guard *blocked* ABSTAIN (a
+    keep-rule conflict) forces the item to abstain for a human to look at.
+    """
+    evaluation = Evaluation(results=[*extra_results, *evaluate_all(gates, facts).results])
+    item_score = score(
+        signals,
+        facts,
+        custom_condemn=custom_condemn,
+        keeps=keeps,
+        window_days=window_days,
+    )
+
+    score_value = round(item_score.value)
+    coverage_bp = round(item_score.coverage * 10_000)
+
+    return PolicyJudgment(
+        evaluation=evaluation,
+        item_score=item_score,
+        score=score_value,
+        coverage_bp=coverage_bp,
+        verdict=_verdict(evaluation, score_value, coverage_bp, policy, override=None),
+        # One explanation, two uses: the frozen record stored on the row, and the same string
+        # the effective-reap fate is read back from -- so the scan and every read-time
+        # consumer replay the identical evidence.
+        explanation=_explain(
+            evaluation,
+            item_score,
+            policy,
+            plex_rating_key=plex_rating_key,
+            matched_by=matched_by,
+            match_detail=match_detail,
+            match_status=match_status,
+            merged_rating_keys=merged_rating_keys,
+        ),
+    )
+
+
+def effective_fate(judgment: PolicyJudgment, override: str | None) -> str:
+    """The item's fate with a hand override applied -- what the scan acts and counts on.
+
+    Never what is stored. The Candidate row keeps the pure-policy verdict so an un-spare /
+    un-reap falls back to the real policy result instead of the item taking the override on
+    as its identity; this is derived on top, and derived again downstream the same way.
+
+    A hand reap is read off the frozen EXPLANATION via the one shared decision
+    (``condemned.reap_override_verdict``), NOT off the live evaluation: a bad Plex match
+    holds a reap read-side but never reaches the gate evaluation, so deciding it live would
+    honor a reap the planner and grace-clock resync hold -- orphaning a grace clock the
+    delete set never claims (rules 3/4/22). A pure-policy condemn is trivially effective
+    (mirrors ``condemned.reap_is_effective``'s shortcut).
+    """
+    if override == "spare":
+        return "protect"
+    if override == "reap":
+        reap_condemns = judgment.verdict == "condemn" or (
+            reap_override_verdict(judgment.explanation, score=judgment.score) == "condemn"
+        )
+        return "condemn" if reap_condemns else "protect"
+    return judgment.verdict
 
 
 def _judge_item(
@@ -1024,17 +1227,13 @@ def _judge_item(
     clock and condemned tally only. Storage stays override-free so an un-spare / un-reap falls
     back to the real policy result; the effective fate is recomputed downstream the same way.
 
-    Shared by the movie and season paths so both reach a verdict the same way. Seasons
-    pass ``extra_results`` -- the season-pruning guard's outcome -- which is merged ahead
-    of the ordinary gates: a guard PROTECT wins like any protection, and a guard *blocked*
-    ABSTAIN (a keep-rule conflict) forces the item to abstain for a human to look at.
+    Shared by the movie and season paths so both reach a verdict the same way, and the
+    judgment itself is :func:`judge_facts` -- shared further still, with the policy lab, so
+    a sweep of real library shapes exercises the scan's own pipeline rather than a copy.
 
-    Round FIRST, then decide -- and store exactly what decided. The stored integers are
-    what the table shows, what the why-panel explains, and what the simulator re-decides;
-    if the verdict were taken from the underlying float instead, an item scoring 69.7
-    against a threshold of 70 would abstain while storing a 70, and the simulator would
-    later condemn the very item the queue said it was sparing. There must be exactly one
-    number, and everything must decide on it.
+    Seasons pass ``extra_results`` -- the season-pruning guard's outcome -- which is merged
+    ahead of the ordinary gates: a guard PROTECT wins like any protection, and a guard
+    *blocked* ABSTAIN (a keep-rule conflict) forces the item to abstain for a human.
     """
     # The stored verdict and explanation are PURE POLICY: the scan never bakes a hand override
     # into them. A hand "spare"/"reap" lives only in the whitelist and is re-applied live at
@@ -1044,30 +1243,19 @@ def _judge_item(
     # after one -- instead of the item taking the override on as its identity. The season-
     # pruning guard (extra_results) is genuine policy and stays; only the hand override is held
     # out here and applied on top downstream. See rules 48-51.
-    evaluation = Evaluation(results=[*extra_results, *evaluate_all(gates, facts).results])
-    item_score = score(
-        signals,
-        facts,
-        custom_condemn=custom_condemn,
-        keeps=keeps,
-        window_days=window_days,
-    )
-
-    score_value = round(item_score.value)
-    coverage_bp = round(item_score.coverage * 10_000)
-
-    verdict = _verdict(evaluation, score_value, coverage_bp, policy, override=None)
+    #
     # The grace clock for a condemned item is set by the CALLER, batched across the whole
     # run (record_first_flagged_bulk) -- one query for every condemned key instead of a
     # read per item. The decision per key is unchanged: see _apply_first_flag.
-
-    # One explanation, two uses: the frozen record stored on the row, and the same string the
-    # effective-reap fate is read back from below -- so the scan and every read-time consumer
-    # replay the identical evidence.
-    explanation = _explain(
-        evaluation,
-        item_score,
+    judged = judge_facts(
+        facts,
+        gates,
         policy,
+        signals=signals,
+        custom_condemn=custom_condemn,
+        keeps=keeps,
+        window_days=window_days,
+        extra_results=extra_results,
         plex_rating_key=plex_rating_key,
         matched_by=matched_by,
         match_detail=match_detail,
@@ -1109,10 +1297,10 @@ def _judge_item(
             library_title=display.library,
             ratings_json=display.ratings_json,
             show_status=display.show_status,
-            verdict=verdict,
-            score=score_value,
-            coverage_bp=coverage_bp,
-            explanation_json=explanation,
+            verdict=judged.verdict,
+            score=judged.score,
+            coverage_bp=judged.coverage_bp,
+            explanation_json=judged.explanation,
             # The frozen scoring inputs: the Facts plus the season-pruning guard (extra_results,
             # NOT the hand-override, which is re-applied live at replay time from the override
             # map). This is what the simulator replays under an edited policy. See facts_codec.
@@ -1126,20 +1314,7 @@ def _judge_item(
     # caller uses it to set the grace clock and the condemned tally over the set that will
     # actually be removed: a honored hand reap earns a fresh grace window, a hand spare gives up
     # its clock (rules 4/50). The fate is derived, never stored.
-    if override == "spare":
-        return "protect"
-    if override == "reap":
-        # Read the effective-reap fate off the SAME frozen explanation the read side does, via
-        # the one shared decision (condemned.reap_override_verdict). NOT off the live evaluation:
-        # a bad Plex match holds a reap read-side but never reaches the gate evaluation, so
-        # `_verdict(override="reap")` would honor a reap the planner and grace-clock resync hold
-        # -- orphaning a grace clock the delete set never claims (rules 3/4/22). A pure-policy
-        # condemn is trivially effective (mirrors condemned.reap_is_effective's shortcut).
-        reap_condemns = verdict == "condemn" or (
-            reap_override_verdict(explanation, score=score_value) == "condemn"
-        )
-        return "condemn" if reap_condemns else "protect"
-    return verdict
+    return effective_fate(judged, override)
 
 
 def _verdict(
@@ -1580,7 +1755,7 @@ def _raw_items(
         )
         if plex_library is not None:
             if plex_library.strip().casefold() in identity.libraries_for_ids(
-                ids, plex_index, ("tmdb", "imdb")
+                ids, plex_index, identity.MOVIE_ID_PRIORITY
             ):
                 mapped_lib_hits.add(plex_library)
             elif resolution.status is identity.MatchStatus.AMBIGUOUS:
@@ -1608,7 +1783,9 @@ def _raw_items(
                 match_status=str(resolution.status),
                 detail=resolution.detail,
                 mapped_library=plex_library,
-                candidate_libraries=identity.candidate_libraries(ids, plex_index, ("tmdb", "imdb"))
+                candidate_libraries=identity.candidate_libraries(
+                    ids, plex_index, identity.MOVIE_ID_PRIORITY
+                )
                 or None,
             )
         else:
@@ -1786,20 +1963,27 @@ async def _fold_merged_watch_stats(
     if not all_keys:
         return
     window_start = int((utcnow() - timedelta(days=window_days)).timestamp())
-    async with engine.connect() as conn:
-        rows = (
-            await conn.execute(
-                text(
-                    "SELECT rating_key, user_id, MAX(watched_at) AS last FROM watch_event "
-                    "WHERE media_type = 'movie' AND rating_key IN :keys "
-                    "GROUP BY rating_key, user_id"
-                ).bindparams(bindparam("keys", expanding=True)),
-                {"keys": all_keys},
-            )
-        ).all()
     per_key: dict[int, list[Any]] = {}
-    for row in rows:
-        per_key.setdefault(int(row.rating_key), []).append(row)
+    async with engine.connect() as conn:
+        # Chunked, like every sibling that expands an IN over library-sized key sets
+        # (season_watch_stats, record_first_flagged_bulk). SQLite caps the number of bound
+        # variables in one statement; a library with enough merged listings to pass that
+        # cap raised OperationalError, which is not an IntegrationError and so was caught
+        # nowhere: the whole scan died rather than one fold being skipped.
+        for start in range(0, len(all_keys), _WATCH_KEY_CHUNK):
+            chunk = all_keys[start : start + _WATCH_KEY_CHUNK]
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT rating_key, user_id, MAX(watched_at) AS last FROM watch_event "
+                        "WHERE media_type = 'movie' AND rating_key IN :keys "
+                        "GROUP BY rating_key, user_id"
+                    ).bindparams(bindparam("keys", expanding=True)),
+                    {"keys": chunk},
+                )
+            ).all()
+            for row in rows:
+                per_key.setdefault(int(row.rating_key), []).append(row)
     for canonical, group in groups.items():
         group_rows = [row for key in group for row in per_key.get(key, [])]
         if not group_rows:
@@ -1859,6 +2043,11 @@ async def sync_protection_lists(
     degraded rather than delete something the list would have protected. The atomic-swap
     in ``lists.sync`` guarantees a failed refresh leaves the previous membership intact
     rather than emptying it.
+
+    This pass also **retires** the lists the current configuration no longer produces
+    (``lists.retire_absent``), because the slug of a derived list changes when its setting
+    does: without that, tightening "match ANY" to "match ALL" writes a new list while the
+    old one keeps protecting everything it ever matched.
     """
     synced: dict[str, int | str] = {}
 
@@ -1889,50 +2078,68 @@ async def sync_protection_lists(
     # titles, since a sync atomically replaces its slug's whole membership.
     movie_match: Literal["any", "all"] = "all" if movie_keep_match == "all" else "any"
     tv_match: Literal["any", "all"] = "all" if tv_keep_match == "all" else "any"
+    # Every keep-tag slug this configuration produces, collected as the providers are built.
+    # The retire pass below reads it as the whole truth about that family, which is why it is
+    # built from the *arr rows and the policy alone: both are local settings, so a briefly
+    # unreachable instance is still in this list and its keep-list is never retired over a
+    # network blip. Empty tags mean no provider AND no slug, which is exactly the case that
+    # has to retire -- an emptied tag list otherwise leaves the whole stored keep-list in force.
+    keep_tag_slugs: set[str] = set()
     for radarr in radarrs:
         if movie_keep_tags:
-            runs.append(
-                _run(
-                    lists.ArrTagRule(
-                        radarr.client,
-                        tuple(movie_keep_tags),
-                        movie_match,
-                        instance_id=radarr.instance_id,
-                        instance_name=radarr.name,
-                    ),
-                    kind=lists.ListKind.WHITELIST,
-                )
+            movie_rule = lists.ArrTagRule(
+                radarr.client,
+                tuple(movie_keep_tags),
+                movie_match,
+                instance_id=radarr.instance_id,
+                instance_name=radarr.name,
             )
+            keep_tag_slugs.add(movie_rule.slug)
+            runs.append(_run(movie_rule, kind=lists.ListKind.WHITELIST))
     for sonarr in sonarrs:
         if tv_keep_tags:
-            runs.append(
-                _run(
-                    lists.ArrTagRule(
-                        sonarr.client,
-                        tuple(tv_keep_tags),
-                        tv_match,
-                        instance_id=sonarr.instance_id,
-                        instance_name=sonarr.name,
-                    ),
-                    kind=lists.ListKind.WHITELIST,
-                )
+            tv_rule = lists.ArrTagRule(
+                sonarr.client,
+                tuple(tv_keep_tags),
+                tv_match,
+                instance_id=sonarr.instance_id,
+                instance_name=sonarr.name,
             )
+            keep_tag_slugs.add(tv_rule.slug)
+            runs.append(_run(tv_rule, kind=lists.ListKind.WHITELIST))
 
+    collection_slug: str | None = None
     if plex_server is not None:
-        runs.append(
-            _run(
-                lists.PlexCollection(
-                    server=plex_server, section_name=section_name, collection_name=collection_name
-                ),
-                kind=lists.ListKind.WHITELIST,
-            )
+        collection = lists.PlexCollection(
+            server=plex_server, section_name=section_name, collection_name=collection_name
         )
+        collection_slug = collection.slug
+        runs.append(_run(collection, kind=lists.ListKind.WHITELIST))
 
     # gather_reaped, not bare gather: _run swallows every per-provider failure, so only
     # something unexpected (a cache-database fault) can raise here -- and when it does,
     # the surviving providers are canceled and drained rather than left refreshing
     # lists for a scan that is already dead.
     await gather_reaped(*runs)
+
+    # Retire the lists this configuration no longer produces. A stored list outlives the
+    # setting that made it: flipping the keep-tag match, clearing the tags, renaming the
+    # collection or deleting an instance all leave a row that keeps protecting from a rule
+    # the operator already replaced, so the tightening they saved never takes effect.
+    # Slugs whose sync FAILED are in these sets and are never retired -- the atomic swap
+    # kept their membership and it is still the right list, just stale.
+    for slug in await lists.retire_absent(
+        engine, family=lists.KEEP_TAG_SLUGS, current=keep_tag_slugs
+    ):
+        synced[slug] = "retired"
+    # The Plex family only when Plex actually answered. With no server there is no provider
+    # and no slug, and retiring on that would unprotect every title on the "Never Reap"
+    # collection because Plex was briefly unreachable.
+    if plex_server is not None and collection_slug is not None:
+        for slug in await lists.retire_absent(
+            engine, family=lists.PLEX_COLLECTION_SLUGS, current={collection_slug}
+        ):
+            synced[slug] = "retired"
     return synced
 
 

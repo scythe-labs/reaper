@@ -48,6 +48,7 @@ from reaper.crypto import SecretBox
 from reaper.db.models import AppUser, AuthProvider, PendingPlexLogin, PlexServer
 from reaper.services.plex_link import (
     PlexLinkError,
+    PlexLinkRetryableError,
     PlexServerChoiceNeededError,
     client_identifier,
     complete_link,
@@ -159,8 +160,10 @@ async def poll_plex_login(
     pending row, so a rejected token cannot be replayed.
 
     First-run setup only: an owner of several servers raises
-    :class:`PlexServerChoiceNeededError` -- not a refusal, so the pending row survives
-    and the frontend re-polls with ``choice`` carrying the picked server.
+    :class:`PlexServerChoiceNeededError`, and a server that is briefly unreachable raises
+    :class:`PlexLinkRetryableError` -- neither is a refusal, so the pending row survives
+    in both cases and the frontend re-polls the same PIN (carrying the picked server, or
+    simply waiting for the server to come back).
     """
     async with session_factory() as session:
         pending = await session.scalar(
@@ -221,6 +224,15 @@ async def poll_plex_login(
             # Not a refusal: the sign-in succeeded and the owner just has to pick a
             # server. Leave the pending row intact so the same PIN can finish the job
             # once the frontend re-polls with the choice.
+            raise
+        except PlexLinkRetryableError:
+            # Also not a refusal: the sign-in succeeded, and the server simply did not
+            # answer this instant -- it may be restarting. Leave the pending row intact
+            # and let it bubble, so the browser keeps polling the still-valid sign-in
+            # instead of being sent back through the whole approval round trip. Must sit
+            # ABOVE the PlexLinkError arm below, which is its parent class and would
+            # otherwise consume the pending row (B2-14, in the setup twin of the link
+            # poll).
             raise
         except PlexLinkError as exc:
             await _consume_pending(session_factory, pin_id)

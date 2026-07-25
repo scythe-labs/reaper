@@ -17,6 +17,7 @@ import respx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from reaper.clients.base import IntegrationError
 from reaper.config import Settings
 from reaper.db.session import create_engine
 from reaper.services.lists import (
@@ -53,6 +54,58 @@ class _FakeSonarr:
         return self._series
 
 
+class _FakePlexServer:
+    """A Plex stand-in for the keep-collection tests.
+
+    Built from ``{library: guids or None}``: ``None`` is a library with no such collection
+    (plexapi raises ``NotFound``), a list is one holding a movie per guid, and a guid of
+    ``None`` is an item whose guids no longer parse. Every library reports the SAME title,
+    so several entries model the same-title case the resolver has to survive.
+    """
+
+    def __init__(self, libraries: dict[str, list[str | None] | None]) -> None:
+        self.library = self._Library(libraries)
+
+    class _Library:
+        def __init__(self, libraries: dict[str, list[str | None] | None]) -> None:
+            self._libraries = libraries
+
+        def sections(self) -> list[_FakePlexServer._Section]:
+            return [
+                _FakePlexServer._Section(name.rstrip(" *"), guids)
+                for name, guids in self._libraries.items()
+            ]
+
+    class _Section:
+        def __init__(self, title: str, guids: list[str | None] | None) -> None:
+            self.title = title
+            self._guids = guids
+
+        def collection(self, name: str) -> object:
+            from plexapi.exceptions import NotFound
+
+            if self._guids is None:
+                raise NotFound("no such collection")
+            return _FakePlexServer._Collection(self._guids)
+
+    class _Collection:
+        def __init__(self, guids: list[str | None]) -> None:
+            self._guids = guids
+
+        def items(self) -> list[object]:
+            from types import SimpleNamespace
+
+            return [
+                SimpleNamespace(
+                    type="movie",
+                    title="A title",
+                    guids=[SimpleNamespace(id=f"imdb://{g}")] if g else [],
+                    guid=None,
+                )
+                for g in self._guids
+            ]
+
+
 class TestArrTagRule:
     """The configurable keep-list: several tags, combined ANY (union) or ALL (intersection)."""
 
@@ -80,6 +133,30 @@ class TestArrTagRule:
 
     async def test_no_tags_keeps_nothing(self, sonarr: _FakeSonarr) -> None:
         assert await ArrTagRule(sonarr, (), "any").fetch() == []  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("configured", ["Reaper-Keep", "REAPER-KEEP", " reaper-keep "])
+    async def test_the_operators_capitalization_still_matches(self, configured: str) -> None:
+        """Sonarr and Radarr lower-case every label at the source, so an operator who
+        configures the natural capitalization of their own tag was looking up a spelling the
+        tag map cannot hold. The tag then read as MISSING, and on a first sync that stored an
+        empty keep-list and reported success: keep-tagged titles silently deletable, forever,
+        with the settings screen showing the list as healthy."""
+        sonarr = _FakeSonarr(
+            [{"id": 1, "label": "reaper-keep"}],
+            [{"title": "A", "tvdbId": 10, "tags": [1]}],
+        )
+
+        items = await ArrTagRule(sonarr, (configured,), "any").fetch()  # type: ignore[arg-type]
+
+        assert [i.title for i in items] == ["A"]
+
+    async def test_a_tag_that_really_is_absent_still_raises(self) -> None:
+        """The other direction: normalizing must not turn a genuinely missing tag into a
+        match, or the wipe protection above stops firing."""
+        sonarr = _FakeSonarr([{"id": 1, "label": "other"}], [])
+
+        with pytest.raises(ContainerMissingError):
+            await ArrTagRule(sonarr, ("reaper-keep",), "any").fetch()  # type: ignore[arg-type]
 
 
 class TestAVanishedContainerNeverWipesTheList:
@@ -133,22 +210,51 @@ class TestAVanishedContainerNeverWipesTheList:
             await sync(engine, stale, kind=ListKind.WHITELIST)
 
     async def test_a_deleted_plex_collection_is_a_missing_container(self) -> None:
-        from plexapi.exceptions import NotFound
-
-        class _Section:
-            def collection(self, name: str) -> object:
-                raise NotFound("gone")
-
-        class _Library:
-            def section(self, name: str) -> _Section:
-                return _Section()
-
-        class _Server:
-            library = _Library()
-
-        provider = PlexCollection(server=_Server(), section_name="Movies")
+        provider = PlexCollection(server=_FakePlexServer({"Movies": None}), section_name="Movies")
         with pytest.raises(ContainerMissingError):
             await provider.fetch()
+
+    async def test_the_collection_is_found_in_the_second_library_of_that_name(self) -> None:
+        """Two libraries may share a title, and ``library.section(title)`` answers with only
+        one of them. Reading the keep collection off the wrong twin looks exactly like the
+        collection having been deleted, which degrades the scan and, on a first sync, stores
+        an empty keep-list."""
+        provider = PlexCollection(
+            server=_FakePlexServer({"Movies": None, "Movies ": None, "Movies*": ["tt0000001"]}),
+            section_name="Movies",
+        )
+        # The third library is titled "Movies" too; the fake spells them apart only so the
+        # dict can hold three, and reports every one of them under the same title.
+        items = await provider.fetch()
+
+        assert [i.imdb_id for i in items] == ["tt0000001"]
+
+    async def test_a_library_that_does_not_exist_is_a_hard_failure(self) -> None:
+        """Not a missing container but a missing LIBRARY: a name nothing matches is a
+        configuration error, reported, never synced as an empty list."""
+        provider = PlexCollection(server=_FakePlexServer({}), section_name="Movies")
+        with pytest.raises(IntegrationError):
+            await provider.fetch()
+
+    async def test_a_populated_collection_with_no_usable_ids_never_wipes_the_list(
+        self, engine: AsyncEngine
+    ) -> None:
+        """A Plex agent change can leave a real, full "Never Reap" collection whose guids no
+        longer parse. Every item then drops out of the id filter, and reading that as an
+        empty list would wipe the stored membership and unprotect every title on it."""
+        good = PlexCollection(
+            server=_FakePlexServer({"Movies": ["tt0000001", "tt0000002"]}), section_name="Movies"
+        )
+        assert await sync(engine, good, kind=ListKind.WHITELIST) == 2
+
+        unparseable = PlexCollection(
+            server=_FakePlexServer({"Movies": [None, None]}), section_name="Movies"
+        )
+        with pytest.raises(ContainerMissingError):
+            await sync(engine, unparseable, kind=ListKind.WHITELIST)
+
+        index = await load_membership_index(engine)
+        assert index.lookup(media_type="movie", imdb_id="tt0000001")
 
 
 @pytest.fixture
@@ -228,14 +334,20 @@ class TestImdbTop250:
         self, engine: AsyncEngine, httpx2_mock: respx.Router
     ) -> None:
         """The whole point of the atomic swap. A protection must never silently empty
-        itself because a third-party service had a bad minute."""
+        itself because a third-party service had a bad minute.
+
+        Both of these name the error the sync really raises. A bare
+        ``pytest.raises(Exception)`` is satisfied by one raised BEFORE the swap is reached
+        -- so the assertions below would be covering a path that never ran, on the one
+        rule 27 / rule 2 surface where an empty result is the failure being guarded.
+        """
         httpx2_mock.get(IMDB_TOP_250_URL).mock(
             return_value=httpx.Response(200, json=_top250_payload())
         )
         await sync(engine, ImdbTop250())
 
         httpx2_mock.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(503))
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(IntegrationError, match="503"):
             await sync(engine, ImdbTop250())
 
         # Still protected.
@@ -246,7 +358,7 @@ class TestImdbTop250:
     ) -> None:
         httpx2_mock.get(IMDB_TOP_250_URL).mock(return_value=httpx.Response(503))
 
-        with pytest.raises(Exception):  # noqa: B017
+        with pytest.raises(IntegrationError, match="503"):
             await sync(engine, ImdbTop250())
 
         async with engine.connect() as conn:

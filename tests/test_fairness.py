@@ -33,7 +33,6 @@ from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import Candidate, Snapshot, WhitelistEntry
 from reaper.db.session import create_cache_engine, create_engine, create_session_factory
-from reaper.engine.requester import WatchEvidence
 from reaper.services import fairness, history_sync
 from reaper.services.fairness import (
     UNMATCHED_AFTER_SCAN,
@@ -41,6 +40,7 @@ from reaper.services.fairness import (
     UNMATCHED_SET_ASIDE,
     CandidateInfo,
     ReclaimableTitle,
+    WatchEvidence,
     roll_up,
 )
 

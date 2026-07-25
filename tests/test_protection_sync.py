@@ -129,6 +129,50 @@ class _TaggedSonarr:
         return self._series
 
 
+class _CollectionServer:
+    """A Plex stand-in holding one library with one collection, whatever it is called.
+
+    ``imdb`` is the single title on that collection, so a rename can be told apart from
+    the same list under a new name.
+    """
+
+    class _Item:
+        type = "movie"
+        title = "A title"
+        guid = None
+
+        def __init__(self, imdb: str) -> None:
+            from types import SimpleNamespace
+
+            self.guids = [SimpleNamespace(id=f"imdb://{imdb}")]
+
+    class _Collection:
+        def __init__(self, imdb: str) -> None:
+            self._imdb = imdb
+
+        def items(self) -> list[object]:
+            return [_CollectionServer._Item(self._imdb)]
+
+    class _Section:
+        title = "Movies"
+
+        def __init__(self, imdb: str) -> None:
+            self._imdb = imdb
+
+        def collection(self, name: str) -> object:
+            return _CollectionServer._Collection(self._imdb)
+
+    class _Library:
+        def __init__(self, imdb: str) -> None:
+            self._imdb = imdb
+
+        def sections(self) -> list[object]:
+            return [_CollectionServer._Section(self._imdb)]
+
+    def __init__(self, imdb: str = "tt0000001") -> None:
+        self.library = self._Library(imdb)
+
+
 class TestEachInstanceKeepsItsOwnKeepList:
     async def test_two_instances_of_one_service_both_protect(self, engine: AsyncEngine) -> None:
         """Two Sonarr instances, each with its own keep-tagged title. The slug carries
@@ -163,3 +207,135 @@ class TestEachInstanceKeepsItsOwnKeepList:
         # And BOTH instances' keep-tagged titles are protected at the same time.
         assert await memberships(engine, media_type="tv", tvdb_id=10)
         assert await memberships(engine, media_type="tv", tvdb_id=20)
+
+
+class TestAReplacedKeepListStopsProtecting:
+    """A stored list outlives the setting that created it: the slug carries the any/all
+    match, the instance id and the collection name, so changing any of them writes a NEW
+    list and leaves the old one enabled. Everything the old rule ever matched stayed
+    whitelisted forever, which means the tightening the operator saved never took effect
+    and the why-panel cited a keep rule that no longer exists."""
+
+    @staticmethod
+    def _sonarr() -> SonarrSource:
+        return SonarrSource(
+            client=_TaggedSonarr(
+                [{"id": 1, "label": "keep"}, {"id": 2, "label": "gold"}],
+                [
+                    {"title": "A", "tvdbId": 10, "tags": [1]},  # keep only
+                    {"title": "B", "tvdbId": 11, "tags": [1, 2]},  # both
+                ],
+            ),
+            instance_id=1,
+            name="hd",
+        )
+
+    async def test_flipping_any_to_all_stops_protecting_the_any_matches(
+        self, engine: AsyncEngine
+    ) -> None:
+        await sync_protection_lists(
+            engine,
+            sonarrs=[self._sonarr()],
+            tv_keep_tags=("keep", "gold"),
+            tv_keep_match="any",
+            include_top_250=False,
+        )
+        assert await memberships(engine, media_type="tv", tvdb_id=10)
+
+        synced = await sync_protection_lists(
+            engine,
+            sonarrs=[self._sonarr()],
+            tv_keep_tags=("keep", "gold"),
+            tv_keep_match="all",
+            include_top_250=False,
+        )
+
+        assert synced["sonarr-1-keeptags-any"] == "retired"
+        assert not await memberships(engine, media_type="tv", tvdb_id=10)  # only "keep"
+        assert await memberships(engine, media_type="tv", tvdb_id=11)  # both tags
+
+    async def test_flipping_back_protects_again(self, engine: AsyncEngine) -> None:
+        """Retired, never deleted: the membership stays, and the list resumes the moment
+        the configuration produces it again. A row left disabled while its sync succeeds
+        would be a keep-list that protects nothing."""
+        for match in ("any", "all", "any"):
+            await sync_protection_lists(
+                engine,
+                sonarrs=[self._sonarr()],
+                tv_keep_tags=("keep", "gold"),
+                tv_keep_match=match,
+                include_top_250=False,
+            )
+
+        assert await memberships(engine, media_type="tv", tvdb_id=10)
+
+    async def test_clearing_the_tags_retires_the_whole_keep_list(self, engine: AsyncEngine) -> None:
+        """The stronger trigger: with no tags configured no provider is built at all, so
+        without the retire pass nothing touches the stored list and every title it ever
+        matched stays protected by a rule the operator deleted."""
+        await sync_protection_lists(
+            engine, sonarrs=[self._sonarr()], tv_keep_tags=("keep",), include_top_250=False
+        )
+        assert await memberships(engine, media_type="tv", tvdb_id=10)
+
+        await sync_protection_lists(
+            engine, sonarrs=[self._sonarr()], tv_keep_tags=(), include_top_250=False
+        )
+
+        assert not await memberships(engine, media_type="tv", tvdb_id=10)
+
+    async def test_a_failed_sync_is_never_retired(self, engine: AsyncEngine) -> None:
+        """The stale copy is still the right list, just unrefreshed, and the atomic swap
+        kept it deliberately. Retiring it here would unprotect every title on it because
+        one *arr was briefly unreachable."""
+
+        class _Unreachable(_TaggedSonarr):
+            async def tags(self) -> list[dict[str, object]]:
+                raise RuntimeError("connection refused")
+
+        await sync_protection_lists(
+            engine, sonarrs=[self._sonarr()], tv_keep_tags=("keep",), include_top_250=False
+        )
+
+        broken = SonarrSource(client=_Unreachable([], []), instance_id=1, name="hd")
+        synced = await sync_protection_lists(
+            engine, sonarrs=[broken], tv_keep_tags=("keep",), include_top_250=False
+        )
+
+        assert "error" in str(synced["sonarr-1-keeptags-any"])
+        assert await memberships(engine, media_type="tv", tvdb_id=10)
+
+    async def test_renaming_the_plex_collection_retires_the_old_one(
+        self, engine: AsyncEngine
+    ) -> None:
+        """The collection name is in the slug too, so a rename leaves the old collection's
+        membership protecting titles the operator has since taken off the new one."""
+        await sync_protection_lists(
+            engine,
+            plex_server=_CollectionServer(),
+            collection_name="Never Reap",
+            include_top_250=False,
+        )
+        assert await memberships(engine, media_type="movie", imdb_id="tt0000001")
+
+        synced = await sync_protection_lists(
+            engine,
+            plex_server=_CollectionServer("tt0000002"),
+            collection_name="Keep Forever",
+            include_top_250=False,
+        )
+
+        assert synced["plex-collection-never-reap"] == "retired"
+        assert not await memberships(engine, media_type="movie", imdb_id="tt0000001")
+
+    async def test_an_unreachable_plex_never_retires_the_collection(
+        self, engine: AsyncEngine
+    ) -> None:
+        """With no server there is no provider and no slug, and retiring on that would
+        unprotect every title on the "Never Reap" collection over a network blip. The
+        scan already degrades for the same reason; the stored list must survive it."""
+        await sync_protection_lists(engine, plex_server=_CollectionServer(), include_top_250=False)
+
+        await sync_protection_lists(engine, plex_server=None, include_top_250=False)
+
+        assert await memberships(engine, media_type="movie", imdb_id="tt0000001")

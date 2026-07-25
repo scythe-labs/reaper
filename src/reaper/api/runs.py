@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Sequence
 from contextlib import AsyncExitStack
 
 import structlog
-from fastapi import APIRouter, FastAPI, HTTPException, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -90,7 +91,53 @@ async def _run_steps(session: AsyncSession, run: ReapRun) -> list[ActionStep]:
     )
 
 
-async def _planned_candidates(session: AsyncSession, run: ReapRun) -> list[Candidate]:
+class _RunReads:
+    """Per-request memo for the three reads every run's output needs.
+
+    ``list_runs`` renders up to 200 runs, and each one independently re-read the hand
+    overrides, the reap profile, and the WHOLE effective condemned set of its snapshot --
+    that last one being every condemned row in the snapshot, pulled into memory once per
+    run. Runs on a page overwhelmingly share a snapshot, so each read happens once here
+    and every run that needs it gets the same answer (P-2).
+
+    Scoped to ONE request and never held across one. The overrides and the allowance are
+    deliberately read live, so the count and total in front of the owner describe the
+    settings in force now; a cache that outlived the request would put back exactly the
+    staleness those live reads exist to prevent.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._decisions: dict[str, str] | None = None
+        self._allow_unmeasured: bool | None = None
+        self._condemned: dict[int, dict[str, Candidate]] = {}
+
+    async def decisions(self) -> dict[str, str]:
+        if self._decisions is None:
+            self._decisions = await whitelist.overrides(self._session)
+        return self._decisions
+
+    async def allow_unmeasured(self) -> bool:
+        if self._allow_unmeasured is None:
+            settings = await active_profile_settings(self._session)
+            self._allow_unmeasured = settings.max_unmeasured_per_run > 0
+        return self._allow_unmeasured
+
+    async def condemned(self, snapshot_id: int) -> dict[str, Candidate]:
+        cached = self._condemned.get(snapshot_id)
+        if cached is None:
+            cached = await effective_condemned(self._session, snapshot_id, await self.decisions())
+            self._condemned[snapshot_id] = cached
+        return cached
+
+
+async def _planned_candidates(
+    session: AsyncSession,
+    run: ReapRun,
+    *,
+    steps: Sequence[ActionStep] | None = None,
+    reads: _RunReads | None = None,
+) -> list[Candidate]:
     """Exactly the candidates this run would actually delete, deduped to one per item.
 
     Deduped by media_key because a season is THREE steps sharing one key, and counting per
@@ -111,13 +158,14 @@ async def _planned_candidates(session: AsyncSession, run: ReapRun) -> list[Candi
     run will act on. Unless the operator's allowance is open, in which case they ARE acted
     on and belong in the count -- read live below, so both surfaces agree.
     """
-    steps = await _run_steps(session, run)
-    decisions = await whitelist.overrides(session)
-    by_key = await effective_condemned(session, run.snapshot_id, decisions)
+    memo = reads if reads is not None else _RunReads(session)
+    if steps is None:
+        steps = await _run_steps(session, run)
+    by_key = await memo.condemned(run.snapshot_id)
     # The allowance is read here, at the moment the numbers are produced, so the count
     # and total in front of the owner describe the set the executor will act on under the
     # settings in force NOW -- not the ones in force when the plan was built.
-    allow_unmeasured = (await active_profile_settings(session)).max_unmeasured_per_run > 0
+    allow_unmeasured = await memo.allow_unmeasured()
     return [
         by_key[k]
         for k in dict.fromkeys(s.media_key for s in steps)
@@ -125,9 +173,13 @@ async def _planned_candidates(session: AsyncSession, run: ReapRun) -> list[Candi
     ]
 
 
-async def _run_out(session: AsyncSession, run: ReapRun) -> RunOut:
+async def _run_out(
+    session: AsyncSession, run: ReapRun, *, reads: _RunReads | None = None
+) -> RunOut:
+    # Steps are fetched ONCE and handed down: this and _planned_candidates each used to
+    # query them, so every run cost two step reads instead of one (P-2).
     steps = await _run_steps(session, run)
-    planned = await _planned_candidates(session, run)
+    planned = await _planned_candidates(session, run, steps=steps, reads=reads)
 
     return RunOut(
         id=run.id,
@@ -189,7 +241,6 @@ async def create_run(request: Request, payload: CreateRunIn | None = None) -> Ru
             run = await build_plan(
                 session,
                 snapshot_id=snapshot.id,
-                policy_hash=snapshot.policy_hash,
                 approved_by="api",
                 only_media_keys=only,
                 max_unmeasured=(await active_profile_settings(session)).max_unmeasured_per_run,
@@ -203,7 +254,15 @@ async def create_run(request: Request, payload: CreateRunIn | None = None) -> Ru
 
 
 @router.get("/runs")
-async def list_runs(request: Request, limit: int = 50) -> list[RunSummaryOut]:
+async def list_runs(
+    request: Request,
+    # Bounded at the boundary, both ends. Without a lower bound a negative limit passed
+    # straight through to ``LIMIT -1``, which SQLite reads as NO limit: one request
+    # returned every run ever made (B-8). Cheap rows make that less costly than it was,
+    # not bounded -- so the bound stays here, where a bad value is refused rather than
+    # clamped silently.
+    limit: int = Query(50, ge=1, le=200),
+) -> list[RunSummaryOut]:
     """The recent plans, as stored rows and nothing more (see ``RunSummaryOut``).
 
     Deliberately NOT ``RunOut``: that shape's counts, totals and phrase are each derived
@@ -214,14 +273,11 @@ async def list_runs(request: Request, limit: int = 50) -> list[RunSummaryOut]:
     """
     async with _sessions(request)() as session:
         runs = list(
-            (
-                await session.execute(
-                    select(ReapRun).order_by(ReapRun.id.desc()).limit(min(limit, 200))
-                )
-            )
+            (await session.execute(select(ReapRun).order_by(ReapRun.id.desc()).limit(limit)))
             .scalars()
             .all()
         )
+        # No memo needed: nothing here is derived, so there is no expensive read to share.
         return [
             RunSummaryOut(
                 id=r.id,
@@ -505,7 +561,10 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
             # Removing files leaves the last snapshot's queue and policy preview stale, so
             # kick a fresh scan -- on a completed OR a stopped run alike, as long as at least
             # one file was actually removed. Nothing removed means nothing went stale.
-            if report.deleted_items > 0:
+            # ``library_changed``, not ``deleted_items``: a movie Radarr deleted whose import
+            # exclusion never landed ends FAILED, and reading the confirmed count alone left
+            # the queue offering files that were already gone.
+            if report.library_changed:
                 launch_scan(app)
         except ExecutionError as exc:
             # A refused run the executor raised rather than executed (changed manifest, not

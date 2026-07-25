@@ -57,7 +57,13 @@ class ArrClient(BaseClient):
         self.prefix = api_path_prefix or self.default_prefix
 
     async def system_status(self) -> dict[str, Any]:
-        """Connectivity + version check. The basis of the version gate."""
+        """Connectivity + version check.
+
+        Reaching it proves the URL, the key and the API path all work, and it reports the
+        version Reaper shows beside the instance. It does NOT gate the API path: the path
+        comes from the instance's stored ``api_path_prefix``, which nothing derives from
+        this response (rule 24 -- the comment used to claim a gate that is not here).
+        """
         data = await self.get_json(f"{self.prefix}/system/status")
         if not isinstance(data, dict):
             raise IntegrationError(self.service, "system/status did not return an object")

@@ -69,8 +69,12 @@ class Instance(Base):
     # not an Instance, so it is untouched here.
     external_url: Mapped[str | None] = mapped_column(String(500), default=None)
 
-    # Discovered from GET /api/v3/system/status, never hardcoded: Sonarr's
-    # v5-develop ships a real /api/v5 with a different SeriesResource shape.
+    # The API path every request to this instance is built on. Held against the day an
+    # *arr serves a different one -- Sonarr's v5-develop ships a real /api/v5 with a
+    # different SeriesResource shape -- and passed to the client by both the scan and Test
+    # Connection, so the two always probe the same path. Nothing WRITES it yet: it has
+    # only ever held its default, and there is no UI or probe that derives it (rule 24 --
+    # this comment used to say it was discovered from system/status, which it is not).
     api_path_prefix: Mapped[str] = mapped_column(String(20), default="/api/v3")
     detected_version: Mapped[str | None] = mapped_column(String(50), default=None)
 
@@ -644,6 +648,34 @@ class RecoveryToken(Base):
     used_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
 
 
+#: Tables holding live proof of a sign-in: something that lets a caller in *now*, rather
+#: than the account it belongs to. A restore replaces the whole database and brings the
+#: backup's password hashes back with it, so everything here must be cleared out of the
+#: staged copy first, or a session or reset link that was valid when the backup was taken
+#: starts working again and defeats a later sign-out-everywhere (rule 75/12).
+#:
+#: Declared here, beside the models, rather than as a literal inside the restore code that
+#: consumes it (``services.restore._purge_auth_state``): a new auth-bearing table added
+#: over there would have been carried silently forward (R-3). ``tests/test_restore.py``
+#: fails when a table that looks auth-bearing is missing from this tuple.
+AUTH_BEARING_TABLES: tuple[str, ...] = (
+    "auth_session",
+    "recovery_token",
+    "pending_plex_login",
+)
+
+#: The exceptions, spelled out so the drift test can tell "considered and excluded" from
+#: "forgotten". Each of these holds a credential, and each is meant to come back:
+#:
+#: * ``app_user`` carries ``password_hash``, but it is the ACCOUNT, not a live session.
+#:   Restoring a backup restores its admins; purging them would lock the operator out of
+#:   the install they just restored.
+#: * ``plex_server`` and ``instance`` carry credentials for OTHER systems (the Plex admin
+#:   token, the *arr keys). Restoring them is the entire point of bundling the encryption
+#:   key with the backup, and none of them lets anyone into Reaper.
+NOT_AUTH_BEARING_TABLES: tuple[str, ...] = ("app_user", "plex_server", "instance")
+
+
 class AppSetting(Base):
     """Singleton key/value config that the admin edits in the web UI.
 
@@ -792,5 +824,17 @@ class ActionStep(Base):
     created_at: Mapped[UtcTimestamp]
     sent_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
     verified_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
+
+    file_removed_at: Mapped[UtcTimestamp | None] = mapped_column(default=None)
+    """When Reaper confirmed this step's file was really gone from disk -- recorded
+    separately from ``state`` because the two can disagree.
+
+    A movie deleted through Radarr whose import exclusion never appeared inside the poll
+    window ends FAILED: the verification genuinely did fail, and the state must keep saying
+    so. But the file IS gone and its bytes ARE reclaimed, so the rolling 30-day budget has
+    to charge it or a flaky *arr silently buys the operator unlimited deletions
+    (``Executor._rolling_30d_deletions`` counts VERIFIED **or** this, never both twice).
+    NULL on every row written before this column existed, which reads exactly as it did
+    then: only its VERIFIED state counts it."""
 
     run: Mapped[ReapRun] = relationship(back_populates="steps")

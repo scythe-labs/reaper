@@ -1569,6 +1569,69 @@ class TestTheContradictionVeto:
         assert res.rating_key == 100
         assert res.matched_by is MatchedBy.TMDB
 
+    def test_an_id_pointing_away_from_the_row_holding_the_file_abstains(self) -> None:
+        """The catastrophe the module docstring names. Radarr manages one file; Plex lists
+        it twice -- rk=200 is the row whose Part IS that file (a local agent, so it carries
+        no ids at all) and rk=100 is a second listing of the same content that DID match
+        and holds a different file. The id binds rk=100, but the file name names rk=200.
+        Judging rk=100's watch history while deleting rk=200's file is exactly what the
+        cross-tier veto exists to stop -> keep."""
+        index = PlexIndex.build(
+            [
+                _item(100, title="Example Movie", year=2020, tmdb=1001, basename="other copy.mkv"),
+                _item(200, title="Example Movie", year=2020, basename="the managed file.mkv"),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title=None,
+            year=None,
+            file_basename="/movies/Example Movie (2020)/the managed file.mkv",
+            file_size=99,
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.detail == "Kept: identifiers disagree (tmdb->100, basename->200)"
+
+    def test_a_file_name_naming_the_bound_row_confirms_the_id(self) -> None:
+        """The healthy shape: the id and the file name name the same listing. The
+        cross-check corroborates, and the bind keeps its id provenance."""
+        index = PlexIndex.build(
+            [
+                _item(100, title="Example Movie", tmdb=1001, basename="the managed file.mkv"),
+                _item(200, title="Other", tmdb=1002, basename="something else.mkv"),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title=None,
+            year=None,
+            file_basename="/movies/the managed file.mkv",
+            index=index,
+        )
+        assert res.rating_key == 100
+        assert res.matched_by is MatchedBy.TMDB
+
+    def test_a_file_name_naming_several_listings_is_silence_for_a_bound_id(self) -> None:
+        """A name naming more than one listing says nothing about WHICH -- and under a
+        shared id it is the merged-twins shape tier 1 has already narrowed. Silence, so
+        the id's own answer stands; only a name naming exactly one listing can veto."""
+        index = PlexIndex.build(
+            [
+                _item(100, title="Example Movie", tmdb=1001, basename="example.mkv"),
+                _item(300, title="Elsewhere", basename="example.mkv"),
+            ]
+        )
+        res = resolve_movie(
+            ids=ExternalIds.of(tmdb=1001),
+            title=None,
+            year=None,
+            file_basename="example.mkv",
+            index=index,
+        )
+        assert res.rating_key == 100
+        assert res.matched_by is MatchedBy.TMDB
+
     def test_a_title_mismatch_is_silence_not_contradiction(self) -> None:
         """The id row's title differs from the query title, so Tier 3 finds nothing. That
         is silence, not a contradiction -- the id still binds."""
@@ -1582,6 +1645,75 @@ class TestTheContradictionVeto:
         )
         assert res.rating_key == 100
         assert res.matched_by is MatchedBy.TMDB
+
+
+class TestAShowsImdbIdCrossChecksItsTvdbBind:
+    """imdb never binds a show, but it always checks the one that did.
+
+    A movie in this exact shape has always abstained; a show used to bind whatever its
+    tvdb id named, because the resolver never consulted the imdb id both sides carry.
+    """
+
+    def test_a_stale_tvdb_id_naming_another_show_abstains(self) -> None:
+        """Sonarr's tvdb id is stale (a series split, or a bad match) and names a
+        different Plex show. The imdb id names the real one. The ids contradict each
+        other and there is no way to know which is wrong -> keep the whole series."""
+        index = PlexIndex.build(
+            [
+                _item(100, title="Some Other Show", tvdb=2001, imdb="tt0000001"),
+                _item(200, title="Example Show", tvdb=9999, imdb="tt0000042"),
+            ]
+        )
+        res = resolve_show(
+            ids=ExternalIds.of(imdb="tt0000042", tvdb=2001),
+            title=None,
+            year=None,
+            file_basename=None,
+            index=index,
+        )
+        assert res.rating_key is None
+        assert "contradict" in res.detail.lower()
+
+    def test_an_agreeing_imdb_id_confirms_the_tvdb_bind(self) -> None:
+        index = PlexIndex.build([_item(300, title="Example Show", tvdb=2001, imdb="tt0000042")])
+        res = resolve_show(
+            ids=ExternalIds.of(imdb="tt0000042", tvdb=2001),
+            title=None,
+            year=None,
+            file_basename=None,
+            index=index,
+        )
+        assert res.rating_key == 300
+        assert res.matched_by is MatchedBy.TVDB
+
+    def test_imdb_alone_never_binds_a_show(self) -> None:
+        """The cross-check may only ever ADD abstains. With no tvdb hit to check, an imdb
+        id that names a Plex show does NOT bind it -- that would make shows deletable that
+        are kept today. The weaker tiers decide, exactly as before."""
+        index = PlexIndex.build([_item(300, title="Example Show", imdb="tt0000042")])
+        res = resolve_show(
+            ids=ExternalIds.of(imdb="tt0000042", tvdb=2001),
+            title=None,
+            year=None,
+            file_basename=None,
+            index=index,
+        )
+        assert res.rating_key is None
+        assert res.status is MatchStatus.UNMATCHED
+
+    def test_imdb_alone_still_leaves_the_title_backstop_intact(self) -> None:
+        """Standing down is not a veto: the title+year tier still binds the show it always
+        did, so the imdb cross-check costs no existing match."""
+        index = PlexIndex.build([_item(300, title="Example Show", year=2020, imdb="tt0000042")])
+        res = resolve_show(
+            ids=ExternalIds.of(imdb="tt0000042"),
+            title="Example Show",
+            year=2020,
+            file_basename=None,
+            index=index,
+        )
+        assert res.rating_key == 300
+        assert res.matched_by is MatchedBy.TITLE_YEAR
 
 
 # ---------------------------------------------------------------------------

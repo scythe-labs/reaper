@@ -68,8 +68,10 @@ class SignalId(enum.StrEnum):
 
     Note what is **not** here: size.
 
-    ``SIZE`` remains available for owners who insist, but it is off by default and the
-    UI warns about it. Backtested against real watch history, a scorer that weighted
+    ``SIZE`` remains available for owners who insist, but it is off by default and
+    enabling it raises a ``danger`` warning on the policy page (``policy.inspect``, the
+    same one a hand-written size rule raises). Backtested against real watch history, a
+    scorer that weighted
     size produced a condemned set with *worse* regret than picking at random among
     films of the same age -- it scored below the baseline it was supposed to beat.
 
@@ -256,19 +258,30 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
 
     raw: float | None
     detail: str
+    # The observation the branch read, so the shared tail below can tell "we looked and
+    # there is genuinely nothing" (Absent) from "we could not look" (Unknown). Only the
+    # branch knows which fact it read, and that knowledge is gone by the tail.
+    observation: Observation[float] | Observation[int]
 
     match config.signal:
         case SignalId.UNWATCHED:
-            raw = _numeric(facts.days_observed_unwatched)
+            observation = facts.days_observed_unwatched
+            raw = _numeric(observation)
             detail = (
                 f"not watched in {humanize_days(raw)}"
                 if raw is not None
                 else "no watch history to say how long it has gone unwatched"
             )
         case SignalId.SIZE:
-            size = _numeric(facts.size_bytes)
+            observation = facts.size_bytes
+            size = _numeric(observation)
             raw = size / 1_000_000_000 if size is not None else None
-            detail = f"{raw:.1f} GB on disk" if raw is not None else "could not read the file size"
+            if raw is not None:
+                detail = f"{raw:.1f} GB on disk"
+            elif isinstance(observation, Absent):
+                detail = "no file size recorded"
+            else:
+                detail = "could not read the file size"
         case SignalId.SEASON_RANK:
             # A special (season 0) is deliberately left out of the newest->oldest ranking,
             # so its rank is Absent: we looked, and it genuinely has no rank slot. That is
@@ -286,7 +299,8 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
                     evaluated=True,
                     state=SignalState.NOT_APPLICABLE,
                 )
-            raw = _numeric(facts.season_rank)
+            observation = facts.season_rank
+            raw = _numeric(observation)
             # Rank 1 is the NEWEST season with files, not the oldest. Calling it an
             # older season while charging it deletion pressure told the owner the
             # opposite of what the ranking means.
@@ -296,11 +310,14 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
                 else "could not tell which season this is"
             )
         case SignalId.FEW_WATCHERS:
-            watchers = _numeric(facts.distinct_watchers)
+            observation = facts.distinct_watchers
+            watchers = _numeric(observation)
             # Inverted, but still unsigned: FEWER watchers means MORE pressure.
             # The pressure is computed from the shortfall, never as a negative.
             raw = max(0.0, float(config.saturate_at) - watchers) if watchers is not None else None
-            if watchers is None:
+            if watchers is None and isinstance(observation, Absent):
+                detail = "no watch history recorded for it"
+            elif watchers is None:
                 detail = "could not tell who watched it"
             elif watchers == 0:
                 detail = f"nobody watched it in the last {humanize_window(window_days)}"
@@ -309,11 +326,33 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
                 window_text = humanize_window(window_days)
                 detail = f"only {watchers:.0f} {people} watched it in the last {window_text}"
         case SignalId.LOW_RATING:
-            rating = _numeric(facts.imdb_rating_tenths)
+            observation = facts.imdb_rating_tenths
+            rating = _numeric(observation)
             # Same shape: a LOW rating is pressure to delete. Expressed as the
             # shortfall below saturate_at, so it stays in [0, weight].
             raw = max(0.0, float(config.saturate_at) - rating) if rating is not None else None
-            detail = f"IMDb {rating / 10:.1f}" if rating is not None else "no IMDb rating"
+            if rating is not None:
+                detail = f"IMDb {rating / 10:.1f}"
+            elif isinstance(observation, Absent):
+                detail = "no IMDb rating"
+            else:
+                detail = "could not read the IMDb rating"
+
+    if raw is None and isinstance(observation, Absent):
+        # We looked, and there genuinely is no value: an unrated show, a season with no
+        # single release date. Real evidence, not a read failure -- so EVALUATED, with the
+        # weight retained and coverage intact, exactly as SEASON_RANK above and
+        # evaluate_custom's graded arm read an Absent. Reading it as UNREADABLE told the
+        # owner "could not read the IMDb rating" about a title that simply has none, and
+        # dragged every unrated show's coverage toward the abstain floor.
+        return SignalResult(
+            config.signal,
+            0.0,
+            config.weight,
+            detail,
+            evaluated=True,
+            state=SignalState.NOT_APPLICABLE,
+        )
 
     if raw is None:
         # Unknown contributes ZERO pressure -- the floor. Its weight still counts

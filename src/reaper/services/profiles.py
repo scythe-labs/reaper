@@ -35,7 +35,9 @@ from reaper.engine.policy import (
     DEFAULT_TV_POLICY,
     PolicyBody,
     ProfileSettings,
+    combine_hashes,
     rebalance,
+    recover_rating_rules,
 )
 
 log = structlog.get_logger(__name__)
@@ -163,17 +165,28 @@ class ActivePolicy:
     on screen are ones they never chose.
     """
 
+    rating_rules_recovered: bool = False
+    """This is the operator's own body with their rating bar restored
+    (``policy.recover_rating_rules``).
+
+    The bar moved off the RATING_FLOOR gate row with no backfill, so a body written before
+    that move still validates while protecting nothing. Restoring it changes what the scan
+    decides -- titles their bar keeps stop being condemnable -- so it is never adopted
+    silently: this flag makes ``repaired`` true, the scan degrades, and the editor opens on
+    it as an unsaved draft the operator reviews and saves.
+    """
+
     @property
     def repaired(self) -> bool:
-        """Either recovery: what is in hand is not what is stored.
+        """Any recovery: what is in hand is not what is stored.
 
-        The scan reads this one. Both cases mean the run would execute against a policy
-        nobody saved, which is the substitution the journal exists to prevent -- so both
-        degrade the snapshot, however the body was arrived at. Do NOT infer this from the
-        name: an operator's own policy is frequently *called* "default", so the name
-        cannot tell the two recoveries apart (it silently did not, once).
+        The scan reads this one. Every case means the run would execute against a policy
+        nobody saved, which is the substitution the journal exists to prevent -- so all of
+        them degrade the snapshot, however the body was arrived at. Do NOT infer this from
+        the name: an operator's own policy is frequently *called* "default", so the name
+        cannot tell the recoveries apart (it silently did not, once).
         """
-        return self.rescaled or self.fell_back
+        return self.rescaled or self.fell_back or self.rating_rules_recovered
 
 
 async def active_policy(session: AsyncSession, media_type: str = "movie") -> ActivePolicy:
@@ -196,23 +209,46 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
     raising on any shape it cannot read. A body whose removal weights predate the
     100-point budget is rescaled and flagged ``repaired``; anything else unreadable falls
     back to the shipped default, also flagged.
+
+    One recovery runs on a body that validates *perfectly well*: a rating bar written
+    before the bar moved off the gate row is restored by ``policy.recover_rating_rules``,
+    because that body loads cleanly while protecting nothing. It is checked first, on the
+    raw dict, since validation cannot see what is missing.
     """
     row = await active_policy_row(session, media_type)
     default = DEFAULT_TV_POLICY if media_type == "tv" else DEFAULT_MOVIE_POLICY
 
     if row is None:
         return ActivePolicy(default, "default")
+
+    try:
+        raw = json.loads(row.body_json)
+    except ValueError:
+        # Not JSON at all. `model_validate_json` below reports it the same way, and the
+        # two recoveries that read `raw` both refuse a non-dict.
+        raw = None
+
+    restored = recover_rating_rules(raw)
+    if restored is not None:
+        try:
+            body = PolicyBody.model_validate(restored)
+        except ValidationError:
+            # The stored body was legacy-shaped but does not load even with the bar put
+            # back (hand-edited, or broken some other way). Fall through and read it as
+            # stored; the editor's "this protection has no rating sources" warning covers
+            # the bar, and any other fault takes the paths below.
+            log.warning("policy.rating_rules_unrecoverable", media_type=media_type)
+        else:
+            log.info("policy.rating_rules_recovered", media_type=media_type, name=row.name)
+            return ActivePolicy(body, row.name, rating_rules_recovered=True)
+
     try:
         return ActivePolicy(PolicyBody.model_validate_json(row.body_json), row.name)
     except ValidationError:
         # Pydantic raises ValidationError for malformed JSON too, so we land here with a
-        # body that json.loads cannot read either. Both that and a body that decodes to
+        # body that json.loads could not read either. Both that and a body that decodes to
         # something other than an object (a list, a number, null) fall through to the
         # shipped default below; neither may escape as an exception.
-        try:
-            raw = json.loads(row.body_json)
-        except ValueError:
-            raw = None
         repaired = rebalance(raw) if isinstance(raw, dict) else None
         if repaired is not None:
             log.info("policy.rebalanced", media_type=media_type, name=row.name)
@@ -224,6 +260,25 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
 async def active_policies(session: AsyncSession) -> tuple[ActivePolicy, ActivePolicy]:
     """The (movie, tv) policies in force, in that fixed order -- the pair a scan runs to."""
     return (await active_policy(session, "movie"), await active_policy(session, "tv"))
+
+
+async def live_policy_hash(session: AsyncSession) -> str:
+    """The fingerprint of the policy pair in force right now.
+
+    The same combination a scan stamps onto its snapshot (``policy.combine_hashes``, movie
+    then TV), computed here so the scan and the executor cannot drift into two spellings of
+    "the current policy". The executor compares a run's stored hash against this before it
+    deletes anything: an operator who added a protection after approving a plan changed no
+    candidate row, so the manifest still matches while the plan now targets files the new
+    policy keeps.
+
+    A policy Reaper had to recover reads as whatever ``active_policy`` handed back -- the
+    shipped default when the stored body was unreadable -- so a repaired policy produces a
+    hash that will not match a snapshot scored under the real one. That refuses the run,
+    which is the direction rule 65 wants.
+    """
+    movie, tv = await active_policies(session)
+    return combine_hashes(movie.body.policy_hash(), tv.body.policy_hash())
 
 
 async def _ensure_active_policy_row(session: AsyncSession) -> int:

@@ -23,6 +23,8 @@ the real delay for a client retry or a poll loop only burns wall clock for no si
 """
 
 import asyncio
+import logging
+from collections.abc import Iterator
 
 import pytest
 import structlog
@@ -30,6 +32,7 @@ from pwdlib import PasswordHash
 from pwdlib.hashers.argon2 import Argon2Hasher
 
 import reaper.auth.passwords as _passwords
+from reaper import logbuffer
 from reaper.auth.ratelimit import (
     argon2_gate,
     login_throttle,
@@ -37,6 +40,7 @@ from reaper.auth.ratelimit import (
     recover_throttle,
 )
 from reaper.config import Settings
+from reaper.logging import _NOISY_LOGGERS
 
 _passwords._hasher = PasswordHash((Argon2Hasher(time_cost=1, memory_cost=8, parallelism=1),))
 
@@ -47,10 +51,18 @@ async def _instant_async_sleep(delay: float, result: object = None) -> object:
     """Stand in for ``asyncio.sleep`` everywhere: real duration, one real tick.
 
     Production code really waits out retry backoff (``clients/base.py``'s ``@retry``),
-    the plex.tv pin-poll loop, and Discord's ``Retry-After``. A test that provokes two
-    retries pays ~1.5s of pure idle time for a delay no assertion reads. Still awaits the
-    real ``sleep(0)`` (rather than returning immediately) so code that relies on
-    ``asyncio.sleep`` to yield to the event loop keeps working unchanged.
+    the plex.tv pin-poll loop (``clients/plextv.py``'s ``wait_for_pin``), and Discord's
+    ``Retry-After``. A test that provokes two retries pays ~1.5s of pure idle time for a
+    delay no assertion reads. Still awaits the real ``sleep(0)`` (rather than returning
+    immediately) so code that relies on ``asyncio.sleep`` to yield to the event loop keeps
+    working unchanged.
+
+    **It does not move the clock.** ``loop.time()`` still advances in real wall-clock, so a
+    loop bounded by a DEADLINE rather than by a sleep count does not finish early here -- it
+    spins through the whole remaining window as fast as it can. Any test of such a deadline
+    has to pass a short timeout of its own and say why (``test_plex_auth``'s
+    ``test_the_deadline_clips_a_backoff_the_server_chose`` is the worked example); the
+    pin loop's real 300s default would take 300 seconds.
     """
     return await _real_async_sleep(0, result)
 
@@ -78,6 +90,38 @@ def _capturable_logs() -> None:
     itself call it inside their own body, so this starting state does not affect them.
     """
     structlog.configure(cache_logger_on_first_use=False)
+
+
+@pytest.fixture
+def _restore_logging() -> Iterator[None]:
+    """Save and restore everything ``configure_logging`` / ``logbuffer.set_level`` mutate.
+
+    Opt-in, because it is only needed by the handful of tests that call those functions in
+    their own body -- but for those it is not optional. ``configure_logging`` is entirely
+    process-global: it sets the root level via ``basicConfig``, attaches a ring handler to
+    the root logger, lowers every noisy library logger, and re-runs ``structlog.configure``.
+    All of it outlives the test and lands on whatever the xdist worker picks up next.
+
+    Shared here rather than copied per module: it lived in ``test_logging_quiet`` while its
+    direct sibling in ``test_foundations`` called ``configure_logging`` with no cleanup at
+    all, which is exactly the shape a shared fixture prevents.
+    """
+    root = logging.getLogger()
+    saved_root = root.level
+    saved_handlers = list(root.handlers)
+    saved = {name: logging.getLogger(name).level for name in _NOISY_LOGGERS}
+    saved_ring = logbuffer.level_name()
+    try:
+        yield
+    finally:
+        # Order matters, and it used to be wrong: ``logbuffer.set_level`` sets the ROOT
+        # logger's level as well as the ring's, so restoring the ring last silently
+        # re-clobbered the root level this fixture had just put back. Ring first, root last.
+        logbuffer.set_level(saved_ring)
+        for name, level in saved.items():
+            logging.getLogger(name).setLevel(level)
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_root)
 
 
 @pytest.fixture(autouse=True)

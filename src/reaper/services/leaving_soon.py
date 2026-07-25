@@ -32,6 +32,7 @@ to death without a Plex server in sight.
 from __future__ import annotations
 
 import asyncio
+import weakref
 from dataclasses import dataclass
 from typing import Any
 
@@ -359,6 +360,39 @@ async def announce_new(
 # Orchestration: the one pass the button, the scan hook, and the cleanup share
 # ---------------------------------------------------------------------------
 
+#: One announce lock per event loop, created lazily so it always binds to the running one.
+#: A single module-level ``asyncio.Lock`` would bind to whichever loop first awaited it and
+#: raise on every other, and the suite runs a fresh loop per test (rule 37) -- the shape
+#: ``history_sync._rebuild_lock`` uses, for the same reason. Weak-keyed so a closed loop's
+#: lock is collected. In production there is exactly one loop, hence one lock.
+_pass_locks: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _pass_lock() -> asyncio.Lock:
+    """Serializes a whole Leaving Soon pass against every other one in this process.
+
+    The announced set is read at the start of a pass and written at the end, with a
+    whole-library Plex reconcile and a Discord post in between -- minutes of network I/O
+    across which nothing else was held back. Two passes overlap easily: the operator presses
+    "Update now" while a scheduled scan is landing, and its after-scan hook fires. Both read
+    the same "already announced", both decide the same title is new, and the household gets
+    the same heads-up twice. Worse, the later writer persists a set derived from ITS pre-I/O
+    read, dropping whatever the first pass recorded -- so that title is announced a third
+    time on the next pass. Rule 8 wants the announcement idempotent on the durable set; the
+    set was durable, the read-modify-write around it was not.
+
+    Held across the reconcile too, not just the announce: a second concurrent whole-section
+    reconcile against the same libraries is wasted work at best.
+    """
+    loop = asyncio.get_running_loop()
+    lock = _pass_locks.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _pass_locks[loop] = lock
+    return lock
+
 
 async def _plex_client(
     session: AsyncSession, box: SecretBox, settings: Settings
@@ -385,7 +419,21 @@ async def run_sync(
     The single implementation behind the Reap-page button and the after-scan hook, so
     the two can never drift. Raises :class:`LeavingSoonDisabledError` when the shelf is
     off, and :class:`PlexError` when no server is linked or none of it is reachable.
+
+    Serialized against every other pass in this process (see :func:`_pass_lock`), because
+    the announced set is read at the top and written at the bottom with minutes of network
+    I/O in between.
     """
+    async with _pass_lock():
+        return await _run_pass(session_factory, settings, box)
+
+
+async def _run_pass(
+    session_factory: async_sessionmaker[AsyncSession],
+    settings: Settings,
+    box: SecretBox,
+) -> LeavingSoonResult:
+    """The pass itself. Split from :func:`run_sync` only so the lock wraps it whole."""
     async with session_factory() as session:
         if not await app_settings.leaving_soon_enabled(session):
             raise LeavingSoonDisabledError(
@@ -393,7 +441,6 @@ async def run_sync(
                 "and Reaper will keep the shelf up to date."
             )
         safety = await app_settings.runtime_safety(session, settings)
-        plex = await _plex_client(session, box, settings)
         libraries = await app_settings.enabled_plex_libraries(session)
         profile = await active_profile_settings(session)
         report = await grace_report(session, grace_days=profile.grace_days)
@@ -401,12 +448,17 @@ async def run_sync(
         already = await app_settings.get_leaving_soon_announced(session)
         # build_notifier may have seeded the webhook from the environment on first read.
         await session.commit()
+        # Built LAST of everything this pass gathers. This pass owns the client (rule 34),
+        # and its close lives in the try/finally below; building it FIRST, as this used to,
+        # put four awaited reads between the construction and the only thing that closes it,
+        # so any one of them raising leaked the client and its pooled connections.
+        plex = await _plex_client(session, box, settings)
 
     if plex is None:
         raise PlexError("Leaving Soon needs a linked Plex server. Link one in Settings first.")
 
-    movie_keys, season_keys, _titles = _grace_keys(report)
     try:
+        movie_keys, season_keys, _titles = _grace_keys(report)
         outcomes = await sync_shelves(
             plex,
             libraries,
@@ -416,7 +468,6 @@ async def run_sync(
         )
         notified, announced = await announce_new(notifier, report, already_announced=already)
     finally:
-        # This pass owns the client (rule 34): close it however the reconcile ends.
         await plex.aclose()
 
     result = LeavingSoonResult(
@@ -496,19 +547,25 @@ async def after_scan(
         # whenever a webhook is set. Announcing is a read plus a webhook post, no Plex
         # write, so it does not depend on the shelf reconcile having succeeded. run_sync
         # raises PlexError before it announces, so nothing here double-announces.
-        async with session_factory() as session:
-            notifier = await build_notifier(session, box, settings)
-            if notifier is None:
-                return
-            profile = await active_profile_settings(session)
-            report = await grace_report(session, grace_days=profile.grace_days)
-            already = await app_settings.get_leaving_soon_announced(session)
-            await session.commit()
+        #
+        # Under the same lock as the full pass, and for the same reason: this is the read-
+        # announce-write in its barest form, and for an operator running Leaving Soon with
+        # the shelf off it is not an edge case, it is the ONLY path that ever announces.
+        # run_sync has already released the lock by the time it raises its way to here.
+        async with _pass_lock():
+            async with session_factory() as session:
+                notifier = await build_notifier(session, box, settings)
+                if notifier is None:
+                    return
+                profile = await active_profile_settings(session)
+                report = await grace_report(session, grace_days=profile.grace_days)
+                already = await app_settings.get_leaving_soon_announced(session)
+                await session.commit()
 
-        notified, announced = await announce_new(notifier, report, already_announced=already)
-        async with session_factory() as session:
-            await app_settings.set_leaving_soon_announced(session, set(announced))
-            await session.commit()
+            notified, announced = await announce_new(notifier, report, already_announced=already)
+            async with session_factory() as session:
+                await app_settings.set_leaving_soon_announced(session, set(announced))
+                await session.commit()
         if notified:
             log.info("leaving_soon.announced_without_shelf", count=len(announced))
     except Exception as exc:
@@ -536,9 +593,15 @@ async def cleanup_sections(
     try:
         async with session_factory() as session:
             safety = await app_settings.runtime_safety(session, settings)
+            # The guard first, the client second (rule 34). Read-only is the DEFAULT state,
+            # so building the client before checking it leaked one -- with its pooled
+            # connections -- every time a library or the whole shelf was switched off while
+            # deletion was not armed, which is the common way this is reached.
+            if not safety.leaving_soon_write_allowed:
+                return False
             plex = await _plex_client(session, box, settings)
 
-        if plex is None or not safety.leaving_soon_write_allowed:
+        if plex is None:
             return False
 
         try:

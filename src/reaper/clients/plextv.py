@@ -62,6 +62,14 @@ PIN_TIMEOUT = 300.0
 # the fix is to wait longer, not to abandon the flow and make the owner start over.
 PIN_RATE_LIMIT_BACKOFF = 5.0
 
+# The most we will honor from a server-supplied ``Retry-After``. plex.tv naming a few
+# seconds is back-pressure worth honoring; anything naming minutes or hours -- a rate
+# limiter in front of plex.tv, a proxy interposed on the LAN -- would park the sign-in on
+# a sleep far past the deadline it was given, with the terminal showing "Waiting..." and
+# nothing to do but Ctrl-C (S2-2). An external server does not get to set an unbounded
+# sleep; notify/discord.py caps the same header for the same reason.
+PIN_RATE_LIMIT_MAX_BACKOFF = 30.0
+
 
 def plex_headers(client_identifier: str, *, version: str) -> dict[str, str]:
     """The identifying headers Plex expects.
@@ -235,22 +243,40 @@ class PlexTvClient(BaseClient):
         polled too eagerly, and the correct response is to wait longer and keep going.
         Letting it propagate would abort a sign-in the owner has not even finished --
         which is exactly the failure that made the very first link attempt die.
+
+        ``timeout`` is a real bound, not just a loop condition: every sleep is clipped to
+        what is left of it, so the call returns at the deadline and reports the sign-in as
+        not completed rather than sitting inside a sleep the server chose (S2-2).
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
+
+        async def _wait(seconds: float) -> bool:
+            """Sleep, but never past the deadline. False once there is no time left."""
+            remaining = deadline - loop.time()
+            if remaining <= 0.0:
+                return False
+            await asyncio.sleep(min(seconds, remaining))
+            return True
+
         while loop.time() < deadline:
             try:
                 token = await self.check_pin(pin_id)
             except IntegrationError as exc:
                 if exc.status == 429:
-                    # Honor the server's own pacing when it names one; the fixed
+                    # Honor the server's own pacing when it names one, capped: the fixed
                     # backoff is only the fallback for a bare 429.
-                    await asyncio.sleep(exc.retry_after or PIN_RATE_LIMIT_BACKOFF)
+                    backoff = min(
+                        exc.retry_after or PIN_RATE_LIMIT_BACKOFF, PIN_RATE_LIMIT_MAX_BACKOFF
+                    )
+                    if not await _wait(backoff):
+                        break
                     continue
                 raise
             if token:
                 return token
-            await asyncio.sleep(PIN_POLL_INTERVAL)
+            if not await _wait(PIN_POLL_INTERVAL):
+                break
         return None
 
     async def account(self, user_token: str) -> PlexAccount:
@@ -315,6 +341,31 @@ class PlexTvClient(BaseClient):
         return any(s.client_identifier == machine_identifier for s in servers)
 
 
+class _ProbeClient(BaseClient):
+    """A one-shot ``/identity`` probe against a single advertised Plex address.
+
+    Its own client because it talks to a media server rather than plex.tv, at a URL that
+    is not known until the resource list comes back. It exists so the probe rides the
+    shared machinery -- the guarded transport, the retry on a transient blip, the
+    same-origin redirect policy, the mapped errors -- instead of the bare
+    ``httpx2.AsyncClient`` it used to build inline (I-4).
+    """
+
+    service: ClassVar[str] = "plex"
+
+    async def identity(self) -> httpx2.Response | None:
+        """The ``/identity`` response, or ``None`` when the address does not answer.
+
+        ``_send`` maps a 4xx/5xx to ``IntegrationError`` as well as a transport failure,
+        so every "it did not answer usefully" case arrives here as one thing and reads
+        as ``None``. Both callers below treat that alike.
+        """
+        try:
+            return await self._send("GET", "/identity")
+        except IntegrationError:
+            return None
+
+
 async def _ask_identity(
     connection: PlexConnection, token: str, *, timeout: float, verify: bool
 ) -> httpx2.Response | None:
@@ -325,14 +376,28 @@ async def _ask_identity(
     operator's explicit choice for a self-signed HTTPS server (the same per-service
     opt-out the *arr clients have), threaded through the link flow and stored on the
     server row.
+
+    It rides ``_ProbeClient`` rather than a bare ``httpx2.AsyncClient`` so the probe gets
+    the guarded transport, the retry on a transient blip, the same-origin redirect policy
+    and the mapped errors every other read in this package gets (I-4, rule 33).
+
+    ``timeout`` bounds the WHOLE probe, retries included, not each attempt. The caller
+    walks a server's advertised addresses one at a time (``plex_link
+    .reachable_connection``), so an address that black-holes packets must cost that
+    bound once and no more -- otherwise adding the retry layer would have quietly
+    tripled how long linking takes on a server with a dead address to get past.
     """
+    client = _ProbeClient(
+        connection.uri,
+        safety=RuntimeSafety(destructive_enabled=False),
+        headers={"X-Plex-Token": token, "Accept": "application/json"},
+        verify=verify,
+        timeout=httpx2.Timeout(timeout),
+    )
     try:
-        async with httpx2.AsyncClient(timeout=timeout, verify=verify) as client:
-            return await client.get(
-                f"{connection.uri.rstrip('/')}/identity",
-                headers={"X-Plex-Token": token, "Accept": "application/json"},
-            )
-    except httpx2.HTTPError:
+        async with client, asyncio.timeout(timeout):
+            return await client.identity()
+    except TimeoutError:
         return None
 
 

@@ -38,7 +38,6 @@ from reaper.engine.gates import (
     GateConfig,
     GateId,
     MinDormancyGate,
-    OthersWatchingGate,
     RatingFloorGate,
     ServerPopularityGate,
     StreamingNowGate,
@@ -101,7 +100,6 @@ GATE_TYPES: dict[GateId, type] = {
     GateId.WHITELISTED: WhitelistGate,
     GateId.STREAMING_NOW: StreamingNowGate,
     GateId.SERVER_POPULARITY: ServerPopularityGate,
-    GateId.OTHERS_WATCHING: OthersWatchingGate,
     GateId.CURATED_LIST: CuratedListGate,
     GateId.DATA_HORIZON: DataHorizonGate,
     GateId.UNMANAGED: UnmanagedGate,
@@ -156,31 +154,40 @@ def build_gates(policy: PolicyBody) -> list[Gate]:
     return gates
 
 
-async def _allowed_sections(session: AsyncSession) -> set[int] | None:
+async def _allowed_sections(session: AsyncSession) -> tuple[set[int] | None, str | None]:
     """Which Plex library section keys the scan may enrich against, from the operator's
-    Settings -> Plex choice.
+    Settings -> Plex choice, and a degradation reason if the choice could not be read.
 
-    ``None`` means "no scoping configured, use every library" -- the safe default, and the
-    inverse of the deletion-path empty-selection rule: this list only ever *removes* a
-    library's enrichment (its items then resolve unmatched and are kept), so an empty or
-    absent selection must widen to all, never narrow to none. Once the operator HAS synced
-    their libraries and turned some off, the enabled subset scopes the sweep and the spine;
-    if they have turned every one off, that explicit choice is honored (an empty set,
-    which enriches nothing).
+    ``None`` means "no scoping configured, use every library". Once the operator HAS
+    synced their libraries and turned some off, the enabled subset scopes the sweep and
+    the spine; if they have turned every one off, that explicit choice is honored (an
+    empty set, which enriches nothing).
 
-    This is a configuration input that only ever *narrows* enrichment, not an evidence
-    source (rule 28). If it cannot be read, the safe fallback is the FULL-coverage
-    behavior -- scan every library -- so a settings-read hiccup is logged and defaults to
-    ``None`` rather than aborting the whole scan.
+    Widening is NOT the safe direction, whatever it looks like. Removing a library from
+    enrichment is exactly what keeps its files: those items resolve unmatched, abstain,
+    and are never condemned. So re-adding every library on a failed read hands watch
+    facts to the dormant items in libraries the operator deliberately turned off, and
+    walks them into the condemnable set. Note the asymmetry this fixes: an explicit "all
+    libraries off" yields an empty set (enrich nothing), while a read *failure* used to
+    yield ``None`` (enrich everything) -- the failure silently picked the strictly more
+    permissive branch, in the condemn direction, with nothing surfaced.
+
+    So a read failure still returns ``None`` (a viewable snapshot beats an aborted scan)
+    but hands back a reason with it, which the caller adds to ``pre_scan_degradations``:
+    the snapshot is loud and un-executable, so nothing widened here can be deleted, and
+    the operator is told their library choices were not applied.
     """
     try:
         libraries = await app_settings.get_plex_libraries(session)
     except Exception as exc:
         log.warning("scan.library_scope_unreadable", error=str(exc))
-        return None
+        return None, (
+            "your Plex library choices could not be read, so this scan covered every "
+            "library, including any you turned off"
+        )
     if not libraries:
-        return None
-    return {int(lib["key"]) for lib in libraries if lib.get("enabled")}
+        return None, None
+    return {int(lib["key"]) for lib in libraries if lib.get("enabled")}, None
 
 
 async def build_sources(
@@ -349,57 +356,98 @@ async def build_reap_gateway(
     closers: list[BaseClient | PlexClient] = []
     tautulli: TautulliClient | None = None
 
-    for row in rows:
-        key = box.decrypt(row.api_key_enc)
-        if row.kind is InstanceKind.RADARR:
-            client = RadarrClient(
-                row.base_url,
-                key,
-                safety=safety,
-                api_path_prefix=row.api_path_prefix,
-                verify=row.verify_tls,
-            )
-            radarr[row.id] = client
-            closers.append(client)
-        elif row.kind is InstanceKind.SONARR:
-            sclient = SonarrClient(
-                row.base_url,
-                key,
-                safety=safety,
-                api_path_prefix=row.api_path_prefix,
-                verify=row.verify_tls,
-            )
-            sonarr[row.id] = sclient
-            closers.append(sclient)
-        elif row.kind is InstanceKind.TAUTULLI and tautulli is None:
-            tautulli = TautulliClient(row.base_url, key, safety=safety, verify=row.verify_tls)
-            closers.append(tautulli)
+    # Every client is registered for close the instant it exists, so a raise part-way
+    # through -- box.decrypt on a row whose api_key_enc was written under a different key
+    # is the realistic one -- closes the ones already built instead of stranding their
+    # connection pools for the life of the process (rule 34). This is build_sources'
+    # discipline, adapted: the caller cannot own the stack here, because these clients
+    # must outlive the request that builds them (the background run closes them). So the
+    # stack guards construction only, and pop_all() hands ownership back on success --
+    # push_async_callback rather than enter_async_context, so nothing is entered twice
+    # when the run's own stack enters them for real.
+    async with AsyncExitStack() as building:
+        for row in rows:
+            key = box.decrypt(row.api_key_enc)
+            if row.kind is InstanceKind.RADARR:
+                client = RadarrClient(
+                    row.base_url,
+                    key,
+                    safety=safety,
+                    api_path_prefix=row.api_path_prefix,
+                    verify=row.verify_tls,
+                )
+                building.push_async_callback(client.aclose)
+                radarr[row.id] = client
+                closers.append(client)
+            elif row.kind is InstanceKind.SONARR:
+                sclient = SonarrClient(
+                    row.base_url,
+                    key,
+                    safety=safety,
+                    api_path_prefix=row.api_path_prefix,
+                    verify=row.verify_tls,
+                )
+                building.push_async_callback(sclient.aclose)
+                sonarr[row.id] = sclient
+                closers.append(sclient)
+            elif row.kind is InstanceKind.TAUTULLI and tautulli is None:
+                tautulli = TautulliClient(row.base_url, key, safety=safety, verify=row.verify_tls)
+                building.push_async_callback(tautulli.aclose)
+                closers.append(tautulli)
 
-    plex = (
-        PlexClient(plex_uri, plex_token, safety=safety, verify=plex_verify)
-        if plex_uri is not None and plex_token is not None
-        else None
-    )
-    if plex is not None:
-        closers.append(plex)
+        plex = (
+            PlexClient(plex_uri, plex_token, safety=safety, verify=plex_verify)
+            if plex_uri is not None and plex_token is not None
+            else None
+        )
+        if plex is not None:
+            building.push_async_callback(plex.aclose)
+            closers.append(plex)
 
-    gateway = ReapGateway(radarr=radarr, sonarr=sonarr, plex=plex, tautulli=tautulli)
+        gateway = ReapGateway(radarr=radarr, sonarr=sonarr, plex=plex, tautulli=tautulli)
+        # Built without a failure: detach every close callback, so leaving this block
+        # closes nothing and the caller's ownership of `closers` is exactly as before.
+        building.pop_all()
+
     return gateway, closers
+
+
+#: What Tautulli might spell a boolean as, beyond the integers it actually stores.
+#: Anything outside these reads as unreadable, not as true.
+_TRUE_TOKENS = frozenset({"true", "t", "yes", "y", "on"})
+_FALSE_TOKENS = frozenset({"false", "f", "no", "n", "off"})
 
 
 def _flag(row: Any, name: str) -> bool | None:
     """A Tautulli boolean-ish field (``1``/``0``, ``True``/``False``, ``"1"``/``"0"``),
     or None when the row or field is missing or unreadable -- the caller decides what
-    absence means, because it differs per flag."""
+    absence means, because it differs per flag.
+
+    Every value that is not a recognized boolean returns None, including a truthy one.
+    ``bool("false")`` is True, so falling back to plain truthiness read an unparseable
+    keep-history value as "this user IS recording history": no degradation, and every
+    title only that user watches then scores as never-played, which is the one case
+    ``_keep_history_degradations`` exists to catch. Unreadable is not True.
+    """
     if not isinstance(row, dict):
         return None
     value = row.get(name)
     if value is None:
         return None
+    if isinstance(value, bool):
+        return value
     try:
+        # Tautulli stores these as INTEGERs, so this is the real path: 1/0, "1"/"0".
         return bool(int(value))
     except (TypeError, ValueError):
-        return bool(value)
+        pass
+    if isinstance(value, str):
+        token = value.strip().casefold()
+        if token in _TRUE_TOKENS:
+            return True
+        if token in _FALSE_TOKENS:
+            return False
+    return None
 
 
 async def _keep_history_degradations(tautulli: TautulliClient) -> list[str]:
@@ -543,7 +591,7 @@ async def _run_scan_locked(
             # departure.
             active_profile = await profiles.active_profile(policy_session)
             profile_settings = active_profile.settings
-            allowed_sections = await _allowed_sections(policy_session)
+            allowed_sections, scope_degradation = await _allowed_sections(policy_session)
         movie_gates = build_gates(movie_policy)
         tv_gates = build_gates(tv_policy)
 
@@ -554,17 +602,32 @@ async def _run_scan_locked(
         # in-gather source failure does. None of them may silently pass through.
         pre_scan_degradations: list[str] = []
 
+        # The operator's library choices could not be read, so this scan enriched every
+        # library instead of the subset they picked. That widens the condemnable set,
+        # so it degrades (see _allowed_sections).
+        if scope_degradation:
+            pre_scan_degradations.append(scope_degradation)
+
         # A stored policy that no longer validated was repaired to load it (profiles
         # .ActivePolicy.repaired). The rescale cannot move a score, so scanning on it is
         # safe -- but it is NOT the policy the operator saved, and a run must never
         # execute against one nobody approved. Degrade, so the scan still produces a
         # viewable snapshot and the fix is one visit to the policy page.
         for label, active in (("movie", active_movie), ("tv", active_tv)):
-            if active.repaired:
-                pre_scan_degradations.append(
-                    f"your {label} policy needs saving again before anything can be removed: "
-                    "open the policy page, check the points, and save"
-                )
+            if not active.repaired:
+                continue
+            # Name the part that was recovered, so the operator checks the right thing: a
+            # rescale moved their points, the rating recovery put back a protection that
+            # had stopped keeping anything.
+            what = (
+                "check Keep well-rated titles"
+                if active.rating_rules_recovered
+                else "check the points"
+            )
+            pre_scan_degradations.append(
+                f"your {label} policy needs saving again before anything can be removed: "
+                f"open the policy page, {what}, and save"
+            )
 
         # Same reasoning for the profile's caps and grace: when the stored settings blob was
         # unreadable, the run is holding the shipped defaults, which can be LOOSER than what
@@ -714,10 +777,21 @@ async def _run_scan_locked(
         # bar sit at a false 100% while several more Plex calls run. Best-effort by design:
         # after_scan swallows and logs its own failures -- the warning layer must never fail
         # a scan that already landed.
-        emit(Progress("shelves", 0, 0, "updating shelves"))
-        after_scan_started = time.monotonic()
-        await leaving_soon.after_scan(session_factory, settings, box)
-        after_scan_ms = round((time.monotonic() - after_scan_started) * 1000)
+        #
+        # Skipped entirely on a degraded snapshot. The shelf labels items in Plex and
+        # posts a heads-up naming them, both of which are assertions to other people that
+        # a file is going away -- and this snapshot's condemn set was built on evidence
+        # Reaper declared untrustworthy and refuses to plan from. Announcing it would
+        # warn about files nothing can delete, and that a healthy scan may well keep. The
+        # previous shelf stands until a clean scan replaces it.
+        after_scan_ms: int | None = None
+        if snapshot.degraded:
+            log.info("scan.shelves_skipped", snapshot=snapshot.id, reason="degraded")
+        else:
+            emit(Progress("shelves", 0, 0, "updating shelves"))
+            after_scan_started = time.monotonic()
+            await leaving_soon.after_scan(session_factory, settings, box)
+            after_scan_ms = round((time.monotonic() - after_scan_started) * 1000)
 
         # Only now is the run truly done: bar to 100%, and the browser's next poll sees
         # `running` flip false right behind it.

@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """In-process brute-force throttling and CPU-shedding for the login endpoints.
 
-The login routes are the only unauthenticated, state-establishing surface Reaper
-exposes, and ``POST /api/auth/local`` runs a full Argon2id verification on every
+The login routes (``/api/auth/local``, ``/recover``, and the Plex sign-in pair) are
+the only unauthenticated, state-establishing surface Reaper exposes, and every one
+of them is covered here. ``POST /api/auth/local`` runs a full Argon2id verification on every
 call (deliberately, even for a nonexistent user, so timing does not enumerate
 usernames -- see :mod:`reaper.services.login`). Argon2id is *meant* to be
 expensive, which turns that endpoint into two problems for an internet- or
@@ -13,11 +14,20 @@ LAN-exposed instance:
 * **CPU exhaustion.** Each request forces a heavy hash, so a flood pins the CPU
   and denies the legitimate operator service.
 
-This module answers both, dependency-free and in-process (no Redis, no slowapi):
+The Plex sign-in endpoints are unauthenticated too, and cost differently: they
+have no password to guess, but ``POST /api/auth/plex/start`` writes a pending row
+and fires an outbound request to plex.tv. A flood of *successful* calls is the
+problem there, so a consecutive-failure lockout never trips -- what bounds it is a
+plain rate limit (S-1).
+
+This module answers all three, dependency-free and in-process (no Redis, no
+slowapi):
 
 * :class:`Throttle` tracks consecutive failures per key -- we key on both the
   client IP and the attempted username -- and, past a threshold, refuses further
   attempts for a growing back-off window. That is the brute-force lock.
+* :class:`RateLimiter` caps how many calls one key may make in a window, whether
+  or not they succeed. That is the flood and amplification bound.
 * :class:`ConcurrencyGate` caps how many Argon2 verifications may be in flight at
   once, shedding load (a fast refusal) rather than piling on more hashing.
 
@@ -40,10 +50,13 @@ from dataclasses import dataclass, field
 
 __all__ = [
     "ConcurrencyGate",
+    "RateLimiter",
     "Throttle",
     "argon2_gate",
     "login_throttle",
     "password_throttle",
+    "plex_poll_limit",
+    "plex_start_limit",
     "recover_throttle",
 ]
 
@@ -132,8 +145,61 @@ class Throttle:
             del self._buckets[k]
 
 
+@dataclass
+class _Window:
+    started: float = 0.0
+    calls: int = 0
+
+
+@dataclass
+class RateLimiter:
+    """A fixed-window call cap per key, counting every call rather than failures.
+
+    :class:`Throttle` above locks out a key that keeps guessing WRONG, which is the right
+    shape for a password. It is the wrong shape for an endpoint whose calls all succeed:
+    ``/api/auth/plex/start`` inserts a pending row and asks plex.tv for a PIN every time,
+    so a script can flood the table and get the install's egress address rate-limited by
+    plex.tv -- locking the real operator out of Plex sign-in -- without ever failing once.
+
+    A fixed window (rather than a sliding one) is deliberate: it is a handful of numbers
+    per key, it cannot be gamed into more than ``2 * limit`` calls across a window
+    boundary, and that bound is far below what the flood needs. Idle keys are swept the
+    same way :class:`Throttle` sweeps its buckets.
+    """
+
+    limit: int
+    window: float
+    clock: Callable[[], float] = time.monotonic
+    _sweep_at: int = 2048
+    _windows: dict[str, _Window] = field(default_factory=dict)
+
+    def retry_after(self, key: str) -> float:
+        """Seconds until ``key`` may call again, or 0.0. Counts this call when allowed."""
+        now = self.clock()
+        self._maybe_sweep(now)
+        window = self._windows.get(key)
+        if window is None or now - window.started >= self.window:
+            self._windows[key] = _Window(started=now, calls=1)
+            return 0.0
+        if window.calls < self.limit:
+            window.calls += 1
+            return 0.0
+        return max(0.0, window.started + self.window - now)
+
+    def reset(self) -> None:
+        """Forget all state. For tests and for a clean process start."""
+        self._windows.clear()
+
+    def _maybe_sweep(self, now: float) -> None:
+        if len(self._windows) < self._sweep_at:
+            return
+        stale = [k for k, w in self._windows.items() if now - w.started >= self.window]
+        for k in stale:
+            del self._windows[k]
+
+
 class ConcurrencyGate:
-    """A non-blocking cap on how many callers may hold the gate at once.
+    """A non-blocking cap on how many HASHES may be in flight at once.
 
     Used to bound in-flight Argon2 verifications: when the gate is full, a new
     login sheds load (the caller returns a fast "busy" rather than queuing more
@@ -141,6 +207,12 @@ class ConcurrencyGate:
     :meth:`acquire` and :meth:`release` never await -- on the single event loop
     they are atomic -- and the awaits between them (the login's DB work) do not
     touch the counter.
+
+    Slots are hashes, not requests. ``admin_password.verify`` runs one Argon2
+    verification per local admin, so a single gated request used to occupy one slot
+    while doing N verifications' worth of work -- the bound rule 11 asks for was
+    counting the wrong thing, and a multi-admin install multiplied the CPU behind
+    every slot (S-4). Callers now take as many slots as hashes they intend to run.
     """
 
     def __init__(self, limit: int) -> None:
@@ -151,18 +223,24 @@ class ConcurrencyGate:
     def limit(self) -> int:
         return self._limit
 
-    def acquire(self) -> bool:
-        """Take a slot if one is free. Returns False when the gate is full."""
-        if self._active >= self._limit:
-            return False
-        self._active += 1
-        return True
+    def acquire(self, slots: int = 1) -> int:
+        """Take ``slots`` if that many are free; return how many were taken, else 0.
 
-    def release(self) -> None:
+        The count is clamped to the gate's own limit, so a caller wanting more hashes
+        than the gate has slots waits for a quiet moment rather than being refused
+        forever -- the clamp is why the return value matters: pass it back to
+        :meth:`release` rather than assuming what was taken.
+        """
+        want = max(1, min(slots, self._limit))
+        if self._active + want > self._limit:
+            return 0
+        self._active += want
+        return want
+
+    def release(self, slots: int = 1) -> None:
         # Guard against an underflow from a mispaired release; the count must
         # never drop below zero or the gate would over-admit forever after.
-        if self._active > 0:
-            self._active -= 1
+        self._active = max(0, self._active - max(1, slots))
 
     def reset(self) -> None:
         self._active = 0
@@ -185,3 +263,18 @@ recover_throttle = Throttle(threshold=10, base_delay=1.0, max_delay=120.0, decay
 # must not get an unthrottled Argon2 oracle. Same strictness as login.
 password_throttle = Throttle(threshold=5, base_delay=2.0, max_delay=300.0, decay=900.0)
 argon2_gate = ConcurrencyGate(_ARGON2_MAX_CONCURRENCY)
+
+# The Plex sign-in pair. Sized off what the real flow does, with room to spare, so a
+# person signing in never meets either one:
+#
+# * ``start`` mints a PIN. One sign-in needs one, and a few retries after a mistyped
+#   password or a closed tab; 15 in 5 minutes is generous for a human and a hard stop
+#   for a script pumping pending rows and plex.tv requests.
+# * ``poll`` runs on a 2-second timer for up to the 5-minute deadline, so ONE sign-in is
+#   already ~150 calls. The cap has to clear that comfortably or it would break the very
+#   flow it protects; a poll is also much cheaper than a start (it reaches plex.tv only
+#   for a pin id that has a pending row of its own).
+#
+# Both key on the client address alone: there is no account to key on before sign-in.
+plex_start_limit = RateLimiter(limit=15, window=300.0)
+plex_poll_limit = RateLimiter(limit=400, window=300.0)

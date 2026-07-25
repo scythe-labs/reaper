@@ -103,6 +103,31 @@ def _take_batch(rows: Iterator[tuple[str, float, int]], size: int) -> list[dict[
     ]
 
 
+#: Above this share of dropped rows, a load is treated as format drift rather than the
+#: ordinary trickle of IMDb nulls. A healthy dataset drops a fraction of a percent; the
+#: shape this catches is an upstream column change that silently halves rating coverage
+#: while still loading millions of rows, so the zero-row tripwire never fires.
+DRIFT_SKIP_FRACTION = 0.05
+
+
+@dataclass(frozen=True, slots=True)
+class LoadResult:
+    """What one dataset load produced: rows kept, and rows dropped as unreadable."""
+
+    rows: int
+    skipped: int
+
+    @property
+    def skip_fraction(self) -> float:
+        seen = self.rows + self.skipped
+        return self.skipped / seen if seen else 0.0
+
+    @property
+    def drifted(self) -> bool:
+        """Whether enough rows were dropped to suspect the format changed."""
+        return self.skip_fraction >= DRIFT_SKIP_FRACTION
+
+
 def parse_rows(
     stream: IO[bytes], counters: dict[str, int] | None = None
 ) -> Iterator[tuple[str, float, int]]:
@@ -111,9 +136,11 @@ def parse_rows(
     Rows with ``\\N`` (IMDb's null) or malformed numbers are skipped rather than
     coerced: a rating of 0.0 would read as "terrible film, delete it".
 
-    ``counters`` (optional) accumulates a ``skipped`` count of the dropped rows, so the
-    caller can surface format drift: a large skip fraction quietly shrinks rating coverage
-    while staying above the zero-row tripwire that would otherwise catch it.
+    ``counters`` (optional) accumulates a ``skipped`` count of the dropped rows. ``load``
+    returns it on :class:`LoadResult` and the nightly job puts it in front of the
+    operator, because a large skip fraction quietly shrinks rating coverage while staying
+    above the zero-row tripwire that would otherwise catch it -- and less rating coverage
+    means fewer well-rated titles protected.
     """
 
     def _skip() -> None:
@@ -162,7 +189,7 @@ async def download(destination: Path, *, url: str = DATASET_URL) -> Path:
     return destination
 
 
-async def load(engine: AsyncEngine, archive: Path) -> int:
+async def load(engine: AsyncEngine, archive: Path) -> LoadResult:
     """Load the dataset, swapping it in atomically.
 
     The multi-minute parse+insert populates a *staging* table in many short transactions,
@@ -244,8 +271,17 @@ async def load(engine: AsyncEngine, archive: Path) -> int:
 
     # ``skipped`` counts rows dropped as null or malformed. A sudden jump against a steady
     # ``rows`` is the signature of an upstream format change silently shrinking coverage.
-    log.info("imdb.loaded", rows=rows, skipped=counters["skipped"])
-    return rows
+    skipped = counters["skipped"]
+    result = LoadResult(rows=rows, skipped=skipped)
+    if result.drifted:
+        # Loud, because this is the failure that removes protection: fewer ratings means
+        # fewer well-rated titles kept, and the zero-row tripwire never fires for a load
+        # that is merely half a load. Returned as well as logged -- the caller puts it in
+        # front of the operator (see scheduler.refresh_ratings).
+        log.warning("imdb.load_drift", rows=rows, skipped=skipped, fraction=result.skip_fraction)
+    else:
+        log.info("imdb.loaded", rows=rows, skipped=skipped)
+    return result
 
 
 class ImdbRatings:
@@ -322,7 +358,7 @@ class ImdbRatings:
         return out
 
 
-async def refresh(engine: AsyncEngine, data_dir: Path) -> int:
+async def refresh(engine: AsyncEngine, data_dir: Path) -> LoadResult:
     """Download and load. The nightly job."""
     archive = await download(data_dir / "title.ratings.tsv.gz")
     return await load(engine, archive)

@@ -20,6 +20,7 @@ from pydantic import SecretStr
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.secrets import (
+    SecretMaterialError,
     key_file_path,
     resolve_kdf_salt,
     resolve_secret_key,
@@ -68,13 +69,24 @@ class TestAutoGeneration:
         b = resolve_secret_key(_settings(tmp_path / "b"))
         assert a != b
 
-    def test_an_empty_key_file_is_regenerated_rather_than_used(self, tmp_path: Path) -> None:
+    def test_an_empty_key_file_refuses_to_boot_rather_than_minting_a_new_one(
+        self, tmp_path: Path
+    ) -> None:
+        """An empty key file is a crashed write or a truncated volume, not a fresh install.
+
+        Minting a replacement would look like recovery and be the opposite: the file is
+        what decrypts every stored service credential, so a new one makes all of them
+        permanently unreadable, silently, and the operator only finds out when a scan
+        cannot reach Sonarr (S-5). Stopping with an explanation keeps every option open.
+        """
         settings = _settings(tmp_path)
         settings.ensure_data_dir()
         key_file_path(settings).write_text("   \n")
 
-        key = resolve_secret_key(settings)
-        assert key.strip()
+        with pytest.raises(SecretMaterialError, match="empty"):
+            resolve_secret_key(settings)
+        # And it left the file alone, so a backup of the real key can still be dropped in.
+        assert key_file_path(settings).read_text() == "   \n"
 
 
 class TestPerInstallSalt:
@@ -98,14 +110,23 @@ class TestPerInstallSalt:
         b = resolve_kdf_salt(_settings(tmp_path / "b"))
         assert a != b
 
-    def test_a_junk_salt_file_is_regenerated_rather_than_used(self, tmp_path: Path) -> None:
+    def test_a_junk_salt_file_refuses_to_boot_rather_than_minting_a_new_one(
+        self, tmp_path: Path
+    ) -> None:
+        """A salt that exists but will not parse is unreadable material, not absence.
+
+        The fixed-v1 fallback only covers data from before this install had a salt at
+        all, so anything written under the salt this file held would stop decrypting
+        (S-5). A salt file that never existed is a different case and still generates,
+        which the test above pins.
+        """
         settings = _settings(tmp_path)
         settings.ensure_data_dir()
         salt_file_path(settings).write_text("not-hex\n")
 
-        salt = resolve_kdf_salt(settings)
-        assert salt
-        assert bytes.fromhex(salt_file_path(settings).read_text().strip()) == salt
+        with pytest.raises(SecretMaterialError, match="salt"):
+            resolve_kdf_salt(settings)
+        assert salt_file_path(settings).read_text() == "not-hex\n"
 
     def test_data_written_before_the_salt_existed_still_decrypts(self, tmp_path: Path) -> None:
         """The upgrade path: an install whose credentials were encrypted under the fixed

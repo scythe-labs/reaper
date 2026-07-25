@@ -87,11 +87,19 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
         <span className="spinner" aria-hidden="true" />
         <div>
           <strong>Waiting for Plex…</strong>
+          {/* Once the sign-in is approved, the wait can continue for a second reason: the
+              server itself isn't answering yet. Say which one it is, so a longer wait
+              doesn't read as a hang. Reaper keeps polling either way; the sign-in stays
+              good. Worded the same as the Settings panel's copy. */}
           <p className="muted">
-            Approve the sign-in in the Plex window.{" "}
-            <a href={authUrl} target="_blank" rel="noreferrer">
-              Didn’t open?
-            </a>
+            {pin.retrying ?? (
+              <>
+                Approve the sign-in in the Plex window.{" "}
+                <a href={authUrl} target="_blank" rel="noreferrer">
+                  Didn’t open?
+                </a>
+              </>
+            )}
           </p>
         </div>
         <button className="link" onClick={cancel}>

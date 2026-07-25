@@ -25,7 +25,6 @@ from reaper.engine.gates import (
     Facts,
     GateConfig,
     GateId,
-    OthersWatchingGate,
     RatingFloorGate,
     RatingRule,
     ServerPopularityGate,
@@ -85,7 +84,6 @@ def facts(draw: st.DrawFn) -> Facts:
         is_managed=draw(observations(st.booleans())),
         in_curated_list=draw(observations(st.text(max_size=20))),
         is_whitelisted=draw(observations(st.booleans())),
-        others_watching=draw(observations(small_ints)),
     )
 
 
@@ -96,7 +94,6 @@ ALL_GATES = [
     WhitelistGate(GateConfig(GateId.WHITELISTED)),
     CuratedListGate(GateConfig(GateId.CURATED_LIST)),
     UnmanagedGate(GateConfig(GateId.UNMANAGED)),
-    OthersWatchingGate(GateConfig(GateId.OTHERS_WATCHING, threshold=1)),
 ]
 
 ALL_SIGNALS = [
@@ -183,7 +180,6 @@ class TestUnknownNeverCondemns:
                     "is_managed",
                     "in_curated_list",
                     "is_whitelisted",
-                    "others_watching",
                 )
             },
         )
@@ -228,7 +224,6 @@ class TestScoreBounds:
             is_managed=Known(value=True, source="t"),
             in_curated_list=Absent(source="t"),
             is_whitelisted=Known(value=False, source="t"),
-            others_watching=Known(value=0, source="t"),
         )
         full = score(ALL_SIGNALS, item)
 
@@ -264,7 +259,6 @@ class TestProtectionAlwaysBeatsScore:
             is_managed=Known(value=True, source="t"),
             in_curated_list=Absent(source="t"),
             is_whitelisted=Known(value=True, source="t"),  # <- the whitelist
-            others_watching=Known(value=0, source="t"),
         )
 
         assert score(ALL_SIGNALS, item).value > 90  # it looks maximally deletable
@@ -287,7 +281,6 @@ def _rating_facts(ratings: tuple[Rating, ...]) -> Facts:
         is_managed=Known(value=True, source="t"),
         in_curated_list=Absent(source="t"),
         is_whitelisted=Known(value=False, source="t"),
-        others_watching=Known(value=0, source="t"),
         ratings=ratings,
     )
 
@@ -361,7 +354,6 @@ class TestExplainability:
             is_managed=Known(value=True, source="radarr"),
             in_curated_list=Absent(source="lists"),
             is_whitelisted=Known(value=False, source="plex"),
-            others_watching=Known(value=0, source="tautulli"),
             # A below-floor IMDb rating, so the rating gate reports its actual number.
             ratings=_imdb(6.0, votes=50_000),
         )
@@ -438,9 +430,8 @@ def _observed_fields() -> tuple[str, ...]:
     is exactly the drift rule 7 forbids: a new authorable field can no longer be added
     without joining the sweep.
 
-    Out by construction: ``others_watching`` and ``is_managed`` have no ``FieldSpec`` at
-    all (gate-lane only, via ``OthersWatchingGate`` and ``UnmanagedGate``), so no rule
-    can name them. Out by choice: ``_GATE_ONLY``.
+    Out by construction: ``is_managed`` has no ``FieldSpec`` at all (gate-lane only, via
+    ``UnmanagedGate``), so no rule can name it. Out by choice: ``_GATE_ONLY``.
     """
     names = [f.name for f in dataclass_fields(Facts) if f.name not in ("title", "ratings")]
     probe = Facts(title="probe", **{n: Known(value=n, source="probe") for n in names})

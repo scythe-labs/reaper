@@ -58,7 +58,12 @@ class GateId(enum.StrEnum):
     STREAMING_NOW = "streaming_now"
     RATING_FLOOR = "rating_floor"
     SERVER_POPULARITY = "server_popularity"
+
     OTHERS_WATCHING = "others_watching"
+    """Retired: no gate implements it and no fact builder gathers the count (see the note
+    where OthersWatchingGate used to be). Kept only so an explanation stored while it was
+    built still decodes; ``scan_runner.GATE_TYPES`` refuses to build it."""
+
     CURATED_LIST = "curated_list"
     DATA_HORIZON = "data_horizon"
     UNMANAGED = "unmanaged"
@@ -163,7 +168,6 @@ class Facts:
     is_managed: Observation[bool]
     in_curated_list: Observation[str]
     is_whitelisted: Observation[bool]
-    others_watching: Observation[int]
 
     # --- fields authorable in custom rules (the weighting feature) --------------------
     # Given fail-safe defaults so the non-production Facts builders (backtest
@@ -466,11 +470,14 @@ class MinDormancyGate:
     beyond about 1,825 days it is nearly free. Dormancy of a year or two means very
     little -- people circle back to films on that timescale all the time.
 
-    That curve is a *property of an audience*, not a universal constant, so Reaper
-    derives it from the operator's own watch history at calibration time (see
-    ``engine.calibration``) and only falls back to a documented default curve when
-    there is not enough history to fit one. The gate exists either way: the cliff is
-    the invariant, its exact position is not.
+    That curve is a *property of an audience*, not a universal constant, and the cliff
+    positions above are documented defaults measured on one real library, not figures
+    fitted to this server. **The threshold this gate enforces is the operator's own
+    stored number** (``config.threshold``), read straight off the policy: nothing
+    adjusts it. ``engine.calibration`` derives a bucketed rewatch prior, which is the
+    backtest's lift baseline and not this threshold, and it has no production caller in
+    any case (see the note at the top of that module). The gate exists either way: the
+    cliff is the invariant, its exact position is a default the operator may move.
     """
 
     config: GateConfig
@@ -565,36 +572,17 @@ class UnmanagedGate:
         return GateResult(self.id, ABSTAIN, detail="Managed by Sonarr or Radarr.")
 
 
-@dataclass(frozen=True, slots=True)
-class OthersWatchingGate:
-    """The requester ignored it, but other people did not."""
-
-    config: GateConfig
-    id: GateId = GateId.OTHERS_WATCHING
-
-    def evaluate(self, facts: Facts) -> GateResult:
-        if blocked := _blocked(self.id, facts.others_watching, "who else watched it"):
-            return blocked
-        others = facts.others_watching
-        count = others.value if isinstance(others, Known) else 0
-        floor = max(self.config.threshold, 1)
-
-        if count >= floor:
-            return GateResult(
-                self.id,
-                PROTECT,
-                detail=(
-                    f"{count} other {'person is' if count == 1 else 'people are'} watching it. "
-                    "Removing it would punish them for someone else's request"
-                ),
-            )
-        return GateResult(
-            self.id,
-            ABSTAIN,
-            detail="Nobody besides the requester has watched it."
-            if count == 0
-            else f"Only {count} besides the requester has watched it.",
-        )
+# An `OthersWatchingGate` ("the requester ignored it, but other people did not") lived here.
+# No fact builder ever produced a Known ``others_watching`` -- snapshot, season_scan and
+# backtest all wrote Absent -- so the count was always 0 against a floor of at least 1 and
+# the gate could not PROTECT anything, while its ABSTAIN line read to the owner like a check
+# that ran. A protection that cannot fire is deleted, not stockpiled (rule 38): the evidence
+# it needs (per-user plays excluding the requester) is not gathered anywhere in the scan.
+# ``GateId.OTHERS_WATCHING`` survives so a stored explanation written while it was built can
+# still be decoded, and ``scan_runner.GATE_TYPES`` no longer carries it, so a policy that
+# still enables it refuses to scan rather than running a protection that keeps nothing.
+# Wiring it back means gathering the count first, then restoring gate, fact and builders
+# together.
 
 
 @dataclass
@@ -653,7 +641,6 @@ __all__ = [
     "GateOutcome",
     "GateResult",
     "MinDormancyGate",
-    "OthersWatchingGate",
     "RatingFloorGate",
     "RatingRule",
     "ServerPopularityGate",

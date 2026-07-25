@@ -22,6 +22,11 @@ No titles, ids, media keys, paths, hosts, or usernames -- the golden rule applie
 fixtures exactly as it does to code.
 
 Usage: ``uv run python scripts/policy_lab_extract.py`` from the repo root.
+
+``--rebaseline`` re-pins only the baseline block on the fixture already committed, using
+the shapes it already holds. That is the mode to use after an intentional engine change:
+it needs no real library, so CI and every contributor can reproduce it, and it prints
+every vector that moved.
 """
 
 from __future__ import annotations
@@ -100,7 +105,41 @@ def stored_obs(
     return obs("known", transform(value) if transform is not None else value)
 
 
+def rebaseline() -> None:
+    """Re-pin the baseline block on the fixture already committed, without a real library.
+
+    The vectors are de-identified fact *shapes* and do not change when the engine does;
+    only ``baseline`` (the engine's own output under the shipped defaults) does. An
+    intentional engine change would otherwise be un-re-pinnable by anyone without a real
+    ``data/reaper.db`` -- i.e. by CI, and by every contributor who is not the operator.
+
+    Prints one line per vector whose verdict, score or coverage moved, so the change gets
+    reviewed rather than rubber-stamped: a verdict flip in this list is a scoring change
+    and wants SCORER_VERSION bumped with it.
+    """
+    fixture = json.loads(OUT.read_text())
+    gate_lists = {
+        "movie": build_gates(DEFAULT_MOVIE_POLICY),
+        "season": build_gates(DEFAULT_TV_POLICY),
+    }
+    moved = 0
+    for v in fixture["vectors"]:
+        policy = DEFAULT_MOVIE_POLICY if v["media_type"] == "movie" else DEFAULT_TV_POLICY
+        verdict, score_value, coverage_bp = judge(v, policy, gate_lists[v["media_type"]])[:3]
+        fresh = {"verdict": verdict, "score": score_value, "coverage_bp": coverage_bp}
+        if fresh != v.get("baseline"):
+            print(f"{v['id']}: {v.get('baseline')} -> {fresh}")
+            moved += 1
+        v["baseline"] = fresh
+    OUT.write_text(json.dumps(fixture, indent=1, sort_keys=True) + "\n")
+    print(f"re-pinned {OUT.relative_to(REPO)}: {moved} of {len(fixture['vectors'])} vectors moved")
+
+
 def main() -> None:
+    if "--rebaseline" in sys.argv[1:]:
+        rebaseline()
+        return
+
     rng = random.Random(42)
     rdb = sqlite3.connect(f"file:{REPO / 'data' / 'reaper.db'}?mode=ro", uri=True)
     cdb = sqlite3.connect(f"file:{REPO / 'data' / 'cache.db'}?mode=ro", uri=True)
@@ -288,7 +327,6 @@ def main() -> None:
                     "is_managed": from_gate("unmanaged", False),
                     "in_curated_list": curated_obs,
                     "is_whitelisted": from_gate("whitelisted", True),
-                    "others_watching": obs("absent"),
                     "requested": obs("unknown"),
                     "genres": genres_obs,
                     "release_age_days": release_obs,

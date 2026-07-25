@@ -4,17 +4,14 @@
 // dark shell is fixed; the platter and its glow follow the operator's accent, so the
 // browser-tab favicon tracks the same --accent the rest of the UI derives from. This module
 // is the single source of that drawing for every raster medium -- the runtime favicon data
-// URI, and the committed favicon.svg / apple-touch / manifest PNGs.
-//
-// The committed files are generated, by `scripts/gen-icons.mjs` (`npm run icons`): favicon.svg
-// is `deepIconSvg(DEFAULT_ACCENT)` verbatim, and every PNG in `ICON_TARGETS` below is that SVG
-// rasterized at the size and variant the table names. Change anything here or in ./scythe and
-// run it again. deepIcon.test.ts is what makes forgetting impossible rather than merely
-// discouraged: the generator stamps each PNG with the hash of the exact SVG text it rendered,
-// and the test recomputes that hash from this module, so a stale raster fails the suite.
-//
-// The in-app badge draws the same thing in JSX (BrandBadge.tsx), following --accent live via
-// color-mix; keep the two in step. Scythe geometry comes from ./scythe.
+// URI, and the committed favicon.svg / apple-touch / manifest PNGs. favicon.svg is
+// `deepIconSvg(DEFAULT_ACCENT)`; the PNGs are rasterized from the two SVG variants at the
+// default accent (the rounded rx=143 form for favicon-32 / apple-touch / icon-192 / icon-512,
+// the full-bleed `{radius:0}` form for icon-maskable-512). deepIcon.test.ts is the
+// enforcement: it fails if favicon.svg drifts from `deepIconSvg`, or if any PNG is missing or
+// the wrong size, so a brand change can't ship a stale asset. The in-app badge draws the same
+// thing in JSX (BrandBadge.tsx), following --accent live via color-mix; keep the two in step.
+// Scythe geometry comes from ./scythe.
 
 import { SCYTHE_BLADE_D, SCYTHE_SNATH_D, SCYTHE_SNATH_WIDTH } from "./scythe";
 
@@ -51,41 +48,17 @@ export function deepDiskColors(accent: string): { light: string; dark: string; g
   };
 }
 
-/** The rounded badge's corner radius on the 512 grid. Declared once: it is the default below,
- *  the value `ICON_TARGETS` names, and what the test looks for in the committed SVG. */
-export const BADGE_RADIUS = 143;
-
 export interface DeepIconOptions {
-  /** Corner radius on the 512 grid. `BADGE_RADIUS` is the rounded badge (browser tab,
-   *  in-app); 0 is a full-bleed square for the iOS touch icon and maskable manifest icons,
-   *  which apply their own mask over the square. */
+  /** Corner radius on the 512 grid. 143 is the rounded badge (browser tab, in-app); 0 is a
+   *  full-bleed square for the iOS touch icon and maskable manifest icons, which apply their
+   *  own mask over the square. */
   radius?: number;
 }
-
-/** Every committed raster, and the variant each takes. iOS and Android mask their own icons,
- *  so those get the full-bleed square and let the platform round it; anything a browser shows
- *  as-is gets the rounded badge. This was prose in the header once, and the prose drifted --
- *  it had apple-touch rounded, which the committed file never was. Now `scripts/gen-icons.mjs`
- *  writes exactly this list and deepIcon.test.ts checks exactly this list, so a new size is
- *  declared here once and both follow. */
-export const ICON_TARGETS: readonly { file: string; size: number; radius: number }[] = [
-  { file: "favicon-32.png", size: 32, radius: BADGE_RADIUS },
-  { file: "apple-touch-icon.png", size: 180, radius: 0 },
-  { file: "icon-192.png", size: 192, radius: BADGE_RADIUS },
-  { file: "icon-512.png", size: 512, radius: BADGE_RADIUS },
-  { file: "icon-maskable-512.png", size: 512, radius: 0 },
-];
-
-/** The PNG `tEXt` keyword the generator stamps into every raster it writes, carrying the
- *  sha256 of the exact SVG text that was rasterized. That is the drift check: the test
- *  recomputes the hash from `deepIconSvg`, so a PNG rendered from an older drawing fails even
- *  though its size and its pixels are all perfectly valid. */
-export const ICON_SOURCE_KEYWORD = "reaper-source";
 
 /** The Deep icon as a standalone SVG string for a given accent. Used for the runtime favicon
  *  data URI and to generate the committed icon files. */
 export function deepIconSvg(accent: string, opts: DeepIconOptions = {}): string {
-  const r = opts.radius ?? BADGE_RADIUS;
+  const r = opts.radius ?? 143;
   const { light, dark, glow } = deepDiskColors(accent);
   const shell =
     r > 0

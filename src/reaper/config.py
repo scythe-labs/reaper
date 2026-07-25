@@ -311,7 +311,7 @@ def parse_trusted_proxies(raw: str) -> list[str]:
 
     Comma- or whitespace-separated, mirroring how ``REAPER_SECRET_KEY_OLD`` lists a
     chain. Blank entries are dropped. The entries are NOT validated here -- that is the
-    middleware's ``parse_proxy_networks``, which drops anything malformed (fail closed:
+    ``auth.proxy.parse_proxy_networks``, which drops anything malformed (fail closed:
     an unparseable entry trusts nobody extra).
     """
     return [part.strip() for part in re.split(r"[,\s]+", raw) if part.strip()]

@@ -128,12 +128,45 @@ class TestDegradedStateRefusesToAnswer:
 
 class TestAtomicLoad:
     async def test_load_populates_and_marks_fresh(self, engine: AsyncEngine, archive: Path) -> None:
-        rows = await load(engine, archive)
+        loaded = await load(engine, archive)
 
-        assert rows == 4  # the two nulls and the malformed line are excluded
+        assert loaded.rows == 4  # the two nulls and the malformed line are excluded
         state = await ImdbRatings(engine).state()
         assert state.row_count == 4
         assert state.degraded() is False
+
+    async def test_the_dropped_row_count_reaches_the_caller(
+        self, engine: AsyncEngine, archive: Path
+    ) -> None:
+        """The skip count is what tells anyone the file's format moved under us.
+
+        A load that keeps millions of rows but drops half of them still clears the
+        zero-row tripwire, so nothing else catches it -- and every rating it lost is a
+        title that no longer has a rating to protect it. Logging alone left it where no
+        operator would ever look.
+        """
+        loaded = await load(engine, archive)
+
+        assert loaded.skipped == 2  # the two IMDb nulls; the malformed line has 2 columns
+        assert loaded.skip_fraction > 0
+        assert loaded.drifted is True  # 2 of 6 read, far past the drift threshold
+
+    async def test_a_clean_load_does_not_read_as_drift(
+        self, engine: AsyncEngine, tmp_path: Path
+    ) -> None:
+        """IMDb always carries a trickle of nulls, so the flag must mean "the shape
+        changed", not "one row was unrated"."""
+        clean = tmp_path / "clean.tsv.gz"
+        with gzip.open(clean, "wt", encoding="utf-8") as handle:
+            handle.write("tconst\taverageRating\tnumVotes\n")
+            for n in range(100):
+                handle.write(f"tt{n:07d}\t7.5\t1000\n")
+
+        loaded = await load(engine, clean)
+
+        assert loaded.rows == 100
+        assert loaded.skipped == 0
+        assert loaded.drifted is False
 
     async def test_an_empty_parse_is_refused_rather_than_swapped_in(
         self, engine: AsyncEngine, tmp_path: Path

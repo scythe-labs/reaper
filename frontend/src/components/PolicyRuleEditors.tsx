@@ -67,7 +67,11 @@ function coerceValue(field: VocabField, raw: string): number | string | boolean 
   if (field.type === "bool") return raw === "true";
   if (field.type === "rating_tenths") return Math.round(Number(raw) * 10);
   if (field.type === "bytes") return Math.round(Number(raw) * 1e9);
-  if (field.type === "text") return raw;
+  // Trimmed, so a typed space cannot compose a rule that matches everything: "contains"
+  // with an empty target is true for every title that has the field at all. The server
+  // refuses it too (engine/fields.py Condition._validate_value_type); this keeps the UI
+  // from offering it in the first place.
+  if (field.type === "text") return raw.trim();
   return Math.round(Number(raw));
 }
 
@@ -461,7 +465,9 @@ export function RemoveRulesEditor({
                 <button
                   className="ghost sm"
                   onClick={add}
-                  disabled={rampBackwards || (!isRamp && field.type !== "bool" && rValue === "")}
+                  disabled={
+                    rampBackwards || (!isRamp && field.type !== "bool" && rValue.trim() === "")
+                  }
                 >
                   Add rule
                 </button>
@@ -673,7 +679,7 @@ export function KeepRulesEditor({
                     <button
                       className="ghost sm"
                       onClick={addHard}
-                      disabled={hardField.type !== "bool" && hValue === ""}
+                      disabled={hardField.type !== "bool" && hValue.trim() === ""}
                     >
                       Add rule
                     </button>

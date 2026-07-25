@@ -21,6 +21,7 @@ from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import Candidate, Snapshot, WhitelistEntry
 from reaper.main import create_app
+from reaper.services.whitelist import show_key
 
 from ._auth import login
 
@@ -236,6 +237,66 @@ class TestOverrideFilter:
         # A spare override AND a requester: Zulu is spared but was never requested.
         rows = client.get("/api/candidates?verdict=condemn&override=spare&requested=yes").json()
         assert rows == []
+
+    def test_a_season_spared_on_its_own_key_beats_its_shows_reap(self, client: TestClient) -> None:
+        """The precedence still lives in one function, not in SQL.
+
+        The filter now narrows in SQL to the rows that could possibly carry a decision and
+        asks the real ``effective_override`` about each, rather than resolving every row in
+        the lane in Python. This is the case that would break if the narrowing ever tried
+        to decide as well: the season's own key must win over its show's.
+        """
+        assert (
+            client.post(
+                "/api/whitelist",
+                json={"media_key": "sonarr:1:5:5", "title": "Season 5", "decision": "spare"},
+            ).status_code
+            < 300
+        )
+        spared = client.get("/api/candidates?verdict=protect&override=spare").json()
+        assert "Example Mid · Season 5" in _titles(spared)
+        # And it is no longer counted under its show's reap.
+        reaped = client.get("/api/candidates?verdict=condemn&override=reap").json()
+        assert _titles(reaped) == set()
+
+    def test_untouched_means_neither_its_own_key_nor_its_shows(self, client: TestClient) -> None:
+        """``override=none`` is the anti-set of every effective decision.
+
+        It used to be built by pulling every media_key in the lane into Python and binding
+        them all back into one IN, which on a large library was nearly every row and could
+        run past SQLite's bound-variable ceiling into a 500. It is derived from the
+        operator's decisions now, so what must not change is which rows it names.
+        """
+        rows = client.get("/api/candidates?verdict=condemn&override=none").json()
+        # Alpha has no decision at any level. The season is covered by its SHOW's reap and
+        # Zulu by its own spare, so neither is untouched.
+        assert _titles(rows) == {"Example Alpha"}
+
+
+class TestTheShowKeyInvariantTheFilterRelieson:
+    """``Candidate.group_key`` and ``whitelist.show_key`` must name the same thing.
+
+    The override filter narrows in SQL with ``group_key IN (decided keys)`` before asking
+    the real decision function about each row. That narrowing is only a superset if a
+    season's stored ``group_key`` is exactly the key ``show_key`` derives from its
+    media_key -- if the two ever drifted, a season kept by a whole-show spare would fall
+    out of the narrowed set and be reported as untouched. The season scan builds
+    ``group_key`` as ``sonarr:{instance}:{series}``; this pins that they agree.
+    """
+
+    def test_a_seasons_group_key_is_its_show_key(self, client: TestClient) -> None:
+        rows = client.get("/api/candidates?verdict=protect&media_type=season").json()
+        rows += client.get("/api/candidates?verdict=condemn&media_type=season").json()
+        assert rows, "the fixture must hold at least one season for this to mean anything"
+        for row in rows:
+            assert row["group_key"] == show_key(str(row["media_key"]))
+
+    def test_a_movie_has_neither(self, client: TestClient) -> None:
+        rows = client.get("/api/candidates?verdict=condemn&media_type=movie").json()
+        assert rows
+        for row in rows:
+            assert row["group_key"] is None
+            assert show_key(str(row["media_key"])) is None
 
 
 class TestSort:

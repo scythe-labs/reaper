@@ -291,7 +291,6 @@ async def build_plan(
     session: AsyncSession,
     *,
     snapshot_id: int,
-    policy_hash: str,
     approved_by: str,
     only_media_keys: set[str] | None = None,
     max_unmeasured: int = 0,
@@ -301,6 +300,11 @@ async def build_plan(
     The run is created in ``PLANNED`` state with every step ``PENDING``. It records the
     manifest hash of what it would delete and who approved it; the executor will refuse
     to act if either the snapshot's policy or that manifest no longer matches.
+
+    The policy hash is read off the snapshot here rather than passed in. It was a caller
+    argument that every caller filled with ``snapshot.policy_hash`` anyway, and the executor
+    now REFUSES a run whose policy hash is not the one in force -- so a caller free to pass a
+    different value was a way to hand that interlock the wrong number.
 
     ``only_media_keys`` restricts the plan to an explicit set of items -- the "reap just
     these" path, and the safe way to do a first, single, hand-picked deletion. It changes
@@ -524,7 +528,9 @@ async def build_plan(
     now = utcnow()
     run = ReapRun(
         snapshot_id=snapshot_id,
-        policy_hash=policy_hash,
+        # The policy this snapshot was scored under. The executor compares it against the
+        # policy in force at execute time and refuses a plan judged by a superseded one.
+        policy_hash=snapshot.policy_hash,
         state=RunState.PLANNED,
         # The manifest binds to the WHOLE condemned set, spared or not. A spare is not a
         # change to what was condemned -- it is a decision to keep one of them -- so sparing

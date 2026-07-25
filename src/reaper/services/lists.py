@@ -37,7 +37,7 @@ Being *on* the list is the signal.
 from __future__ import annotations
 
 import enum
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
@@ -185,6 +185,17 @@ class ImdbTop250:
         return items
 
 
+def _tag_key(tag: str) -> str:
+    """The comparison form for an *arr tag label.
+
+    Sonarr and Radarr lower-case and trim every label on the way in, so the operator's
+    configured spelling and the stored one routinely differ. Every comparison goes
+    through here, on BOTH sides, so a keep tag can never fail to match the label it
+    names -- the ``plex.normalize_label`` of the *arr side.
+    """
+    return tag.strip().casefold()
+
+
 @dataclass(frozen=True, slots=True)
 class ArrTagRule:
     """One or more *arr tags, combined -- the configurable "keep list".
@@ -224,19 +235,25 @@ class ArrTagRule:
         if not self.tags:
             return []
 
-        # First match wins when two tag labels collide after lowercasing ('Keep' and
+        # First match wins when two tag labels collide after normalizing ('Keep' and
         # 'keep' can both exist), and a malformed tag row is skipped rather than failing
         # the whole keep-list over a row that was never the owner's keep tag.
         by_label: dict[str, int] = {}
         for row in await self.client.tags():
             tag_id = row.get("id")
             if isinstance(tag_id, int):
-                by_label.setdefault(str(row.get("label", "")).lower(), tag_id)
+                by_label.setdefault(_tag_key(str(row.get("label", ""))), tag_id)
 
         wanted: set[int] = set()
         missing: list[str] = []
         for tag in self.tags:
-            found = by_label.get(tag)
+            # BOTH sides normalized, or the lookup silently misses. Sonarr and Radarr
+            # lower-case every label at the source, so an operator who configures the
+            # natural capitalization of their own tag ("Reaper-Keep") would look up a
+            # spelling the map cannot hold: the tag reads as MISSING, and on a first sync
+            # that stores an empty membership and reports success -- a keep list that
+            # protects nothing, forever, while the settings screen shows it as healthy.
+            found = by_label.get(_tag_key(tag))
             if found is None:
                 log.info("lists.tag_absent", tag=tag, service=self.client.service)
                 missing.append(tag)
@@ -315,22 +332,42 @@ class PlexCollection:
 
         return await asyncio.to_thread(self._fetch_sync)
 
-    def _fetch_sync(self) -> list[ListItem]:
+    def _find_collection(self) -> Any:
+        """The keep collection, looked for in **every** library carrying this title.
+
+        ``library.section(title)`` returns whichever of two same-titled libraries plexapi
+        saw first (rule 6/57), so on a server with an HD and a 4K library both called
+        "Movies" the collection could be read from a library that does not hold it. That
+        reads as "the container is gone", which over a populated stored list degrades the
+        scan and, on a first sync, stores an empty keep-list. Asking each matching library
+        in turn removes the ambiguity without asking the operator for a key.
+        """
         from plexapi.exceptions import NotFound
 
-        section = self.server.library.section(self.section_name)  # type: ignore[attr-defined]
-        try:
-            collection = section.collection(self.collection_name)
-        except NotFound:
-            # The container is not there to ask: deleted, renamed, or simply not yet
-            # created. Which of those it is depends on what is already stored, and
-            # sync() decides -- raising here (rather than returning []) is what lets a
-            # stored membership survive a deleted "Never Reap" collection.
-            log.info("lists.plex_collection_absent", collection=self.collection_name)
-            raise ContainerMissingError(
-                f"Plex collection {self.collection_name!r} does not exist in section "
-                f"{self.section_name!r}"
-            ) from None
+        library = self.server.library  # type: ignore[attr-defined]
+        sections = [s for s in library.sections() if str(s.title) == self.section_name]
+        if not sections:
+            # Not a missing container but a missing LIBRARY: a mistyped name, or one the
+            # operator removed. A hard failure, recorded against the slug, exactly as the
+            # raw plexapi NotFound this replaces was.
+            raise IntegrationError("plex", f"there is no library called {self.section_name!r}")
+        for section in sections:
+            try:
+                return section.collection(self.collection_name)
+            except NotFound:
+                continue
+        # The container is not there to ask: deleted, renamed, or simply not yet
+        # created. Which of those it is depends on what is already stored, and
+        # sync() decides -- raising here (rather than returning []) is what lets a
+        # stored membership survive a deleted "Never Reap" collection.
+        log.info("lists.plex_collection_absent", collection=self.collection_name)
+        raise ContainerMissingError(
+            f"Plex collection {self.collection_name!r} does not exist in section "
+            f"{self.section_name!r}"
+        )
+
+    def _fetch_sync(self) -> list[ListItem]:
+        collection = self._find_collection()
 
         items: list[ListItem] = []
         for item in collection.items():
@@ -456,11 +493,24 @@ async def sync(
     tag, a deleted "Never Reap" collection) counts as a failure whenever members are
     stored, for exactly that reason; it counts as genuinely empty only when there was
     never anything to protect.
+
+    A **populated** container whose every item lost its ids is the same failure wearing
+    a different coat, and it is treated the same way (rule 27). A Plex agent change can
+    leave a real, full "Never Reap" collection returning items whose guids no longer
+    parse; the id filter below then collapses a non-empty fetch to zero, and the swap
+    would wipe the stored membership and unprotect every title on it. Only a container
+    that genuinely came back empty may empty the list.
     """
     await ensure_schema(engine)
 
     try:
-        items = [i for i in await provider.fetch() if i.has_any_id]
+        fetched = await provider.fetch()
+        items = [i for i in fetched if i.has_any_id]
+        if fetched and not items:
+            raise ContainerMissingError(
+                f"None of the {len(fetched)} titles on {provider.display_name} could be "
+                "identified, so the list was not read as empty."
+            )
     except ContainerMissingError as exc:
         async with engine.connect() as conn:
             stored = (
@@ -519,9 +569,13 @@ async def sync(
                 "(slug, display_name, mode, kind, weight, enabled, item_count, "
                 " last_synced_at, last_error) "
                 "VALUES (:slug, :name, :mode, :kind, :weight, 1, :count, :now, NULL) "
+                # ``enabled = 1`` on the conflict too, not just on the insert: a slug
+                # ``retire_absent`` switched off is a live list again the moment this
+                # configuration produces it, and a keep-list that syncs while disabled
+                # protects nothing (``load_membership_index`` joins ``WHERE enabled = 1``).
                 "ON CONFLICT(slug) DO UPDATE SET "
                 "  display_name = :name, mode = :mode, kind = :kind, item_count = :count, "
-                "  last_synced_at = :now, last_error = NULL"
+                "  enabled = 1, last_synced_at = :now, last_error = NULL"
             ),
             {
                 "slug": provider.slug,
@@ -536,6 +590,57 @@ async def sync(
 
     log.info("lists.synced", slug=provider.slug, items=len(items))
     return len(items)
+
+
+#: The two slug families Reaper *derives* from configuration rather than being told, and so
+#: is responsible for retiring. Both change spelling when the configuration behind them
+#: changes -- ``ArrTagRule.slug`` carries the any/all match and the instance id,
+#: ``PlexCollection.slug`` carries the collection name -- so the old row would otherwise sit
+#: there enabled, still protecting from a rule the operator has already replaced.
+KEEP_TAG_SLUGS = "%-keeptags-%"
+PLEX_COLLECTION_SLUGS = "plex-collection-%"
+
+
+async def retire_absent(engine: AsyncEngine, *, family: str, current: Collection[str]) -> list[str]:
+    """Disable every enabled list in ``family`` that this configuration no longer produces.
+
+    A stored list outlives the setting that created it. Flip "Keep tags: match ANY" to
+    "match ALL" and the slug changes, so the sync writes a NEW row while the old one stays
+    enabled: the tightening the operator saved never takes effect, because everything that
+    matched ANY tag is still whitelisted by a list nothing updates. Clearing the keep tags
+    entirely, renaming the "Never Reap" collection, and deleting an *arr instance all land
+    the same way. So each run declares the slugs it is responsible for and this retires the
+    rest of that family.
+
+    Disabled, never deleted: the membership is left in place so the row still explains
+    itself on the settings screen, and ``sync`` re-enables a slug the moment it comes back
+    (flip ALL back to ANY and the old list resumes protecting). Returns what it retired.
+
+    **Only call this for a family whose inputs were actually readable this run.** The
+    caller decides: a Plex that could not be reached produces no collection provider, and
+    retiring on that would unprotect every title on the operator's "Never Reap" collection
+    because of a network blip -- the fail-open this codebase exists to avoid.
+    """
+    await ensure_schema(engine)
+    keep = set(current)
+    async with engine.begin() as conn:
+        # Read and write inside ONE transaction (rule 58): the set being retired is
+        # decided from the rows this statement will update, not from an earlier snapshot.
+        rows = (
+            await conn.execute(
+                text("SELECT slug FROM protection_list WHERE enabled = 1 AND slug LIKE :family"),
+                {"family": family},
+            )
+        ).scalars()
+        stale = sorted({str(slug) for slug in rows} - keep)
+        for slug in stale:
+            await conn.execute(
+                text("UPDATE protection_list SET enabled = 0 WHERE slug = :slug"),
+                {"slug": slug},
+            )
+    for slug in stale:
+        log.info("lists.retired", slug=slug, family=family)
+    return stale
 
 
 @dataclass(frozen=True, slots=True)

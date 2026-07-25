@@ -147,6 +147,7 @@ export function GeneralPanel() {
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [confirmReplace, setConfirmReplace] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
 
   // Seed the editable fields from the server once per load (and re-seed after saves,
   // which return the canonical stored values -- rule 39).
@@ -225,6 +226,16 @@ export function GeneralPanel() {
     mutationFn: copyKey,
     onMutate: () => setKeyError(null),
     onError: (e: Error) => setKeyError(e.message),
+  });
+  const removeKey = useMutation({
+    mutationFn: api.removeApiKey,
+    onMutate: () => setKeyError(null),
+    onError: (e: Error) => setKeyError(e.message),
+    onSuccess: () => {
+      setRevealedKey(null);
+      setConfirmRemove(false);
+      void queryClient.invalidateQueries({ queryKey: ["general-settings"] });
+    },
   });
 
   if (general.isPending) {
@@ -568,6 +579,29 @@ export function GeneralPanel() {
                       onClick={() => setConfirmReplace(true)}
                     >
                       Replace…
+                    </button>
+                  )}
+                  {/* Replacing swaps one working key for another, so it never closes this
+                      lane. Remove does: afterwards nothing gets in on the header at all.
+                      Same two-step confirm the Replace control uses. */}
+                  {confirmRemove ? (
+                    <>
+                      <button
+                        className="danger"
+                        disabled={removeKey.isPending}
+                        onClick={() => removeKey.mutate()}
+                      >
+                        Confirm remove
+                      </button>
+                      <button onClick={() => setConfirmRemove(false)}>Cancel</button>
+                    </>
+                  ) : (
+                    <button
+                      className="ghost"
+                      title="Anything using this key stops working immediately"
+                      onClick={() => setConfirmRemove(true)}
+                    >
+                      Remove…
                     </button>
                   )}
                 </>

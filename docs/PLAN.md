@@ -7,15 +7,16 @@
 > seen. No number in this repo describes anyone's actual server; findings from live
 > testing are recorded as ratios and shapes, never as fingerprints.
 
-Last updated: 2026-07-25 (the whole-frontend UI/UX review, remediated in eleven batches)
+Last updated: 2026-07-24 (the whole-frontend UI/UX review, remediated in seven batches)
 
-### Newest — the whole-frontend UI/UX review, remediated in eleven batches
+### Newest — the whole-frontend UI/UX review, remediated in ten batches
 
 `docs/UI_REVIEW.md` (dev @ `a7d7659`) swept every file under `frontend/src` with six parallel
 agents and landed **94 findings**: 1 critical, 18 high, 45 medium, 30 low. Worked in seven
-batches along the document's own fix order, then four more past its end. **92 are checked off.**
+batches along the document's own fix order, then three more past its end. **91 are checked off.**
 R1 and R2 (the two big file splits) are annotated in place with exactly what landed and what did
-not; those two are all that remain, neither operator-visible.
+not, and PR9 waits on an icon generator that was never committed; those three are all that remain,
+none of them operator-visible.
 
 The batches were the deletion path, the queue's control grammar, the number-input family, the
 unknown-state and stale-cache sweep, contrast and motion, copy, and refactor plus performance.
@@ -100,21 +101,6 @@ exact mismatch has been found, so it is a test now rather than a fourth comment 
 and a build flag shipping source maps with nothing recording whether that was a decision. It is
 one, and checking it corrected the review: maps cost nothing on first load, since a browser fetches
 them only with devtools open.
-
-**Batch 11 gave the app icons a generator,** which rule 68 has required all along and which never
-existed: five PNGs described as rasterized from the SVG, no script in the repo able to do it, and a
-drift test that read their width and height under a comment claiming that caught a stale asset. It
-cannot -- a brand change is precisely what never changes a PNG's dimensions. `npm run icons` renders
-them in headless Chrome, which is the same engine that draws the runtime favicon and needs no image
-library in `package.json`; ImageMagick was tried first and drops every gradient and the entire
-scythe handle. The drift check is provenance: each PNG carries the sha256 of the exact SVG text it
-was rendered from, so a stale raster fails while being a perfectly valid image. Three pixel probes
-cover what a hash cannot -- and one of them, the corner, is the only thing in existence that
-separates `icon-512` from `icon-maskable-512`, identical in size and drawing and differing only in
-whether the platform will round an already-rounded badge. The finding's own file had already gone
-wrong the way unexecutable prose does: its header said apple-touch took the rounded badge, and the
-committed file was always full-bleed. That mapping is now the table both the generator and the test
-read.
 
 
 ### Earlier — a hand reap on a keep-rule conflict is honored, and a held reap stops calling itself "Sanctuary"
@@ -1809,7 +1795,7 @@ A pass over the operator console fixed six things a real look surfaced:
 | **M7b** Leaving Soon label + Discord | ✅ done — reconcile, notifier, **and the live label write** (gated like a delete by default; `REAPER_ALLOW_UNARMED_LEAVING_SOON` opts in) |
 | **M8** Profiles + scheduler | ✅ done |
 | **Whitelist** — manual "spare this file" path, scan + planner + grace | ✅ done |
-| **Fairness** — per-requester leaderboard (the orphaned requester rule, wired) | ✅ done |
+| **Fairness** — per-requester leaderboard (it took the orphaned requester rule's *evidence*, never its verdict; the rule itself is deleted — see the correction below) | ✅ done |
 | **Scales** — the fairness view, renamed and rebuilt as per-requester cards (a balance bar weighing granted disk that is *earning its keep* vs *to reclaim*, the reclaimable summary leading with the disk not the count, each reclaimable title a chip that opens its real card). Nav label + heading say "Scales"; the internal `view` id, `["fairness"]` query key, and `/api/fairness` route are unchanged. | ✅ done |
 | **Scales sits on the last scan** (was a live requester-rule re-evaluation). It joins Seerr requests to the latest snapshot's candidates by tmdb/imdb, so it can never disagree with Review: a title is reclaimable only when the scan **condemns** it (`verdict == condemn`), watches are keyed on the candidate's own rating key (fixes the stale-Seerr-key false "nobody watched"), and a request the scan hasn't seen reads *not in the last scan*, never unwatched. The old live path re-derived the scan's title resolution (a second copy of the app's most delicate matching); reusing the snapshot keeps one resolution. `/api/fairness` rows now carry `reclaimable: [{title, size_bytes, item_id, group_key}]` (heaviest first, capped 25); report adds `not_in_scan` and `no_snapshot`. Root cause it fixes: the watch log has no content id, so the old single-key lookup missed plays on a title's other copies (4K/HD, merged listings, re-match) that the scan folds. Verified end-to-end: the reclaimable count agrees with Review, and a chip click lands on the item's Why panel. | ✅ done |
 | **Operator console** — service config, first-run setup, schedule, safety, redesigned review | ✅ done — the whole tool is now configurable from the browser |
@@ -2211,11 +2197,17 @@ live clients is that step.
   key judges PROTECT), the planner (excluded even from a frozen snapshot's condemned set),
   and grace (a canceled item leaves the countdown at once). Spare/un-spare on every
   condemn row. Un-sparing deletes nothing — it lets the file be judged again.
-- **Fairness view.** `engine/requester.py` was complete and tested but *orphaned*. It now
-  powers a per-requester leaderboard: requests made, disk granted, share ever played, disk
-  nobody watched. Every join hangs off the Plex rating key; the evidence query matches both
-  `rating_key` (movies) and `grandparent_rating_key` (a show's episodes). Read-only —
-  surfaces the rule's findings as information, not as a second condemn path.
+- **Fairness view.** A per-requester leaderboard: requests made, disk granted, share ever
+  played, disk nobody watched. Every join hangs off the Plex rating key; the evidence query
+  matches both `rating_key` (movies) and `grandparent_rating_key` (a show's episodes).
+  Read-only — information, never a second condemn path.
+  - **Correction (2026-07-24, review H-2).** This entry used to say the view *wired*
+    `engine/requester.py`, the orphaned requester rule. It did not: it took only
+    `WatchEvidence` from it, and the rule's `evaluate` — a whole second
+    CONDEMN/PROTECT/ABSTAIN decision beside `engine.verdict.decide_verdict` — stayed
+    unreachable from production, called only by its own tests. Rebuilding Scales on the
+    last scan (below) is what actually replaced it. The module is now deleted and
+    `WatchEvidence` lives in `services/fairness.py` with its one consumer (rule 38).
 - **Grace lifecycle.** The cancellable countdown, derived from `first_flagged_at +
   grace_days` (one source of truth, nothing to store). Items partition into counting-down
   and cleared; cancel = spare. Panel on the Reap view.

@@ -45,11 +45,16 @@ def _raw(**overrides: object) -> RawItem:
     return RawItem(**base)  # type: ignore[arg-type]
 
 
-def _facts(item: RawItem, *, imdb: dict[str, object] | None = None):
+def _facts(
+    item: RawItem,
+    *,
+    imdb: dict[str, object] | None = None,
+    membership_index: lists.MembershipIndex | None = None,
+):
     return build_facts(
         item,
         ScanContext(horizon=datetime(2019, 1, 1, tzinfo=UTC)),
-        membership_index=_EMPTY_INDEX,
+        membership_index=membership_index or _EMPTY_INDEX,
         imdb=imdb or {},  # type: ignore[arg-type]
         last_played={},
         watchers_window={10: 0},
@@ -81,6 +86,42 @@ class TestARatingWeCouldNotLookUpIsUnknown:
         facts = _facts(_raw(imdb_id="tt0000001"), imdb={})
 
         assert isinstance(facts.imdb_rating_tenths, Absent)
+
+
+class TestAKeepListRowIsFoundByEveryIdTheMovieCarries:
+    """Radarr is tmdb-native and a blank ``imdbId`` is ordinary, so a movie's imdb id is
+    often the one Plex matched. A "Never Reap" collection on a legacy-agent Plex library
+    is stored under an imdb id and nothing else, so looking the movie up by Radarr's ids
+    alone would miss it -- and a film the owner put on the keep list would be condemned
+    on a healthy, executable snapshot."""
+
+    @staticmethod
+    def _keep_list_stored_under_imdb_only() -> lists.MembershipIndex:
+        membership = lists.Membership(
+            slug="never-reap",
+            display_name="Never Reap",
+            mode=lists.ListMode.HARD,
+            kind=lists.ListKind.WHITELIST,
+            rank=None,
+        )
+        return lists.MembershipIndex({"tt0000042": ((1, "movie", membership),)}, {}, {})
+
+    def test_a_movie_whose_only_imdb_id_came_from_plex_is_still_protected(self) -> None:
+        facts = _facts(
+            _raw(imdb_id=None, tmdb_id=7, plex_imdb_id="tt0000042"),
+            membership_index=self._keep_list_stored_under_imdb_only(),
+        )
+
+        assert facts.is_whitelisted == Known(value=True, source="Never Reap")
+
+    def test_a_movie_carrying_neither_imdb_id_is_not_falsely_protected(self) -> None:
+        """The other direction: the fallback must not invent a match."""
+        facts = _facts(
+            _raw(imdb_id=None, tmdb_id=7, plex_imdb_id=None),
+            membership_index=self._keep_list_stored_under_imdb_only(),
+        )
+
+        assert facts.is_whitelisted == Known(value=False, source="lists")
 
 
 class TestAMatchedItemWithNoArrivalDateIsWarned:
