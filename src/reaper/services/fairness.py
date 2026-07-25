@@ -528,6 +528,15 @@ def roll_up(
                 continue
             seen.add(ident)
             scoped = _scope_to_request(cands, req)
+            if not scoped:
+                # The title is in the scan but none of the seasons THEY asked for are, so there
+                # is nothing of theirs to attribute here. Skipped exactly as the person drawer
+                # skips it (``build_person_detail``), which is the point: counting it here and
+                # not there made the card say "4 requests, 50% they watched" while the panel it
+                # opens said "3 requests in the last scan, 67% They watched" for the same person
+                # and the same scan (B-28, rule 30). A person with only such requests gets no
+                # row at all, matching the drawer, which has no detail to show them.
+                continue
             row = _row(req)
             row.requests_made += 1
             row.gb_granted_bytes += sum(c.size_bytes or 0 for c in scoped)

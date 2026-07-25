@@ -597,6 +597,54 @@ class TestSeasonScopedAttribution:
         assert report.total_reclaimable_bytes == 10 * GB
         assert report.total_reclaimable_items == 1
 
+    def test_a_request_whose_seasons_are_all_absent_is_not_counted(self) -> None:
+        """B-28: the scan has a show, but not the season this person asked for. There is
+        nothing of theirs to attribute, so the request does not count -- exactly as the person
+        drawer skips it. Counting it here inflated the card's denominator, so the same person
+        in the same scan read one watched share on the card and a different one in the panel
+        the card opens."""
+        cands = [
+            _cand(
+                cid=1,
+                media_type="season",
+                season_number=1,
+                tmdb=None,
+                tvdb=9001,
+                imdb=None,
+                rating_key=101,
+            )
+        ]
+        asked_for_a_season_the_scan_has = _req(
+            plex_id=100,
+            name="Alice",
+            media_type="tv",
+            tmdb=None,
+            tvdb=9001,
+            imdb=None,
+            seasons=(1,),
+            request_id=1,
+        )
+        asked_for_one_it_does_not = _req(
+            plex_id=100,
+            name="Alice",
+            media_type="tv",
+            tmdb=None,
+            tvdb=9001,
+            imdb=None,
+            seasons=(9,),
+            request_id=2,
+        )
+        both = roll_up([asked_for_a_season_the_scan_has, asked_for_one_it_does_not], cands, {})
+        (row,) = both.rows
+        # One request, not two: the season-9 request scoped to nothing.
+        assert row.requests_made == 1
+
+        # And a person whose ONLY request scopes to nothing gets no row at all -- the drawer
+        # has no detail to show them (build_person_detail returns None, a 404), so a card that
+        # opens onto nothing must not exist either.
+        none_of_it = roll_up([asked_for_one_it_does_not], cands, {})
+        assert none_of_it.rows == []
+
 
 class TestUnmatched:
     """The "not in the last scan" list: what each unmatched request is, and why. The count
@@ -1262,5 +1310,89 @@ class TestBuildPersonDetail:
         assert title.size_bytes == 4 * GB
         # Watched counts the one S1 episode, never the S2 episode she never asked for.
         assert title.watched_by_them == 1
+        await main.dispose()
+        await cache.dispose()
+
+    async def test_the_card_and_the_panel_count_the_same_requests(self, tmp_path: Path) -> None:
+        """B-28, rule 30: the card divides the watched share by ``requests_made`` and the panel
+        it opens divides by ``requests_in_scan``. Alice asked for a season the scan has and a
+        season of another show it does not, and watched the first. The two surfaces must reach
+        the same number; they used to read 50% and 100% for the same person and the same scan."""
+        settings = Settings(data_dir=tmp_path, secret_key="test-key")  # type: ignore[call-arg]
+        main = create_engine(settings)
+        async with main.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        cache = create_cache_engine(settings)
+        await history_sync.ensure_schema(cache)
+        factory = create_session_factory(main)
+        # Two shows, each with only S1 in the scan.
+        async with factory() as session:
+            snap = Snapshot(
+                created_at=NOW, policy_hash="p" * 64, horizon_at=NOW, item_count=2, degraded=False
+            )
+            session.add(snap)
+            await session.flush()
+            for tvdb, rk in ((9001, 770), (9002, 780)):
+                session.add(
+                    Candidate(
+                        snapshot_id=snap.id,
+                        media_key=f"sonarr:1:{tvdb}:1",
+                        title="A Show S1",
+                        media_type="season",
+                        size_bytes=4 * GB,
+                        verdict="condemn",
+                        score=80,
+                        coverage_bp=10_000,
+                        explanation_json="{}",
+                        tvdb_id=tvdb,
+                        plex_rating_key=rk,
+                        group_key=f"sonarr:1:{tvdb}",
+                        group_title="A Show",
+                        created_at=NOW,
+                    )
+                )
+            await session.commit()
+        await _insert_event(cache, rating_key=9101, user_id=1, parent=770, gp=9001)
+        portal = _FakeSeerr(
+            [
+                # In the scan, and watched.
+                _req(
+                    plex_id=1,
+                    name="Alice",
+                    media_type="tv",
+                    tmdb=None,
+                    tvdb=9001,
+                    imdb=None,
+                    seasons=(1,),
+                    request_id=1,
+                ),
+                # The show is in the scan, season 9 is not: this scopes to nothing.
+                _req(
+                    plex_id=1,
+                    name="Alice",
+                    media_type="tv",
+                    tmdb=None,
+                    tvdb=9002,
+                    imdb=None,
+                    seasons=(9,),
+                    request_id=2,
+                ),
+            ]
+        )
+        report = await fairness.build_report(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[portal],  # type: ignore[list-item]
+            cache_engine=cache,
+        )
+        detail = await fairness.build_person_detail(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[portal],  # type: ignore[list-item]
+            cache_engine=cache,
+            identity="plex:1",
+        )
+        assert detail is not None
+        (row,) = report.rows
+        assert row.requests_made == detail.requests_in_scan == 1
+        assert row.played_by_them == detail.played_by_them == 1
         await main.dispose()
         await cache.dispose()

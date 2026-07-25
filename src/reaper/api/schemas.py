@@ -571,6 +571,23 @@ class PolicyIn(BaseModel):
     keep_rating_match: Literal["any", "all"] = "any"
 
 
+class PolicyValidateIn(PolicyIn):
+    """A policy draft to check, plus the one profile value whose warning is anchored to a
+    control in the same editor.
+
+    ``inspect`` reads the operator's SAVED profile, which is right nearly everywhere: a
+    warning about a cap should describe what is in force. The unknown-size allowance is the
+    exception, because its warning renders directly beneath the box that sets it and that box
+    shows the DRAFT. Every other warning in the editor describes the draft, so this one read
+    the saved value while sitting under the changed one: drag it from 5 to 0 and the warning
+    kept saying Reaper would delete up to 5 (B-26, rule 42).
+
+    Omitted (``None``) means "use the saved profile", which is what every other caller of
+    ``inspect`` wants and what this route did before."""
+
+    draft_max_unmeasured_per_run: int | None = Field(default=None, ge=0, le=25)
+
+
 class PolicyWarningOut(BaseModel):
     field: str
     message: str

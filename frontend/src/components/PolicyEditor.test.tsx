@@ -6,7 +6,7 @@
 // click left the removal lane over budget with Save disabled. Each test here fails if
 // either fix is reverted.
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { CustomCondemn, Policy, PolicyBody, ProfileSettings } from "../api";
 import { DocsProvider } from "../docs/DocsContext";
@@ -104,7 +104,9 @@ const pace: ProfileSettings = {
 
 function renderEditor(
   policy: Partial<Policy> & { body: PolicyBody },
-  paceSettings: ProfileSettings = pace,
+  /** An Error renders against a profile read that FAILED; "pending" against one still in
+   *  flight. The two are deliberately different states on this page (B-29). */
+  paceSettings: ProfileSettings | Error | "pending" = pace,
   /** Pass an Error to render the editors against a vocabulary fetch that failed. */
   vocabulary: Error | null = null,
 ) {
@@ -114,7 +116,9 @@ function renderEditor(
     warnings: [],
     ...policy,
   });
-  apiMock.profile.mockResolvedValue(paceSettings);
+  if (paceSettings === "pending") apiMock.profile.mockReturnValue(new Promise(() => {}));
+  else if (paceSettings instanceof Error) apiMock.profile.mockRejectedValue(paceSettings);
+  else apiMock.profile.mockResolvedValue(paceSettings);
   apiMock.safety.mockResolvedValue({
     destructive_enabled: false,
     has_password: true,
@@ -313,6 +317,96 @@ describe("the caps switch and the copy that reads it", () => {
     expect(savebar).not.toBeNull();
     expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
     expect(savebar?.textContent ?? "").toContain("pace and limits");
+  });
+
+  it("claims nothing about caps when the profile couldn't be read at all", async () => {
+    // B-29, rule 53: the fallback wording ("removes only within your caps") also covered the
+    // FAILED read, so the one sentence an operator scans before arming asserted caps were in
+    // force directly above a section saying the settings behind them could not be loaded.
+    renderEditor({ body: body() }, new Error("profile unreadable"));
+
+    const line = (await screen.findByText(/Right now Reaper flags a movie/)).textContent ?? "";
+    expect(line).not.toContain("caps");
+    expect(line).not.toContain("removes");
+    // Still a sentence, just one that stops at what it can vouch for.
+    expect(line).toContain("70 / 100");
+    // And the contradiction it used to sit above is on screen at the same time.
+    expect(screen.getByText(/Couldn't load these settings/)).toBeInTheDocument();
+  });
+
+  it("keeps the neutral wording while the profile is still loading", async () => {
+    // The distinction the fix turns on: not-yet-known is not the same as could-not-be-read.
+    renderEditor({ body: body() }, "pending");
+
+    const line = (await screen.findByText(/Right now Reaper flags a movie/)).textContent ?? "";
+    expect(line).toContain("removes only within your caps");
+  });
+});
+
+describe("the unknown-size allowance", () => {
+  it("is checked as it stands on screen, not as it was last saved", async () => {
+    // B-26, rule 42: the warning renders directly beneath this box, but the server computed
+    // it from the SAVED profile. Drag it from 0 to 5 and no warning appeared until after a
+    // save; drag it back down and the old warning kept naming the old number. Every other
+    // warning on this page describes the draft, so this one was the odd one out.
+    const { userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    renderEditor({ body: body() }, { ...pace, max_unmeasured_per_run: 0 });
+
+    const box = await screen.findByLabelText("Items with an unknown size");
+    await user.clear(box);
+    await user.type(box, "5");
+
+    await waitFor(() =>
+      expect(apiMock.validatePolicy).toHaveBeenCalledWith(expect.anything(), 5),
+    );
+  });
+});
+
+describe("the one Save button, over two independent saves", () => {
+  it("still writes pace when the policy half is off the point budget", async () => {
+    // PR-7: one blocked half held the other hostage. Pace and limits are un-hashed and have
+    // nothing to do with the removal budget -- this file's own header says tightening a cap
+    // never voids an approval -- yet a grace edit could not be saved until an unrelated
+    // weight was fixed. One save affordance still (rule 43), gated per half.
+    const { userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    apiMock.saveProfile.mockResolvedValue({ ...pace, grace_days: 21 });
+    renderEditor({ body: body() });
+
+    // Take the removal lane off 100 by hand, which is what blocks the policy save.
+    const weight = (await screen.findAllByLabelText(/How much .* matters/))[0]!;
+    fireEvent.change(weight, { target: { value: "5" } });
+    await screen.findByText(/before saving/);
+
+    // Now edit the other half.
+    const grace = screen.getByLabelText("Grace period");
+    await user.clear(grace);
+    await user.type(grace, "21");
+
+    const save = screen.getByRole("button", { name: "Save changes" });
+    await waitFor(() => expect(save).toBeEnabled());
+    // ...and the bar says which half it is leaving behind, rather than just refusing.
+    expect(screen.getByText(/Save writes pace and limits only/)).toBeInTheDocument();
+
+    await user.click(save);
+    await waitFor(() => expect(apiMock.saveProfile).toHaveBeenCalled());
+    expect(apiMock.savePolicy).not.toHaveBeenCalled();
+  });
+
+  it("stays disabled when the blocked policy is the only thing dirty", async () => {
+    renderEditor({ body: body() });
+
+    const weight = (await screen.findAllByLabelText(/How much .* matters/))[0]!;
+    fireEvent.change(weight, { target: { value: "5" } });
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled(),
+    );
+    // The bar does NOT add a "held back" line here: nothing is being written, and the points
+    // notice beside it already says why. One subject, one sentence.
+    expect(screen.queryByText(/Save writes pace and limits only/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Give out the other/)).toBeInTheDocument();
   });
 });
 

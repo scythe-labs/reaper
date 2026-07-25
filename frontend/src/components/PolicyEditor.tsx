@@ -724,10 +724,19 @@ export function PolicyEditor({
   // request when you stop -- not one per pixel. Combined with keepPreviousData below, this is
   // what stops the outcome box flickering while you adjust a weight.
   const [debounced, setDebounced] = useState<PolicyBody | null>(null);
+  // The unknown-size allowance rides along on the same timer. It is not part of the policy at
+  // all -- it lives on the profile -- but its warning is anchored beneath the box that sets it,
+  // so the validator has to see the DRAFTED value or that warning describes something else
+  // (B-26). One timer, so dragging either the policy or this fires one request when you stop.
+  const draftedUnmeasured = pace?.max_unmeasured_per_run ?? null;
+  const [debouncedUnmeasured, setDebouncedUnmeasured] = useState<number | null>(null);
   useEffect(() => {
-    const id = setTimeout(() => setDebounced(draft), 250);
+    const id = setTimeout(() => {
+      setDebounced(draft);
+      setDebouncedUnmeasured(draftedUnmeasured);
+    }, 250);
     return () => clearTimeout(id);
-  }, [draft]);
+  }, [draft, draftedUnmeasured]);
 
   const { data: simulation, error: simError } = useQuery({
     queryKey: ["simulate", debounced],
@@ -740,8 +749,8 @@ export function PolicyEditor({
   // 5 days); that error is what "you can't save this" means, and it is shown near the controls,
   // not dressed up as a simulation result.
   const { data: validation, error: invalidError } = useQuery({
-    queryKey: ["validate", debounced],
-    queryFn: () => api.validatePolicy(debounced!),
+    queryKey: ["validate", debounced, debouncedUnmeasured],
+    queryFn: () => api.validatePolicy(debounced!, debouncedUnmeasured),
     enabled: debounced !== null,
     placeholderData: keepPreviousData,
     retry: false,
@@ -986,6 +995,25 @@ export function PolicyEditor({
       : null;
   const validatorDown = invalidError !== null && invalidMessage === null;
 
+  // The savebar saves two INDEPENDENT things, so a problem in one must not hold the other
+  // (PR-7). Pace and limits are un-hashed and are not part of the policy at all -- this file's
+  // header is explicit that tightening a cap never voids an approval -- yet a policy off the
+  // 100-point budget used to disable the one Save button, so a grace-period edit could not be
+  // written until an unrelated weight was fixed. One save affordance still (rule 43): the
+  // button writes whichever halves are actually savable, and says which one it is leaving.
+  const policyBlocked = dirty && (Boolean(invalidMessage) || pointsLeft !== 0);
+  const willSavePolicy = dirty && !policyBlocked;
+  const willSavePace = paceDirty;
+  const saving = save.isPending || savePace.isPending;
+  // Why the policy half is held, in one clause. The numbers are NOT repeated here: the points
+  // meter renders directly below this line and the 422 notice at the top of the page, so a
+  // second copy of either would be the third sentence in the bar saying one thing. Points are
+  // named first when both are true, because that notice is the one right beside this.
+  const policyHeldBecause =
+    pointsLeft !== 0
+      ? "the points add up to 100"
+      : "the problem at the top of this page is fixed";
+
   const switchMediaType = (next: "movie" | "tv") => {
     if (next === mediaType) return;
     if (dirty) {
@@ -1056,11 +1084,18 @@ export function PolicyEditor({
   // Branch on the caps switch: with caps off the executor skips the per-run and rolling
   // checks entirely, so claiming a hard "at most N per run" here would contradict the
   // caps-off warning below and the run itself (B-2). Grace still binds either way.
-  const paceClause = !pace
-    ? "removes only within your caps"
-    : pace.caps_enabled
-      ? `removes at most ${count(pace.max_items_per_run)} titles or ${bytes(pace.max_bytes_per_run)} per run`
-      : "removes with no per-run limit until you turn limits back on";
+  // A failed profile read says nothing about caps at all. The neutral "within your caps"
+  // wording covers the still-LOADING case only: asserting caps are in force while the section
+  // below says "Couldn't load these settings" is the contradiction B-29 names, on the one
+  // sentence an operator reads before arming (rules 53/65).
+  const paceClause = paceFailed
+    ? null
+    : !pace
+      ? "removes only within your caps"
+      : pace.caps_enabled
+        ? `removes at most ${count(pace.max_items_per_run)} titles or ${bytes(pace.max_bytes_per_run)} per run`
+        : "removes with no per-run limit until you turn limits back on";
+  const paceTail = paceClause ? `, and ${paceClause}.` : ".";
 
   return (
     <section className="editor">
@@ -1181,7 +1216,7 @@ export function PolicyEditor({
                     , always keeps <strong>{andList(tvKeepClauses)}</strong>
                   </>
                 )}
-                , and {paceClause}.
+                {paceTail}
               </>
             ) : (
               <>
@@ -1192,7 +1227,7 @@ export function PolicyEditor({
                     , keeps anything <strong>{keepClauses.join(" or ")}</strong>
                   </>
                 )}
-                , and {paceClause}.
+                {paceTail}
               </>
             )}
           </p>
@@ -1752,11 +1787,25 @@ export function PolicyEditor({
                   .join(" · ")}
               </strong>
               <br />
-              {dirty && paceDirty
+              {/* What Save will ACTUALLY write, not what is merely dirty: a held-back policy
+                  half must not be described as applying on the next scan (PR-7). */}
+              {willSavePolicy && willSavePace
                 ? "Policy changes apply on the next scan, which starts by itself after saving. Pace applies immediately."
-                : dirty
+                : willSavePolicy
                   ? `Saves only your ${kind} policy. The ${otherKind} one is untouched. It applies on the next scan, which starts by itself after saving.`
-                  : "Pace applies immediately. Changing a limit never affects a run you've already approved."}
+                  : willSavePace
+                    ? "Pace applies immediately. Changing a limit never affects a run you've already approved."
+                    : null}
+              {/* Only when the OTHER half will still be written: that is the new fact, and the
+                  one an operator would otherwise have to infer. With the policy alone dirty
+                  the button is simply disabled and the notice beside the cause already says
+                  why, so a line here would be the bar's third sentence on one subject. */}
+              {policyBlocked && willSavePace && (
+                <span className="notice notice-warn budget-notice">
+                  Save writes pace and limits only. Your {kind} policy can't go with it until{" "}
+                  {policyHeldBecause}.
+                </span>
+              )}
               {/* The rescale recovery. Rendered here, beside Save, because it is about
                   what you are about to write -- and from the response FLAGS, not the
                   warning list, which is built by re-validating the draft and so can never
@@ -1783,18 +1832,17 @@ export function PolicyEditor({
             </button>
             <button
               className="primary"
-              disabled={
-                (dirty && (Boolean(invalidMessage) || pointsLeft !== 0)) ||
-                save.isPending ||
-                savePace.isPending
-              }
+              // Enabled when EITHER half can be written. A blocked policy no longer holds
+              // pace and limits hostage (PR-7); the line above says which half is waiting.
+              disabled={(!willSavePolicy && !willSavePace) || saving}
               onClick={() => {
-                // Two independent saves; each failure renders its own notice below.
-                if (dirty) save.mutate(draft);
-                if (paceDirty && pace) savePace.mutate(pace);
+                // Two independent saves; each failure renders its own notice below. The
+                // blocked half is skipped, never sent for the server to refuse.
+                if (willSavePolicy) save.mutate(draft);
+                if (willSavePace && pace) savePace.mutate(pace);
               }}
             >
-              {save.isPending || savePace.isPending ? "Saving…" : "Save changes"}
+              {saving ? "Saving…" : "Save changes"}
             </button>
             {save.error && <p className="notice notice-error">{save.error.message}</p>}
             {savePace.error && <p className="notice notice-error">{savePace.error.message}</p>}

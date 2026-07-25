@@ -38,13 +38,13 @@ pattern, don't invent a new one.
 
 ## Progress (keep this current — it is the handoff between sessions)
 
-**81 of 94 findings are checked off.** The fix order's seven batches are done (batch 7 left R1
-and R2 unchecked, annotated in place with exactly what landed and what did not), and batch 8
-took the four unscheduled findings that mislead or dead-end the operator. Batches 1-7 are
-committed on `ui-review-remediation`; batch 8 follows it.
+**87 of 94 findings are checked off.** The fix order's seven batches are done (batch 7 left R1
+and R2 unchecked, annotated in place with exactly what landed and what did not), batch 8 took the
+four unscheduled findings that mislead or dead-end the operator, and batch 9 the six that put a
+wrong number or a wrong claim in front of them. All three are committed on
+`ui-review-remediation`.
 
-**Still open, all unscheduled:** S4, S5, B23, B26-B29, PR7, PR9, PR11, U16, plus R1/R2's
-residue. Roughly a batch of wording-and-number bugs (B26-B29, B23, PR7), four cheap hygiene
+**Still open, all unscheduled:** S4, S5, PR9, PR11, U16, plus R1/R2's residue. Four cheap hygiene
 fixes (S4, S5, U16, PR11), one build-hygiene debt (PR9), and the two restructures.
 
 **Run the gates with `set -o pipefail`.** Piping a step into `tail` returns `tail`'s status:
@@ -484,6 +484,61 @@ real server.
 which returns `tail`'s exit status, not the step's. `tsc` failed in this batch and the chain
 still reported success. Run the gates with `set -o pipefail`, or unpiped.
 
+### Batch 9, the wrong numbers and the wrong claims (B23, B26-B29, PR7)
+
+Also off the fix order. Where batch 8 was surfaces that dead-end, these are surfaces that state
+something untrue: two numbers for one person, a warning tracking a value nobody is looking at, a
+sentence asserting caps whose settings could not be read, a tile hidden exactly when it is needed,
+a save button held by an unrelated half, and a tab click that throws away typed input. Six of the
+seven fixes carry a test proven to fail without them (reverted one at a time, re-run, restored);
+B23 has no unit test and was driven live instead.
+
+- **B28** had the Scales card and the panel it opens divide by two different sets. The roll-up
+  counted every matched request including a season-scoped one that scoped to nothing, which the
+  detail builder explicitly skips, so the same person in the same scan read one watched share on
+  the card and a different one in the panel. The roll-up now skips it too, in the same shape and
+  with the same reason written down. A person whose ONLY requests scope to nothing now gets no
+  card at all, which is the other half of the same agreement: the drawer has no detail to show
+  them, so it 404s, and a card that opens onto nothing must not exist.
+- **B27** nested the "Not in the last scan" tile inside the has-people branch, so the one
+  affordance that explains an empty Scales page was hidden in exactly the state that produces it
+  (a fresh portal, or ids the scan has not backfilled, leaves every request unmatched). The tile
+  is defined once now and rendered in both states.
+- **B26** anchored the unknown-size warning beneath the box that sets it, then computed it from
+  the SAVED profile. Every other warning in that editor describes the draft, so this one was the
+  odd one out: raise the allowance and nothing appeared until after a save, lower it and the old
+  warning kept naming the old number. The editor sends the drafted value with the check
+  (`PolicyValidateIn.draft_max_unmeasured_per_run`, debounced on the same timer as the policy),
+  so `inspect` stays the single author of the message. Omitting the field keeps the stored
+  reading, which is what every other caller wants, and the bound is on the wire so a draft can
+  never describe an allowance a save would refuse.
+- **B29** let the pace clause fall back to "removes only within your caps" when the profile query
+  had *failed*, so the sentence an operator scans before arming asserted caps were in force
+  directly above a section saying those settings could not be loaded. The clause is dropped
+  entirely on a failed read; the neutral wording now covers the still-loading case alone.
+- **PR7** gated two deliberately independent saves behind one condition, so a policy off the
+  100-point budget also blocked the pace save that has nothing to do with it. Still one save
+  affordance (rule 43), now gated per half: the button enables when either half is savable, the
+  "what applies when" line describes what will ACTUALLY be written rather than what is merely
+  dirty, and a line names the half being left behind. That line renders only when the other half
+  IS being written -- with the policy alone dirty the button is simply disabled and the notice
+  beside the cause already says why, so a line there would be the bar's third sentence on one
+  subject.
+- **B23** cleared `settingsFocus` on every masthead tab click, including a click on the tab you
+  are already on, and `<Settings>` is keyed on that nonce -- so the click remounted the whole
+  subtree and destroyed unsaved input. The focus resets are skipped when the clicked tab is the
+  current view.
+
+**Driven live in Chrome, deletion never armed, nothing written** (confirmed against
+`/api/settings/general` and `/api/profile` afterward: the name, grace, and allowance are all
+unchanged). B23 both ways: arriving at Settings through a "Settings → Plex" jump, typing into a
+field and clicking the Settings tab leaves the typed value intact, while a genuine tab change
+still clears the focus and lands on General with no jump replayed. B26 both ways: the warning
+appears beneath the box the moment the box reads 5 and clears the moment it reads 0. PR7: with the
+removal lane off budget and grace edited, Save is live, the bar says "Save writes pace and limits
+only", and the applies-when line is the pace one. B28's agreement was read off a real person's
+card and panel (both figures matched); the divergent case is the unit test's.
+
 ---
 
 ## 1. Security
@@ -746,7 +801,7 @@ still reported success. Run the gates with `set -o pipefail`, or unpiped.
   `new ApiError(response.status, "Reaper got an unexpected reply from the server.")`; do the same for
   the uncaught `response.json()` in `api.candidates` and `api.restorePrepare`.
 
-- [ ] **B23 [medium]** `frontend/src/App.tsx:706-717,822-825` · Every masthead tab click clears
+- [x] **B23 [medium]** `frontend/src/App.tsx:706-717,822-825` · Every masthead tab click clears
   `settingsFocus`, and `<Settings>` is keyed on `settingsFocus?.nonce ?? "settings"`, so clicking the
   tab you are already on force-remounts the whole Settings subtree and destroys unsaved input. Arrive
   via a "Run one from Settings → Jobs" link, type a new application name, click "Settings" in the top
@@ -771,7 +826,7 @@ still reported success. Run the gates with `set -o pipefail`, or unpiped.
   `mutationFn` (`if (keys.length === 0) throw new Error("Nothing is selected.")`) and give
   `api.createRun` an explicit whole-set caller shape so `[]` can never read as "everything".
 
-- [ ] **B26 [medium]** `frontend/src/components/PolicyEditor.tsx:2354` · The `max_unmeasured_per_run`
+- [x] **B26 [medium]** `frontend/src/components/PolicyEditor.tsx:2354` · The `max_unmeasured_per_run`
   warning is anchored beside the pace control that sets it, but the server computes it from
   `active_profile_settings` (the SAVED profile), never the drafted value on screen. Drag it from 5 to
   0 and the warning under the box keeps saying Reaper will delete up to 5; raise it 0 to 5 and no
@@ -779,14 +834,14 @@ still reported success. Run the gates with `set -o pipefail`, or unpiped.
   compute this one warning client-side from `pace.max_unmeasured_per_run` and drop it from the
   server's `inspect` output. Do not leave it anchored to a control it does not track.
 
-- [ ] **B27 [medium]** `frontend/src/components/Fairness.tsx:212-247` · The "Not in the last scan"
+- [x] **B27 [medium]** `frontend/src/components/Fairness.tsx:212-247` · The "Not in the last scan"
   tile — the one affordance that explains why Scales is empty — is nested inside the
   `data.rows.length > 0` branch, so it is hidden exactly when it is needed. With a fresh portal or
   unbackfilled ids, `rows` is `[]` and `not_in_scan` is 40, and the page shows only "No available
   requests are in the last scan yet."; the 40 unmatched requests and the button that explains them
   are suppressed. **Fix:** move the `not_in_scan > 0` tile out of the `rows.length > 0` block.
 
-- [ ] **B28 [medium]** `frontend/src/components/Fairness.tsx:46-49` vs
+- [x] **B28 [medium]** `frontend/src/components/Fairness.tsx:46-49` vs
   `frontend/src/components/ScalesPanel.tsx:206-209` · The card divides by `requests_made`, the panel
   it opens divides by `requests_in_scan`, and the two are not the same set: `requests_made` counts
   every matched group including a season-scoped request that scoped to nothing, which the detail
@@ -795,7 +850,7 @@ still reported success. Run the gates with `set -o pipefail`, or unpiped.
   `requests_made` increment in the roll-up when `scoped` is empty, exactly as the detail builder does,
   and cover it with a test using a season-scoped request whose seasons are absent.
 
-- [ ] **B29 [medium]** `frontend/src/components/PolicyEditor.tsx:1703-1707` · `paceClause` falls back
+- [x] **B29 [medium]** `frontend/src/components/PolicyEditor.tsx:1703-1707` · `paceClause` falls back
   to "removes only within your caps" whenever `pace` is null, which includes the case where the
   profile query *failed*. The intent band then asserts caps are in force directly above a section that
   says "Couldn't load these settings." Rule 53. **Fix:** branch the fallback on `paceFailed` and drop
@@ -1079,7 +1134,7 @@ still reported success. Run the gates with `set -o pipefail`, or unpiped.
   username inputs in `AdminPasswordForm`, `LocalSheet`, `RestoreCard`, and `DeletionToggle` (and
   `maxLength={256}` to the recovery code).
 
-- [ ] **PR7 [medium]** `frontend/src/components/PolicyEditor.tsx:2417-2428` · One Save button gates two
+- [x] **PR7 [medium]** `frontend/src/components/PolicyEditor.tsx:2417-2428` · One Save button gates two
   deliberately independent saves, so a policy that is off the 100-point budget also blocks the pace
   save that has nothing to do with it: drag a weight so `pointsLeft = -5`, then edit the grace period,
   and the grace change cannot be saved until the point budget is fixed. This contradicts the file's own
@@ -1384,8 +1439,10 @@ a suggestion.
    bugs (B30-B35), I2.~~ Done, except the residue noted inline on R1 and R2.
 
 Nothing is left in the fix order. Batch 8 then took the four unscheduled findings that mislead or
-dead-end the operator (B6, B10, B11, B17). What remains open in the document above: S4, S5, B23,
-B26-B29, PR7, PR9, PR11, U16, plus R1/R2's residue.
+dead-end the operator (B6, B10, B11, B17), and batch 9 the six that state something untrue
+(B23, B26-B29, PR7). What remains open in the document above: S4, S5, PR9, PR11, U16, plus
+R1/R2's residue -- four cheap hygiene fixes, one build-hygiene debt, and two restructures with no
+behavior change.
 
 Run `uv run ruff format .` before staging any backend change, and the full CLAUDE.md gate set before
 each commit -- with `set -o pipefail`, or a failing step will hide behind the `tail` you pipe it to. When a change is observable in the app, drive it end-to-end per the `verify` skill;

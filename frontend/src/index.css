@@ -3362,6 +3362,11 @@ a.rating-chip:hover {
   gap: 0.6rem;
   margin: 0.2rem 0 0.9rem;
 }
+/* The same tiles, when "not in the last scan" is the only one there is (nobody on the
+   board). auto-fit would stretch the lone tile the full width of the page. */
+.fair-stats-lone {
+  grid-template-columns: minmax(160px, 22rem);
+}
 .fair-stat {
   display: flex;
   flex-direction: column;

@@ -9,13 +9,13 @@
 
 Last updated: 2026-07-24 (the whole-frontend UI/UX review, remediated in seven batches)
 
-### Newest — the whole-frontend UI/UX review, remediated in seven batches
+### Newest — the whole-frontend UI/UX review, remediated in nine batches
 
 `docs/UI_REVIEW.md` (dev @ `a7d7659`) swept every file under `frontend/src` with six parallel
 agents and landed **94 findings**: 1 critical, 18 high, 45 medium, 30 low. Worked in seven
-batches along the document's own fix order, compacting between each. **77 are checked off.** R1
+batches along the document's own fix order, then two more past its end. **87 are checked off.** R1
 and R2 (the two big file splits) are annotated in place with exactly what landed and what did
-not; 15 more were never scheduled into a batch and are listed at the end of that file.
+not; five hygiene findings remain and are listed at the end of that file.
 
 The batches were the deletion path, the queue's control grammar, the number-input family, the
 unknown-state and stale-cache sweep, contrast and motion, copy, and refactor plus performance.
@@ -71,6 +71,20 @@ read told the operator to save while rendering no Save button; a Plex PIN poll t
 the sign-in settled could paint "sign-in failed" over a good session or sign someone in after
 Cancel; and any modal closed on a text-drag that ended outside it, which over the reap sheet took
 the dry-run result and the typed confirmation phrase with it.
+
+**Batch 9 took the six that state something untrue,** which is a different failure from batch 8's
+dead ends and turned out to share one root: a number or a claim derived from a set that is not the
+set the operator is looking at. Scales divided the card's watched share by every matched request
+and the panel's by the ones the detail builder actually kept, so the same person in the same scan
+read two different percentages. The unknown-size warning rendered directly beneath the box that
+sets it while being computed from the *saved* profile, so it described a value nobody was looking
+at -- the editor now sends the drafted number with the check, keeping `inspect` the single author
+of the message. The intent band's "removes only within your caps" fallback also covered the case
+where the profile read had *failed*, so it asserted caps directly above a section saying those
+settings could not be loaded (rule 53 again, from the other end). One Save button gated two
+deliberately independent saves, so a policy off the point budget blocked a grace edit that has
+nothing to do with it. And the "not in the last scan" tile -- the one thing that explains an empty
+Scales page -- was nested inside the branch that renders only when the page is *not* empty.
 
 ### Earlier — a hand reap on a keep-rule conflict is honored, and a held reap stops calling itself "Sanctuary"
 

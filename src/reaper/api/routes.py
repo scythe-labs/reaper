@@ -48,6 +48,7 @@ from reaper.api.schemas import (
     LinksOut,
     PolicyIn,
     PolicyOut,
+    PolicyValidateIn,
     PolicyWarningOut,
     RatingsOut,
     SeasonShapeOut,
@@ -1264,7 +1265,7 @@ async def save_policy(request: Request, payload: PolicyIn) -> PolicyOut:
 
 
 @router.post("/policy/validate")
-async def validate_policy(request: Request, payload: PolicyIn) -> PolicyOut:
+async def validate_policy(request: Request, payload: PolicyValidateIn) -> PolicyOut:
     """Validate, hash, and inspect.
 
     Validation refuses what is *provably* wrong. ``inspect`` warns about what is merely
@@ -1280,6 +1281,14 @@ async def validate_policy(request: Request, payload: PolicyIn) -> PolicyOut:
     async with _sessions(request)() as session:
         has_requests_app = await _requests_app_configured(session)
         settings = await active_profile_settings(session)
+    if payload.draft_max_unmeasured_per_run is not None:
+        # The editor's unknown-size box is the one control whose warning renders beneath it
+        # while showing an unsaved value, so the check runs against what is on screen rather
+        # than what is stored (see PolicyValidateIn). Bounds are enforced on the wire by the
+        # field itself, so this cannot widen the allowance past what a save would accept.
+        settings = settings.model_copy(
+            update={"max_unmeasured_per_run": payload.draft_max_unmeasured_per_run}
+        )
     return _policy_out(
         _to_body(payload),
         payload.name,

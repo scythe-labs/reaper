@@ -768,9 +768,15 @@ function Dashboard({ user }: { user: AuthUser }) {
               // The view you are on is stated, not just colored.
               aria-current={view === n.id ? "page" : undefined}
               onClick={() => {
-                // A plain tab visit must not replay an old cross-page jump.
-                setPolicyFocus(null);
-                setSettingsFocus(null);
+                // A plain tab visit must not replay an old cross-page jump -- but clicking the
+                // tab you are ALREADY on is not a visit, and clearing the focus there changes
+                // the key Settings is mounted under, remounting the whole subtree and throwing
+                // away whatever is typed into it (B-23). Arriving from a "Settings → Jobs" link,
+                // typing a name, then clicking Settings in the nav used to silently discard it.
+                if (n.id !== view) {
+                  setPolicyFocus(null);
+                  setSettingsFocus(null);
+                }
                 // Leaving Scales (or re-entering it) closes any open Scales panel, so the
                 // split view never lingers on a tab that has no panel to show. Both the person
                 // panel and the "not in the last scan" panel are cleared, matching the

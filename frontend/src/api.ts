@@ -1438,7 +1438,16 @@ export const api = {
   vocabularyValues: (field: string) =>
     request<FieldValues>(`/api/vocabulary/values?field=${encodeURIComponent(field)}`),
   savePolicy: (body: PolicyBody) => post<Policy>("/api/policy", body),
-  validatePolicy: (body: PolicyBody) => post<Policy>("/api/policy/validate", body),
+  /** Check a policy draft. `maxUnmeasured` is the unknown-size allowance as it stands in the
+   *  editor: its warning renders beneath the box that sets it, so the check has to run against
+   *  the drafted value, not the saved profile. Omit it and the server uses what is stored. */
+  validatePolicy: (body: PolicyBody, maxUnmeasured?: number | null) =>
+    post<Policy>("/api/policy/validate", {
+      ...body,
+      ...(maxUnmeasured === null || maxUnmeasured === undefined
+        ? {}
+        : { draft_max_unmeasured_per_run: maxUnmeasured }),
+    }),
   simulate: (body: PolicyBody) => post<Simulation>("/api/policy/simulate", body),
   /** The season-count distribution from the latest snapshot, for the keep-last advisory.
    *  Independent of the current keep-last value, so it needs no re-scan. */

@@ -1309,6 +1309,54 @@ class TestPolicyValidation:
         assert "vote floor of 0" in json.dumps(response.json())
 
 
+class TestUnknownSizeWarningTracksTheDraft:
+    """B-26: the unknown-size warning renders directly beneath the box that sets it, and that
+    box shows an UNSAVED value. Every other warning the editor renders describes the draft, so
+    this one read the saved profile while sitting under the changed one: raise it and no
+    warning appeared until after a save, lower it and the old warning kept naming the old
+    number. The editor sends the drafted value; omitting it keeps the stored reading."""
+
+    def _unmeasured(self, client: TestClient, **extra: object) -> list[str]:
+        body = client.post(
+            "/api/policy/validate",
+            json={
+                "condemn_at": 70,
+                "gates": DEFAULT_GATES,
+                "signals": DEFAULT_SIGNALS,
+                **extra,
+            },
+        ).json()
+        return [w["message"] for w in body["warnings"] if w["field"] == "max_unmeasured_per_run"]
+
+    def test_the_stored_zero_is_quiet(self, client: TestClient) -> None:
+        """The shipped profile keeps every unmeasured item, so there is nothing to warn about."""
+        assert self._unmeasured(client) == []
+
+    def test_a_drafted_allowance_warns_before_it_is_saved(self, client: TestClient) -> None:
+        (message,) = self._unmeasured(client, draft_max_unmeasured_per_run=5)
+        assert "up to 5 items" in message
+
+    def test_drafting_it_back_to_zero_clears_the_warning(self, client: TestClient) -> None:
+        """Explicit 0 is a value, not an omission: it must not fall back to the stored one."""
+        assert self._unmeasured(client, draft_max_unmeasured_per_run=0) == []
+
+    def test_the_allowance_cannot_be_widened_past_what_a_save_accepts(
+        self, client: TestClient
+    ) -> None:
+        """The bound is on the wire, so a draft cannot talk the checker into describing an
+        allowance the profile route would refuse to store."""
+        response = client.post(
+            "/api/policy/validate",
+            json={
+                "condemn_at": 70,
+                "gates": DEFAULT_GATES,
+                "signals": DEFAULT_SIGNALS,
+                "draft_max_unmeasured_per_run": 26,
+            },
+        )
+        assert response.status_code == 422
+
+
 class TestVocabularyIsFilteredServerSide:
     """A protect-only field is never even OFFERED to the condemn editor, so a dangerous
     condition is not merely rejected -- it is unconstructable."""
