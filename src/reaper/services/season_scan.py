@@ -76,6 +76,7 @@ from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
 from reaper.db.models import SizeSource
 from reaper.engine import identity
+from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.gates import ABSTAIN as GATE_ABSTAIN
 from reaper.engine.gates import PROTECT as GATE_PROTECT
 from reaper.engine.gates import Facts, GateId, GateResult
@@ -513,11 +514,21 @@ def build_season_facts(
         # which floors on each item's own added_at. When we cannot establish the season's
         # arrival at all, dormancy is Unknown -- which protects -- exactly as a movie with
         # no added-at date does; we never fabricate a Known dormancy from the horizon.
+        # Through the one shared derivation (engine/dormancy.py), the same one the movie
+        # scan, the backtest and the prior calibration use (rule 3). The two arms differ
+        # only in what reference is available: with no arrival date there is nothing to
+        # fall back to, so a season with neither a play nor an added-at goes Unknown below
+        # rather than being measured from the horizon alone.
         if last_played is not None:
-            dormancy = Known(value=(utcnow() - last_played).days, source="tautulli")
+            reference = reference_instant(
+                last_played=last_played, added_at=last_played, horizon=horizon
+            )
+            dormancy = Known(value=dormancy_days(reference, now=utcnow()), source="tautulli")
         elif season_added_at is not None:
-            reference = max(season_added_at, horizon)
-            dormancy = Known(value=(utcnow() - reference).days, source="tautulli")
+            reference = reference_instant(
+                last_played=None, added_at=season_added_at, horizon=horizon
+            )
+            dormancy = Known(value=dormancy_days(reference, now=utcnow()), source="tautulli")
         else:
             # Matched to a Plex season, but no arrival date and no play history, so dormancy
             # cannot be measured and the season abstains: kept to be safe, never reaped. Warn

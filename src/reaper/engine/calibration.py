@@ -45,6 +45,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from reaper.clock import from_epoch
+from reaper.engine.dormancy import dormancy_days, reference_instant
 
 log = structlog.get_logger(__name__)
 
@@ -239,11 +240,13 @@ async def derive(
         if arrived is None or arrived > cutoff:
             continue  # It did not exist yet. Judging it would be fiction.
 
-        last = before.get(key)
-        # Never played => measure from whichever is later: when it arrived, or the
-        # start of our evidence. NOT from epoch 0, which reads as ~20,600 days.
-        reference = last or max(arrived, horizon)
-        dormant = (cutoff - reference).days
+        # The one dormancy derivation (engine/dormancy.py), shared with the live scan, the
+        # season scan and the backtest -- so an item cannot bucket by one arithmetic here
+        # and score by another there.
+        reference = reference_instant(
+            last_played=before.get(key), added_at=arrived, horizon=horizon
+        )
+        dormant = dormancy_days(reference, now=cutoff)
         if dormant < 0:
             continue
 

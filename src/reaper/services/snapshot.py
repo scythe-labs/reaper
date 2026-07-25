@@ -50,6 +50,7 @@ from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
 from reaper.db.models import Candidate, FirstFlagged, SizeSource, Snapshot
 from reaper.engine import facts_codec, identity
+from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.gates import Evaluation, Facts, Gate, GateResult, evaluate_all
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
@@ -243,9 +244,14 @@ def build_facts(
         )
         dormancy = Unknown(reason="no added-at date", source="tautulli")
     else:
-        played = last_played.get(rating_key)
-        reference = played or max(item.added_at, context.horizon)
-        dormancy = Known(value=(utcnow() - reference).days, source="tautulli")
+        # Through the one shared derivation (engine/dormancy.py), so the season scan, the
+        # backtest and the prior calibration all measure this the same way (rule 3).
+        reference = reference_instant(
+            last_played=last_played.get(rating_key),
+            added_at=item.added_at,
+            horizon=context.horizon,
+        )
+        dormancy = Known(value=dormancy_days(reference, now=utcnow()), source="tautulli")
 
     # --- popularity ---------------------------------------------------------
     recent: Observation[int]

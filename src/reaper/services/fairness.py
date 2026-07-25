@@ -45,11 +45,11 @@ import structlog
 from sqlalchemy import bindparam, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from reaper.aio import gather_reaped
 from reaper.clients.base import IntegrationError
 from reaper.clients.seerr import MediaRequest, QuotaStatus, SeerrClient, UserQuota
 from reaper.clock import utcnow
 from reaper.db.models import Candidate, Snapshot
-from reaper.engine.requester import WatchEvidence
 from reaper.services import condemned, history_sync, whitelist
 from reaper.services.planner import MediaRef, PlanError
 
@@ -59,6 +59,31 @@ log = structlog.get_logger(__name__)
 #: fail-closed reading of "the scan does not protect it": an abstain was *kept to be safe*,
 #: so it is not offered up here either.
 _CONDEMN = "condemn"
+
+
+@dataclass(frozen=True)
+class WatchEvidence:
+    """What the watch mirror knows about who played one item.
+
+    Lived in ``engine/requester.py`` beside a second, unwired condemn/protect/abstain decision
+    function -- a whole parallel verdict path that only its own tests ever called. Scales was
+    rebuilt to sit on the last scan instead of re-judging requests live, which left that rule
+    with no consumer at all, so it is gone (rule 38) and the evidence it carried lives here,
+    with the one surface that reads it.
+    """
+
+    plays_by_user: dict[int, int] = field(default_factory=dict)
+    """Tautulli user_id -> play count."""
+
+    distinct_watchers: int = 0
+
+    def plays_by(self, plex_user_id: int | None) -> int:
+        """How many times one person played it. ``None`` (an unlinked Seerr account, whose
+        history Reaper cannot see) reads as zero plays here; every surface that could act on
+        that number guards the ``None`` itself rather than letting it mean "never watched"."""
+        if plex_user_id is None:
+            return 0
+        return self.plays_by_user.get(plex_user_id, 0)
 
 
 @dataclass(frozen=True)
@@ -442,8 +467,19 @@ def _collect_unmatched(
 
     for group in groups.values():
         rep = group[0]
-        if _match_candidates(index, rep):
-            continue  # the scan has it -- not our concern here
+        cands = _match_candidates(index, rep)
+        if cands:
+            # The scan has the TITLE, which is not the same as having what was asked for: a
+            # request for season 5 of a show the scan holds seasons 1-3 of scopes to nothing
+            # (rule 30). It used to fall between every surface -- it counted toward the
+            # board's "N requests" and the watch-rate denominator, but the drawer's
+            # in-scan list skipped it and this classifier called the group matched, so the
+            # operator saw a request that was findable nowhere. Classified per request, not
+            # per group: its co-requesters may well have asked for seasons the scan does
+            # hold, and they stay matched.
+            group = [r for r in group if not _scope_to_request(cands, r)]
+            if not group:
+                continue
         if identity is not None and not any(_identity(r) == identity for r in group):
             continue
         out.append(_unmatched_row(group, _unmatched_reason(group, snapshot_at), identity=identity))
@@ -489,6 +525,9 @@ def roll_up(
     # an imdb group counts once -- the way the bytes total already dedupes by candidate id.
     reclaimable_titles: set[frozenset[int]] = set()
     condemned_size_by_candidate: dict[int, int] = {}
+    #: (person, the candidate set their request matched) pairs already attributed. Spans
+    #: every group, because one title can be reached through more than one of them.
+    seen: set[tuple[str, frozenset[int]]] = set()
 
     def _row(req: MediaRequest) -> RequesterRow:
         ident = _identity(req)
@@ -521,13 +560,27 @@ def roll_up(
         # One row per distinct requester (by cross-portal identity), each attributed ONLY the
         # seasons they asked for: a season-scoped request never charges the whole show (B-6,
         # rule 78). Co-requesters of one show can scope different seasons, so this is per request.
-        seen: set[str] = set()
+        matched_key = frozenset(c.candidate_id for c in cands)
         for req in group:
-            ident = _identity(req)
-            if ident in seen:
-                continue
-            seen.add(ident)
             scoped = _scope_to_request(cands, req)
+            if not scoped:
+                # They asked for seasons this scan does not hold. There is nothing of theirs
+                # to attribute, and counting the request anyway inflated both the board's
+                # request count and the denominator of their watch rate with something that
+                # could never move the numerator (rule 30). It is not lost: _collect_unmatched
+                # classifies exactly this case, so it surfaces in the not-in-scan panel where
+                # the operator can see it, and the two surfaces agree on the count.
+                continue
+            ident = _identity(req)
+            # Deduped across GROUPS, not just within one. A single title splits into two
+            # content-key groups when some co-requests carry tmdb and others only imdb, and
+            # both resolve to the SAME candidates -- every candidate is indexed under every
+            # id it carries. A person in both groups was charged twice: requests, granted
+            # disk and reclaimable items all doubled on their row while the report totals
+            # (deduped by candidate set) stayed right, so the board disagreed with itself.
+            if (ident, matched_key) in seen:
+                continue
+            seen.add((ident, matched_key))
             row = _row(req)
             row.requests_made += 1
             row.gb_granted_bytes += sum(c.size_bytes or 0 for c in scoped)
@@ -539,7 +592,7 @@ def roll_up(
                 for c in scoped:
                     ev = evidence_by_key.get(str(c.plex_rating_key)) if c.plex_rating_key else None
                     if ev:
-                        scoped_plays += ev.plays_by_user.get(pid, 0)
+                        scoped_plays += ev.plays_by(pid)
                 if scoped_plays > 0:
                     row.played_by_them += 1
 
@@ -768,7 +821,11 @@ async def _enrich_titles(
         # Prefer the looked-up year; the request itself never carried one.
         u.year = info.year
 
-    await asyncio.gather(*(_one(u) for u in targets))
+    # ``_one`` swallows every ordinary failure itself, so nothing normally escapes to detach
+    # the siblings here. Reaped anyway, for the case that is not ordinary: up to 80 lookups
+    # ride the same clients, and a cancellation or a genuine bug in one must not leave the
+    # other 79 reading against a client the route is unwinding past (rule 34).
+    await gather_reaped(*(_one(u) for u in targets))
 
 
 async def _load_candidates(
@@ -894,9 +951,16 @@ _REQUEST_CACHE_TTL = timedelta(seconds=30)
 async def _fetch_available(seerrs: Sequence[SeerrClient]) -> list[MediaRequest]:
     """Every "available" request across every portal, fetched CONCURRENTLY. The portal reads are
     independent, and paging them serially was the drawer's seconds-slow cost (P-1). Fail-hard:
-    ``asyncio.gather`` re-raises the first portal error exactly as the old serial loop did, so an
-    unreachable portal still 502s rather than a partial board."""
-    results = await asyncio.gather(*(s.all_requests(filter_="available") for s in seerrs))
+    the first portal error propagates exactly as the old serial loop did, so an unreachable
+    portal still 502s rather than a partial board.
+
+    Through ``gather_reaped``, like every other fan-out against an operator's live services. A
+    bare ``asyncio.gather`` re-raises the first failure and leaves its siblings *running* --
+    against clients the route is about to close as its exit stack unwinds, so a portal still
+    paging several thousand requests dies mid-read on "the client has been closed", inside a
+    task nobody is awaiting. Reaping cancels and drains them first, so the failure the caller
+    sees is the only thing still in flight."""
+    results = await gather_reaped(*(s.all_requests(filter_="available") for s in seerrs))
     return [r for sub in results for r in sub]
 
 
@@ -1052,6 +1116,9 @@ async def build_person_detail(
             groups[ck].append(req)
 
     titles: list[PersonTitle] = []
+    #: Candidate sets already listed, so one title reached through two id-split groups is
+    #: one row here rather than two (see the roll-up's ``seen``).
+    seen_titles: set[frozenset[int]] = set()
     name = ""
     plex_id: int | None = None
     granted = played = recl_items = recl_bytes = 0
@@ -1070,9 +1137,19 @@ async def build_person_detail(
         # Only the seasons THIS person asked for (rule 78). A season-scoped request whose
         # seasons are all absent from the scan scopes to nothing -- there is nothing of theirs
         # to attribute here, so it is skipped rather than shown as a 0-byte matched title.
+        # (The board skips it identically, and the shared classifier below lists it under
+        # not-in-scan, so the two surfaces agree on where it went.)
         scoped = _scope_to_request(cands, mine)
         if not scoped:
             continue
+        # The board's cross-group dedup, on the drawer's twin of the same loop (rule 72): a
+        # title reached through both a tmdb group and an imdb group resolves to one candidate
+        # set, and counting it once per group listed it twice and doubled this person's
+        # granted and reclaimable figures.
+        matched_key = frozenset(c.candidate_id for c in cands)
+        if matched_key in seen_titles:
+            continue
+        seen_titles.add(matched_key)
         matched_any = True
 
         granted += sum(c.size_bytes or 0 for c in scoped)
@@ -1087,8 +1164,8 @@ async def build_person_detail(
         plays = 0
         for c in scoped:
             ev = evidence.get(str(c.plex_rating_key)) if c.plex_rating_key else None
-            if ev and plex_id is not None:
-                plays += ev.plays_by_user.get(plex_id, 0)
+            if ev:
+                plays += ev.plays_by(plex_id)
         if plays > 0:
             played += 1
         # What the row shows: a movie's raw plays ("watched 3x"), but a series' DISTINCT

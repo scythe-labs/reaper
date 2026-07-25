@@ -48,6 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from reaper.clock import from_epoch
 from reaper.engine.calibration import NotCalibratedError, RewatchPrior
+from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.gates import Evaluation, Facts, Gate, evaluate_all
 from reaper.engine.observation import Absent, Known
 from reaper.engine.policy import PolicyBody
@@ -293,8 +294,13 @@ class Item:
 
 async def _plays(
     engine: AsyncEngine, rating_key: int, *, media_type: str
-) -> list[tuple[int, datetime, str]]:
-    """Every play of an item: (user_id, when, friendly_name-ish).
+) -> list[tuple[int, datetime]]:
+    """Every play of an item: ``(user_id, when)``.
+
+    Deliberately no name: the watch mirror stores ids, and ``run`` resolves a display name
+    from the Tautulli user list (``names``) at the one place it needs one. A third element
+    carrying ``str(user_id)`` and documented as a friendly name read as though regret names
+    came from here, which would have shown an operator a bare id where they expect a person.
 
     For TV we match on ``grandparent_rating_key``: Seerr and the library index
     store the *show*'s key, but history rows are per-episode, so filtering on
@@ -311,17 +317,17 @@ async def _plays(
         )
         rows = list(result)
 
-    out: list[tuple[int, datetime, str]] = []
+    out: list[tuple[int, datetime]] = []
     for row in rows:
         when = from_epoch(row.watched_at)
         if when is not None:
-            out.append((int(row.user_id), when, str(row.user_id)))
+            out.append((int(row.user_id), when))
     return out
 
 
 def facts_as_of(
     item: Item,
-    plays: list[tuple[int, datetime, str]],
+    plays: list[tuple[int, datetime]],
     *,
     cutoff: datetime,
     horizon: datetime,
@@ -343,13 +349,13 @@ def facts_as_of(
     window_start = cutoff - timedelta(days=popularity_window_days)
     recent_watchers = {p[0] for p in past if p[1] >= window_start}
 
-    # The derived field, and the reason it is derived. "Days since last play" is
-    # null for exactly the items we care most about, and coercing that null to
-    # epoch 0 reads as ~20,600 days unwatched -- maximum condemnation pressure for
-    # the item we know least about. Instead: if never played, measure from when it
-    # arrived, or from the horizon, whichever is later.
-    reference = last_played or max(item.added_at, horizon)
-    days_unwatched = (cutoff - reference).total_seconds() / 86_400
+    # The derived field, through the one shared derivation (engine/dormancy.py) the live
+    # scan and the prior calibration also use. It used to be computed here as a float while
+    # calibration floored, so the same item could bucket one side of a threshold and score
+    # the other -- and a backtest that does not measure dormancy the way the scan does is
+    # not a rehearsal of anything.
+    reference = reference_instant(last_played=last_played, added_at=item.added_at, horizon=horizon)
+    days_unwatched = dormancy_days(reference, now=cutoff)
 
     if days_unwatched < 0:
         return None
@@ -506,7 +512,7 @@ async def run(
         # Did a real person go looking for this? And crucially -- before or after the
         # grace period expired? A play inside the grace window is a RESCUE: the item
         # is still in quarantine and the pre-delete re-check spares it.
-        for user_id, when, _ in plays:
+        for user_id, when in plays:
             if when <= cutoff:
                 continue
 

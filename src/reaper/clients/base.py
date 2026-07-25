@@ -22,7 +22,7 @@ Two things it deliberately does *not* rely on:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, ClassVar, Self
 
 import httpx2
@@ -77,6 +77,28 @@ def _log_retry(retry_state: RetryCallState) -> None:
         wait=round(sleep, 2) if sleep is not None else None,
         error=type(exc).__name__ if exc is not None else None,
     )
+
+
+def transient_retry[**P, T](fn: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
+    """The one retry policy for a transient transport failure: three attempts, backing off.
+
+    Named and shared rather than repeated, so every read this codebase issues -- a JSON call
+    through :meth:`BaseClient._request`, a streamed dataset download through
+    :meth:`PublicClient.stream_to` -- survives a blip on the same terms. A second copy would
+    be a second set of numbers to keep in step.
+
+    **The decorated body must let raw ``httpx2`` transport errors escape.** The predicate
+    matches those, so a body that maps them to ``IntegrationError`` first never matches, and
+    the backoff below it becomes dead code -- which is exactly why the mapping lives one
+    layer out in every caller here.
+    """
+    return retry(
+        retry=retry_if_exception_type((httpx2.TransportError, httpx2.TimeoutException)),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=0.5, max=4),
+        before_sleep=_log_retry,
+        reraise=True,
+    )(fn)
 
 
 def _retry_after_seconds(response: httpx2.Response) -> float | None:
@@ -222,13 +244,7 @@ class BaseClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    @retry(
-        retry=retry_if_exception_type((httpx2.TransportError, httpx2.TimeoutException)),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=0.5, max=4),
-        before_sleep=_log_retry,
-        reraise=True,
-    )
+    @transient_retry
     async def _request(
         self,
         method: str,
@@ -240,12 +256,11 @@ class BaseClient:
     ) -> httpx2.Response:
         """Issue one request and let raw httpx2 transport errors escape, so tenacity retries.
 
-        The retry predicate above matches ``httpx2.TransportError``/``TimeoutException``, so
-        those must reach the decorator *unmapped*. That is exactly why the error mapping
-        lives one layer out in :meth:`_send` and not here: an earlier version mapped a
-        transient timeout to ``IntegrationError`` inside the retried body, the predicate
-        never matched, and the exponential backoff was dead code -- every momentary blip
-        aborted the whole scan on the first attempt with zero retries.
+        The error mapping lives one layer out in :meth:`_send` and not here for the reason
+        :func:`transient_retry` spells out: an earlier version mapped a transient timeout to
+        ``IntegrationError`` inside the retried body, the predicate never matched, and the
+        exponential backoff was dead code -- every momentary blip aborted the whole scan on
+        the first attempt with zero retries.
         """
         return await self._client.request(method, path, params=params, json=json, headers=headers)
 

@@ -41,7 +41,7 @@ verification `VERIFIED`, B2-8's fix changes freshly-built plans too. Every findi
 - [x] **Phase 5 — Snapshot & scan pipeline** (14 findings; B2-24 already fixed in Phase 2) — *done 2026-07-24*
 - [x] **Phase 6 — API routes, runs & query performance** (14 findings) — *done 2026-07-24*
 - [x] **Phase 7 — Security, auth, restore & infra** (18 findings) — *done 2026-07-24*
-- [ ] **Phase 8 — Fairness, Leaving Soon & engine cleanup**
+- [x] **Phase 8 — Fairness, Leaving Soon & engine cleanup** (11 findings) — *done 2026-07-24*
 - [ ] **Phase 9 — Test suite**
 - [ ] **Phase 10 — Merge the review's Agent Rules into CLAUDE.md**
 
@@ -698,7 +698,7 @@ driven by a "server is down" flag, which is what the scenario actually means.
 
 ---
 
-## Phase 8 — Fairness, Leaving Soon & engine cleanup
+## Phase 8 — Fairness, Leaving Soon & engine cleanup  ✅ DONE
 
 **Findings:** PR-3 (medium), R-1 (low-medium), B2-18 (low), B2-19 (low), B2-20 (low),
 B-14 (low), H-2 (low), R-2 (low), I-5 (low), I-6 (low), I-7 (low).
@@ -706,9 +706,94 @@ B-14 (low), H-2 (low), R-2 (low), I-5 (low), I-6 (low), I-7 (low).
 **Theme.** The read-only surfaces (Scales, Leaving Soon) plus the engine's leftover parallel
 implementations.
 
-**Files:** `services/fairness.py`, `services/leaving_soon.py`, `engine/requester.py`,
-`engine/facts_codec.py`, `engine/calibration.py`, `engine/backtest.py`, `clients/public.py`,
-`services/history_sync.py`.
+**What was done**
+
+- **B2-19** — a season-scoped request whose seasons the scan does not hold no longer counts
+  as a request the scan has. `roll_up` skips the per-person accounting when
+  `_scope_to_request` returns empty (mirroring `build_person_detail`, which already did),
+  and `_collect_unmatched` now classifies it — **per request, not per group**, so a
+  co-requester who asked for a season the scan *does* hold keeps their attribution. Took the
+  verifier's preferred option: the guard alone would have made the request vanish from every
+  surface instead of appearing in the not-in-scan panel. Found while writing the test that
+  the defect was worse than reported: the old per-group dedup counted the FIRST request it
+  saw for a person, so a phantom arriving first took the row and the season they had actually
+  watched was never looked at — their watch rate read 0%, not merely a diluted denominator.
+- **B-14** — the per-person dedup key is now `(identity, frozenset(matched candidate ids))`,
+  hoisted out of the per-group loop, so one title reached through both a tmdb group and an
+  imdb group is charged once. **The same defect is in `build_person_detail`** (the drawer
+  listed the title twice and doubled that person's granted and reclaimable figures); the
+  review named only `roll_up`, but rule 72 says a hardening fix lands on every twin in the
+  same change, so both are fixed.
+- **B2-18** — `_fetch_available` and `_enrich_titles` go through `aio.gather_reaped` like
+  every other fan-out in the codebase. Per the verifier, line 771 is not itself a live
+  instance (`_one` catches its own `IntegrationError`), and `_person_quotas` at 714 was
+  already correct; 771 is converted anyway for the cancellation case, and the comment says
+  which it is.
+- **B2-20** — a per-event-loop `_pass_lock()` (weak-keyed on the running loop, the
+  `history_sync._rebuild_lock` shape, for the rule-37 reason) serializes a whole Leaving Soon
+  pass. `run_sync` splits into a thin locked wrapper over `_run_pass`, and **the after-scan
+  fallback takes the same lock** — the verifier's first addition, and for an operator running
+  the shelf off it is the only path that ever announces. The merge-on-write alternative was
+  rejected as the verifier says: it fixes the lost update but not the duplicate Discord post.
+- **PR-3** — `cleanup_sections` checks `leaving_soon_write_allowed` *before* building the
+  client (read-only is the default state, so this leaked one every time a library or the
+  whole feature was switched off unarmed). `run_sync` builds its client **last**, after the
+  four reads it used to sit in front of, so nothing between the construction and the
+  `try/finally` that closes it can raise.
+- **R-1** — `_OBS_FIELDS` is derived from `dataclasses.fields(Facts)` by annotation, and a
+  field that is neither an `Observation` nor one of the two handled by hand raises at import
+  (a build failure, never a scan-time one). Deriving on the write side moves the problem to
+  the read side, so **a key a stored snapshot does not carry now thaws as `Unknown`**, not
+  `Absent` and not a `KeyError`: old snapshots outlive the code that wrote them, and
+  `Unknown` is both the honest reading and the fail-safe one. That also fixes a latent crash:
+  `api/routes.py` reads `facts_json or "{}"`, which used to `KeyError` inside a re-decide.
+  `_observation_fields` takes the dataclass as a parameter so the two outcomes are testable
+  against a stand-in for a future `Facts`.
+- **R-2** — new `engine/dormancy.py` with `reference_instant` + `dormancy_days`, used by
+  **all four** builders: `snapshot`, `season_scan`, `backtest`, `calibration`. The review
+  named only the last two; rule 3 wants the production derivation to be the shared one, and
+  the backtest is a rehearsal of the scan or it is nothing. The float is gone — everything
+  floors, which is the bound that argues for keeping (rule 31).
+- **H-2** — `engine/requester.py` **deleted** (rule 38), with `tests/test_requester_rule.py`.
+  Nothing in production called `evaluate`; Scales was rebuilt to sit on the last scan rather
+  than re-judge requests live, which left the rule with no consumer. `WatchEvidence` moved to
+  `services/fairness.py` beside its one reader, `others_watching` (only `evaluate` used it)
+  dropped, and `plays_by` is now genuinely live — fairness's two raw `plays_by_user.get`
+  call sites use it. `docs/PLAN.md` carried the claim that the Fairness view *wired* the
+  orphaned rule; it never did, and the correction is recorded there.
+- **I-5** — `stream_to` splits into a mapping outer and a retried `_stream_once`, the same
+  `_request`/`_send` discipline (raw `httpx2` errors must reach the predicate unmapped, or
+  the backoff is dead code). The policy itself is now one named `transient_retry` decorator
+  in `clients/base.py` that both paths share, rather than two copies of five numbers.
+- **I-6** — `_plays` returns `(user_id, when)`. The third element was `str(user_id)`
+  documented as a friendly name and read by nobody; `run` resolves names from the Tautulli
+  user list.
+- **I-7** — the incremental-sync comment says two days, and cites `INCREMENTAL_OVERLAP`
+  rather than restating the number; the module docstring's "the overlap day" is now "the
+  overlap window".
+
+**Tests.** Two new files, 35 tests. `tests/test_scales_and_shelf_upkeep.py` (17) covers
+B2-19, B-14, B2-20 and PR-3; `tests/test_engine_derivations.py` (18) covers R-1, R-2, I-5,
+I-6 and H-2. Every test was **run against the un-fixed code** and the discriminating ones
+confirmed failing there (5 in fairness, 1 in the announce race, 2 in the client leak, 6 in
+the engine file); the handful that pass both ways are labeled in-file as guard-rails rather
+than left to look like proofs.
+
+One test needed real work: the announce race would not reproduce. Stubbed out, one pass
+reliably ran read-post-write to completion before the other got a turn, so the obvious test
+passed with the lock removed and pinned nothing. It now uses a bounded `_Rendezvous` at the
+announced-set read — the first pass waits for a second to reach the same point — which
+overlaps them deterministically without the lock and simply expires (0.3s) with it.
+
+**Gates.** `ruff format`/`ruff check` clean; `mypy src/reaper` clean (96 files);
+**pytest 2257 passed in 94s** (2236 before this phase: −14 requester-rule tests, +35 new);
+`alembic upgrade head` + `alembic check` clean, no schema change needed; frontend `lint`
+clean, `test` 268 passed (30 files), `build` clean.
+
+**Files:** `services/fairness.py`, `services/leaving_soon.py`, `engine/requester.py`
+(deleted), `engine/dormancy.py` (new), `engine/facts_codec.py`, `engine/calibration.py`,
+`engine/backtest.py`, `clients/base.py`, `clients/public.py`, `services/history_sync.py`,
+`services/snapshot.py`, `services/season_scan.py`, `docs/PLAN.md`.
 
 ---
 

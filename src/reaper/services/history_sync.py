@@ -24,7 +24,7 @@ Two facts about Tautulli's API shape this, both verified live and neither obviou
   correctness is restored within a day.
 
 Rows are written with ``INSERT OR REPLACE`` keyed on the stable ``row_id``, so re-fetching
-the overlap day (or a whole full sweep) is idempotent and never duplicates.
+the overlap window (or a whole full sweep) is idempotent and never duplicates.
 
 ## The horizon
 
@@ -362,9 +362,10 @@ async def sync(
     # anything. If the source shrank, we stop rather than judge against changed evidence.
     await _check_regression(engine, client)
 
-    # Incremental only when we already hold history AND know its newest instant. Filter
-    # by date with a day of overlap: `after` is date-granular, so re-asking for our
-    # newest day guarantees no gap, and INSERT OR REPLACE makes the overlap free.
+    # Incremental only when we already hold history AND know its newest instant. Filter by
+    # date with INCREMENTAL_OVERLAP (two days) of overlap: `after` is date-granular and
+    # Tautulli's exact boundary semantics are unverified, so re-asking for our newest days
+    # guarantees no gap, and INSERT OR REPLACE makes the overlap free.
     after: str | None = None
     if not full and before.rows and before.latest is not None:
         after = (before.latest - INCREMENTAL_OVERLAP).strftime("%Y-%m-%d")
