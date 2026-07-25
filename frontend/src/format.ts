@@ -90,29 +90,57 @@ const SPARE_SKEW_SLACK_MS = 3_600_000;
 
 /** How a timed hand-spare's remaining life reads on a card. `iso` is when the spare stops
  *  keeping the item; null means it never does (kept forever). While time remains `days` is at
- *  least 1, and reaches 0 only once expired. The clock is only truly realized at the next scan,
- *  so a past expiry reads "expired" here, the item still shown as spared until that scan
- *  re-judges it (fail toward keeping). */
+ *  least 1, and reaches 0 only once expired.
+ *
+ *  Three states, and each field is filled for exactly the ones that may print it, so a surface
+ *  can never render a string belonging to a state it is not in:
+ *
+ *  | state    | `short` | `phrase`      | `until`           | `note`                     |
+ *  | -------- | ------- | ------------- | ----------------- | -------------------------- |
+ *  | forever  | `""`    | `""`          | `""`              | `""`                       |
+ *  | counting | `"27d"` | `27 days left`| `Kept until Aug 18`| `""`                      |
+ *  | expired  | `"0d"`  | `expired`     | `""`              | `Your spare expired on ...`|
+ *
+ *  The expiry is only realized by a SCAN (`whitelist.purge_expired_spares`), so past the date
+ *  the item really is still kept -- the planner, the ledger and the executor all go on reading
+ *  every spare on file. That is why `expired` is a state the UI draws rather than a state it
+ *  hides: `note` is the sentence that says so, and `until` empties out precisely so no caller
+ *  can promise "Kept until" a day that has already gone by. */
 export function spareRemaining(iso: string | null): {
   forever: boolean;
   days: number;
   expired: boolean;
-  /** The compact count the resting clock mark and the Spare button wear: "27d". Empty for a
-   *  forever spare, and empty once the count has run down -- see `phrase`. */
+  /** The compact count the resting mark and the Spare button wear: "27d", "0d" once expired.
+   *  Empty for a forever spare, which counts nothing. */
   short: string;
-  /** The chip's clause: "27 days left", "1 day left". Empty for a forever spare, and empty once
-   *  the count has run down: NO surface names that gap. The item is genuinely still kept there
-   *  (the queue, planner and executor all read every spare on file, expired or not -- only a
-   *  scan realizes the expiry), so the button and chip drop the countdown and rest on the plain
-   *  "Spared" rather than teaching the operator a word for a state that clears itself. */
+  /** The chip's clause: "27 days left", "1 day left", "expired". Empty for a forever spare,
+   *  whose chip claims the keep outright instead ("will be kept"). */
   phrase: string;
-  /** "Kept until Aug 18", for a tooltip or a fuller line. Empty for a forever spare. */
+  /** "Kept until Aug 18", for a tooltip or a fuller line. Empty for a forever spare, and empty
+   *  once expired -- past the date it would be a promise about a day already gone. The expired
+   *  state says its piece through `note`. */
   until: string;
+  /** The whole sentence an expired spare needs, for a tooltip or the why panel: what happened,
+   *  and that the file is still kept until a scan judges it again. Empty in every other state.
+   *  One derivation, so the button, the chip and the panel cannot word it three ways (rule
+   *  104). */
+  note: string;
 } {
-  if (!iso) return { forever: true, days: 0, expired: false, short: "", phrase: "", until: "" };
+  if (!iso) {
+    return { forever: true, days: 0, expired: false, short: "", phrase: "", until: "", note: "" };
+  }
   const ms = new Date(iso).getTime() - Date.now();
-  const until = `Kept until ${date(iso)}`;
-  if (ms <= 0) return { forever: false, days: 0, expired: true, short: "", phrase: "", until };
+  if (ms <= 0) {
+    return {
+      forever: false,
+      days: 0,
+      expired: true,
+      short: "0d",
+      phrase: "expired",
+      until: "",
+      note: `Your spare expired on ${date(iso)}. Still kept until the next scan judges it again`,
+    };
+  }
   // Round up so a partial day still shows, but only after shaving the small clock-skew slack --
   // otherwise a fresh N-day spare reads N+1. Floor at 1: while time remains it is never "0 days".
   const days = Math.max(1, Math.ceil((ms - SPARE_SKEW_SLACK_MS) / 86_400_000));
@@ -122,6 +150,7 @@ export function spareRemaining(iso: string | null): {
     expired: false,
     short: `${days}d`,
     phrase: days === 1 ? "1 day left" : `${days} days left`,
-    until,
+    until: `Kept until ${date(iso)}`,
+    note: "",
   };
 }

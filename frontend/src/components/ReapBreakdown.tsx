@@ -9,7 +9,7 @@
 // is the Review queue's job, and this links there rather than growing a second, weaker copy
 // of it. Deletes nothing; the plan is still built, dry-run, and executed below.
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, type SignalCount } from "../api";
 import { bytes, count } from "../format";
 import { useHoldsBackUnmeasured } from "./queueSettings";
@@ -79,6 +79,10 @@ export function ReapBreakdown({
   // delete count here, which is the unsafe direction.
   const allowance = useHoldsBackUnmeasured();
   const holdsBackUnmeasured = allowance.holdsBack;
+  // The one action the expired-spares notice below offers: a scan is what realizes a spare's
+  // clock, so it is the only thing that hands those titles back to policy. Declared up here
+  // with the other hooks -- the early returns below are what makes that necessary.
+  const startScan = useMutation({ mutationFn: () => api.startScan() });
 
   if (isPending) return <p className="muted">Loading…</p>;
   // An unreadable breakdown must never look like "nothing to reap": say we couldn't look,
@@ -199,6 +203,34 @@ export function ReapBreakdown({
         </>
       )}
 
+      {/* Spares whose clock has passed. They are counted in "You spared by hand" above and are
+          absent from the total, with nothing else on the page to say why -- a spare's expiry is
+          realized only by a SCAN (`whitelist.purge_expired_spares`), so until one runs the
+          planner, this ledger and the executor all still read it and the file is genuinely kept.
+          Outside the reapCount branch on purpose: when every condemned title was spared and
+          those spares have since expired, the empty state is exactly when this matters most.
+          Warn tone with its own action, like the page's stale-plan notice, because the operator
+          has to do something (scan) for these to move -- not the informational `.rb-line` the
+          held reaps use, which only points at Review. */}
+      {data.spares_expired > 0 && (
+        <p className="notice notice-warn">
+          <strong>
+            {plural(data.spares_expired, "spare has", "spares have")} expired.
+          </strong>{" "}
+          {data.spares_expired === 1 ? "That title is" : "Those titles are"} still being kept, so
+          this reap won't remove {data.spares_expired === 1 ? "it" : "them"}. A new scan judges{" "}
+          {data.spares_expired === 1 ? "it" : "them"} again.{" "}
+          <button className="link" onClick={() => startScan.mutate()} disabled={startScan.isPending}>
+            {startScan.isPending ? "Starting…" : "Scan now"}
+          </button>
+          {startScan.isError && (
+            <>
+              {" "}
+              <span className="error">The scan didn't start. Try again.</span>
+            </>
+          )}
+        </p>
+      )}
       {data.hand_reaped_held > 0 && (
         <div className="rb-line">
           {/* "this reap", not "a scan": a scan never removes anything, and the Jobs page

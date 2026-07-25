@@ -26,6 +26,7 @@ async def get_reap_breakdown(request: Request) -> ReapBreakdownOut:
         policy_condemned_bytes=report.policy_condemned_bytes,
         policy_condemned_unknown=report.policy_condemned_unknown,
         hand_spared=report.hand_spared,
+        spares_expired=report.spares_expired,
         hand_reaped=report.hand_reaped,
         hand_reaped_bytes=report.hand_reaped_bytes,
         hand_reaped_unknown=report.hand_reaped_unknown,

@@ -1437,6 +1437,14 @@ tbody tr.selected {
   color: var(--condemn);
   border: 1px dashed var(--condemn);
 }
+/* The keep-direction twin of .score-refused: a hand spare whose clock has passed. Green,
+   because the item is still kept until a scan re-judges it; dashed, because the decision
+   keeping it has expired. Routed through handFate like every other fate-bearing cell. */
+.score-spare-expired {
+  background: var(--protect-soft);
+  color: var(--protect);
+  border: 1px dashed var(--protect);
+}
 
 /* ---- why panel ----------------------------------------------------------- */
 
@@ -4754,6 +4762,17 @@ button.sm {
   background: var(--protect);
   color: var(--protect-soft);
 }
+/* A hand spare whose clock has PASSED. Dashed green on the soft fill, the keep-direction twin
+   of .chip-reap-refused: the decision was yours, and its effect is pending a scan. It is
+   deliberately NOT the solid .chip-hand-spare (the spare has run out, and solid means "you
+   chose this and it holds") and deliberately NOT a scan-verdict chip either -- only a scan
+   realizes a spare's expiry, so until then the planner, the ledger and the executor all still
+   read it and the file really is kept. See handFate's "spare-expired". */
+.chip-spare-expired {
+  background: var(--protect-soft);
+  color: var(--protect);
+  border: 1px dashed var(--protect);
+}
 .chip-reap-refused {
   background: var(--condemn-soft);
   color: var(--condemn);
@@ -4875,6 +4894,12 @@ button.sm {
   color: var(--protect-soft);
   background: var(--protect);
 }
+/* The status-chip family's twin of .chip-spare-expired -- same reasoning, same dashed green. */
+.status-spare-expired {
+  color: var(--protect);
+  background: var(--protect-soft);
+  border: 1px dashed var(--protect);
+}
 /* A reap the engine can't honor yet: dashed red, mirroring .chip-reap-refused and the
    dashed .score-refused / .strip-ov-reap-refused. It is no longer .status-look -- amber now
    means only "left for you to decide", and a held reap is a decision you made, not one left
@@ -4988,6 +5013,16 @@ button.sm {
   background: var(--protect);
   box-shadow: none;
 }
+/* A spare whose clock has passed: still green (the file is still kept -- only a scan realizes
+   the expiry), but hollow and dashed, because the decision keeping it has run out. Declared
+   after the scan-verdict bases (.strip-abstain and friends) so it wins the square's base color,
+   exactly as .strip-ov-reap-refused does. */
+.strip-ov-spare-expired {
+  color: var(--protect);
+  background: var(--protect-soft);
+  border: 1.5px dashed var(--protect);
+  box-shadow: none;
+}
 .strip-ov-reap {
   color: var(--condemn-soft);
   background: var(--condemn);
@@ -5070,6 +5105,12 @@ button.sm {
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1;
+}
+/* A spare whose clock has passed rests as the DASHED dial (ClockGlyph's `dashed`) plus a real
+   "0d", held back a touch so it reads as spent beside a live countdown's full-strength clock.
+   Same green: the file is still kept until a scan realizes the expiry. */
+.override-mark.expired {
+  opacity: 0.8;
 }
 .override-mark .scythe {
   width: 16px;
@@ -5163,6 +5204,32 @@ button.sm {
   border-color: var(--condemn);
   color: var(--condemn);
   background: var(--condemn-soft);
+}
+/* A spare whose clock has passed. Green because the file is genuinely kept (only a scan
+   realizes the expiry); dashed and hollow because the decision keeping it has run out -- the
+   same thing the held reap's dashed red says in the other direction.
+
+   It has to beat `.ov-spare.active`, which the button still carries: the item IS still spared,
+   `aria-pressed` is still true, and clicking still clears it. It wins on SPECIFICITY, not
+   source order -- `.ov-spare.active.expired` is three classes to that rule's two, and the hover
+   pair below is five to its four -- so these may sit either side of it and still hold. The bare
+   `.ov-spare.expired` is the belt for a future caller that sets `expired` without `active`. */
+.ov-spare.expired,
+.ov-spare.active.expired {
+  background: var(--protect-soft);
+  border-color: var(--protect);
+  border-style: dashed;
+  color: var(--protect);
+}
+.ov-spare.active.expired:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--protect) 18%, var(--surface));
+  border-color: var(--protect);
+}
+/* The split's seam: the caret's divider goes dashed with the rest, so the pair reads as one
+   expired control rather than a dashed half joined to a solid one. */
+.ov-split .split-caret.expired {
+  border-left-style: dashed;
+  border-left-color: color-mix(in srgb, var(--protect) 55%, transparent);
 }
 /* A made decision reads at a glance: the solid hand-decision chip, green for spare, red for
    reap -- the same solid-means-yours language the override chips use. */

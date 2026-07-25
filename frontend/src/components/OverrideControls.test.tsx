@@ -92,24 +92,44 @@ describe("the Spare button, spared", () => {
   });
 });
 
-describe("a spare whose count has run down", () => {
-  // It is still kept: the queue, planner and executor read every spare on file, and only a scan
-  // realizes the expiry. So the button keeps saying Spared -- it just has nothing left to count,
-  // and gets no word of its own for the gap. Deleting the empty-phrase branch in `spareRemaining`
-  // would surface "expired" here, which is the state this pins shut.
-  it("rests on the plain word, with no count and no word for the gap", () => {
-    for (const roomy of [true, false]) {
-      const { container, unmount } = draw({
-        override: "spare",
-        spareExpiresAt: inDays(-3),
-        roomy,
-      });
-      const btn = screen.getByRole("button", { name: "Spared" });
-      expect(btn.textContent).not.toMatch(/\d/);
-      expect(btn.textContent?.toLowerCase()).not.toContain("expired");
-      // Not ∞ either: it was a timed spare, and saying "forever" would be the other lie.
-      expect(forever(container)).toBe(false);
-      unmount();
-    }
+describe("a spare whose clock has passed", () => {
+  // Its own state, not a variant of either neighbor. The item is genuinely still kept -- the
+  // planner, the ledger and the executor all read every spare on file, and only a scan realizes
+  // the expiry -- so the button must not go dark as though policy had it back. But the decision
+  // has run out, so it must not wear the solid fill that means "you chose this and it holds".
+  it("says so, and wears the dashed fill rather than the solid one", () => {
+    const { container } = draw({ override: "spare", spareExpiresAt: inDays(-3) });
+    const btn = screen.getByRole("button", { name: "Spared, expired" });
+    expect(btn.className).toContain("expired");
+    // Still `active` and still aria-pressed: the item IS spared, and clicking still clears it.
+    expect(btn.className).toContain("active");
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+    // Not ∞ either: it was a timed spare, and saying "forever" would be the other lie.
+    expect(forever(container)).toBe(false);
+  });
+
+  it("abbreviates on the fixed track and spells it out in the footer", () => {
+    const narrow = draw({ override: "spare", spareExpiresAt: inDays(-3) });
+    expect(screen.getByRole("button", { name: "Spared, expired" }).textContent).toContain(
+      "Expired",
+    );
+    narrow.unmount();
+    // The footer has the room, so it takes the fuller label -- and needs no aria-label, because
+    // the visible text already names the state.
+    draw({ override: "spare", spareExpiresAt: inDays(-3), roomy: true });
+    const wide = screen.getByRole("button", { name: "Spare expired" });
+    expect(wide.getAttribute("aria-label")).toBeNull();
+  });
+
+  it("tells the operator the file is still kept, and never dates it in the past tense", () => {
+    // The whole point of drawing this state: an expired spare that read as a plain "Spared"
+    // left no way to know it had run out, and a "Kept until <a day last week>" tooltip was a
+    // promise about a day already gone.
+    draw({ override: "spare", spareExpiresAt: inDays(-3), roomy: true });
+    const title = screen.getByRole("button", { name: "Spare expired" }).getAttribute("title") ?? "";
+    expect(title).not.toMatch(/^Kept until/);
+    expect(title).toMatch(
+      /^Your spare expired on .+\. Still kept until the next scan judges it again$/,
+    );
   });
 });

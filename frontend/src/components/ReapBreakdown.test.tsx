@@ -35,6 +35,7 @@ function full(overrides: Partial<Breakdown> = {}): Breakdown {
     policy_condemned_bytes: 4400 * GB,
     policy_condemned_unknown: 0,
     hand_spared: 12,
+    spares_expired: 0,
     hand_reaped: 38,
     hand_reaped_bytes: 300 * GB,
     hand_reaped_unknown: 0,
@@ -165,6 +166,44 @@ describe("the ledger", () => {
     // operation that is actually holding them -- this reap, never "a scan" (U-10).
     expect(await screen.findByText(/2 reaps you marked are on hold/)).toBeInTheDocument();
     expect(screen.queryByText(/a scan won't remove/)).not.toBeInTheDocument();
+  });
+
+  it("says when expired spares are keeping titles out of the reap, and offers the scan", async () => {
+    // Those titles are counted in "You spared by hand" and absent from the total, and until
+    // this line existed nothing on the page said why. A spare's clock is realized only by a
+    // scan, so a scan is the remedy offered -- and the copy must not claim the reap will take
+    // them, because it will not.
+    apiMock.reapBreakdown.mockResolvedValue(full({ hand_spared: 12, spares_expired: 3 }));
+    renderBreakdown();
+    const notice = (await screen.findByText(/3 spares have expired/)).closest("p")!;
+    expect(notice).toHaveClass("notice-warn");
+    expect(notice.textContent).toContain("still being kept");
+    expect(notice.textContent).toContain("A new scan judges them again");
+    expect(screen.getByRole("button", { name: "Scan now" })).toBeInTheDocument();
+  });
+
+  it("says it in the singular for one, and stays silent at zero", async () => {
+    apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 1 }));
+    const { unmount } = renderBreakdown();
+    expect(await screen.findByText(/1 spare has expired/)).toBeInTheDocument();
+    unmount();
+
+    apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 0 }));
+    renderBreakdown();
+    await screen.findByText("Will be reaped");
+    expect(screen.queryByText(/expired/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Scan now" })).not.toBeInTheDocument();
+  });
+
+  it("shows the notice even when the reap would remove nothing", async () => {
+    // The case that matters most: every condemned title was spared, and those spares have
+    // since expired. The ledger collapses to its empty state, so if this line lived inside it
+    // the operator would be told nothing at all.
+    apiMock.reapBreakdown.mockResolvedValue(
+      full({ will_reap: 0, will_reap_bytes: 0, hand_spared: 543, spares_expired: 4 }),
+    );
+    renderBreakdown();
+    expect(await screen.findByText(/4 spares have expired/)).toBeInTheDocument();
   });
 });
 

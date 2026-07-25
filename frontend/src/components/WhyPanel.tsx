@@ -283,11 +283,16 @@ function heldReapNote(item: CandidateDetail): string {
   return "You asked to remove this, but Reaper can't confirm it's safe to remove yet, so it's kept for now.";
 }
 
-/** What a hand spare says: kept by the owner, forever or on a countdown. */
+/** What a hand spare says: kept by the owner, forever, on a countdown, or expired.
+ *
+ *  The expired arm is the one that has to be careful. The item really is still kept -- only a
+ *  scan realizes a spare's clock -- so this must not read as "it will be removed now". It says
+ *  what happened and what is still true, in the same words the button's tooltip uses, from the
+ *  one derivation (`spareRemaining().note`, rule 104). */
 function spareNote(item: CandidateDetail): string {
   const remaining = spareRemaining(item.spare_expires_at);
   if (remaining.forever) return "You chose to keep this, so it won't be removed.";
-  if (remaining.expired) return "Your spare has run out, so Reaper judges this again on the next scan.";
+  if (remaining.expired) return `${remaining.note}.`;
   return `You chose to keep this. ${remaining.phrase}, then Reaper judges it again.`;
 }
 

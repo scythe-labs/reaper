@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,6 +49,15 @@ class ReapBreakdown:
     policy_condemned_bytes: int
     policy_condemned_unknown: int
     hand_spared: int
+    spares_expired: int
+    """The share of ``hand_spared`` whose clock has already passed -- spares that are keeping a
+    condemned title out of this plan even though the operator's decision has run out.
+
+    A spare's expiry is realized ONLY by a scan (``whitelist.purge_expired_spares``), so between
+    the clock passing and the next scan the planner, this ledger and the executor all still read
+    it and the file is genuinely kept. Reported so the Reap page can say why those titles are
+    missing and that a scan releases them, instead of leaving them silently absent. Counted with
+    the same ``<= now`` boundary the purge uses, so this is exactly what a scan would let go."""
     hand_reaped: int
     hand_reaped_bytes: int
     hand_reaped_unknown: int
@@ -77,6 +87,7 @@ def _empty() -> ReapBreakdown:
         policy_condemned_bytes=0,
         policy_condemned_unknown=0,
         hand_spared=0,
+        spares_expired=0,
         hand_reaped=0,
         hand_reaped_bytes=0,
         hand_reaped_unknown=0,
@@ -158,8 +169,23 @@ async def reap_breakdown(session: AsyncSession) -> ReapBreakdown:
     policy_unknown = sum(1 for c in condemned_rows if c.size_bytes is None)
 
     # A hand spare removes a policy-condemned row from the reap set.
-    hand_spared = sum(
-        1 for c in condemned_rows if whitelist.effective_override(c.media_key, decisions) == "spare"
+    spared_rows = [
+        c for c in condemned_rows if whitelist.effective_override(c.media_key, decisions) == "spare"
+    ]
+    hand_spared = len(spared_rows)
+
+    # ...and of those, the ones whose clock has already passed. Counted over the SPARED
+    # condemned rows only, not every expired whitelist row, because the Reap page's claim is
+    # "these are not in this plan" -- true only of a title the policy condemned and a spare is
+    # holding back. The expiry read is the effective one (own key, else the show's), matching
+    # the spare that is actually doing the keeping.
+    now = datetime.now(UTC)
+    expiries = await whitelist.spare_expiries(session)
+    spares_expired = sum(
+        1
+        for c in spared_rows
+        if (exp := whitelist.effective_spare_expiry(c.media_key, decisions, expiries)) is not None
+        and exp <= now
     )
 
     will_reap = len(effective)
@@ -206,6 +232,7 @@ async def reap_breakdown(session: AsyncSession) -> ReapBreakdown:
         policy_condemned_bytes=policy_bytes,
         policy_condemned_unknown=policy_unknown,
         hand_spared=hand_spared,
+        spares_expired=spares_expired,
         hand_reaped=hand_reaped,
         hand_reaped_bytes=hand_reaped_bytes,
         hand_reaped_unknown=hand_reaped_unknown,

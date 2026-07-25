@@ -11,6 +11,7 @@
 // group's mark all carry the same three fields, and none of them needs to be the same type to
 // ask these questions.
 
+import { spareRemaining } from "../format";
 import type { Override, Verdict } from "../api";
 
 /** Which color a score badge or strip square wears once a hand decision is in play.
@@ -20,14 +21,34 @@ import type { Override, Verdict } from "../api";
  *  still held. Amber is no longer used here at all -- it means only "left for you to decide"
  *  (the abstain `status-look` chip). Anything untouched keeps its scan verdict. Shared by the
  *  score badge and the season strip so the two can never disagree with each other or with
- *  the row's chip. */
-export type Fate = Verdict | "reap" | "spare" | "refused";
+ *  the row's chip.
+ *
+ *  `"spare-expired"` is the fourth: a hand spare whose clock has passed. It is DASHED GREEN,
+ *  and it is neither of the two states it sits between. Not solid green -- the operator's
+ *  decision has run out, and solid means "you chose this and it holds". Not the scan verdict
+ *  either -- the item is genuinely still kept, because only a scan realizes a spare's expiry
+ *  (`whitelist.purge_expired_spares`), so until then the planner, the ledger and the executor
+ *  all still read that spare. Painting it by verdict would tell the operator the item is back
+ *  on the block when nothing will reap it. The dashed treatment is the one this app already
+ *  uses for a decision whose effect is pending a scan, worn today by the held reap. */
+export type Fate = Verdict | "reap" | "spare" | "spare-expired" | "refused";
 export function handFate(item: {
   verdict: Verdict;
   override: Override | null;
   override_effective: boolean | null;
+  /** When the spare in effect stops keeping the item (ISO), null for a forever spare.
+   *
+   *  Optional for the sake of `isCondemned`, whose yes/no answer is the same for both spare
+   *  states, so threading an expiry through it would be noise. Any caller that COLORS a cell
+   *  must pass it: omitted, an expired spare reads as `"spare"` and paints the solid "you chose
+   *  this" green, which is the one thing it is not. That is the pre-expiry behavior and the
+   *  keep direction, so it fails safe rather than loud -- which is exactly why a new
+   *  fate-bearing surface has to be checked against this line rather than trusted to error. */
+  spare_expires_at?: string | null;
 }): Fate {
-  if (item.override === "spare") return "spare";
+  if (item.override === "spare") {
+    return spareRemaining(item.spare_expires_at ?? null).expired ? "spare-expired" : "spare";
+  }
   if (item.override === "reap") return item.override_effective === false ? "refused" : "reap";
   return item.verdict;
 }

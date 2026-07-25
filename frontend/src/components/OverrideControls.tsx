@@ -112,19 +112,28 @@ export function OverrideControls({
   // is in force on this item -- its own glyph, its own count -- because the default stops
   // mattering the moment there is a real answer. Sparing for 90 days under a Forever default
   // used to leave the button reading "∞ Spared", wrong on both counts.
+  //
+  // Three spared states, never two. An EXPIRED spare is its own: the item is genuinely still
+  // kept (the planner, the ledger and the executor all read every spare on file -- only a scan
+  // realizes the expiry), so the button must not go dark as though policy had it back. But it
+  // is no longer a live decision either, so it must not wear the solid fill that means "you
+  // chose this and it holds". It says so instead, and the dashed `.expired` fill below carries
+  // the rest.
   const spared = override === "spare";
   const remaining = spareRemaining(spareExpiresAt);
-  // A run-down spare has nothing left to count, and gets no word of its own: the item really is
-  // still kept (every consumer reads all spares on file; only a scan realizes the expiry), so
-  // the button rests on the plain "Spared" and the next scan hands it back to policy.
   const counting = spared && !remaining.forever && !remaining.expired;
+  const expired = spared && remaining.expired;
   const spareLabel = !spared
     ? "Spare"
-    : counting
+    : expired
       ? roomy
-        ? `Spared ${remaining.short}`
-        : remaining.short
-      : "Spared";
+        ? "Spare expired"
+        : "Expired"
+      : counting
+        ? roomy
+          ? `Spared ${remaining.short}`
+          : remaining.short
+        : "Spared";
 
   const clickSpare = (e: ReactMouseEvent) => {
     e.stopPropagation();
@@ -150,19 +159,31 @@ export function OverrideControls({
       <span className="ov-split">
         <button
           type="button"
-          className={`ov-btn ov-spare split-main ${override === "spare" ? "active" : ""}`}
+          className={`ov-btn ov-spare split-main ${override === "spare" ? "active" : ""} ${
+            expired ? "expired" : ""
+          }`}
           disabled={pending}
           aria-pressed={override === "spare"}
-          // On the narrow surfaces the visible label is the bare count, so name the button in
-          // full for a screen reader. The visible "87d" stays a substring of that name, which
-          // is what WCAG 2.5.3 (Label in Name) asks for.
-          aria-label={counting && !roomy ? `Spared ${remaining.short} left` : undefined}
+          // On the narrow surfaces the visible label is abbreviated to fit the fixed track, so
+          // name the button in full for a screen reader. The visible text ("87d", "Expired")
+          // stays a substring of that name, which is what WCAG 2.5.3 (Label in Name) asks for.
+          aria-label={
+            roomy
+              ? undefined
+              : expired
+                ? "Spared, expired"
+                : counting
+                  ? `Spared ${remaining.short} left`
+                  : undefined
+          }
           onClick={clickSpare}
           title={
             spared
-              ? counting
-                ? `${remaining.until}. Click to let Reaper judge it again`
-                : "Spared. Click to let Reaper judge it again"
+              ? expired
+                ? remaining.note
+                : counting
+                  ? `${remaining.until}. Click to let Reaper judge it again`
+                  : "Spared. Click to let Reaper judge it again"
               : defaultDays > 0
                 ? `Spare for ${defaultDays} days. Use the arrow for another length`
                 : "Spare forever. Use the arrow for a set time"
@@ -176,7 +197,11 @@ export function OverrideControls({
         <button
           ref={caretRef}
           type="button"
-          className={`ov-btn ov-spare split-caret ${override === "spare" ? "active" : ""}`}
+          // The caret takes `.expired` too, so the pair reads as one dashed control rather than
+          // a dashed half joined to a solid one.
+          className={`ov-btn ov-spare split-caret ${override === "spare" ? "active" : ""} ${
+            expired ? "expired" : ""
+          }`}
           disabled={pending}
           aria-haspopup="menu"
           aria-expanded={menuAt !== null}
@@ -455,7 +480,9 @@ export function OverrideMark({
 }: {
   override: Override | null;
   /** For a spare, when it stops keeping the item (ISO), or null for forever. A forever spare
-   *  rests as ∞; a timed one rests as the clock plus its days left ("27d"). */
+   *  rests as ∞; a timed one rests as the clock plus its days left ("27d"); an expired one
+   *  rests as the DASHED clock and "0d" -- still keeping the file (only a scan realizes the
+   *  clock), but no longer a live decision, the same distinction the button and chip draw. */
   spareExpiresAt?: string | null;
 }) {
   if (!override) return null;
@@ -468,12 +495,12 @@ export function OverrideMark({
   }
   const remaining = spareRemaining(spareExpiresAt);
   return (
-    <span className="override-mark spare" aria-hidden="true">
+    <span className={`override-mark spare ${remaining.expired ? "expired" : ""}`} aria-hidden="true">
       {remaining.forever ? (
         <span className="mk-inf">∞</span>
       ) : (
         <>
-          <ClockGlyph />
+          <ClockGlyph dashed={remaining.expired} />
           <span className="mk-count">{remaining.short}</span>
         </>
       )}

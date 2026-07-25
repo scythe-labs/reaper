@@ -115,14 +115,25 @@ describe("spareRemaining", () => {
     expect(r.days).toBe(0);
   });
 
-  it("gives a run-down spare no count and no clause, so no surface names the gap", () => {
-    // The item is still kept until a scan realizes the expiry, so the button and chip keep
-    // saying "Spared" -- they just have nothing left to count. An empty phrase is what makes
-    // them drop the clause instead of printing a word for it.
+  it("names the expired state, and empties the one field that would lie about it", () => {
+    // The item is still kept until a scan realizes the expiry, so every surface goes on saying
+    // it is spared -- it just says WHICH spare. `until` is the field that cannot survive here:
+    // "Kept until Jul 22" past Jul 22 is a promise about a day already gone, so it empties and
+    // `note` carries the whole sentence instead.
     const r = spareRemaining(inDays(-3));
-    expect(r.short).toBe("");
-    expect(r.phrase).toBe("");
-    // The date it ran out still reaches the tooltip.
-    expect(r.until).not.toBe("");
+    expect(r.short).toBe("0d");
+    expect(r.phrase).toBe("expired");
+    expect(r.until).toBe("");
+    expect(r.note).toMatch(
+      /^Your spare expired on .+\. Still kept until the next scan judges it again$/,
+    );
+  });
+
+  it("leaves `note` to the expired state alone", () => {
+    // It is the sentence that explains a spare which has stopped counting but is still keeping
+    // the file. A live or forever spare has nothing to explain, and a surface that prints
+    // `note` unconditionally must render nothing for them.
+    expect(spareRemaining(null).note).toBe("");
+    expect(spareRemaining(inDays(27)).note).toBe("");
   });
 });

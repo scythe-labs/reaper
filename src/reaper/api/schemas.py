@@ -186,6 +186,12 @@ class GroupSeasonMarkOut(BaseModel):
     """The season's size on disk, so the card can state whole-show totals without a
     second fetch. None when nothing would report one, which is not zero: the strip still
     shows the square, and the show's totals leave it out and say so."""
+    spare_expires_at: str | None = None
+    """For a ``"spare"`` override: when it stops keeping this season, ISO-8601, or None for
+    a forever spare. The strip square colors by the item's fate (rule 49), and a spare whose
+    clock has PASSED is a fate of its own -- still keeping the file until a scan realizes the
+    expiry, but no longer a live decision, so it wears the dashed green rather than the solid
+    one. None when there is no spare override."""
 
 
 class CandidateOut(BaseModel):
@@ -799,6 +805,11 @@ class ReapBreakdownOut(BaseModel):
     policy_condemned_bytes: int
     policy_condemned_unknown: int
     hand_spared: int
+    spares_expired: int = 0
+    """The share of ``hand_spared`` whose clock has already passed. Those titles are still being
+    kept -- only a scan realizes a spare's expiry -- so they are absent from this plan with
+    nothing on the page to explain it. The Reap page shows one line when nonzero, saying a scan
+    judges them again."""
     hand_reaped: int
     hand_reaped_bytes: int
     hand_reaped_unknown: int

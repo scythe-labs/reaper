@@ -54,6 +54,11 @@ export interface GroupSeasonMark {
   /** The season's size on disk, so the card can state whole-show totals without a
    *  second fetch. Null when nothing would report one, which is not zero. */
   size_bytes: number | null;
+  /** For a "spare" override: when it stops keeping this season (ISO), or null for a forever
+   *  spare. The square colors by the item's fate (rule 49), and a spare whose clock has passed
+   *  is a fate of its own -- still keeping the file until a scan realizes the expiry, so still
+   *  green, but dashed rather than solid because it is no longer a live decision. */
+  spare_expires_at: string | null;
 }
 
 export interface Candidate {
@@ -649,6 +654,10 @@ export interface ReapBreakdown {
   policy_condemned_bytes: number;
   policy_condemned_unknown: number;
   hand_spared: number;
+  /** The share of `hand_spared` whose clock has already passed. Those titles are still being
+   *  kept -- only a scan realizes a spare's expiry -- so they are absent from the plan with
+   *  nothing else on the page to explain it. One notice when nonzero. */
+  spares_expired: number;
   hand_reaped: number;
   hand_reaped_bytes: number;
   hand_reaped_unknown: number;

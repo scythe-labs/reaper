@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -156,6 +157,110 @@ async def test_a_hand_spare_leaves_the_net(session: AsyncSession) -> None:
     assert report.policy_condemned == 2
     assert report.hand_spared == 1
     assert report.will_reap == 1
+
+
+async def test_an_expired_spare_still_keeps_the_title_and_is_counted_as_expired(
+    session: AsyncSession,
+) -> None:
+    """A spare whose clock has passed goes on keeping the file until a SCAN realizes it.
+
+    That is the whole reason the count exists. ``purge_expired_spares`` runs only inside the
+    scan transaction, so between the clock passing and the next scan this ledger, the planner
+    and the executor all still read the spare -- the title is genuinely kept and genuinely
+    absent from the reap, with nothing else on the page to explain why. The count is what lets
+    the Reap page say so.
+    """
+    snap = await _snapshot(session)
+    await _add(session, snapshot_id=snap, media_key="radarr:1:1")
+    await _add(session, snapshot_id=snap, media_key="radarr:1:2")
+    # One spare set 30 days ago for 10 days: expired 20 days back.
+    await whitelist.set_override(
+        session,
+        media_key="radarr:1:1",
+        title="x",
+        decision="spare",
+        note=None,
+        spare_days=10,
+        now=NOW - timedelta(days=30),
+    )
+    # ...and one still running, which must NOT be counted.
+    await whitelist.set_override(
+        session,
+        media_key="radarr:1:2",
+        title="y",
+        decision="spare",
+        note=None,
+        spare_days=10,
+        now=NOW,
+    )
+
+    report = await breakdown.reap_breakdown(session)
+
+    assert report.hand_spared == 2
+    assert report.spares_expired == 1
+    # Still kept, both of them: the expired one is NOT back on the reap list.
+    assert report.will_reap == 0
+
+
+async def test_a_forever_spare_never_counts_as_expired(session: AsyncSession) -> None:
+    """It has no clock to run out. Reading a null expiry as "passed" would put a permanent
+    warning on the Reap page telling the operator to scan for a spare that will never move."""
+    snap = await _snapshot(session)
+    await _add(session, snapshot_id=snap, media_key="radarr:1:1")
+    await whitelist.set_override(
+        session, media_key="radarr:1:1", title="x", decision="spare", note=None
+    )
+
+    report = await breakdown.reap_breakdown(session)
+
+    assert report.hand_spared == 1
+    assert report.spares_expired == 0
+
+
+async def test_the_count_is_scoped_to_this_snapshot_s_condemned_rows(
+    session: AsyncSession,
+) -> None:
+    """The notice claims those titles are being held out of THIS reap, so the count is taken
+    over the snapshot's condemned rows -- not over the whitelist, which outlives any one scan.
+
+    Two rows an expired spare must NOT speak for: one the scan left alone (nothing is being
+    held back), and one that is not in the snapshot at all (a spare on a title since removed
+    from the library). Counting either would send the operator scanning for no change.
+
+    What this does NOT pin: whether the sum walks the spared rows or all condemned rows. Those
+    are indistinguishable at this interface and always will be -- ``spare_expiries`` holds only
+    ``decision == "spare"`` entries, so ``effective_spare_expiry`` already returns None for
+    anything unspared, and the filter is for reading, not for behavior.
+    """
+    snap = await _snapshot(session)
+    await _add(session, snapshot_id=snap, media_key="radarr:1:1")  # condemned, no override
+    await _add(session, snapshot_id=snap, media_key="radarr:1:9", verdict="abstain")
+    long_ago = NOW - timedelta(days=30)
+    # Spared and expired, but the scan left it alone: it is keeping nothing out of the reap.
+    await whitelist.set_override(
+        session,
+        media_key="radarr:1:9",
+        title="x",
+        decision="spare",
+        note=None,
+        spare_days=1,
+        now=long_ago,
+    )
+    # Spared and expired, and not in the snapshot at all.
+    await whitelist.set_override(
+        session,
+        media_key="radarr:1:404",
+        title="gone",
+        decision="spare",
+        note=None,
+        spare_days=1,
+        now=long_ago,
+    )
+
+    report = await breakdown.reap_breakdown(session)
+
+    assert report.hand_spared == 0
+    assert report.spares_expired == 0
 
 
 async def test_a_hand_reap_joins_the_net(session: AsyncSession) -> None:

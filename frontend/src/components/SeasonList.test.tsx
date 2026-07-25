@@ -60,9 +60,9 @@ function season(
     show_status: showStatus,
     season_number: n,
     group_seasons: [
-      { id: 1, season: 1, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3 },
-      { id: 2, season: 2, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3 },
-      { id: 3, season: 3, verdict: "abstain", override: null, override_effective: null, size_bytes: 1024 ** 3 },
+      { id: 1, season: 1, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null },
+      { id: 2, season: 2, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null },
+      { id: 3, season: 3, verdict: "abstain", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null },
     ],
   };
 }

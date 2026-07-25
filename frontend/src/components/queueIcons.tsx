@@ -107,10 +107,20 @@ export function ScytheIcon() {
 
 /** A small clock, the dormancy pill's shape reused -- here in the spare's green to mean "kept,
  *  for now". It marks a TIMED spare, where ∞ marks a forever one. */
-export function ClockGlyph() {
+export function ClockGlyph({ dashed = false }: { dashed?: boolean } = {}) {
   return (
     <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-      <circle cx="8" cy="8" r="6.2" stroke="currentColor" strokeWidth="1.4" />
+      {/* `dashed` marks a spare whose clock has PASSED: the same dial, drawn the way this app
+          draws every decision whose effect is pending a scan (the dashed .status-reap-held /
+          .score-refused family). The hands stay solid so it still reads as a clock. */}
+      <circle
+        cx="8"
+        cy="8"
+        r="6.2"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeDasharray={dashed ? "2.2 1.8" : undefined}
+      />
       <path d="M8 4.6V8l2.4 1.4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
     </svg>
   );

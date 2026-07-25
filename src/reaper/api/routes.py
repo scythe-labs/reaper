@@ -388,7 +388,7 @@ async def list_candidates(
         }
         expiries = await whitelist.spare_expiries(session)
         group_totals, group_marks = await _group_rollups(
-            session, snapshot.id, {r.group_key for r in rows if r.group_key}, decisions
+            session, snapshot.id, {r.group_key for r in rows if r.group_key}, decisions, expiries
         )
 
         return [
@@ -422,6 +422,7 @@ async def _group_rollups(
     snapshot_id: int,
     group_keys: set[str],
     decisions: dict[str, str],
+    expiries: dict[str, datetime | None],
 ) -> tuple[dict[str, tuple[int, int, int]], dict[str, list[GroupSeasonMarkOut]]]:
     """Two per-show rollups from one sweep of each group's member rows.
 
@@ -440,8 +441,12 @@ async def _group_rollups(
     leaving out instead of quietly shrinking.
 
     **Marks** -- the show card's season strip: every member's (season, verdict,
-    override, and whether a hand reap actually takes) across all lanes, sorted by
-    season number (unnumbered rows last).
+    override, whether a hand reap actually takes, and when a hand spare stops keeping it)
+    across all lanes, sorted by season number (unnumbered rows last). The expiry rides
+    along because the strip square colors by the item's FATE (rule 49), and an expired
+    spare is a fate of its own -- still keeping the file, but no longer a live decision.
+    Without it the square could only draw the solid "you chose this" green, which is the
+    one thing an expired spare is not.
 
     ``IN`` chunked at 500 per the bound-variable limit.
     """
@@ -472,6 +477,14 @@ async def _group_rollups(
         ).all()
         for candidate_id, media_key, group_key, size_bytes, verdict in members:
             override = whitelist.effective_override(media_key, decisions)
+            # The spare in EFFECT on this season, matching `override` above: its own if it has
+            # one, else its show's. Read only alongside a "spare" decision, exactly as
+            # `_candidate_out` reads it, so a non-spared square never carries a stray date.
+            spare_exp = (
+                whitelist.effective_spare_expiry(media_key, decisions, expiries)
+                if override == "spare"
+                else None
+            )
             mark = GroupSeasonMarkOut(
                 id=int(candidate_id),
                 season=_season_number(media_key),
@@ -479,6 +492,7 @@ async def _group_rollups(
                 override=override,
                 override_effective=(True if override == "reap" and verdict == "condemn" else None),
                 size_bytes=size_bytes,
+                spare_expires_at=spare_exp.isoformat() if spare_exp is not None else None,
             )
             marks[group_key].append(mark)
             if override == "reap" and verdict != "condemn":

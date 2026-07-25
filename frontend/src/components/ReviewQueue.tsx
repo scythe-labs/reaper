@@ -531,25 +531,31 @@ function SeasonStrip({
         const handClass =
           fate === "spare"
             ? " strip-ov-spare"
-            : fate === "reap"
-              ? " strip-ov-reap"
-              : fate === "refused"
-                ? " strip-ov-reap-refused"
-                : "";
+            : fate === "spare-expired"
+              ? " strip-ov-spare-expired"
+              : fate === "reap"
+                ? " strip-ov-reap"
+                : fate === "refused"
+                  ? " strip-ov-reap-refused"
+                  : "";
         const overrideNote =
-          mark.override === "spare"
-            ? ", you spared it"
-            : reapRefused
-              ? ", reap requested but it is kept for now"
-              : mark.override === "reap"
-                ? ", you reaped it by hand"
-                : "";
+          fate === "spare-expired"
+            ? ", you spared it and that spare has expired"
+            : mark.override === "spare"
+              ? ", you spared it"
+              : reapRefused
+                ? ", reap requested but it is kept for now"
+                : mark.override === "reap"
+                  ? ", you reaped it by hand"
+                  : "";
         // The lane word follows the EFFECTIVE fate (handFate), not the raw verdict, so a spared
         // condemnation reads "kept, you spared it" and never "would be removed, you spared it".
+        // An expired spare is still "kept" for the same reason its square stays green: only a
+        // scan realizes the clock, so nothing will reap it before then (rule 61).
         const lane =
           fate === "reap"
             ? MARK_LABELS.condemn
-            : fate === "spare" || fate === "refused"
+            : fate === "spare" || fate === "spare-expired" || fate === "refused"
               ? MARK_LABELS.protect
               : (MARK_LABELS[mark.verdict] ?? mark.verdict);
         return (
