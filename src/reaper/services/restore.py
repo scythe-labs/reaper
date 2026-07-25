@@ -529,6 +529,47 @@ def _unique_dir(parent: Path, name: str) -> Path:
     return candidate
 
 
+#: SQLite keeps the database's recent transactions in a sidecar write-ahead log, and
+#: recovers from it on the next open. It validates that log by its own header and frame
+#: checksums alone -- never by any binding to the database file beside it -- so a WAL left
+#: over from a DIFFERENT database replays into whatever ``reaper.db`` it finds. That is
+#: why these travel with the database everywhere below, and never on their own.
+_DB_SIDECARS = (f"{DB_ARCNAME}-wal", f"{DB_ARCNAME}-shm")
+_LIVE_FILES = (DB_ARCNAME, *_DB_SIDECARS, KEY_FILENAME, SALT_FILENAME)
+
+
+def _move_aside(data_dir: Path, recovery: Path, names: tuple[str, ...]) -> None:
+    """Move the named live files into ``recovery``. Idempotent.
+
+    A name already gone is skipped, so an interrupted swap can finish by simply running
+    this again over the same set.
+    """
+    for name in names:
+        live = data_dir / name
+        if live.exists():
+            shutil.move(str(live), str(recovery / name))
+
+
+def _recovery_dir(data_dir: Path, marker: Path) -> Path:
+    """The pre-restore folder a half-finished swap was moving the live data into.
+
+    The name is read back from :data:`SWAP_MARKER`, so it is treated as untrusted input
+    even though this process wrote it: taken as a bare filename, and accepted only if it
+    still looks like one of ours. Anything else (an empty marker, a hand-edited one, a
+    folder since deleted) gets a fresh directory rather than a guess, because the one
+    thing that must not happen here is the previous data being written somewhere the
+    operator will not find it.
+    """
+    named = Path(marker.read_text(encoding="utf-8").strip()).name
+    if named.startswith(PRE_RESTORE_PREFIX):
+        recovery = data_dir / named
+        if recovery.is_dir():
+            return recovery
+        recovery.mkdir(parents=True, exist_ok=True)
+        return recovery
+    return _unique_dir(data_dir, f"{PRE_RESTORE_PREFIX}{utcnow().strftime('%Y%m%dT%H%M%SZ')}")
+
+
 def _move_staged_in(data_dir: Path, pending: Path) -> None:
     """Move whatever the staging still holds into ``data/``, then drop the staging.
 
@@ -588,11 +629,25 @@ def apply_pending_restore(settings: Settings) -> bool:
 
     marker = pending / SWAP_MARKER
     if marker.is_file():
-        recovery_name = marker.read_text(encoding="utf-8").strip() or "the pre-restore folder"
+        recovery = _recovery_dir(data_dir, marker)
+        # Finish the move-aside the killed run may have left half-done, and only then move
+        # the staged files in. This used to move the staged files in directly, which was
+        # right for the case it was written for (the database across, the key still
+        # staged) and wrong one rename earlier: a kill between moving the live database
+        # and moving its write-ahead log left that log in data/, where the restored
+        # database then landed beside it and SQLite replayed a foreign WAL into it.
+        #
+        # How far to finish depends on whether the staged database is still staged. While
+        # it is, anything at data/reaper.db is the previous database and belongs in the
+        # recovery folder. Once _move_staged_in has moved it across, that same path is the
+        # RESTORED database, and moving it aside would undo the restore and leave nothing
+        # behind -- so only the sidecars are swept then.
+        names = _LIVE_FILES if (pending / DB_ARCNAME).is_file() else _DB_SIDECARS
+        _move_aside(data_dir, recovery, names)
         _move_staged_in(data_dir, pending)
         sys.stderr.write(
             "reaper: finished a restore that was interrupted on an earlier start; the "
-            f"previous data is saved in data/{recovery_name} (remove it once the restore "
+            f"previous data is saved in data/{recovery.name} (remove it once the restore "
             "looks good)\n"
         )
         return True
@@ -610,11 +665,10 @@ def apply_pending_restore(settings: Settings) -> bool:
     recovery = _unique_dir(data_dir, f"{PRE_RESTORE_PREFIX}{utcnow().strftime('%Y%m%dT%H%M%SZ')}")
     marker.write_text(recovery.name + "\n", encoding="utf-8")
     # Move the live copy aside first (its -wal/-shm travel with it), then move the
-    # staged copy in. Same filesystem, so each move is an atomic rename.
-    for name in (DB_ARCNAME, f"{DB_ARCNAME}-wal", f"{DB_ARCNAME}-shm", KEY_FILENAME, SALT_FILENAME):
-        live = data_dir / name
-        if live.exists():
-            shutil.move(str(live), str(recovery / name))
+    # staged copy in. Same filesystem, so each move is an atomic rename -- but a swap is
+    # several of them, and the marker written just above is what lets the next boot pick
+    # up between any two (see the resume path at the top of this function).
+    _move_aside(data_dir, recovery, _LIVE_FILES)
     _move_staged_in(data_dir, pending)
 
     sys.stderr.write(

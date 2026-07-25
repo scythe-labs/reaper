@@ -94,6 +94,93 @@ class TestAnInterruptedSwapIsFinished:
         assert "pre-restore-20260724T000000Z" in err
 
 
+class TestASwapKilledMidLoopDoesNotStrandAWal:
+    """The other half of the same window, one rename earlier.
+
+    The move-aside walks ``reaper.db`` first and its ``-wal``/``-shm`` after. A kill
+    between those two renames left the previous database's write-ahead log sitting in
+    ``data/``, and the resume path only ever moved the STAGED files in -- so the restored
+    database landed beside a log written for a different database. SQLite validates a WAL
+    by its own header and frame checksums, never by any binding to the database file, so
+    it replays. Neither copy survives it: the restored database takes writes it never
+    made, and the pre-restore copy is missing the log those writes were in.
+    """
+
+    def test_a_stale_wal_follows_its_own_database_into_recovery(self, tmp_path: Path) -> None:
+        settings = _settings(tmp_path)
+        settings.ensure_data_dir()
+        recovery = tmp_path / "pre-restore-20260724T000000Z"
+        recovery.mkdir()
+        # The interrupted state: the live database made it across, its sidecars did not.
+        _sqlite_file(recovery / DB_ARCNAME)
+        (tmp_path / f"{DB_ARCNAME}-wal").write_bytes(b"previous-database-wal")
+        (tmp_path / f"{DB_ARCNAME}-shm").write_bytes(b"previous-database-shm")
+        _stage(tmp_path, with_db=True, swapping=recovery.name)
+
+        assert restore.apply_pending_restore(settings) is True
+
+        assert not (tmp_path / f"{DB_ARCNAME}-wal").exists(), (
+            "the previous database's write-ahead log was left beside the restored "
+            "database, where SQLite will replay it into a database it never belonged to"
+        )
+        assert not (tmp_path / f"{DB_ARCNAME}-shm").exists()
+        assert (recovery / f"{DB_ARCNAME}-wal").read_bytes() == b"previous-database-wal"
+        assert (recovery / f"{DB_ARCNAME}-shm").read_bytes() == b"previous-database-shm"
+        assert (tmp_path / DB_ARCNAME).is_file()
+
+    def test_a_kill_before_any_rename_still_saves_the_live_database(self, tmp_path: Path) -> None:
+        """Killed after the marker but before the first move, everything is still live.
+        The resume path must move it aside, not let the staged copy overwrite it."""
+        settings = _settings(tmp_path)
+        settings.ensure_data_dir()
+        recovery = tmp_path / "pre-restore-20260724T000000Z"
+        recovery.mkdir()
+        _sqlite_file(tmp_path / DB_ARCNAME)
+        live = (tmp_path / DB_ARCNAME).read_bytes()
+        (tmp_path / KEY_FILENAME).write_text("live-key\n")
+        _stage(tmp_path, with_db=True, swapping=recovery.name)
+
+        assert restore.apply_pending_restore(settings) is True
+
+        assert (recovery / DB_ARCNAME).read_bytes() == live
+        assert (recovery / KEY_FILENAME).read_text() == "live-key\n"
+        assert (tmp_path / KEY_FILENAME).read_text() == "staged-key\n"
+
+    def test_an_already_restored_database_is_not_moved_aside(self, tmp_path: Path) -> None:
+        """Once the staged database has been moved in, ``data/reaper.db`` is the RESTORED
+        one. Sweeping it into recovery on the next boot would undo the restore and leave
+        the install with no database at all, which is why the sweep is scoped by whether
+        the staged copy is still staged."""
+        settings = _settings(tmp_path)
+        settings.ensure_data_dir()
+        recovery = tmp_path / "pre-restore-20260724T000000Z"
+        recovery.mkdir()
+        _sqlite_file(tmp_path / DB_ARCNAME)
+        restored = (tmp_path / DB_ARCNAME).read_bytes()
+        _stage(tmp_path, with_db=False, swapping=recovery.name)
+
+        assert restore.apply_pending_restore(settings) is True
+
+        assert (tmp_path / DB_ARCNAME).read_bytes() == restored
+        assert not (recovery / DB_ARCNAME).exists()
+
+    def test_an_unusable_marker_name_still_lands_inside_the_data_dir(self, tmp_path: Path) -> None:
+        """The marker is written by this process, but it is read back off disk, so it is
+        treated as untrusted: a name that is not one of ours gets a fresh folder rather
+        than being joined onto the data directory."""
+        settings = _settings(tmp_path)
+        settings.ensure_data_dir()
+        _sqlite_file(tmp_path / DB_ARCNAME)
+        _stage(tmp_path, with_db=True, swapping="../escaped")
+
+        assert restore.apply_pending_restore(settings) is True
+
+        assert not (tmp_path.parent / "escaped").exists()
+        made = [p for p in tmp_path.iterdir() if p.name.startswith(restore.PRE_RESTORE_PREFIX)]
+        assert len(made) == 1
+        assert (made[0] / DB_ARCNAME).is_file()
+
+
 class TestAnUnusableStagingIsStillDiscarded:
     def test_the_live_data_is_untouched_and_the_message_is_true(
         self,
