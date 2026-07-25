@@ -84,7 +84,48 @@ def read_session_tokens(cookies: Mapping[str, str]) -> tuple[str, ...]:
     return tuple(tokens)
 
 
+def _delete(response: Response, name: str) -> None:
+    """Emit the delete for one cookie name, with the ``Secure`` flag that name requires.
+
+    The flag is a property of the NAME, not of the request, and that is the whole point.
+    A browser only accepts a ``__Host-`` cookie carrying ``Secure``, deletion included, so
+    clearing it with the request's own flag broke the most common install shape: TLS
+    terminated at a reverse proxy the operator had not listed under proxy trust, where
+    :func:`is_secure_request` returns ``False``. The delete went out without ``Secure``,
+    the browser discarded it, and the cookie survived in the jar with its database row
+    already gone. Every later sign-in wrote the plain name, the dead ``__Host-`` cookie
+    outranked it on read, and sign-in silently stopped working until the operator cleared
+    cookies by hand or the 30-day window lapsed.
+
+    A delete carries no value, so marking it ``Secure`` leaks nothing. On a genuinely
+    plain-HTTP install a browser ignores the ``Secure`` delete, but no ``__Host-`` cookie
+    was ever set there for it to clear, and a ``Secure`` cookie is never *sent* over plain
+    HTTP either, so nothing can shadow anything. The plain name is cleared with
+    ``secure=False`` so its delete is accepted on either scheme.
+    """
+    response.delete_cookie(
+        key=name, path="/", samesite="lax", secure=name == _SECURE_NAME, httponly=True
+    )
+
+
 def set_session_cookie(response: Response, token: str, *, secure: bool) -> None:
+    """Write the session cookie under the name this connection calls for, and clear the other.
+
+    Clearing the other name is what keeps exactly ONE session cookie in the jar, and it is
+    load-bearing rather than tidy. Writing one name and leaving the other alone let a
+    still-LIVE cookie under the unused name outlive every later sign-in: the read prefers
+    ``__Host-``, so with one in the jar the app kept authenticating as whoever owned it.
+    Signing in as a second admin appeared to succeed and the app stayed signed in as the
+    first. :func:`read_session_tokens` and
+    :func:`reaper.auth.sessions.resolve_session_from_cookies` close the case where the
+    shadowing cookie is DEAD; only this closes the case where it is alive.
+
+    Switching scheme still never strands a session. Moving to HTTPS, the new ``__Host-``
+    cookie is written and the plain one cleared. Moving away from it, the plain cookie is
+    written and the ``__Host-`` delete goes out ``Secure``: over an HTTPS browser leg it
+    lands, and over a genuinely plain-HTTP one the browser would not have sent that cookie
+    in the first place.
+    """
     response.set_cookie(
         key=_SECURE_NAME if secure else _PLAIN_NAME,
         value=token,
@@ -96,28 +137,15 @@ def set_session_cookie(response: Response, token: str, *, secure: bool) -> None:
         secure=secure,
         path="/",
     )
+    _delete(response, _PLAIN_NAME if secure else _SECURE_NAME)
 
 
 def clear_session_cookie(response: Response) -> None:
     """Delete both names, each with the ``Secure`` flag that name itself requires.
 
     Both go, so a scheme change (or a stale plain cookie left over from an HTTP session
-    before TLS was added) cannot leave a zombie behind.
-
-    The flag is a property of the NAME, not of the request, and that is the whole point.
-    A browser only accepts a ``__Host-`` cookie carrying ``Secure``, deletion included.
-    Clearing it with the request's own flag therefore broke the most common install
-    shape: TLS terminated at a reverse proxy the operator had not listed under proxy
-    trust, where :func:`is_secure_request` returns ``False``. The delete went out without
-    ``Secure``, the browser discarded it, and the cookie survived in the jar with its
-    database row already gone. Every later sign-in wrote the plain name, the dead
-    ``__Host-`` cookie outranked it on read, and sign-in silently stopped working until
-    the operator cleared cookies by hand or the 30-day window lapsed.
-
-    A delete carries no value, so marking it ``Secure`` leaks nothing. On a genuinely
-    plain-HTTP install a browser may refuse the ``Secure`` delete, but no ``__Host-``
-    cookie was ever set there for it to refuse. The plain name is cleared with
-    ``secure=False`` so its delete is accepted on either scheme.
+    before TLS was added) cannot leave a zombie behind. :func:`_delete` explains why the
+    flag follows the name rather than the request, and what it cost when it did not.
     """
-    response.delete_cookie(key=_SECURE_NAME, path="/", samesite="lax", secure=True, httponly=True)
-    response.delete_cookie(key=_PLAIN_NAME, path="/", samesite="lax", secure=False, httponly=True)
+    _delete(response, _SECURE_NAME)
+    _delete(response, _PLAIN_NAME)

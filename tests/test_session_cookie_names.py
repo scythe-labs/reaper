@@ -33,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session
 
 from reaper.auth.admins import create_local_admin
-from reaper.auth.cookie import clear_session_cookie, read_session_tokens
+from reaper.auth.cookie import clear_session_cookie, read_session_tokens, set_session_cookie
 from reaper.auth.sessions import open_session, resolve_session_from_cookies
 from reaper.auth.tokens import SESSION_TTL, hash_token
 from reaper.clock import expiry, utcnow
@@ -43,7 +43,7 @@ from reaper.db.models import AppUser, AuthSession
 from reaper.db.session import create_engine, create_session_factory
 from reaper.main import create_app
 
-from ._auth import login
+from ._auth import TEST_ADMIN, TEST_PASSWORD, login, seed_admin
 
 SECURE_NAME = "__Host-reaper_session"
 PLAIN_NAME = "reaper_session"
@@ -194,6 +194,10 @@ class TestLogoutRevokesEverySessionTheJarPresents:
     def test_a_second_live_session_under_the_other_name_is_revoked_too(
         self, client: TestClient, settings: Settings
     ) -> None:
+        """The planted jar is not one a browser could present: TestClient speaks http, and
+        a real browser never sends a ``__Host-`` cookie over plain HTTP. It pins the server
+        behavior regardless, which is the property under test, and it does discriminate
+        (revert to closing only the first token and the login session survives)."""
         login(client, settings)  # TestClient speaks http, so this is the PLAIN name
 
         engine = sa_create_engine(settings.sync_database_url)
@@ -218,3 +222,58 @@ class TestLogoutRevokesEverySessionTheJarPresents:
             remaining = session.execute(select(func.count(AuthSession.id))).scalar_one()
         engine.dispose()
         assert remaining == 0, "logout left a live session open under the other cookie name"
+
+
+class TestOnlyOneSessionCookieIsEverLeftInTheJar:
+    """Writing one name has to clear the other, or a LIVE cookie under the unused name
+    outlives every later sign-in.
+
+    Reading the first name that RESOLVES fixes the dead-cookie lockout, and nothing more:
+    a live cookie still resolves. Because ``__Host-`` is tried first, one sitting in the
+    jar kept authenticating as whoever owned it, so signing in as a second admin appeared
+    to succeed while the app stayed signed in as the first.
+    """
+
+    def test_writing_the_host_name_clears_the_plain_one(self) -> None:
+        response = Response()
+        set_session_cookie(response, "tok", secure=True)
+        emitted = _emitted(response)
+        assert "tok" in emitted[SECURE_NAME]
+        assert "max-age=0" in emitted[PLAIN_NAME].lower()
+
+    def test_writing_the_plain_name_clears_the_host_one_with_secure(self) -> None:
+        """The delete needs Secure or the browser refuses it, which is the whole lesson of
+        the class above. Over a genuinely plain-HTTP leg the browser would never have sent
+        that cookie anyway, so nothing is stranded."""
+        response = Response()
+        set_session_cookie(response, "tok", secure=False)
+        emitted = _emitted(response)
+        assert "tok" in emitted[PLAIN_NAME]
+        assert "max-age=0" in emitted[SECURE_NAME].lower()
+        assert "secure" in emitted[SECURE_NAME].lower()
+
+    def test_signing_in_clears_the_other_name_in_the_same_response(
+        self, client: TestClient, settings: Settings
+    ) -> None:
+        """The end-to-end shape, asserted where it is decidable: on the wire.
+
+        The failure needs a browser leg that is HTTPS while ``is_secure_request`` reads
+        False, which is precisely the unlisted-proxy install. TestClient cannot be both at
+        once -- over http it discards the ``Secure`` delete exactly as a browser would, and
+        over https ``is_secure_request`` becomes True and the app writes the other name. So
+        this pins what the SERVER emits, which is the half this fix owns, and the two unit
+        tests above pin the flags that decide whether the browser honors it.
+        """
+        seed_admin(settings)
+        client.headers["X-Reaper-CSRF"] = "1"
+        response = client.post(
+            "/api/auth/local", json={"username": TEST_ADMIN, "password": TEST_PASSWORD}
+        )
+        assert response.status_code == 200
+
+        emitted = {h.split("=", 1)[0]: h for h in response.headers.get_list("set-cookie")}
+        assert PLAIN_NAME in emitted, "the session cookie itself"
+        assert "max-age=0" in emitted[SECURE_NAME].lower(), (
+            "signing in must clear the other name, or a live cookie under it keeps "
+            "authenticating as whoever owned it"
+        )
