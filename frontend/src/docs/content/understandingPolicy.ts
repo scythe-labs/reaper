@@ -135,7 +135,6 @@ export const understandingPolicy: Doc = {
         ["Keep well-rated titles", "Anything clearing your rating bar", "IMDb 7.5, at least 1,000 votes"],
         ["Spare titles you've tagged", "Anything with your keep tag", "Tag `reaper-keep`, plus a Never Reap collection"],
         ["Never touch something playing right now", "Anything being watched at that moment", "On, re-checked live"],
-        ["Only touch what Sonarr or Radarr manages", "Files those apps do not manage", "On"],
         ["Don't judge what predates your history", "Titles older than your watch history", "On"],
         ["Honor protected lists", "Titles on a curated list", "On (IMDb Top 250)"],
       ],

@@ -6,7 +6,9 @@
 import { render, screen } from "@testing-library/react";
 import { useEffect } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { GATE_META } from "../components/policyMeta";
 import { docSections } from "./blocks";
+import { understandingPolicy } from "./content/understandingPolicy";
 import { DocBody } from "./DocBody";
 import { DocsModal } from "./DocsModal";
 import { DocsProvider, useDocs } from "./DocsContext";
@@ -143,5 +145,24 @@ describe("useDocs / DocsProvider", () => {
     }
     expect(() => render(<Bare />)).toThrow(/DocsProvider/);
     spy.mockRestore();
+  });
+});
+
+describe("the protections table", () => {
+  // Rule 25: operator copy may only name a feature that is wired. This table hand-lists the
+  // protections and their defaults, so it is a second copy of GATE_META that nothing kept
+  // honest -- when the "unmanaged" gate was retired, its entry left GATE_META and the editor
+  // while this row stayed, telling operators a protection shipped On that no policy carried.
+  it("names only protections the policy editor can still show", () => {
+    const protections = understandingPolicy.body.find(
+      (b): b is Extract<typeof b, { kind: "table" }> => b.kind === "table" && b.head[0] === "Protection",
+    );
+    expect(protections).toBeDefined();
+
+    const known = new Set(Object.values(GATE_META).map((m) => m.label));
+    const listed = protections!.rows.map((r) => r[0] ?? "");
+
+    expect(listed.length).toBeGreaterThan(0);
+    expect(listed.filter((label) => !known.has(label))).toEqual([]);
   });
 });
