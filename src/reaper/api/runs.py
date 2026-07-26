@@ -658,7 +658,8 @@ def _settings_out(settings: ProfileSettings, *, recovered: bool = False) -> Prof
 
 @router.get("/profile")
 async def get_profile(request: Request) -> ProfileSettingsIO:
-    """The caps and grace settings a run obeys. Built-in defaults until one is saved.
+    """The pace settings: the caps a run obeys, plus the grace window it does *not* (the
+    countdown is a notice, see ``services.grace``). Built-in defaults until one is saved.
 
     Reports ``settings_recovered`` when the stored blob was unreadable and these are the
     shipped defaults, so the Pace page can tell the operator to save again (rule 65)."""

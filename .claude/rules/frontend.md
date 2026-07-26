@@ -13,7 +13,7 @@ paths:
 Blockers, not suggestions. **Rule numbers are permanent** (tests cite them); where two
 overlap, the more specific governs. Rules binding every file are in the root `CLAUDE.md`;
 the backend's are in `.claude/rules/backend.md`. Holds 17–20, 36, 39–51, 53–54, 60–62,
-66–67, 69, 79–80, 85–86.
+66–67, 69, 79–80, 85–86, 120–123.
 
 ## React correctness
 
@@ -168,7 +168,8 @@ chosen decision is the solid hand-decision chip.
 - **A whole show is not atomic, so it uses its own no-op test.** A movie/season on the Condemned
   lane is fully condemned. A show is on that lane because *some* season is, and a whole-show Reap
   still takes the seasons the scan kept, so both buttons stay until *every* season is condemned.
-  That test is `showReapIsNoop` (`components/ReviewQueue.tsx`), the one place it lives; the show
+  That test is `showReapIsNoop` (`components/reviewFate.ts`, re-exported by `ReviewQueue.tsx`),
+  the one place it lives; the show
   card's whole-show control and `ShowPanel` both call it, never a fourth inline copy.
 - **Every whole-show `hideReap` computation runs over the whole show, every lane.**
   `showReapIsNoop` and `groupReapEffective` take `group.seasons` in the panel and `group_seasons`
@@ -181,7 +182,7 @@ chosen decision is the solid hand-decision chip.
 
 **49. A fate-bearing cell colors by the item's fate, never by the scan verdict alone.** The score
 badge (`Score`) and the season strip square (`SeasonStrip`) both route color through the one
-`handFate` helper (`components/ReviewQueue.tsx`): a hand spare or an *effective* hand reap paints
+`handFate` helper (`components/reviewFate.ts`): a hand spare or an *effective* hand reap paints
 SOLID ("you chose this"); a reap the engine *can't honor yet* reads **dashed red** (`--condemn`
 on `--condemn-soft`, dashed border, never solid) and on the strip also carries a small scythe
 corner-mark (`.strip-mark`), so it reads as YOUR ask and never blends into the plain condemned
@@ -208,7 +209,7 @@ one `whitelist.effective_override` + `show_key`, never recomputed as a client-si
 Each control clears the key it lit — a season control the season key, a whole-show control the
 show key — so it can only ever reverse what it showed. Lighting a control from effective/aggregate
 state it *cannot* clear was the dead toggle this rule exists to prevent. When a whole-show decision
-keeps or reaps a season, `KeptByShowNote` (`components/ReviewQueue.tsx`) names it beside that
+keeps or reaps a season, `KeptByShowNote` (`components/OverrideControls.tsx`) names it beside that
 season's control, its wording turning on whether the season's own decision is absent, the same, or
 opposite. A season-level clear NEVER silently un-decides the whole show: that strips protection
 from every other season, which is fail-open and forbidden. The grace clock follows the same

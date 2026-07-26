@@ -1466,8 +1466,10 @@ def _apply_first_flag(
     long ago, then *rescued* (watched, spared, or re-judged as protect) and later condemned
     again a full dormancy period afterwards, must serve a FRESH grace window. Its old
     ``first_flagged_at`` is far in the past, so grace_report would drop it straight into
-    ``ready`` with no countdown and no Leaving Soon warning -- deleting on the second
-    condemnation with zero grace. We detect the return by the gap since it was last seen
+    ``ready`` with no countdown and no Leaving Soon warning -- so the household would get no
+    notice at all on the second condemnation. (The window holds nothing back either way, see
+    ``services.grace``; what is lost is the warning.) We detect the return by the gap since
+    it was last seen
     condemned: when that gap exceeds the grace window (so it genuinely left, not just
     missed a snapshot to an outage), the clock restarts. ``last_seen_condemned_at`` exists
     for exactly this reset.

@@ -8,7 +8,7 @@ paths:
 # Test blockers
 
 Blockers, not suggestions. **Rule numbers are permanent** — cite them in test docstrings the
-way the existing suite does (`rule 88`, `rule 118`). Holds 37, 118–119.
+way the existing suite does (`rule 88`, `rule 118`). Holds 37, 118–119, 132–133.
 
 **37. Tests that boot the app are hermetic.** Use the shared autouse `_hermetic` fixture in
 `tests/conftest.py`, which stubs env seeding and startup network. Never let a test read the

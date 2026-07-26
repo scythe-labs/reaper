@@ -6,11 +6,11 @@ paths:
 
 # Backend blockers — `src/reaper/`
 
-Blockers, not suggestions, distilled from five adversarial review passes. **Rule numbers are
+Blockers, not suggestions, distilled from six adversarial review passes. **Rule numbers are
 permanent** (tests and comments cite them); where two overlap, the more specific governs.
 Rules binding every file are in the root `CLAUDE.md`; the SPA's are in
 `.claude/rules/frontend.md`. Holds 1–6, 8–14, 22–23, 26–35, 38, 52, 55–59, 63, 65, 70–71,
-73–78, 81–84, 87–117.
+73–78, 81–84, 87–117, 124–131.
 
 ## The safety / deletion path
 

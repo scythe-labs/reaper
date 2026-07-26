@@ -1,11 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The grace period: the countdown between "condemned" and "actually gone".
 
-Reaper never deletes the instant it condemns something. A condemned item sits in a grace
-window of ``grace_days`` first, during which it can be canceled by hand, rescued by
-anyone watching it, or simply reconsidered when the next scan re-judges it. Only after
-the window closes is it eligible for a real deletion -- and that step is still supervised
-and, for now, deliberately unbuilt.
+A condemned item sits in a grace window of ``grace_days``, during which it can be spared by
+hand, rescued by anyone watching it, or simply reconsidered when the next scan re-judges it.
+
+**The window is a notice, not a gate.** Nothing on the deletion path reads it: neither
+``services.planner`` nor ``services.executor`` imports this module, and ``leaving_soon`` is
+its only consumer. An unexpired window does not stop a send, and never has. What actually
+keeps a file at send time is the executor's own live interlocks, re-checked per item
+(``Executor._being_watched_now`` and ``Executor._watched_since_approval``, both called in
+``_one_delete``), plus the manual spare and the fact that every deletion is started by hand.
+So the countdown is the household's chance to catch an item, not a lock that holds it: do
+not write code or operator copy that treats an unexpired window as protection.
 
 This module computes where each currently-condemned item sits in that window. There is no
 new state to store: the clock is ``FirstFlagged.first_flagged_at`` (set once, never moved
@@ -61,10 +67,12 @@ class GraceItem:
 class GraceReport:
     grace_days: int
     in_grace: list[GraceItem]
-    """Still counting down, soonest to clear first -- the ones a cancel would catch."""
+    """Still counting down, soonest to clear first. Already plannable and already
+    deletable: the countdown is what the household sees, not a hold on the file (see the
+    module docstring). A spare ends it at any point, before or after it runs out."""
     ready: list[GraceItem]
-    """The window has closed. Eligible for the (deferred, supervised) reap; shown so the
-    owner knows what would go, not so anything goes automatically."""
+    """The countdown has run out. **No more deletable than** ``in_grace`` -- the planner
+    takes both -- so the split says who has had their notice, not what has unlocked."""
     total_bytes_in_grace: int
     total_bytes_ready: int
     unknown_size_in_grace: int = 0

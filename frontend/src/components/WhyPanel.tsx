@@ -948,8 +948,8 @@ export function WhyPanel({
 
       {item.first_flagged_at && (
         <p className="flagged">
-          On the list since {since(item.first_flagged_at)}. It waits out a grace period,
-          which you can cancel, before Reaper can remove it.
+          On the list since {since(item.first_flagged_at)}. Watching it or sparing it keeps
+          it, and you still start every removal by hand.
         </p>
       )}
 

@@ -42,7 +42,7 @@ export const PRESETS: { id: PresetId; label: string; help: string; condemn_at: n
   {
     id: "cautious",
     label: "Cautious",
-    help: "Cautious: only flags a title it is very sure about, removes less per run, and waits a month of grace.",
+    help: "Cautious: only flags a title it is very sure about, removes less per run, and shows a title as leaving for a month.",
     condemn_at: 82,
     caps: {
       max_items_per_run: 5,
