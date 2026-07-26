@@ -137,7 +137,15 @@ class DiscordNotifier:
 
     async def announce_leaving_soon(self, titles: list[str], *, grace_days: int) -> bool:
         """ "These N titles are leaving soon." The headline count is honest even when the
-        enumerated list is truncated for length."""
+        enumerated list is truncated for length.
+
+        ``grace_days`` is described as how long they *show* as leaving, never as a deadline
+        or a reprieve. Nothing on the deletion path reads the window (see the module
+        docstring on ``services.grace``), so a promise like "watch it in the next 14 days
+        and it stays" would offer a runway the code does not enforce: the owner can reap on
+        day one. What is true is the outcome, unconditioned on the clock -- watching it
+        keeps it, and a person starts every removal.
+        """
         if not titles:
             return False
         shown = titles[:_MAX_TITLES]
@@ -152,9 +160,10 @@ class DiscordNotifier:
             Embed(
                 title=f"{count} {noun} leaving soon",
                 description=(
-                    f"Unwatched, and on the list to go. Watch one in the next "
-                    f"{grace_days} days and it stays. Nothing is removed "
-                    f"automatically.\n\n{lines}{link}"
+                    f"Unwatched, and on the list to go. Watch one and it stays. Nothing "
+                    f"is removed automatically: they show as leaving for the next "
+                    f"{grace_days} days, and every removal is started by hand.\n\n"
+                    f"{lines}{link}"
                 ),
             )
         )

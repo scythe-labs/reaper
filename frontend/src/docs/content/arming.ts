@@ -9,7 +9,7 @@ export const arming: Doc = {
   summary: "Arming is a separate, deliberate, password-gated step. Do it last, after everything else is set.",
   body: [
     p(
-      "Editing a policy changes nothing about whether Reaper can delete. A fresh install is read-only: it can scan, score, and explain, and nothing else. Turning deletion on is its own act, done in the app with your password. The one exception is a deploy that sets REAPER_DESTRUCTIVE_ACTIONS_ENABLED, which starts the first boot armed.",
+      "Editing a policy changes nothing about whether Reaper can delete. A fresh install is read-only: it can scan, score, and explain, and nothing else. Turning deletion on is its own act, done in the app with your password. The one exception is a deploy that sets `REAPER_DESTRUCTIVE_ACTIONS_ENABLED=true`, which starts the first boot armed.",
     ),
     callout(
       "note",

@@ -27,7 +27,7 @@ export const overview: Doc = {
       "**Tautulli** tells Reaper who watched what, and when.",
       "**Sonarr** manages your TV shows. Reaper removes them through it.",
       "**Radarr** manages your movies. Reaper removes them through it.",
-      "**Seerr** (Overseerr or Jellyseerr) tells Reaper who asked for a title, so you can see it on the card and filter by it.",
+      "**Seerr** (Overseerr or Jellyseerr) tells Reaper who asked for a title, so you can see it, filter by it, and write a rule that keeps requests.",
       "**Plex** is your library. Reaper reads it, and refreshes it after a cleanup.",
     ]),
     p("Tautulli plus Sonarr or Radarr is enough to start scanning. Plex isn’t required just to look."),

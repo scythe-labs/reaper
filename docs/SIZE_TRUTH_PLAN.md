@@ -466,10 +466,25 @@ number it cannot stand behind" (`schemas.py:539-542`).
 **Every unknown count is suppressed at zero.** An operator with a fully healthy library must
 see no new pixels anywhere.
 
-> **Stale citations.** `GracePanel.tsx` no longer exists anywhere in `frontend/src/`; every
-> reference to it below is from an earlier layout and must be re-located against the current
-> tree before Stage 6 is built. The other `file:line` numbers here have drifted too — treat
-> them as names to grep for, never as positions.
+> **Stale citations, relocated.** `GracePanel.tsx` no longer exists anywhere in
+> `frontend/src/`, and its three roles below landed in two different components. Every
+> `file:line` number in this section has drifted too — treat them as names to grep for, never
+> as positions.
+>
+> - The fifth per-item `itemBytes` render (`GracePanel.tsx:39`) → `ScalesPanel.tsx`. The
+>   non-test set is still exactly five: `ReviewQueue.tsx` (twice), `ScalesPanel.tsx`,
+>   `WhyPanel.tsx`, `ShowPanel.tsx`.
+> - The aggregate byte renders (`:140`/`:148`) and the `.notice.notice-warn` pattern (`:126`)
+>   → `ReapBreakdown.tsx`.
+> - **No successor exists for the per-item grace view itself.** There is no per-item countdown
+>   surface in the SPA at all: no `/api/grace` route, and `days_remaining` / `grace_ends_at`
+>   appear nowhere in `frontend/src/`. `grace_days` reaches the frontend only as a policy
+>   setting (`PolicyEditor`, `PolicySimulator`, `policyPresets`). Stage 6 must decide where that
+>   render belongs rather than assume a home.
+>
+> Two items this section still lists as work are **already shipped**: `totalBytes` exists in
+> `format.ts`, and the whole-show `bytes()` contradiction in `ShowPanel.tsx` is fixed — it
+> calls `totalBytes` now.
 
 Call sites: the five per-item renders already on `itemBytes` need no edit but must typecheck
 (`ReviewQueue.tsx:863`, `:944`, `ShowPanel.tsx:113`, `WhyPanel.tsx:746`, `GracePanel.tsx:39`).

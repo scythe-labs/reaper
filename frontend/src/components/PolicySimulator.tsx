@@ -86,8 +86,8 @@ export function StaleNotice({
       ) : (
         <>
           <p>
-            You changed how the scan reads your library (a watch window, a keep tag, or a season
-            rule), so the last scan's evidence no longer fits this policy. Scan to apply it.
+            You changed what the scan reads: a protection, a watch window, a keep tag, or a season
+            rule. The last scan's evidence no longer fits. Scan to apply it.
           </p>
           <button className="primary sm" onClick={onScan} disabled={starting}>
             {starting ? "Starting…" : "Scan now"}
@@ -198,18 +198,25 @@ export function Outcome({
 
       {pace && (
         <p className="help">
+          {/*
+            Grace is a NOTICE, not a gate: nothing on the deletion path reads the window
+            (services/grace.py), so "nothing is removed until it has waited out the
+            N-day grace period" promised a hold that does not exist. What grace does is
+            show a title as leaving for N days; what keeps it is a spare, a play, or the
+            fact that a person starts every run.
+          */}
           {pace.caps_enabled ? (
             <>
               Your pace: at most {count(pace.max_items_per_run)} titles /{" "}
-              {bytes(pace.max_bytes_per_run)} per run, and nothing is removed until it has
-              waited out the {pace.grace_days}-day grace period.
+              {bytes(pace.max_bytes_per_run)} per run, and a flagged title shows as leaving
+              for {pace.grace_days} days.
             </>
           ) : (
             // Caps off: the executor skips the per-run and rolling checks, so there is no
-            // size limit to promise here (B-2). Grace still binds.
+            // size limit to promise here (B-2). The countdown is unaffected by the switch.
             <>
-              Your pace: no per-run limit until you turn limits back on. Nothing is removed
-              until it has waited out the {pace.grace_days}-day grace period.
+              Your pace: no per-run limit until you turn limits back on. A flagged title
+              shows as leaving for {pace.grace_days} days.
             </>
           )}
         </p>

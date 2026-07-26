@@ -464,13 +464,15 @@ class MinDormancyGate:
     that had close to a one-in-three chance of being played again within the year.
 
     The default threshold is not a guess; it comes from the shape of the rewatch
-    curve. That probability decays **gradually, and never cliffs** -- see
-    ``docs/SIGNALS.md``, "There is no cliff. Nothing is ever free to delete." Measured on
-    one real library (``backtest.FALLBACK_REWATCH_PRIOR``) it runs about 30% between two
-    and three years, about 19% from three to five, and about 13% beyond five. So below
-    1,095 days of dormancy deleting is close to a coin-flip against your users, and past
-    it the odds improve but never reach free. Dormancy of a year or two means very
-    little -- people circle back to films on that timescale all the time.
+    curve. That probability **roughly halves at the one-year mark, then decays only
+    slowly, and its tail never reaches zero** -- see ``docs/SIGNALS.md``, "There is no
+    cliff. Nothing is ever free to delete." Measured on one real library
+    (``backtest.FALLBACK_REWATCH_PRIOR``) it runs about 61% inside the first year, about
+    30% between two and three years, about 19% from three to five, and about 13% beyond
+    five. So a title one to three years dormant still has close to a one-in-three chance
+    of being played again within the year, and past 1,095 days the odds improve but never
+    reach free. Dormancy of a year or two means very little -- people circle back to
+    films on that timescale all the time.
 
     That curve is a *property of an audience*, not a universal constant, and the figures
     above are documented defaults measured on one real library, not figures fitted to
@@ -478,7 +480,7 @@ class MinDormancyGate:
     (``config.threshold``), read straight off the policy: nothing adjusts it.
     ``engine.calibration`` derives a bucketed rewatch prior, which is the backtest's lift
     baseline and not this threshold, and it has no caller in ``src/`` in any case (see the
-    note at the top of that module). The gate exists either way: the slow decay is the
+    note at the top of that module). The gate exists either way: the shallow tail is the
     invariant, and the threshold is a default the operator may move.
     """
 

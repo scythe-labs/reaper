@@ -1087,7 +1087,8 @@ export function PolicyEditor({
   ].filter((c): c is string => c !== null);
   // Branch on the caps switch: with caps off the executor skips the per-run and rolling
   // checks entirely, so claiming a hard "at most N per run" here would contradict the
-  // caps-off warning below and the run itself (B-2). Grace still binds either way.
+  // caps-off warning below and the run itself (B-2). The switch does not touch the grace
+  // countdown, which is a notice rather than a hold either way (services/grace.py).
   // A failed profile read says nothing about caps at all. The neutral "within your caps"
   // wording covers the still-LOADING case only: asserting caps are in force while the section
   // below says "Couldn't load these settings" is the contradiction B-29 names, on the one
@@ -1747,7 +1748,9 @@ export function PolicyEditor({
                   ariaLabel="Grace period"
                   onChange={(v) => updatePace({ grace_days: v })}
                 />
-                <span className="help">Time on the list to rescue a title before removal.</span>
+                {/* A notice, not a hold: nothing on the deletion path reads this window
+                    (services/grace.py), so help promising time "before removal" was false. */}
+                <span className="help">How long a flagged title shows as leaving, so someone can rescue it.</span>
               </span>
 
               <span className="ex-label">Unknown-size items</span>

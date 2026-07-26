@@ -40,7 +40,7 @@ exactly the buckets the policy cares about most.
 
 | Dormant for | Over all history keys (**wrong**) | Over the actual library (**right**) |
 |---|---|---|
-| 0–365d | ~44% | **~60%** |
+| 0–365d | ~44% | **~61%** |
 | 365–548d | ~31% | ~31% |
 | 548–730d | ~30% | ~32% |
 | 730–1095d | ~19% | **~30%** |
@@ -60,7 +60,7 @@ following year — over the **correct** population:
 
 | Dormant for | Rewatched within a year |
 |---|---|
-| 0–365 days | **~60%** |
+| 0–365 days | **~61%** |
 | 365–548 | ~31% |
 | 548–730 | ~32% |
 | 730–1095 | ~30% |
@@ -117,8 +117,9 @@ the engine simpler by dropping them, drop them.
 
 **Roughly one deletion in eight is a film someone comes back for.** That is the honest
 number, at the best settings measured. It is not a tuning failure — it is what an active
-library looks like. It is the reason the grace period, the *Leaving Soon* collection,
-and the human approval gate are not optional decoration.
+library looks like. It is the reason the *Leaving Soon* warning and the human approval
+gate are not optional decoration. (The warning is what the grace countdown drives; the
+countdown itself holds nothing back.)
 
 ---
 

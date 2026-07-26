@@ -31,7 +31,7 @@ export const understandingPolicy: Doc = {
       "**Protections are hard lines that always win.** They sit in their own lane and can only ever keep a file, never remove one. If any single protection fires, the title stays, whatever it scored.",
     ),
     p(
-      "**Caps stop a run; grace warns you first.** Caps limit how much any one run, and any rolling 30 days, can remove, and they stop the whole run rather than trimming it. Grace starts a countdown on every flagged title, your window to catch it: watch it or spare it and it stays.",
+      "**Caps stop a run; grace is the heads-up.** Caps limit how much any one run, and any rolling 30 days, can remove, and they stop the whole run rather than trimming it. Grace shows every flagged title as leaving for a set number of days. It is a notice, not a hold: watching a title or sparing it keeps it, and nothing goes until you run a reap yourself.",
     ),
     p(
       "**Missing information can only protect, never delete.** The score is pressure that adds up from zero. Anything Reaper cannot read, an outage, a stale ratings file, a title it cannot match, simply adds no pressure. The worst a failure can do is make Reaper more cautious.",
@@ -74,7 +74,7 @@ export const understandingPolicy: Doc = {
 
     h2("What's in a policy", "in-a-policy"),
     p(
-      "A policy has two halves. The rules that change what Reaper decides (the line, signals, protections) take effect on the next scan. The limits on how much it may do and how long it waits (caps and grace) take effect immediately. Movies and TV are two separate policies, tuned on their own.",
+      "A policy has two halves. The rules that change what Reaper decides (the line, signals, protections) take effect on the next scan. The limits on how much one run may remove, and how long a title shows as leaving (caps and grace), take effect immediately. Movies and TV are two separate policies, tuned on their own.",
     ),
 
     h3("Your starting point", "starting-point"),
@@ -155,7 +155,7 @@ export const understandingPolicy: Doc = {
       ],
     ),
     p(
-      "Caps stop the whole run when crossed. They never remove just the part that fits, and while they are on, the rolling 30-day limits bound any sequence of runs. Turning off \"Limit how much each run removes\" drops all four. Items Reaper cannot measure are held back by default.",
+      "Caps stop the whole run when crossed, never removing just the part that fits, and the rolling 30-day limits bound any sequence of runs. Turning off \"Limit how much each run removes\" drops those four, the first four rows above. The unknown-size allowance and the countdown are unaffected, so items Reaper cannot measure are still held back.",
     ),
 
     h3("Movies and TV are tuned separately", "movies-tv"),
@@ -169,7 +169,7 @@ export const understandingPolicy: Doc = {
     ),
     p("**The loop:** nudge one control, watch the number, repeat. If the count jumps more than you expected, put the control back and move it half as far."),
     p(
-      '**Live for the numbers, not the plumbing.** Moving the flag threshold, a signal’s points, a rating bar, or one of your own rules updates the panel instantly. Change a protection switch, a watch window, a keep tag, or a season rule, and it says "Needs a fresh scan" and offers a Scan button. This is on purpose: a wrong number that looks live is worse than a blank one.',
+      '**Live for the numbers, not the plumbing.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, or one of your own rules updates the panel instantly. Anything that changes what a scan reads (a protection\'s switch or its own numbers, a watch window, a keep tag, a season rule) says "Needs a fresh scan" and offers a Scan now button. This is on purpose: a wrong number that looks live is worse than a blank one.',
     ),
     callout(
       "caution",

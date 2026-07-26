@@ -67,10 +67,12 @@ class GraceItem:
 class GraceReport:
     grace_days: int
     in_grace: list[GraceItem]
-    """Still counting down, soonest to clear first -- the ones a cancel would catch."""
+    """Still counting down, soonest to clear first. Already plannable and already
+    deletable: the countdown is what the household sees, not a hold on the file (see the
+    module docstring). A spare ends it at any point, before or after it runs out."""
     ready: list[GraceItem]
-    """The window has closed. Eligible for the (deferred, supervised) reap; shown so the
-    owner knows what would go, not so anything goes automatically."""
+    """The countdown has run out. **No more deletable than** ``in_grace`` -- the planner
+    takes both -- so the split says who has had their notice, not what has unlocked."""
     total_bytes_in_grace: int
     total_bytes_ready: int
     unknown_size_in_grace: int = 0

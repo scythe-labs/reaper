@@ -29,7 +29,7 @@ Last verified against the code: 2026-07-26.
 | **M4** React SPA — review queue, why-panel, policy editor, live simulator | ✅ done |
 | **M5** The reap loop — journal, planner, executor, canary, caps | ✅ done — the live send is wired (`executor._send_for_real`, `POST /api/runs/{id}/execute`), armed from the UI and phrase-gated |
 | **M6** Season pruning | ✅ done — read-only scan through live execute (`executor._send_season`), unmonitor verified before any file is removed |
-| **M7a** Grace lifecycle — the cancellable countdown (DB-only) | ✅ done |
+| **M7a** Grace lifecycle — the notice countdown (DB-only) | ✅ done — a countdown the household sees, not a hold on the file; see the Delete mode row below |
 | **M7b** Leaving Soon label + Discord | ✅ done — reconcile, notifier, and the live label write (gated like a delete by default) |
 | **M8** Profiles + scheduler | ✅ done |
 | **Whitelist** — manual "spare this file", scan + planner + grace | ✅ done, including two-level (show/season) spares with expiry |
@@ -52,7 +52,9 @@ Last verified against the code: 2026-07-26.
    needs `POST /api/policy/backtest` plus a minimal UI. `calibration.derive` has no caller
    anywhere in `src/` — **wiring the backtest would not by itself give it one**, since
    `backtest.run` takes its prior as an injected argument and never calls `derive`; the new
-   route must call it and pass the result in. Until they ship, the live simulator is the
+   route must call it and pass the result in. The backtest also models grace as a delay before
+   deletion, which production does not do, so its `rescued` count is a best case; the field says
+   so and whoever wires it must fix or label it. Until they ship, the live simulator is the
    threshold-tuning surface, and no operator copy may name the backtest or promise a prior
    fitted to their own history.
 4. **Size-truth leftovers** (`docs/SIZE_TRUTH_PLAN.md`): a real-data pass reading

@@ -46,7 +46,8 @@ The interlocks, in order, and why each exists:
    force right now. Anything scored under a superseded policy is refused, and the remedy is
    one scan.
 2. **Manual spare re-check, per item.** The owner may spare an item by hand *after* the
-   plan is built -- during the grace window this executor exists for. A spare does not
+   plan is built, which is what the grace countdown invites them to do (this executor never
+   reads that window; see ``services.grace``). A spare does not
    change the frozen candidate row (still ``condemn``) or the manifest hash, so this is a
    distinct check, run for every item in dry-run and for real alike, and it wins.
 3. **Caps ABORT, never truncate.** A run over its item or byte cap stops entirely.
@@ -1320,9 +1321,10 @@ class Executor:
         candidate = delete.candidate
 
         # A spare wins over everything, in dry-run and for real alike. The owner may spare an
-        # item by hand after the plan was built -- during the grace window this executor
-        # exists to honor -- and a frozen candidate row still reads ``condemn``, so this is
-        # the check (not the verdict, not the manifest hash) that keeps a hand-spared file.
+        # item by hand after the plan was built, which is what the grace countdown invites
+        # (this executor never reads that window -- see services.grace), and a frozen candidate
+        # row still reads ``condemn``, so this is the check (not the verdict, not the manifest
+        # hash) that keeps a hand-spared file.
         if whitelist.effective_override(candidate.media_key, self._decisions) == "spare":
             return self._mark_skipped(
                 delete,

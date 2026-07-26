@@ -131,8 +131,16 @@ class BacktestResult:
     regrets: list[Regret] = field(default_factory=list)
 
     rescued: list[Regret] = field(default_factory=list)
-    """Played DURING the grace window. The live pre-delete check would have caught
-    these, so the file survives -- and the grace period demonstrably earns its keep."""
+    """Played DURING the grace window, so the file survives here.
+
+    **A divergence to close before this ships.** The backtest models the window as a delay
+    before deletion (``deleted_at = cutoff + grace_days``), but production does not: nothing
+    on the deletion path reads the window (see the module docstring on ``services.grace``),
+    and the owner may reap on day one. So this count is an upper bound on what grace itself
+    rescues. Production's real rescuers are the live per-item vetoes, which catch a play
+    after the plan was approved rather than anywhere inside a window. Whoever wires the
+    backtest (M3c) either models those vetoes instead, or labels this figure as the
+    best case it is. Harmless today only because nothing calls this module."""
 
     @property
     def condemned_bytes(self) -> int:
@@ -429,10 +437,12 @@ async def run(
 ) -> BacktestResult:
     """Replay ``policy`` as of ``cutoff`` and measure what it would have cost.
 
-    ``grace_days`` matters, and getting it wrong slanders the policy: an item played
-    two days after being condemned is still in quarantine, and the live re-check
-    before deletion would spare it. Only plays *after* the grace period expires are
-    genuine regrets -- media that was actually gone when someone went looking.
+    ``grace_days`` matters here because this replay **models the window as a delay before
+    deletion** (``deleted_at = cutoff + grace_days``) and counts a play inside it as a
+    rescue rather than a regret. **Production does not work that way** -- nothing on the
+    deletion path reads the window (see the module docstring on ``services.grace``) and the
+    owner may reap on day one, so this split flatters the policy. See ``rescued`` for what
+    has to change before these figures are shown to anyone.
     """
     result = BacktestResult(
         cutoff=cutoff,
@@ -510,9 +520,10 @@ async def run(
         if isinstance(facts.days_observed_unwatched, Known):
             result.condemned_dormancy.append(facts.days_observed_unwatched.value)
 
-        # Did a real person go looking for this? And crucially -- before or after the
-        # grace period expired? A play inside the grace window is a RESCUE: the item
-        # is still in quarantine and the pre-delete re-check spares it.
+        # Did a real person go looking for this? And -- in this model -- before or after the
+        # window expired? A play inside it counts as a RESCUE here, which is the modeling
+        # divergence documented on `rescued` and in `run`: production has no such hold, so
+        # this is the best case rather than what would happen.
         for user_id, when in plays:
             if when <= cutoff:
                 continue

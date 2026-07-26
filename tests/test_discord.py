@@ -63,11 +63,16 @@ class TestLeavingSoon:
         assert ok is True
         body = route.calls.last.request.content.decode()
         assert "3 titles are leaving soon" in body
-        # The countdown reaches the household, phrased as a notice rather than a promise to
-        # remove on a timer: nothing on the deletion path reads the grace window (see the
-        # module docstring on services/grace.py).
-        assert "next 14 days" in body
+        # The countdown reaches the household as a notice, never as a deadline or a
+        # reprieve: nothing on the deletion path reads the grace window (see the module
+        # docstring on services/grace.py), so the owner may reap on day one. The rescue is
+        # therefore stated unconditioned on the clock, and the days describe only how long
+        # the titles SHOW as leaving.
+        assert "Watch one and it stays" in body
+        assert "leaving for the next 14 days" in body
         assert "Nothing is removed automatically" in body
+        # The retired promise, which offered a runway the code does not enforce.
+        assert "in the next 14 days and it stays" not in body
 
     async def test_a_single_title_is_singular(self, httpx2_mock: respx.Router) -> None:
         route = httpx2_mock.post(WEBHOOK).mock(return_value=httpx.Response(204))

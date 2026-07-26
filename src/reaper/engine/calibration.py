@@ -8,8 +8,9 @@
 schedules or CLIs a backtest either. So no number an operator sees today comes from here,
 and no gate threshold is fitted by it -- ``MinDormancyGate`` enforces the operator's own
 stored number. Nothing operator-facing may claim otherwise until :func:`derive` is wired
-(rule 24). This note mirrors the one at the top of ``engine.backtest``, which was written
-and this module then went without.
+(rule 24). This note mirrors the one at the top of ``engine.backtest``: that module carried
+the warning for a while and this one did not, which is how the docs came to promise a
+per-operator prior nothing computes.
 
 The prior -- "how likely is a film dormant for N days to be watched again this year" --
 is the baseline the scorer must beat. It is **not a constant**, and shipping it as one

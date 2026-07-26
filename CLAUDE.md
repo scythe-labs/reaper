@@ -188,8 +188,10 @@ streaming veto and played-since-approval check) each resolve toward keeping the 
 - `docs/README.md` — what belongs in which file, and the rule that keeps them current.
 - `docs/STATUS.md` — **start here.** What is true right now: milestones, open work, decisions
   locked. Small and edited in place.
-- `docs/LEARNINGS.md`, `docs/SIGNALS.md` — findings from real data. Read `SIGNALS.md` before
-  touching `signals.py`, `policy.py`, or `calibration.py`; it is cited from three places in `src/`.
+- `docs/LEARNINGS.md`, `docs/SIGNALS.md` — findings from real data. `SIGNALS.md` is cited from
+  five places in `src/`: `engine/signals.py`, `engine/policy.py` (twice), `engine/gates.py`, and
+  `api/routes.py`. Read it before touching any of them, and before the rewatch curve in
+  `engine/backtest.py`.
 - `docs/SIZE_TRUTH_PLAN.md` — the one feature plan still live (4 of 9 stages remain).
 - `docs/history/` — frozen: the retired plan narrative and the review passes, including the
   finding IDs behind the numbered rules. Never edit an archived file to bring it up to date.
