@@ -572,7 +572,7 @@ _MOVIE_COMPARABLE = frozenset({SizeSource.RADARR})
 #: And for seasons, which delete file by file and re-read the summed episode files.
 #: ``SONARR_FILES`` is that same quantity. ``SONARR`` is the season FOLDER and is a known
 #: mismatch: the folder side is the larger number, so the comparison reads as a shrink and
-#: the growth interlock has been desensitised since it was written. It stays admissible
+#: the growth interlock has been desensitized since it was written. It stays admissible
 #: because it is the only season measurement Reaper takes today, and removing it would
 #: keep every season. Preferring ``SONARR_FILES`` at scan time is what actually repairs
 #: the interlock, and is deliberately a separate change.

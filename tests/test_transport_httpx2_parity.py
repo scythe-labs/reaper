@@ -4,7 +4,8 @@
 ``GuardedTransport`` (clients/base.py) is the safety linchpin: it subclasses
 ``httpx2.AsyncBaseTransport``, inspects each request's method / path / extensions, and
 either refuses a mutation or delegates to an inner transport. It is now ported, alongside
-the whole BaseClient stack and its respx tests (see docs/PLAN.md). This file pinned the one
+the whole BaseClient stack and its respx tests (see docs/history/PLAN-narrative.md).
+This file pinned the one
 library contract that port depended on before it landed -- that httpx2's
 ``AsyncBaseTransport`` extension point behaves identically to httpx's -- and stays as a
 permanent regression pin on that contract now that the port is done.

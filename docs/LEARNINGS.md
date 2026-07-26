@@ -8,9 +8,188 @@
 > more valuable than the fix, because it stops the next person re-trying X.
 >
 > Figures are given as ratios and orders of magnitude on purpose: the point is the
-> *shape* of the finding, which generalises, not one server's numbers, which do not.
+> *shape* of the finding, which generalizes, not one server's numbers, which do not.
 
 ---
+
+## The headline findings
+> Moved here from the living plan on 2026-07-26. The plan tracked *state*; these are
+> *findings*, which do not go stale, so they belong with the measurements that produced
+> them.
+
+
+Validated against a large, active, multi-instance production setup. The findings are
+recorded as shapes and ratios — see `docs/LEARNINGS.md` and `docs/SIGNALS.md` for the
+detail.
+
+- **An active library is not mostly dead weight.** The share of films *never* played at
+  all was under one percent. A film watched in the past year is more likely than not to
+  be watched again within the next one. This is the finding that most contradicts the
+  intuition a pruning tool gets built on.
+- **There is no cliff, and nothing is ever free to delete.** A film dormant for five
+  years still has a double-digit chance of being watched next year. There is only
+  *cheaper* and *dearer*.
+- **The best policy measured still carries ~12% regret** — roughly one deletion in
+  eight is a film someone comes back for. Not a tuning failure: it is what an active
+  library looks like, and it is why the grace period and the human approval gate are
+  not decoration.
+- **Dormancy does essentially all the work.** `FEW_WATCHERS` and `LOW_RATING` add no
+  measurable skill on top of it.
+- **Removing `SIZE` from the score was right.** Size measures *reward*, not *risk*;
+  big files are big *because* they are popular.
+- Rating coverage for movies via Radarr is effectively free and effectively complete
+  (IMDb ~99%, Rotten Tomatoes ~88%) — no extra key, no extra request.
+- Real request data contains **the same title requested by several people**, which is
+  why the requester rule is per-*media*, not per-*request*.
+
+The population trap that produced two confidently wrong conclusions is treated in full in
+`docs/SIGNALS.md`, and again below under what an active library looks like.
+
+
+## Assumptions that were wrong
+> Moved here from the living plan on 2026-07-26. The plan tracked *state*; these are
+> *findings*, which do not go stale, so they belong with the measurements that produced
+> them.
+
+
+Each of these was in the original plan and was disproved by running against a real
+library. They are the reason the plan is a living document.
+
+### 1. `episodeCount` is the number of episodes in a season — **wrong**
+
+It is Sonarr's *download intent*. An unmonitored-but-complete season reports
+`episodeCount = 0` while holding a full `totalEpisodeCount` — and on a mature library
+that is the *majority* of seasons, because finished shows get unmonitored.
+
+⇒ Only `episodeFileCount` and `sizeOnDisk` describe reality. `totalEpisodeCount`
+is the honest season length. `episodeCount` is display-only.
+
+### 2. Plex's `audience_rating` is Rotten Tomatoes — **not necessarily**
+
+On a probed server, every movie sampled had `rating_image` empty and
+`audience_rating_image = imdb://image.rating`. It was **IMDb**. Both shapes exist in
+the wild; the field means whatever the metadata agent decided.
+
+⇒ Ratings carry *provenance*, read from the data, never inferred. An IMDb floor of
+7.5 compared against a Tomatometer of 96 would protect nothing, silently, forever.
+
+### 3. Signed weights with a neutral baseline — **actively dangerous**
+
+Under a signed score (start at 50, subtract for "well rated"), an `Unknown` removes
+a *negative* contribution and the score **rises**. An outage makes media *more*
+condemned.
+
+⇒ Signals are unsigned, `[0, weight]`. Unknown contributes 0, the floor. Property-
+tested: making any input `Unknown` never increases a score; a total outage scores 0.
+
+### 4. Server popularity counts distinct watchers — **needed a window**
+
+Counting all-time watchers protected the overwhelming majority of the library and made
+every threshold condemn almost nothing. On a long-lived server nearly everything has
+been watched by *someone*, eventually; only a fraction still have watchers this year.
+
+⇒ Popularity is windowed (365d default). There is deliberately no way to spell
+"all time".
+
+### 5. A play after deletion is a regret — **not if it's within grace**
+
+An item played 2 days after condemnation is still in quarantine; the live pre-delete
+check spares it. Counting rescues as failures slanders the policy.
+
+⇒ Regrets and rescues are split at the grace boundary.
+
+### 6. SQLite stores timezones — **it does not**
+
+`DateTime(timezone=True)` is a silent no-op. Aware in, naive out.
+
+⇒ Timestamps are integer epoch. The instant *is* the value.
+
+### 7. The rewatch curve is a constant — **it is a property of an audience**
+
+Shipping one library's rewatch rates as a hardcoded prior makes every lift number on
+every *other* library meaningless.
+
+⇒ `engine/calibration.py` derives the prior from the operator's own history, and the
+backtest labels which prior it used in every summary it prints.
+
+### 8. The simulator can re-decide a snapshot under any policy — **only the thresholds**
+
+The zero-API-call simulator re-compares **stored** scores against new numbers. That is
+exact for `condemn_at` and `coverage_floor_bp` and simply *wrong* for anything else:
+change a signal weight or a gate, and the stored scores were produced by the old ones.
+A policy editor that let you drag a weight and then showed a confident count would be
+the most dangerous screen in the product — the stale number looks exactly as
+authoritative as the true one.
+
+⇒ `PolicyBody.scoring_hash()` covers the signals and gates but not the thresholds. The
+snapshot records it, and the simulator **refuses to report any numbers** when it
+differs, saying so and telling you to re-scan.
+
+### 9. Rounding the score after deciding the verdict — **two answers to one question**
+
+The scan compared the *float* score (69.7) against the threshold and abstained, but
+persisted `round(69.7)` = 70. The simulator, which only ever sees the stored 70,
+condemned it. The review queue and the policy editor disagreed about a real film, at
+the same threshold, on the same snapshot — and the queue displayed "score 70, your
+threshold is 70, **not judged**", which reads as a bug even to a careful user.
+
+⇒ Round **first**, then decide, and store exactly what decided. There is one number and
+everything compares against it (`tests/test_verdict_agreement.py` sweeps the grid).
+
+### 10. Posters and blurbs must come from Tautulli — **not needed**
+
+The instinct (and the original request) was to fetch poster art and descriptions from
+Tautulli. But `get_library_media_info` is show/movie-level and has no overview, so that
+would mean a per-item `get_metadata` call — thousands of extra requests on a large
+library. The *arr payloads the scan **already** pulls carry all of it: `overview`, `year`,
+and `images[].remoteUrl` (a TMDb CDN URL that resolves straight from the browser).
+
+⇒ Display fields are captured at scan time from data already in hand and stored on the
+candidate. Zero extra API calls, and they survive on the frozen snapshot like everything
+else. A Tautulli image proxy stays an option for items the *arr has no poster for, not a
+requirement.
+
+### 11. Seerr's `serviceId` is Reaper's instance id — **different numbering schemes**
+
+The tempting join for "who requested this" is Seerr's `serviceId` → Reaper's `Instance.id`.
+They do not line up: Seerr indexes *its own* configured services, Reaper indexes its own
+rows. The external ids (tmdb for movies, tvdb+season for TV) are present on both sides and
+do line up.
+
+⇒ The requested-by map keys on external ids. And it is treated as **display-only** — never
+a gate — so a rare cross-edition id collision can at worst show the wrong name on a card,
+never condemn or spare the wrong file. (The requester *rule*, which does affect the score,
+still joins per-media through Plex, unchanged.)
+
+### 12. The emergency stop worked — **it was never wired**
+
+`RuntimeSafety.emergency_stop` existed, with a correct `destructive_allowed = env_enabled
+AND NOT emergency_stop`, and a UI story around it. But every construction site built
+`RuntimeSafety(env_enabled=...)` and nothing ever read the DB, so the switch controlled
+nothing. A safety control that silently does nothing is worse than none.
+
+⇒ One helper (`app_settings.runtime_safety`) now assembles the effective permission, used
+everywhere a client or a health check is built.
+
+**Superseded — the two-switch model is gone, and the docs did not notice for a long time.**
+The host-ceiling / emergency-stop pair was collapsed into a single stored toggle:
+`destructive_allowed` is now `RuntimeSafety.destructive_enabled` alone, sourced from the DB,
+with `REAPER_DESTRUCTIVE_ACTIONS_ENABLED` seeding only the first run (`app_settings.
+destructive_enabled` falls back to it solely when nothing is stored). There is no
+`emergency_stop` field. So the old guarantee — *nothing reachable from a browser can arm
+Reaper* — **no longer holds**: the password-gated `PUT /api/settings/safety` arms it, and
+`tests/test_settings_api.py::TestSafety` pins exactly that, with the env var false. The
+admin password is now the only thing between a browser and an armed Reaper.
+
+⇒ The lesson is the drift, not the design: `README.md` and `.env.example` went on promising
+the ceiling ("Turning deletion on requires host access") long after it was removed, and two
+docstrings still described switches that no longer existed. A safety claim nobody re-checked
+is the same failure as §12 itself, one level up — see engineering rule 7. Corrected to
+describe the stored toggle. **If the host ceiling is wanted back, it is a code change, not a
+doc change.**
+
+---
+
 
 ## The scoring engine
 

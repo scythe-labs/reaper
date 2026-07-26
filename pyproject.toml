@@ -21,7 +21,7 @@ dependencies = [
     "pydantic-settings>=2.14.2",
     "python-dotenv>=1.1.0",      # imported directly (config.load_raw_env), not only transitively
     # Persistence
-    "sqlalchemy>=2.0.51",        # plain SQLAlchemy, NOT SQLModel (see docs/decisions.md)
+    "sqlalchemy>=2.0.51",        # plain SQLAlchemy, NOT SQLModel (see docs/STATUS.md)
     "alembic>=1.18.5",
     "aiosqlite>=0.22.1",
     "greenlet>=3.5.4",
@@ -51,7 +51,7 @@ dev = [
     "respx>=0.23.1",             # httpx mocking (respx speaks httpx only, not httpx2)
     "hypothesis>=6.161.0",       # property tests for the scoring invariants
     "pytest-xdist>=3.8.0",
-    "pytest-httpx2>=1.0.0",      # httpx2 mocking; respx cannot (see docs/PLAN.md httpx2 scope)
+    "pytest-httpx2>=1.0.0",      # httpx2 mocking; respx cannot (see docs/history/PLAN-narrative.md httpx2 scope)
 ]
 
 [project.scripts]

@@ -1,5 +1,26 @@
 # Size truth: making an unreadable size stop being a number
 
+> **LIVE — 4 of 9 stages remain.** Stages 1, 2, 3, 3b and 3c are shipped and verified in code.
+> Most of what follows is therefore the record of work already done; the open items are:
+>
+> 1. **Stage 5 — the only correctness fix left, and it is on the deletion path.** Season sizes
+>    still come from the Sonarr season *folder* statistic, not summed episode files, so the
+>    frozen and live sides of the season growth interlock measure different quantities.
+>    `executor.py`'s `_SEASON_COMPARABLE` comment says it outright: the interlock "has been
+>    desensitized since it was written." `SizeSource.SONARR_FILES` exists and is written by
+>    nothing in `src/`. Preferring it at scan time is the repair.
+> 2. **Stage 4** — a real-data pass reading `scan.size_source_tally`, recorded as ratios in
+>    `docs/LEARNINGS.md`. Cheap, and it gates Stage 6.
+> 3. **Stage 7** — add `"size_bytes"` to `DEGRADABLE` in `tests/_policy_lab.py`, and delete the
+>    test-only `snapshot.candidates()` (no caller in `src/`; a standing rule 38 violation).
+> 4. **Stage 6** — movie lower bounds. Optional, low predicted yield, gated on Stage 4.
+>    Discardable unless Stage 4 says otherwise.
+>
+> Two now-forbidden instructions in the body have been corrected in place and marked. Every
+> cross-file `file:line` citation below has drifted since 2026-07-19; treat them as hints.
+
+
+
 Status: **Stages 1, 2, 3, 3b and 3c landed 2026-07-19.** Written 2026-07-19 for execution by
 another agent session; §1 and the Stage 1/2 boundary have since been corrected against the
 shipped code (see the notes marked **Corrected**).
@@ -43,11 +64,12 @@ against a stand-in `ProfileSettings()` rather than the operator's own, which had
 settings-based warning unreachable — including the pre-existing danger about running
 without approval. Record this: the browser pass earns its cost.
 
-**Note for whoever runs the app next:** the schema changed, and a `data/reaper.db` created
-before these commits has neither `size_source` nor `held_back_unknown_size` and still holds
-`size_bytes` NOT NULL. Pre-release the dev DB is disposable, so the fix is to delete it and
-`alembic upgrade head` from empty, carrying the `app_user` rows across if the admin account
-matters.
+> **CORRECTED 2026-07-26 — do not follow the paragraph this replaces.** It told you to delete
+> `data/reaper.db` and upgrade from empty. That was written pre-release; testers now run Reaper
+> on real data and **never rebuild their database**. The heal migration
+> `alembic/versions/20260723_1000_heal_candidate_size_nullable.py` already upgrades an
+> in-window database in place, and its own header ends "Testers never rebuild their database."
+> Run `alembic upgrade head` and keep your data.
 
 This plan removes the last place Reaper invents a number on the deletion path. It is the
 "correct fix, no workarounds" version of the size problem, superseding the display-only
@@ -160,7 +182,7 @@ So the quantity freed is the **summed episode-file bytes** — exactly what
 **This inverts the season ladder, and fixes a pre-existing bug.** Today the scan stores
 `statistics.sizeOnDisk` (folder) and the executor compares it against the summed live episode
 files (`executor.py:1237`). Those are two different measurements, so the season growth
-interlock has been systematically desensitised since it was written — the folder side is
+interlock has been systematically desensitized since it was written — the folder side is
 larger, so the comparison reads as "it shrank" and the check does not fire. Sourcing the
 frozen size from the summed episode files makes both sides the same measurement for the first
 time. **Stage 5 is therefore a bug fix, not merely an acquisition improvement.**
@@ -250,12 +272,16 @@ interlock. Define the enum beside the column, and make the executor's selection 
 Precedent for a nullable string whose NULL means "could not check": `Candidate.show_status`
 (`models.py:388-397`).
 
-**Migration mechanics.** The project is pre-release at a single Alembic baseline that is
-**rewritten in place** — the baseline's own header says "edit the models, delete `reaper.db`,
-delete this file, regenerate, and upgrade from empty"
-(`alembic/versions/20260714_1840_baseline_schema.py:1-19`), reinforced by `CLAUDE.md` and
-`docs/PLAN.md:583-584`. No new revision file. `tests/test_migrations.py:34-38` (one head) stays
-green.
+> **CORRECTED 2026-07-26.** The paragraph below describes a baseline that no longer exists.
+> The baseline is now **frozen** — its own header says so, and every schema change is its own
+> additive revision chained onto head. Nothing here may be taken as license to edit it or to
+> regenerate from empty. Kept only because the stage notes below refer back to it.
+
+**Migration mechanics (as written 2026-07-19, now superseded).** The project is pre-release at
+a single Alembic baseline that is **rewritten in place** — the baseline's own header says "edit
+the models, delete `reaper.db`, delete this file, regenerate, and upgrade from empty"
+(`alembic/versions/20260714_1840_baseline_schema.py:1-19`). No new revision file.
+`tests/test_migrations.py:34-38` (one head) stays green.
 
 **Corrected:** this originally said to do both column changes in ONE regeneration. They
 belong to different stages (see Stage 1's note), so the baseline is regenerated twice, once
@@ -804,4 +830,4 @@ Plus a real browser pass at Stage 4: the narrow-viewport overflow of the nowrap 
 - **How often does a movie have `hasFile: true` and no `sizeOnDisk`?** This is the entire
   value of Stage 6. If it is near zero, skip Stage 6.
 - **How far does a season's folder statistic diverge from its summed episode files?** This
-  measures how desensitised the season growth interlock has been (§2.1).
+  measures how desensitized the season growth interlock has been (§2.1).

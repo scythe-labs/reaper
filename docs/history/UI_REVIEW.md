@@ -1,3 +1,15 @@
+# The whole-frontend UI/UX review — archived
+
+> **FROZEN 2026-07-26. Effectively complete: 92 of 94 findings fixed.**
+>
+> The two unchecked items (R1, R2 file splits) are annotated in place as deliberate non-fixes
+> with no behavior change. PR9 has since landed. The `## Progress` section below was the
+> live handoff between sessions and is no longer maintained.
+>
+> **The `## Agent Rules` section here is superseded** by `.claude/rules/frontend.md`, which
+> carries these as rules 17-21, 39-51 and 60-69 in their merged wording. Follow the rules
+> files, never this copy.
+
 # UI/UX review: the whole frontend
 
 - **Baseline:** `dev` @ `a7d7659`, reviewed 2026-07-24.

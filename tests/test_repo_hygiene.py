@@ -21,6 +21,20 @@ SELF = Path(__file__).resolve()
 SRC = REPO / "src" / "reaper"
 TESTS = REPO / "tests"
 FRONTEND_SRC = REPO / "frontend" / "src"
+DOCS = REPO / "docs"
+HISTORY = DOCS / "history"
+
+# docs/ splits by how long a statement stays true (see docs/README.md). Live docs are held to
+# the same standards as code; docs/history/ is frozen and deliberately describes the past, so
+# its stale dates, TBD placeholders and superseded rule wordings are correct as written.
+STATUS_DOC = DOCS / "STATUS.md"
+STATUS_MAX_LINES = 200
+
+
+def _live_docs() -> list[Path]:
+    """Every doc that claims to describe the present. Excludes the frozen archive."""
+    return sorted(p for p in DOCS.rglob("*.md") if HISTORY not in p.parents)
+
 
 INSTRUCTION_FILES = [REPO / "CLAUDE.md", *sorted((REPO / ".claude" / "rules").glob("*.md"))]
 
@@ -49,6 +63,10 @@ def _code_files() -> list[Path]:
         for pattern in globs:
             out.extend(p for p in root.rglob(pattern) if p.is_file())
     return out
+
+
+def _code_and_live_docs() -> list[Path]:
+    return [*_code_files(), *_live_docs()]
 
 
 def _defined_rules() -> dict[int, list[Path]]:
@@ -96,7 +114,7 @@ def test_every_rule_citation_in_code_resolves() -> None:
     """
     defined = _defined_rules()
     dangling: list[str] = []
-    for path in _code_files():
+    for path in _code_and_live_docs():
         for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             for match in _RULE_CITE.finditer(line):
                 for number in re.findall(r"\d+", match.group(1)):
@@ -173,7 +191,7 @@ def test_american_english_everywhere() -> None:
     ``aria-labelledby`` attribute keep their real spelling.
     """
     offenders: list[str] = []
-    for path in _code_files():
+    for path in _code_and_live_docs():
         # This file spells every banned word once, in the pattern above.
         if path.resolve() == SELF:
             continue
@@ -232,3 +250,87 @@ def test_scoped_rule_files_declare_their_paths(path: Path) -> None:
     assert text.startswith("---\n"), f"{path.name} needs YAML frontmatter"
     frontmatter = text.split("---", 2)[1]
     assert "paths:" in frontmatter, f"{path.name} must scope itself with a paths: list"
+
+
+# --- the docs discipline -----------------------------------------------------------------
+#
+# These check the STRUCTURE of docs/, never the truth of a sentence. CI can prove that an
+# archived file says it is frozen; it cannot prove a paragraph is still accurate. The point is
+# to make the cheap failures impossible so the expensive ones stay visible.
+
+
+def test_status_doc_stays_small() -> None:
+    """``docs/STATUS.md`` is the live state, and it only works while it is small.
+
+    The plan it replaced reached 3,508 append-only lines, at which point updating it meant
+    first reading enough of it to find where the update went. Co-change with code commits fell
+    to 24.7%. A doc you edit in place stays cheap to edit; this budget is what keeps it one.
+    """
+    lines = len(STATUS_DOC.read_text(encoding="utf-8").splitlines())
+    assert lines <= STATUS_MAX_LINES, (
+        f"docs/STATUS.md is {lines} lines, over its {STATUS_MAX_LINES}-line budget.\n"
+        "Move history to docs/history/ and measured findings to docs/LEARNINGS.md, "
+        "then shorten what is left. Do not raise this number to make the test pass."
+    )
+
+
+def test_archived_docs_declare_they_are_frozen() -> None:
+    """Every file in ``docs/history/`` says so in its own banner.
+
+    An archived doc that reads like a live one is worse than no doc: the review it holds was
+    remediated, so its "still open" claims actively mislead whoever reads it next.
+    """
+    offenders = [
+        str(p.relative_to(REPO))
+        for p in sorted(HISTORY.rglob("*.md"))
+        if "FROZEN" not in "".join(p.read_text(encoding="utf-8").splitlines(keepends=True)[:30])
+    ]
+    assert not offenders, "archived docs must open with a FROZEN banner:\n" + "\n".join(offenders)
+
+
+def test_live_docs_carry_no_unresolved_placeholders() -> None:
+    """A live doc never ships a ``TBD``.
+
+    The retired plan carried two unresolved ``(dev @ TBD)`` commit placeholders for days.
+    Placeholders in ``docs/history/`` are fine: that file is a record of what was written then.
+    """
+    offenders = [
+        f"{p.relative_to(REPO)}:{n}"
+        for p in _live_docs()
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if "TBD" in line
+    ]
+    assert not offenders, "resolve or remove these placeholders:\n" + "\n".join(offenders)
+
+
+def test_docs_referenced_from_code_exist() -> None:
+    """A ``docs/…`` path named in code resolves to a real file.
+
+    Rule 64: removing a surface removes its whole supply chain. Moving a doc without updating
+    the comments that cite it leaves a reader chasing a path that is not there.
+    """
+    ref = re.compile(r"docs/[\w./-]+\.md")
+    dangling: list[str] = []
+    for path in [*_code_files(), REPO / "pyproject.toml"]:
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for match in ref.finditer(line):
+                if not (REPO / match.group(0)).is_file():
+                    dangling.append(f"{path.relative_to(REPO)}:{lineno} -> {match.group(0)}")
+    assert not dangling, "these doc paths do not exist:\n" + "\n".join(dangling)
+
+
+def test_live_docs_do_not_restate_the_numbered_rules() -> None:
+    """The numbered rules have exactly one home: ``CLAUDE.md`` and ``.claude/rules/``.
+
+    Two review passes each carried their own "Agent Rules" section, and those wordings were
+    deliberately changed when they were merged into the rules files. A second copy in a live
+    doc is a copy that will disagree.
+    """
+    heading = re.compile(r"^#+\s.*agent rules", re.IGNORECASE)
+    offenders = [
+        f"{p.relative_to(REPO)}:{n}"
+        for p in _live_docs()
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if heading.match(line)
+    ]
+    assert not offenders, "the rules live in .claude/rules/, not in docs/:\n" + "\n".join(offenders)

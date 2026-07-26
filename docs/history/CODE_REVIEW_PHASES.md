@@ -1,3 +1,15 @@
+# The fifth pass, remediation tracker — archived
+
+> **FROZEN 2026-07-26. All ten phases are DONE; nothing here is outstanding.**
+>
+> **The standing authorization below is revoked.** This file granted per-phase commit-and-push
+> on a working branch, "overriding CLAUDE.md's commit-only-when-asked for this branch and this
+> remediation only." That branch is gone and that remediation is finished. **Commit only when
+> asked** (`CLAUDE.md`) governs, with no exception carried forward from here.
+>
+> Kept as the record of what each phase actually changed, and as the model for how a large
+> remediation is split so that twins land together.
+
 # Backend review remediation — phase plan & tracker
 
 The whole-backend review in `docs/CODE_REVIEW.md` (dev @ `d3c3839`, 2026-07-24) holds **two

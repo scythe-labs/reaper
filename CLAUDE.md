@@ -59,9 +59,10 @@ haven't touched this session.
   head` on an existing database only ever adds. New columns are nullable or carry a server
   default, and the next scan backfills them; a not-yet-backfilled `NULL` reads as "unknown,"
   never as a wrong definite value. `cache.db` stays disposable and unmigrated.
-- **Keep `docs/PLAN.md` current** — what is done and, more importantly, which assumptions
-  turned out wrong. Record findings, including negative results, in `docs/LEARNINGS.md` and
-  `docs/SIGNALS.md`.
+- **A change that alters what the app *does* updates `docs/STATUS.md` in the same commit** —
+  edit the line that is now wrong, never append beside it. Measured findings, including
+  negative results, go to `docs/LEARNINGS.md`. `docs/README.md` says what belongs where: state,
+  knowledge, and history have different lifespans and never share a file.
 - **Commit only when asked**; end commit messages with the `Co-Authored-By` trailer.
 
 ## Rules that apply everywhere
@@ -183,7 +184,11 @@ streaming veto and played-since-approval check) each resolve toward keeping the 
 
 ## Where things are documented
 
-- `docs/PLAN.md` — the living plan (start here for current state).
-- `docs/LEARNINGS.md`, `docs/SIGNALS.md` — findings from real data.
-- `docs/CODE_REVIEW.md` — the whole-codebase review passes, and the finding IDs behind the
-  numbered rules.
+- `docs/README.md` — what belongs in which file, and the rule that keeps them current.
+- `docs/STATUS.md` — **start here.** What is true right now: milestones, open work, decisions
+  locked. Small and edited in place.
+- `docs/LEARNINGS.md`, `docs/SIGNALS.md` — findings from real data. Read `SIGNALS.md` before
+  touching `signals.py`, `policy.py`, or `calibration.py`; it is cited from four places in `src/`.
+- `docs/SIZE_TRUTH_PLAN.md` — the one feature plan still live (4 of 9 stages remain).
+- `docs/history/` — frozen: the retired plan narrative and the review passes, including the
+  finding IDs behind the numbered rules. Never edit an archived file to bring it up to date.

@@ -6,7 +6,8 @@ webhook ever break Reaper". So the failure paths get the most attention: every o
 return False and stay silent, never raise, and never log the URL.
 
 notify/discord.py is on httpx2 (Reaper is mid-migration off the unmaintained httpx; see
-docs/PLAN.md). respx cannot intercept an httpx2 client, so these use the ``httpx2_mock``
+docs/history/PLAN-narrative.md). respx cannot intercept an httpx2 client, so these use
+the ``httpx2_mock``
 fixture from pytest-httpx2, which is a ``respx.Router`` wired to httpx2. The Router API is
 respx's: the mocked ``return_value`` is an ``httpx.Response`` (respx's own currency, which
 the plugin hands to the httpx2 client), while a ``side_effect`` exception is an httpx2 one

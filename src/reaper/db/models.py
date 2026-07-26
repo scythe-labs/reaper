@@ -295,7 +295,7 @@ class AutonomyGrant(Base):
     backtest that must feed ``backtest_passed`` has no route or UI, so the check
     constraints below mean no row can honestly exist until that ships. The schema is
     kept (pre-release, single migration baseline) so the earned-autonomy design stays
-    enforced in the database from day one, and PLAN.md tracks the wiring as open work.
+    enforced in the database from day one, and docs/STATUS.md tracks the wiring as open work.
     """
 
     __tablename__ = "autonomy_grant"
