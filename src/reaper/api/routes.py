@@ -1751,9 +1751,13 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
             kind = "movies" if body.media_type == "movie" else "TV"
             return SimulationOut(
                 exact=False,
+                # States the condition, not who caused it. An upgrade that retires a gate moves
+                # both hashes exactly as an edit does (``engine.policy.RETIRED_GATES``), so
+                # "you changed" can be false. Kept in step with the frontend's own copy in
+                # ``PolicySimulator.tsx``, which is what the operator actually reads.
                 stale_reason=(
-                    "You changed what the scan reads: a protection, a watch window, a keep tag, or "
-                    f"a season rule. The last scan's evidence no longer fits your {kind} policy. "
+                    "This policy doesn't match the last scan: a protection, a watch window, a "
+                    f"keep tag, or a season rule reads differently from your {kind} policy now. "
                     "Run a scan to apply it, then this becomes exact again."
                 ),
                 condemned=0,

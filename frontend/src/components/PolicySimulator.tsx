@@ -85,9 +85,14 @@ export function StaleNotice({
         </>
       ) : (
         <>
+          {/* States the condition, never who caused it. An upgrade that retires a gate moves
+              scoring_hash and evidence_hash the same way an edit does (engine/policy.py's
+              RETIRED_GATES), so this used to open "You changed what the scan reads" at an
+              operator who had changed nothing, on a page where a protection row had just
+              silently disappeared. True for a real edit and for an upgrade alike. */}
           <p>
-            You changed what the scan reads: a protection, a watch window, a keep tag, or a season
-            rule. The last scan's evidence no longer fits. Scan to apply it.
+            This policy doesn't match the last scan: a protection, a watch window, a keep tag, or a
+            season rule reads differently now. Scan to apply it.
           </p>
           <button className="primary sm" onClick={onScan} disabled={starting}>
             {starting ? "Starting…" : "Scan now"}

@@ -168,7 +168,7 @@ export const understandingPolicy: Doc = {
     ),
     p("**The loop:** nudge one control, watch the number, repeat. If the count jumps more than you expected, put the control back and move it half as far."),
     p(
-      '**Live for the numbers, not the plumbing.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, or one of your own rules updates the panel instantly. Anything that changes what a scan reads (a protection\'s switch or its own numbers, a watch window, a keep tag, a season rule) says "Needs a fresh scan" and offers a Scan now button. This is on purpose: a wrong number that looks live is worse than a blank one.',
+      '**Live for the numbers, not the plumbing.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, or one of your own rules updates the panel instantly. Anything that changes what a scan reads (a protection\'s switch or its own numbers, a watch window, a keep tag, a season rule) says "Needs a fresh scan" and offers a Scan now button. An upgrade that retires a protection can say it too, without you having touched anything. This is on purpose: a wrong number that looks live is worse than a blank one.',
     ),
     callout(
       "caution",

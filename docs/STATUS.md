@@ -61,7 +61,11 @@ Last verified against the code: 2026-07-26.
    retired earlier and missed by the first version: it never shipped in a default policy, but
    the save boundary accepts any `GateId`, and a body carrying one had no self-heal.
    `tests/test_policy.py` now pins the set against every id `build_gates` cannot construct, so
-   the next retirement cannot forget it. `GateId.UNMANAGED` and the surfaces
+   the next retirement cannot forget it. Retiring a gate moves `scoring_hash` and
+   `evidence_hash` as well as `policy_hash`, so the first Policy page after an upgrade shows
+   the simulator's "needs a fresh scan" state with no numbers; that notice now states the
+   condition instead of telling the operator they changed something.
+   `GateId.UNMANAGED` and the surfaces
    that decode a stored explanation (`STRUCTURAL_GATES`, the chip phrase, the why-panel line)
    stay. `Facts.is_managed` stays too: it is a true observation and the evidence any re-wiring
    would need, which is a Plex-first scan path, not a change to the gate.

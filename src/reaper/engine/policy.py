@@ -368,9 +368,19 @@ class PolicyBody(Frozen):
         untrustworthy. Degrading on this would make the first scan after an upgrade
         un-plannable for every install, over a protection that was never doing anything.
 
-        It does move ``policy_hash``, which voids a plan approved before the upgrade and asks
-        for a re-scan (rule 113). That is the honest outcome: the stored policy really is not
-        the one now in force, even though every verdict it produces is identical.
+        It moves all three hashes, not just ``policy_hash``. ``policy_hash`` voids a plan
+        approved before the upgrade and asks for a re-scan (rule 113). ``scoring_hash`` and
+        ``evidence_hash`` move too, because ``gates`` is excluded from neither
+        ``_POST_SCORE_FIELDS`` nor ``_EVIDENCE_REPLAYABLE_FIELDS`` -- so the policy simulator
+        misses both its exact tier and its frozen-facts replay tier and withholds every number
+        until that re-scan. That is the honest outcome: the stored policy really is not the one
+        now in force, even though every verdict it produces is identical.
+
+        What it must NOT do is let a surface blame the operator for it. The simulator's stale
+        notice once opened "You changed what the scan reads" at an install that had changed
+        nothing; it now states the condition instead (``PolicySimulator.tsx``, and the matching
+        ``stale_reason`` in ``api.routes``). No post-upgrade code can reproduce the old hash,
+        so the copy is the only thing that can carry the truth here.
         """
         kept = tuple(g for g in self.gates if g.gate not in self.RETIRED_GATES)
         if len(kept) != len(self.gates):
