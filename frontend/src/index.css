@@ -3671,6 +3671,48 @@ a.rating-chip:hover {
   margin-top: 0.15rem;
 }
 
+/* On a phone the card's three flex columns leave the middle one -- which is all the balance
+   bar can ever be as wide as -- about half the card, so the bar stops dead under the watched
+   %, reading as a bar that ran out rather than a full one. The whole card becomes one grid
+   instead: avatar, name and % share the top line, and the bar and its legend span to the
+   right edge, where the eye already expects a 100% bar to end. .fair-body and .fair-side are
+   plain unlabeled wrappers, so display: contents dissolves them and their children place
+   themselves -- no second markup for the same card. The chip drops out here: it repeats the
+   legend line directly above it, in the same color ("48 GiB to reclaim" over "48 GiB to
+   reclaim · 6 titles"), and on a screen this narrow a card earns its height. */
+@media (max-width: 640px) {
+  .fair-card {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+    row-gap: 0.5rem;
+    column-gap: 0.9rem;
+  }
+  .fair-body,
+  .fair-side {
+    display: contents;
+  }
+  .fair-avatar {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .fair-row1 {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .fair-watched {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .fair-balance,
+  .fair-legend {
+    grid-column: 2 / -1;
+  }
+  .fair-side > .status-chip {
+    display: none;
+  }
+}
+
 /* ---- Scales person panel (ScalesPanel) ---------------------------------- */
 /* The panel is the why-panel shell (.why, main.split), so it inherits the side-column /
    right-hand-sheet behavior and the head/close grammar. Only its body is Scales' own: the
