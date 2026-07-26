@@ -316,7 +316,9 @@ describe("the all-seasons list", () => {
     renderQueue();
     await expandSeasons();
 
-    const list = screen.getByRole("list");
+    // The click is awaited, the read it starts is not, so the list arrives a beat later
+    // (rule 137).
+    const list = await screen.findByRole("list");
     expect(await within(list).findByText("Size unknown")).toBeInTheDocument();
     expect(within(list).queryByText("0 B")).not.toBeInTheDocument();
     // The season that did report one still reads as a size.

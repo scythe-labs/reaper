@@ -128,3 +128,15 @@ rendered proves nothing about the one that enables it. A control whose label cha
 loading state ("Refresh"/"Refreshing…", "Scan library"/"Scanning…") gates itself and needs nothing
 extra; one whose accessible name holds still does not — a `<select>` is the usual shape, and
 `LogsPanel`'s level picker, disabled until its settings land, is the next one waiting.
+
+The same zero margin hides behind an awaited *action*: `await user.click(…)` resolves on the
+click, not on the read the click starts, so a synchronous query after it asserts on markup that
+has not arrived. `SeasonList`'s unknown-size test did exactly that, taking `getByRole("list")`
+straight after expanding a show.
+
+**Swept, so nobody need guess at the rest.** Hold every React Query notification back 200ms
+(`notifyManager.setScheduler((cb) => setTimeout(cb, 200))` in `src/test/setup.ts`) and make
+user-event throw instead of return at its three `isDisabled` short-circuits
+(`utility/selectOptions.js`, `utility/upload.js`, `system/pointer/mouse.js`), then run the suite:
+a test with no margin fails, and one acting on a disabled control says so. Those two were the
+only ones. Re-run it that way rather than reasoning about which awaits are load-bearing.
