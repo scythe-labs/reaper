@@ -556,24 +556,26 @@ class DataHorizonGate:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class UnmanagedGate:
-    """If no *arr owns it, Reaper cannot delete it -- it has no filesystem path."""
-
-    config: GateConfig
-    id: GateId = GateId.UNMANAGED
-
-    def evaluate(self, facts: Facts) -> GateResult:
-        if blocked := _blocked(self.id, facts.is_managed, "which *arr owns this"):
-            return blocked
-        managed = facts.is_managed
-        if isinstance(managed, Known) and not managed.value:
-            return GateResult(
-                self.id,
-                PROTECT,
-                detail="no Sonarr or Radarr manages this file, so Reaper cannot remove it",
-            )
-        return GateResult(self.id, ABSTAIN, detail="Managed by Sonarr or Radarr.")
+# An `UnmanagedGate` ("if no *arr owns it, Reaper cannot delete it") lived here, enabled by
+# default in both shipped policies. It could not fire. Reaper builds its candidate list BY
+# asking Sonarr and Radarr what they hold, so a file neither owns can never reach the set this
+# gate filtered: every producer of ``Facts.is_managed`` writes a hardcoded ``Known(True)``
+# (`snapshot`, `season_scan`, `backtest`), and no fourth producer exists. The PROTECT branch
+# and the gate's half of ``verdict.STRUCTURAL_GATES`` were both unreachable while the operator
+# saw a switch, on by default, warned in red if they turned it off (rule 38/117).
+#
+# It differs from `OthersWatchingGate` below in a way worth recording: THAT gate's input was
+# never gathered, so its ABSTAIN line asserted a check that never ran. This one's input is
+# genuinely observed -- the item did come from an *arr -- so "Managed by Sonarr or Radarr" was
+# true, and no file was ever wrongly deleted by it. Retired as dead safety-adjacent code, not
+# as a hole.
+#
+# ``Facts.is_managed`` stays: it is a real observation, frozen into every stored snapshot, and
+# it is exactly what a re-wiring would need. Bringing the gate back means giving Reaper a scan
+# path that can find media NO *arr manages -- reading Plex directly rather than the *arrs --
+# so that the fact can be something other than True. Gate, builders and tests return together.
+# ``GateId.UNMANAGED`` survives so a stored explanation still decodes, and it stays in
+# ``STRUCTURAL_GATES`` and in `api.routes`' chip phrasing for the same reason.
 
 
 # An `OthersWatchingGate` ("the requester ignored it, but other people did not") lived here.
@@ -649,7 +651,6 @@ __all__ = [
     "RatingRule",
     "ServerPopularityGate",
     "StreamingNowGate",
-    "UnmanagedGate",
     "WhitelistGate",
     "evaluate_all",
 ]

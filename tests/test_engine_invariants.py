@@ -29,7 +29,6 @@ from reaper.engine.gates import (
     RatingRule,
     ServerPopularityGate,
     StreamingNowGate,
-    UnmanagedGate,
     WhitelistGate,
     evaluate_all,
 )
@@ -93,7 +92,6 @@ ALL_GATES = [
     ServerPopularityGate(GateConfig(GateId.SERVER_POPULARITY, threshold=3)),
     WhitelistGate(GateConfig(GateId.WHITELISTED)),
     CuratedListGate(GateConfig(GateId.CURATED_LIST)),
-    UnmanagedGate(GateConfig(GateId.UNMANAGED)),
 ]
 
 ALL_SIGNALS = [
@@ -430,8 +428,10 @@ def _observed_fields() -> tuple[str, ...]:
     is exactly the drift rule 7 forbids: a new authorable field can no longer be added
     without joining the sweep.
 
-    Out by construction: ``is_managed`` has no ``FieldSpec`` at all (gate-lane only, via
-    ``UnmanagedGate``), so no rule can name it. Out by choice: ``_GATE_ONLY``.
+    Out by construction: ``is_managed`` has no ``FieldSpec`` at all, so no rule can name
+    it. It is the fact the retired ``UnmanagedGate`` read (``engine.gates``) and now has no
+    consumer; it stays because it is a true observation and the evidence any re-wiring would
+    need. Out by choice: ``_GATE_ONLY``.
     """
     names = [f.name for f in dataclass_fields(Facts) if f.name not in ("title", "ratings")]
     probe = Facts(title="probe", **{n: Known(value=n, source="probe") for n in names})

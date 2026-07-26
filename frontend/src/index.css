@@ -5005,9 +5005,9 @@ button.sm {
   background: var(--surface-2);
 }
 /* A hand override paints the square SOLID -- "you chose this" reads at a glance next
-   to the outlined scan verdicts. A reap the engine can't honor yet (someone streaming, an
-   unmanaged file) is the exception: not solid, dashed red with a scythe, because the file
-   is held. */
+   to the outlined scan verdicts. A reap the engine can't honor yet (someone streaming, or a
+   protection that could not be checked) is the exception: not solid, dashed red with a
+   scythe, because the file is held. */
 .strip-ov-spare {
   color: var(--protect-soft);
   background: var(--protect);

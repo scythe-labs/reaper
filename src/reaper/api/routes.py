@@ -795,6 +795,9 @@ def _kept_phrase(gate: str, detail: str) -> str:
             return "no watch history, kept to be safe"
         return "watched too recently"
     if gate == "unmanaged":
+        # Retired gate, kept for stored explanations only -- a snapshot taken before the
+        # retirement can still be read back, and this is what renders its chip. No new scan
+        # produces it (``engine.gates``, and the same reasoning as ``others_watching`` above).
         return "not managed by Sonarr or Radarr"
     if gate == "season_progression":
         return _kept_season_phrase(detail)

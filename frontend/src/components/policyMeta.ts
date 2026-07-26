@@ -52,10 +52,12 @@ export const GATE_META: Record<string, GateMeta> = {
     label: "Don't judge what predates your history",
     help: "Tautulli can't see plays from before it was installed, so anything older than your history is left alone rather than assumed unwatched.",
   },
-  unmanaged: {
-    label: "Only touch what Sonarr or Radarr manages",
-    help: "If Sonarr or Radarr doesn't own the file, Reaper has no safe way to remove it.",
-  },
+  // `unmanaged` ("Only touch what Sonarr or Radarr manages") was here. Its gate is retired
+  // (see `engine/gates.py`): Reaper builds its candidate list by asking Sonarr and Radarr
+  // what they hold, so a file neither owns can never reach the set that protection filtered,
+  // and the switch did nothing in either position. The policy body no longer carries the
+  // gate, so no row asks for a label — and both readers of this map fall back to a
+  // title-cased id anyway, so a stored explanation naming it still renders.
 };
 
 export const SIGNAL_META: Record<string, { label: string; help: string }> = {

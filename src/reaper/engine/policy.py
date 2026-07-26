@@ -337,6 +337,35 @@ class PolicyBody(Frozen):
             object.__setattr__(self, "scorer_version", SCORER_VERSION)
         return self
 
+    #: Gates that shipped, could not fire, and were retired. Their ``GateId`` stays alive so a
+    #: stored explanation written while they existed still decodes (``engine.gates`` records
+    #: what each retirement would need to come back), but a policy BODY may no longer carry
+    #: one. Retiring a gate without this leaves every stored policy naming a protection
+    #: ``scan_runner.build_gates`` has no implementation for, and it refuses to scan rather
+    #: than silently skip -- correctly, which is exactly why the body has to be cleaned first.
+    RETIRED_GATES: ClassVar[frozenset[GateId]] = frozenset({GateId.UNMANAGED})
+
+    @model_validator(mode="after")
+    def _drop_retired_gates(self) -> Self:
+        """Silently drop a retired gate from a body that still names one.
+
+        Deliberately NOT flagged as a repair, and deliberately does not degrade the scan, so
+        this is the exception to rule 105 rather than a violation of it. That rule degrades
+        because a shim restoring a protection-bearing field proves something WAS unprotected
+        and the operator needs to know. Here the opposite is true: a retired gate is one that
+        could never keep a file, so dropping it withdraws nothing and no scan run under it was
+        untrustworthy. Degrading on this would make the first scan after an upgrade
+        un-plannable for every install, over a protection that was never doing anything.
+
+        It does move ``policy_hash``, which voids a plan approved before the upgrade and asks
+        for a re-scan (rule 113). That is the honest outcome: the stored policy really is not
+        the one now in force, even though every verdict it produces is identical.
+        """
+        kept = tuple(g for g in self.gates if g.gate not in self.RETIRED_GATES)
+        if len(kept) != len(self.gates):
+            object.__setattr__(self, "gates", kept)
+        return self
+
     media_type: Literal["movie", "tv"] = "movie"
 
     condemn_at: int = Field(ge=1, le=100)
@@ -998,10 +1027,6 @@ def inspect(
     for gate, why in (
         (GateId.STREAMING_NOW, "Reaper could delete a file while someone is watching it."),
         (GateId.DATA_HORIZON, "Media older than your watch history would look never-watched."),
-        (
-            GateId.UNMANAGED,
-            "Reaper cannot delete unmanaged files anyway; disabling this only hides them.",
-        ),
     ):
         if gate in disabled:
             warnings.append(
@@ -1168,7 +1193,6 @@ DEFAULT_MOVIE_POLICY = PolicyBody(
     gates=(
         GateSetting(gate=GateId.WHITELISTED),
         GateSetting(gate=GateId.STREAMING_NOW),
-        GateSetting(gate=GateId.UNMANAGED),
         GateSetting(gate=GateId.DATA_HORIZON),
         GateSetting(gate=GateId.CURATED_LIST),
         # THE MOST IMPORTANT GATE. Nothing under three years dormant may be deleted at

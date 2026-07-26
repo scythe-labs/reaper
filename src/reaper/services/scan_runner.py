@@ -41,7 +41,6 @@ from reaper.engine.gates import (
     RatingFloorGate,
     ServerPopularityGate,
     StreamingNowGate,
-    UnmanagedGate,
     WhitelistGate,
 )
 from reaper.engine.policy import PolicyBody
@@ -102,7 +101,6 @@ GATE_TYPES: dict[GateId, type] = {
     GateId.SERVER_POPULARITY: ServerPopularityGate,
     GateId.CURATED_LIST: CuratedListGate,
     GateId.DATA_HORIZON: DataHorizonGate,
-    GateId.UNMANAGED: UnmanagedGate,
     GateId.MIN_DORMANCY: MinDormancyGate,
 }
 

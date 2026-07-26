@@ -38,6 +38,12 @@ from reaper.engine.gates import GateId, GateResult
 #: right now must not be deleted, and an unmanaged file has no path to delete through.
 #: Everything else (dormancy, rating, popularity, a curated list, the keep list) is a
 #: *cautious* judgment the owner is entitled to overrule by hand.
+#:
+#: ``UNMANAGED`` is here for STORED EXPLANATIONS only: its gate was retired (see
+#: ``engine.gates``) because it could never fire, so no new scan can produce a fired
+#: ``unmanaged`` result. Keeping the id listed costs nothing and means that if one ever is
+#: read back off disk, it still holds a hand reap rather than becoming overrulable -- the
+#: keep direction. Removing it would be the only change here that could release a file.
 STRUCTURAL_GATES = frozenset({GateId.STREAMING_NOW, GateId.UNMANAGED})
 
 #: Gates whose *blocked* result is a deliberate "the owner should decide" flag, not a

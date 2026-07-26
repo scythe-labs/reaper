@@ -274,6 +274,10 @@ function heldReapNote(item: CandidateDetail): string {
   if (fired.has("streaming_now")) {
     return "You asked to remove this, but someone is watching it right now, so it's kept for now.";
   }
+  // Reads a STORED explanation, so it outlives the gate that wrote it. That gate is retired
+  // (`engine/gates.py`) and no new scan can produce this, but a snapshot on disk is read back
+  // by whatever version is running, and a wrong-but-specific sentence is worse than a right
+  // one. Kept for the same reason `api/routes.py` keeps its phrase for `others_watching`.
   if (fired.has("unmanaged")) {
     return "You asked to remove this, but no app manages the file, so there's no safe way to remove it.";
   }

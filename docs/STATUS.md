@@ -45,22 +45,22 @@ Last verified against the code: 2026-07-26.
    `executor.py`'s `_SEASON_COMPARABLE` comment states this outright. `SizeSource.SONARR_FILES`
    exists and is written by nothing in `src/`; preferring it at scan time is the repair.
    Tracked as Stage 5 in `docs/SIZE_TRUTH_PLAN.md`.
-2. **One finding from the deletion-path review is open: `UnmanagedGate` cannot fire**
-   (`engine/gates.py:570`, issue #68). Every producer of `facts.is_managed` is a hardcoded
-   `Known(True)` — the candidate set is built from the *arrs, so no unmanaged file can enter
-   it — leaving the PROTECT branch and its half of `STRUCTURAL_GATES` unreachable while the
-   gate ships enabled by default, warns "danger" if switched off, and renders its own
-   why-panel branch and CSS. Rule 38/117 says retire it; doing so is a vertical slice
-   (`GATE_TYPES`, both default policies, the policy warning, `policyMeta.ts`, `WhyPanel.tsx`,
-   `index.css`) plus a loader shim so existing policies do not refuse to scan, and it removes
-   a control operators can see. **Decision pending**, which is why it is not done.
-
-   Context: a seven-group adversarial pass on 2026-07-26 raised 33 candidates; 14 survived
-   verification and 19 were refuted. Re-verifying the survivors before fixing refuted 3 more
-   (#69's two paging sites, and this gate as a *safety* finding) and turned up one they had
-   missed — `clients/seerr.py`'s short walk, fixed in `0dea343`. Refuted candidates live in
+2. **The deletion-path review is closed out.** A seven-group adversarial pass on 2026-07-26
+   raised 33 candidates; 14 survived verification and 19 were refuted. Re-verifying the
+   survivors before fixing refuted 3 more (#69's two paging sites, and `UnmanagedGate` as a
+   *safety* finding) and turned up one they had missed, `clients/seerr.py`'s short request
+   walk, which did convert a partial read into a protection-withdrawing `Known(False)`. All
+   fixed; issues #60–#69 closed. Refuted candidates live in
    `.claude/skills/reaper-review/references/refuted.md` so the next pass does not re-raise
    them; the run artifact is `.claude/review-findings/` (gitignored).
+
+   `UnmanagedGate` was retired under rule 38/117 (it shipped enabled by default and could not
+   fire). `PolicyBody.RETIRED_GATES` drops it from a stored body on load, which is what keeps
+   existing installs scanning — every one of the 12 policy rows on the test server named it,
+   and `build_gates` refuses a gate it cannot build. `GateId.UNMANAGED` and the three surfaces
+   that decode a stored explanation (`STRUCTURAL_GATES`, the chip phrase, the why-panel line)
+   stay. `Facts.is_managed` stays too: it is a true observation and the evidence any re-wiring
+   would need, which is a Plex-first scan path, not a change to the gate.
 3. **The autonomy-grant flow (M3b).** Rows, hash and caps exist; nothing can create a grant.
 4. **The backtest surface (M3c), the lift metric inside it (M3f), and the calibration prior
    beside it (M3g).** All three engines are complete and tested; none is reachable. Nothing in

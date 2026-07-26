@@ -37,6 +37,7 @@ from reaper.engine.policy import (
 from reaper.engine.signals import Score, SignalConfig, SignalId, score
 from reaper.engine.verdict import decide_verdict
 from reaper.ratings import RatingSource
+from reaper.services.scan_runner import GATE_TYPES
 
 
 def _policy(**overrides: object) -> PolicyBody:
@@ -427,7 +428,47 @@ class TestDefaultPolicy:
         assert GateId.RATING_FLOOR in enabled
         assert GateId.SERVER_POPULARITY in enabled
         assert GateId.DATA_HORIZON in enabled
-        assert GateId.UNMANAGED in enabled
+        assert GateId.CURATED_LIST in enabled
+        assert GateId.MIN_DORMANCY in enabled
+
+    def test_no_shipped_protection_is_one_that_cannot_fire(self) -> None:
+        """Rule 38/117, as a standing check rather than a one-off. Every gate the default
+        turns on must be one ``build_gates`` can actually construct, or the operator is shown
+        a switch that does nothing (and, since ``build_gates`` refuses an unknown gate rather
+        than skipping it, a scan that will not run)."""
+        buildable = set(GATE_TYPES) | {GateId.RATING_FLOOR}  # RATING_FLOOR is built explicitly
+
+        for body in (DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY):
+            enabled = {g.gate for g in body.gates if g.enabled}
+            assert enabled <= buildable, f"{body.media_type}: {enabled - buildable}"
+
+    def test_a_stored_policy_naming_a_retired_gate_still_loads(self) -> None:
+        """The upgrade path. UNMANAGED shipped enabled by default for the whole of Reaper's
+        life before it was retired, so essentially every stored body names it. Left in place
+        it would reach ``build_gates``, which refuses a gate it cannot build -- so an upgrade
+        would take every install's scan offline. The body is cleaned on load instead."""
+        stored = DEFAULT_MOVIE_POLICY.model_dump(mode="json")
+        stored["gates"] = [
+            {"gate": "unmanaged", "enabled": True},
+            *stored["gates"],
+        ]
+
+        loaded = PolicyBody.model_validate(stored)
+
+        assert GateId.UNMANAGED not in {g.gate for g in loaded.gates}
+        assert loaded.policy_hash() == DEFAULT_MOVIE_POLICY.policy_hash()
+
+    def test_a_retired_gate_cannot_be_reintroduced_by_hand(self) -> None:
+        """Not only the stored path: a body built in code cannot carry one either, so nothing
+        can put the dead switch back in front of an operator."""
+        revived = DEFAULT_MOVIE_POLICY.model_copy(
+            update={"gates": (*DEFAULT_MOVIE_POLICY.gates, GateSetting(gate=GateId.UNMANAGED))}
+        )
+
+        assert GateId.UNMANAGED in {g.gate for g in revived.gates}  # model_copy does not validate
+        assert GateId.UNMANAGED not in {
+            g.gate for g in PolicyBody.model_validate(revived.model_dump()).gates
+        }
 
     def test_the_default_rating_gate_has_a_real_vote_floor(self) -> None:
         # The gate is enabled, and its one default bar is IMDb 7.5 from 1,000 votes.
