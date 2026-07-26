@@ -63,7 +63,13 @@ haven't touched this session.
   edit the line that is now wrong, never append beside it. Measured findings, including
   negative results, go to `docs/LEARNINGS.md`. `docs/README.md` says what belongs where: state,
   knowledge, and history have different lifespans and never share a file.
-- **Commit only when asked**; end commit messages with the `Co-Authored-By` trailer.
+- **Commit as you go, in focused commits — don't wait to be asked.** One commit tells one
+  story: a feature, a bug fix, a cleanup that stands on its own. A fix ships with the test
+  that pins it and the doc line it corrects, because those are the same story. Nothing else
+  rides along. **The reviewer's attention is the scarce resource, so balance it both ways:**
+  don't dribble one change across a string of tiny commits, and don't lump unrelated work into
+  a big one. Aim for the fewest commits that each still stand alone and read clearly. End
+  commit messages with the `Co-Authored-By` trailer.
 
 ## Rules that apply everywhere
 
