@@ -45,8 +45,16 @@ Last verified against the code: 2026-07-26.
    `executor.py`'s `_SEASON_COMPARABLE` comment states this outright. `SizeSource.SONARR_FILES`
    exists and is written by nothing in `src/`; preferring it at scan time is the repair.
    Tracked as Stage 5 in `docs/SIZE_TRUTH_PLAN.md`.
-2. **The autonomy-grant flow (M3b).** Rows, hash and caps exist; nothing can create a grant.
-3. **The backtest surface (M3c), the lift metric inside it (M3f), and the calibration prior
+2. **Ten confirmed findings from the deletion-path review are open** *(issues #64–#69).* A
+   seven-group adversarial pass over the safety files on 2026-07-26 raised 33 candidates; 14
+   survived independent verification and 19 were refuted. The four tier-1 findings — a
+   protection that could not fire — are fixed. Open: four that widen what gets deleted or lose
+   the audit trail (#64–#67), five smaller ones rolled into #68, and #69, the paging twins
+   deferred in writing from the #60 fix. The run artifact is `.claude/review-findings/`
+   (gitignored); refuted candidates are in `.claude/skills/reaper-review/references/refuted.md`
+   so the next pass does not re-raise them.
+3. **The autonomy-grant flow (M3b).** Rows, hash and caps exist; nothing can create a grant.
+4. **The backtest surface (M3c), the lift metric inside it (M3f), and the calibration prior
    beside it (M3g).** All three engines are complete and tested; none is reachable. Nothing in
    `src/` imports `engine.backtest`, so `BacktestResult.lift` is unreachable too. The backtest
    needs `POST /api/policy/backtest` plus a minimal UI. `calibration.derive` has no caller
@@ -57,7 +65,7 @@ Last verified against the code: 2026-07-26.
    so and whoever wires it must fix or label it. Until they ship, the live simulator is the
    threshold-tuning surface, and no operator copy may name the backtest or promise a prior
    fitted to their own history.
-4. **Size-truth leftovers** (`docs/SIZE_TRUTH_PLAN.md`): a real-data pass reading
+5. **Size-truth leftovers** (`docs/SIZE_TRUTH_PLAN.md`): a real-data pass reading
    `scan.size_source_tally` recorded as ratios in `LEARNINGS.md` (Stage 4, and it gates Stage
    6); `"size_bytes"` added to `DEGRADABLE` in `tests/_policy_lab.py`; and the test-only
    `snapshot.candidates()` deleted, which has no caller in `src/` and is a standing rule 38
