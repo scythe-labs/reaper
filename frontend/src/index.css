@@ -3684,15 +3684,15 @@ a.rating-chip:hover {
    plain unlabeled wrappers, so display: contents dissolves them and their children place
    themselves -- no second markup for the same card.
 
-   The chip drops out here, and that is right for ONE of its two branches. On a card with
-   something to reclaim it is pure repetition: the legend line directly above says the same
-   thing in the same red ("48 GiB to reclaim" over "48 GiB to reclaim · 6 titles"). On a clean
-   card it is not -- the pill is green (.status-kept, --protect) and its legend counterpart
-   reads "nothing reclaimable" in gray (--muted) -- so that branch loses its one affirmative
-   token below 640px. Nor does height settle it: the reflow makes the card SHORTER (measured
-   at 390px, 199px flex -> 180px grid), and putting the chip back costs about 30px, landing
-   roughly where the flex card already was. Open question, deliberately left as one rather
-   than dressed up as a trade. */
+   The chip drops out here, and the two branches are NOT symmetric about that. With something
+   to reclaim it is pure repetition: the legend line directly above says the same thing in the
+   same red ("48 GiB to reclaim" over "48 GiB to reclaim · 6 titles"). On a clean card it is
+   not -- the pill is green (.status-kept, --protect) while its legend counterpart reads
+   "nothing reclaimable" in gray (--muted) -- so below 640px that card states its good news in
+   the full green bar and a gray line, and wears no pill at all. Reviewed against rendered
+   alternatives and left this way on purpose. Height is not the reason and was never the
+   argument: the reflow makes the card SHORTER (390px: 199px flex -> 180px grid) and the pill
+   would only cost about 29px of that back. */
 @media (max-width: 640px) {
   .fair-card {
     display: grid;
