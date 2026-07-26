@@ -45,14 +45,22 @@ Last verified against the code: 2026-07-26.
    `executor.py`'s `_SEASON_COMPARABLE` comment states this outright. `SizeSource.SONARR_FILES`
    exists and is written by nothing in `src/`; preferring it at scan time is the repair.
    Tracked as Stage 5 in `docs/SIZE_TRUTH_PLAN.md`.
-2. **Ten confirmed findings from the deletion-path review are open** *(issues #64–#69).* A
-   seven-group adversarial pass over the safety files on 2026-07-26 raised 33 candidates; 14
-   survived independent verification and 19 were refuted. The four tier-1 findings — a
-   protection that could not fire — are fixed. Open: four that widen what gets deleted or lose
-   the audit trail (#65), five smaller ones rolled into #68, and #69, the paging twins
-   deferred in writing from the #60 fix. The run artifact is `.claude/review-findings/`
-   (gitignored); refuted candidates are in `.claude/skills/reaper-review/references/refuted.md`
-   so the next pass does not re-raise them.
+2. **One finding from the deletion-path review is open: `UnmanagedGate` cannot fire**
+   (`engine/gates.py:570`, issue #68). Every producer of `facts.is_managed` is a hardcoded
+   `Known(True)` — the candidate set is built from the *arrs, so no unmanaged file can enter
+   it — leaving the PROTECT branch and its half of `STRUCTURAL_GATES` unreachable while the
+   gate ships enabled by default, warns "danger" if switched off, and renders its own
+   why-panel branch and CSS. Rule 38/117 says retire it; doing so is a vertical slice
+   (`GATE_TYPES`, both default policies, the policy warning, `policyMeta.ts`, `WhyPanel.tsx`,
+   `index.css`) plus a loader shim so existing policies do not refuse to scan, and it removes
+   a control operators can see. **Decision pending**, which is why it is not done.
+
+   Context: a seven-group adversarial pass on 2026-07-26 raised 33 candidates; 14 survived
+   verification and 19 were refuted. Re-verifying the survivors before fixing refuted 3 more
+   (#69's two paging sites, and this gate as a *safety* finding) and turned up one they had
+   missed — `clients/seerr.py`'s short walk, fixed in `0dea343`. Refuted candidates live in
+   `.claude/skills/reaper-review/references/refuted.md` so the next pass does not re-raise
+   them; the run artifact is `.claude/review-findings/` (gitignored).
 3. **The autonomy-grant flow (M3b).** Rows, hash and caps exist; nothing can create a grant.
 4. **The backtest surface (M3c), the lift metric inside it (M3f), and the calibration prior
    beside it (M3g).** All three engines are complete and tested; none is reachable. Nothing in
