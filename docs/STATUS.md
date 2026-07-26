@@ -24,8 +24,8 @@ Last verified against the code: 2026-07-26.
 | **M3c** Backtest — replay against the operator's own watch history | 🟡 engine complete and tested (`engine/backtest.py`), **not reachable**: no route, CLI or UI calls it. Operator copy must not reference it until it ships (rule 25) |
 | **M3d** Field registry + authorable protect rules | ✅ done |
 | **M3e** Snapshot pipeline + REST API + polled progress | ✅ done |
-| **M3f** Signal quality — lift metric, size removed, dormancy gate | ✅ done |
-| **M3g** Calibration — rewatch prior derived from the operator's own history | ✅ done |
+| **M3f** Signal quality — lift metric, size removed, dormancy gate | 🟡 size removed and the dormancy gate are wired; the **lift metric is backtest-only** (`backtest.BacktestResult.lift`) and unreachable until M3c ships |
+| **M3g** Calibration — rewatch prior derived from the operator's own history | 🟡 `engine/calibration.derive` is complete and tested, **not reachable**: no caller anywhere in `src/`, not even the backtest, which imports only `RewatchPrior` and `NotCalibratedError` and takes its prior as an injected argument. Every prior in use is the hardcoded `backtest.FALLBACK_REWATCH_PRIOR` |
 | **M4** React SPA — review queue, why-panel, policy editor, live simulator | ✅ done |
 | **M5** The reap loop — journal, planner, executor, canary, caps | ✅ done — the live send is wired (`executor._send_for_real`, `POST /api/runs/{id}/execute`), armed from the UI and phrase-gated |
 | **M6** Season pruning | ✅ done — read-only scan through live execute (`executor._send_season`), unmonitor verified before any file is removed |
@@ -46,9 +46,15 @@ Last verified against the code: 2026-07-26.
    exists and is written by nothing in `src/`; preferring it at scan time is the repair.
    Tracked as Stage 5 in `docs/SIZE_TRUTH_PLAN.md`.
 2. **The autonomy-grant flow (M3b).** Rows, hash and caps exist; nothing can create a grant.
-3. **The backtest surface (M3c).** The engine is complete and tested but unreachable. It needs
-   `POST /api/policy/backtest` plus a minimal UI. Until it ships, the live simulator is the
-   threshold-tuning surface, and no operator copy may name the backtest.
+3. **The backtest surface (M3c), the lift metric inside it (M3f), and the calibration prior
+   beside it (M3g).** All three engines are complete and tested; none is reachable. Nothing in
+   `src/` imports `engine.backtest`, so `BacktestResult.lift` is unreachable too. The backtest
+   needs `POST /api/policy/backtest` plus a minimal UI. `calibration.derive` has no caller
+   anywhere in `src/` — **wiring the backtest would not by itself give it one**, since
+   `backtest.run` takes its prior as an injected argument and never calls `derive`; the new
+   route must call it and pass the result in. Until they ship, the live simulator is the
+   threshold-tuning surface, and no operator copy may name the backtest or promise a prior
+   fitted to their own history.
 4. **Size-truth leftovers** (`docs/SIZE_TRUTH_PLAN.md`): a real-data pass reading
    `scan.size_source_tally` recorded as ratios in `LEARNINGS.md` (Stage 4, and it gates Stage
    6); `"size_bytes"` added to `DEGRADABLE` in `tests/_policy_lab.py`; and the test-only
@@ -64,17 +70,18 @@ Last verified against the code: 2026-07-26.
 | Protect authoring | **Catalog + user-authored protect rules** (worst case is nothing deletes) |
 | Signals | **Unsigned**, fixed denominator including unknown weights |
 | Observations | **Known / Absent / Unknown** — never conflated |
-| Delete mode | DB-only grace period → cancellable → then irreversible |
+| Delete mode | Grace is a **notice** window, not a gate: it starts a DB-only countdown and drives Leaving Soon + Discord. Nothing on the deletion path reads it, so what actually spares a file at send time is the live played-since-approval and streaming vetoes |
 | Autonomy | An **earned grant keyed to `policy_hash`** — any edit reverts to approval-required |
 | Caps | **Four**: items + bytes, per-run + rolling 30-day |
-| Kill switch | **One-way**: the UI can disable deletion, never enable it |
+| Kill switch | **Asymmetric, not one-way**: arming is password-gated, disarming is one ungated click. The UI is the live control; the env var supplies the default only until the toggle is first written, after which the stored value wins for good. Re-read before every item, so disarming halts a run in flight |
 | Auth | Plex OAuth + `owned == true` check, local fallback that cannot be removed |
 | ORM | **Plain SQLAlchemy, not SQLModel** — the model layer carries safety-bearing nullability and constraints, and we keep them declared in one place we control |
-| Migrations | **Baseline `22777b2b5015` is frozen** (testers have real data). Every schema change is its own additive revision chained onto head. `cache.db` stays disposable. |
+| Migrations | **Baseline `22777b2b5015` is frozen going forward** (testers have real data). It was edited before the freeze held, which is why `heal_candidate_size_nullable` carries a reflection guard (rule 81). Every schema change is its own revision chained onto head: an add, a new table, a backfill, or a guarded rebuild. Nearly always *widening* — the one exception is that same heal migration also dropping a stray server default, safe only because the ORM carries the Python-side default. `cache.db` stays disposable. |
 
 ## Where the pipeline stands
 
-A full scan of a large library completes in tens of seconds, streaming progress while it runs,
+A full scan of a large library completes in tens of seconds, reporting progress while it runs
+(the SPA polls `GET /api/scan/status`; there is no streaming transport),
 and produces a candidate list partitioned into condemn / protect / abstain. The gather is
 concurrent across sources: it costs roughly its slowest source plus the judge loop, which is
 in-memory per item.

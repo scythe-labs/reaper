@@ -31,7 +31,7 @@ export const understandingPolicy: Doc = {
       "**Protections are hard lines that always win.** They sit in their own lane and can only ever keep a file, never remove one. If any single protection fires, the title stays, whatever it scored.",
     ),
     p(
-      "**Caps and grace are your seatbelts.** Caps limit how much any one run, and any rolling 30 days, can remove, and they stop the whole run rather than trimming it. Grace holds every flagged title for a set number of days, cancellable, before anything is removed.",
+      "**Caps stop a run; grace warns you first.** Caps limit how much any one run, and any rolling 30 days, can remove, and they stop the whole run rather than trimming it. Grace starts a countdown on every flagged title, your window to catch it: watch it or spare it and it stays.",
     ),
     p(
       "**Missing information can only protect, never delete.** The score is pressure that adds up from zero. Anything Reaper cannot read, an outage, a stale ratings file, a title it cannot match, simply adds no pressure. The worst a failure can do is make Reaper more cautious.",
@@ -41,8 +41,8 @@ export const understandingPolicy: Doc = {
     p("Follow it in order the first time."),
     steps([
       {
-        title: "Let Reaper learn your audience first.",
-        text: "Reaper judges dormant titles against how often your own viewers circle back to something they left alone, measured from your watch history. Make sure your history source is connected and a scan has run against real data.",
+        title: "Connect your watch history first.",
+        text: "Every score starts from how long a title has gone unplayed, which Reaper reads from your history source. Connect it and let one scan finish against real data before you tune anything.",
       },
       {
         title: "Start on the Cautious footing.",
@@ -68,7 +68,7 @@ export const understandingPolicy: Doc = {
       },
       {
         title: "Set pace and grace, then arm deletion last.",
-        text: "Confirm your caps and grace, and turn on the Leaving Soon shelf so your household can rescue anything about to go. Only then arm deletion, which is password-gated and separate from all tuning.",
+        text: "Confirm your caps and grace, and turn on the Leaving Soon shelf so your household can rescue anything about to go. To see the shelf before you arm anything, also turn on \"Update while read-only\" in Settings, Plex. Only then arm deletion, which is password-gated and separate from all tuning.",
       },
     ]),
 
@@ -150,12 +150,12 @@ export const understandingPolicy: Doc = {
         ["Most disk freed per run", "Space one run may remove", "500 GB", "Any amount"],
         ["Most titles per 30 days", "Titles over any rolling 30 days", "100", "the run cap"],
         ["Most disk freed per 30 days", "Space over any rolling 30 days", "2 TB", "the run cap"],
-        ["Grace period", "Days a flagged title waits, cancellable", "14 days", "7 days"],
+        ["Grace period", "Days a flagged title shows as leaving", "14 days", "7 days"],
         ["Unknown-size items per run", "No-size titles a run may remove", "0 (held back)", "0"],
       ],
     ),
     p(
-      "Caps stop the whole run when crossed. They never remove just the part that fits. The rolling 30-day limits are what make a large runaway removal impossible across any sequence of runs. Items Reaper cannot measure are held back by default.",
+      "Caps stop the whole run when crossed. They never remove just the part that fits, and while they are on, the rolling 30-day limits bound any sequence of runs. Turning off \"Limit how much each run removes\" drops all four. Items Reaper cannot measure are held back by default.",
     ),
 
     h3("Movies and TV are tuned separately", "movies-tv"),
@@ -169,7 +169,7 @@ export const understandingPolicy: Doc = {
     ),
     p("**The loop:** nudge one control, watch the number, repeat. If the count jumps more than you expected, put the control back and move it half as far."),
     p(
-      '**Live only for the threshold.** Moving the flag threshold updates the numbers instantly. Change a signal’s points, a protection, a watch window, a keep tag, or a season rule, and the panel says "Needs a fresh scan" and offers a Scan button. This is on purpose: a wrong number that looks live is worse than a blank one.',
+      '**Live for the numbers, not the plumbing.** Moving the flag threshold, a signal’s points, a rating bar, or one of your own rules updates the panel instantly. Change a protection switch, a watch window, a keep tag, or a season rule, and it says "Needs a fresh scan" and offers a Scan button. This is on purpose: a wrong number that looks live is worse than a blank one.',
     ),
     callout(
       "caution",
@@ -188,7 +188,7 @@ export const understandingPolicy: Doc = {
     ),
     h3("Big backlog of never-played requests"),
     p(
-      "Keep the defaults, especially the 3-year age line and keep well-rated. Old, never-watched, mediocre requests are exactly what Balanced already flags. Because per-run caps stop rather than trim, for one supervised first cleanup you can raise the per-run cap for that run only, keep the 30-day cap and grace on, then turn it back down.",
+      "Keep the defaults, especially the 3-year age line and keep well-rated. Old, never-watched, mediocre requests are exactly what Balanced already flags. Because per-run caps stop rather than trim, for one supervised first cleanup you can raise the per-run cap for that run only, leave the 30-day cap in place, then turn it back down.",
     ),
     h3("Movies only, or TV only"),
     p(
@@ -211,8 +211,8 @@ export const understandingPolicy: Doc = {
       { term: "Flag threshold", text: "The score, out of 100, at or above which a title becomes a candidate for removal." },
       { term: "Signal", text: "One reason to remove, adding up to its number of points to the score." },
       { term: "Protection", text: "A hard line that keeps a title no matter its score, and can never remove one." },
-      { term: "Grace", text: "The days a flagged title waits, cancellable, before anything is actually removed." },
-      { term: "Cap", text: "A limit on how much one run, or a rolling 30 days, may remove. It stops the run rather than trimming it." },
+      { term: "Grace", text: "The days a flagged title shows as leaving, so someone can watch it or you can spare it. You still start every removal by hand." },
+      { term: "Cap", text: "A limit on how much one run, or a rolling 30 days, may remove, while \"Limit how much each run removes\" is on. It stops the run rather than trimming it." },
     ]),
 
     callout(

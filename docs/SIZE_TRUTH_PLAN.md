@@ -466,6 +466,11 @@ number it cannot stand behind" (`schemas.py:539-542`).
 **Every unknown count is suppressed at zero.** An operator with a fully healthy library must
 see no new pixels anywhere.
 
+> **Stale citations.** `GracePanel.tsx` no longer exists anywhere in `frontend/src/`; every
+> reference to it below is from an earlier layout and must be re-located against the current
+> tree before Stage 6 is built. The other `file:line` numbers here have drifted too — treat
+> them as names to grep for, never as positions.
+
 Call sites: the five per-item renders already on `itemBytes` need no edit but must typecheck
 (`ReviewQueue.tsx:863`, `:944`, `ShowPanel.tsx:113`, `WhyPanel.tsx:746`, `GracePanel.tsx:39`).
 Fix the visible contradiction at `ShowPanel.tsx:73`, which renders a whole-show total with

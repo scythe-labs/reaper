@@ -24,9 +24,9 @@ are always in context before you change it:
 
 | File | Governs | Rules |
 | --- | --- | --- |
-| `.claude/rules/backend.md` | `src/reaper/**`, `alembic/**` — safety path, engine, evidence, clients, auth, persistence | 1–6, 8–14, 22–23, 26–35, 38, 52, 55–59, 63, 65, 70–71, 73–78, 81–84, 87–117, 124–131 |
-| `.claude/rules/frontend.md` | `frontend/src/**` — UI grammar, the review queue, the two-level spare, gating surfaces | 17–20, 36, 39–51, 53–54, 60–62, 66–67, 69, 79–80, 85–86, 120–123 |
-| `.claude/rules/tests.md` | `tests/**`, `*.test.tsx` — test discipline | 37, 118–119, 132–133 |
+| `.claude/rules/backend.md` | `src/reaper/**/*.py`, `alembic/**/*.py` — safety path, engine, evidence, clients, auth, persistence | 1–6, 8–14, 22–23, 26–35, 38, 52, 55–59, 63, 65, 70–71, 73–78, 81–84, 87–117, 124–131 |
+| `.claude/rules/frontend.md` | `frontend/src/**/*.{ts,tsx,css}` and `frontend/index.html` (rule 69 governs it) — UI grammar, the review queue, the two-level spare, gating surfaces | 17–20, 36, 39–51, 53–54, 60–62, 66–67, 69, 79–80, 85–86, 120–123 |
+| `.claude/rules/tests.md` | `tests/**/*.py`, `frontend/src/**/*.test.ts{,x}` — test discipline | 37, 118–119, 132–133 |
 
 Nine rules bind every file and stay here, under *Rules that apply everywhere*. Where two rules
 overlap, the more specific one governs. Read the governing file before working in a tree you
@@ -151,7 +151,8 @@ common CI break.** When a change is observable in the app, *drive it end-to-end*
 
 ## Architecture
 
-- `src/reaper/clients/` — the **only** place HTTP lives. `GuardedTransport` (and its
+- `src/reaper/clients/` — the **only** place HTTP lives (one sanctioned exception,
+  `notify/discord.py`'s webhook POST; see rule 33). `GuardedTransport` (and its
   `GuardedSession` twin for plexapi) refuses any mutating request unless deletion is armed on
   the host **and** the executor declared the intent to the journal first.
 - `src/reaper/engine/` — `gates` (hard, fail-closed protections), `signals` (soft weighted
@@ -188,7 +189,7 @@ streaming veto and played-since-approval check) each resolve toward keeping the 
 - `docs/STATUS.md` — **start here.** What is true right now: milestones, open work, decisions
   locked. Small and edited in place.
 - `docs/LEARNINGS.md`, `docs/SIGNALS.md` — findings from real data. Read `SIGNALS.md` before
-  touching `signals.py`, `policy.py`, or `calibration.py`; it is cited from four places in `src/`.
+  touching `signals.py`, `policy.py`, or `calibration.py`; it is cited from three places in `src/`.
 - `docs/SIZE_TRUTH_PLAN.md` — the one feature plan still live (4 of 9 stages remain).
 - `docs/history/` — frozen: the retired plan narrative and the review passes, including the
   finding IDs behind the numbered rules. Never edit an archived file to bring it up to date.

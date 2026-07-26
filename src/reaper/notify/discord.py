@@ -152,9 +152,9 @@ class DiscordNotifier:
             Embed(
                 title=f"{count} {noun} leaving soon",
                 description=(
-                    f"Unwatched, and past review. They will be removed after the "
-                    f"{grace_days}-day grace period unless someone watches them or they "
-                    f"are spared.\n\n{lines}{link}"
+                    f"Unwatched, and on the list to go. Watch one in the next "
+                    f"{grace_days} days and it stays. Nothing is removed "
+                    f"automatically.\n\n{lines}{link}"
                 ),
             )
         )

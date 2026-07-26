@@ -41,13 +41,15 @@ export const cheatSheet: Doc = {
       [
         ["Per run", "10 titles / 500 GB"],
         ["Per 30 days (rolling)", "100 titles / 2 TB"],
-        ["Grace period", "14 days (min 7)"],
+        ["Leaving-soon countdown", "14 days (min 7)"],
         ["Unknown-size items", "0 (held back)"],
       ],
     ),
     // "stop", matching understandingPolicy's line about the same mechanism. "Abort" was the
     // only place in the product an operator met that word (U-15).
-    p("Caps stop the whole run when crossed. They never remove just the part that fits."),
+    p(
+      "Caps stop the whole run when crossed. They never remove just the part that fits. Leave \"Limit how much each run removes\" on, or all four stop applying.",
+    ),
 
     h2("Habits that keep you safe", "habits"),
     ul([

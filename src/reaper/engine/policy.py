@@ -1105,11 +1105,12 @@ DEFAULT_MOVIE_POLICY = PolicyBody(
         GateSetting(gate=GateId.DATA_HORIZON),
         GateSetting(gate=GateId.CURATED_LIST),
         # THE MOST IMPORTANT GATE. Nothing under three years dormant may be deleted at
-        # all, whatever else it scores. The rewatch rate decays slowly through the
-        # first two years and then falls off a cliff at roughly three -- so below this
-        # line, deleting is close to a coin-flip against your users. A GATE, not a
-        # weight: a weight can be outvoted, and that is exactly how an early version
-        # ended up condemning films with a large chance of coming back.
+        # all, whatever else it scores. The measured rewatch rate decays gradually and
+        # never cliffs (docs/SIGNALS.md, "There is no cliff"): ~30% at two to three years,
+        # ~19% past three. Three years is where deleting stops being close to a coin-flip
+        # against your users, not where the risk ends. A GATE, not a weight: a weight can
+        # be outvoted, and that is exactly how an early version ended up condemning films
+        # with a large chance of coming back.
         GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095),
         # "Keep well-rated titles". The bars themselves live in keep_rating_rules below;
         # this setting is only the on/off switch. The default bar is IMDb 7.5 from at
@@ -1124,9 +1125,10 @@ DEFAULT_MOVIE_POLICY = PolicyBody(
         GateSetting(gate=GateId.SERVER_POPULARITY, threshold=3, window_days=365),
     ),
     signals=(
-        # Dormancy dominates, and the numbers come from the measured rewatch curve:
-        # floor at 365 (below which a third of films come back) and saturating at 1825
-        # (beyond which the rate is 2%).
+        # Dormancy dominates, and the numbers come from the measured rewatch curve
+        # (backtest.FALLBACK_REWATCH_PRIOR): floor at 365 (below which ~61% of films are
+        # played again within the year) and saturating at 1825 (beyond which the rate is
+        # still ~13%, never zero -- nothing is ever free to delete).
         SignalSetting(signal=SignalId.UNWATCHED, weight=70, saturate_at=1825, floor=365),
         SignalSetting(signal=SignalId.FEW_WATCHERS, weight=20, saturate_at=3),
         SignalSetting(signal=SignalId.LOW_RATING, weight=10, saturate_at=60),

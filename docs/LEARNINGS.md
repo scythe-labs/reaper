@@ -109,8 +109,11 @@ check spares it. Counting rescues as failures slanders the policy.
 Shipping one library's rewatch rates as a hardcoded prior makes every lift number on
 every *other* library meaningless.
 
-⇒ `engine/calibration.py` derives the prior from the operator's own history, and the
-backtest labels which prior it used in every summary it prints.
+⇒ **Intended, not shipped.** `engine/calibration.derive` can fit the prior from the
+operator's own history and `backtest.prior_is_derived` can label which prior was used, but
+neither has a caller in `src/`: every number in use is `backtest.FALLBACK_REWATCH_PRIOR`,
+one library's curve. Tracked as M3g in `docs/STATUS.md`, blocked behind the unwired
+backtest (M3c).
 
 ### 8. The simulator can re-decide a snapshot under any policy — **only the thresholds**
 
@@ -500,10 +503,11 @@ is a film someone comes back for. That is not a tuning failure — it is what an
 library looks like, and it is why the grace period and the human approval gate are not
 decoration.
 
-⇒ This curve is a property of *an audience*, not a constant. Reaper therefore **derives
-it from the operator's own history** at calibration time and only falls back to a
-documented default when there is too little history to fit one. Never ship someone
-else's rewatch curve as if it were physics.
+⇒ This curve is a property of *an audience*, not a constant, so never ship someone else's
+rewatch curve as if it were physics. **Reaper still does**: `engine/calibration.derive`
+exists to fit the curve per operator but has no caller in `src/`, so the hardcoded
+`backtest.FALLBACK_REWATCH_PRIOR` is what every number reads today. Wiring it is M3g in
+`docs/STATUS.md`.
 
 ---
 

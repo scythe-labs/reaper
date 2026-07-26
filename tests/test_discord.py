@@ -63,7 +63,11 @@ class TestLeavingSoon:
         assert ok is True
         body = route.calls.last.request.content.decode()
         assert "3 titles are leaving soon" in body
-        assert "14-day grace" in body
+        # The countdown reaches the household, phrased as a notice rather than a promise to
+        # remove on a timer: nothing on the deletion path reads the grace window (see the
+        # module docstring on services/grace.py).
+        assert "next 14 days" in body
+        assert "Nothing is removed automatically" in body
 
     async def test_a_single_title_is_singular(self, httpx2_mock: respx.Router) -> None:
         route = httpx2_mock.post(WEBHOOK).mock(return_value=httpx.Response(204))

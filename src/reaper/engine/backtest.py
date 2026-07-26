@@ -77,9 +77,10 @@ class Regret:
 
 
 # THE ONLY PRIOR ANYTHING ACTUALLY USES TODAY. reaper.engine.calibration.derive can
-# compute one from the owner's own history, and should, but it has no production caller
-# (only this module imports it, and nothing calls this module) -- so a backtest run from
-# a test or a REPL is measured against these figures unless the caller passes its own.
+# compute one from the owner's own history, and should, but it has no caller anywhere in
+# src/ -- not even this module, which imports only RewatchPrior and NotCalibratedError
+# from there -- and nothing calls this module either. So a backtest run from a test or a
+# REPL is measured against these figures unless the caller passes its own.
 # They are what one real library happened to show, and a different library will have a
 # different curve: a household of three has nothing in common with a server used by a
 # hundred people.

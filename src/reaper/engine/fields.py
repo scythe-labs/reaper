@@ -13,9 +13,10 @@ what they meant, and nothing caught it.
 
 **The protect lane is composable and user-authored.** Because a protection cannot
 delete anything: the worst case of a badly written protect rule is that nothing gets
-deleted. That asymmetry is the same one already in the kill switch -- the UI can
-disable deletion but never enable it -- and it is what lets us hand the owner real
-expressive power without handing them a loaded gun.
+deleted. That asymmetry is the same one already in the kill switch -- arming it is
+password-gated, disarming it is one ungated click, because making Reaper safer is
+never worth guarding -- and it is what lets us hand the owner real expressive power
+without handing them a loaded gun.
 
 The registry enforces the asymmetry *structurally*. Each field declares which lanes
 it may appear in and which operators it accepts, and the API filters by lane before
