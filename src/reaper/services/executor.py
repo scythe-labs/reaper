@@ -1527,10 +1527,11 @@ class Executor:
         against the exact approval instant, so a play genuinely before approval does not
         count and one after it does.
 
-        Fail-closed at every step: a Tautulli error, or a returned row we cannot read a
-        timestamp from, both spare the item. A row present but unreadable survived the
-        ``after`` filter, so it may well be a post-approval play -- we do not delete on the
-        assumption that it was not.
+        Fail-closed at every step: a Tautulli error, a success response whose history body
+        cannot be read, and a returned row we cannot read a timestamp from all spare the
+        item. A row present but unreadable survived the ``after`` filter, so it may well be
+        a post-approval play -- we do not delete on the assumption that it was not. Only a
+        genuine list of rows, none of them at or after the approval instant, returns False.
         """
         gateway = self._gateway
         if gateway is None or gateway.tautulli is None:  # pragma: no cover - execute() guards
@@ -1564,7 +1565,21 @@ class Executor:
 
             rows = data.get("data") if isinstance(data, dict) else None
             if not isinstance(rows, list):
-                rows = []
+                # A body we cannot read is NOT "nobody played it". The client only raises
+                # when the envelope reports failure, so a success response carrying a null
+                # or unrecognized ``data`` arrives here having raised nothing -- and
+                # coercing it to ``[]`` fell straight through to ``return False``, the
+                # value that proceeds with the delete. That made a genuine empty, a null
+                # body and an unknown shape indistinguishable, and the after-action
+                # checklist then printed _CHECK_NOT_PLAYED_SINCE for a check that saw no
+                # data at all. Rules 1, 28 and 93: unreadable is Unknown, never a definite
+                # empty. Spare, exactly as the ``except`` above does.
+                log.warning(
+                    "reap.watched_since_unreadable",
+                    media_key=candidate.media_key,
+                    error="Tautulli returned a history body Reaper could not read",
+                )
+                return True
             for row in rows:
                 played_ts = _row_timestamp(row)
                 # An unreadable timestamp (None) spares: the row is present and passed the

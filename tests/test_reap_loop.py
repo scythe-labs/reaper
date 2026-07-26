@@ -2027,6 +2027,54 @@ class TestWatchedSinceApproval:
         assert report.skipped == 1
         assert radarr.delete_calls == []
 
+    @pytest.mark.parametrize(
+        "body",
+        [
+            pytest.param({"data": None}, id="null-data"),
+            pytest.param({"data": {"rows": []}}, id="data-is-an-object"),
+            pytest.param({"recordsFiltered": 0}, id="no-data-key-at-all"),
+            pytest.param([], id="envelope-is-not-a-mapping"),
+        ],
+    )
+    async def test_an_unreadable_history_body_fails_closed(
+        self, session: AsyncSession, body: Any
+    ) -> None:
+        """A success response whose history body cannot be read must spare, not delete.
+
+        The client raises only when the envelope reports failure, so each of these arrives
+        having raised nothing. Coercing them to an empty row list made them indistinguishable
+        from a genuine "nobody played it" and fell through to the delete -- with the
+        after-action checklist reporting the played-since-approval check as passed for a
+        check that saw no data (rules 1, 28, 93). Deleting the coerce makes every case here
+        spare instead.
+        """
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+        radarr = FakeRadarr()
+        gateway = _gateway(radarr={1: radarr}, tautulli=FakeTautulli(body=body))
+
+        report = await _real(session, run, gateway)
+
+        assert report.skipped == 1
+        assert radarr.delete_calls == []
+
+    async def test_a_genuinely_empty_history_still_deletes(self, session: AsyncSession) -> None:
+        """The other side of the previous test, so the fix cannot be "spare on everything".
+
+        A real list with no rows is Tautulli saying it looked and nobody played it. That is
+        an answer, not a failure, and it must still let the delete proceed -- otherwise the
+        interlock would hold every item on a library nobody has watched.
+        """
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=700)
+        run = await _plan(session, snapshot_id)
+        radarr = FakeRadarr()
+        gateway = _gateway(radarr={1: radarr}, tautulli=FakeTautulli(body={"data": []}))
+
+        report = await _real(session, run, gateway)
+
+        assert report.deleted_items == 1
+        assert radarr.delete_calls == [1]
+
     async def test_a_play_through_the_files_other_listing_spares(
         self, session: AsyncSession
     ) -> None:
@@ -2779,6 +2827,8 @@ class FakeTautulli:
 
     ``rows`` answers every key alike; ``rows_by_key`` answers per rating key (empty for
     keys not listed), for the merged-listings tests where WHICH key was played matters.
+    ``body`` replaces the whole response, for the shapes that are not a list of rows at
+    all -- the success envelope carrying a null or unrecognized ``data``.
     """
 
     def __init__(
@@ -2787,9 +2837,11 @@ class FakeTautulli:
         rows: list[dict[str, Any]] | None = None,
         rows_by_key: dict[int, list[dict[str, Any]]] | None = None,
         raise_error: bool = False,
+        body: Any = None,
     ) -> None:
         self._rows = rows or []
         self._rows_by_key = rows_by_key
+        self._body = body
         self._raise = raise_error
         self.history_calls: list[dict[str, Any]] = []
 
@@ -2805,6 +2857,8 @@ class FakeTautulli:
         )
         if self._raise:
             raise IntegrationError("tautulli", "history unavailable")
+        if self._body is not None:
+            return self._body
         if self._rows_by_key is not None:
             key = rating_key if rating_key is not None else parent_rating_key
             return {"data": list(self._rows_by_key.get(key or 0, []))}
