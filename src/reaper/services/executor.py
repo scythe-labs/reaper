@@ -1756,7 +1756,15 @@ class Executor:
 
         # Verify the movie is actually gone -- always, and immediately (a deleted movie 404s).
         gone = await self._movie_is_gone(radarr, ref.arr_id)
-        checks.append(StepCheck("Removed the file through Radarr", gone))
+        # Only a real 404 passes the check. An unreadable re-read (``None``) is not a pass:
+        # nobody confirmed anything, and the checklist must not say they did (rule 7/24).
+        proven_gone = gone is True
+        # ``None`` means the re-read failed, so the file's fate is unknown. For everything
+        # below that is the KEEP direction (fail the item, do not claim a verification), but
+        # for the budget it is the opposite: an uncharged delete buys the next run more
+        # room. So "not proven still present" is what charges, not "proven gone".
+        assume_removed = gone is not False
+        checks.append(StepCheck("Removed the file through Radarr", proven_gone))
 
         # Stamp the removal the moment it is proven, and BEFORE anything else that could
         # fail. Everything below -- the exclusion poll, the Plex refresh -- can end this item
@@ -1765,7 +1773,7 @@ class Executor:
         # up, so a Radarr that is slow to add exclusions cannot quietly buy unlimited
         # deletions (rule 5/30). Committed here, not at the end: an audit record of a
         # deleted file is not something to hold in a transaction (rule 26).
-        if gone:
+        if assume_removed:
             await self._mark_file_removed(step)
 
         # The exclusion is polled only when it was armed: Radarr adds it a moment after the
@@ -1787,30 +1795,38 @@ class Executor:
         # failed (the file is still gone). Best-effort: never affects the item's verdict.
         # A merged bind lists this one file under several rating keys, so the purge's
         # count-delta gate is told how many Plex entries this delete removes.
-        if gone:
+        if assume_removed:
             await self._best_effort_refresh(
                 str(movie.get("path") or movie.get("folderName") or ""),
                 plex_entries=len(self._equivalent_keys(delete.candidate)) or 1,
             )
 
-        if not (excluded and gone):
-            # The file is already gone once ``gone`` is True; a missing exclusion is the
-            # remaining risk (a re-request could re-download), so say which failed and that
-            # the file itself is removed either way. With the exclusion off ``excluded`` is
-            # always True, so this branch only fires on a movie that would not delete.
+        if not (excluded and proven_gone):
+            # Three different things went wrong here and they read differently to an
+            # operator, so each says what it actually knows rather than printing a tuple of
+            # internal flags. With the exclusion off ``excluded`` is always True, so the
+            # first branch only fires on a movie that would not delete.
+            if gone is False:
+                reason = (
+                    "Radarr accepted the delete but the movie is still there. Nothing was removed."
+                )
+            elif gone is None:
+                reason = (
+                    "Radarr accepted the delete, but Reaper could not reach it again to "
+                    "confirm the file is gone. It is counted against your limits as removed."
+                )
+            else:
+                reason = (
+                    "The file was removed, but Reaper could not confirm the import "
+                    "exclusion, so a re-request could download it again."
+                )
             return self._fail(
                 delete,
-                f"delete not fully confirmed (gone={gone}, exclusion_verified={excluded}). "
-                + (
-                    "The file was removed, but the import exclusion could not be verified "
-                    "after polling, so a re-request could re-download it."
-                    if gone
-                    else "Radarr returned 200 but the movie is still present."
-                ),
+                reason,
                 checks=checks,
                 # The file is gone even though this item failed, so the library changed and
                 # the queue is now stale: the post-run rescan has to fire.
-                file_removed=gone,
+                file_removed=assume_removed,
             )
 
         await self._mark_verified(step, {"tmdb_id": tmdb_id, "excluded": excluded, "gone": True})
@@ -1828,12 +1844,22 @@ class Executor:
             checks=checks,
         )
 
-    async def _movie_is_gone(self, radarr: MovieDeleter, movie_id: int) -> bool:
-        """A deleted movie 404s. Any other error is treated as 'not proven gone'."""
+    async def _movie_is_gone(self, radarr: MovieDeleter, movie_id: int) -> bool | None:
+        """Did the movie really go? ``True`` gone, ``False`` still there, ``None`` unknown.
+
+        Three answers, not two, because the two ends of "not True" want opposite handling.
+        A 404 proves the delete took. A clean read that still finds the movie proves it did
+        NOT: Radarr returned 200 and did nothing. But a timeout or a 502 on this re-read
+        proves neither, and collapsing it into ``False`` claimed the movie was still present
+        when nobody had looked -- and, worse, skipped the ``file_removed_at`` stamp, so bytes
+        that really were reclaimed never reached the rolling 30-day budget (rules 97, 5/30).
+        ``delete_movie`` already returned without raising by the time this runs, so the
+        fail-closed reading of an unreadable verification is that the file went.
+        """
         try:
             await radarr.movie_by_id(movie_id)
         except IntegrationError as exc:
-            return exc.status == 404
+            return True if exc.status == 404 else None
         return False
 
     async def _exclusion_landed(self, radarr: MovieDeleter, tmdb_id: int) -> bool:
@@ -2024,7 +2050,24 @@ class Executor:
         await sonarr.delete_episode_files(file_ids)
 
         # 3. Verify no file for this season remains.
-        remaining = await sonarr.episode_files(ref.arr_id)
+        try:
+            remaining = await sonarr.episode_files(ref.arr_id)
+        except IntegrationError:
+            # The twin of the movie path's unreadable re-read (``_movie_is_gone`` returning
+            # ``None``), reached by a raise rather than a return because there is no 404 to
+            # distinguish here. ``delete_episode_files`` already returned without raising, so
+            # the files went; only the confirmation failed. Charge the bytes before failing
+            # the item, or a Sonarr that is unreachable for the re-read buys the next run
+            # unlimited room (rules 97, 5/30, and 72 for the twin).
+            await self._mark_file_removed(delete_step)
+            return self._fail(
+                delete,
+                f"Sonarr accepted the delete for season {ref.season}, but Reaper could not "
+                "reach it again to confirm the files are gone. They are counted against "
+                "your limits as removed.",
+                checks=checks,
+                file_removed=True,
+            )
         still_there = [f for f in remaining if _season_number(f) == ref.season]
         checks.append(
             StepCheck(f"Deleted the season's {len(file_ids)} episode file(s)", not still_there)

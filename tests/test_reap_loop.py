@@ -3525,6 +3525,86 @@ class TestARemovalIsCountedEvenWhenTheStepFails:
         assert report.library_changed is False
         assert (await _steps(session, run.id))[0].file_removed_at is None
 
+    async def test_a_delete_that_cannot_be_re_read_is_still_charged(
+        self, session: AsyncSession
+    ) -> None:
+        """The third answer. Radarr accepted the delete, then went unreachable for the
+        confirming re-read, so nobody knows whether the movie is there. That is NOT the same
+        as the mirror above, where a clean read proved it was: the file almost certainly
+        went, and leaving it uncharged lets an intermittently slow Radarr buy unlimited
+        deletions past the monthly budget (rules 97 and 5/30)."""
+
+        class UnreachableAfterDelete(FakeRadarr):
+            async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
+                if movie_id in self._deleted:
+                    # A timeout carries no status at all, which is exactly the case that
+                    # used to collapse into "the movie is still present".
+                    raise IntegrationError("radarr", "timed out", status=None)
+                return await super().movie_by_id(movie_id)
+
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+
+        report = await _real(session, run, _gateway(radarr={1: UnreachableAfterDelete()}))
+
+        step = (await _steps(session, run.id))[0]
+        assert step.state is StepState.FAILED  # nothing was confirmed, so nothing claims it was
+        assert step.file_removed_at is not None  # but the bytes are charged
+        assert report.removed_unconfirmed == 1
+        assert report.library_changed is True
+
+    async def test_the_operator_is_not_told_the_movie_is_still_there(
+        self, session: AsyncSession
+    ) -> None:
+        """The copy has to distinguish the two failures, because they need opposite
+        responses: a movie Radarr refused to delete is still on disk and can be retried, a
+        movie it could not re-read is gone. Printing "the movie is still there" for the
+        second sends the operator looking for a file nobody can find (rules 7/24 and 21)."""
+
+        class UnreachableAfterDelete(FakeRadarr):
+            async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
+                if movie_id in self._deleted:
+                    raise IntegrationError("radarr", "timed out", status=None)
+                return await super().movie_by_id(movie_id)
+
+        snapshot_id = await _snapshot_one(session, media_key="radarr:1:1", rating_key=701)
+        run = await _plan(session, snapshot_id)
+
+        await _real(session, run, _gateway(radarr={1: UnreachableAfterDelete()}))
+
+        error = ((await _steps(session, run.id))[0].error or "").lower()
+        assert "could not reach it again" in error
+        assert "still there" not in error
+
+    async def test_a_season_delete_that_cannot_be_re_read_is_charged_too(
+        self, session: AsyncSession
+    ) -> None:
+        """Rule 72: the same defect wearing a different shape. The movie path collapsed an
+        unreadable re-read into a return value; the season path lets it raise, which unwound
+        past the stamp entirely. Both end with reclaimed bytes charged to nothing."""
+
+        class UnreachableAfterDelete(FakeSonarr):
+            async def episode_files(self, series_id: int) -> list[dict[str, Any]]:
+                if self.delete_calls:
+                    raise IntegrationError("sonarr", "timed out", status=None)
+                return await super().episode_files(series_id)
+
+        snapshot_id = await _snapshot_one(
+            session, media_key="sonarr:1:42:3", rating_key=800, media_type="season"
+        )
+        run = await _plan(session, snapshot_id)
+        sonarr = UnreachableAfterDelete()
+
+        report = await _real(session, run, _gateway(sonarr={1: sonarr}))
+
+        assert sonarr.delete_calls == [[101, 102]]  # the files really were deleted
+        steps = {s.kind: s for s in await _steps(session, run.id)}
+        delete_step = steps["sonarr_delete_files"]
+        assert delete_step.state is StepState.FAILED  # nothing confirmed it
+        assert delete_step.file_removed_at is not None  # but the bytes are charged
+        assert report.library_changed is True
+        assert "could not reach it again" in (delete_step.error or "").lower()
+
 
 # ---------------------------------------------------------------------------
 # The progress bar counts the set the operator authorized
