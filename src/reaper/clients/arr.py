@@ -94,7 +94,11 @@ class ArrClient(BaseClient):
           destroy library records.
         """
         data = await self.get_json(f"{self.prefix}/rootfolder")
-        return list(data) if isinstance(data, list) else []
+        if not isinstance(data, list):
+            # A 200 whose body is not a list is never "there are none of these".
+            # See ``tags`` for the reasoning; this is the same defect (rule 72).
+            raise IntegrationError(self.service, f"{self.prefix}/rootfolder did not return a list")
+        return list(data)
 
 
 class SonarrClient(ArrClient):
@@ -106,7 +110,11 @@ class SonarrClient(ArrClient):
 
     async def series(self) -> list[dict[str, Any]]:
         data = await self.get_json(f"{self.prefix}/series")
-        return list(data) if isinstance(data, list) else []
+        if not isinstance(data, list):
+            # A 200 whose body is not a list is never "there are none of these".
+            # See ``tags`` for the reasoning; this is the same defect (rule 72).
+            raise IntegrationError(self.service, f"{self.prefix}/series did not return a list")
+        return list(data)
 
     async def series_by_id(self, series_id: int) -> dict[str, Any]:
         data = await self.get_json(f"{self.prefix}/series/{series_id}")
@@ -127,15 +135,29 @@ class SonarrClient(ArrClient):
         still monitored" makes the *arr re-download everything we just removed.
         """
         data = await self.get_json(f"{self.prefix}/episodefile", params={"seriesId": series_id})
-        return list(data) if isinstance(data, list) else []
+        if not isinstance(data, list):
+            # A 200 whose body is not a list is never "there are none of these".
+            # See ``tags`` for the reasoning; this is the same defect (rule 72).
+            raise IntegrationError(self.service, f"{self.prefix}/episodefile did not return a list")
+        return list(data)
 
     async def episodes(self, series_id: int) -> list[dict[str, Any]]:
         data = await self.get_json(f"{self.prefix}/episode", params={"seriesId": series_id})
-        return list(data) if isinstance(data, list) else []
+        if not isinstance(data, list):
+            # A 200 whose body is not a list is never "there are none of these".
+            # See ``tags`` for the reasoning; this is the same defect (rule 72).
+            raise IntegrationError(self.service, f"{self.prefix}/episode did not return a list")
+        return list(data)
 
     async def exclusions(self) -> list[dict[str, Any]]:
         data = await self.get_json(f"{self.prefix}{self.exclusion_path}")
-        return list(data) if isinstance(data, list) else []
+        if not isinstance(data, list):
+            # A 200 whose body is not a list is never "there are none of these".
+            # See ``tags`` for the reasoning; this is the same defect (rule 72).
+            raise IntegrationError(
+                self.service, f"{self.prefix}{self.exclusion_path} did not return a list"
+            )
+        return list(data)
 
     async def unmonitor_season(self, series_id: int, season_number: int) -> None:
         """Stop monitoring one season, via the season-pass edit. Reversible.
@@ -193,7 +215,14 @@ class RadarrClient(ArrClient):
         extra API key. (Sonarr does not: its ratings are flat TVDB.)
         """
         data = await self.get_json(f"{self.prefix}/movie")
-        return list(data) if isinstance(data, list) else []
+        if not isinstance(data, list):
+            # A 200 whose body is not a list is never "this instance holds no movies".
+            # Coerced to [], an auth proxy's JSON error page read as an empty library:
+            # every movie on that Radarr silently left the scan, and the snapshot stayed
+            # executable, so the operator was told a complete run over a partial library
+            # (rules 28 and 93). See ``tags`` -- same defect, same answer (rule 72).
+            raise IntegrationError(self.service, f"{self.prefix}/movie did not return a list")
+        return list(data)
 
     async def movie_by_id(self, movie_id: int) -> dict[str, Any]:
         data = await self.get_json(f"{self.prefix}/movie/{movie_id}")
@@ -203,7 +232,13 @@ class RadarrClient(ArrClient):
 
     async def exclusions(self) -> list[dict[str, Any]]:
         data = await self.get_json(f"{self.prefix}{self.exclusion_path}")
-        return list(data) if isinstance(data, list) else []
+        if not isinstance(data, list):
+            # A 200 whose body is not a list is never "there are none of these".
+            # See ``tags`` for the reasoning; this is the same defect (rule 72).
+            raise IntegrationError(
+                self.service, f"{self.prefix}{self.exclusion_path} did not return a list"
+            )
+        return list(data)
 
     async def delete_movie(
         self, movie_id: int, *, delete_files: bool = True, add_exclusion: bool = True

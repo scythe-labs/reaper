@@ -10,12 +10,14 @@ must not be relayed same-origin.
 
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 import httpx2
 import pytest
 import respx
 
-from reaper.clients.arr import RadarrClient
+from reaper.clients.arr import RadarrClient, SonarrClient
 from reaper.clients.base import IntegrationError
 from reaper.clients.plextv import PlexTvClient
 from reaper.clients.tautulli import ALLOWED_IMAGE_TYPES, TautulliClient
@@ -98,6 +100,56 @@ class TestTagsBodyMustBeAList:
         async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
             with pytest.raises(IntegrationError, match="did not return a list"):
                 await client.tags()
+
+
+class TestEveryListReadRefusesANonListBody:
+    """``tags`` was the only one that got this right. Every sibling coerced a non-list 200
+    to ``[]``, and each of those empties tells a lie with its own consequence: an auth
+    proxy's JSON error page read as "this Radarr holds no movies", so a whole instance left
+    the scan while the snapshot stayed executable and the operator was told a complete run
+    (rules 28, 93, 72). ``movie_by_id`` and ``series_by_id`` already raised, which is what
+    makes the coercion an inconsistency rather than a house style."""
+
+    @pytest.mark.parametrize(
+        ("client_cls", "host", "path", "call"),
+        [
+            (RadarrClient, "radarr.test", "/api/v3/movie", lambda c: c.movies()),
+            (RadarrClient, "radarr.test", "/api/v3/rootfolder", lambda c: c.root_folders()),
+            (RadarrClient, "radarr.test", "/api/v3/exclusions", lambda c: c.exclusions()),
+            (SonarrClient, "sonarr.test", "/api/v3/series", lambda c: c.series()),
+            (SonarrClient, "sonarr.test", "/api/v3/episodefile", lambda c: c.episode_files(1)),
+            (SonarrClient, "sonarr.test", "/api/v3/episode", lambda c: c.episodes(1)),
+            (
+                SonarrClient,
+                "sonarr.test",
+                "/api/v3/importlistexclusion",
+                lambda c: c.exclusions(),
+            ),
+        ],
+    )
+    async def test_a_non_list_200_raises(
+        self,
+        httpx2_mock: respx.Router,
+        client_cls: type[RadarrClient] | type[SonarrClient],
+        host: str,
+        path: str,
+        call: Any,
+    ) -> None:
+        httpx2_mock.get(host=host, path=path).mock(
+            return_value=httpx.Response(200, json={"error": "bad gateway"})
+        )
+        async with client_cls(f"https://{host}", "k", safety=READ_ONLY) as client:
+            with pytest.raises(IntegrationError, match="did not return a list"):
+                await call(client)
+
+    async def test_a_genuinely_empty_list_is_still_empty(self, httpx2_mock: respx.Router) -> None:
+        """The control, and the reason this cannot just raise on anything falsy: a Radarr
+        with no movies yet is answering the question, and must not degrade a scan."""
+        httpx2_mock.get("https://radarr.test/api/v3/movie").mock(
+            return_value=httpx.Response(200, json=[])
+        )
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
+            assert await client.movies() == []
 
 
 class TestSendRetriesTransientTransportErrors:
