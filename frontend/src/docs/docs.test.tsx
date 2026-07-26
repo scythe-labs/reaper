@@ -33,7 +33,9 @@ describe("registry", () => {
   it("orders groups by GROUP_ORDER", () => {
     const groups = groupedDocs().map((g) => g.group);
     const known = groups.filter((g) => GROUP_ORDER.includes(g));
-    expect(known).toEqual([...known].sort((a, b) => GROUP_ORDER.indexOf(a) - GROUP_ORDER.indexOf(b)));
+    expect(known).toEqual(
+      [...known].sort((a, b) => GROUP_ORDER.indexOf(a) - GROUP_ORDER.indexOf(b)),
+    );
   });
 
   it("exposes only id-bearing top-level headings as jump targets", () => {
@@ -101,9 +103,17 @@ describe("DocBody", () => {
 describe("DocsModal", () => {
   it("shows the asked-for doc, the index, and its section list", () => {
     render(
-      <DocsModal docId="understanding-policy" anchor={undefined} nonce={1} onClose={() => {}} onNavigate={() => {}} />,
+      <DocsModal
+        docId="understanding-policy"
+        anchor={undefined}
+        nonce={1}
+        onClose={() => {}}
+        onNavigate={() => {}}
+      />,
     );
-    expect(screen.getByRole("heading", { level: 1, name: "Understanding policy" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Understanding policy" }),
+    ).toBeInTheDocument();
     // The index lists other docs too.
     expect(screen.getByRole("button", { name: /Tuning cheat sheet/ })).toBeInTheDocument();
     // The active doc's top-level sections appear as jump buttons.
@@ -111,7 +121,15 @@ describe("DocsModal", () => {
   });
 
   it("falls back to the first doc for an unknown id", () => {
-    render(<DocsModal docId="does-not-exist" anchor={undefined} nonce={1} onClose={() => {}} onNavigate={() => {}} />);
+    render(
+      <DocsModal
+        docId="does-not-exist"
+        anchor={undefined}
+        nonce={1}
+        onClose={() => {}}
+        onNavigate={() => {}}
+      />,
+    );
     expect(screen.getByRole("heading", { level: 1, name: DOCS[0]!.title })).toBeInTheDocument();
   });
 });
@@ -134,7 +152,9 @@ describe("useDocs / DocsProvider", () => {
       </DocsProvider>,
     );
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { level: 1, name: "Turning deletion on" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Turning deletion on" }),
+    ).toBeInTheDocument();
   });
 
   it("throws when used outside a provider", () => {
@@ -155,7 +175,8 @@ describe("the protections table", () => {
   // while this row stayed, telling operators a protection shipped On that no policy carried.
   it("names only protections the policy editor can still show", () => {
     const protections = understandingPolicy.body.find(
-      (b): b is Extract<typeof b, { kind: "table" }> => b.kind === "table" && b.head[0] === "Protection",
+      (b): b is Extract<typeof b, { kind: "table" }> =>
+        b.kind === "table" && b.head[0] === "Protection",
     );
     expect(protections).toBeDefined();
 

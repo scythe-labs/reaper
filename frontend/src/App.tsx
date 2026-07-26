@@ -28,11 +28,15 @@ import { useScanSettled } from "./useScanSettled";
 // script, so a first paint of the queue paid for the policy editor, the simulator, every
 // settings panel and the docs before it could draw a single card (P-4). Each is a default
 // export from a thin wrapper below, because these modules export more than one thing.
-const PolicyEditor = lazy(async () => ({ default: (await import("./components/PolicyEditor")).PolicyEditor }));
+const PolicyEditor = lazy(async () => ({
+  default: (await import("./components/PolicyEditor")).PolicyEditor,
+}));
 const ReapPlan = lazy(async () => ({ default: (await import("./components/ReapPlan")).ReapPlan }));
 const Fairness = lazy(async () => ({ default: (await import("./components/Fairness")).Fairness }));
 const Settings = lazy(async () => ({ default: (await import("./components/Settings")).Settings }));
-const SetupWizard = lazy(async () => ({ default: (await import("./components/SetupWizard")).SetupWizard }));
+const SetupWizard = lazy(async () => ({
+  default: (await import("./components/SetupWizard")).SetupWizard,
+}));
 
 /** What a route shows while its chunk is on the way. The app's own spinner, announced, so a
  *  slow network reads as loading rather than as a blank page. */
@@ -86,8 +90,8 @@ function SafetyBanner({ onGoToDeletion }: { onGoToDeletion: () => void }) {
       <div className="banner banner-unknown">
         <span className="banner-dot" aria-hidden="true" />
         <span>
-          <strong>Safety state unknown.</strong> Reaper couldn't reach the server to confirm
-          whether deletion is on. Until it can, treat this as armed and{" "}
+          <strong>Safety state unknown.</strong> Reaper couldn't reach the server to confirm whether
+          deletion is on. Until it can, treat this as armed and{" "}
           <button className="link" onClick={onGoToDeletion}>
             check Policy → Deletion
           </button>
@@ -319,8 +323,8 @@ export function ScanFreshness({
     }
     return (
       <p className="notice notice-error scan-freshness">
-        Couldn't read the last scan, so Reaper can't say how old this queue is. Reload the
-        page to try again.
+        Couldn't read the last scan, so Reaper can't say how old this queue is. Reload the page to
+        try again.
       </p>
     );
   }
@@ -403,12 +407,7 @@ export function UserMenu({ user }: { user: AuthUser }) {
 
   return (
     <div className="user-menu" ref={ref} onBlur={onBlur} onKeyDown={onKeyDown}>
-      <button
-        className="user-chip"
-        ref={triggerRef}
-        onClick={toggle}
-        aria-expanded={open}
-      >
+      <button className="user-chip" ref={triggerRef} onClick={toggle} aria-expanded={open}>
         {user.thumb_url ? (
           <img src={user.thumb_url} alt="" className="user-avatar" />
         ) : (
@@ -457,8 +456,8 @@ function WhyPanelFallback({ error, onClose }: { error: boolean; onClose: () => v
             <h2>Something went wrong</h2>
           </header>
           <p className="notice notice-error">
-            Couldn't load the reasons for this item. The item itself is unaffected. Close this
-            panel and click the item to try again.
+            Couldn't load the reasons for this item. The item itself is unaffected. Close this panel
+            and click the item to try again.
           </p>
         </>
       ) : (
@@ -598,9 +597,7 @@ function Dashboard({ user }: { user: AuthUser }) {
     section: PolicySectionId;
     nonce: number;
   } | null>(null);
-  const [settingsFocus, setSettingsFocus] = useState<{ panel: Panel; nonce: number } | null>(
-    null,
-  );
+  const [settingsFocus, setSettingsFocus] = useState<{ panel: Panel; nonce: number } | null>(null);
 
   const goToPolicySection = (section: PolicySectionId) => {
     setPolicyFocus({ section, nonce: Date.now() });
@@ -731,11 +728,7 @@ function Dashboard({ user }: { user: AuthUser }) {
         return;
       }
       const delta =
-        e.key === "ArrowDown" || e.key === "j"
-          ? 1
-          : e.key === "ArrowUp" || e.key === "k"
-            ? -1
-            : 0;
+        e.key === "ArrowDown" || e.key === "j" ? 1 : e.key === "ArrowUp" || e.key === "k" ? -1 : 0;
       if (delta === 0) return;
       e.preventDefault();
       stepRef.current?.(delta);
@@ -815,94 +808,92 @@ function Dashboard({ user }: { user: AuthUser }) {
         {/* One boundary for every route: the queue below is already in this chunk, so only
             a first visit to another view ever shows the fallback. */}
         <Suspense fallback={<RouteLoading />}>
-        {view === "review" ? (
-          <>
-            <ReviewQueue
-              verdict={verdict}
-              onVerdictChange={changeVerdict}
-              selectedId={selectedId}
-              selectedGroupKey={selectedGroupKey}
-              onSelect={(id) => setSelected({ kind: "item", id })}
-              onSelectGroup={(key) => setSelected({ kind: "group", key })}
-              // Show latest closes an open why-panel: its candidate id belongs to the OLD
-              // snapshot, so a refetch could only return a stale row. The show panel is keyed on
-              // a stable group key and refreshes in place, so only the item selection is cleared
-              // (B-7).
-              onClearItemSelection={() =>
-                setSelected((s) => (s?.kind === "item" ? null : s))
-              }
-              stepRef={stepRef}
-              // The newest completed scan, from the shell's status poll. When it moves past
-              // the snapshot the queue is showing, the queue offers (or quietly takes) the
-              // fresher one instead of leaving the reviewer on a stale list.
-              latestScanSnapshotId={scanStatus?.snapshot_id ?? null}
-            />
-            {selectedId !== null &&
-              (detail ? (
-                <WhyPanel
-                  item={detail}
-                  onClose={() => setSelected(null)}
-                  onShowGroup={(key) => setSelected({ kind: "group", key })}
-                />
-              ) : (
-                <WhyPanelFallback error={detailError} onClose={() => setSelected(null)} />
-              ))}
-            {selectedGroupKey !== null &&
-              (groupDetail ? (
-                <ShowPanel
-                  group={groupDetail}
-                  onOpenSeason={(id) => setSelected({ kind: "item", id })}
-                  onClose={() => setSelected(null)}
-                />
-              ) : (
-                <WhyPanelFallback error={groupError} onClose={() => setSelected(null)} />
-              ))}
-          </>
-        ) : view === "policy" ? (
-          <PolicyEditor focus={policyFocus} />
-        ) : view === "reap" ? (
-          <ReapPlan
-            onGoToDeletion={() => goToPolicySection("deletion")}
-            onGoToPlexSettings={() => goToSettingsPanel("plex")}
-            onGoToReview={() => {
-              setSelected(null);
-              changeView("review");
-            }}
-          />
-        ) : view === "fairness" ? (
-          <>
-            <Fairness
-              selectedIdentity={scalesUser}
-              onSelectPerson={openScalesPerson}
-              onOpenUnmatched={openScalesUnmatched}
-              unmatchedSelected={scalesUnmatched}
-            />
-            {scalesUser !== null &&
-              (personDetail ? (
-                <ScalesPanel
-                  detail={personDetail}
-                  onClose={() => setScalesUser(null)}
-                  onOpenItem={goToItemReasons}
-                  onOpenGroup={goToGroupReasons}
-                />
-              ) : (
-                <ScalesPanelFallback error={personError} onClose={() => setScalesUser(null)} />
-              ))}
-            {scalesUnmatched && (
-              <NotInScanPanel
-                items={fairnessReport?.unmatched ?? []}
-                isPending={fairnessPending}
-                error={fairnessError}
-                onClose={() => setScalesUnmatched(false)}
+          {view === "review" ? (
+            <>
+              <ReviewQueue
+                verdict={verdict}
+                onVerdictChange={changeVerdict}
+                selectedId={selectedId}
+                selectedGroupKey={selectedGroupKey}
+                onSelect={(id) => setSelected({ kind: "item", id })}
+                onSelectGroup={(key) => setSelected({ kind: "group", key })}
+                // Show latest closes an open why-panel: its candidate id belongs to the OLD
+                // snapshot, so a refetch could only return a stale row. The show panel is keyed on
+                // a stable group key and refreshes in place, so only the item selection is cleared
+                // (B-7).
+                onClearItemSelection={() => setSelected((s) => (s?.kind === "item" ? null : s))}
+                stepRef={stepRef}
+                // The newest completed scan, from the shell's status poll. When it moves past
+                // the snapshot the queue is showing, the queue offers (or quietly takes) the
+                // fresher one instead of leaving the reviewer on a stale list.
+                latestScanSnapshotId={scanStatus?.snapshot_id ?? null}
               />
-            )}
-          </>
-        ) : (
-          <Settings
-            key={settingsFocus?.nonce ?? "settings"}
-            initialPanel={settingsFocus?.panel}
-          />
-        )}
+              {selectedId !== null &&
+                (detail ? (
+                  <WhyPanel
+                    item={detail}
+                    onClose={() => setSelected(null)}
+                    onShowGroup={(key) => setSelected({ kind: "group", key })}
+                  />
+                ) : (
+                  <WhyPanelFallback error={detailError} onClose={() => setSelected(null)} />
+                ))}
+              {selectedGroupKey !== null &&
+                (groupDetail ? (
+                  <ShowPanel
+                    group={groupDetail}
+                    onOpenSeason={(id) => setSelected({ kind: "item", id })}
+                    onClose={() => setSelected(null)}
+                  />
+                ) : (
+                  <WhyPanelFallback error={groupError} onClose={() => setSelected(null)} />
+                ))}
+            </>
+          ) : view === "policy" ? (
+            <PolicyEditor focus={policyFocus} />
+          ) : view === "reap" ? (
+            <ReapPlan
+              onGoToDeletion={() => goToPolicySection("deletion")}
+              onGoToPlexSettings={() => goToSettingsPanel("plex")}
+              onGoToReview={() => {
+                setSelected(null);
+                changeView("review");
+              }}
+            />
+          ) : view === "fairness" ? (
+            <>
+              <Fairness
+                selectedIdentity={scalesUser}
+                onSelectPerson={openScalesPerson}
+                onOpenUnmatched={openScalesUnmatched}
+                unmatchedSelected={scalesUnmatched}
+              />
+              {scalesUser !== null &&
+                (personDetail ? (
+                  <ScalesPanel
+                    detail={personDetail}
+                    onClose={() => setScalesUser(null)}
+                    onOpenItem={goToItemReasons}
+                    onOpenGroup={goToGroupReasons}
+                  />
+                ) : (
+                  <ScalesPanelFallback error={personError} onClose={() => setScalesUser(null)} />
+                ))}
+              {scalesUnmatched && (
+                <NotInScanPanel
+                  items={fairnessReport?.unmatched ?? []}
+                  isPending={fairnessPending}
+                  error={fairnessError}
+                  onClose={() => setScalesUnmatched(false)}
+                />
+              )}
+            </>
+          ) : (
+            <Settings
+              key={settingsFocus?.nonce ?? "settings"}
+              initialPanel={settingsFocus?.panel}
+            />
+          )}
         </Suspense>
       </main>
       {reapSheetRun !== null && (
@@ -916,7 +907,11 @@ function Dashboard({ user }: { user: AuthUser }) {
  *  scanned once; after that (or if the owner skips) it is the dashboard. */
 function Authed({ user }: { user: AuthUser }) {
   const [skipped, setSkipped] = useState(false);
-  const { data: setup, isLoading, isError } = useQuery({
+  const {
+    data: setup,
+    isLoading,
+    isError,
+  } = useQuery({
     queryKey: ["setup"],
     queryFn: api.setupStatus,
   });
@@ -953,7 +948,11 @@ function Authed({ user }: { user: AuthUser }) {
 
 /** The gate. Nothing renders until we know who (if anyone) is signed in. */
 export function App() {
-  const { data: user, isLoading, isError } = useQuery({
+  const {
+    data: user,
+    isLoading,
+    isError,
+  } = useQuery({
     queryKey: ["me"],
     queryFn: api.me,
     // A 401 is the normal logged-out state, not something to retry into a storm.

@@ -73,7 +73,11 @@ export const h3 = (text: string, id?: string): Heading => ({
   ...(id !== undefined ? { id } : {}),
 });
 export const p = (text: string): Para => ({ kind: "p", text });
-export const callout = (tone: CalloutTone, text: string): Callout => ({ kind: "callout", tone, text });
+export const callout = (tone: CalloutTone, text: string): Callout => ({
+  kind: "callout",
+  tone,
+  text,
+});
 export const ul = (items: string[]): ListBlock => ({ kind: "list", items });
 export const ol = (items: string[]): ListBlock => ({ kind: "list", ordered: true, items });
 export const steps = (items: StepItem[]): Steps => ({ kind: "steps", items });
@@ -84,7 +88,10 @@ export const table = (head: string[], rows: string[][], hi?: number): TableBlock
   ...(hi !== undefined ? { hi } : {}),
 });
 export const defs = (items: DefItem[]): Defs => ({ kind: "defs", items });
-export const diagram = (spec: Omit<DiagramBlock, "kind">): DiagramBlock => ({ kind: "diagram", ...spec });
+export const diagram = (spec: Omit<DiagramBlock, "kind">): DiagramBlock => ({
+  kind: "diagram",
+  ...spec,
+});
 
 /** The h2 headings a doc exposes as jump targets, for the index sub-list and deep links. */
 export function docSections(doc: Doc): { id: string; text: string }[] {

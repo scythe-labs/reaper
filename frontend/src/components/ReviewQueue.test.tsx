@@ -208,7 +208,9 @@ describe("keeping the list in step with the latest scan", () => {
       .mockResolvedValueOnce(page([movie(1), movie(2)], 2, 0, 1))
       .mockRejectedValue(new Error("network blip"));
     renderQueue("condemn", 2);
-    expect(await screen.findByText(/A newer scan just finished|One scan behind/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/A newer scan just finished|One scan behind/),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Updated to the latest scan.")).not.toBeInTheDocument();
   });
 
@@ -263,9 +265,7 @@ describe("a bulk override", () => {
       "radarr:1:3",
     ]);
     // The queue refreshed even though part of the write failed.
-    await waitFor(() =>
-      expect(apiMock.candidates.mock.calls.length).toBeGreaterThan(listFetches),
-    );
+    await waitFor(() => expect(apiMock.candidates.mock.calls.length).toBeGreaterThan(listFetches));
     // The failed one, alone, is still picked, and the notice counts it.
     expect(
       await screen.findByText(/1 item could not be updated; it is still selected/),
@@ -361,9 +361,36 @@ describe("the whole-show override buttons", () => {
     // show, including a kept one. A whole-show Reap takes that kept season, so Reap must stay
     // -- the card judges over `group_seasons`, not the tab-filtered page.
     const marks: GroupSeasonMark[] = [
-      { id: 1, season: 1, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
-      { id: 2, season: 2, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
-      { id: 3, season: 3, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
+      {
+        id: 1,
+        season: 1,
+        verdict: "condemn",
+        override: null,
+        override_effective: null,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
+      {
+        id: 2,
+        season: 2,
+        verdict: "condemn",
+        override: null,
+        override_effective: null,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
+      {
+        id: 3,
+        season: 3,
+        verdict: "protect",
+        override: null,
+        override_effective: null,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
     ];
     apiMock.candidates.mockResolvedValue(
       page([
@@ -381,12 +408,41 @@ describe("the whole-show override buttons", () => {
     // "reap". But across the whole show (group_seasons) the override is mixed -- other seasons
     // are untouched -- so the whole-show control must NOT read as "Reaping" (its active state).
     const marks: GroupSeasonMark[] = [
-      { id: 5, season: 5, verdict: "abstain", override: "reap", override_effective: false, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
-      { id: 8, season: 8, verdict: "condemn", override: "reap", override_effective: true, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
-      { id: 10, season: 10, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
+      {
+        id: 5,
+        season: 5,
+        verdict: "abstain",
+        override: "reap",
+        override_effective: false,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
+      {
+        id: 8,
+        season: 8,
+        verdict: "condemn",
+        override: "reap",
+        override_effective: true,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
+      {
+        id: 10,
+        season: 10,
+        verdict: "protect",
+        override: null,
+        override_effective: null,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
     ];
     apiMock.candidates.mockResolvedValue(
-      page([season(8, "condemn", { override: "reap", override_effective: true, group_seasons: marks })]),
+      page([
+        season(8, "condemn", { override: "reap", override_effective: true, group_seasons: marks }),
+      ]),
     );
     renderQueue("condemn");
     await screen.findByText("Example Show");
@@ -399,8 +455,26 @@ describe("the whole-show override buttons", () => {
     // Now a whole-show Reap would change nothing, so it falls away just as the movie's does.
     // Every season condemned in `group_seasons` too, so the whole-show view agrees.
     const marks: GroupSeasonMark[] = [
-      { id: 1, season: 1, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
-      { id: 2, season: 2, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
+      {
+        id: 1,
+        season: 1,
+        verdict: "condemn",
+        override: null,
+        override_effective: null,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
+      {
+        id: 2,
+        season: 2,
+        verdict: "condemn",
+        override: null,
+        override_effective: null,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
     ];
     apiMock.candidates.mockResolvedValue(
       page([
@@ -466,8 +540,26 @@ describe("the bulk bar's count", () => {
     // "1 selected" beside a Reap now that plans ten seasons is not the set the server acts
     // on (U-13, rule 30). The show's count is the server's own actable total.
     const marks: GroupSeasonMark[] = [
-      { id: 1, season: 1, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
-      { id: 2, season: 2, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
+      {
+        id: 1,
+        season: 1,
+        verdict: "condemn",
+        override: null,
+        override_effective: null,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
+      {
+        id: 2,
+        season: 2,
+        verdict: "condemn",
+        override: null,
+        override_effective: null,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
     ];
     apiMock.candidates.mockResolvedValue(
       page([
@@ -497,9 +589,7 @@ describe("select everything matching", () => {
     renderQueue();
     const user = await selectAllDrawn();
     // Two drawn and picked, four matching: the button that reaches past the drawn cards.
-    await user.click(
-      await screen.findByRole("button", { name: /Select everything matching/ }),
-    );
+    await user.click(await screen.findByRole("button", { name: /Select everything matching/ }));
 
     expect(
       await screen.findByText(/Couldn't load the rest of the list, so nothing was selected/),
@@ -542,9 +632,7 @@ describe("a reap the engine refused", () => {
       screen.getByText("Reap requested · kept for now: a check on it couldn't be settled"),
     ).toBeInTheDocument();
     // The lane chip's own capitalized wording never lands mid-sentence.
-    expect(
-      screen.queryByText(/kept for now: Needs a look/),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/kept for now: Needs a look/)).not.toBeInTheDocument();
   });
 });
 
@@ -577,9 +665,7 @@ describe("the score badge's color follows the fate", () => {
   });
 
   it("goes solid green when the item is spared by hand", async () => {
-    const cls = await scoreClassFor(
-      movie(1, { verdict: "condemn", override: "spare" }),
-    );
+    const cls = await scoreClassFor(movie(1, { verdict: "condemn", override: "spare" }));
     expect(cls).toContain("score-spare");
     expect(cls).not.toContain("score-condemn");
   });
@@ -635,7 +721,11 @@ describe("the season strip's colors follow the fate", () => {
   // agree with its row: solid for an effective hand decision, dashed red (with a scythe
   // mark) for a reap the engine can't honor yet, the scan verdict otherwise. Amber is never
   // used here -- it means only "left for you to decide".
-  function mark(id: number, verdict: Verdict, extra: Partial<GroupSeasonMark> = {}): GroupSeasonMark {
+  function mark(
+    id: number,
+    verdict: Verdict,
+    extra: Partial<GroupSeasonMark> = {},
+  ): GroupSeasonMark {
     return {
       id,
       season: id,
@@ -686,7 +776,11 @@ describe("the season strip's colors follow the fate", () => {
     const future = new Date(Date.now() + 30 * 86_400_000).toISOString();
     const { classes } = await stripRender([
       // No show-level spare in this strip, so each season's own spare is what covers it.
-      mark(1, "condemn", { override: "spare", spare_expires_at: future, spare_covers_until: future }),
+      mark(1, "condemn", {
+        override: "spare",
+        spare_expires_at: future,
+        spare_covers_until: future,
+      }),
       mark(2, "condemn", { override: "spare", spare_expires_at: past, spare_covers_until: past }),
       mark(3, "condemn", { override: "spare", spare_expires_at: null, spare_covers_until: null }),
       mark(4, "condemn"),
@@ -921,11 +1015,42 @@ describe("a per-row control on the lane it does not match", () => {
 describe("what a card says after a hand decision", () => {
   it("stops asserting removal the moment the whole show is spared", async () => {
     const marks: GroupSeasonMark[] = [
-      { id: 1, season: 1, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
-      { id: 2, season: 2, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
-      { id: 3, season: 3, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
+      {
+        id: 1,
+        season: 1,
+        verdict: "condemn",
+        override: null,
+        override_effective: null,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
+      {
+        id: 2,
+        season: 2,
+        verdict: "condemn",
+        override: null,
+        override_effective: null,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
+      {
+        id: 3,
+        season: 3,
+        verdict: "protect",
+        override: null,
+        override_effective: null,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
     ];
-    const extra = { group_seasons: marks, group_condemned_count: 2, group_condemned_bytes: 2 * 1024 ** 3 };
+    const extra = {
+      group_seasons: marks,
+      group_condemned_count: 2,
+      group_condemned_bytes: 2 * 1024 ** 3,
+    };
     apiMock.candidates.mockResolvedValue(
       page([season(1, "condemn", extra), season(2, "condemn", extra)]),
     );
@@ -949,9 +1074,36 @@ describe("what a card says after a hand decision", () => {
     // "0 of 3 would be removed · 0 B" beneath a "will be removed" chip for the rest of the
     // session, while the server would in fact plan every season it honors (B-1).
     const marks: GroupSeasonMark[] = [
-      { id: 1, season: 1, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
-      { id: 2, season: 2, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
-      { id: 3, season: 3, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
+      {
+        id: 1,
+        season: 1,
+        verdict: "protect",
+        override: null,
+        override_effective: null,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
+      {
+        id: 2,
+        season: 2,
+        verdict: "protect",
+        override: null,
+        override_effective: null,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
+      {
+        id: 3,
+        season: 3,
+        verdict: "protect",
+        override: null,
+        override_effective: null,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
     ];
     const extra = {
       group_seasons: marks,
@@ -985,11 +1137,38 @@ describe("what a card says after a hand decision", () => {
     const gb = 1024 ** 3;
     const marks: GroupSeasonMark[] = [
       // Honored: the only one that will actually go.
-      { id: 1, season: 1, verdict: "protect", override: "reap", override_effective: true, size_bytes: gb, spare_expires_at: null, spare_covers_until: null },
+      {
+        id: 1,
+        season: 1,
+        verdict: "protect",
+        override: "reap",
+        override_effective: true,
+        size_bytes: gb,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
       // Refused by the engine -- a hand reap it cannot honor yet.
-      { id: 2, season: 2, verdict: "protect", override: "reap", override_effective: false, size_bytes: gb, spare_expires_at: null, spare_covers_until: null },
+      {
+        id: 2,
+        season: 2,
+        verdict: "protect",
+        override: "reap",
+        override_effective: false,
+        size_bytes: gb,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
       // The operator's own opposing spare.
-      { id: 3, season: 3, verdict: "protect", override: "spare", override_effective: null, size_bytes: gb, spare_expires_at: null, spare_covers_until: null },
+      {
+        id: 3,
+        season: 3,
+        verdict: "protect",
+        override: "spare",
+        override_effective: null,
+        size_bytes: gb,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
     ];
     const extra = {
       group_seasons: marks,
@@ -1016,9 +1195,27 @@ describe("what a card says after a hand decision", () => {
     const gb = 1024 ** 3;
     const past = new Date(Date.now() - 3 * 86_400_000).toISOString();
     const marks: GroupSeasonMark[] = [
-      { id: 1, season: 1, verdict: "protect", override: "reap", override_effective: true, size_bytes: gb, spare_expires_at: null, spare_covers_until: null },
+      {
+        id: 1,
+        season: 1,
+        verdict: "protect",
+        override: "reap",
+        override_effective: true,
+        size_bytes: gb,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
       // Spared by hand for a set time, and that time has run out.
-      { id: 2, season: 2, verdict: "protect", override: "spare", override_effective: null, size_bytes: gb, spare_expires_at: past, spare_covers_until: past },
+      {
+        id: 2,
+        season: 2,
+        verdict: "protect",
+        override: "spare",
+        override_effective: null,
+        size_bytes: gb,
+        spare_expires_at: past,
+        spare_covers_until: past,
+      },
     ];
     const extra = {
       group_seasons: marks,

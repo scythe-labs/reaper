@@ -83,8 +83,8 @@ function Steps({ run }: { run: Run }) {
       </table>
       {more > 0 && (
         <p className="muted">
-          …and {count(more)} more {more === 1 ? "step" : "steps"}, not shown. The run still
-          covers every one of them.
+          …and {count(more)} more {more === 1 ? "step" : "steps"}, not shown. The run still covers
+          every one of them.
         </p>
       )}
     </div>
@@ -245,9 +245,9 @@ export function ReapPlan({
 
       {degraded && (
         <p className="notice notice-warn">
-          <strong>This scan came back incomplete.</strong> {latestSnapshot?.degraded_reason} You
-          can still look at it, but Reaper won't act on it, so a plan can't be built. Fix the
-          source and scan again.
+          <strong>This scan came back incomplete.</strong> {latestSnapshot?.degraded_reason} You can
+          still look at it, but Reaper won't act on it, so a plan can't be built. Fix the source and
+          scan again.
         </p>
       )}
 
@@ -274,8 +274,8 @@ export function ReapPlan({
           <div className="plan-summary">
             <span className="confirm-phrase">{run.confirmation_phrase}</span>
             <span className="muted">
-              {souls(run.item_count)} · {bytes(run.total_bytes)} · smallest first, and the first
-              is a test: if it doesn't go exactly as planned, the run stops.
+              {souls(run.item_count)} · {bytes(run.total_bytes)} · smallest first, and the first is
+              a test: if it doesn't go exactly as planned, the run stops.
             </span>
             {/* The plan is smaller than the queue implied, and this is where the owner
                 finds out. Silence here reads as "that was everything". */}
@@ -294,8 +294,7 @@ export function ReapPlan({
             )}
             {staleRun && (
               <p className="notice notice-warn">
-                This plan came from an older scan, so it can list titles you have since
-                protected.{" "}
+                This plan came from an older scan, so it can list titles you have since protected.{" "}
                 <button className="link" onClick={() => plan.mutate()} disabled={plan.isPending}>
                   Build a new plan
                 </button>
@@ -308,7 +307,11 @@ export function ReapPlan({
                 ) : (
                   <>
                     Reaper couldn't check whether this plan came from the latest scan.{" "}
-                    <button className="link" onClick={() => plan.mutate()} disabled={plan.isPending}>
+                    <button
+                      className="link"
+                      onClick={() => plan.mutate()}
+                      disabled={plan.isPending}
+                    >
                       Build a new plan
                     </button>
                   </>

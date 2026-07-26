@@ -179,9 +179,7 @@ describe("a policy that couldn't be read", () => {
     // exactly the state it explains.
     const { container } = renderEditor({ body: body(), needs_save: false, fell_back: true });
 
-    expect(
-      await screen.findByText(/Your saved policy couldn't be read/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/Your saved policy couldn't be read/)).toBeInTheDocument();
     // And the way out is offered: the savebar renders, so the fallback can be replaced.
     const savebar = container.querySelector(".savebar");
     expect(savebar).not.toBeNull();
@@ -282,9 +280,7 @@ describe("a preset", () => {
 
     // Applying a preset re-enables caps (B-10): the warning clears, so the profile it would
     // save is capped, not uncapped.
-    await waitFor(() =>
-      expect(screen.queryByText(/No cap on run size/)).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByText(/No cap on run size/)).not.toBeInTheDocument());
   });
 });
 
@@ -357,9 +353,7 @@ describe("the unknown-size allowance", () => {
     await user.clear(box);
     await user.type(box, "5");
 
-    await waitFor(() =>
-      expect(apiMock.validatePolicy).toHaveBeenCalledWith(expect.anything(), 5),
-    );
+    await waitFor(() => expect(apiMock.validatePolicy).toHaveBeenCalledWith(expect.anything(), 5));
   });
 });
 
@@ -540,7 +534,13 @@ describe("the gate that counts recent watchers", () => {
       body: {
         ...body(),
         gates: [
-          { gate: "server_popularity", enabled: true, threshold: 3, secondary: 0, window_days: 365 },
+          {
+            gate: "server_popularity",
+            enabled: true,
+            threshold: 3,
+            secondary: 0,
+            window_days: 365,
+          },
         ],
       },
     });

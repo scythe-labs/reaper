@@ -122,8 +122,8 @@ export function LogsPanel() {
     <div className="panel">
       <h2>Logs</h2>
       <p className="muted">
-        What Reaper is doing right now, and the trail of what it did. Every removal decision
-        is answerable from here. The newest {count(2000)} lines are kept.
+        What Reaper is doing right now, and the trail of what it did. Every removal decision is
+        answerable from here. The newest {count(2000)} lines are kept.
       </p>
 
       <div className="logbar">
@@ -229,9 +229,9 @@ export function LogsPanel() {
           <div className="set-row">
             <span className="set-label">Logging level</span>
             <p className="help">
-              How much Reaper writes, both here and in the container output. Info is the
-              everyday setting. Debug is chatty and best while chasing a problem. Takes
-              effect immediately, no restart.
+              How much Reaper writes, both here and in the container output. Info is the everyday
+              setting. Debug is chatty and best while chasing a problem. Takes effect immediately,
+              no restart.
             </p>
             <div className="set-control">
               <select
@@ -267,9 +267,7 @@ export function LogsPanel() {
         </div>
         {setLevel.error && <p className="notice notice-error">{setLevel.error.message}</p>}
         {download.error && (
-          <p className="notice notice-error">
-            The download didn't start: {download.error.message}
-          </p>
+          <p className="notice notice-error">The download didn't start: {download.error.message}</p>
         )}
       </div>
     </div>

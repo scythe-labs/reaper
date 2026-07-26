@@ -15,8 +15,18 @@ import { ScytheGlyph } from "./ScytheGlyph";
 export function LayersIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-      <path d="M8 2l6 3-6 3-6-3 6-3z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
-      <path d="M2 8l6 3 6-3M2 11l6 3 6-3" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path
+        d="M8 2l6 3-6 3-6-3 6-3z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M2 8l6 3 6-3M2 11l6 3 6-3"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -24,7 +34,12 @@ export function LayersIcon() {
 export function FunnelIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-      <path d="M2 3h12l-4.5 5.5V13L6.5 11V8.5L2 3z" stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round" />
+      <path
+        d="M2 3h12l-4.5 5.5V13L6.5 11V8.5L2 3z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -32,7 +47,12 @@ export function FunnelIcon() {
 export function SortIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-      <path d="M3 4h10M3 8h6M3 12h3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      <path
+        d="M3 4h10M3 8h6M3 12h3"
+        stroke="currentColor"
+        strokeWidth="1.4"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }
@@ -65,9 +85,30 @@ export function OverrideIcon() {
 export function LibraryIcon() {
   return (
     <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-      <rect x="2.5" y="3" width="2.4" height="10" rx="0.6" stroke="currentColor" strokeWidth="1.2" />
-      <rect x="5.8" y="3" width="2.4" height="10" rx="0.6" stroke="currentColor" strokeWidth="1.2" />
-      <path d="M9.6 4l2.4.6-1.9 8.2-2.4-.6" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+      <rect
+        x="2.5"
+        y="3"
+        width="2.4"
+        height="10"
+        rx="0.6"
+        stroke="currentColor"
+        strokeWidth="1.2"
+      />
+      <rect
+        x="5.8"
+        y="3"
+        width="2.4"
+        height="10"
+        rx="0.6"
+        stroke="currentColor"
+        strokeWidth="1.2"
+      />
+      <path
+        d="M9.6 4l2.4.6-1.9 8.2-2.4-.6"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -82,8 +123,21 @@ export function PlusIcon() {
 
 export function CaretIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" aria-hidden="true" className="fchip-caret">
-      <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    <svg
+      viewBox="0 0 16 16"
+      width="11"
+      height="11"
+      fill="none"
+      aria-hidden="true"
+      className="fchip-caret"
+    >
+      <path
+        d="M4 6l4 4 4-4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -91,7 +145,13 @@ export function CaretIcon() {
 export function CheckIcon() {
   return (
     <svg viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
-      <path d="M3 8.5l3 3 7-7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M3 8.5l3 3 7-7"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }

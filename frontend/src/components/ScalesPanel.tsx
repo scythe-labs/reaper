@@ -90,7 +90,14 @@ function ProfileName({ name, href }: { name: string; href: string | null }) {
       title="Open this person in the request portal"
     >
       <h2>{name}</h2>
-      <svg className="scales-ext" viewBox="0 0 16 16" width="13" height="13" fill="none" aria-hidden="true">
+      <svg
+        className="scales-ext"
+        viewBox="0 0 16 16"
+        width="13"
+        height="13"
+        fill="none"
+        aria-hidden="true"
+      >
         <path
           d="M6 3h7v7M13 3L4 12"
           stroke="currentColor"
@@ -106,7 +113,8 @@ function ProfileName({ name, href }: { name: string; href: string | null }) {
 /** The fate marker: the loud, actionable states wear a colored chip; "kept" is the quiet,
  *  expected state, so it reads as a plain gray label rather than a green pill on every row. */
 function Fate({ verdict }: { verdict: string }) {
-  if (verdict === "condemn") return <span className="status-chip status-pressure">Reclaimable</span>;
+  if (verdict === "condemn")
+    return <span className="status-chip status-pressure">Reclaimable</span>;
   if (verdict === "abstain") return <span className="status-chip status-look">Left to decide</span>;
   if (verdict === "protect") return <span className="scales-kept">Kept</span>;
   return <span className="scales-kept">{verdict}</span>;
@@ -124,13 +132,7 @@ function watchedLabel(t: PersonTitle): string {
 /** One requested title: what it is, when it arrived, whether they watched it, its fate, and
  *  who else asked. The whole row opens that item's real card in Review (a movie or lone
  *  season by id, a whole show by its group), so the reasoning is one click away. */
-function TitleRow({
-  t,
-  onOpen,
-}: {
-  t: PersonTitle;
-  onOpen: (() => void) | null;
-}) {
+function TitleRow({ t, onOpen }: { t: PersonTitle; onOpen: (() => void) | null }) {
   const kind = t.media_type === "movie" ? "Movie" : "Series";
   // Some stored titles already carry their year (e.g. "Some Show (2019)"); don't print it
   // twice. Only append the year when the title does not already end with it.
@@ -321,7 +323,11 @@ export function ScalesPanel({
         ) : (
           <div className="scales-titles">
             {detail.titles.map((t, i) => (
-              <TitleRow key={`${t.item_id ?? t.group_key ?? t.title}-${i}`} t={t} onOpen={opener(t)} />
+              <TitleRow
+                key={`${t.item_id ?? t.group_key ?? t.title}-${i}`}
+                t={t}
+                onOpen={opener(t)}
+              />
             ))}
           </div>
         )}
@@ -332,8 +338,7 @@ export function ScalesPanel({
           <div className="scales-h3row">
             <h3>Not in the last scan</h3>
             <span className="scales-count">
-              {count(detail.not_in_scan)}{" "}
-              {detail.not_in_scan === 1 ? "request" : "requests"}
+              {count(detail.not_in_scan)} {detail.not_in_scan === 1 ? "request" : "requests"}
             </span>
           </div>
           <UnmatchedList items={detail.unmatched} excludeName={detail.name} />
@@ -357,8 +362,7 @@ export function ScalesPanelFallback({ error, onClose }: { error: boolean; onClos
             <h2>Something went wrong</h2>
           </header>
           <p className="notice notice-error">
-            Couldn't load this person's requests. Close this panel and click the card to try
-            again.
+            Couldn't load this person's requests. Close this panel and click the card to try again.
           </p>
         </>
       ) : (

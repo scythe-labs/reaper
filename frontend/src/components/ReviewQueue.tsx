@@ -71,11 +71,7 @@ import {
   type FilterDimension,
   type QueueFilters,
 } from "./queueFilters";
-import {
-  QueueSettingsContext,
-  useHoldsBackUnmeasured,
-  type QueueSettings,
-} from "./queueSettings";
+import { QueueSettingsContext, useHoldsBackUnmeasured, type QueueSettings } from "./queueSettings";
 import {
   groupReapEffective,
   handFate,
@@ -118,13 +114,10 @@ const TABS: { verdict: Verdict; label: string; blurb: string; empty: string }[] 
   },
 ];
 
-
 // --- remembered filters --------------------------------------------------------------------
 // Each queue tab keeps its own filters and sort, on this device, until changed or cleared.
 
-
 // --- little inline icons for the filter/sort pills ------------------------------------------
-
 
 /** The Plex library an item lives in, as a quiet neutral chip on the facts line -- the same
  *  placement and weight as the resolution badge, deliberately not a verdict color. Hidden when
@@ -238,14 +231,19 @@ export function Poster({ url, alt }: { url: string | null; alt: string }) {
       <div className="poster poster-empty" aria-hidden="true">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none">
           <path d="M4 5h16v14H4z" stroke="currentColor" strokeWidth="1.6" />
-          <path d="M8 5v14M16 5v14M4 9h4M16 9h4M4 15h4M16 15h4" stroke="currentColor" strokeWidth="1.2" />
+          <path
+            d="M8 5v14M16 5v14M4 9h4M16 9h4M4 15h4M16 15h4"
+            stroke="currentColor"
+            strokeWidth="1.2"
+          />
         </svg>
       </div>
     );
   }
-  return <img className="poster" src={url} alt={alt} loading="lazy" onError={() => setBroken(true)} />;
+  return (
+    <img className="poster" src={url} alt={alt} loading="lazy" onError={() => setBroken(true)} />
+  );
 }
-
 
 /** The score chip. Color carries the item's fate so it reads without the label. */
 function Score({ item }: { item: Candidate }) {
@@ -255,7 +253,6 @@ function Score({ item }: { item: Candidate }) {
     </span>
   );
 }
-
 
 /** The label the resolution badge wears: 4K, HD or SD. Null (no data) shows nothing. */
 function resolutionLabel(value: string | null): string | null {
@@ -304,13 +301,6 @@ function DormantPill({ dormantFor }: { dormantFor: string | null }) {
   );
 }
 
-
-
-
-
-
-
-
 /** How a card participates in Select mode. When ``selectMode`` is off these are inert and the
  *  card behaves normally (click opens the why-panel); when on, the whole card is a selection
  *  target -- press to toggle, drag across to paint a run.
@@ -328,11 +318,6 @@ type CardSelect = {
   // stuck and paint every card a later mouse-hover crossed.
   onSelectToggle: (key: string) => void;
 };
-
-
-
-
-
 
 function CardStatusLine({
   condemned,
@@ -354,7 +339,8 @@ function CardStatusLine({
   // `condemned` false the card would lose this line outright and reflow under the cursor --
   // the live reflow the in-place patch exists to prevent. The dormancy fact is true on every
   // lane, so it stands in when there is no chip to show.
-  if (!condemned) return chip ? <StatusChip chip={chip} /> : <DormantPill dormantFor={dormantFor} />;
+  if (!condemned)
+    return chip ? <StatusChip chip={chip} /> : <DormantPill dormantFor={dormantFor} />;
   return (
     <>
       <DormantPill dormantFor={dormantFor} />
@@ -363,9 +349,6 @@ function CardStatusLine({
     </>
   );
 }
-
-
-
 
 type Group = {
   key: string;
@@ -746,7 +729,8 @@ function seasonDivergence(
     // The specific reason the engine held it (from the stored explanation) beats the chip's
     // short phrase, which beats a generic line -- so the row says WHY, e.g. that the season it
     // was compared against is kept because Sonarr is still downloading it.
-    const why = season.reason ?? chipWhy(season.chip) ?? "Reaper couldn't confirm it's safe to remove";
+    const why =
+      season.reason ?? chipWhy(season.chip) ?? "Reaper couldn't confirm it's safe to remove";
     return {
       chip: <span className="status-chip status-reap-held">Kept for now</span>,
       reason: capitalizeSentence(why),
@@ -963,7 +947,8 @@ const MovieCard = memo(function MovieCard({
   pending: boolean;
   hideReap: boolean;
 }) {
-  const state = item.override === "spare" ? "card-spared" : item.override === "reap" ? "card-reaped" : "";
+  const state =
+    item.override === "spare" ? "card-spared" : item.override === "reap" ? "card-reaped" : "";
   const { selectMode } = select;
   return (
     <article
@@ -1149,8 +1134,11 @@ const ShowCard = memo(function ShowCard({
   const condemnedBytes = reapsWholeShow
     ? reapedMarks.reduce((sum, m) => sum + (m.size_bytes ?? 0), 0)
     : (first.group_condemned_bytes ?? fetchedSize);
-  const condemnedUnknown = reapsWholeShow ? reapedUnknown : (first.group_unknown_size ?? fetchedUnknown);
-  const state = showOverride === "spare" ? "card-spared" : showOverride === "reap" ? "card-reaped" : "";
+  const condemnedUnknown = reapsWholeShow
+    ? reapedUnknown
+    : (first.group_unknown_size ?? fetchedUnknown);
+  const state =
+    showOverride === "spare" ? "card-spared" : showOverride === "reap" ? "card-reaped" : "";
   const { selectMode } = select;
 
   return (
@@ -1393,40 +1381,37 @@ export function ReviewQueue({
     isFetchingNextPage,
     fetchNextPage,
   } = useInfiniteQuery({
-      queryKey: ["candidates", verdict, search, filters],
-      queryFn: ({ pageParam }) =>
-        api.candidates(
-          verdict,
-          {
-            search,
-            media_type: filters.mediaType,
-            requested: filters.requested,
-            genre: filters.genre,
-            library: filters.library,
-            override: filters.override,
-            sort: filters.sort,
-            order: filters.order,
-          },
-          FETCH_PAGE,
-          pageParam,
-        ),
-      initialPageParam: 0,
-      // The next offset, until we have fetched the whole filtered set the header counted.
-      getNextPageParam: (last) => {
-        const next = last.offset + last.items.length;
-        return next < last.total ? next : undefined;
-      },
-    });
+    queryKey: ["candidates", verdict, search, filters],
+    queryFn: ({ pageParam }) =>
+      api.candidates(
+        verdict,
+        {
+          search,
+          media_type: filters.mediaType,
+          requested: filters.requested,
+          genre: filters.genre,
+          library: filters.library,
+          override: filters.override,
+          sort: filters.sort,
+          order: filters.order,
+        },
+        FETCH_PAGE,
+        pageParam,
+      ),
+    initialPageParam: 0,
+    // The next offset, until we have fetched the whole filtered set the header counted.
+    getNextPageParam: (last) => {
+      const next = last.offset + last.items.length;
+      return next < last.total ? next : undefined;
+    },
+  });
 
   // Every candidate loaded so far, flattened across pages; the totals come from the server (the
   // full filtered set, measured before the page window) so the header is right from page one.
   // Memoised on `pages` so the reference is stable between unrelated renders (a keystroke, a
   // drag repaint) -- otherwise the sentinel observer below, keyed on `data`, would tear down
   // and rebuild every render and could re-fire while the sentinel sits in view.
-  const data = useMemo(
-    () => (pages ? pages.pages.flatMap((p) => p.items) : undefined),
-    [pages],
-  );
+  const data = useMemo(() => (pages ? pages.pages.flatMap((p) => p.items) : undefined), [pages]);
   const totalItems = pages?.pages[0]?.total ?? 0;
   // Named apart from the `totalBytes` formatter, which this used to shadow -- which is
   // how the header kept rendering a bare sum while every other total had learned to say
@@ -1940,503 +1925,526 @@ export function ReviewQueue({
     // reads them from HERE: one subscription for the whole list rather than one per control
     // (P-7, see QueueSettingsContext).
     <QueueSettingsContext.Provider value={queueSettings}>
-    <section className="queue">
-      {/* A view-level heading, for parity with Policy/Fairness/Settings so heading navigation
+      <section className="queue">
+        {/* A view-level heading, for parity with Policy/Fairness/Settings so heading navigation
           can land on "Review queue" the way it lands on those views. */}
-      <h2>Review queue</h2>
-      <nav className="tabs" aria-label="Queue lists">
-        {TABS.map((t) => (
-          <button
-            key={t.verdict}
-            className={t.verdict === verdict ? "tab active" : "tab"}
-            // Reserve the bold (active) width so switching lists never shifts the tab row.
-            data-label={t.label}
-            // The list you are on is stated, not just colored, the same as the masthead
-            // and the settings rail. Plain buttons, not the tabs pattern: these switch a
-            // whole list rather than swapping panels, and none of that pattern's keyboard
-            // contract (arrow keys, a tabpanel to point at) exists here.
-            aria-current={t.verdict === verdict ? "page" : undefined}
-            onClick={() => onVerdictChange(t.verdict)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </nav>
+        <h2>Review queue</h2>
+        <nav className="tabs" aria-label="Queue lists">
+          {TABS.map((t) => (
+            <button
+              key={t.verdict}
+              className={t.verdict === verdict ? "tab active" : "tab"}
+              // Reserve the bold (active) width so switching lists never shifts the tab row.
+              data-label={t.label}
+              // The list you are on is stated, not just colored, the same as the masthead
+              // and the settings rail. Plain buttons, not the tabs pattern: these switch a
+              // whole list rather than swapping panels, and none of that pattern's keyboard
+              // contract (arrow keys, a tabpanel to point at) exists here.
+              aria-current={t.verdict === verdict ? "page" : undefined}
+              onClick={() => onVerdictChange(t.verdict)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </nav>
 
-      <p className="blurb">{tab.blurb}</p>
+        <p className="blurb">{tab.blurb}</p>
 
-      {/* A scan finished under an open review. Sticky, so it stays in reach however far the
+        {/* A scan finished under an open review. Sticky, so it stays in reach however far the
           reviewer has scrolled; derived from the list being behind, so it clears itself the
           moment any refetch pulls the newer snapshot. */}
-      {freshness.showBar && (
-        <div className="scan-nudge" role="status">
-          <span className="nudge-dot" aria-hidden="true" />
-          <span className="nudge-text">
-            <b>A newer scan just finished</b>
-            <span>You're viewing the previous scan.</span>
-          </span>
-          <span className="nudge-actions">
-            <button type="button" className="primary sm" onClick={showLatest}>
-              Show latest
-            </button>
-            <button
-              type="button"
-              className="nudge-x"
-              onClick={freshness.dismiss}
-              aria-label="Keep viewing this scan"
-              title="Keep viewing this scan"
-            >
-              <svg viewBox="0 0 14 14" width="13" height="13" aria-hidden="true">
+        {freshness.showBar && (
+          <div className="scan-nudge" role="status">
+            <span className="nudge-dot" aria-hidden="true" />
+            <span className="nudge-text">
+              <b>A newer scan just finished</b>
+              <span>You're viewing the previous scan.</span>
+            </span>
+            <span className="nudge-actions">
+              <button type="button" className="primary sm" onClick={showLatest}>
+                Show latest
+              </button>
+              <button
+                type="button"
+                className="nudge-x"
+                onClick={freshness.dismiss}
+                aria-label="Keep viewing this scan"
+                title="Keep viewing this scan"
+              >
+                <svg viewBox="0 0 14 14" width="13" height="13" aria-hidden="true">
+                  <path
+                    d="M3 3l8 8M11 3l-8 8"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+            </span>
+          </div>
+        )}
+        {freshness.showMarker && (
+          <button type="button" className="scan-behind" onClick={showLatest}>
+            <span className="nudge-dot" aria-hidden="true" />
+            One scan behind. <span className="scan-behind-cta">Show latest</span>
+          </button>
+        )}
+        {toastOn && (
+          <div className="scan-toast" role="status">
+            <span className="scan-toast-check" aria-hidden="true">
+              <svg viewBox="0 0 16 16" width="15" height="15">
                 <path
-                  d="M3 3l8 8M11 3l-8 8"
+                  d="M3.5 8.5l3 3 6-7"
+                  fill="none"
                   stroke="currentColor"
-                  strokeWidth="1.6"
+                  strokeWidth="1.8"
                   strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </span>
+            <span className="scan-toast-msg">Updated to the latest scan.</span>
+          </div>
+        )}
+
+        <div className="queue-toolbar">
+          <div className="search-wrap">
+            <svg
+              className="search-icon"
+              viewBox="0 0 16 16"
+              width="14"
+              height="14"
+              aria-hidden="true"
+            >
+              <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            <input
+              className="search-input"
+              type="search"
+              aria-label="Search titles and shows"
+              placeholder="Search titles and shows…"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+            />
+          </div>
+
+          {/* One control adds any filter, so a new filter never means a new toolbar button.
+            Each filter added here becomes a removable, editable chip below. Hidden once every
+            filter is already applied. */}
+          {addableDimensions.length > 0 && (
+            <span className="filter-anchor">
+              <button
+                type="button"
+                className={`add-filter ${openMenu === "add" ? "open" : ""}`}
+                aria-haspopup="menu"
+                aria-expanded={openMenu === "add"}
+                onClick={() => setOpenMenu((m) => (m === "add" ? null : "add"))}
+              >
+                <PlusIcon />
+                Filter
+              </button>
+              {openMenu === "add" && (
+                <ul className="filter-menu" role="menu" aria-label="Add a filter">
+                  <li className="filter-menu-head" aria-hidden="true">
+                    Add a filter
+                  </li>
+                  {addableDimensions.map((d) => (
+                    <li key={d.id} role="none">
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="filter-mi"
+                        onClick={() => {
+                          setFilters((f) => d.set(f, d.options[0]!.value));
+                          setOpenMenu(null);
+                        }}
+                      >
+                        <span className="filter-mi-ic" aria-hidden="true">
+                          {d.icon}
+                        </span>
+                        {d.label}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </span>
+          )}
+
+          <div className="sort-group">
+            <Pill
+              icon={<SortIcon />}
+              value={filters.sort}
+              onChange={(v) => setFilters((f) => ({ ...f, sort: v as SortKey }))}
+              title="Sort by"
+            >
+              {SORTS.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </Pill>
+            <button
+              className="sort-dir"
+              onClick={() =>
+                setFilters((f) => ({ ...f, order: f.order === "desc" ? "asc" : "desc" }))
+              }
+              title={filters.order === "desc" ? "High to low" : "Low to high"}
+              aria-label={filters.order === "desc" ? "Descending" : "Ascending"}
+            >
+              <svg
+                viewBox="0 0 16 16"
+                width="14"
+                height="14"
+                fill="none"
+                aria-hidden="true"
+                className={filters.order}
+              >
+                <path
+                  d="M8 3v10M4 9l4 4 4-4"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                 />
               </svg>
             </button>
-          </span>
-        </div>
-      )}
-      {freshness.showMarker && (
-        <button type="button" className="scan-behind" onClick={showLatest}>
-          <span className="nudge-dot" aria-hidden="true" />
-          One scan behind. <span className="scan-behind-cta">Show latest</span>
-        </button>
-      )}
-      {toastOn && (
-        <div className="scan-toast" role="status">
-          <span className="scan-toast-check" aria-hidden="true">
-            <svg viewBox="0 0 16 16" width="15" height="15">
-              <path
-                d="M3.5 8.5l3 3 6-7"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
-          <span className="scan-toast-msg">Updated to the latest scan.</span>
-        </div>
-      )}
+          </div>
 
-      <div className="queue-toolbar">
-        <div className="search-wrap">
-          <svg className="search-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-            <circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" strokeWidth="1.5" />
-            <path d="M11 11l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-          <input
-            className="search-input"
-            type="search"
-            aria-label="Search titles and shows"
-            placeholder="Search titles and shows…"
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-          />
-        </div>
-
-        {/* One control adds any filter, so a new filter never means a new toolbar button.
-            Each filter added here becomes a removable, editable chip below. Hidden once every
-            filter is already applied. */}
-        {addableDimensions.length > 0 && (
-          <span className="filter-anchor">
-            <button
-              type="button"
-              className={`add-filter ${openMenu === "add" ? "open" : ""}`}
-              aria-haspopup="menu"
-              aria-expanded={openMenu === "add"}
-              onClick={() => setOpenMenu((m) => (m === "add" ? null : "add"))}
-            >
-              <PlusIcon />
-              Filter
-            </button>
-            {openMenu === "add" && (
-              <ul className="filter-menu" role="menu" aria-label="Add a filter">
-                <li className="filter-menu-head" aria-hidden="true">
-                  Add a filter
-                </li>
-                {addableDimensions.map((d) => (
-                  <li key={d.id} role="none">
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="filter-mi"
-                      onClick={() => {
-                        setFilters((f) => d.set(f, d.options[0]!.value));
-                        setOpenMenu(null);
-                      }}
-                    >
-                      <span className="filter-mi-ic" aria-hidden="true">
-                        {d.icon}
-                      </span>
-                      {d.label}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </span>
-        )}
-
-        <div className="sort-group">
-          <Pill
-            icon={<SortIcon />}
-            value={filters.sort}
-            onChange={(v) => setFilters((f) => ({ ...f, sort: v as SortKey }))}
-            title="Sort by"
-          >
-            {SORTS.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </Pill>
+          {/* Turn the whole list into a selectable surface: tap a card to pick it, or press and
+            drag across a run. Turning it off clears the picks. */}
           <button
-            className="sort-dir"
-            onClick={() =>
-              setFilters((f) => ({ ...f, order: f.order === "desc" ? "asc" : "desc" }))
+            type="button"
+            className={`select-toggle ${selectMode ? "active" : ""}`}
+            onClick={toggleSelectMode}
+            aria-pressed={selectMode}
+            title={
+              selectMode
+                ? "Done selecting. Clears your picks"
+                : "Select several at once to spare or reap"
             }
-            title={filters.order === "desc" ? "High to low" : "Low to high"}
-            aria-label={filters.order === "desc" ? "Descending" : "Ascending"}
           >
-            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true" className={filters.order}>
-              <path d="M8 3v10M4 9l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            <CheckSquareIcon />
+            {selectMode ? "Done" : "Select"}
           </button>
         </div>
 
-        {/* Turn the whole list into a selectable surface: tap a card to pick it, or press and
-            drag across a run. Turning it off clears the picks. */}
-        <button
-          type="button"
-          className={`select-toggle ${selectMode ? "active" : ""}`}
-          onClick={toggleSelectMode}
-          aria-pressed={selectMode}
-          title={
-            selectMode
-              ? "Done selecting. Clears your picks"
-              : "Select several at once to spare or reap"
-          }
-        >
-          <CheckSquareIcon />
-          {selectMode ? "Done" : "Select"}
-        </button>
-      </div>
-
-      {/* Every active filter as a chip: the search term (cleared with one tap) and each added
+        {/* Every active filter as a chip: the search term (cleared with one tap) and each added
           dimension (click to change its value, × to remove). A stacked combination is visible
           at a glance. Sort is not a chip: it hides nothing. */}
-      {filtering && (
-        <div className="active-filters">
-          {search && (
-            <FilterChip
-              label={<>&ldquo;{search}&rdquo;</>}
-              clearLabel={`Stop searching for ${search}`}
-              onClear={() => {
-                setSearchInput("");
-                setSearch("");
-              }}
-            />
-          )}
-          {activeDimensions.map((d) => {
-            const current = d.value(filters);
-            const label = d.options.find((o) => o.value === current)?.label ?? current;
-            return (
-              <span className="filter-anchor" key={d.id}>
-                <span className={`fchip ${openMenu === d.id ? "open" : ""}`}>
-                  <button
-                    type="button"
-                    className="fchip-body"
-                    title={`Filter: ${d.label}`}
-                    aria-haspopup="listbox"
-                    aria-expanded={openMenu === d.id}
-                    onClick={() => setOpenMenu((m) => (m === d.id ? null : d.id))}
-                  >
-                    <span className="fchip-ic" aria-hidden="true">
-                      {d.icon}
-                    </span>
-                    <b>{label}</b>
-                    <CaretIcon />
-                  </button>
-                  <button
-                    type="button"
-                    className="fchip-x"
-                    aria-label={`Remove the ${d.label} filter`}
-                    onClick={() => {
-                      setFilters((f) => d.set(f, d.defaultValue));
-                      setOpenMenu((m) => (m === d.id ? null : m));
-                    }}
-                  >
-                    ×
-                  </button>
-                </span>
-                {openMenu === d.id && (
-                  <ul className="filter-menu" role="listbox" aria-label={d.label}>
-                    <li className="filter-menu-head" aria-hidden="true">
-                      {d.label}
-                    </li>
-                    {d.options.map((o) => (
-                      <li key={o.value} role="none">
-                        <button
-                          type="button"
-                          role="option"
-                          aria-selected={o.value === current}
-                          className={`filter-mi ${o.value === current ? "sel" : ""}`}
-                          onClick={() => {
-                            setFilters((f) => d.set(f, o.value));
-                            setOpenMenu(null);
-                          }}
-                        >
-                          <span className="filter-mi-label">{o.label}</span>
-                          {o.value === current && (
-                            <span className="filter-mi-tick" aria-hidden="true">
-                              <CheckIcon />
-                            </span>
-                          )}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </span>
-            );
-          })}
-          <button type="button" className="link-btn" onClick={clearFilters}>
-            Clear all
-          </button>
-        </div>
-      )}
-
-      {error && <p className="error">{error.message}</p>}
-      {isPending && <p className="muted">Loading…</p>}
-
-      {data && data.length === 0 && !filtering && <p className="empty">{tab.empty}</p>}
-      {data && data.length === 0 && filtering && (
-        <div className="empty-filtered">
-          <p className="empty-headline">Nothing here matches your filters.</p>
-          {hiddenCount > 0 && (
-            <p className="muted">
-              {hiddenLine}
-              {requestedExplainer}
-            </p>
-          )}
-          <button type="button" className="sm ghost" onClick={clearFilters}>
-            Clear filters
-          </button>
-        </div>
-      )}
-
-      {data && data.length > 0 && (
-        <>
-          {/* The unknown count sits AFTER "would be freed", not inside the total: those
-              items are precisely the ones that would not be freed, so folding them into
-              the same phrase says the opposite of what is true. */}
-          <p className="queue-total">
-            <strong>{count(totalItems)}</strong> {totalItems === 1 ? "item" : "items"}
-            {" · "}
-            <strong>{bytes(totalSize)}</strong>
-            {verdict === "condemn" && " would be freed"}
-            {totalUnknownSize > 0 && (
-              <>
-                {" · "}
-                <strong>
-                  {count(totalUnknownSize)} {totalUnknownSize === 1 ? "size" : "sizes"} unknown
-                </strong>
-              </>
+        {filtering && (
+          <div className="active-filters">
+            {search && (
+              <FilterChip
+                label={<>&ldquo;{search}&rdquo;</>}
+                clearLabel={`Stop searching for ${search}`}
+                onClear={() => {
+                  setSearchInput("");
+                  setSearch("");
+                }}
+              />
             )}
-          </p>
-          <div className={`card-list ${selectMode ? "card-list-selecting has-bulk-bar" : ""}`}>
-            {shownGroups.map((group) => {
-              const key = groupKeyOf(group);
-              return group.isShow ? (
-                <ShowCard
-                  key={group.key}
-                  group={group}
-                  defaultOpen={expandSeasonsByDefault}
-                  selectedId={selectedId}
-                  selectedGroupKey={selectedGroupKey}
-                  isSelected={selected.has(key)}
-                  select={cardSelect}
-                  onOpen={onSelect}
-                  onOpenGroup={onSelectGroup}
-                  onSet={onSet}
-                  onClear={onClear}
-                  pending={pending}
-                />
-              ) : (
-                <MovieCard
-                  key={group.key}
-                  item={group.items[0]!}
-                  selected={group.items[0]!.id === selectedId}
-                  isSelected={selected.has(key)}
-                  select={cardSelect}
-                  onOpen={onSelect}
-                  onSet={onSet}
-                  onClear={onClear}
-                  pending={pending}
-                  // The ITEM's own verdict, through the one shared test -- never the tab's.
-                  // Lane membership is the effective verdict, so a movie sits on Condemned
-                  // with a stored abstain and an honored hand reap: Reap must stay, and a
-                  // spared condemnation must stay flippable (rule 48).
-                  hideReap={reapIsNoop(group.items[0]!)}
-                />
+            {activeDimensions.map((d) => {
+              const current = d.value(filters);
+              const label = d.options.find((o) => o.value === current)?.label ?? current;
+              return (
+                <span className="filter-anchor" key={d.id}>
+                  <span className={`fchip ${openMenu === d.id ? "open" : ""}`}>
+                    <button
+                      type="button"
+                      className="fchip-body"
+                      title={`Filter: ${d.label}`}
+                      aria-haspopup="listbox"
+                      aria-expanded={openMenu === d.id}
+                      onClick={() => setOpenMenu((m) => (m === d.id ? null : d.id))}
+                    >
+                      <span className="fchip-ic" aria-hidden="true">
+                        {d.icon}
+                      </span>
+                      <b>{label}</b>
+                      <CaretIcon />
+                    </button>
+                    <button
+                      type="button"
+                      className="fchip-x"
+                      aria-label={`Remove the ${d.label} filter`}
+                      onClick={() => {
+                        setFilters((f) => d.set(f, d.defaultValue));
+                        setOpenMenu((m) => (m === d.id ? null : m));
+                      }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                  {openMenu === d.id && (
+                    <ul className="filter-menu" role="listbox" aria-label={d.label}>
+                      <li className="filter-menu-head" aria-hidden="true">
+                        {d.label}
+                      </li>
+                      {d.options.map((o) => (
+                        <li key={o.value} role="none">
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={o.value === current}
+                            className={`filter-mi ${o.value === current ? "sel" : ""}`}
+                            onClick={() => {
+                              setFilters((f) => d.set(f, o.value));
+                              setOpenMenu(null);
+                            }}
+                          >
+                            <span className="filter-mi-label">{o.label}</span>
+                            {o.value === current && (
+                              <span className="filter-mi-tick" aria-hidden="true">
+                                <CheckIcon />
+                              </span>
+                            )}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </span>
               );
             })}
-          </div>
-          {(visible < groups.length || hasNextPage) && (
-            <div ref={sentinel} className="load-more muted">
-              {isFetchingNextPage
-                ? "Loading more…"
-                : `Showing ${count(shownItems)} of ${count(totalItems)}`}
-            </div>
-          )}
-        </>
-      )}
-
-      {selectMode && (
-        <div className="bulk-bar" role="region" aria-label="Bulk actions">
-          <span className="bulk-count">
-            {selected.size === 0 ? (
-              "Tap or drag to pick"
-            ) : selectedItems != null && selectedItems !== selected.size ? (
-              <>
-                <strong>{selected.size}</strong> {selected.size === 1 ? "card" : "cards"} ·{" "}
-                <strong>{count(selectedItems)}</strong> {selectedItems === 1 ? "item" : "items"}
-              </>
-            ) : (
-              <>
-                <strong>{selected.size}</strong> selected
-              </>
-            )}
-          </span>
-          <div className="bulk-actions">
-            <button
-              type="button"
-              className="sm ghost"
-              disabled={shownKeys.length === 0 && selected.size === 0}
-              onClick={() =>
-                setSelected((prev) => {
-                  // "Select everything matching" can leave far more picked than is drawn, and
-                  // clearing only the drawn cards would strand the rest selected and invisible.
-                  if (holdsUndrawn) return new Set();
-                  const next = new Set(prev);
-                  if (allShownSelected) shownKeys.forEach((k) => next.delete(k));
-                  else shownKeys.forEach((k) => next.add(k));
-                  return next;
-                })
-              }
-              title={
-                holdsUndrawn
-                  ? "Clear the whole selection, including the cards not drawn yet"
-                  : "Select (or clear) every card drawn so far"
-              }
-            >
-              {holdsUndrawn || allShownSelected ? "Deselect all" : "Select all"}
+            <button type="button" className="link-btn" onClick={clearFilters}>
+              Clear all
             </button>
-            {/* Reach past the drawn cards to the whole filtered list, so a bulk action never
-                depends on scrolling a few thousand cards into existence first. */}
-            {moreToSelect && (
+          </div>
+        )}
+
+        {error && <p className="error">{error.message}</p>}
+        {isPending && <p className="muted">Loading…</p>}
+
+        {data && data.length === 0 && !filtering && <p className="empty">{tab.empty}</p>}
+        {data && data.length === 0 && filtering && (
+          <div className="empty-filtered">
+            <p className="empty-headline">Nothing here matches your filters.</p>
+            {hiddenCount > 0 && (
+              <p className="muted">
+                {hiddenLine}
+                {requestedExplainer}
+              </p>
+            )}
+            <button type="button" className="sm ghost" onClick={clearFilters}>
+              Clear filters
+            </button>
+          </div>
+        )}
+
+        {data && data.length > 0 && (
+          <>
+            {/* The unknown count sits AFTER "would be freed", not inside the total: those
+              items are precisely the ones that would not be freed, so folding them into
+              the same phrase says the opposite of what is true. */}
+            <p className="queue-total">
+              <strong>{count(totalItems)}</strong> {totalItems === 1 ? "item" : "items"}
+              {" · "}
+              <strong>{bytes(totalSize)}</strong>
+              {verdict === "condemn" && " would be freed"}
+              {totalUnknownSize > 0 && (
+                <>
+                  {" · "}
+                  <strong>
+                    {count(totalUnknownSize)} {totalUnknownSize === 1 ? "size" : "sizes"} unknown
+                  </strong>
+                </>
+              )}
+            </p>
+            <div className={`card-list ${selectMode ? "card-list-selecting has-bulk-bar" : ""}`}>
+              {shownGroups.map((group) => {
+                const key = groupKeyOf(group);
+                return group.isShow ? (
+                  <ShowCard
+                    key={group.key}
+                    group={group}
+                    defaultOpen={expandSeasonsByDefault}
+                    selectedId={selectedId}
+                    selectedGroupKey={selectedGroupKey}
+                    isSelected={selected.has(key)}
+                    select={cardSelect}
+                    onOpen={onSelect}
+                    onOpenGroup={onSelectGroup}
+                    onSet={onSet}
+                    onClear={onClear}
+                    pending={pending}
+                  />
+                ) : (
+                  <MovieCard
+                    key={group.key}
+                    item={group.items[0]!}
+                    selected={group.items[0]!.id === selectedId}
+                    isSelected={selected.has(key)}
+                    select={cardSelect}
+                    onOpen={onSelect}
+                    onSet={onSet}
+                    onClear={onClear}
+                    pending={pending}
+                    // The ITEM's own verdict, through the one shared test -- never the tab's.
+                    // Lane membership is the effective verdict, so a movie sits on Condemned
+                    // with a stored abstain and an honored hand reap: Reap must stay, and a
+                    // spared condemnation must stay flippable (rule 48).
+                    hideReap={reapIsNoop(group.items[0]!)}
+                  />
+                );
+              })}
+            </div>
+            {(visible < groups.length || hasNextPage) && (
+              <div ref={sentinel} className="load-more muted">
+                {isFetchingNextPage
+                  ? "Loading more…"
+                  : `Showing ${count(shownItems)} of ${count(totalItems)}`}
+              </div>
+            )}
+          </>
+        )}
+
+        {selectMode && (
+          <div className="bulk-bar" role="region" aria-label="Bulk actions">
+            <span className="bulk-count">
+              {selected.size === 0 ? (
+                "Tap or drag to pick"
+              ) : selectedItems != null && selectedItems !== selected.size ? (
+                <>
+                  <strong>{selected.size}</strong> {selected.size === 1 ? "card" : "cards"} ·{" "}
+                  <strong>{count(selectedItems)}</strong> {selectedItems === 1 ? "item" : "items"}
+                </>
+              ) : (
+                <>
+                  <strong>{selected.size}</strong> selected
+                </>
+              )}
+            </span>
+            <div className="bulk-actions">
               <button
                 type="button"
                 className="sm ghost"
-                disabled={selectEverything.isPending}
-                onClick={() => selectEverything.mutate()}
-                title="Load the rest of this list and select all of it"
+                disabled={shownKeys.length === 0 && selected.size === 0}
+                onClick={() =>
+                  setSelected((prev) => {
+                    // "Select everything matching" can leave far more picked than is drawn, and
+                    // clearing only the drawn cards would strand the rest selected and invisible.
+                    if (holdsUndrawn) return new Set();
+                    const next = new Set(prev);
+                    if (allShownSelected) shownKeys.forEach((k) => next.delete(k));
+                    else shownKeys.forEach((k) => next.add(k));
+                    return next;
+                  })
+                }
+                title={
+                  holdsUndrawn
+                    ? "Clear the whole selection, including the cards not drawn yet"
+                    : "Select (or clear) every card drawn so far"
+                }
               >
-                {selectEverything.isPending
-                  ? "Selecting…"
-                  : matchingCards === null
-                    ? "Select everything matching"
-                    : `Select everything matching (${count(matchingCards)})`}
+                {holdsUndrawn || allShownSelected ? "Deselect all" : "Select all"}
               </button>
-            )}
-            <button
-              type="button"
-              className="sm ov-btn ov-spare"
-              disabled={pending || selected.size === 0}
-              onClick={() =>
-                bulk.mutate({ keys: [...selected], decision: "spare", spareDays: defaultSpareDays })
-              }
-              title={
-                defaultSpareDays > 0
-                  ? `Spare the selected items for ${defaultSpareDays} days`
-                  : "Spare the selected items forever"
-              }
-            >
-              <SpareGlyph days={defaultSpareDays} /> Spare
-            </button>
-            {/* On Condemned the items are already on the block, so a bulk Reap override does
+              {/* Reach past the drawn cards to the whole filtered list, so a bulk action never
+                depends on scrolling a few thousand cards into existence first. */}
+              {moreToSelect && (
+                <button
+                  type="button"
+                  className="sm ghost"
+                  disabled={selectEverything.isPending}
+                  onClick={() => selectEverything.mutate()}
+                  title="Load the rest of this list and select all of it"
+                >
+                  {selectEverything.isPending
+                    ? "Selecting…"
+                    : matchingCards === null
+                      ? "Select everything matching"
+                      : `Select everything matching (${count(matchingCards)})`}
+                </button>
+              )}
+              <button
+                type="button"
+                className="sm ov-btn ov-spare"
+                disabled={pending || selected.size === 0}
+                onClick={() =>
+                  bulk.mutate({
+                    keys: [...selected],
+                    decision: "spare",
+                    spareDays: defaultSpareDays,
+                  })
+                }
+                title={
+                  defaultSpareDays > 0
+                    ? `Spare the selected items for ${defaultSpareDays} days`
+                    : "Spare the selected items forever"
+                }
+              >
+                <SpareGlyph days={defaultSpareDays} /> Spare
+              </button>
+              {/* On Condemned the items are already on the block, so a bulk Reap override does
                 nothing: drop it there, exactly as the per-card and panel buttons do. The real
                 deletion is "Reap now" below, a different button, which stays. */}
-            {verdict !== "condemn" && (
+              {verdict !== "condemn" && (
+                <button
+                  type="button"
+                  className="sm ov-btn ov-reap"
+                  disabled={pending || selected.size === 0}
+                  onClick={() => bulk.mutate({ keys: [...selected], decision: "reap" })}
+                >
+                  <ScytheIcon /> Reap
+                </button>
+              )}
               <button
                 type="button"
-                className="sm ov-btn ov-reap"
+                className="sm ghost"
                 disabled={pending || selected.size === 0}
-                onClick={() => bulk.mutate({ keys: [...selected], decision: "reap" })}
+                onClick={() => bulk.mutate({ keys: [...selected], decision: null })}
+                title="Remove any override and let Reaper judge these again"
               >
-                <ScytheIcon /> Reap
+                Clear override
               </button>
-            )}
-            <button
-              type="button"
-              className="sm ghost"
-              disabled={pending || selected.size === 0}
-              onClick={() => bulk.mutate({ keys: [...selected], decision: null })}
-              title="Remove any override and let Reaper judge these again"
-            >
-              Clear override
-            </button>
-            {verdict === "condemn" && (
-              <button
-                type="button"
-                className="sm danger"
-                disabled={pending || selected.size === 0}
-                onClick={() => reapNow.mutate([...selected])}
-                title="Delete the selected items now (opens a confirmation)"
-              >
-                {reapNow.isPending ? "Planning…" : "Reap now…"}
+              {verdict === "condemn" && (
+                <button
+                  type="button"
+                  className="sm danger"
+                  disabled={pending || selected.size === 0}
+                  onClick={() => reapNow.mutate([...selected])}
+                  title="Delete the selected items now (opens a confirmation)"
+                >
+                  {reapNow.isPending ? "Planning…" : "Reap now…"}
+                </button>
+              )}
+              <button type="button" className="sm select-done" onClick={toggleSelectMode}>
+                Done
               </button>
-            )}
-            <button type="button" className="sm select-done" onClick={toggleSelectMode}>
-              Done
-            </button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* A per-card Spare or Reap that failed says so here, in the same place as the bulk
+        {/* A per-card Spare or Reap that failed says so here, in the same place as the bulk
           failures -- otherwise the button reads as a click the app ignored. Same wording as
           the why-panel's, since it is the same action. */}
-      {(setOverride.isError || clearOverride.isError) && (
-        <p className="error bulk-error">Couldn't save that. Try again.</p>
-      )}
-      {selectEverything.isError && (
-        <p className="error bulk-error">
-          Couldn't load the rest of the list, so nothing was selected. Your picks are as they
-          were. Try again.
-        </p>
-      )}
-      {bulkFailures > 0 && (
-        <p className="error bulk-error">
-          {bulkFailures === 1
-            ? "1 item could not be updated; it is still selected so you can try again."
-            : `${count(bulkFailures)} items could not be updated; they are still selected so ` +
-              "you can try again."}
-        </p>
-      )}
-      {reapNow.error && <p className="error bulk-error">{reapNow.error.message}</p>}
-      {reapRun && (
-        <ReapConfirm
-          run={reapRun}
-          onClose={() => setReapRun(null)}
-          onDone={() => setSelected(new Set())}
-        />
-      )}
-    </section>
+        {(setOverride.isError || clearOverride.isError) && (
+          <p className="error bulk-error">Couldn't save that. Try again.</p>
+        )}
+        {selectEverything.isError && (
+          <p className="error bulk-error">
+            Couldn't load the rest of the list, so nothing was selected. Your picks are as they
+            were. Try again.
+          </p>
+        )}
+        {bulkFailures > 0 && (
+          <p className="error bulk-error">
+            {bulkFailures === 1
+              ? "1 item could not be updated; it is still selected so you can try again."
+              : `${count(bulkFailures)} items could not be updated; they are still selected so ` +
+                "you can try again."}
+          </p>
+        )}
+        {reapNow.error && <p className="error bulk-error">{reapNow.error.message}</p>}
+        {reapRun && (
+          <ReapConfirm
+            run={reapRun}
+            onClose={() => setReapRun(null)}
+            onDone={() => setSelected(new Set())}
+          />
+        )}
+      </section>
     </QueueSettingsContext.Provider>
   );
 }

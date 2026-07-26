@@ -113,7 +113,11 @@ export function ShowPanel({
         <ul className="panel-seasons">
           {group.seasons.map((season) => (
             <li key={season.id}>
-              <button type="button" className="panel-season" onClick={() => onOpenSeason(season.id)}>
+              <button
+                type="button"
+                className="panel-season"
+                onClick={() => onOpenSeason(season.id)}
+              >
                 <span className={`score score-${handFate(season)}`}>{season.score}</span>
                 <span className="panel-season-name">
                   {season.season_number === 0

@@ -324,8 +324,8 @@ export function PlexPanel() {
     <div className="panel">
       <h2>Plex</h2>
       <p className="blurb">
-        Linking Plex lets Reaper warn your library with a "Leaving Soon" shelf and read your
-        "Never Reap" collection. It's optional. Scanning works without it.
+        Linking Plex lets Reaper warn your library with a "Leaving Soon" shelf and read your "Never
+        Reap" collection. It's optional. Scanning works without it.
       </p>
 
       <div className="set-group">
@@ -357,8 +357,8 @@ export function PlexPanel() {
             <div className="set-row">
               <span className="set-label">Which server should Reaper manage?</span>
               <p className="help">
-                This account owns more than one Plex server. Reaper will only ever scan and
-                prune the one you pick.
+                This account owns more than one Plex server. Reaper will only ever scan and prune
+                the one you pick.
               </p>
               <div className="set-control server-pick">
                 <ServerPickList
@@ -372,8 +372,8 @@ export function PlexPanel() {
             <div className="set-row">
               <span className="set-label">No Plex server linked</span>
               <p className="help">
-                Sign in with Plex and Reaper discovers your servers. It never asks for a
-                token by hand.
+                Sign in with Plex and Reaper discovers your servers. It never asks for a token by
+                hand.
               </p>
               <div className="set-control">
                 {linking ? (
@@ -436,9 +436,8 @@ export function PlexPanel() {
                     {linkedServerMissing && (
                       <p className="notice notice-warn">
                         Plex's list came back without the server Reaper uses
-                        {data?.name ? `, ${data.name}` : ""}. Nothing has changed. Refresh to
-                        look again; the server and connection stay as they are until it is
-                        back.
+                        {data?.name ? `, ${data.name}` : ""}. Nothing has changed. Refresh to look
+                        again; the server and connection stay as they are until it is back.
                       </p>
                     )}
                     <select
@@ -483,8 +482,8 @@ export function PlexPanel() {
             <div className="set-row">
               <span className="set-label">Connection</span>
               <p className="help">
-                How Reaper reaches the server. A local address is usually faster; remote
-                works from anywhere. Pick "Manual address" to type your own.
+                How Reaper reaches the server. A local address is usually faster; remote works from
+                anywhere. Pick "Manual address" to type your own.
               </p>
               <div className="set-control">
                 <select
@@ -578,8 +577,8 @@ export function PlexPanel() {
           <div className="set-row">
             <span className="set-label">Plex web address</span>
             <p className="help">
-              Where links to your library open. Keep the default unless you host your own
-              Plex Web. Clear it and save to go back to the default.
+              Where links to your library open. Keep the default unless you host your own Plex Web.
+              Clear it and save to go back to the default.
             </p>
             <div className="set-control">
               <input
@@ -617,8 +616,8 @@ export function PlexPanel() {
           <h3>Libraries</h3>
           <p className="group-blurb">
             The libraries Reaper may touch in Plex. Leaving Soon shelves are managed only in
-            libraries you turn on. This doesn't change what gets scanned: scanning reads from
-            Radarr and Sonarr.
+            libraries you turn on. This doesn't change what gets scanned: scanning reads from Radarr
+            and Sonarr.
           </p>
           {libraries.isPending || syncLibraries.isPending ? (
             <p className="muted">Loading libraries…</p>
@@ -671,9 +670,9 @@ export function PlexPanel() {
         <div className="set-group">
           <h3>Leaving Soon</h3>
           <p className="group-blurb">
-            While an item counts down its grace period, Reaper can put it on a "Leaving Soon"
-            shelf in Plex, so people get a heads-up before it goes: movies in your movie
-            libraries, seasons in your TV libraries.
+            While an item counts down its grace period, Reaper can put it on a "Leaving Soon" shelf
+            in Plex, so people get a heads-up before it goes: movies in your movie libraries,
+            seasons in your TV libraries.
           </p>
           {leavingSoon.isPending ? (
             <p className="muted">Loading…</p>
@@ -686,10 +685,10 @@ export function PlexPanel() {
               <div className="set-row">
                 <span className="set-label">Show "Leaving Soon" in Plex</span>
                 <p className="help">
-                  Reaper keeps a Leaving Soon collection in each library you turned on above,
-                  and puts the matching label on everything in it. Items appear when they
-                  start counting down and drop off when they're spared or removed. Updates
-                  after every scan, or from the Jobs page.
+                  Reaper keeps a Leaving Soon collection in each library you turned on above, and
+                  puts the matching label on everything in it. Items appear when they start counting
+                  down and drop off when they're spared or removed. Updates after every scan, or
+                  from the Jobs page.
                 </p>
                 <div className="set-control">
                   <Switch
@@ -703,9 +702,9 @@ export function PlexPanel() {
               <div className="set-row">
                 <span className="set-label">Update while read-only</span>
                 <p className="help">
-                  Until deletion is on, Reaper writes nothing to Plex, including this shelf.
-                  Turn this on to let the warning appear while Reaper is still read-only. It
-                  can only manage the collection and label. It can never remove files.
+                  Until deletion is on, Reaper writes nothing to Plex, including this shelf. Turn
+                  this on to let the warning appear while Reaper is still read-only. It can only
+                  manage the collection and label. It can never remove files.
                 </p>
                 <div className="set-control">
                   <Switch
@@ -730,9 +729,7 @@ export function PlexPanel() {
       )}
 
       {!linked && (
-        <p className="help">
-          Link Plex to pick libraries and turn on the "Leaving Soon" shelf.
-        </p>
+        <p className="help">Link Plex to pick libraries and turn on the "Leaving Soon" shelf.</p>
       )}
     </div>
   );

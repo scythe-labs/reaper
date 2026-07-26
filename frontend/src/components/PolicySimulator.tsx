@@ -213,23 +213,23 @@ export function Outcome({
           {pace.caps_enabled ? (
             <>
               Your pace: at most {count(pace.max_items_per_run)} titles /{" "}
-              {bytes(pace.max_bytes_per_run)} per run, and a flagged title shows as leaving
-              for {pace.grace_days} days.
+              {bytes(pace.max_bytes_per_run)} per run, and a flagged title shows as leaving for{" "}
+              {pace.grace_days} days.
             </>
           ) : (
             // Caps off: the executor skips the per-run and rolling checks, so there is no
             // size limit to promise here (B-2). The countdown is unaffected by the switch.
             <>
-              Your pace: no per-run limit until you turn limits back on. A flagged title
-              shows as leaving for {pace.grace_days} days.
+              Your pace: no per-run limit until you turn limits back on. A flagged title shows as
+              leaving for {pace.grace_days} days.
             </>
           )}
         </p>
       )}
 
       <p className="blurb">
-        The delta is the number that matters before saving: not the total, but what changes
-        relative to the list you have already reviewed.
+        The delta is the number that matters before saving: not the total, but what changes relative
+        to the list you have already reviewed.
       </p>
     </div>
   );

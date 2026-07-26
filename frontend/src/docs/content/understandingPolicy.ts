@@ -68,7 +68,7 @@ export const understandingPolicy: Doc = {
       },
       {
         title: "Set pace and grace, then arm deletion last.",
-        text: "Confirm your caps and grace, and turn on the Leaving Soon shelf so your household can rescue anything about to go. To see the shelf before you arm anything, also turn on \"Update while read-only\" in Settings, Plex. Only then arm deletion, which is password-gated and separate from all tuning.",
+        text: 'Confirm your caps and grace, and turn on the Leaving Soon shelf so your household can rescue anything about to go. To see the shelf before you arm anything, also turn on "Update while read-only" in Settings, Plex. Only then arm deletion, which is password-gated and separate from all tuning.',
       },
     ]),
 
@@ -104,7 +104,9 @@ export const understandingPolicy: Doc = {
     ),
 
     h3("Signals: soft pressure", "signals"),
-    p("Each signal pushes the score up by up to its number of points. The default mix differs for movies and TV."),
+    p(
+      "Each signal pushes the score up by up to its number of points. The default mix differs for movies and TV.",
+    ),
     table(
       ["Signal", "What it means", "Movie points", "TV points"],
       [
@@ -130,18 +132,40 @@ export const understandingPolicy: Doc = {
     table(
       ["Protection", "What it keeps", "Default"],
       [
-        ["Give every title time to be rewatched", "Anything younger than the age line", "3 years (cannot go below 5 days)"],
-        ["Keep what your users actually watch", "Anything enough people played recently", "3 people, within the last year"],
-        ["Keep well-rated titles", "Anything clearing your rating bar", "IMDb 7.5, at least 1,000 votes"],
-        ["Spare titles you've tagged", "Anything with your keep tag", "Tag `reaper-keep`, plus a Never Reap collection"],
-        ["Never touch something playing right now", "Anything being watched at that moment", "On, re-checked live"],
+        [
+          "Give every title time to be rewatched",
+          "Anything younger than the age line",
+          "3 years (cannot go below 5 days)",
+        ],
+        [
+          "Keep what your users actually watch",
+          "Anything enough people played recently",
+          "3 people, within the last year",
+        ],
+        [
+          "Keep well-rated titles",
+          "Anything clearing your rating bar",
+          "IMDb 7.5, at least 1,000 votes",
+        ],
+        [
+          "Spare titles you've tagged",
+          "Anything with your keep tag",
+          "Tag `reaper-keep`, plus a Never Reap collection",
+        ],
+        [
+          "Never touch something playing right now",
+          "Anything being watched at that moment",
+          "On, re-checked live",
+        ],
         ["Don't judge what predates your history", "Titles older than your watch history", "On"],
         ["Honor protected lists", "Titles on a curated list", "On (IMDb Top 250)"],
       ],
     ),
 
     h3("Pace and limits", "pace"),
-    p("These limit how much can happen, and are shared by movies and TV. They take effect the moment you save."),
+    p(
+      "These limit how much can happen, and are shared by movies and TV. They take effect the moment you save.",
+    ),
     table(
       ["Limit", "What it bounds", "Default", "Floor"],
       [
@@ -154,7 +178,7 @@ export const understandingPolicy: Doc = {
       ],
     ),
     p(
-      "Caps stop the whole run when crossed, never removing just the part that fits, and the rolling 30-day limits bound any sequence of runs. Turning off \"Limit how much each run removes\" drops those four, the first four rows above. The unknown-size allowance and the countdown are unaffected, so items Reaper cannot measure are still held back.",
+      'Caps stop the whole run when crossed, never removing just the part that fits, and the rolling 30-day limits bound any sequence of runs. Turning off "Limit how much each run removes" drops those four, the first four rows above. The unknown-size allowance and the countdown are unaffected, so items Reaper cannot measure are still held back.',
     ),
 
     h3("Movies and TV are tuned separately", "movies-tv"),
@@ -166,7 +190,9 @@ export const understandingPolicy: Doc = {
     p(
       'The right-hand "What this would do" panel re-decides your last scan under your draft, with zero calls to Sonarr, Radarr, or your history source. It shows how many titles would be removed, how much space that frees, every title’s score against your line, example titles newly flagged, and how this draft differs from the policy you already saved.',
     ),
-    p("**The loop:** nudge one control, watch the number, repeat. If the count jumps more than you expected, put the control back and move it half as far."),
+    p(
+      "**The loop:** nudge one control, watch the number, repeat. If the count jumps more than you expected, put the control back and move it half as far.",
+    ),
     p(
       '**Live for the numbers, not the plumbing.** Moving the flag threshold, how much is enough to go on, a signal’s points, a rating bar, or one of your own rules updates the panel instantly. Anything that changes what a scan reads (a protection\'s switch or its own numbers, a watch window, a keep tag, a season rule) says "Needs a fresh scan" and offers a Scan now button. An upgrade that retires a protection can say it too, without you having touched anything. This is on purpose: a wrong number that looks live is worse than a blank one.',
     ),
@@ -206,12 +232,30 @@ export const understandingPolicy: Doc = {
 
     h2("Glossary", "glossary"),
     defs([
-      { term: "Policy", text: "Your rulebook for one media type: the line, the signals, the protections." },
-      { term: "Flag threshold", text: "The score, out of 100, at or above which a title becomes a candidate for removal." },
-      { term: "Signal", text: "One reason to remove, adding up to its number of points to the score." },
-      { term: "Protection", text: "A hard line that keeps a title no matter its score, and can never remove one." },
-      { term: "Grace", text: "The days a flagged title shows as leaving, so someone can watch it or you can spare it. You still start every removal by hand." },
-      { term: "Cap", text: "A limit on how much one run, or a rolling 30 days, may remove, while \"Limit how much each run removes\" is on. It stops the run rather than trimming it." },
+      {
+        term: "Policy",
+        text: "Your rulebook for one media type: the line, the signals, the protections.",
+      },
+      {
+        term: "Flag threshold",
+        text: "The score, out of 100, at or above which a title becomes a candidate for removal.",
+      },
+      {
+        term: "Signal",
+        text: "One reason to remove, adding up to its number of points to the score.",
+      },
+      {
+        term: "Protection",
+        text: "A hard line that keeps a title no matter its score, and can never remove one.",
+      },
+      {
+        term: "Grace",
+        text: "The days a flagged title shows as leaving, so someone can watch it or you can spare it. You still start every removal by hand.",
+      },
+      {
+        term: "Cap",
+        text: 'A limit on how much one run, or a rolling 30 days, may remove, while "Limit how much each run removes" is on. It stops the run rather than trimming it.',
+      },
     ]),
 
     callout(

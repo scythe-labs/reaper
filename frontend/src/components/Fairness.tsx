@@ -99,8 +99,8 @@ export function PersonCard({
         <div className="fair-row1">
           <span className="fair-name">{row.name}</span>
           <span className="fair-sub">
-            <strong>{count(row.requests_made)}</strong> requests ·{" "}
-            <strong>{bytes(granted)}</strong> granted
+            <strong>{count(row.requests_made)}</strong> requests · <strong>{bytes(granted)}</strong>{" "}
+            granted
           </span>
         </div>
 
@@ -207,8 +207,7 @@ export function Fairness({
           </button>
         </div>
         <p className="blurb">
-          Who asked for what, and who actually watched it. Read only: nothing here removes
-          anything.
+          Who asked for what, and who actually watched it. Read only: nothing here removes anything.
         </p>
       </div>
 

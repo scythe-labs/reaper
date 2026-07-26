@@ -1,0 +1,13 @@
+# Build output and vendored code: nothing here is written by hand, and `public/vendor` is a
+# megabyte of third-party bundle that `npm run predev` copies in fresh anyway.
+dist
+public/vendor
+
+# Generated assets belong to their generator (rule 68). `icons.generated.json` is emitted by
+# scripts/gen-icons.mjs and hash-checked by src/brand/appIcon.test.ts, so a formatter
+# rewriting it would fail the drift test on a file no human touched.
+src/brand/icons.generated.json
+
+# npm owns the lockfile's layout. Formatting it would put `npm ci` and `format:check` in a
+# fight that one of them has to lose on every dependency bump.
+package-lock.json

@@ -116,7 +116,9 @@ describe("the ledger", () => {
       full({ will_reap: 569, will_reap_unknown: 4, movies_unknown: 3, seasons_unknown: 1 }),
     );
     renderBreakdown();
-    expect(await screen.findByText(/4 titles can't be measured, so Reaper won't remove/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/4 titles can't be measured, so Reaper won't remove/),
+    ).toBeInTheDocument();
     // With the allowance off the planner drops those 4, so the headline and total count only
     // 565, and the raw 569 never appears (B-8).
     expect(screen.getAllByText("565").length).toBeGreaterThan(0);
@@ -205,9 +207,7 @@ describe("the ledger", () => {
   it("says it in the singular for one, and stays silent at zero", async () => {
     apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 1 }));
     const { unmount } = renderBreakdown();
-    expect(
-      await screen.findByText(/1 title is kept by a spare that expired/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/1 title is kept by a spare that expired/)).toBeInTheDocument();
     unmount();
 
     apiMock.reapBreakdown.mockResolvedValue(full({ spares_expired: 0 }));
@@ -231,9 +231,7 @@ describe("the ledger", () => {
     expect(apiMock.startScan).toHaveBeenCalledTimes(1);
     // The started status is seeded into the shared cache, so the label flips without waiting
     // for a poll to come back around.
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Scanning…" })).toBeDisabled(),
-    );
+    await waitFor(() => expect(screen.getByRole("button", { name: "Scanning…" })).toBeDisabled());
   });
 
   it("says the scan didn't start, in the tone every other failure uses", async () => {
@@ -258,9 +256,7 @@ describe("the ledger", () => {
       full({ will_reap: 0, will_reap_bytes: 0, hand_spared: 543, spares_expired: 4 }),
     );
     renderBreakdown();
-    expect(
-      await screen.findByText(/4 titles are kept by spares that expired/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/4 titles are kept by spares that expired/)).toBeInTheDocument();
   });
 });
 

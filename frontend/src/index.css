@@ -795,9 +795,21 @@ button.link:hover:not(:disabled) {
   inset: -30%;
   z-index: 0;
   background:
-    radial-gradient(38% 42% at 22% 26%, color-mix(in srgb, var(--accent) 28%, transparent), transparent 70%),
-    radial-gradient(34% 40% at 82% 18%, color-mix(in srgb, var(--plex) 22%, transparent), transparent 70%),
-    radial-gradient(46% 50% at 68% 88%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 72%);
+    radial-gradient(
+      38% 42% at 22% 26%,
+      color-mix(in srgb, var(--accent) 28%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      34% 40% at 82% 18%,
+      color-mix(in srgb, var(--plex) 22%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(
+      46% 50% at 68% 88%,
+      color-mix(in srgb, var(--accent) 18%, transparent),
+      transparent 72%
+    );
   filter: blur(30px);
   opacity: 0.7;
   animation: drift 22s ease-in-out infinite alternate;
@@ -2903,11 +2915,7 @@ a.rating-chip:hover {
 }
 /* Dashed, not solid: unspent points are absent rather than allocated to something. */
 .budget-free {
-  background: repeating-linear-gradient(
-    90deg,
-    var(--border-strong) 0 3px,
-    transparent 3px 7px
-  );
+  background: repeating-linear-gradient(90deg, var(--border-strong) 0 3px, transparent 3px 7px);
 }
 .budget-line {
   display: flex;
@@ -4303,7 +4311,9 @@ a.rating-chip:hover {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-sm);
-  transition: box-shadow 0.15s var(--ease), border-color 0.15s var(--ease);
+  transition:
+    box-shadow 0.15s var(--ease),
+    border-color 0.15s var(--ease);
 }
 /* Hover speaks in the accent on every card -- accent edge + a faint accent wash -- so pointing
    at any row reads the same way. Scales' .fair-card and its .fair-stat-btn tile share this
@@ -4335,7 +4345,9 @@ a.rating-chip:hover {
 .fair-card.selected,
 .fair-stat-btn.selected {
   border-color: var(--accent);
-  box-shadow: inset 3px 0 0 var(--accent), var(--shadow-sm);
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    var(--shadow-sm);
 }
 /* Hovering the selected card is additive: the accent selection bar stays and the hover only
    deepens it (raised shadow), so it never trades the accent edge for a plain one and can't
@@ -4344,7 +4356,9 @@ a.rating-chip:hover {
 .card-selected:hover,
 .fair-card.selected.clickable:hover,
 .fair-stat-btn.selected:hover {
-  box-shadow: inset 3px 0 0 var(--accent), var(--shadow-md);
+  box-shadow:
+    inset 3px 0 0 var(--accent),
+    var(--shadow-md);
 }
 /* A spared card recedes -- but the dim must NOT be `opacity` on the card itself. An `opacity`
    layer anywhere ABOVE the season strip makes Safari drop a strip square's fill to dark on a
@@ -5720,7 +5734,8 @@ button.sm {
      slot) and the size track are both a FIXED width, so every row places its buttons and its
      size at the same x -- the columns can't drift with the size string ("22.5 GiB" vs
      "9.1 GiB") or the button count. Only the title (1fr) flexes. See rule 51. */
-  grid-template-columns: 2.6rem minmax(0, 1fr)
+  grid-template-columns:
+    2.6rem minmax(0, 1fr)
     var(--btns, calc(2 * var(--ov-btn-w) + var(--ov-btn-gap))) 4.75rem;
   align-items: center;
   column-gap: 0.7rem;
@@ -5973,17 +5988,33 @@ button.danger:hover:not(:disabled) {
 }
 /* Brand marks, from the token pairs beside --plex. Tautulli is Plex gold, so it wears the
    Plex pair rather than a copy of it. */
-.kind-radarr { background: var(--radarr); color: var(--radarr-ink); }
-.kind-sonarr { background: var(--sonarr); color: var(--sonarr-ink); }
-.kind-tautulli { background: var(--plex); color: var(--plex-ink); }
-.kind-seerr { background: var(--seerr); color: var(--seerr-ink); }
+.kind-radarr {
+  background: var(--radarr);
+  color: var(--radarr-ink);
+}
+.kind-sonarr {
+  background: var(--sonarr);
+  color: var(--sonarr-ink);
+}
+.kind-tautulli {
+  background: var(--plex);
+  color: var(--plex-ink);
+}
+.kind-seerr {
+  background: var(--seerr);
+  color: var(--seerr-ink);
+}
 
 .test-badge {
   font-size: 0.8rem;
   font-weight: 500;
 }
-.test-badge.ok { color: var(--protect); }
-.test-badge.bad { color: var(--condemn); }
+.test-badge.ok {
+  color: var(--protect);
+}
+.test-badge.bad {
+  color: var(--condemn);
+}
 
 /* the service add/edit modal */
 .service-form {
@@ -6379,7 +6410,10 @@ button.danger:hover:not(:disabled) {
 }
 /* The .safe / .armed tones (soft fill + color-mix border + dot color) are shared with the
    top-of-page banner near the top of this file; only the panel-specific spacing lives here. */
-.safety-state p { margin: 0.2rem 0 0; font-size: 0.84rem; }
+.safety-state p {
+  margin: 0.2rem 0 0;
+  font-size: 0.84rem;
+}
 .safety-row {
   display: flex;
   align-items: center;
@@ -6389,7 +6423,10 @@ button.danger:hover:not(:disabled) {
   border-top: 1px solid var(--border);
   flex-wrap: wrap;
 }
-.safety-row .help { margin-top: 0.2rem; max-width: 46ch; }
+.safety-row .help {
+  margin-top: 0.2rem;
+  max-width: 46ch;
+}
 /* The row is a space-between flex line, so a failure notice would otherwise be squeezed in
    beside the form it belongs to. Give it the full width, under the control. */
 .safety-row .notice {
@@ -7151,7 +7188,9 @@ button.danger:hover:not(:disabled) {
   box-shadow: var(--shadow-sm);
   flex-wrap: wrap;
 }
-.setup-finish h2 { margin: 0 0 0.2rem; }
+.setup-finish h2 {
+  margin: 0 0 0.2rem;
+}
 .btn-lg {
   padding: 0.7rem 1.4rem;
   font-size: 1rem;

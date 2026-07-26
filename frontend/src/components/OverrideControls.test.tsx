@@ -17,10 +17,7 @@ function inDays(days: number): string {
   return new Date(Date.now() + days * 86_400_000).toISOString();
 }
 
-function draw(
-  props: Partial<Parameters<typeof OverrideControls>[0]> = {},
-  defaultSpareDays = 0,
-) {
+function draw(props: Partial<Parameters<typeof OverrideControls>[0]> = {}, defaultSpareDays = 0) {
   const shared: QueueSettings = {
     defaultSpareDays,
     unmeasured: { holdsBack: true, isPending: false, isError: false },
@@ -89,7 +86,9 @@ describe("the Spare button, spared", () => {
   it("puts the end date in the tooltip, which the button has no room to show", () => {
     draw({ override: "spare", spareExpiresAt: inDays(87), roomy: true });
     const btn = screen.getByRole("button", { name: "Spared 87d" });
-    expect(btn.getAttribute("title")).toMatch(/^Kept until .+\. Click to let Reaper judge it again$/);
+    expect(btn.getAttribute("title")).toMatch(
+      /^Kept until .+\. Click to let Reaper judge it again$/,
+    );
   });
 });
 
@@ -164,7 +163,9 @@ describe("a spare whose clock has passed", () => {
 
   it("offers no clear row on an item with no spare of its own to clear", async () => {
     draw({}, 30);
-    await userEvent.setup().click(screen.getByRole("button", { name: "Choose how long to keep it" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Choose how long to keep it" }));
     expect(screen.queryByRole("menuitem", { name: "Clear this spare" })).not.toBeInTheDocument();
   });
 });
@@ -175,10 +176,14 @@ describe("the resting mark", () => {
     // no longer a decision in force at this level -- the button it hands over to on hover
     // offers a fresh one -- so resting as "0d" announced a decision the control no longer
     // holds. A live spare and a forever one still rest as their own icon.
-    const { container: spent } = render(<OverrideMark override="spare" spareExpiresAt={inDays(-3)} />);
+    const { container: spent } = render(
+      <OverrideMark override="spare" spareExpiresAt={inDays(-3)} />,
+    );
     expect(spent).toBeEmptyDOMElement();
 
-    const { container: live } = render(<OverrideMark override="spare" spareExpiresAt={inDays(27)} />);
+    const { container: live } = render(
+      <OverrideMark override="spare" spareExpiresAt={inDays(27)} />,
+    );
     expect(live.textContent).toContain("27d");
 
     const { container: ever } = render(<OverrideMark override="spare" spareExpiresAt={null} />);

@@ -58,9 +58,7 @@ describe("JobStatus resting states", () => {
         flash={null}
       />,
     );
-    expect(container.querySelector(".last-exact")?.textContent).not.toContain(
-      "Ratings refreshed",
-    );
+    expect(container.querySelector(".last-exact")?.textContent).not.toContain("Ratings refreshed");
   });
 
   it("reads 'hasn't run yet' with a hollow dot when there is no last run", () => {

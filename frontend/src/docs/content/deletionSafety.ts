@@ -6,7 +6,8 @@ export const deletionSafety: Doc = {
   id: "how-a-delete-is-kept-safe",
   group: "Safety",
   title: "How a delete is kept safe",
-  summary: "The path a file takes from candidate to deleted, and the safeties that protect every step of it.",
+  summary:
+    "The path a file takes from candidate to deleted, and the safeties that protect every step of it.",
   body: [
     p(
       "Reaper removes irreplaceable files from a server other people depend on, so the whole design leans one way: every time something is unclear, the file is kept. A person drives every deletion by hand, along a path that gets deliberately harder at each step.",
@@ -17,7 +18,9 @@ export const deletionSafety: Doc = {
     ),
 
     h2("The path a delete takes", "the-path"),
-    p("Seven steps, each with its own gate. You can stop at any point, and most of them change nothing on disk."),
+    p(
+      "Seven steps, each with its own gate. You can stop at any point, and most of them change nothing on disk.",
+    ),
     diagram({
       title: "The operator's path",
       steps: [
@@ -26,7 +29,10 @@ export const deletionSafety: Doc = {
           node: { text: "Scan complete?", shape: "decision" },
           branch: { label: "a source failed", node: { text: "View only", shape: "terminal" } },
         },
-        { node: { text: "Review the three lists", sub: "condemned · protected · left alone" }, enter: { label: "yes" } },
+        {
+          node: { text: "Review the three lists", sub: "condemned · protected · left alone" },
+          enter: { label: "yes" },
+        },
         { node: { text: "Read each item's reason", sub: "score, and every protection checked" } },
         { node: { text: "Build the plan", sub: "unmeasured held back · smallest first" } },
         { node: { text: "Practice run", sub: "a full rehearsal, nothing sent" } },
@@ -39,7 +45,13 @@ export const deletionSafety: Doc = {
           enter: { label: "on · needs password" },
         },
         { node: { text: "Reap, one item at a time", sub: "live progress · Stop anytime" } },
-        { node: { text: "Confirm it's really gone", sub: "re-read the world · rescan", shape: "terminal" } },
+        {
+          node: {
+            text: "Confirm it's really gone",
+            sub: "re-read the world · rescan",
+            shape: "terminal",
+          },
+        },
       ],
     }),
 
@@ -111,10 +123,16 @@ export const deletionSafety: Doc = {
           enter: { label: "no" },
           branch: { label: "grew or unreadable", node: { text: "Keep this file", tone: "keep" } },
         },
-        { node: { text: "Remove via Sonarr / Radarr", sub: "blocks a silent re-download" }, enter: { label: "ok" } },
+        {
+          node: { text: "Remove via Sonarr / Radarr", sub: "blocks a silent re-download" },
+          enter: { label: "ok" },
+        },
         {
           node: { text: "Did it really go?", shape: "decision" },
-          branch: { label: "first delete misbehaves", node: { text: "Halt the run", tone: "stop" } },
+          branch: {
+            label: "first delete misbehaves",
+            node: { text: "Halt the run", tone: "stop" },
+          },
         },
         { node: { text: "Verified gone", shape: "terminal" }, enter: { label: "yes" } },
       ],
@@ -122,7 +140,7 @@ export const deletionSafety: Doc = {
     ul([
       "**The test file goes first.** The first file actually removed is the test: the smallest measured one goes alone and is verified before any other is touched. If it does not behave exactly as expected, the whole run halts. Files spared or still being watched are skipped first, so the test is the first real removal. A later file misbehaving is recorded and the run carries on.",
       "**Removed so it stays gone.** A movie is removed through Radarr with an import exclusion, a per-service setting, so it will not quietly re-download. A season is unmonitored first, and Reaper confirms the unmonitor took before touching a file, so Sonarr will not pull it back.",
-      "**The caps hold, while they are on.** A run over its per-run or 30-day limit stops entirely rather than deleting the part that fits. Switching off \"Limit how much each run removes\" in Policy leaves the password, your typed confirmation, and every live check standing.",
+      '**The caps hold, while they are on.** A run over its per-run or 30-day limit stops entirely rather than deleting the part that fits. Switching off "Limit how much each run removes" in Policy leaves the password, your typed confirmation, and every live check standing.',
     ]),
 
     h2("Grace: a window to catch it before it's gone", "grace"),
@@ -135,12 +153,14 @@ export const deletionSafety: Doc = {
     ),
 
     h2("Things worth knowing", "edges"),
-    p("A safety story is only worth trusting if it names its own edges. These are the ones worth carrying."),
+    p(
+      "A safety story is only worth trusting if it names its own edges. These are the ones worth carrying.",
+    ),
     ul([
       "**A scripted deploy can start armed.** The password gate covers the switch in the app. Setting `REAPER_DESTRUCTIVE_ACTIONS_ENABLED=true` in the environment turns deletion on at first boot with no password. That is meant for infrastructure-as-code installs, but it is worth knowing before you set it.",
       "**That environment setting is the default until you use the switch.** The moment you turn deletion on or off in the app, the app's switch wins for good. To return a running install to read-only, use Policy, Deletion; changing the environment value alone leaves the app armed.",
       "**A few read failures keep files rather than stop the run.** If Reaper cannot list a service's folders, it does not fail the whole scan. Instead it refuses to match the items it is unsure about, so those files are kept rather than risked. The rule still holds, no file's fate rides on a timeout, but not every hiccup shows as an incomplete-scan banner.",
-      "**The Leaving Soon shelf is off until you turn it on,** and writing it needs deletion armed unless you also turn on \"Update while read-only\" in Settings, Plex. It only reaches people who browse or pinned that library. Wire up the Discord webhook to warn everyone else.",
+      '**The Leaving Soon shelf is off until you turn it on,** and writing it needs deletion armed unless you also turn on "Update while read-only" in Settings, Plex. It only reaches people who browse or pinned that library. Wire up the Discord webhook to warn everyone else.',
     ]),
   ],
 };

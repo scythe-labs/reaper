@@ -178,7 +178,10 @@ describe("the pre-paint script in index.html", () => {
   // the other. index.html runs before the bundle, so it cannot import accent.ts -- which is
   // exactly why it once carried a hand-copied, subtly-different luminance formula. These
   // assertions are what stops that coming back.
-  const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "index.html"), "utf8");
+  const html = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "index.html"),
+    "utf8",
+  );
 
   it("reads every accent value back from the cache accent.ts writes", () => {
     for (const key of [

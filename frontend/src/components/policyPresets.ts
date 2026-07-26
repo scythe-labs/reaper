@@ -38,7 +38,13 @@ export type PresetCaps = Pick<
   | "caps_enabled"
 >;
 
-export const PRESETS: { id: PresetId; label: string; help: string; condemn_at: number; caps: PresetCaps }[] = [
+export const PRESETS: {
+  id: PresetId;
+  label: string;
+  help: string;
+  condemn_at: number;
+  caps: PresetCaps;
+}[] = [
   {
     id: "cautious",
     label: "Cautious",

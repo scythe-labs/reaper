@@ -79,7 +79,9 @@ function renderPanel(connections: PlexResourceConnection[] = [discovered(LOCAL)]
 
 beforeEach(() => {
   apiMock.plexStatus.mockResolvedValue(status());
-  apiMock.plexLibraries.mockResolvedValue([{ key: 1, title: "Movies", kind: "movie", enabled: true }]);
+  apiMock.plexLibraries.mockResolvedValue([
+    { key: 1, title: "Movies", kind: "movie", enabled: true },
+  ]);
   apiMock.syncPlexLibraries.mockResolvedValue([]);
   apiMock.setPlexLibraries.mockResolvedValue([]);
   apiMock.leavingSoonSettings.mockResolvedValue({
@@ -173,7 +175,9 @@ describe("when plex.tv's list comes back without the linked server", () => {
 describe("linking with Plex", () => {
   it("offers the approval link and a way out while it waits", async () => {
     const user = userEvent.setup();
-    apiMock.plexStatus.mockResolvedValue(status({ linked: false, name: null, connection_uri: null }));
+    apiMock.plexStatus.mockResolvedValue(
+      status({ linked: false, name: null, connection_uri: null }),
+    );
     renderPanel();
 
     await user.click(await screen.findByRole("button", { name: "Link with Plex" }));

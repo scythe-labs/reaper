@@ -6,7 +6,8 @@ export const overview: Doc = {
   id: "overview",
   group: "Getting started",
   title: "What Reaper does",
-  summary: "Reaper finds the movies and shows nobody watches, explains why, and removes them safely once you approve.",
+  summary:
+    "Reaper finds the movies and shows nobody watches, explains why, and removes them safely once you approve.",
   body: [
     p(
       "Your library grows, your disk doesn’t. Reaper reads your watch history and hands you a reviewed list, each item carrying a plain explanation of why it is a candidate, and every protection it checked that kept it safe. You skim, approve, and it removes the files through Sonarr and Radarr, then refreshes Plex.",
@@ -30,6 +31,8 @@ export const overview: Doc = {
       "**Seerr** (Overseerr or Jellyseerr) tells Reaper who asked for a title, so you can see it, filter by it, and write a rule that keeps requests.",
       "**Plex** is your library. Reaper reads it, and refreshes it after a cleanup.",
     ]),
-    p("Tautulli plus Sonarr or Radarr is enough to start scanning. Plex isn’t required just to look."),
+    p(
+      "Tautulli plus Sonarr or Radarr is enough to start scanning. Plex isn’t required just to look.",
+    ),
   ],
 };

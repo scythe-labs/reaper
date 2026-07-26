@@ -68,8 +68,8 @@ export function DeletionToggle() {
           <div>
             <strong>Turn deletion off</strong>
             <p className="help">
-              Puts Reaper back to read-only right away. Safe to press either way: if it was
-              already off, nothing changes.
+              Puts Reaper back to read-only right away. Safe to press either way: if it was already
+              off, nothing changes.
             </p>
           </div>
           <button

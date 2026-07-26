@@ -182,10 +182,9 @@ export function ReapConfirm({
           owner is entitled to know while deciding. */}
       {run.held_back_unknown_size > 0 && (
         <p className="notice notice-warn">
-          {souls(run.held_back_unknown_size)}{" "}
-          {run.held_back_unknown_size === 1 ? "is" : "are"} held back. Reaper couldn't measure{" "}
-          {run.held_back_unknown_size === 1 ? "its" : "their"} size, so it won't delete{" "}
-          {run.held_back_unknown_size === 1 ? "it" : "them"}.
+          {souls(run.held_back_unknown_size)} {run.held_back_unknown_size === 1 ? "is" : "are"} held
+          back. Reaper couldn't measure {run.held_back_unknown_size === 1 ? "its" : "their"} size,
+          so it won't delete {run.held_back_unknown_size === 1 ? "it" : "them"}.
         </p>
       )}
 
@@ -252,13 +251,13 @@ export function ReapConfirm({
               <p className="reap-disarmed">Checking whether deletion is on…</p>
             ) : safety.isError || !safety.data ? (
               <p className="notice notice-warn">
-                Reaper couldn't confirm whether deletion is on, so nothing can be reaped
-                from here. Check <em>Policy → Deletion</em>, then reload this page.
+                Reaper couldn't confirm whether deletion is on, so nothing can be reaped from here.
+                Check <em>Policy → Deletion</em>, then reload this page.
               </p>
             ) : (
               <p className="reap-disarmed">
-                Deletion is <strong>off</strong>. Turn it on in <em>Policy → Deletion</em>{" "}
-                (it asks for your admin password), then come back here.
+                Deletion is <strong>off</strong>. Turn it on in <em>Policy → Deletion</em> (it asks
+                for your admin password), then come back here.
               </p>
             )
           ) : (

@@ -54,7 +54,14 @@ function sonarr(overrides: Partial<Instance> = {}): Instance {
 }
 
 function seerr(overrides: Partial<Instance> = {}): Instance {
-  return { ...sonarr(), id: 5, kind: "seerr", name: "Primary", base_url: "http://10.0.0.9:5055", ...overrides };
+  return {
+    ...sonarr(),
+    id: 5,
+    kind: "seerr",
+    name: "Primary",
+    base_url: "http://10.0.0.9:5055",
+    ...overrides,
+  };
 }
 
 const LIBRARIES: PlexLibrary[] = [
@@ -137,9 +144,7 @@ describe("ServiceModal HD/4K library map", () => {
 
   it("shows a notice, not an empty list, when the folders can't be read", async () => {
     renderModal(sonarr(), new Error("unreachable"));
-    expect(
-      await screen.findByText(/couldn't read this instance's folders/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/couldn't read this instance's folders/i)).toBeInTheDocument();
   });
 
   it("does not claim the operator has no libraries when the list can't be read", async () => {
@@ -249,7 +254,13 @@ describe("ServiceModal multi-Seerr service map", () => {
   it("sends the map the operator sees on save, dropping 'Not set' services", async () => {
     renderSeerrModal(seerr(), [
       { service_id: 2, kind: "sonarr", name: "Main TV", is_4k: false, suggested_instance_id: 3 },
-      { service_id: 9, kind: "sonarr", name: "Unmapped", is_4k: false, suggested_instance_id: null },
+      {
+        service_id: 9,
+        kind: "sonarr",
+        name: "Unmapped",
+        is_4k: false,
+        suggested_instance_id: null,
+      },
     ]);
     await waitFor(() => expect(selectForService("Main TV").value).toBe("3"));
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -281,9 +292,7 @@ describe("ServiceModal multi-Seerr service map", () => {
 
   it("shows a notice, not an empty list, when the services can't be read", async () => {
     renderSeerrModal(seerr(), new Error("forbidden"));
-    expect(
-      await screen.findByText(/couldn't read this portal's services/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/couldn't read this portal's services/i)).toBeInTheDocument();
   });
 
   it("does not claim there are no Sonarr or Radarr connections when the list can't be read", async () => {

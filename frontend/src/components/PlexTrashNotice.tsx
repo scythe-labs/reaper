@@ -28,25 +28,21 @@ export function PlexTrashNotice({
     <p className="notice notice-warn">
       {known > 0 ? (
         <>
-          <strong>Plex may also remove records for items Reaper didn't delete.</strong> Its
-          trash already holds {unreadable ? `at least ${items}` : items}
-          {unreadable ? ", and some libraries couldn't be read" : ""}. Emptying it removes
-          their watch history, ratings, and collections. No files are deleted.
+          <strong>Plex may also remove records for items Reaper didn't delete.</strong> Its trash
+          already holds {unreadable ? `at least ${items}` : items}
+          {unreadable ? ", and some libraries couldn't be read" : ""}. Emptying it removes their
+          watch history, ratings, and collections. No files are deleted.
         </>
       ) : (
         <>
-          <strong>Reaper couldn't read Plex's trash.</strong> It can't say what's in
-          there, and emptying it removes the watch history, ratings, and collections of
-          everything that is. No files are deleted.
+          <strong>Reaper couldn't read Plex's trash.</strong> It can't say what's in there, and
+          emptying it removes the watch history, ratings, and collections of everything that is. No
+          files are deleted.
         </>
       )}
       {onAck && (
         <label className="trash-ack">
-          <input
-            type="checkbox"
-            checked={!!acked}
-            onChange={(e) => onAck(e.target.checked)}
-          />
+          <input type="checkbox" checked={!!acked} onChange={(e) => onAck(e.target.checked)} />
           <span>I understand, continue anyway</span>
         </label>
       )}

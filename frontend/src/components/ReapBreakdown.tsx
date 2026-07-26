@@ -104,8 +104,8 @@ export function ReapBreakdown({
   if (isError || !data) {
     return (
       <p className="notice notice-warn">
-        Couldn't load what a reap would remove. Reaper just can't show it right now. Reload to
-        try again.
+        Couldn't load what a reap would remove. Reaper just can't show it right now. Reload to try
+        again.
       </p>
     );
   }
@@ -155,14 +155,16 @@ export function ReapBreakdown({
           <strong>{bytes(data.will_reap_bytes)}</strong>
         </span>
       </div>
-      <p className="rb-sub">Your policy's verdict from the last scan, with your own changes on top.</p>
+      <p className="rb-sub">
+        Your policy's verdict from the last scan, with your own changes on top.
+      </p>
 
       {allowanceUnknown ? (
         <>
           <p className="notice notice-warn">
-            Reaper couldn't check your unknown-size allowance, so it can't say how many titles
-            this reap removes. {plural(data.will_reap_unknown, "title", "titles")} on the list
-            can't be measured. Reload to try again.
+            Reaper couldn't check your unknown-size allowance, so it can't say how many titles this
+            reap removes. {plural(data.will_reap_unknown, "title", "titles")} on the list can't be
+            measured. Reload to try again.
           </p>
           <Reasons rows={data.condemned_by} anchor={data.policy_condemned} />
         </>

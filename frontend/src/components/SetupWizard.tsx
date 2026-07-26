@@ -89,8 +89,8 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
           <div>
             <h1>Welcome to Reaper</h1>
             <p className="muted">
-              Two quick things and you're running. Everything here only reads your library.
-              Nothing can be deleted until you say so.
+              Two quick things and you're running. Everything here only reads your library. Nothing
+              can be deleted until you say so.
             </p>
           </div>
         </div>
@@ -121,8 +121,8 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
       <div className="setup-finish">
         {!setup.scan_ready ? (
           <p className="muted">
-            Connect Tautulli plus at least one of Radarr or Sonarr above, then you'll be able
-            to run your first scan.
+            Connect Tautulli plus at least one of Radarr or Sonarr above, then you'll be able to run
+            your first scan.
           </p>
         ) : scanning ? (
           <>
@@ -132,9 +132,9 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
                 <h2>Your first scan is running</h2>
               </div>
               <p className="muted">
-                Big libraries with a lot of watch history can take a while. You don't have to
-                wait here: head into the app, and the bar at the top shows the scan's progress.
-                The review queue fills in the moment it finishes.
+                Big libraries with a lot of watch history can take a while. You don't have to wait
+                here: head into the app, and the bar at the top shows the scan's progress. The
+                review queue fills in the moment it finishes.
               </p>
             </div>
             <button className="primary btn-lg" onClick={onSkip}>
@@ -156,8 +156,8 @@ export function SetupWizard({ onSkip }: { onSkip: () => void }) {
             <div>
               <h2>Ready to scan</h2>
               <p className="muted">
-                Your library and watch history are connected. Run a first scan to see what
-                Reaper would reap. It only reads, and you approve every deletion by hand later.
+                Your library and watch history are connected. Run a first scan to see what Reaper
+                would reap. It only reads, and you approve every deletion by hand later.
               </p>
             </div>
             <button

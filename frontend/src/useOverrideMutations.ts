@@ -35,22 +35,20 @@ export function useOverrideMutations() {
   // `settle` then falls back to a real refetch, so a decision is never silently invisible.
   const patchInPlace = (key: string, fields: Partial<Candidate>): boolean => {
     let matched = false;
-    queryClient.setQueriesData<InfiniteData<CandidatePage>>(
-      { queryKey: ["candidates"] },
-      (old) =>
-        old
-          ? {
-              ...old,
-              pages: old.pages.map((page) => ({
-                ...page,
-                items: page.items.map((c) => {
-                  if (c.media_key !== key) return c;
-                  matched = true;
-                  return { ...c, ...fields };
-                }),
-              })),
-            }
-          : old,
+    queryClient.setQueriesData<InfiniteData<CandidatePage>>({ queryKey: ["candidates"] }, (old) =>
+      old
+        ? {
+            ...old,
+            pages: old.pages.map((page) => ({
+              ...page,
+              items: page.items.map((c) => {
+                if (c.media_key !== key) return c;
+                matched = true;
+                return { ...c, ...fields };
+              }),
+            })),
+          }
+        : old,
     );
     return matched;
   };
@@ -76,22 +74,20 @@ export function useOverrideMutations() {
     spareExpiresAt: string | null,
   ): boolean => {
     let matched = false;
-    queryClient.setQueriesData<InfiniteData<CandidatePage>>(
-      { queryKey: ["candidates"] },
-      (old) =>
-        old
-          ? {
-              ...old,
-              pages: old.pages.map((page) => ({
-                ...page,
-                items: page.items.map((c) => {
-                  if (c.group_key !== groupKey) return c;
-                  matched = true;
-                  return { ...c, show_override: decision, show_spare_expires_at: spareExpiresAt };
-                }),
-              })),
-            }
-          : old,
+    queryClient.setQueriesData<InfiniteData<CandidatePage>>({ queryKey: ["candidates"] }, (old) =>
+      old
+        ? {
+            ...old,
+            pages: old.pages.map((page) => ({
+              ...page,
+              items: page.items.map((c) => {
+                if (c.group_key !== groupKey) return c;
+                matched = true;
+                return { ...c, show_override: decision, show_spare_expires_at: spareExpiresAt };
+              }),
+            })),
+          }
+        : old,
     );
     return matched;
   };

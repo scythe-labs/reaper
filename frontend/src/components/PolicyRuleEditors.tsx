@@ -17,20 +17,15 @@
 // Curated: a phrase exists only where more-of-the-number honestly means more reason to
 import { useEffect, useId, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { api, type Condition, type CustomCondemn, type GradedKeep, type VocabField } from "../api";
+import { FIELD_TO_GATE, FIELD_TO_SIGNAL, humanDays, OP_LABELS } from "./PolicyEditor";
 import {
-  api,
-  type Condition,
-  type CustomCondemn,
-  type GradedKeep,
-  type VocabField,
-} from "../api";
-import {
-  FIELD_TO_GATE,
-  FIELD_TO_SIGNAL,
-  humanDays,
-  OP_LABELS,
-} from "./PolicyEditor";
-import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS, useTypedNumber } from "./QuantityInput";
+  FixedQuantity,
+  QuantityInput,
+  SIZE_UNITS,
+  TIME_UNITS,
+  useTypedNumber,
+} from "./QuantityInput";
 import { Segmented } from "./Segmented";
 
 // remove. (Most of these fields are filtered out of the remove vocabulary today because a
@@ -342,8 +337,8 @@ export function RemoveRulesEditor({
     <div className="rules-card">
       <h3>Your own reasons to remove</h3>
       <p className="blurb">
-        Add pressure to the score with a rule of your own. These can flag a title, but a
-        protection still wins, and missing data only ever leans toward keeping.
+        Add pressure to the score with a rule of your own. These can flag a title, but a protection
+        still wins, and missing data only ever leans toward keeping.
       </p>
 
       {condemn.length > 0 && (
@@ -357,7 +352,10 @@ export function RemoveRulesEditor({
               <span className="rules-weight-remove">
                 {r.kind === "graded" ? `up to +${r.weight} points` : `+${r.weight} points`}
               </span>
-              <button className="ghost sm" onClick={() => onCondemn(condemn.filter((_, j) => j !== i))}>
+              <button
+                className="ghost sm"
+                onClick={() => onCondemn(condemn.filter((_, j) => j !== i))}
+              >
                 Remove
               </button>
             </div>
@@ -370,8 +368,8 @@ export function RemoveRulesEditor({
           drop the form rather than offer a dropdown with nothing in it. */}
       {condemnVocabError ? (
         <p className="notice notice-error">
-          Reaper couldn't load the things a rule can look at, so there's nothing to pick from
-          right now. Reload to try again. The rules you've already added are unaffected.
+          Reaper couldn't load the things a rule can look at, so there's nothing to pick from right
+          now. Reload to try again. The rules you've already added are unaffected.
         </p>
       ) : (
         <>
@@ -386,7 +384,11 @@ export function RemoveRulesEditor({
             </select>
             {field && (
               <>
-                <select value={rOp} aria-label="Comparison" onChange={(e) => setROp(e.target.value)}>
+                <select
+                  value={rOp}
+                  aria-label="Comparison"
+                  onChange={(e) => setROp(e.target.value)}
+                >
                   {field.ops.map((o) => (
                     <option key={o} value={o}>
                       {OP_LABELS[o] ?? o}
@@ -477,8 +479,8 @@ export function RemoveRulesEditor({
           {/* Beside the boxes that fix it (rule 42), and only while it is true. */}
           {rampBackwards && (
             <p className="help help-warn">
-              The second number has to be higher than the first: a rule like this builds up
-              between them.
+              The second number has to be higher than the first: a rule like this builds up between
+              them.
             </p>
           )}
           {field?.help_text && <p className="help">{field.help_text}</p>}
@@ -581,8 +583,8 @@ export function KeepRulesEditor({
       <h3>Your own keep rules</h3>
       <p className="blurb">
         Two strengths: a rule can keep a title <strong>outright</strong>, or just{" "}
-        <strong>lean toward keeping</strong> by lowering its score. Neither can ever flag
-        anything, and missing data takes the full lean, to be safe.
+        <strong>lean toward keeping</strong> by lowering its score. Neither can ever flag anything,
+        and missing data takes the full lean, to be safe.
       </p>
 
       {(conditions.length > 0 || keeps.length > 0) && (
@@ -614,7 +616,10 @@ export function KeepRulesEditor({
                 <span className="rules-weight-keep">
                   lowers the score, up to −{k.max_discount} points
                 </span>
-                <button className="ghost sm" onClick={() => onKeeps(keeps.filter((_, j) => j !== i))}>
+                <button
+                  className="ghost sm"
+                  onClick={() => onKeeps(keeps.filter((_, j) => j !== i))}
+                >
                   Remove
                 </button>
               </div>
@@ -627,8 +632,8 @@ export function KeepRulesEditor({
           with nothing behind it, so name the failure and drop the form. */}
       {vocabError ? (
         <p className="notice notice-error">
-          Reaper couldn't load the things a rule can look at, so there's nothing to pick from
-          right now. Reload to try again. The rules you've already added are unaffected.
+          Reaper couldn't load the things a rule can look at, so there's nothing to pick from right
+          now. Reload to try again. The rules you've already added are unaffected.
         </p>
       ) : (
         <>
@@ -645,7 +650,11 @@ export function KeepRulesEditor({
 
             {strength === "hard" ? (
               <div className="condition-add">
-                <select value={hField} aria-label="Field" onChange={(e) => setHField(e.target.value)}>
+                <select
+                  value={hField}
+                  aria-label="Field"
+                  onChange={(e) => setHField(e.target.value)}
+                >
                   <option value="">Keep it when…</option>
                   {hardFields.map((f) => (
                     <option key={f.key} value={f.key}>
@@ -655,7 +664,11 @@ export function KeepRulesEditor({
                 </select>
                 {hardField && (
                   <>
-                    <select value={hOp} aria-label="Comparison" onChange={(e) => setHOp(e.target.value)}>
+                    <select
+                      value={hOp}
+                      aria-label="Comparison"
+                      onChange={(e) => setHOp(e.target.value)}
+                    >
                       {hardField.ops.map((o) => (
                         <option key={o} value={o}>
                           {OP_LABELS[o] ?? o}
@@ -689,7 +702,11 @@ export function KeepRulesEditor({
               </div>
             ) : (
               <div className="condition-add">
-                <select value={lField} aria-label="Field" onChange={(e) => setLField(e.target.value)}>
+                <select
+                  value={lField}
+                  aria-label="Field"
+                  onChange={(e) => setLField(e.target.value)}
+                >
                   <option value="">when…</option>
                   {leanFields.map((f) => (
                     <option key={f.key} value={f.key}>

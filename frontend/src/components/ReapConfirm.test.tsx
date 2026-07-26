@@ -212,16 +212,12 @@ describe("the execute gate", () => {
   });
 
   it("a practice run that stopped never unlocks execution", async () => {
-    apiMock.dryRun.mockResolvedValue(
-      report({ state: "aborted", aborted_reason: "over the cap" }),
-    );
+    apiMock.dryRun.mockResolvedValue(report({ state: "aborted", aborted_reason: "over the cap" }));
     renderSheet();
 
     await screen.findByText(/The plan stopped/);
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /^Reap 1 soul$/ }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Reap 1 soul$/ })).not.toBeInTheDocument();
   });
 
   it("shows live progress and a Stop while reaping, and closes freely (the run is detached)", async () => {

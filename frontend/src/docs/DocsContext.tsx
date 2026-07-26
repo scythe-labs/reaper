@@ -27,9 +27,11 @@ type DocsApi = { openDoc: (id: string, anchor?: string) => void };
 const DocsCtx = createContext<DocsApi | null>(null);
 
 export function DocsProvider({ children }: { children: ReactNode }) {
-  const [target, setTarget] = useState<{ docId: string; anchor: string | undefined; nonce: number } | null>(
-    null,
-  );
+  const [target, setTarget] = useState<{
+    docId: string;
+    anchor: string | undefined;
+    nonce: number;
+  } | null>(null);
 
   const openDoc = useCallback((id: string, anchor?: string) => {
     // A fresh nonce every call, so re-opening the same doc and anchor re-scrolls.
@@ -48,7 +50,7 @@ export function DocsProvider({ children }: { children: ReactNode }) {
         // No fallback: the docs are a modal over the page, and a spinner in the scrim for the
         // moment it takes to fetch would flash more than it informs.
         <Suspense fallback={null}>
-            <DocsModal
+          <DocsModal
             docId={target.docId}
             anchor={target.anchor}
             nonce={target.nonce}

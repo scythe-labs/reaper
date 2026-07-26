@@ -368,7 +368,14 @@ export type CustomCondemn =
       value: number | string | boolean;
       weight: number;
     }
-  | { kind: "graded"; name: string; field: string; weight: number; saturate_at: number; floor: number };
+  | {
+      kind: "graded";
+      name: string;
+      field: string;
+      weight: number;
+      saturate_at: number;
+      floor: number;
+    };
 
 /** A user-authored graded "lean toward keeping" -- a subtractive discount, fail-closed. */
 export interface GradedKeep {
@@ -383,11 +390,7 @@ export interface GradedKeep {
 /** Which rating source a keep bar reads. Movies can back every source (Radarr carries
  *  them); TV backs IMDb plus whatever Plex serves for the show. */
 export type RatingSource =
-  | "imdb"
-  | "tmdb"
-  | "rotten_tomatoes_critic"
-  | "rotten_tomatoes_audience"
-  | "metacritic";
+  "imdb" | "tmdb" | "rotten_tomatoes_critic" | "rotten_tomatoes_audience" | "metacritic";
 
 /** One "keep it if it clears this bar" rule. `floor` is in tenths (7.5 -> 75), and reads
  *  the same for a percentage source (75% -> 75). `min_votes` only bites on sources that
@@ -1375,8 +1378,7 @@ export const api = {
     request<SeerrService[]>(`/api/settings/instances/${id}/seerr-services`),
   testInstance: (body: { kind: string; base_url: string; api_key: string; verify_tls?: boolean }) =>
     post<InstanceTest>("/api/settings/instances/test", body),
-  testSavedInstance: (id: number) =>
-    post<InstanceTest>(`/api/settings/instances/${id}/test`, {}),
+  testSavedInstance: (id: number) => post<InstanceTest>(`/api/settings/instances/${id}/test`, {}),
 
   plexStatus: () => request<PlexStatus>("/api/settings/plex"),
   /**

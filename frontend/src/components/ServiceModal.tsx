@@ -29,8 +29,18 @@ export const KINDS: {
   // so a second has no working setup. The backend refuses it too; this only hides the add.
   singleton?: boolean;
 }[] = [
-  { value: "radarr", label: "Radarr", hint: "Your movies. At least one is required.", port: "7878" },
-  { value: "sonarr", label: "Sonarr", hint: "Your TV shows. Needed for season pruning.", port: "8989" },
+  {
+    value: "radarr",
+    label: "Radarr",
+    hint: "Your movies. At least one is required.",
+    port: "7878",
+  },
+  {
+    value: "sonarr",
+    label: "Sonarr",
+    hint: "Your TV shows. Needed for season pruning.",
+    port: "8989",
+  },
   {
     value: "tautulli",
     label: "Tautulli",
@@ -393,8 +403,7 @@ export function ServiceModal({
   }, [save.isPending, savePendingRef]);
 
   const canTest = host.trim() !== "" && apiKey.trim() !== "" && !testConn.isPending;
-  const ready =
-    name.trim() !== "" && host.trim() !== "" && (editing || apiKey.trim() !== "");
+  const ready = name.trim() !== "" && host.trim() !== "" && (editing || apiKey.trim() !== "");
 
   return (
     <ModalShell
@@ -474,9 +483,8 @@ export function ServiceModal({
             </label>
             {!verifyCert && (
               <p className="notice notice-warn">
-                Reaper will accept this server's certificate without checking who issued
-                it. Only use this for a server you run yourself, like one with a
-                self-signed certificate.
+                Reaper will accept this server's certificate without checking who issued it. Only
+                use this for a server you run yourself, like one with a self-signed certificate.
               </p>
             )}
           </>
@@ -528,8 +536,8 @@ export function ServiceModal({
               <p className="help">Reading this instance's folders…</p>
             ) : rootFolders.error ? (
               <p className="notice notice-warn">
-                Reaper couldn't read this instance's folders. Test the connection above, then
-                reopen this to map them.
+                Reaper couldn't read this instance's folders. Test the connection above, then reopen
+                this to map them.
               </p>
             ) : rootFolders.data && rootFolders.data.length > 0 ? (
               <>
@@ -550,7 +558,9 @@ export function ServiceModal({
                             </option>
                           ))}
                         </select>
-                        {suggestedRoots.has(f.path) && <span className="pl-suggested">suggested</span>}
+                        {suggestedRoots.has(f.path) && (
+                          <span className="pl-suggested">suggested</span>
+                        )}
                       </div>
                     </Fragment>
                   ))}
@@ -565,14 +575,15 @@ export function ServiceModal({
                   </p>
                 ) : !plexLibraries.isPending && libOptions.length === 0 ? (
                   <p className="help">
-                    No Plex libraries yet. Sync them in Plex settings first, then pick one per folder.
+                    No Plex libraries yet. Sync them in Plex settings first, then pick one per
+                    folder.
                   </p>
                 ) : (
                   <p className="help">
                     Which Plex library each folder lands in. This tells an HD copy from a 4K one
                     when the same title is in two libraries. Matches are suggested from your
-                    folders. Leave a folder on "Not set" to keep both copies when they can't be
-                    told apart.
+                    folders. Leave a folder on "Not set" to keep both copies when they can't be told
+                    apart.
                   </p>
                 )}
               </>

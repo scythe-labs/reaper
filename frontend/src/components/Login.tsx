@@ -114,8 +114,8 @@ function PlexButton({ setup, onAuthed }: { setup: boolean; onAuthed: () => void 
       <div className="server-pick">
         <strong>Which server should Reaper manage?</strong>
         <p className="muted">
-          This account owns more than one Plex server. Reaper will only ever scan and
-          prune the one you pick. You can change it later in Settings.
+          This account owns more than one Plex server. Reaper will only ever scan and prune the one
+          you pick. You can change it later in Settings.
         </p>
         <ServerPickList
           servers={pin.servers ?? []}
@@ -225,15 +225,15 @@ function LocalSheet({
         <div className="sheet-grip" aria-hidden="true" />
         <h2>Local account</h2>
         <p className="muted sheet-blurb">
-          The fallback for when Plex is unreachable. Reaper always keeps at least one
-          local account so a plex.tv outage can’t lock you out.
+          The fallback for when Plex is unreachable. Reaper always keeps at least one local account
+          so a plex.tv outage can’t lock you out.
         </p>
 
         {noLocalYet ? (
           <p className="notice notice-warn">
             No local account exists yet. Create one on the host with{" "}
-            <code>reaper-admin create-admin --username &lt;name&gt;</code>, or sign in
-            with Plex above.
+            <code>reaper-admin create-admin --username &lt;name&gt;</code>, or sign in with Plex
+            above.
           </p>
         ) : (
           <form onSubmit={submit} className="local-form">
@@ -307,9 +307,9 @@ function RecoveryCard({ onAuthed }: { onAuthed: () => void }) {
           the log files that tab downloads. Sending a locked-out operator to Settings ->
           Logs to find it left them concluding recovery was broken (U-11). */}
       <p className="auth-note">
-        Reaper printed a recovery code to the container's console output. Paste it here to
-        sign in as an admin so you can reset a password or re-link Plex; the code expires the
-        moment it is used.
+        Reaper printed a recovery code to the container's console output. Paste it here to sign in
+        as an admin so you can reset a password or re-link Plex; the code expires the moment it is
+        used.
       </p>
       <form onSubmit={submit} className="local-form">
         <label className="field">
@@ -370,8 +370,8 @@ export function Login() {
           </button>
 
           <p className="auth-safety">
-            Reaper can permanently delete media. Only the server’s owner is admitted.
-            Authenticating with Plex is not enough.
+            Reaper can permanently delete media. Only the server’s owner is admitted. Authenticating
+            with Plex is not enough.
           </p>
         </div>
       )}

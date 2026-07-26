@@ -85,9 +85,7 @@ describe("NotInScanPanel", () => {
 
   it("shows the all-clear only when the report loaded and was genuinely empty", () => {
     render(<NotInScanPanel items={[]} onClose={vi.fn()} />);
-    expect(
-      screen.getByText(/every available request is in the last scan/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/every available request is in the last scan/i)).toBeInTheDocument();
   });
 });
 

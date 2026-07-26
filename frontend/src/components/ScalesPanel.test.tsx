@@ -152,7 +152,9 @@ describe("ScalesPanel", () => {
     render(
       <ScalesPanel
         detail={detail({
-          titles: [title({ title: "A Show", media_type: "season", item_id: null, group_key: "tv:7" })],
+          titles: [
+            title({ title: "A Show", media_type: "season", item_id: null, group_key: "tv:7" }),
+          ],
         })}
         onClose={vi.fn()}
         onOpenItem={vi.fn()}
@@ -191,7 +193,13 @@ describe("ScalesPanel", () => {
       <ScalesPanel
         detail={detail({
           titles: [
-            title({ title: "A Show", media_type: "season", group_key: "tv:7", item_id: null, watched_by_them: 62 }),
+            title({
+              title: "A Show",
+              media_type: "season",
+              group_key: "tv:7",
+              item_id: null,
+              watched_by_them: 62,
+            }),
             title({ title: "One Season", media_type: "season", item_id: 5, watched_by_them: 1 }),
           ],
         })}
@@ -267,7 +275,12 @@ describe("ScalesPanel", () => {
   it("closes on Escape and on the close button", async () => {
     const onClose = vi.fn();
     render(
-      <ScalesPanel detail={detail()} onClose={onClose} onOpenItem={vi.fn()} onOpenGroup={vi.fn()} />,
+      <ScalesPanel
+        detail={detail()}
+        onClose={onClose}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
     );
     await userEvent.click(screen.getByRole("button", { name: /close/i }));
     await userEvent.keyboard("{Escape}");

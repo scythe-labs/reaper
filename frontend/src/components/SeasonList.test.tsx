@@ -61,9 +61,36 @@ function season(
     show_status: showStatus,
     season_number: n,
     group_seasons: [
-      { id: 1, season: 1, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
-      { id: 2, season: 2, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
-      { id: 3, season: 3, verdict: "abstain", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
+      {
+        id: 1,
+        season: 1,
+        verdict: "protect",
+        override: null,
+        override_effective: null,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
+      {
+        id: 2,
+        season: 2,
+        verdict: "condemn",
+        override: null,
+        override_effective: null,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
+      {
+        id: 3,
+        season: 3,
+        verdict: "abstain",
+        override: null,
+        override_effective: null,
+        size_bytes: 1024 ** 3,
+        spare_expires_at: null,
+        spare_covers_until: null,
+      },
     ],
   };
 }
@@ -138,9 +165,9 @@ describe("the show card", () => {
     renderQueue({ items: [ended, going, unread] });
 
     expect(await screen.findByTitle("This show has ended")).toHaveTextContent("Ended");
-    expect(
-      screen.getByTitle("We couldn't check whether this show has ended"),
-    ).toHaveTextContent("Status unknown");
+    expect(screen.getByTitle("We couldn't check whether this show has ended")).toHaveTextContent(
+      "Status unknown",
+    );
     // The still-going show wears nothing: one card, one chip, and neither is its.
     expect(screen.queryByText("Still going")).not.toBeInTheDocument();
     expect(screen.getAllByText("Ended")).toHaveLength(1);
@@ -357,8 +384,16 @@ describe("the all-seasons list", () => {
       show_override: "reap",
       ...extra,
     });
-    const held1 = withShow(31, 1, { override: "reap", override_own: null, override_effective: false });
-    const held2 = withShow(32, 2, { override: "reap", override_own: null, override_effective: false });
+    const held1 = withShow(31, 1, {
+      override: "reap",
+      override_own: null,
+      override_effective: false,
+    });
+    const held2 = withShow(32, 2, {
+      override: "reap",
+      override_own: null,
+      override_effective: false,
+    });
     apiMock.group.mockResolvedValue({
       group_key: "sonarr:5:42",
       title: "Example Show",
@@ -435,7 +470,9 @@ describe("the all-seasons list", () => {
     renderQueue();
     await expandSeasons();
     expect(await screen.findByText(/The whole show's spare has run out\./)).toBeInTheDocument();
-    expect(screen.getByText(/still kept until the next scan judges them again/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/still kept until the next scan judges them again/),
+    ).toBeInTheDocument();
     expect(document.querySelector(".show-inherit-mark .mk-inf")).toBeNull();
   });
   it("marks a season whose own spare ran out, so its row does not disagree with itself", async () => {

@@ -32,7 +32,12 @@ export function ScytheGlyph({
       aria-hidden="true"
     >
       <path d={SCYTHE_BLADE_D} fill="currentColor" />
-      <path d={SCYTHE_SNATH_D} stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="round" />
+      <path
+        d={SCYTHE_SNATH_D}
+        stroke="currentColor"
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
     </svg>
   );
 }

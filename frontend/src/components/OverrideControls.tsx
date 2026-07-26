@@ -464,13 +464,12 @@ export function KeptByShowNote({
         </>
       ) : heldReap ? (
         <>
-          <b>The whole show is set to reap</b>, but this season is <b>kept for now</b>. Undo it
-          on the show.
+          <b>The whole show is set to reap</b>, but this season is <b>kept for now</b>. Undo it on
+          the show.
         </>
       ) : (
         <>
-          <b>The whole show is set to reap</b>, so this season will be removed. Undo it on the
-          show.
+          <b>The whole show is set to reap</b>, so this season will be removed. Undo it on the show.
         </>
       );
   } else if (own === showOverride) {

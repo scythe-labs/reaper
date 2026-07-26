@@ -80,7 +80,11 @@ function DiagramNodeBox({ node }: { node: DiagramNode }) {
  *  text; the container scrolls sideways on a narrow pane rather than clipping. */
 function DocDiagram({ block }: { block: DiagramBlock }) {
   return (
-    <div className="doc-diagram" role="group" aria-label={block.title ? `Flowchart: ${block.title}` : "Flowchart"}>
+    <div
+      className="doc-diagram"
+      role="group"
+      aria-label={block.title ? `Flowchart: ${block.title}` : "Flowchart"}
+    >
       {block.title && <p className="doc-diagram-cap">{block.title}</p>}
       {block.legend && block.legend.length > 0 && (
         <div className="doc-diagram-legend">
@@ -110,7 +114,11 @@ function DocDiagram({ block }: { block: DiagramBlock }) {
                 <DiagramNodeBox node={s.node} />
               </div>
               {s.branch && (
-                <div className={s.branch.node.tone ? `dd-branch dd-${s.branch.node.tone}` : "dd-branch"}>
+                <div
+                  className={
+                    s.branch.node.tone ? `dd-branch dd-${s.branch.node.tone}` : "dd-branch"
+                  }
+                >
                   <span className="dd-hline" />
                   <span className="dd-harrow" />
                   {s.branch.label && <span className="dd-elabel">{s.branch.label}</span>}

@@ -42,9 +42,7 @@ export function useReviewFreshness(opts: {
 }): ReviewFreshness {
   const { viewSnapshotId, latestSnapshotId } = opts;
   const behind =
-    latestSnapshotId !== null &&
-    viewSnapshotId !== null &&
-    latestSnapshotId > viewSnapshotId;
+    latestSnapshotId !== null && viewSnapshotId !== null && latestSnapshotId > viewSnapshotId;
 
   const [nudging, setNudging] = useState(false);
   const [dismissed, setDismissed] = useState(false);

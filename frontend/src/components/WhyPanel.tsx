@@ -30,18 +30,19 @@ import {
 } from "../api";
 import { coverage, itemBytes, since, spareRemaining } from "../format";
 import { useOverrideMutations } from "../useOverrideMutations";
-import {
-  KeptByShowNote,
-  LibraryChip,
-  OverrideControls,
-  ShowStatusChip,
-} from "./ReviewQueue";
+import { KeptByShowNote, LibraryChip, OverrideControls, ShowStatusChip } from "./ReviewQueue";
 import { useHoldsBackUnmeasured } from "./queueSettings";
 import { reapIsNoop } from "./reviewFate";
 
 /** The built-in signal ids. Anything else in `explanation.signals[].id` is a custom
  *  rule's own name, and its row wears the "Your rule" tag. */
-const BUILTIN_SIGNAL_IDS = new Set(["unwatched", "season_rank", "few_watchers", "low_rating", "size"]);
+const BUILTIN_SIGNAL_IDS = new Set([
+  "unwatched",
+  "season_rank",
+  "few_watchers",
+  "low_rating",
+  "size",
+]);
 
 /** The little "this one is yours" marker worn by every policy row the owner authored. */
 function RuleTag() {
@@ -230,7 +231,12 @@ export function WhyClose({ onClose }: { onClose: () => void }) {
   return (
     <button type="button" className="why-close" onClick={onClose} aria-label="Close">
       <svg viewBox="0 0 16 16" width="15" height="15" fill="none" aria-hidden="true">
-        <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        <path
+          d="M4 4l8 8M12 4l-8 8"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+        />
       </svg>
     </button>
   );
@@ -354,8 +360,8 @@ function verdictLook(item: CandidateDetail): { klass: string; label: string; not
       label: "Sanctuary",
       note: (
         <>
-          Something is protecting this, so <strong>the score doesn't matter</strong>: it's kept
-          no matter what, and nothing can change that.
+          Something is protecting this, so <strong>the score doesn't matter</strong>: it's kept no
+          matter what, and nothing can change that.
         </>
       ),
     };
@@ -513,9 +519,7 @@ const GROUP_ROW_LIMIT = 6;
  *  shares is 0), so the same rows land in the same order on every render. */
 function byShare(a: Row, b: Row): number {
   return (
-    b.share - a.share ||
-    b.signal.weight - a.signal.weight ||
-    a.signal.id.localeCompare(b.signal.id)
+    b.share - a.share || b.signal.weight - a.signal.weight || a.signal.id.localeCompare(b.signal.id)
   );
 }
 
@@ -546,7 +550,8 @@ function SignalGroup({
   // Shares are whole points, so "these added nothing" is exactly zero -- there is no
   // rounding band to pick a threshold inside. At zero the summary says only how many are
   // down there, because "adding +0" reads as a bug.
-  const more = hiddenTotal > 0 ? `${hidden.length} more, adding +${hiddenTotal}` : `${hidden.length} more`;
+  const more =
+    hiddenTotal > 0 ? `${hidden.length} more, adding +${hiddenTotal}` : `${hidden.length} more`;
 
   return (
     <div className="sig-group">
@@ -618,8 +623,8 @@ function Signals({ item }: { item: CandidateDetail }) {
     <section className="block">
       <h3>Why it scored {explanation.score}</h3>
       <p className="blurb">
-        Reasons to believe nobody will watch it again. Reaper saw <strong>{coverage(item.coverage_bp)}</strong>{" "}
-        of the evidence.
+        Reasons to believe nobody will watch it again. Reaper saw{" "}
+        <strong>{coverage(item.coverage_bp)}</strong> of the evidence.
       </p>
 
       <SignalGroup
@@ -765,8 +770,7 @@ const CAUSE_COPY: Record<string, string> = {
   "Plex has not matched this item": "This title couldn't be found in Plex.",
   "Plex has not matched this season": "This season couldn't be found in Plex.",
   "more than one Plex item matches this title": "This looks like more than one thing in Plex.",
-  "more than one Plex item matches this show":
-    "This show looks like more than one thing in Plex.",
+  "more than one Plex item matches this show": "This show looks like more than one thing in Plex.",
   "no added-at date": "Plex didn't say when this was added.",
   "no added-at date for this season": "Plex didn't say when this season was added.",
   "could not read active sessions": "Reaper couldn't see what's playing right now.",
@@ -945,8 +949,8 @@ export function WhyPanel({
           `.notice-warn` every other "we could not check" uses. */}
       {item.explanation_unreadable && (
         <p className="notice notice-warn">
-          Reaper couldn't read why it judged this one, so the reasons below are missing.
-          Run a scan to rebuild them. Nothing is removed on a reason Reaper can't show.
+          Reaper couldn't read why it judged this one, so the reasons below are missing. Run a scan
+          to rebuild them. Nothing is removed on a reason Reaper can't show.
         </p>
       )}
 
@@ -954,8 +958,8 @@ export function WhyPanel({
 
       {item.first_flagged_at && (
         <p className="flagged">
-          On the list since {since(item.first_flagged_at)}. Watching it or sparing it keeps
-          it, and you still start every removal by hand.
+          On the list since {since(item.first_flagged_at)}. Watching it or sparing it keeps it, and
+          you still start every removal by hand.
         </p>
       )}
 
@@ -1021,8 +1025,8 @@ export function WhyPanel({
           plain reason only, never which source was asked or when. */}
       {item.size_bytes === null && holdsBack && (
         <p className="notice notice-warn">
-          Held back: size unknown. Sonarr and Radarr had none, so Reaper can't tell what
-          removing this would free, and won't remove it.
+          Held back: size unknown. Sonarr and Radarr had none, so Reaper can't tell what removing
+          this would free, and won't remove it.
         </p>
       )}
 

@@ -54,12 +54,7 @@ import {
   type PresetId,
 } from "./policyPresets";
 import { Outcome, StaleNotice } from "./PolicySimulator";
-import {
-  FixedQuantity,
-  QuantityInput,
-  SIZE_UNITS,
-  TIME_UNITS,
-} from "./QuantityInput";
+import { FixedQuantity, QuantityInput, SIZE_UNITS, TIME_UNITS } from "./QuantityInput";
 import { Segmented } from "./Segmented";
 import { Switch } from "./Switch";
 
@@ -167,10 +162,7 @@ function GateRow({ gate, onChange }: { gate: GateSetting; onChange: (g: GateSett
   return (
     <li className="rule-row">
       <label className="toggle rule-toggle">
-        <Switch
-          checked={gate.enabled}
-          onChange={(enabled) => onChange({ ...gate, enabled })}
-        />
+        <Switch checked={gate.enabled} onChange={(enabled) => onChange({ ...gate, enabled })} />
         <span className="rule-name">{meta.label}</span>
       </label>
       {meta.help && <p className="help rule-help">{meta.help}</p>}
@@ -238,8 +230,20 @@ type RatingSourceMeta = {
 
 const RATING_META: Record<RatingSource, RatingSourceMeta> = {
   imdb: { label: "IMDb", scale: "ten", votes: true, defFloor: 65, defVotes: 5000 },
-  rotten_tomatoes_critic: { label: "Rotten Tomatoes critics", scale: "pct", votes: false, defFloor: 75, defVotes: 0 },
-  rotten_tomatoes_audience: { label: "Rotten Tomatoes audience", scale: "pct", votes: false, defFloor: 80, defVotes: 0 },
+  rotten_tomatoes_critic: {
+    label: "Rotten Tomatoes critics",
+    scale: "pct",
+    votes: false,
+    defFloor: 75,
+    defVotes: 0,
+  },
+  rotten_tomatoes_audience: {
+    label: "Rotten Tomatoes audience",
+    scale: "pct",
+    votes: false,
+    defFloor: 80,
+    defVotes: 0,
+  },
   metacritic: { label: "Metacritic", scale: "pct", votes: false, defFloor: 70, defVotes: 0 },
   tmdb: { label: "TMDb", scale: "ten", votes: true, defFloor: 70, defVotes: 500 },
 };
@@ -255,7 +259,8 @@ const RATING_ORDER: RatingSource[] = [
 function describeBar(rule: RatingRule): string {
   const meta = RATING_META[rule.source];
   if (meta.scale === "pct") return `${meta.label} ${rule.floor}%`;
-  const votes = meta.votes && rule.min_votes > 0 ? ` from ${rule.min_votes.toLocaleString()}+ votes` : "";
+  const votes =
+    meta.votes && rule.min_votes > 0 ? ` from ${rule.min_votes.toLocaleString()}+ votes` : "";
   return `${(rule.floor / 10).toFixed(1)} on ${meta.label}${votes}`;
 }
 
@@ -356,7 +361,10 @@ function RatingFloorRow({
   const available = RATING_ORDER.filter((s) => !used.has(s));
   const addSource = (source: RatingSource) => {
     const meta = RATING_META[source];
-    onRules([...rules, { source, floor: meta.defFloor, min_votes: meta.votes ? meta.defVotes : 0 }]);
+    onRules([
+      ...rules,
+      { source, floor: meta.defFloor, min_votes: meta.votes ? meta.defVotes : 0 },
+    ]);
   };
   const joiner = match === "any" ? ", or " : ", and ";
   const summary =
@@ -463,7 +471,10 @@ function PointsBudget({ builtIn, yours }: { builtIn: number; yours: number }) {
   return (
     <span className="budget">
       <span className="budget-meter" aria-hidden="true">
-        <i className="budget-built" style={{ width: `${(Math.min(builtIn, 100) / scale) * 100}%` }} />
+        <i
+          className="budget-built"
+          style={{ width: `${(Math.min(builtIn, 100) / scale) * 100}%` }}
+        />
         <i className="budget-yours" style={{ width: `${(Math.min(yours, 100) / scale) * 100}%` }} />
         {left < 0 && <i className="budget-over" style={{ width: `${(-left / scale) * 100}%` }} />}
         {left > 0 && <i className="budget-free" style={{ width: `${(left / scale) * 100}%` }} />}
@@ -473,9 +484,7 @@ function PointsBudget({ builtIn, yours }: { builtIn: number; yours: number }) {
           <strong>{total}</strong> of 100 removal points used
         </span>
         {left === 0 ? (
-          <span className="muted">
-            {pointsSplit(builtIn, yours)}
-          </span>
+          <span className="muted">{pointsSplit(builtIn, yours)}</span>
         ) : (
           <span className={left < 0 ? "budget-over-text" : "muted"}>
             {left < 0 ? `${-left} over` : `${left} left to give out`}
@@ -609,8 +618,8 @@ function SeasonAdvisory({ keepLast, scope }: { keepLast: number; scope: "all" | 
   return (
     <p className={`help ${!bounded && covered === data.total_shows ? "help-warn" : ""}`}>
       With this setting, {bounded ? "up to " : null}
-      <strong>{count(covered)}</strong> of {count(data.total_shows)} shows have no season
-      eligible for removal (from your last scan).
+      <strong>{count(covered)}</strong> of {count(data.total_shows)} shows have no season eligible
+      for removal (from your last scan).
     </p>
   );
 }
@@ -715,8 +724,7 @@ export function PolicyEditor({
     () =>
       pace !== null &&
       savedPace !== undefined &&
-      (Boolean(savedPace.settings_recovered) ||
-        JSON.stringify(pace) !== JSON.stringify(savedPace)),
+      (Boolean(savedPace.settings_recovered) || JSON.stringify(pace) !== JSON.stringify(savedPace)),
     [pace, savedPace],
   );
 
@@ -816,9 +824,7 @@ export function PolicyEditor({
       // canonical forms. The server can order fields differently from the draft the
       // save was built from, and a raw JSON.stringify comparison would then read
       // "unsaved changes" forever.
-      setDraft((cur) =>
-        cur && cur.media_type === policy.body.media_type ? policy.body : cur,
-      );
+      setDraft((cur) => (cur && cur.media_type === policy.body.media_type ? policy.body : cur));
       void queryClient.invalidateQueries({ queryKey: ["policy", savedType] });
       // Apply the saved policy to the review queue by re-scanning in the background. The
       // queue and the simulator read the last snapshot's stored verdicts, which were
@@ -967,7 +973,9 @@ export function PolicyEditor({
   // leave the whole workspace saying "Loading…" for good. Say what happened instead.
   if (!draft) {
     if (policyFailed) {
-      return <p className="notice notice-error">Couldn't load these settings. Reload to try again.</p>;
+      return (
+        <p className="notice notice-error">Couldn't load these settings. Reload to try again.</p>
+      );
     }
     return <p className="muted">Loading…</p>;
   }
@@ -994,9 +1002,7 @@ export function PolicyEditor({
   // else (a timeout, a 500) means the CHECK itself failed, which must not be dressed up
   // as a policy error nor lock Save: the server re-validates on save regardless.
   const invalidMessage =
-    invalidError instanceof ApiError && invalidError.status === 422
-      ? invalidError.message
-      : null;
+    invalidError instanceof ApiError && invalidError.status === 422 ? invalidError.message : null;
   const validatorDown = invalidError !== null && invalidMessage === null;
 
   // The savebar saves two INDEPENDENT things, so a problem in one must not hold the other
@@ -1014,9 +1020,7 @@ export function PolicyEditor({
   // second copy of either would be the third sentence in the bar saying one thing. Points are
   // named first when both are true, because that notice is the one right beside this.
   const policyHeldBecause =
-    pointsLeft !== 0
-      ? "the points add up to 100"
-      : "the problem at the top of this page is fixed";
+    pointsLeft !== 0 ? "the points add up to 100" : "the problem at the top of this page is fixed";
 
   const switchMediaType = (next: "movie" | "tv") => {
     if (next === mediaType) return;
@@ -1159,15 +1163,14 @@ export function PolicyEditor({
             flag alone and no dirty gate, disclosure or savebar can hide it. */}
         {saved?.fell_back && (
           <div className="notice notice-error">
-            Your saved policy couldn't be read, so this shows the starting one instead.
-            Nothing has changed on your server. Check the values below, then save to
-            replace it.
+            Your saved policy couldn't be read, so this shows the starting one instead. Nothing has
+            changed on your server. Check the values below, then save to replace it.
           </div>
         )}
         {saved?.rating_rules_restored && (
           <div className="notice notice-warn">
-            Keep well-rated titles had stopped keeping anything. Your saved rating is back
-            below, unsaved. Reaper won't remove anything until you check it and save.
+            Keep well-rated titles had stopped keeping anything. Your saved rating is back below,
+            unsaved. Reaper won't remove anything until you check it and save.
           </div>
         )}
         {pendingSwitch !== null && (
@@ -1257,13 +1260,13 @@ export function PolicyEditor({
             />
           </div>
           <p className="help">
-            {presetHelp} Picking one resets the built-in points and rescales your own rules
-            to fit 100. Your scores stay where they are.
+            {presetHelp} Picking one resets the built-in points and rescales your own rules to fit
+            100. Your scores stay where they are.
           </p>
           {staged !== null && (
             <p className="help">
-              <strong>Staged, not saved.</strong> Review the changes below, then Save changes in
-              the bar at the bottom.
+              <strong>Staged, not saved.</strong> Review the changes below, then Save changes in the
+              bar at the bottom.
             </p>
           )}
         </div>
@@ -1313,8 +1316,8 @@ export function PolicyEditor({
             onChange={(e) => update({ coverage_floor_bp: Number(e.target.value) })}
           />
           <span className="help">
-            Reaper judges a title on the reasons below. If it can't check enough of them, it
-            holds the title in Limbo for you to decide.
+            Reaper judges a title on the reasons below. If it can't check enough of them, it holds
+            the title in Limbo for you to decide.
           </span>
         </label>
 
@@ -1449,10 +1452,7 @@ export function PolicyEditor({
                   The most recent seasons of every show are kept outright, whatever they score.
                   There is no upper limit.
                 </p>
-                <SeasonAdvisory
-                  keepLast={draft.keep_last_seasons}
-                  scope={draft.keep_last_scope}
-                />
+                <SeasonAdvisory keepLast={draft.keep_last_seasons} scope={draft.keep_last_scope} />
               </li>
 
               <li className="rule-row">
@@ -1483,9 +1483,7 @@ export function PolicyEditor({
                   />
                   <span className="rule-name">Always keep a show's first season</span>
                 </label>
-                <p className="help rule-help">
-                  So a new viewer can still start the show.
-                </p>
+                <p className="help rule-help">So a new viewer can still start the show.</p>
               </li>
 
               <li className="rule-row">
@@ -1516,8 +1514,8 @@ export function PolicyEditor({
                     </div>
                     <p className="help rule-help">
                       If someone has not watched any of the show in this many days, Reaper treats
-                      the show as abandoned by them and lets go of their place. Set to 0 to hold
-                      it forever. When Reaper can't tell when they last watched, it keeps holding.
+                      the show as abandoned by them and lets go of their place. Set to 0 to hold it
+                      forever. When Reaper can't tell when they last watched, it keeps holding.
                     </p>
                     <div className="rule-control">
                       <span>also keep</span>
@@ -1579,8 +1577,8 @@ export function PolicyEditor({
                 </label>
                 <p className="help rule-help">
                   When a season your rule would remove was watched by more people than a season it
-                  keeps, Reaper marks it "Needs a look" and waits for you. Turn this off and
-                  Reaper follows your keep rule without asking.
+                  keeps, Reaper marks it "Needs a look" and waits for you. Turn this off and Reaper
+                  follows your keep rule without asking.
                 </p>
               </li>
             </ul>
@@ -1612,8 +1610,8 @@ export function PolicyEditor({
             checks the policy again on save either way. */}
         {validatorDown && (
           <p className="notice notice-warn">
-            Couldn't check this draft just now, so any problem with it can't be shown here.
-            You can still save: the server checks it again when you do.
+            Couldn't check this draft just now, so any problem with it can't be shown here. You can
+            still save: the server checks it again when you do.
           </p>
         )}
         {/* Warnings live beside their controls; only one no anchor claims lands here. */}
@@ -1622,8 +1620,8 @@ export function PolicyEditor({
         <p className="hash">
           {validation && (
             <>
-              {kind} policy <code>{validation.policy_hash.slice(0, 12)}</code> · saving does not
-              arm anything
+              {kind} policy <code>{validation.policy_hash.slice(0, 12)}</code> · saving does not arm
+              anything
             </>
           )}
         </p>
@@ -1646,9 +1644,8 @@ export function PolicyEditor({
             can hide it (mirrors the policy recovery notice above). */}
         {savedPace?.settings_recovered && (
           <p className="notice notice-error">
-            Your saved caps and grace couldn't be read, so these show the starting ones.
-            Nothing has changed on your server, but a scan won't remove anything until you
-            check these and save.
+            Your saved caps and grace couldn't be read, so these show the starting ones. Nothing has
+            changed on your server, but a scan won't remove anything until you check these and save.
           </p>
         )}
 
@@ -1675,8 +1672,8 @@ export function PolicyEditor({
             </p>
             {!pace.caps_enabled && (
               <p className="notice notice-warn notice-inline">
-                No cap on run size. A run can remove everything you've approved at once.
-                Deletion still needs the password and your approval of the list.
+                No cap on run size. A run can remove everything you've approved at once. Deletion
+                still needs the password and your approval of the list.
               </p>
             )}
 
@@ -1750,7 +1747,9 @@ export function PolicyEditor({
                 />
                 {/* A notice, not a hold: nothing on the deletion path reads this window
                     (services/grace.py), so help promising time "before removal" was false. */}
-                <span className="help">How long a flagged title shows as leaving, so someone can rescue it.</span>
+                <span className="help">
+                  How long a flagged title shows as leaving, so someone can rescue it.
+                </span>
               </span>
 
               <span className="ex-label">Unknown-size items</span>
@@ -1783,9 +1782,8 @@ export function PolicyEditor({
           </DocLink>
         </h3>
         <p className="blurb">
-          Whether Reaper is allowed to remove anything at all. One switch for all of Reaper,
-          movies and TV alike. Turning it on always asks for the admin password. Turning it off
-          never does.
+          Whether Reaper is allowed to remove anything at all. One switch for all of Reaper, movies
+          and TV alike. Turning it on always asks for the admin password. Turning it off never does.
         </p>
         <DeletionToggle />
 
@@ -1796,7 +1794,8 @@ export function PolicyEditor({
           <div className="savebar">
             <span className="savebar-what">
               <strong>
-                Unsaved changes: {[dirty ? `${kind} policy` : null, paceDirty ? "pace and limits" : null]
+                Unsaved changes:{" "}
+                {[dirty ? `${kind} policy` : null, paceDirty ? "pace and limits" : null]
                   .filter(Boolean)
                   .join(" · ")}
               </strong>
@@ -1828,9 +1827,9 @@ export function PolicyEditor({
                   gate can hide it. */}
               {saved?.needs_save && !saved.fell_back && (
                 <span className="notice notice-warn budget-notice">
-                  Your points have been spread to add up to 100. Nothing has changed on
-                  your server yet. Each rule keeps the same share it had, so your scores
-                  stay where they are. Review and save.
+                  Your points have been spread to add up to 100. Nothing has changed on your server
+                  yet. Each rule keeps the same share it had, so your scores stay where they are.
+                  Review and save.
                 </span>
               )}
               {dirty && <PointsBudget builtIn={builtInWeight} yours={yourWeight} />}
@@ -1879,9 +1878,8 @@ export function PolicyEditor({
           <div className="sim sim-info">
             <h3>Can't show what this would do</h3>
             <p>
-              The simulator request failed, so there are no numbers to show. Nothing about
-              your library or your saved policy has changed. Adjust any control to try
-              again.
+              The simulator request failed, so there are no numbers to show. Nothing about your
+              library or your saved policy has changed. Adjust any control to try again.
             </p>
             <p className="error">{simError.message}</p>
           </div>

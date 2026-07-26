@@ -8,7 +8,10 @@ export const cheatSheet: Doc = {
   title: "Tuning cheat sheet",
   summary: "The defaults and the habits that keep you safe, at a glance.",
   body: [
-    callout("tip", "**Start cautious. Tighten one nudge at a time.** You can always remove more later. You can never un-delete."),
+    callout(
+      "tip",
+      "**Start cautious. Tighten one nudge at a time.** You can always remove more later. You can never un-delete.",
+    ),
 
     h2("Signals, default points", "signals"),
     table(
@@ -21,7 +24,9 @@ export const cheatSheet: Doc = {
         ["Size on disk", "off", "off"],
       ],
     ),
-    p("Points must total **100** or Save is blocked. Never weight size: it aims at your biggest, most-loved files."),
+    p(
+      "Points must total **100** or Save is blocked. Never weight size: it aims at your biggest, most-loved files.",
+    ),
 
     h2("Protections, all on by default", "protections"),
     table(
@@ -51,7 +56,7 @@ export const cheatSheet: Doc = {
     // "stop", matching understandingPolicy's line about the same mechanism. "Abort" was the
     // only place in the product an operator met that word (U-15).
     p(
-      "Caps stop the whole run when crossed. They never remove just the part that fits. Leave \"Limit how much each run removes\" on: switching it off drops the two run limits above. Unknown-size items are still held back, and the countdown still runs.",
+      'Caps stop the whole run when crossed. They never remove just the part that fits. Leave "Limit how much each run removes" on: switching it off drops the two run limits above. Unknown-size items are still held back, and the countdown still runs.',
     ),
 
     h2("Habits that keep you safe", "habits"),

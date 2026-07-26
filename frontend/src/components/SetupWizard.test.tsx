@@ -37,7 +37,13 @@ const IDLE = {
   snapshot_id: null,
   followup_queued: false,
 };
-const RUNNING = { ...IDLE, running: true, phase: "history", percent: 3, detail: "syncing watch history" };
+const RUNNING = {
+  ...IDLE,
+  running: true,
+  phase: "history",
+  percent: 3,
+  detail: "syncing watch history",
+};
 
 function renderWizard(onSkip: () => void = () => {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

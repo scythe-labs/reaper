@@ -22,9 +22,27 @@ function signal(over: Partial<SignalContribution> & { id: string }): SignalContr
 /** The six rows the operator was looking at: 75/75, 30/80, 20/20, 20/20, 10/60, 0/25.
  *  Total weight 280, total pressure 155, so the score is 55. */
 const WORKED_ROWS: SignalContribution[] = [
-  signal({ id: "unwatched", contribution: 75, weight: 75, detail: "not watched in 5 years", state: "adds" }),
-  signal({ id: "season_rank", contribution: 30, weight: 80, detail: "a later season", state: "adds" }),
-  signal({ id: "few_watchers", contribution: 20, weight: 20, detail: "1 person watched it", state: "adds" }),
+  signal({
+    id: "unwatched",
+    contribution: 75,
+    weight: 75,
+    detail: "not watched in 5 years",
+    state: "adds",
+  }),
+  signal({
+    id: "season_rank",
+    contribution: 30,
+    weight: 80,
+    detail: "a later season",
+    state: "adds",
+  }),
+  signal({
+    id: "few_watchers",
+    contribution: 20,
+    weight: 20,
+    detail: "1 person watched it",
+    state: "adds",
+  }),
   signal({ id: "size", contribution: 20, weight: 20, detail: "takes 40 GiB", state: "adds" }),
   signal({ id: "low_rating", contribution: 10, weight: 60, detail: "rated 6.4", state: "adds" }),
   signal({ id: "my rule", weight: 25, detail: "not on the shelf", state: "not_applicable" }),
@@ -198,8 +216,19 @@ describe("the scoring receipt", () => {
   it("renders the four states apart", () => {
     show(
       detail([
-        signal({ id: "unwatched", contribution: 40, weight: 40, detail: "not watched in 5 years", state: "adds" }),
-        signal({ id: "few_watchers", weight: 30, detail: "4 people watched it", state: "argues_keep" }),
+        signal({
+          id: "unwatched",
+          contribution: 40,
+          weight: 40,
+          detail: "not watched in 5 years",
+          state: "adds",
+        }),
+        signal({
+          id: "few_watchers",
+          weight: 30,
+          detail: "4 people watched it",
+          state: "argues_keep",
+        }),
         signal({
           id: "low_rating",
           weight: 20,
@@ -216,7 +245,9 @@ describe("the scoring receipt", () => {
     // "Couldn't check" keeps its own group and its own words, never folded in with the
     // rows Reaper did read.
     expect(groupOf("Couldn't check")).toBeTruthy();
-    expect(screen.getByText("could not read its rating").closest("li")).toHaveClass("sig-unreadable");
+    expect(screen.getByText("could not read its rating").closest("li")).toHaveClass(
+      "sig-unreadable",
+    );
     expect(screen.getByText("4 people watched it").closest("li")).toHaveClass("sig-argues_keep");
     expect(screen.getByText("not on the shelf").closest("li")).toHaveClass("sig-not_applicable");
   });
@@ -228,7 +259,12 @@ describe("the scoring receipt", () => {
       detail([
         signal({ id: "unwatched", contribution: 40, weight: 40, detail: "not watched in 5 years" }),
         signal({ id: "few_watchers", weight: 30, detail: "5 people watched it" }),
-        signal({ id: "low_rating", weight: 20, detail: "could not read its rating", evaluated: false }),
+        signal({
+          id: "low_rating",
+          weight: 20,
+          detail: "could not read its rating",
+          evaluated: false,
+        }),
       ]),
     );
 
@@ -355,7 +391,13 @@ describe("the scoring receipt", () => {
     // One row carries the whole score and eleven carry a rounding crumb each, so every
     // hidden row's share is a flat zero. "6 more, adding +0" would read as a bug.
     const rows = [
-      signal({ id: "unwatched", contribution: 1000, weight: 1000, detail: "the reason", state: "adds" }),
+      signal({
+        id: "unwatched",
+        contribution: 1000,
+        weight: 1000,
+        detail: "the reason",
+        state: "adds",
+      }),
       ...pushRows(11, 1),
     ];
     show(detail(rows));
@@ -405,7 +447,9 @@ describe("the protection blocks", () => {
     const { userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     const base = detail(WORKED_ROWS);
-    show(detail(WORKED_ROWS, { explanation: { ...base.explanation, protections_checked: CHECKED } }));
+    show(
+      detail(WORKED_ROWS, { explanation: { ...base.explanation, protections_checked: CHECKED } }),
+    );
 
     expect(screen.getByRole("heading", { name: "Protections it cleared" })).toBeTruthy();
     const label = screen.getByText("Show all 3");
@@ -452,7 +496,9 @@ describe("the verdict headline", () => {
   it("labels an honored hand reap a removal, never a Sanctuary", () => {
     show(detail(WORKED_ROWS, { verdict: "protect", override: "reap", override_effective: true }));
     expect(screen.getByText("Reaped by hand")).toBeInTheDocument();
-    expect(screen.getByText(/it will be removed\. Nothing is holding it back/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/it will be removed\. Nothing is holding it back/i),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Sanctuary")).not.toBeInTheDocument();
     expect(screen.queryByText(/nothing can change that/i)).not.toBeInTheDocument();
   });
@@ -478,13 +524,28 @@ describe("the verdict headline", () => {
   });
 
   it("names an unmanaged hold and a could-not-check hold distinctly", () => {
-    show(detail(WORKED_ROWS, { override: "reap", override_effective: false,
-      explanation: { ...detail(WORKED_ROWS).explanation, protections_fired: [fired("unmanaged")] } }));
+    show(
+      detail(WORKED_ROWS, {
+        override: "reap",
+        override_effective: false,
+        explanation: {
+          ...detail(WORKED_ROWS).explanation,
+          protections_fired: [fired("unmanaged")],
+        },
+      }),
+    );
     expect(screen.getByText(/no app manages the file/i)).toBeInTheDocument();
 
-    show(detail(WORKED_ROWS, { override: "reap", override_effective: false,
-      explanation: { ...detail(WORKED_ROWS).explanation,
-        protections_unknown: [fired("rating_floor", "could not check the IMDb rating")] } }));
+    show(
+      detail(WORKED_ROWS, {
+        override: "reap",
+        override_effective: false,
+        explanation: {
+          ...detail(WORKED_ROWS).explanation,
+          protections_unknown: [fired("rating_floor", "could not check the IMDb rating")],
+        },
+      }),
+    );
     expect(screen.getByText(/a protection couldn't be checked/i)).toBeInTheDocument();
   });
 
@@ -534,8 +595,15 @@ describe("the verdict headline", () => {
   });
 
   it("claims Sanctuary only when a protection actually fired", () => {
-    show(detail(WORKED_ROWS, { verdict: "protect",
-      explanation: { ...detail(WORKED_ROWS).explanation, protections_fired: [fired("min_dormancy")] } }));
+    show(
+      detail(WORKED_ROWS, {
+        verdict: "protect",
+        explanation: {
+          ...detail(WORKED_ROWS).explanation,
+          protections_fired: [fired("min_dormancy")],
+        },
+      }),
+    );
     expect(screen.getByText("Sanctuary")).toBeInTheDocument();
     expect(screen.getByText(/nothing can change that/i)).toBeInTheDocument();
   });
@@ -549,10 +617,20 @@ describe("the verdict headline", () => {
   });
 
   it("tells a keep-rule conflict what it is and how to resolve it", () => {
-    show(detail(WORKED_ROWS, { verdict: "abstain",
-      explanation: { ...detail(WORKED_ROWS).explanation,
-        protections_unknown: [fired("season_progression",
-          "5 people watched this, more than a season your keep rule protects")] } }));
+    show(
+      detail(WORKED_ROWS, {
+        verdict: "abstain",
+        explanation: {
+          ...detail(WORKED_ROWS).explanation,
+          protections_unknown: [
+            fired(
+              "season_progression",
+              "5 people watched this, more than a season your keep rule protects",
+            ),
+          ],
+        },
+      }),
+    );
     expect(screen.getByText("Needs a look")).toBeInTheDocument();
     expect(screen.getByText(/Spare it to keep it, or Reap it to remove it/i)).toBeInTheDocument();
   });

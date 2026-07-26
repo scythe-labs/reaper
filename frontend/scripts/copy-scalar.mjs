@@ -13,7 +13,16 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const source = join(here, "..", "node_modules", "@scalar", "api-reference", "dist", "browser", "standalone.js");
+const source = join(
+  here,
+  "..",
+  "node_modules",
+  "@scalar",
+  "api-reference",
+  "dist",
+  "browser",
+  "standalone.js",
+);
 const target = join(here, "..", "public", "vendor", "scalar.js");
 
 mkdirSync(dirname(target), { recursive: true });

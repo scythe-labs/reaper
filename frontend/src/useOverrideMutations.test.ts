@@ -134,7 +134,14 @@ describe("useOverrideMutations", () => {
       const invalidated = (invalidateSpy.mock.calls as unknown[][]).map(
         (c) => (c[0] as { queryKey: unknown[] }).queryKey[0],
       );
-      for (const key of ["candidates", "group", "candidate", "reap-breakdown", "snapshot", "fairness"])
+      for (const key of [
+        "candidates",
+        "group",
+        "candidate",
+        "reap-breakdown",
+        "snapshot",
+        "fairness",
+      ])
         expect(invalidated).toContain(key);
     },
   );

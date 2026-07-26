@@ -173,13 +173,13 @@ export function QuantityInput({
   return (
     <span className="qty">
       <input
-          type="number"
-          min={shownMin}
-          step="any"
-          aria-label={ariaLabel}
-          {...typed}
-          onBlur={onBlur}
-        />
+        type="number"
+        min={shownMin}
+        step="any"
+        aria-label={ariaLabel}
+        {...typed}
+        onBlur={onBlur}
+      />
       <select
         value={unit.label}
         aria-label={ariaLabel ? `${ariaLabel} unit` : "Unit"}

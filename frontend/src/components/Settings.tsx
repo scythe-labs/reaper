@@ -119,8 +119,7 @@ function allTimeZones(): string[] {
   if (_zoneCache) return _zoneCache;
   let zones: string[] = [];
   try {
-    const supported = (Intl as { supportedValuesOf?: (key: string) => string[] })
-      .supportedValuesOf;
+    const supported = (Intl as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf;
     if (supported) zones = supported("timeZone");
   } catch {
     zones = [];
@@ -216,7 +215,9 @@ export function GeneralPanel() {
     // A self-hosted Reaper is often reached over plain http on a LAN, where the browser
     // withholds the clipboard API. Say so plainly instead of throwing a raw TypeError.
     if (!navigator.clipboard) {
-      throw new Error("Copying needs a secure (https) page. Press Show, then select the key by hand.");
+      throw new Error(
+        "Copying needs a secure (https) page. Press Show, then select the key by hand.",
+      );
     }
     await navigator.clipboard.writeText(key);
     setCopied(true);
@@ -242,7 +243,9 @@ export function GeneralPanel() {
     return <p className="muted">Loading…</p>;
   }
   if (general.isError || !general.data) {
-    return <p className="notice notice-error">Couldn't load these settings. Reload to try again.</p>;
+    return (
+      <p className="notice notice-error">Couldn't load these settings. Reload to try again.</p>
+    );
   }
   const data = general.data;
 
@@ -299,8 +302,8 @@ export function GeneralPanel() {
           <div className="set-row">
             <span className="set-label">Application URL</span>
             <p className="help">
-              Where people reach Reaper, for example https://reaper.example.com. Notifications
-              use it to link back here. Leave empty and notifications simply skip the link.
+              Where people reach Reaper, for example https://reaper.example.com. Notifications use
+              it to link back here. Leave empty and notifications simply skip the link.
             </p>
             <div className="set-control">
               <input
@@ -325,11 +328,7 @@ export function GeneralPanel() {
             <span className="set-label">Time zone</span>
             <p className="help">The server's time zone.</p>
             <div className="set-control">
-              <select
-                value={tz}
-                aria-label="Time zone"
-                onChange={(e) => setTz(e.target.value)}
-              >
+              <select value={tz} aria-label="Time zone" onChange={(e) => setTz(e.target.value)}>
                 {zoneOptions.map((z) => (
                   <option key={z} value={z}>
                     {z}
@@ -397,9 +396,7 @@ export function GeneralPanel() {
                 </button>
               )}
             </div>
-            {!accentValid && (
-              <p className="help field-error">Enter a hex code like #25c3ff.</p>
-            )}
+            {!accentValid && <p className="help field-error">Enter a hex code like #25c3ff.</p>}
             <div className="presets" aria-label="Quick colors">
               {ACCENT_PRESETS.map((c) => (
                 <button
@@ -437,8 +434,8 @@ export function GeneralPanel() {
           <div className="set-row">
             <span className="set-label">Theme</span>
             <p className="help">
-              Light or dark. "Match my device" follows your system setting. Applies to this
-              browser only.
+              Light or dark. "Match my device" follows your system setting. Applies to this browser
+              only.
             </p>
             <div className="set-control">
               <select
@@ -464,9 +461,7 @@ export function GeneralPanel() {
         <div className="set-rows">
           <div className="set-row">
             <span className="set-label">Expand seasons by default</span>
-            <p className="help">
-              TV shows in the review queue open with every season showing.
-            </p>
+            <p className="help">TV shows in the review queue open with every season showing.</p>
             <div className="set-control">
               <Switch
                 checked={data.expand_seasons_default}
@@ -536,10 +531,10 @@ export function GeneralPanel() {
                 sat in the write allowlist: a key holder could turn run limits off (S-2).
                 Changing either list means changing this line in the same commit. */}
             <p className="help">
-              Send it as the X-Api-Key header so scripts and other apps can use Reaper
-              without signing in. A key reads your library, and can start scans, build plans,
-              and change your policy, run limits, and grace. It cannot turn deletion on, run
-              a reap, read your logs, or change your connections or password.
+              Send it as the X-Api-Key header so scripts and other apps can use Reaper without
+              signing in. A key reads your library, and can start scans, build plans, and change
+              your policy, run limits, and grace. It cannot turn deletion on, run a reap, read your
+              logs, or change your connections or password.
             </p>
             <div className="set-control">
               {data.api_key_set ? (
@@ -619,8 +614,8 @@ export function GeneralPanel() {
           <div className="set-row">
             <span className="set-label">API reference</span>
             <p className="help">
-              Every endpoint, documented from the running app, with a try-it-out client that
-              can use your key. Only visible while signed in.
+              Every endpoint, documented from the running app, with a try-it-out client that can use
+              your key. Only visible while signed in.
             </p>
             <div className="set-control">
               <a className="btn-link" href="/api/docs" target="_blank" rel="noreferrer">
@@ -638,11 +633,11 @@ export function GeneralPanel() {
           <div className="set-row">
             <span className="set-label">Behind a reverse proxy</span>
             <p className="help">
-              Turn this on if Nginx, Traefik, Caddy or similar sits in front of Reaper. Reaper
-              will then trust the proxy to say which address each visitor really came from,
-              which keeps sign-in rate limits accurate per visitor instead of lumping everyone
-              together. It is also how Reaper learns that visitors arrive over HTTPS, so it can
-              mark the sign-in cookie HTTPS-only.
+              Turn this on if Nginx, Traefik, Caddy or similar sits in front of Reaper. Reaper will
+              then trust the proxy to say which address each visitor really came from, which keeps
+              sign-in rate limits accurate per visitor instead of lumping everyone together. It is
+              also how Reaper learns that visitors arrive over HTTPS, so it can mark the sign-in
+              cookie HTTPS-only.
             </p>
             <div className="set-control">
               <Switch
@@ -688,8 +683,8 @@ export function GeneralPanel() {
           </div>
         </div>
         <p className="group-hint muted">
-          Off by default, and forwarded headers from anywhere else are always ignored: a
-          stranger can't fake their address to dodge the login lockout.
+          Off by default, and forwarded headers from anywhere else are always ignored: a stranger
+          can't fake their address to dodge the login lockout.
         </p>
       </div>
 
@@ -903,9 +898,9 @@ function BackupPanel() {
           <section className="rules-card">
             <h3>Download a backup</h3>
             <p className="help">
-              One file with everything Reaper decided and everything you set up, plus the keys
-              that unlock your saved credentials. The rebuildable cache is left out to keep the
-              file small.
+              One file with everything Reaper decided and everything you set up, plus the keys that
+              unlock your saved credentials. The rebuildable cache is left out to keep the file
+              small.
             </p>
             <dl className="backup-facts">
               <dt>Inside</dt>
@@ -921,9 +916,8 @@ function BackupPanel() {
             {error && <p className="notice notice-error">The download didn't start: {error}</p>}
             {!data.key_in_backup && (
               <p className="notice notice-warn">
-                Your encryption key is set through the environment, so it is not inside this
-                backup. Keep that key with the file, or a restore cannot read your saved
-                credentials.
+                Your encryption key is set through the environment, so it is not inside this backup.
+                Keep that key with the file, or a restore cannot read your saved credentials.
               </p>
             )}
             <p className="notice notice-warn">
@@ -1035,8 +1029,8 @@ function RestoreCard({ armed }: { armed: boolean }) {
         <h3>Restore from a backup</h3>
         <div className="notice notice-warn restore-armed">
           <span>
-            <strong>A restore is ready.</strong> Restart Reaper's container to finish. Nothing
-            has changed yet.
+            <strong>A restore is ready.</strong> Restart Reaper's container to finish. Nothing has
+            changed yet.
           </span>
           <button type="button" className="link" onClick={() => void cancel()} disabled={busy}>
             Cancel restore
@@ -1054,13 +1048,7 @@ function RestoreCard({ armed }: { armed: boolean }) {
         turn it back on.
       </p>
 
-      <input
-        ref={inputRef}
-        type="file"
-        accept=".reaper"
-        hidden
-        onChange={onPick}
-      />
+      <input ref={inputRef} type="file" accept=".reaper" hidden onChange={onPick} />
 
       {!summary && (
         <div
@@ -1099,7 +1087,12 @@ function RestoreCard({ armed }: { armed: boolean }) {
           <div className="chosen">
             <div className="chosen-head">
               <span className="chosen-file">{fileName}</span>
-              <button type="button" className="link chosen-x" onClick={() => void cancel()} disabled={busy}>
+              <button
+                type="button"
+                className="link chosen-x"
+                onClick={() => void cancel()}
+                disabled={busy}
+              >
                 Remove
               </button>
             </div>
@@ -1245,7 +1238,7 @@ const JOB_META: Record<string, JobMeta> = {
     title: "Full watch-history update",
     desc: 'Re-reads your whole watch history, not just new plays, so imported or backdated views still count and a wiped history is caught before "never watched" turns wrong.',
     offWarning:
-      'With this off, Reaper stops re-reading your full history. Imported or backdated plays won\'t be counted, and a wiped history won\'t be caught, so "never watched" can drift out of date.',
+      "With this off, Reaper stops re-reading your full history. Imported or backdated plays won't be counted, and a wiped history won't be caught, so \"never watched\" can drift out of date.",
   },
 };
 
@@ -1689,18 +1682,16 @@ function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
     () => !savePendingRef.current,
   );
 
-  const jobsById = new Map<string, ScheduledJob>(
-    (schedule.data?.jobs ?? []).map((j) => [j.id, j]),
-  );
+  const jobsById = new Map<string, ScheduledJob>((schedule.data?.jobs ?? []).map((j) => [j.id, j]));
   const scanJob = jobsById.get(SCAN_ID);
 
   return (
     <div className="panel">
       <h2>Jobs</h2>
       <p className="blurb">
-        Everything Reaper runs on a timer lives here, and you can run any of it now without
-        waiting. None of these can delete a thing. A scan just refreshes the review queue; the
-        rest is upkeep.
+        Everything Reaper runs on a timer lives here, and you can run any of it now without waiting.
+        None of these can delete a thing. A scan just refreshes the review queue; the rest is
+        upkeep.
       </p>
 
       <div className="set-rows">
@@ -1821,9 +1812,9 @@ function NotificationsPanel() {
       <h2>Notifications</h2>
       <p className="blurb">
         A Discord webhook is how Reaper warns your household before anything is deleted: while a
-        title is in its grace period it posts a "leaving soon" heads-up here, so someone can
-        watch it or spare it in time. It's optional, but it's the one warning that reaches people
-        who don't watch the Plex "Leaving Soon" shelf.
+        title is in its grace period it posts a "leaving soon" heads-up here, so someone can watch
+        it or spare it in time. It's optional, but it's the one warning that reaches people who
+        don't watch the Plex "Leaving Soon" shelf.
       </p>
 
       {/* Whether the warning channel exists is only worth stating once it has been read:
@@ -1959,19 +1950,20 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
   ) : mismatch ? (
     "The passwords don't match."
   ) : save.error ? (
-    needed
-      ? `The password wasn't set: ${save.error.message}`
-      : `The password wasn't changed: ${save.error.message}`
+    needed ? (
+      `The password wasn't set: ${save.error.message}`
+    ) : (
+      `The password wasn't changed: ${save.error.message}`
+    )
   ) : null;
 
   // Typing clears the "saved" note and any stale failure, so neither lingers over a form the
   // operator is now re-editing.
-  const onEdit =
-    (set: (v: string) => void) => (e: ChangeEvent<HTMLInputElement>) => {
-      setMsg(null);
-      if (save.isError) save.reset();
-      set(e.target.value);
-    };
+  const onEdit = (set: (v: string) => void) => (e: ChangeEvent<HTMLInputElement>) => {
+    setMsg(null);
+    if (save.isError) save.reset();
+    set(e.target.value);
+  };
 
   return (
     <div className="safety-row pw-row">
@@ -2070,8 +2062,8 @@ export function SecurityPanel() {
     <div className="panel">
       <h2>Security</h2>
       <p className="blurb">
-        The admin password. It confirms turning deletion on (in{" "}
-        <strong>Policy → Deletion</strong>), and it's also how you sign in without Plex.
+        The admin password. It confirms turning deletion on (in <strong>Policy → Deletion</strong>),
+        and it's also how you sign in without Plex.
       </p>
 
       <AdminPasswordForm needed={!data.has_password} />

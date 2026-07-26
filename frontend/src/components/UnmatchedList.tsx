@@ -59,8 +59,7 @@ function requesterLabel(names: string[], excludeName?: string): string | null {
 function Row({ u, excludeName }: { u: UnmatchedRequest; excludeName?: string | undefined }) {
   const kind = u.media_type === "movie" ? "Movie" : "Series";
   // Some stored titles already end in their year; don't print it twice.
-  const showYear =
-    u.title != null && u.year != null && !u.title.trim().endsWith(`(${u.year})`);
+  const showYear = u.title != null && u.year != null && !u.title.trim().endsWith(`(${u.year})`);
 
   const meta: string[] = [kind];
   if (u.available_at) meta.push(`arrived ${date(u.available_at)}`);
