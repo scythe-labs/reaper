@@ -1,12 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  lazy,
+  type ReactElement,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { applyAccent } from "./accent";
 import { api, ApiError, type AuthUser, type Snapshot, type Verdict } from "./api";
 import { BackNavProvider, useBackGuard, useBackNav, useModalOpen } from "./backnav";
 import { Login } from "./components/Login";
 import { ModalShell } from "./components/ModalShell";
+import { PolicyIcon, ReapIcon, ReviewIcon, ScalesIcon, SettingsIcon } from "./components/navIcons";
 import { NotInScanPanel } from "./components/NotInScanPanel";
 import type { PolicySectionId } from "./components/PolicyEditor";
 import { ReapConfirm } from "./components/ReapConfirm";
@@ -55,13 +64,64 @@ type View = "review" | "policy" | "reap" | "fairness" | "settings";
  *  show, or nothing. A single slot -- opening either closes the other. */
 type Selection = { kind: "item"; id: number } | { kind: "group"; key: string } | null;
 
-const NAV: { id: View; label: string }[] = [
-  { id: "review", label: "Review" },
-  { id: "policy", label: "Policy" },
-  { id: "reap", label: "Reap" },
-  { id: "fairness", label: "Scales" },
-  { id: "settings", label: "Settings" },
+const NAV: { id: View; label: string; Icon: () => ReactElement }[] = [
+  { id: "review", label: "Review", Icon: ReviewIcon },
+  { id: "policy", label: "Policy", Icon: PolicyIcon },
+  { id: "reap", label: "Reap", Icon: ReapIcon },
+  { id: "fairness", label: "Scales", Icon: ScalesIcon },
+  { id: "settings", label: "Settings", Icon: SettingsIcon },
 ];
+
+/** The section nav. One element in two shapes: a rail sitting on the masthead's own bottom
+ *  border on a wide screen, and the phone's bottom bar under 900px, where the labels give way
+ *  to the icons. The labels are never dropped from the accessibility tree -- the 900px block in
+ *  index.css clips `.view-label` to a 1px box rather than hiding it, so it still names its
+ *  button -- which is why none of these carries an `aria-label` of its own.
+ *
+ *  Reap carries the safety state as a dot. That is the same fact `SafetyBanner` states in words
+ *  directly below, and the banner renders on every view, which is why the dot is `aria-hidden`:
+ *  the sentence is already in the tree, and the decoration would only say it twice. */
+export function SectionNav({ view, onChange }: { view: View; onChange: (next: View) => void }) {
+  const { data, isLoading, isError } = useSafety();
+  // No dot means "not armed", so a failed read must never fall through to no dot (rule 17/36):
+  // it wears the amber "we could not look" mark instead, the tone the banner uses for the same
+  // state. Only the very first fetch draws nothing, because it genuinely knows nothing yet.
+  const safety: "armed" | "unknown" | null = isLoading
+    ? null
+    : isError || !data
+      ? "unknown"
+      : data.destructive_enabled
+        ? "armed"
+        : null;
+
+  return (
+    <nav className="views" aria-label="Sections">
+      {NAV.map((n) => (
+        <button
+          key={n.id}
+          className={view === n.id ? "view-tab active" : "view-tab"}
+          // Reserve the bold (active) width so switching sections never shifts the rail. The
+          // phone bar drops the strut with the labels; see the 900px block in index.css.
+          data-label={n.label}
+          // The view you are on is stated, not just colored.
+          aria-current={view === n.id ? "page" : undefined}
+          onClick={() => onChange(n.id)}
+        >
+          {/* One positioned box around whichever of the two is showing, so the safety dot
+              anchors to the icon on a phone and to the word on a wide screen without being
+              placed twice. */}
+          <span className="view-mark">
+            <n.Icon />
+            <span className="view-label">{n.label}</span>
+            {n.id === "reap" && safety !== null && (
+              <span className={`view-armed view-armed-${safety}`} aria-hidden="true" />
+            )}
+          </span>
+        </button>
+      ))}
+    </nav>
+  );
+}
 
 /** The safety state, stated permanently and without euphemism.
  *
@@ -757,38 +817,27 @@ function Dashboard({ user }: { user: AuthUser }) {
           </div>
         </div>
 
-        <nav className="views" aria-label="Sections">
-          {NAV.map((n) => (
-            <button
-              key={n.id}
-              className={view === n.id ? "tab active" : "tab"}
-              // Reserve the bold (active) width so switching sections never shifts the nav.
-              data-label={n.label}
-              // The view you are on is stated, not just colored.
-              aria-current={view === n.id ? "page" : undefined}
-              onClick={() => {
-                // A plain tab visit must not replay an old cross-page jump -- but clicking the
-                // tab you are ALREADY on is not a visit, and clearing the focus there changes
-                // the key Settings is mounted under, remounting the whole subtree and throwing
-                // away whatever is typed into it (B-23). Arriving from a "Settings → Jobs" link,
-                // typing a name, then clicking Settings in the nav used to silently discard it.
-                if (n.id !== view) {
-                  setPolicyFocus(null);
-                  setSettingsFocus(null);
-                }
-                // Leaving Scales (or re-entering it) closes any open Scales panel, so the
-                // split view never lingers on a tab that has no panel to show. Both the person
-                // panel and the "not in the last scan" panel are cleared, matching the
-                // mutual-exclusion pairing the open handlers use (U-5).
-                setScalesUser(null);
-                setScalesUnmatched(false);
-                changeView(n.id);
-              }}
-            >
-              {n.label}
-            </button>
-          ))}
-        </nav>
+        <SectionNav
+          view={view}
+          onChange={(next) => {
+            // A plain tab visit must not replay an old cross-page jump -- but clicking the
+            // tab you are ALREADY on is not a visit, and clearing the focus there changes
+            // the key Settings is mounted under, remounting the whole subtree and throwing
+            // away whatever is typed into it (B-23). Arriving from a "Settings → Jobs" link,
+            // typing a name, then clicking Settings in the nav used to silently discard it.
+            if (next !== view) {
+              setPolicyFocus(null);
+              setSettingsFocus(null);
+            }
+            // Leaving Scales (or re-entering it) closes any open Scales panel, so the
+            // split view never lingers on a tab that has no panel to show. Both the person
+            // panel and the "not in the last scan" panel are cleared, matching the
+            // mutual-exclusion pairing the open handlers use (U-5).
+            setScalesUser(null);
+            setScalesUnmatched(false);
+            changeView(next);
+          }}
+        />
 
         <UserMenu user={user} />
       </header>

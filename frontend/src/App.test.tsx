@@ -1,19 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The two always-visible bits of the shell that must not go quiet when a request fails.
+// The always-visible bits of the shell that must not go quiet when a request fails.
 //
 // ScanFreshness is the only staleness signal on the review screen, so a failed fetch has to
 // read as a failure rather than as "no scan has run yet" (which is a positive claim, and the
 // wrong one). UserMenu's sign-out failure notice has to survive the focus move that
-// disabling its own button causes.
+// disabling its own button causes. SectionNav keeps its section names when the phone bar drops
+// to icons, and its armed mark must not read as "off" when the safety state is unreadable.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { testQueryClient } from "./test/queryClient";
-import { ScanFreshness, ScanLine, UserMenu } from "./App";
-import { ApiError, type AuthUser, type Snapshot } from "./api";
+import { ScanFreshness, ScanLine, SectionNav, UserMenu } from "./App";
+import { ApiError, type AuthUser, type Safety, type Snapshot } from "./api";
 
-const { apiMock } = vi.hoisted(() => ({ apiMock: { logout: vi.fn() } }));
+const { apiMock } = vi.hoisted(() => ({ apiMock: { logout: vi.fn(), safety: vi.fn() } }));
 
 // Partial mock: ApiError and the types stay real, because ScanFreshness branches on a real
 // instance of it.
@@ -159,5 +160,75 @@ describe("UserMenu", () => {
     await person.keyboard("{Escape}");
     await person.click(screen.getByRole("button", { name: /owner/i }));
     expect(screen.queryByText(/couldn't sign you out/i)).not.toBeInTheDocument();
+  });
+});
+
+const SAFETY: Safety = { destructive_enabled: false, has_password: true, note: null };
+
+function renderNav(view: "review" | "reap" = "review") {
+  return render(
+    <QueryClientProvider client={testQueryClient()}>
+      <SectionNav view={view} onChange={() => {}} />
+    </QueryClientProvider>,
+  );
+}
+
+/** The section nav is the one control that exists at every width, and under 900px it is drawn
+ *  as icons alone. Everything below is about what survives losing the words: the names a screen
+ *  reader still has, and the safety mark that must never read as "off" when it is really
+ *  "couldn't tell". */
+describe("SectionNav", () => {
+  beforeEach(() => {
+    apiMock.safety.mockReset();
+  });
+
+  it("names every section, which is all the phone's icon-only bar has to go on", async () => {
+    apiMock.safety.mockResolvedValue(SAFETY);
+    renderNav();
+    for (const label of ["Review", "Policy", "Reap", "Scales", "Settings"]) {
+      expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+    }
+    await act(async () => {});
+  });
+
+  it("states which section you are on rather than only coloring it", async () => {
+    apiMock.safety.mockResolvedValue(SAFETY);
+    renderNav("reap");
+    expect(screen.getByRole("button", { name: "Reap" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Review" })).not.toHaveAttribute("aria-current");
+    await act(async () => {});
+  });
+
+  it("marks Reap, and only Reap, while deletion is armed", async () => {
+    apiMock.safety.mockResolvedValue({ ...SAFETY, destructive_enabled: true });
+    const { container } = renderNav();
+    await waitFor(() => expect(container.querySelector(".view-armed-armed")).toBeInTheDocument());
+    expect(
+      screen.getByRole("button", { name: "Reap" }).querySelector(".view-armed"),
+    ).toBeInTheDocument();
+    expect(container.querySelectorAll(".view-armed")).toHaveLength(1);
+  });
+
+  it("draws no mark while deletion is off", async () => {
+    apiMock.safety.mockResolvedValue(SAFETY);
+    const { container } = renderNav();
+    await act(async () => {});
+    expect(container.querySelector(".view-armed")).not.toBeInTheDocument();
+  });
+
+  // No mark means "not armed", so falling through to no mark on a failed read would be the
+  // fail-open direction on a safety surface: an unreadable state has to look different from a
+  // known-safe one (rule 17/36), in the same amber the banner uses to say it could not look.
+  it("shows the unknown mark when the safety state cannot be read", async () => {
+    apiMock.safety.mockRejectedValue(new ApiError(500, "boom"));
+    const { container } = renderNav();
+    await waitFor(() => expect(container.querySelector(".view-armed-unknown")).toBeInTheDocument());
+    expect(container.querySelector(".view-armed-armed")).not.toBeInTheDocument();
+  });
+
+  it("draws nothing on the very first fetch, which knows nothing yet", () => {
+    apiMock.safety.mockReturnValue(new Promise(() => {}));
+    const { container } = renderNav();
+    expect(container.querySelector(".view-armed")).not.toBeInTheDocument();
   });
 });
