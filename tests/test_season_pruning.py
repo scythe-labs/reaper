@@ -156,6 +156,31 @@ class TestSequentialProgression:
         # A season with only un-backfilled (NULL-index) rows -> position unknown -> {m, m+1}.
         assert sequential_protections({"alice": {3: None}}, {3: 10}) == {3, 4}
 
+    def test_finishing_a_season_advances_over_a_hole_to_the_next_real_one(self) -> None:
+        """Rule 124: the anchored position must be a season that exists.
+
+        Seasons are not always a contiguous run -- Sonarr never filled one, someone deleted
+        one by hand, or Reaper pruned one on an earlier run. Advancing to `anchor + 1`
+        blindly pinned the hold on a number nothing holds, so the viewer got no protection
+        at all and season 5, the one they are about to watch, stayed prunable. With the
+        default lookahead of 0 nothing else covers it, and each prune widens the hole that
+        hides the next one.
+        """
+        assert sequential_protections({"alice": {3: 10}}, {3: 10}, on_disk={3, 5}) == {5}
+
+    def test_finishing_the_last_season_protects_nothing(self) -> None:
+        """Someone who finished the show is not mid-binge, so the guard holds nothing.
+
+        Unchanged in effect from before the hole fix: `anchor + 1` simply matched no season.
+        Stated as its own case so advancing-over-a-hole cannot quietly grow into protecting
+        the finale of every completed show.
+        """
+        assert sequential_protections({"alice": {3: 10}}, {3: 10}, on_disk={1, 2, 3}) == set()
+
+    def test_an_unknown_position_still_holds_the_anchor_over_a_hole(self) -> None:
+        """The fail-closed branch keeps the anchor and adds the next REAL season, not m+1."""
+        assert sequential_protections({"alice": {3: None}}, {3: 10}, on_disk={3, 7}) == {3, 7}
+
     def test_it_unions_across_viewers(self) -> None:
         # alice is partway on 2 -> {2}; bob finished 5 -> {6}.
         assert sequential_protections({"alice": {2: 3}, "bob": {5: 8}}, {2: 10, 5: 8}) == {2, 6}

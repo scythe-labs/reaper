@@ -141,10 +141,33 @@ class SeriesPrunePlan:
         return not self.conflicts
 
 
+def _next_after(anchor: int, on_disk: Collection[int] | None) -> set[int]:
+    """The season a viewer moves to once they have finished ``anchor``.
+
+    ``anchor + 1`` only when a season actually holds files there. A show's seasons are not
+    always a contiguous run -- Sonarr never filled one, someone deleted one by hand, or
+    Reaper pruned one on an earlier run -- and advancing blindly into a hole pinned the
+    hold on a season number nothing holds, leaving the season the viewer is genuinely
+    about to watch prunable while the guard read as having run. Worse, it compounds: every
+    prune widens the hole that hid the next one. Rule 124 asks for exactly this check --
+    that the anchored position is a member of the set before it counts as cover.
+
+    Empty when nothing follows: a viewer who finished the last season is not mid-binge,
+    which is the same answer the specials branch gives and the same *effective* answer as
+    before (``anchor + 1`` simply matched no season). ``None`` keeps the old arithmetic for
+    a caller that does not know what is on disk.
+    """
+    if on_disk is None:
+        return {anchor + 1}
+    later = [n for n in on_disk if n > anchor]
+    return {min(later)} if later else set()
+
+
 def _anchor_positions(
     anchor: int,
     progress: Mapping[int, int | None],
     season_final_episode: Mapping[int, int | None],
+    on_disk: Collection[int] | None = None,
 ) -> set[int]:
     """What one anchor season protects: the season being watched, or the next one.
 
@@ -163,9 +186,9 @@ def _anchor_positions(
             return set()
         return {SPECIALS_SEASON}
     if final is None or watched is None:
-        return {anchor, anchor + 1}
+        return {anchor} | _next_after(anchor, on_disk)
     if watched >= final:
-        return {anchor + 1}  # finished the anchor, ready for the next
+        return _next_after(anchor, on_disk)  # finished the anchor, ready for the next
     return {anchor}  # still watching it
 
 
@@ -176,6 +199,7 @@ def sequential_protections(
     lookahead: int = SEQUENTIAL_LOOKAHEAD,
     last_play_by_user: Mapping[str, Mapping[int, datetime | None]] | None = None,
     include_specials: bool = False,
+    on_disk: Collection[int] | None = None,
 ) -> set[int]:
     """Seasons to protect because a viewer is part-way through -- episode-precise.
 
@@ -218,7 +242,7 @@ def sequential_protections(
         if times:
             anchors.add(max(times, key=lambda n: times[n]))
         for anchor in anchors:
-            for start in _anchor_positions(anchor, progress, season_final_episode):
+            for start in _anchor_positions(anchor, progress, season_final_episode, on_disk):
                 for offset in range(lookahead + 1):
                     protected.add(start + offset)
     return protected
@@ -292,6 +316,11 @@ def plan_series_prune(
     airing = set(airing_seasons)
 
     ranks = rank_seasons(list(seasons))
+    # Needed by the mid-binge guard below, which must advance a finished viewer to a season
+    # that EXISTS rather than to `anchor + 1` (rule 124), so it is derived before the call
+    # rather than beside the prune loop that also uses it.
+    on_disk = [s for s in seasons if s.has_content]
+    on_disk_numbers = {s.season_number for s in on_disk}
     # The guard's off-switch empties the protected set here, in the one decision function,
     # so no caller can half-apply it. Expiry (in_progress_hold_days) happens upstream in
     # active_progress, which needs the per-viewer timestamps this function never sees.
@@ -304,13 +333,13 @@ def plan_series_prune(
             # Specials can only be pruned with keep_specials off, so that is the only
             # configuration where a viewer part-way through them needs the hold.
             include_specials=not keep_specials,
+            on_disk=on_disk_numbers,
         )
         if keep_in_progress
         else set()
     )
     total_ranked = len(ranks)
 
-    on_disk = [s for s in seasons if s.has_content]
     real_numbers = [s.season_number for s in on_disk if s.season_number != SPECIALS_SEASON]
     first_real = min(real_numbers) if real_numbers else None
 
