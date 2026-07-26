@@ -13,7 +13,10 @@ this codebase has, and it is usually silent.
 
 ## Argument
 
-`$1` selects the lane. Default when absent: `diff`.
+The argument names a lane from the table below, optionally followed by a target — a commit, a
+branch, or paths. Either part may be absent: with no lane, review the `diff` lane; with no
+target, review the working diff. Positional `$1` substitution is deliberately not used here,
+because it does not reliably resolve to the first word of a multi-word argument.
 
 | Lane | Scope |
 | --- | --- |
