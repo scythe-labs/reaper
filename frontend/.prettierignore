@@ -1,13 +1,18 @@
-# Build output and vendored code: nothing here is written by hand, and `public/vendor` is a
-# megabyte of third-party bundle that `npm run predev` copies in fresh anyway.
+# Build output and vendored code: nothing here is written by hand. `public/vendor` is the
+# one entry that is load-bearing today -- prettier does reformat that third-party bundle,
+# which `npm run predev` then overwrites from node_modules on the next run.
 dist
 public/vendor
 
-# Generated assets belong to their generator (rule 68). `icons.generated.json` is emitted by
-# scripts/gen-icons.mjs and hash-checked by src/brand/appIcon.test.ts, so a formatter
-# rewriting it would fail the drift test on a file no human touched.
+# The two below are ownership boundaries, not fixes for a current misformat: checked with
+# --ignore-path /dev/null, prettier leaves both byte-identical as they stand. They are listed
+# so that stays a coincidence nobody has to rely on.
+#
+# Generated assets belong to their generator (rule 68). scripts/gen-icons.mjs emits this with
+# JSON.stringify, and src/brand/appIcon.test.ts hash-checks the assets it describes; if either
+# side's spacing ever moves, the formatter must not be the one that wins.
 src/brand/icons.generated.json
 
-# npm owns the lockfile's layout. Formatting it would put `npm ci` and `format:check` in a
-# fight that one of them has to lose on every dependency bump.
+# npm owns the lockfile's layout. Listing it keeps `npm ci` and `format:check` from ever
+# having a disagreement that one of them has to lose on a dependency bump.
 package-lock.json

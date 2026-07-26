@@ -160,11 +160,16 @@ defeats every other gate on this list.
 **Both halves of the tree are machine-formatted, so never hand-argue style.** `ruff format`
 owns Python, prettier owns `frontend/`, and both run in CI. They share one width: prettier's
 `printWidth` is 100 because that is ruff's `line-length`. Everything else is prettier's
-default, measured against this tree rather than assumed —
-`frontend/prettier.config.mjs` carries the numbers. Write code at whatever shape is clearest,
-run the formatter, and stage what it gives you. If a reformat ever sweeps files you did not
-touch, that means someone skipped the gate; land the sweep as its own commit and add it to
-`.git-blame-ignore-revs`.
+default, measured against this tree rather than assumed — `frontend/prettier.config.mjs`
+carries the numbers. Write code at whatever shape is clearest, run the formatter, and stage
+what it gives you. If a reformat ever sweeps files you did not touch, that means someone
+skipped the gate; land the sweep as its own commit and add it to `.git-blame-ignore-revs`.
+
+**Prettier's territory stops at `frontend/`.** Invoke it as `npm --prefix frontend run format`,
+never `npx prettier` from the repo root: the config lives in `frontend/`, so a root invocation
+finds none, falls back to an 80-column default, and reflows every hand-wrapped line of
+`CLAUDE.md`, `docs/`, and the commented CI workflow. Markdown and YAML here are wrapped by
+hand, where the line breaks carry meaning, and no formatter owns them.
 
 ## Dev environment
 
