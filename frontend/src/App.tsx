@@ -813,7 +813,7 @@ function Dashboard({ user }: { user: AuthUser }) {
           <BrandMark className="brand-mark sm" />
           <div className="brand-text">
             <span className="brand-word">Reaper</span>
-            <span className="muted brand-sub">explainable pruning for Plex</span>
+            <span className="muted brand-sub">Grave decisions, clearly explained</span>
           </div>
         </div>
 

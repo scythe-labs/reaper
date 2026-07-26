@@ -97,7 +97,7 @@ const FETCH_PAGE = 100;
 const TABS: { verdict: Verdict; label: string; blurb: string; empty: string }[] = [
   {
     verdict: "condemn",
-    label: "Condemned Souls",
+    label: "Condemned",
     blurb: "Scored at or above your threshold, with nothing protecting them.",
     empty: "No souls are on the block.",
   },
