@@ -17,8 +17,9 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
+from reaper.api.schemas import GateSettingIn
 from reaper.engine import policy as policy_module
-from reaper.engine.gates import Facts, GateId
+from reaper.engine.gates import POLICY_AUTHORABLE_GATES, Facts, GateId
 from reaper.engine.observation import Absent, Known
 from reaper.engine.policy import (
     DEFAULT_MOVIE_POLICY,
@@ -46,11 +47,8 @@ _BUILDABLE_GATES = set(GATE_TYPES) | {GateId.RATING_FLOOR}
 
 #: Ids the ENGINE emits as gate results without any policy row behind them: the season guard
 #: comes from the season judgment, CUSTOM tags an operator-authored rule's result. ``GATE_TYPES``
-#: has no entry for either, so ``build_gates`` refuses them exactly as it refuses a retired id.
-#: They are excluded here because no default policy carries one and nothing in the UI can add
-#: one -- NOT because the save boundary rejects them. ``GateSettingIn.gate`` is a bare
-#: ``GateId``, so a hand-crafted POST can still store one and take that install's scans
-#: offline; that hole is wider than the retirement shim and is tracked on its own.
+#: has no entry for either, so ``build_gates`` refuses them exactly as it refuses a retired id,
+#: and ``GateSettingIn`` refuses to save one.
 _ENGINE_ONLY_GATES = {GateId.SEASON_PROGRESSION, GateId.CUSTOM}
 
 
@@ -466,8 +464,7 @@ class TestDefaultPolicy:
         load and takes that install's scans offline permanently with no self-heal.
 
         ``OTHERS_WATCHING`` was exactly that gap -- retired before ``UNMANAGED``, refused by
-        ``build_gates``, and missing from the first version of the set. It never shipped in a
-        default policy, but ``GateSettingIn.gate`` is a bare ``GateId`` and accepts one.
+        ``build_gates``, and missing from the first version of the set.
         """
         unbuildable = set(GateId) - _BUILDABLE_GATES - _ENGINE_ONLY_GATES
 
@@ -475,6 +472,37 @@ class TestDefaultPolicy:
             f"not declared retired: {unbuildable - PolicyBody.RETIRED_GATES}; "
             f"declared retired but buildable: {PolicyBody.RETIRED_GATES - unbuildable}"
         )
+
+    def test_the_save_boundary_allows_exactly_what_the_builder_can_build(self) -> None:
+        """Rule 131: the producer and the consumer of this bound read one declaration.
+
+        ``POLICY_AUTHORABLE_GATES`` lives in ``engine.gates`` because ``api.schemas`` is a
+        leaf that must not import the scan stack, so it cannot derive the set from
+        ``GATE_TYPES`` at runtime. This is what keeps the copy honest: add a gate to
+        ``GATE_TYPES`` and forget the authorable list and this fails, rather than the new
+        protection quietly becoming unsavable.
+        """
+        assert POLICY_AUTHORABLE_GATES == _BUILDABLE_GATES, (
+            f"buildable but not authorable: {_BUILDABLE_GATES - POLICY_AUTHORABLE_GATES}; "
+            f"authorable but not buildable: {POLICY_AUTHORABLE_GATES - _BUILDABLE_GATES}"
+        )
+
+    @pytest.mark.parametrize("gate", sorted(set(GateId) - _BUILDABLE_GATES))
+    def test_a_gate_no_policy_row_can_build_is_refused_at_the_save_boundary(
+        self, gate: GateId
+    ) -> None:
+        """The hole the retirement shim did not cover. ``GateSettingIn.gate`` was a bare
+        ``GateId``, so a hand-crafted save could store a retired id OR an engine-only one
+        (``season_progression``, ``custom``); ``build_gates`` then refused it on every
+        subsequent scan and the install went offline with no self-heal.
+
+        Covers both classes at once, so a future retirement or a new engine-only id is
+        refused here the moment it stops being buildable.
+        """
+        with pytest.raises(ValidationError) as caught:
+            GateSettingIn(gate=gate, enabled=True)
+
+        assert gate.value in str(caught.value)
 
     @pytest.mark.parametrize("gate", sorted(PolicyBody.RETIRED_GATES))
     def test_a_retired_gate_cannot_take_an_install_offline(self, gate: GateId) -> None:

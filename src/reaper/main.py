@@ -12,7 +12,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
@@ -296,6 +297,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         openapi_url=None,
     )
     app.state.settings = settings
+
+    @app.exception_handler(RequestValidationError)
+    async def _validation_reason(_: Request, exc: RequestValidationError) -> JSONResponse:
+        """Strip pydantic's ``Value error,`` prefix off a wire-schema refusal.
+
+        The SPA renders ``detail[].msg`` verbatim (``api.ts``'s ``reason``), so a domain
+        refusal raised in a schema validator reached the operator as "Value error, There is
+        no ... protection to switch on" -- internal vocabulary in front of a plain sentence,
+        which rule 21 does not allow. ``routes._to_body`` already strips exactly this for
+        refusals raised inside a route; this is the same removal for the ones FastAPI
+        handles before the route body ever runs, so both paths read alike.
+
+        Shape is otherwise FastAPI's own, so nothing downstream has to change.
+        """
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": [
+                    {
+                        "loc": [str(part) for part in error.get("loc", ())],
+                        "msg": str(error.get("msg", "")).removeprefix("Value error, "),
+                        "type": error.get("type", ""),
+                    }
+                    for error in exc.errors()
+                ]
+            },
+        )
 
     @app.get("/api/health")
     async def health() -> HealthResponse:

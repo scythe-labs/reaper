@@ -1397,6 +1397,28 @@ class TestPolicyPersistence:
         assert body["name"] == "mine"
         assert body["body"]["condemn_at"] == 55
 
+    def test_saving_a_gate_no_policy_can_build_is_refused_in_plain_language(
+        self, client: TestClient
+    ) -> None:
+        """``GateId`` is wider than what a policy row can build: it also carries retired ids
+        and ids the engine emits on its own. Storing one used to succeed and then break every
+        subsequent scan at ``build_gates``, with no self-heal and nothing naming the save that
+        did it. It is refused at the boundary now, and the refusal has to be readable: the SPA
+        renders ``detail[].msg`` verbatim, so pydantic's "Value error," prefix would land in
+        front of the sentence (rule 21).
+        """
+        bad = [*DEFAULT_GATES, {"gate": "season_progression", "enabled": True}]
+
+        response = client.post("/api/policy", json=_policy(gates=bad))
+
+        assert response.status_code == 422
+        message = " ".join(d["msg"] for d in response.json()["detail"])
+        assert "season_progression" in message
+        assert "Value error" not in message
+
+        # And the stored policy is untouched, so the install still scans.
+        assert client.get("/api/policy").status_code == 200
+
     def test_the_still_downloading_toggle_survives_a_save(self, client: TestClient) -> None:
         """protect_incomplete_seasons rides the whole PolicyIn -> PolicyBody -> PolicyIn path.
         A non-default value must load back exactly, or the toggle silently resets on reload."""

@@ -61,7 +61,12 @@ Last verified against the code: 2026-07-26.
    retired earlier and missed by the first version: it never shipped in a default policy, but
    the save boundary accepts any `GateId`, and a body carrying one had no self-heal.
    `tests/test_policy.py` now pins the set against every id `build_gates` cannot construct, so
-   the next retirement cannot forget it. Retiring a gate moves `scoring_hash` and
+   the next retirement cannot forget it. The save boundary was the wider half of the same
+   hole: `GateSettingIn.gate` took any `GateId`, including the two the engine emits with no
+   policy row behind them, so a hand-crafted save could store a gate no scan could build.
+   `POLICY_AUTHORABLE_GATES` (in `engine/gates.py`, pinned against `GATE_TYPES`) is what the
+   boundary now checks, and a wire-schema refusal reaches the operator without pydantic's
+   `Value error,` prefix. Retiring a gate moves `scoring_hash` and
    `evidence_hash` as well as `policy_hash`, so the first Policy page after an upgrade shows
    the simulator's "needs a fresh scan" state with no numbers; that notice now states the
    condition instead of telling the operator they changed something.

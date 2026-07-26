@@ -12,10 +12,10 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from reaper.engine.fields import FieldType, Lane, Op
-from reaper.engine.gates import GateId
+from reaper.engine.gates import POLICY_AUTHORABLE_GATES, GateId
 from reaper.engine.policy import CustomCondemnSpec, GradedKeepSpec, RatingRuleSpec
 from reaper.engine.signals import SignalId, SignalState
 
@@ -573,6 +573,32 @@ class GateSettingIn(BaseModel):
     threshold: int = 0
     secondary: int = 0
     window_days: int = Field(default=365, ge=1)
+
+    @field_validator("gate")
+    @classmethod
+    def _must_be_authorable(cls, v: GateId) -> GateId:
+        """Refuse a gate no policy row can build, at the boundary.
+
+        ``GateId`` is wider than what a policy may carry: it also holds retired ids (so a
+        stored explanation still decodes) and ids the engine emits on its own
+        (``SEASON_PROGRESSION``, ``CUSTOM``). Typing this field as a bare ``GateId`` let a
+        hand-crafted save store one of those, and ``build_gates`` then refused to construct
+        it -- correctly, but on every subsequent scan, so the install went offline with no
+        self-heal and nothing pointing at the save that did it.
+
+        Rejecting here rather than dropping it: this is operator input asking for a
+        protection that does not exist, so the honest answer is to say so. The load path
+        deliberately still only drops ``PolicyBody.RETIRED_GATES``, because silently
+        dropping an id from a *stored* body is safe only for a gate that could never keep a
+        file, and widening that would put a real protection one typo away from vanishing
+        (rule 38/117).
+        """
+        if v not in POLICY_AUTHORABLE_GATES:
+            raise ValueError(
+                f'There is no "{v.value}" protection to switch on. '
+                "Remove it from the policy and save again."
+            )
+        return v
 
 
 class SignalSettingIn(BaseModel):

@@ -78,7 +78,35 @@ class GateId(enum.StrEnum):
     all, whatever else it scores. See MinDormancyGate."""
 
     SEASON_PROGRESSION = "season_progression"
+    """Not authorable in a policy. The engine emits it from the season judgment
+    (``season_scan.guard_result``); no policy row builds it."""
+
     CUSTOM = "custom"
+    """Not authorable in a policy. Tags the result of an operator-authored custom rule,
+    which is configured under ``custom_condemn``, not as a gate."""
+
+
+#: The gate ids a policy body may carry: exactly the ones ``scan_runner.build_gates`` can
+#: construct from a policy row. Every other member of ``GateId`` is either retired (kept only
+#: so a stored explanation still decodes, see ``PolicyBody.RETIRED_GATES``) or emitted by the
+#: engine itself with no policy row behind it.
+#:
+#: Declared here rather than derived from ``GATE_TYPES`` because the save boundary
+#: (``api.schemas.GateSettingIn``) is a leaf that must not import the scan stack. Rule 131
+#: makes the two agree the only way that scales: ``tests/test_policy.py`` pins this set
+#: against ``GATE_TYPES`` plus the explicitly-built ``RATING_FLOOR``, so adding a gate and
+#: forgetting this list fails a test rather than quietly making the gate unauthorable.
+POLICY_AUTHORABLE_GATES: frozenset[GateId] = frozenset(
+    {
+        GateId.WHITELISTED,
+        GateId.STREAMING_NOW,
+        GateId.RATING_FLOOR,
+        GateId.SERVER_POPULARITY,
+        GateId.CURATED_LIST,
+        GateId.DATA_HORIZON,
+        GateId.MIN_DORMANCY,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
