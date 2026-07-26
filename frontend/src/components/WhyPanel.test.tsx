@@ -63,6 +63,7 @@ function detail(
     show_override: null,
     override_effective: null,
     spare_expires_at: null,
+    spare_covers_until: null,
     show_spare_expires_at: null,
     chip: null,
     season_number: 3,
@@ -492,6 +493,44 @@ describe("the verdict headline", () => {
     expect(screen.getByText("Spared by hand")).toBeInTheDocument();
     expect(screen.getByText(/you chose to keep this/i)).toBeInTheDocument();
     expect(screen.queryByText("Sanctuary")).not.toBeInTheDocument();
+  });
+
+  it("never promises a re-judgment a longer show spare makes moot", () => {
+    // A season spared 10 days inside a show spared forever. Reading the season's own clock,
+    // the panel said "10 days left, then Reaper judges it again" -- and Reaper does no such
+    // thing: that spare lapses and the show's goes on keeping the file. The sentence leads
+    // with the outcome and still accounts for the operator's own decision.
+    show(
+      detail(WORKED_ROWS, {
+        verdict: "condemn",
+        override: "spare",
+        override_own: "spare",
+        show_override: "spare",
+        spare_expires_at: new Date(Date.now() + 10 * 86_400_000).toISOString(),
+        spare_covers_until: null,
+      }),
+    );
+    expect(screen.getByText(/the whole show is spared, so this won't be removed/i)).toBeVisible();
+    expect(screen.getByText(/your spare on this season has 10 days left/i)).toBeVisible();
+    expect(screen.queryByText(/then Reaper judges it again/i)).not.toBeInTheDocument();
+  });
+
+  it("still says a spent spare hands the item back when nothing else covers it", () => {
+    // The other side of the same branch: with no show spare, the two fields agree and the
+    // plain expired sentence stands. Losing this would make every expired spare read as
+    // covered, which is the fail-open direction for the sentence (though not for the file).
+    const spent = new Date(Date.now() - 3 * 86_400_000).toISOString();
+    show(
+      detail(WORKED_ROWS, {
+        verdict: "condemn",
+        override: "spare",
+        override_own: "spare",
+        spare_expires_at: spent,
+        spare_covers_until: spent,
+      }),
+    );
+    expect(screen.getByText(/still kept until the next scan judges it again/i)).toBeVisible();
+    expect(screen.queryByText(/the whole show is spared/i)).not.toBeInTheDocument();
   });
 
   it("claims Sanctuary only when a protection actually fired", () => {

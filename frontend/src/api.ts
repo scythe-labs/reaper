@@ -59,6 +59,10 @@ export interface GroupSeasonMark {
    *  is a fate of its own -- still keeping the file until a scan realizes the expiry, so still
    *  green, but dashed rather than solid because it is no longer a live decision. */
   spare_expires_at: string | null;
+  /** When the LAST spare covering this season stops keeping it, or null for a forever one.
+   *  What the square's COLOR reads; `spare_expires_at` above is the spare a control toggles.
+   *  See `Candidate.spare_covers_until`. */
+  spare_covers_until: string | null;
 }
 
 export interface Candidate {
@@ -123,6 +127,15 @@ export interface Candidate {
    *  `override` is "spare": null then means "kept for good", a value drives the "N days left"
    *  countdown. A season with no spare of its own carries the show spare's expiry. */
   spare_expires_at: string | null;
+  /** When the LAST spare covering this item stops keeping it, own or show, whichever runs
+   *  longer. Null for a forever one. The fate question, where `spare_expires_at` above is the
+   *  precedence question: that one names the spare a control toggles and clears (rule 50), this
+   *  one names when the file stops being kept, which is what a color or a sentence about its
+   *  fate must read (rules 49/61). They differ whenever both levels spare an item and the
+   *  higher-precedence spare runs out first: a season spared 10 days inside a show spared
+   *  forever is kept forever. A show set to REAP contributes no cover, so a season spare
+   *  lapsing under one still reads expired. Read only when `override` is "spare". */
+  spare_covers_until: string | null;
   /** When the whole-show spare covering this season stops keeping it (ISO-8601). Read only
    *  when `show_override` is "spare"; null means a forever show-spare. Always null for a movie. */
   show_spare_expires_at: string | null;

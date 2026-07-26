@@ -55,14 +55,15 @@ function season(
     show_override: null,
     override_effective: null,
     spare_expires_at: null,
+    spare_covers_until: null,
     show_spare_expires_at: null,
     chip,
     show_status: showStatus,
     season_number: n,
     group_seasons: [
-      { id: 1, season: 1, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null },
-      { id: 2, season: 2, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null },
-      { id: 3, season: 3, verdict: "abstain", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null },
+      { id: 1, season: 1, verdict: "protect", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
+      { id: 2, season: 2, verdict: "condemn", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
+      { id: 3, season: 3, verdict: "abstain", override: null, override_effective: null, size_bytes: 1024 ** 3, spare_expires_at: null, spare_covers_until: null },
     ],
   };
 }
@@ -448,15 +449,21 @@ describe("the all-seasons list", () => {
       show_override: "reap",
       ...extra,
     });
+    const liveUntil = new Date(Date.now() + 30 * 86_400_000).toISOString();
+    const spentAt = new Date(Date.now() - 3 * 86_400_000).toISOString();
     const live = withShow(51, 1, {
       override: "spare",
       override_own: "spare",
-      spare_expires_at: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+      spare_expires_at: liveUntil,
+      spare_covers_until: liveUntil,
     });
     const spent = withShow(52, 2, {
       override: "spare",
       override_own: "spare",
-      spare_expires_at: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+      // The show above is set to REAP, so it contributes no cover and the spent season spare
+      // is still the last word: this row must go on reading expired.
+      spare_expires_at: spentAt,
+      spare_covers_until: spentAt,
     });
     apiMock.group.mockResolvedValue({
       group_key: "sonarr:5:42",

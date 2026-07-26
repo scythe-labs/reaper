@@ -873,7 +873,7 @@ function SeasonList({
                 override={season.override}
                 effective={season.override_effective}
                 keptWhy={chipWhy(season.chip)}
-                spareExpiresAt={season.spare_expires_at}
+                spareCoversUntil={season.spare_covers_until}
                 // The season list's own class family, exactly like ShowPanel's SeasonPill and
                 // the row's other chips (StatusChip/CondemnedChip). The `.chip` default sits on
                 // a card's meta line and does NOT clamp, so a long held-reap pill overflowed the
@@ -1001,7 +1001,7 @@ const MovieCard = memo(function MovieCard({
             override={item.override}
             effective={item.override_effective}
             keptWhy={chipWhy(item.chip)}
-            spareExpiresAt={item.spare_expires_at}
+            spareCoversUntil={item.spare_covers_until}
           />
         </div>
         {/* The type chip lives on the meta line, not the title row, so a long title
@@ -1200,7 +1200,9 @@ const ShowCard = memo(function ShowCard({
                       .length
                   : 0
               }
-              spareExpiresAt={first.show_spare_expires_at}
+              // A show has no parent to inherit a longer spare from, so its own expiry IS the
+              // covering one -- unlike a season's, which this chip must never read (rule 50).
+              spareCoversUntil={first.show_spare_expires_at}
             />
           </div>
           <div className="card-meta">

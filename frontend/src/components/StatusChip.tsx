@@ -79,7 +79,7 @@ export function OverrideChip({
   effective,
   keptWhy,
   exceptions = 0,
-  spareExpiresAt = null,
+  spareCoversUntil = null,
   family = "chip",
 }: {
   override: Override | null;
@@ -89,10 +89,16 @@ export function OverrideChip({
    *  the chip drops its unqualified "will be kept/removed" claim, since a season inside goes
    *  the other way (U-3). Zero for movies and single seasons. */
   exceptions?: number;
-  /** When a *timed* spare stops keeping this item (ISO), or null for a forever spare. Read only
-   *  on a spare chip: it turns "will be kept" into a countdown ("27 days left"), and then into
-   *  "expired" on the dashed fill once the clock has passed. */
-  spareExpiresAt?: string | null;
+  /** When the LAST spare covering this item stops keeping it (ISO), or null for a forever one.
+   *  Read only on a spare chip: it turns "will be kept" into a countdown ("27 days left"), and
+   *  then into "expired" on the dashed fill once the clock has passed.
+   *
+   *  Named for the covering spare, not the effective one, because this chip states the item's
+   *  FATE and so must outlive precedence: a candidate passes `spare_covers_until`, never
+   *  `spare_expires_at` (which is the spare a control toggles, rule 50, and can run out while
+   *  a show-level spare keeps the file). A whole-show chip passes the show's own expiry, which
+   *  is both -- a show has no parent to inherit a longer spare from. */
+  spareCoversUntil?: string | null;
   family?: ChipFamily;
 }) {
   const classes = OVERRIDE_CLASSES[family];
@@ -108,7 +114,7 @@ export function OverrideChip({
     // by hand". What changes is the clause and the fill -- dashed rather than solid, because
     // this is no longer a live decision. `note` carries the rest into the tooltip; `until` is
     // empty here by construction, so the chip can never promise a keep-until day already gone.
-    const remaining = spareRemaining(spareExpiresAt);
+    const remaining = spareRemaining(spareCoversUntil);
     const suffix = except ?? (remaining.forever ? "will be kept" : remaining.phrase);
     const title = remaining.note || remaining.until;
     return (

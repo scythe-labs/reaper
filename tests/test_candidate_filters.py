@@ -259,6 +259,68 @@ class TestOverrideFilter:
         reaped = client.get("/api/candidates?verdict=condemn&override=reap").json()
         assert _titles(reaped) == set()
 
+    def test_a_row_reports_both_the_spare_it_toggles_and_the_one_that_covers_it(
+        self, client: TestClient
+    ) -> None:
+        """Two spares, two questions, two fields -- and the wire must carry both.
+
+        The season is spared for a day and its show forever. ``spare_expires_at`` is the spare
+        in force by precedence, which is what the row's Spare control toggles and clears (rule
+        50), so it must stay the season's own date. ``spare_covers_until`` is when the file
+        stops being kept, which is what every color and every sentence about its fate reads
+        (rules 49/61), and the show's forever spare outlasts the season's day: it must be null.
+
+        Reading one field for both jobs is what drew "expired" over a file the show keeps and
+        promised a re-judgment that changes nothing. Pinned at the route because the derivation
+        being right (``test_whitelist``) does not mean it is plumbed.
+        """
+        for key, title, days in (
+            ("sonarr:1:5", "Example Mid", 0),  # the whole show, forever
+            ("sonarr:1:5:5", "Season 5", 1),  # the season, for a day
+        ):
+            assert (
+                client.post(
+                    "/api/whitelist",
+                    json={
+                        "media_key": key,
+                        "title": title,
+                        "decision": "spare",
+                        "spare_days": days,
+                    },
+                ).status_code
+                < 300
+            )
+
+        rows = client.get("/api/candidates?verdict=protect&override=spare").json()
+        season = next(r for r in rows if r["media_key"] == "sonarr:1:5:5")
+        assert season["spare_expires_at"] is not None, "the control still toggles the season's own"
+        assert season["spare_covers_until"] is None, "the show's forever spare outlasts it"
+
+    def test_a_season_covers_itself_when_no_show_spare_outlasts_it(
+        self, client: TestClient
+    ) -> None:
+        """The other side of the same branch, and the one that keeps the fix honest.
+
+        The show above this season is set to REAP, so it contributes no cover: when the
+        season's own spare runs out the file really is handed back. Both fields must answer
+        with the season's own date, or every expired season spare would read as covered.
+        """
+        assert (
+            client.post(
+                "/api/whitelist",
+                json={
+                    "media_key": "sonarr:1:5:5",
+                    "title": "Season 5",
+                    "decision": "spare",
+                    "spare_days": 1,
+                },
+            ).status_code
+            < 300
+        )
+        rows = client.get("/api/candidates?verdict=protect&override=spare").json()
+        season = next(r for r in rows if r["media_key"] == "sonarr:1:5:5")
+        assert season["spare_covers_until"] == season["spare_expires_at"] is not None
+
     def test_untouched_means_neither_its_own_key_nor_its_shows(self, client: TestClient) -> None:
         """``override=none`` is the anti-set of every effective decision.
 

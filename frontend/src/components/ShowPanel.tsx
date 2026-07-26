@@ -27,7 +27,7 @@ function SeasonPill({ season }: { season: Candidate }) {
         override={season.override}
         effective={season.override_effective}
         keptWhy={chipWhy(season.chip)}
-        spareExpiresAt={season.spare_expires_at}
+        spareCoversUntil={season.spare_covers_until}
         family="status-chip"
       />
     );

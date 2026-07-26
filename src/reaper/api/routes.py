@@ -493,6 +493,7 @@ async def _group_rollups(
                 override_effective=(True if override == "reap" and verdict == "condemn" else None),
                 size_bytes=size_bytes,
                 spare_expires_at=spare_exp.isoformat() if spare_exp is not None else None,
+                spare_covers_until=_covers_until(media_key, override, decisions, expiries),
             )
             marks[group_key].append(mark)
             if override == "reap" and verdict != "condemn":
@@ -897,6 +898,31 @@ def _season_number(media_key: str) -> int | None:
         return None
 
 
+def _covers_until(
+    media_key: str,
+    override: str | None,
+    decisions: dict[str, str],
+    expiries: dict[str, datetime | None],
+) -> str | None:
+    """ISO of the LAST spare covering this item, for the surfaces that color it (rule 49).
+
+    The twin of the ``spare_expires_at`` each caller computes beside it, and deliberately a
+    different question: that one is the spare in force by precedence, which is what a control
+    toggles (rule 50), while this one is when the item stops being kept, which is what a color
+    or a sentence about its fate must read. They differ exactly when both levels spare an item
+    and the higher-precedence one runs out first. Derived once here, from
+    :func:`whitelist.covering_spare_expiry`, so every emitting site answers it the same way
+    (rule 104).
+
+    ``None`` covers both "forever" and "not spared", as ``spare_expires_at`` already does: read
+    it only alongside a ``"spare"`` decision.
+    """
+    if override != "spare":
+        return None
+    covers = whitelist.covering_spare_expiry(media_key, decisions, expiries)
+    return covers.isoformat() if covers is not None else None
+
+
 def _candidate_out(
     r: Candidate,
     flagged_at: datetime | None = None,
@@ -971,6 +997,7 @@ def _candidate_out(
             reap_is_effective_decoded(r, explanation) if override == "reap" else None
         ),
         spare_expires_at=spare_exp.isoformat() if spare_exp is not None else None,
+        spare_covers_until=_covers_until(r.media_key, override, decisions, expiries),
         show_spare_expires_at=show_spare_exp.isoformat() if show_spare_exp is not None else None,
         chip=_chip(explanation, r.verdict, r.score),
         season_number=_season_number(r.media_key),

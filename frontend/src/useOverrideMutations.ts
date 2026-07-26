@@ -150,6 +150,13 @@ export function useOverrideMutations() {
           spared: decision === "spare",
           override_effective: null,
           spare_expires_at: spareExpiresAt,
+          // The fate field the colors read. Deliberately the spare just set, not the server's
+          // own-or-show maximum: reproducing that here would be the one derivation written
+          // twice (rule 104). It cannot mislead about the color, because a spare set now is
+          // always in the future or forever and so never reads expired; at worst a season
+          // inside a longer show spare prints its own shorter countdown for one fetch, which
+          // understates how long the file is kept -- the cautious side of a keep claim.
+          spare_covers_until: spareExpiresAt,
         }) || patchShowOverride(key, decision, spareExpiresAt);
       settle(patched);
     },
@@ -167,6 +174,9 @@ export function useOverrideMutations() {
           spared: false,
           override_effective: null,
           spare_expires_at: null,
+          // Read only alongside a "spare" decision, and this clears the decision, so nothing
+          // reads it before the refetch resolves what (if anything) still covers the row.
+          spare_covers_until: null,
         }) || patchShowOverride(key, null, null);
       settle(patched);
     },

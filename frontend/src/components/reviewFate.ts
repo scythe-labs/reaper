@@ -36,7 +36,15 @@ export function handFate(item: {
   verdict: Verdict;
   override: Override | null;
   override_effective: boolean | null;
-  /** When the spare in effect stops keeping the item (ISO), null for a forever spare.
+  /** When the LAST spare covering the item stops keeping it (ISO), null for a forever spare.
+   *
+   *  Deliberately NOT `spare_expires_at`, which is the spare in force by precedence -- an
+   *  item's own key beating its show's. Precedence answers which row Reaper is reading; it
+   *  does not answer when the file stops being kept, because when the winning spare expires
+   *  the other one is still on file. A season spared 10 days inside a show spared forever is
+   *  kept forever, and reading the own key alone painted it dashed "expired" over a file
+   *  nothing would remove. The server derives this (`whitelist.covering_spare_expiry`), so
+   *  the strip mark can answer it without being handed its show's decision.
    *
    *  Optional only for the yes/no callers below (`isCondemned`, `showReapReaches`), which
    *  answer the same for both spare states, so threading an expiry through them would be
@@ -51,10 +59,10 @@ export function handFate(item: {
    *  that treats the two spare states differently is therefore a bug the types cannot catch,
    *  and `showReapReaches` was one -- so every consumer of this function's result enumerates
    *  BOTH spare states, or says in its own doc why one answer covers them. */
-  spare_expires_at?: string | null;
+  spare_covers_until?: string | null;
 }): Fate {
   if (item.override === "spare") {
-    return spareRemaining(item.spare_expires_at ?? null).expired ? "spare-expired" : "spare";
+    return spareRemaining(item.spare_covers_until ?? null).expired ? "spare-expired" : "spare";
   }
   if (item.override === "reap") return item.override_effective === false ? "refused" : "reap";
   return item.verdict;
@@ -142,7 +150,7 @@ export function showReapReaches(season: {
   /** Passed through to `handFate`, which needs it to tell an expired spare from a live one.
    *  Both keep the season, so this changes no answer here -- it is declared so a caller
    *  cannot quietly hand over a mark whose expiry the type dropped on the floor. */
-  spare_expires_at?: string | null;
+  spare_covers_until?: string | null;
 }): boolean {
   const fate = handFate(season);
   return fate !== "spare" && fate !== "spare-expired" && fate !== "refused";

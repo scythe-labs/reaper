@@ -285,15 +285,37 @@ function heldReapNote(item: CandidateDetail): string {
 
 /** What a hand spare says: kept by the owner, forever, on a countdown, or expired.
  *
+ *  It reads the spare that COVERS the item, not the one in force by precedence, because every
+ *  sentence here asserts what will happen to the file (rule 61). A season spared ten days inside
+ *  a show spared forever was told "10 days left, then Reaper judges it again", and Reaper does
+ *  no such thing: the season's spare lapses and the show's goes on keeping it.
+ *
  *  The expired arm is the one that has to be careful. The item really is still kept -- only a
  *  scan realizes a spare's clock -- so this must not read as "it will be removed now". It says
  *  what happened and what is still true, in the same words the button's tooltip uses, from the
  *  one derivation (`spareRemaining().note`, rule 104). */
 function spareNote(item: CandidateDetail): string {
-  const remaining = spareRemaining(item.spare_expires_at);
-  if (remaining.forever) return "You chose to keep this, so it won't be removed.";
-  if (remaining.expired) return `${remaining.note}.`;
-  return `You chose to keep this. ${remaining.phrase}, then Reaper judges it again.`;
+  const cover = spareRemaining(item.spare_covers_until);
+  // A show-level spare outlasts this item's own exactly when the two fields disagree: they are
+  // the same date whenever the item's own spare is the one covering it, both being one
+  // `expiries` lookup on the same key (see `whitelist.covering_spare_expiry`). Comparing them
+  // beats re-deriving "is the show's longer" on the client, which would be the second
+  // derivation rule 104 forbids -- and it needs no date math at all.
+  if (item.spare_covers_until !== item.spare_expires_at) {
+    const own = spareRemaining(item.spare_expires_at);
+    const kept = cover.forever
+      ? "The whole show is spared, so this won't be removed."
+      : `The whole show is spared, ${cover.phrase}.`;
+    // Named second, so the outcome leads and the operator's own decision is still accounted
+    // for rather than silently overridden.
+    const mine = own.expired
+      ? "Your spare on this season has run out."
+      : `Your spare on this season has ${own.phrase}.`;
+    return `${kept} ${mine}`;
+  }
+  if (cover.forever) return "You chose to keep this, so it won't be removed.";
+  if (cover.expired) return `${cover.note}.`;
+  return `You chose to keep this. ${cover.phrase}, then Reaper judges it again.`;
 }
 
 /** The verdict headline, and the reason under it. It reads the EFFECTIVE decision, not the

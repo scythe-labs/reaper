@@ -71,6 +71,47 @@ def effective_spare_expiry(
     return None
 
 
+def covering_spare_expiry(
+    media_key: str, decisions: dict[str, str], expiries: dict[str, datetime | None]
+) -> datetime | None:
+    """When the LAST spare covering this item stops keeping it -- own or show, whichever is later.
+
+    The other question to :func:`effective_spare_expiry`'s. That one answers "which spare is
+    Reaper reading right now", which is precedence: an item's own key wins. This one answers
+    "when does this stop being kept", and precedence is the wrong tool for it, because when the
+    winning spare expires the other one is still on file. A season spared ten days inside a show
+    spared forever is kept forever; a season whose own spare has run out under a show spared for
+    another month is kept for that month. Reading the own key alone printed "expired" over a file
+    nothing would remove, and promised "then Reaper judges it again" about a re-judgment the show
+    spare makes moot.
+
+    A spare must be in force at a level for that level to count, which is why the show arm tests
+    ``decisions`` rather than merely finding an expiry: a season spare lapsing under a show set to
+    **reap** really does hand the file back, and must go on reading as expired. ``None`` means the
+    covering spare is forever, exactly as in :func:`effective_spare_expiry`; call this only when
+    :func:`effective_override` already returned ``"spare"``.
+
+    With no spare at either level -- which that contract forbids -- it falls back to the
+    precedence answer rather than to ``None``, so a caller that slips through cannot read
+    "kept forever" out of a key nothing spares.
+    """
+    own_spared = decisions.get(media_key) == "spare"
+    show = show_key(media_key)
+    show_spared = show is not None and decisions.get(show) == "spare"
+    if not own_spared and not show_spared:
+        return effective_spare_expiry(media_key, decisions, expiries)
+    candidates: list[datetime | None] = []
+    if own_spared:
+        candidates.append(expiries.get(media_key))
+    if show_spared:
+        assert show is not None  # show_spared implies it
+        candidates.append(expiries.get(show))
+    # A forever spare at either level outlasts every date, so it wins outright.
+    if any(expires_at is None for expires_at in candidates):
+        return None
+    return max(expires_at for expires_at in candidates if expires_at is not None)
+
+
 async def overrides(session: AsyncSession) -> dict[str, str]:
     """``media_key -> decision`` for every manual override, as of this read.
 
