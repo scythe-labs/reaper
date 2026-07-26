@@ -564,8 +564,10 @@ class DataHorizonGate:
 # An `UnmanagedGate` ("if no *arr owns it, Reaper cannot delete it") lived here, enabled by
 # default in both shipped policies. It could not fire. Reaper builds its candidate list BY
 # asking Sonarr and Radarr what they hold, so a file neither owns can never reach the set this
-# gate filtered: every producer of ``Facts.is_managed`` writes a hardcoded ``Known(True)``
-# (`snapshot`, `season_scan`, `backtest`), and no fourth producer exists. The PROTECT branch
+# gate filtered: every builder of ``Facts.is_managed`` writes a hardcoded ``Known(True)``
+# (`snapshot`, `season_scan`, `backtest`), and the only other place a `Facts` is constructed
+# is `facts_codec.facts_from_dict`, which can thaw only what a builder already wrote. The
+# PROTECT branch
 # and the gate's half of ``verdict.STRUCTURAL_GATES`` were both unreachable while the operator
 # saw a switch, on by default, warned in red if they turned it off (rule 38/117).
 #
@@ -579,8 +581,11 @@ class DataHorizonGate:
 # it is exactly what a re-wiring would need. Bringing the gate back means giving Reaper a scan
 # path that can find media NO *arr manages -- reading Plex directly rather than the *arrs --
 # so that the fact can be something other than True. Gate, builders and tests return together.
-# ``GateId.UNMANAGED`` survives so a stored explanation still decodes, and it stays in
-# ``STRUCTURAL_GATES`` and in `api.routes`' chip phrasing for the same reason.
+# ``GateId.UNMANAGED`` survives so a stored explanation still decodes. Four surfaces read one
+# back, and all four stay for that reason: ``verdict.STRUCTURAL_GATES``, `api.routes`' chip
+# phrasing, `WhyPanel.tsx`'s held-reap line, and `WhyPanel.tsx`'s ``CHECK_COPY`` entry for
+# "which *arr owns this", which was this gate's blocked branch and whose only producer was the
+# code deleted here.
 
 
 # An `OthersWatchingGate` ("the requester ignored it, but other people did not") lived here.

@@ -55,9 +55,15 @@ export const GATE_META: Record<string, GateMeta> = {
   // `unmanaged` ("Only touch what Sonarr or Radarr manages") was here. Its gate is retired
   // (see `engine/gates.py`): Reaper builds its candidate list by asking Sonarr and Radarr
   // what they hold, so a file neither owns can never reach the set that protection filtered,
-  // and the switch did nothing in either position. The policy body no longer carries the
-  // gate, so no row asks for a label — and both readers of this map fall back to a
-  // title-cased id anyway, so a stored explanation naming it still renders.
+  // and the switch did nothing in either position.
+  //
+  // Removing the entry is safe because neither reader can ask for it, NOT because of the
+  // `titleCase` fallback both readers carry. `PolicyEditor` maps the served policy body,
+  // which no longer holds the gate; `PolicySimulator` maps `protected_by`, which needs a
+  // PROTECT result this gate could never return. A stored explanation's protection rows do
+  // not come through here at all: `WhyPanel` renders the backend's own `detail` text. If the
+  // fallback were ever reached it would print a bare "Unmanaged" into operator copy, which
+  // rule 21 does not allow, so it is a backstop and not the reason this is safe.
 };
 
 export const SIGNAL_META: Record<string, { label: string; help: string }> = {

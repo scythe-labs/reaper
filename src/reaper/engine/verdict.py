@@ -12,8 +12,10 @@ tuning.
 The decision, in order:
 
 1. A hand ``reap`` override condemns -- the owner looked and decided -- but never past a
-   hard safety stop (something streaming right now, an unmanaged file) or a protection
-   that could not be *checked*; those still protect. A block that is a deliberate "the
+   hard safety stop (something streaming right now; an unmanaged file too, though that
+   gate is retired and only a stored explanation can still carry one, see
+   :data:`STRUCTURAL_GATES`) or a protection that could not be *checked*; those still
+   protect. A block that is a deliberate "the
    owner should decide" flag (the keep-rule conflict) is the one exception a reap does
    overrule -- the reap IS the decision it asked for (see :func:`block_holds_reap`).
 2. A protection that fired protects.

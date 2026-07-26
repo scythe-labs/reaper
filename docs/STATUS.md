@@ -65,9 +65,9 @@ Last verified against the code: 2026-07-26.
    `evidence_hash` as well as `policy_hash`, so the first Policy page after an upgrade shows
    the simulator's "needs a fresh scan" state with no numbers; that notice now states the
    condition instead of telling the operator they changed something.
-   `GateId.UNMANAGED` and the surfaces
-   that decode a stored explanation (`STRUCTURAL_GATES`, the chip phrase, the why-panel line)
-   stay. `Facts.is_managed` stays too: it is a true observation and the evidence any re-wiring
+   `GateId.UNMANAGED` and the four surfaces
+   that decode a stored explanation (`STRUCTURAL_GATES`, the chip phrase, the why-panel line,
+   and `WhyPanel.tsx`'s `CHECK_COPY` entry for the gate's blocked branch) stay. `Facts.is_managed` stays too: it is a true observation and the evidence any re-wiring
    would need, which is a Plex-first scan path, not a change to the gate.
 3. **The autonomy-grant flow (M3b).** Rows, hash and caps exist; nothing can create a grant.
 4. **The backtest surface (M3c), the lift metric inside it (M3f), and the calibration prior

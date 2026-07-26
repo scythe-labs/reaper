@@ -268,7 +268,9 @@ function isKeepRuleConflict(item: CandidateDetail): boolean {
 
 /** Why a hand reap is still held -- the one thing the engine will not delete past. After the
  *  keep-rule conflict became reap-overridable, a held reap can only be: something playing
- *  right now, a file no app manages, or a protection that genuinely could not be checked. */
+ *  right now, or a protection that genuinely could not be checked. The "no app manages it"
+ *  branch below is a fourth only for a snapshot stored before that gate was retired
+ *  (`engine/gates.py`); no new scan can produce one. */
 function heldReapNote(item: CandidateDetail): string {
   const fired = new Set(item.explanation.protections_fired.map((o) => o.gate));
   if (fired.has("streaming_now")) {

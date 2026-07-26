@@ -1343,8 +1343,9 @@ def _verdict(
     guarantee that is to give them the same function and the same inputs.
 
     A manual ``"reap"`` override forces CONDEMN -- the owner looked and decided -- but never
-    past a hard safety gate (streaming now, unmanaged) or a protection that could not be
-    checked; those still protect. The one block a reap does overrule is a deliberate "the
+    past a hard safety gate (streaming now; also ``unmanaged``, whose gate is retired, so only
+    a stored explanation can still carry one) or a protection that could not be checked; those
+    still protect. The one block a reap does overrule is a deliberate "the
     owner should decide" deferral (the keep-rule conflict), which is exactly the call the
     flag asked the owner to make -- ``reap_held_by_blocks`` tells the two apart. A ``"spare"``
     override arrives as an extra PROTECT result and so is already handled by
