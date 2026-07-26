@@ -166,6 +166,15 @@ failed read. To see console output locally, run
 `npx vitest run <file> --disableConsoleIntercept`; otherwise read the CI job log. Rule 135 is
 the standing answer: a test that has something to tell you must fail, not warn.
 
+**Reading a CI log.** CI is Gitea Actions, so `gh` does not reach it and `tea` has no log
+subcommand. Fetch with tea's token (macOS: `~/Library/Application Support/tea/config.yml`,
+*not* `~/.config/tea/`) against `$B` = `<host>/api/v1/repos/<owner>/reaper`. **The `id` in
+`$B/actions/tasks` is a task id, and `$B/actions/jobs/<id>/logs` wants a job id** — mixing them
+up returns some unrelated job's log, which reads as a real answer and cost one wrong diagnosis
+already. Go through the run (`$B/actions/runs/<run>/jobs`, the run id being the tail of a task's
+`url`) and confirm `head_sha` against `git rev-parse HEAD`. Log timestamps are the runner's
+local time, so they trail the API's UTC by hours; match on the sha, never the clock.
+
 **Both halves of the tree are machine-formatted, so never hand-argue style.** `ruff format`
 owns Python, prettier owns `frontend/`, and both run in CI. They share one width: prettier's
 `printWidth` is 100 because that is ruff's `line-length`. Everything else is prettier's
