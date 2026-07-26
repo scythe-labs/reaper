@@ -113,30 +113,32 @@ export function OverrideControls({
   // mattering the moment there is a real answer. Sparing for 90 days under a Forever default
   // used to leave the button reading "∞ Spared", wrong on both counts.
   //
-  // Three spared states, never two. An EXPIRED spare is its own: the item is genuinely still
-  // kept (the planner, the ledger and the executor all read every spare on file -- only a scan
-  // realizes the expiry), so the button must not go dark as though policy had it back. But it
-  // is no longer a live decision either, so it must not wear the solid fill that means "you
-  // chose this and it holds". It says so instead, and the dashed `.expired` fill below carries
-  // the rest.
+  // Three spared states, never two. An EXPIRED spare is its own, and it is the one state where
+  // this control STOPS BEING A TOGGLE. The other two answer "is this spared" and press to undo
+  // themselves. A spent one has nothing left to undo: what the operator came here to do is keep
+  // the item again, so it reads "Spare" and a press sets a fresh one. It is not a plain
+  // undecided button either -- the dashed dial says a spare ran out right here -- and clearing
+  // the spent row moves into the length menu, which has room to say what it does.
+  //
+  // A count is how much of something is LEFT, so "0d" is not a smaller amount of it; sitting in
+  // a pressed green button it read "your active decision, none of it", which is a contradiction
+  // rather than a state. ("Expired" cannot go there at all: measured in a real browser it
+  // renders "Expir…", since the track -- `--ov-btn-w`, rule 51 -- leaves the label about 47px
+  // once the caret, the padding and the glyph are out.) The word lives in the tooltip, and the
+  // roomy footer below spells the whole state out where there is space.
   const spared = override === "spare";
   const remaining = spareRemaining(spareExpiresAt);
   const counting = spared && !remaining.forever && !remaining.expired;
   const expired = spared && remaining.expired;
-  // On the fixed track the label is the COUNT, in both states that have one -- "27d" live,
-  // "0d" spent. "Expired" was tried there and measured in a real browser: it renders "Expir…",
-  // because the track (`--ov-btn-w`, rule 51) leaves the label about 47px once the caret, the
-  // padding and the glyph are out, and the word wants more. A clipped word is worse than a
-  // count, and the count is the same shape the resting `OverrideMark` already draws for this
-  // state (the dashed dial plus "0d"), so the button and the mark it replaces on hover now
-  // match. The dashed fill and dial say "spent"; the word is in the accessible name and the
-  // tooltip, and the footer below spells it out where there is room.
+  // `pressed` is the toggle question, and an expired spare answers no even though `spared` is
+  // yes: it drives the fill, `aria-pressed` and what a press does, so all three stay in step.
+  const pressed = spared && !expired;
   const spareLabel = !spared
     ? "Spare"
     : expired
       ? roomy
-        ? "Spare expired"
-        : remaining.short
+        ? "Spare again"
+        : "Spare"
       : counting
         ? roomy
           ? `Spared ${remaining.short}`
@@ -145,7 +147,8 @@ export function OverrideControls({
 
   const clickSpare = (e: ReactMouseEvent) => {
     e.stopPropagation();
-    override === "spare" ? onClear() : onSet("spare", defaultDays);
+    // Expired presses through to a NEW spare rather than clearing the spent one (see above).
+    pressed ? onClear() : onSet("spare", defaultDays);
   };
   const clickReap = (e: ReactMouseEvent) => {
     e.stopPropagation();
@@ -167,49 +170,55 @@ export function OverrideControls({
       <span className="ov-split">
         <button
           type="button"
-          className={`ov-btn ov-spare split-main ${override === "spare" ? "active" : ""} ${
+          className={`ov-btn ov-spare split-main ${pressed ? "active" : ""} ${
             expired ? "expired" : ""
           }`}
           disabled={pending}
-          aria-pressed={override === "spare"}
+          // Not pressed once spent, and that is not a lie about the spare still being on file:
+          // this control is a toggle for "is this spared by hand", and a spent spare is one a
+          // press no longer turns off. Its own state is still announced, by the name below.
+          aria-pressed={pressed}
           // On the narrow surfaces the visible label is abbreviated to fit the fixed track, so
-          // name the button in full for a screen reader. The visible text is the count ("87d"
-          // live, "0d" spent), and it stays a substring of that name -- which is what WCAG
-          // 2.5.3 (Label in Name) asks for, and why the spent name carries the count too
-          // rather than reading "Spared, expired" over a button that visibly says "0d".
+          // name the button in full for a screen reader. The visible text always stays a
+          // substring of that name, which is what WCAG 2.5.3 (Label in Name) asks for -- so the
+          // spent name leads with the word "Spare" the button shows, and adds what a press does
+          // rather than reading like a status.
           aria-label={
-            roomy
-              ? undefined
-              : expired
-                ? `Spared ${remaining.short}, expired`
-                : counting
-                  ? `Spared ${remaining.short} left`
-                  : undefined
+            expired
+              ? "Spare again, the last one expired"
+              : roomy || !counting
+                ? undefined
+                : `Spared ${remaining.short} left`
           }
           onClick={clickSpare}
           title={
-            spared
-              ? expired
-                ? remaining.note
-                : counting
-                  ? `${remaining.until}. Click to let Reaper judge it again`
-                  : "Spared. Click to let Reaper judge it again"
-              : defaultDays > 0
-                ? `Spare for ${defaultDays} days. Use the arrow for another length`
-                : "Spare forever. Use the arrow for a set time"
+            expired
+              ? // `expiredOn`, never `note`: this control knows only THIS item's own spare, and
+                // note's "still kept until the next scan judges it again" is false wherever a
+                // show-level spare outlasts it. What is still keeping the file is the covering
+                // spare's question, answered by the row's chip and by KeptByShowNote beside it.
+                `${remaining.expiredOn}. Click to spare it again`
+              : counting
+                ? `${remaining.until}. Click to let Reaper judge it again`
+                : spared
+                  ? "Spared. Click to let Reaper judge it again"
+                  : defaultDays > 0
+                    ? `Spare for ${defaultDays} days. Use the arrow for another length`
+                    : "Spare forever. Use the arrow for a set time"
           }
         >
           {/* `days` only picks the glyph's shape here: ∞ for a forever spare, the clock for a
-              timed one. The count itself rides in the label beside it. */}
-          <SpareGlyph days={spared ? (remaining.forever ? 0 : 1) : defaultDays} />{" "}
+              timed one. A spent spare keeps the clock (dashed, via `.expired`), so the button
+              still says a spare ran out here rather than reading as never-decided. */}
+          <SpareGlyph days={pressed ? (remaining.forever ? 0 : 1) : expired ? 1 : defaultDays} />{" "}
           <span className="ov-label">{spareLabel}</span>
         </button>
         <button
           ref={caretRef}
           type="button"
-          // The caret takes `.expired` too, so the pair reads as one dashed control rather than
-          // a dashed half joined to a solid one.
-          className={`ov-btn ov-spare split-caret ${override === "spare" ? "active" : ""} ${
+          // The caret follows the main button exactly -- same `pressed`, same `.expired` -- so
+          // the pair reads as one control rather than a dashed half joined to a solid one.
+          className={`ov-btn ov-spare split-caret ${pressed ? "active" : ""} ${
             expired ? "expired" : ""
           }`}
           disabled={pending}
@@ -230,6 +239,14 @@ export function OverrideControls({
             setMenuAt(null);
             onSet("spare", spareDays);
           }}
+          onClear={
+            spared
+              ? () => {
+                  setMenuAt(null);
+                  onClear();
+                }
+              : undefined
+          }
           onClose={() => setMenuAt(null)}
         />
       )}
@@ -266,12 +283,16 @@ function SpareMenu({
   defaultDays,
   triggerRef,
   onPick,
+  onClear,
   onClose,
 }: {
   at: MenuPos;
   defaultDays: number;
   triggerRef: RefObject<HTMLButtonElement | null>;
   onPick: (days: number) => void;
+  /** Clears the spare on this control's own level. Omitted when there is nothing to clear,
+   *  which is what keeps the row off an undecided item's menu. */
+  onClear?: (() => void) | undefined;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -392,6 +413,16 @@ function SpareMenu({
           <span className="mi-label">Custom length…</span>
         </button>
       )}
+      {/* Where clearing lives once the main button stops being the toggle. A LIVE spare still
+          clears from that button (press it again), so this row is the spent spare's only way
+          to drop the row without keeping it longer -- and unlike a bare toggle it has room to
+          say what it does. The next scan deletes a spent row anyway
+          (`whitelist.purge_expired_spares`), so this is that, now. */}
+      {onClear && (
+        <button type="button" role="menuitem" className="dur-mi dur-clear" onClick={onClear}>
+          <span className="mi-label">Clear this spare</span>
+        </button>
+      )}
     </div>,
     document.body,
   );
@@ -401,7 +432,10 @@ function SpareMenu({
  *  reaps it -- so the operator knows the season control toggles only the season's OWN
  *  decision, not the show's. Its wording turns on how the season's own decision relates to
  *  the show's: absent (the show decides), the same (clearing this one changes nothing), or
- *  opposite (the season's own decision wins). Renders nothing when no show decision covers it,
+ *  opposite (the season's own decision wins, and clearing it hands the season to the show's).
+ *  Every branch that can be cleared names what clearing does, in both directions -- the
+ *  harmless one and the one that puts a file back on the reap list.
+ *  Renders nothing when no show decision covers it,
  *  so a movie or an untouched-show season shows no note. The glyph tracks the item's REAL
  *  fate, so the note never contradicts the row's chip. */
 export function KeptByShowNote({
@@ -465,8 +499,13 @@ export function KeptByShowNote({
           </>
         )
       ) : (
+        // The one direction where clearing this control puts a file on the block, so it is the
+        // one that must say so. The harmless twin above already spells its consequence out
+        // ("clearing this one won't remove it"); saying nothing here left the note warning the
+        // operator only when the click was safe, which runs the wrong way.
         <>
           You spared this season, so it <b>stays</b> even though the whole show is set to reap.
+          Clear it and it <b>goes back on the list</b>.
         </>
       );
   }
@@ -490,9 +529,14 @@ export function OverrideMark({
 }: {
   override: Override | null;
   /** For a spare, when it stops keeping the item (ISO), or null for forever. A forever spare
-   *  rests as ∞; a timed one rests as the clock plus its days left ("27d"); an expired one
-   *  rests as the DASHED clock and "0d" -- still keeping the file (only a scan realizes the
-   *  clock), but no longer a live decision, the same distinction the button and chip draw. */
+   *  rests as ∞; a timed one rests as the clock plus its days left ("27d"); a SPENT one rests
+   *  as nothing at all.
+   *
+   *  This mark is what a row carrying a decision looks like at rest (rule 46), and a spare
+   *  whose clock has passed is no longer a decision in force at this level: the button it
+   *  hands over to on hover offers a fresh spare rather than an undo, so resting as "0d" over
+   *  it announced a decision the control no longer holds. What is still keeping the file is a
+   *  different question, and the row's chip and score answer it from the covering spare. */
   spareExpiresAt?: string | null;
 }) {
   if (!override) return null;
@@ -504,13 +548,17 @@ export function OverrideMark({
     );
   }
   const remaining = spareRemaining(spareExpiresAt);
+  // Nothing at rest for a spent spare (see the prop's doc): the row shows the plain Spare
+  // affordance on hover, so an icon of a decision the button no longer holds would be the two
+  // disagreeing about the same key.
+  if (remaining.expired) return null;
   return (
-    <span className={`override-mark spare ${remaining.expired ? "expired" : ""}`} aria-hidden="true">
+    <span className="override-mark spare" aria-hidden="true">
       {remaining.forever ? (
         <span className="mk-inf">∞</span>
       ) : (
         <>
-          <ClockGlyph dashed={remaining.expired} />
+          <ClockGlyph />
           <span className="mk-count">{remaining.short}</span>
         </>
       )}

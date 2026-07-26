@@ -10,7 +10,7 @@ directly, not just the service.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -199,6 +199,73 @@ class TestTimedSpare:
         assert (
             whitelist.effective_spare_expiry("radarr:1:7", decisions, {"radarr:1:7": None}) is None
         )
+
+
+class TestCoveringSpareExpiry:
+    """When the item stops being KEPT, which is not the same question as which spare is in
+    force. Precedence picks the row Reaper reads; when that row expires the other one is still
+    on file, so a color or a sentence about the item's fate has to ask this one instead."""
+
+    SHOW = "sonarr:1:88"
+    SEASON = "sonarr:1:88:3"
+
+    def test_a_forever_show_spare_outlasts_a_spent_season_spare(self) -> None:
+        # The case this function exists for: the season's own spare has run out, the show's
+        # never does, so the file is kept forever. Precedence would answer "expired".
+        spent = utcnow() - timedelta(days=2)
+        decisions = {self.SHOW: "spare", self.SEASON: "spare"}
+        expiries: dict[str, datetime | None] = {self.SHOW: None, self.SEASON: spent}
+        assert whitelist.effective_spare_expiry(self.SEASON, decisions, expiries) == spent
+        assert whitelist.covering_spare_expiry(self.SEASON, decisions, expiries) is None
+
+    def test_a_forever_season_spare_wins_over_a_timed_show_spare(self) -> None:
+        # Forever beats every date whichever level holds it.
+        decisions = {self.SHOW: "spare", self.SEASON: "spare"}
+        expiries: dict[str, datetime | None] = {
+            self.SHOW: utcnow() + timedelta(days=10),
+            self.SEASON: None,
+        }
+        assert whitelist.covering_spare_expiry(self.SEASON, decisions, expiries) is None
+
+    def test_it_takes_the_later_of_two_timed_spares_either_way_round(self) -> None:
+        soon = utcnow() + timedelta(days=3)
+        later = utcnow() + timedelta(days=30)
+        decisions = {self.SHOW: "spare", self.SEASON: "spare"}
+        assert (
+            whitelist.covering_spare_expiry(
+                self.SEASON, decisions, {self.SHOW: later, self.SEASON: soon}
+            )
+            == later
+        )
+        # And it is a max, not "prefer the show": the season's own may be the longer one.
+        assert (
+            whitelist.covering_spare_expiry(
+                self.SEASON, decisions, {self.SHOW: soon, self.SEASON: later}
+            )
+            == later
+        )
+
+    def test_a_show_set_to_reap_contributes_no_cover(self) -> None:
+        # The gate that keeps the fix honest. A season spare lapsing under a REAPED show really
+        # does hand the file back, so it must go on reading as expired -- testing the show's
+        # decision, not merely finding an expiry for its key, is what makes that true.
+        spent = utcnow() - timedelta(days=2)
+        decisions = {self.SHOW: "reap", self.SEASON: "spare"}
+        expiries: dict[str, datetime | None] = {self.SHOW: None, self.SEASON: spent}
+        assert whitelist.covering_spare_expiry(self.SEASON, decisions, expiries) == spent
+
+    def test_an_uncovered_key_falls_back_to_the_precedence_answer(self) -> None:
+        # Callers must ask only about spared items. One that slips through must not read
+        # "kept forever" out of a key nothing spares.
+        decisions = {self.SEASON: "reap"}
+        assert whitelist.covering_spare_expiry(self.SEASON, decisions, {}) is None
+        assert whitelist.covering_spare_expiry("radarr:1:7", {}, {}) is None
+
+    def test_a_movie_answers_from_its_own_spare_alone(self) -> None:
+        spent = utcnow() - timedelta(days=1)
+        decisions = {"radarr:1:7": "spare"}
+        expiries: dict[str, datetime | None] = {"radarr:1:7": spent}
+        assert whitelist.covering_spare_expiry("radarr:1:7", decisions, expiries) == spent
 
 
 class TestPurgeExpiredSpares:

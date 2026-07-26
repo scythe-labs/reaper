@@ -58,6 +58,7 @@ function season(n: number, verdict: Verdict, extra: Partial<Candidate> = {}): Ca
     show_override: null,
     override_effective: null,
     spare_expires_at: null,
+    spare_covers_until: null,
     show_spare_expires_at: null,
     chip: null,
     show_status: null,

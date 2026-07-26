@@ -192,6 +192,12 @@ class GroupSeasonMarkOut(BaseModel):
     clock has PASSED is a fate of its own -- still keeping the file until a scan realizes the
     expiry, but no longer a live decision, so it wears the dashed green rather than the solid
     one. None when there is no spare override."""
+    spare_covers_until: str | None = None
+    """When the LAST spare covering this season stops keeping it, ISO-8601, or None for a
+    forever one. What the square's COLOR reads, where ``spare_expires_at`` above is the spare a
+    control on the row toggles. They differ when both levels spare a season and the season's own
+    spare runs out first: kept for as long as the show's says, not expired. See
+    ``CandidateOut.spare_covers_until``. None when there is no spare override."""
 
 
 class CandidateOut(BaseModel):
@@ -271,6 +277,21 @@ class CandidateOut(BaseModel):
     spare is forever -- read it only when ``override`` is ``"spare"``, where ``None`` is "kept
     for good" and a value drives the "N days left" countdown on the card. Mirrors ``override``:
     a season with no spare of its own carries the expiry of the show spare that keeps it."""
+    spare_covers_until: str | None = None
+    """When the LAST spare covering this item stops keeping it -- its own or its show's,
+    whichever runs longer -- ISO-8601, ``None`` for a forever one.
+
+    The fate question, where ``spare_expires_at`` above is the precedence question. That one
+    names the spare Reaper is reading right now, which is what a control toggles and clears
+    (rule 50). This one names when the file stops being kept, which is what a color or a
+    sentence about its fate must say (rules 49/61). They differ whenever both levels spare an
+    item and the higher-precedence spare runs out first: a season spared ten days inside a show
+    spared forever is kept forever, and reading the own key alone drew "expired" over a file
+    nothing would remove.
+
+    A spare must be in force at a level for that level to count, so a season spare lapsing under
+    a show set to REAP still reads as expired -- there, the file really is handed back. Read only
+    when ``override`` is ``"spare"``."""
     show_spare_expires_at: str | None = None
     """When the whole-show spare covering this season stops keeping it, ISO-8601, or ``None``
     for a forever show-spare (or none at all). The show-level twin of ``spare_expires_at``,

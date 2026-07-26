@@ -5106,12 +5106,6 @@ button.sm {
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
-/* A spare whose clock has passed rests as the DASHED dial (ClockGlyph's `dashed`) plus a real
-   "0d", held back a touch so it reads as spent beside a live countdown's full-strength clock.
-   Same green: the file is still kept until a scan realizes the expiry. */
-.override-mark.expired {
-  opacity: 0.8;
-}
 .override-mark .scythe {
   width: 16px;
   height: 16px;
@@ -5425,6 +5419,19 @@ button.sm {
   height: 1px;
   background: var(--border);
   margin: 0.3rem 0.2rem;
+}
+/* Clearing the spare, under the lengths and set apart from them: every row above KEEPS the
+   item, this one stops keeping it, so it must not read as one more length. Quiet by default --
+   it is the rarely-wanted action, not the destructive one (a clear only lets Reaper judge the
+   item again; nothing is removed without a staged run) -- and it takes the same hover as its
+   siblings. It is the only way to clear a SPENT spare, whose main button now offers a fresh
+   one instead of an undo. */
+.dur-clear {
+  border-top: 1px solid var(--border);
+  margin-top: 0.25rem;
+  padding-top: 0.5rem;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  color: var(--muted);
 }
 .dur-custom {
   display: flex;
