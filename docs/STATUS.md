@@ -57,7 +57,11 @@ Last verified against the code: 2026-07-26.
    `UnmanagedGate` was retired under rule 38/117 (it shipped enabled by default and could not
    fire). `PolicyBody.RETIRED_GATES` drops it from a stored body on load, which is what keeps
    existing installs scanning — every one of the 12 policy rows on the test server named it,
-   and `build_gates` refuses a gate it cannot build. `GateId.UNMANAGED` and the three surfaces
+   and `build_gates` refuses a gate it cannot build. The set covers `OTHERS_WATCHING` too,
+   retired earlier and missed by the first version: it never shipped in a default policy, but
+   the save boundary accepts any `GateId`, and a body carrying one had no self-heal.
+   `tests/test_policy.py` now pins the set against every id `build_gates` cannot construct, so
+   the next retirement cannot forget it. `GateId.UNMANAGED` and the surfaces
    that decode a stored explanation (`STRUCTURAL_GATES`, the chip phrase, the why-panel line)
    stay. `Facts.is_managed` stays too: it is a true observation and the evidence any re-wiring
    would need, which is a Plex-first scan path, not a change to the gate.

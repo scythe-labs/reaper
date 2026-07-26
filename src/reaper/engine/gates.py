@@ -66,7 +66,12 @@ class GateId(enum.StrEnum):
 
     CURATED_LIST = "curated_list"
     DATA_HORIZON = "data_horizon"
+
     UNMANAGED = "unmanaged"
+    """Retired: the candidate set is built by asking Sonarr and Radarr what they hold, so
+    every fact builder wrote ``Known(True)`` and the gate could not fire (see the note where
+    UnmanagedGate used to be). Kept only so an explanation stored while it was built still
+    decodes; ``scan_runner.GATE_TYPES`` refuses to build it."""
 
     MIN_DORMANCY = "min_dormancy"
     """The most important gate. Nothing under the dormancy floor may be deleted at

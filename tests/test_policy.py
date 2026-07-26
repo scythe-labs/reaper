@@ -37,7 +37,21 @@ from reaper.engine.policy import (
 from reaper.engine.signals import Score, SignalConfig, SignalId, score
 from reaper.engine.verdict import decide_verdict
 from reaper.ratings import RatingSource
-from reaper.services.scan_runner import GATE_TYPES
+from reaper.services.scan_runner import GATE_TYPES, build_gates
+
+#: Every gate ``build_gates`` can construct from a policy row. RATING_FLOOR is not in
+#: ``GATE_TYPES`` because it takes a set of per-source bars rather than one GateConfig, so
+#: ``build_gates`` builds it explicitly -- it is buildable, just not by lookup.
+_BUILDABLE_GATES = set(GATE_TYPES) | {GateId.RATING_FLOOR}
+
+#: Ids the ENGINE emits as gate results without any policy row behind them: the season guard
+#: comes from the season judgment, CUSTOM tags an operator-authored rule's result. ``GATE_TYPES``
+#: has no entry for either, so ``build_gates`` refuses them exactly as it refuses a retired id.
+#: They are excluded here because no default policy carries one and nothing in the UI can add
+#: one -- NOT because the save boundary rejects them. ``GateSettingIn.gate`` is a bare
+#: ``GateId``, so a hand-crafted POST can still store one and take that install's scans
+#: offline; that hole is wider than the retirement shim and is tracked on its own.
+_ENGINE_ONLY_GATES = {GateId.SEASON_PROGRESSION, GateId.CUSTOM}
 
 
 def _policy(**overrides: object) -> PolicyBody:
@@ -432,31 +446,48 @@ class TestDefaultPolicy:
         assert GateId.MIN_DORMANCY in enabled
 
     def test_no_shipped_protection_is_one_that_cannot_fire(self) -> None:
-        """Rule 38/117, as a standing check rather than a one-off. Every gate the default
-        turns on must be one ``build_gates`` can actually construct, or the operator is shown
-        a switch that does nothing (and, since ``build_gates`` refuses an unknown gate rather
-        than skipping it, a scan that will not run)."""
-        buildable = set(GATE_TYPES) | {GateId.RATING_FLOOR}  # RATING_FLOOR is built explicitly
+        """Rule 38/117, as a standing check rather than a one-off. Every gate a default
+        policy carries must be one ``build_gates`` can actually construct, or the operator is
+        shown a switch that does nothing (and, since ``build_gates`` refuses an unknown gate
+        rather than skipping it, a scan that will not run).
 
+        Deliberately NOT filtered to ``g.enabled``. A disabled unbuildable gate still renders
+        a row in the editor, and flipping it on is what takes the scan offline -- so the
+        moment it ships in a default body the damage is one click away, not zero clicks.
+        """
         for body in (DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY):
-            enabled = {g.gate for g in body.gates if g.enabled}
-            assert enabled <= buildable, f"{body.media_type}: {enabled - buildable}"
+            shipped = {g.gate for g in body.gates}
+            assert shipped <= _BUILDABLE_GATES, f"{body.media_type}: {shipped - _BUILDABLE_GATES}"
 
-    def test_a_stored_policy_naming_a_retired_gate_still_loads(self) -> None:
-        """The upgrade path. UNMANAGED shipped enabled by default for the whole of Reaper's
-        life before it was retired, so essentially every stored body names it. Left in place
-        it would reach ``build_gates``, which refuses a gate it cannot build -- so an upgrade
-        would take every install's scan offline. The body is cleaned on load instead."""
+    def test_every_unbuildable_gate_id_is_declared_retired(self) -> None:
+        """The drift guard rule 103 asks for, and the one that would have caught ``rule 72``
+        here. ``RETIRED_GATES`` is a hardcoded set mirroring a schema set: any ``GateId``
+        ``build_gates`` cannot construct MUST be listed, or a stored body naming it survives
+        load and takes that install's scans offline permanently with no self-heal.
+
+        ``OTHERS_WATCHING`` was exactly that gap -- retired before ``UNMANAGED``, refused by
+        ``build_gates``, and missing from the first version of the set. It never shipped in a
+        default policy, but ``GateSettingIn.gate`` is a bare ``GateId`` and accepts one.
+        """
+        unbuildable = set(GateId) - _BUILDABLE_GATES - _ENGINE_ONLY_GATES
+
+        assert unbuildable == PolicyBody.RETIRED_GATES, (
+            f"not declared retired: {unbuildable - PolicyBody.RETIRED_GATES}; "
+            f"declared retired but buildable: {PolicyBody.RETIRED_GATES - unbuildable}"
+        )
+
+    @pytest.mark.parametrize("gate", sorted(PolicyBody.RETIRED_GATES))
+    def test_a_retired_gate_cannot_take_an_install_offline(self, gate: GateId) -> None:
+        """Every retired id, not just the one whose retirement prompted the shim. A stored
+        body naming one loads clean and its gates all build, so the scan still runs."""
         stored = DEFAULT_MOVIE_POLICY.model_dump(mode="json")
-        stored["gates"] = [
-            {"gate": "unmanaged", "enabled": True},
-            *stored["gates"],
-        ]
+        stored["gates"] = [{"gate": gate.value, "enabled": True}, *stored["gates"]]
 
         loaded = PolicyBody.model_validate(stored)
 
-        assert GateId.UNMANAGED not in {g.gate for g in loaded.gates}
+        assert gate not in {g.gate for g in loaded.gates}
         assert loaded.policy_hash() == DEFAULT_MOVIE_POLICY.policy_hash()
+        build_gates(loaded)  # would raise ScanConfigError if the drop had not happened
 
     def test_a_retired_gate_cannot_be_reintroduced_by_hand(self) -> None:
         """Not only the stored path: a body built in code cannot carry one either, so nothing

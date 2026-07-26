@@ -343,7 +343,18 @@ class PolicyBody(Frozen):
     #: one. Retiring a gate without this leaves every stored policy naming a protection
     #: ``scan_runner.build_gates`` has no implementation for, and it refuses to scan rather
     #: than silently skip -- correctly, which is exactly why the body has to be cleaned first.
-    RETIRED_GATES: ClassVar[frozenset[GateId]] = frozenset({GateId.UNMANAGED})
+    #:
+    #: **Every** retired id belongs here, not just the one whose retirement prompted the
+    #: mechanism. ``OTHERS_WATCHING`` was retired earlier and was left out of the first
+    #: version of this set: it never shipped in a default policy, so nothing in the UI could
+    #: store one, but ``GateSettingIn.gate`` is typed as a bare ``GateId`` and accepts it, and
+    #: a body that got one would take that install's scans offline permanently with no
+    #: self-heal -- the exact failure this set exists to prevent (rule 72).
+    #: ``tests/test_policy.py`` pins the membership so a future retirement cannot forget it
+    #: (rule 103).
+    RETIRED_GATES: ClassVar[frozenset[GateId]] = frozenset(
+        {GateId.UNMANAGED, GateId.OTHERS_WATCHING}
+    )
 
     @model_validator(mode="after")
     def _drop_retired_gates(self) -> Self:
