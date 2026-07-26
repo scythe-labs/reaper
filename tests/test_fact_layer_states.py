@@ -20,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from structlog.testing import capture_logs
 
+from reaper.engine import identity
 from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.services import lists
@@ -86,6 +87,37 @@ class TestARatingWeCouldNotLookUpIsUnknown:
         facts = _facts(_raw(imdb_id="tt0000001"), imdb={})
 
         assert isinstance(facts.imdb_rating_tenths, Absent)
+
+
+class TestNobodyIsWatchingIsNotSaidOfAnItemNobodyChecked:
+    """``is_streaming_now`` is one of the two structural gates, and it is matched by rating
+    key. An item with no key has no key to match, so the check never ran -- but it recorded
+    a definite ``Known(False)``, three lines under a comment reading "Never assume False,
+    that is how a tool deletes a file somebody is watching" (rules 93 and 7/24). Every
+    sibling fact takes ``Unknown`` on the same condition, and so does the season builder's
+    twin (``season_scan``, rule 72)."""
+
+    def test_an_unmatched_movie_does_not_claim_nobody_is_watching(self) -> None:
+        facts = _facts(_raw(plex_rating_key=None))
+
+        assert isinstance(facts.is_streaming_now, Unknown)
+
+    def test_an_ambiguous_match_is_the_one_that_stings(self) -> None:
+        """Plex DOES hold this title, in two copies, so somebody can be streaming it right
+        now. Reaper refused to guess which copy's history to read, which is correct, and then
+        asserted nobody was watching, which is not. The reason names the real situation."""
+        facts = _facts(_raw(plex_rating_key=None, match_status=identity.MatchStatus.AMBIGUOUS))
+
+        streaming = facts.is_streaming_now
+        assert isinstance(streaming, Unknown)
+        assert "more than one Plex item" in streaming.reason
+
+    def test_a_matched_movie_nobody_is_streaming_is_still_a_definite_no(self) -> None:
+        """The control. A genuine "we looked and nobody is watching" must stay ``Known``, or
+        the veto would block every item and nothing could ever be reaped."""
+        facts = _facts(_raw(plex_rating_key=10))
+
+        assert facts.is_streaming_now == Known(value=False, source="tautulli")
 
 
 class TestAKeepListRowIsFoundByEveryIdTheMovieCarries:

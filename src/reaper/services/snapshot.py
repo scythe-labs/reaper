@@ -358,10 +358,19 @@ def build_facts(
         # A merged bind covers several listings of one file; someone streaming ANY of
         # them is streaming this very file, so the veto checks every key in the group.
         watch_keys = item.merged_rating_keys or ((rating_key,) if rating_key else ())
-        streaming = Known(
-            value=any(key in context.active_rating_keys for key in watch_keys),
-            source="tautulli",
-        )
+        if not watch_keys:
+            # No key to match a session against, so this was never checked. It used to land
+            # as a definite Known(False) -- "nobody is watching this" -- on the very items
+            # Reaper knows least about, and AMBIGUOUS is the case that stings: Plex does hold
+            # the title, in two copies, someone can be streaming it right now, and the fact
+            # asserted otherwise. Every sibling fact above takes Unknown on the same
+            # condition, and the season builder's twin already does (rules 93 and 72).
+            streaming = Unknown(reason=no_key_reason, source="plex")
+        else:
+            streaming = Known(
+                value=any(key in context.active_rating_keys for key in watch_keys),
+                source="tautulli",
+            )
 
     return Facts(
         title=item.title,
