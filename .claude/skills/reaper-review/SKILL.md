@@ -159,6 +159,75 @@ mechanism: return the corrected variant, or withdraw the finding to `references/
 
 Commit each fix as its own story, with the test that pins it, per `CLAUDE.md`.
 
+## Opening issues
+
+A confirmed finding that is not fixed in the same session goes to the tracker, so a session
+that dies does not take the work with it. Gitea, via `tea` — the remote is not GitHub, so `gh`
+and any `--comment` flow do not reach it.
+
+**One issue per fix, not per finding.** This is `CLAUDE.md`'s commit rule pointed at the
+tracker: one commit tells one story, so one issue describes one commit. If two findings would
+be closed by the same edit, they are one issue.
+
+| Findings | Grouping |
+| --- | --- |
+| tier 1–2 | one issue each — each earns its own commit, and each is individually worth doing |
+| tier 3–4 | grouped by shared root cause, or by shared file and theme; the body lists each as a checklist item |
+| twins under rule 72 (the same defect in sibling functions) | always **one** issue, because the rule requires them fixed together |
+
+**Only CONFIRMED findings.** A PLAUSIBLE or unverified one stays in `.claude/review-findings/`
+until something confirms it. An issue asserts a defect exists; do not assert what a verifier
+declined to.
+
+**Cap at 8 issues per run.** Past that, the remaining confirmed findings go into a single
+tracking issue that lists them all, so nothing is lost and the tracker is not flooded. Say in
+the run summary how many were rolled up — a cap that hides what it dropped reads as "that was
+everything."
+
+**Check for duplicates first** (`tea issue list --state all`). Re-running a review must not
+re-file what is already open. Each body carries a stable fingerprint line to match on:
+
+```
+finding: <path>:<symbol> — <short-slug>
+```
+
+Match on that, never on the line number, which drifts with every edit above it.
+
+Create with the reviewed commit pinned, so a finding read against a stale tree is detectable:
+
+```
+tea issue create --title "<outcome, in plain language>" \
+  --description "<body>" --referenced-version "$(git rev-parse --short HEAD)"
+```
+
+The title says what the operator loses, not where the code is wrong: *"A play made after
+approval no longer rescues the file"* beats *"unreadable history body coerced to empty list."*
+Rule 21 governs the title; the body is for engineers and may use the internal vocabulary.
+
+**Keep the body short — it is read to decide what to do, not to relive the review.** Five
+short sections, in this order and no others. If a section needs more than three sentences, the
+finding is really two issues.
+
+```
+**What breaks.** One or two sentences: the trigger, and what the operator loses.
+
+**Where.** `path/to/file.py:123` — `function_name`
+
+**Why it happens.** Two or three sentences of mechanism. Cite the rule number if one applies.
+
+**Fix.** What to change, concretely. One or two sentences.
+
+finding: <path>:<symbol> — <short-slug>
+```
+
+No transcript of the verification, no quoted diffs, no reasoning chain — those live in
+`.claude/review-findings/`, and the issue can say "verifier notes in the run artifact" if
+anyone needs them. An issue nobody finishes reading is an issue nobody acts on.
+
+**Always show the planned issue list and get an explicit go-ahead before creating any.** Filing
+is outward-facing and hard to undo quietly, and the grouping is a judgment the operator may
+want to change.
+
 ## Do not
 
 - Re-review stable code that the diff did not touch, on a `diff` lane.
