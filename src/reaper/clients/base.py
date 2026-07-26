@@ -176,6 +176,19 @@ class GuardedTransport(httpx2.AsyncBaseTransport):
         self._safety = safety
         self._non_media_mutations = non_media_mutations
 
+    async def aclose(self) -> None:
+        """Close the transport this one wraps.
+
+        ``AsyncBaseTransport.aclose`` is a no-op, and inheriting it made every
+        ``BaseClient.aclose()`` a no-op too: the call reached ``AsyncClient.aclose()``, which
+        closes exactly one thing -- its transport -- which was this guard. The real
+        ``AsyncHTTPTransport`` and its connection pool were never told, so nothing but GC
+        reclaimed the sockets, and the ownership discipline rule 34 exists for released
+        nothing however carefully ``scan_runner`` entered each client. ``PlexClient.aclose``
+        is the twin that already did this, and names the same hazard.
+        """
+        await self._inner.aclose()
+
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         if request.method.upper() not in SAFE_METHODS:
             path = request.url.path

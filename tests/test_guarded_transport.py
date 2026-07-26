@@ -16,7 +16,7 @@ import pytest
 import respx
 
 from reaper.clients.arr import RadarrClient, SonarrClient
-from reaper.clients.base import IntegrationError, SafetyViolationError
+from reaper.clients.base import GuardedTransport, IntegrationError, SafetyViolationError
 from reaper.clients.tautulli import READ_COMMANDS, TautulliClient
 from reaper.config import RuntimeSafety
 
@@ -106,6 +106,46 @@ class TestTlsVerificationReachesTheTransport:
         async with TautulliClient("https://tautulli.test", "k", safety=READ_ONLY):
             pass
         assert seen == [True]
+
+
+class TestClosingAClientReleasesItsSockets:
+    """Rule 34's whole point is that someone owns the close. ``scan_runner`` enters or
+    push-callbacks every Radarr, Sonarr, Tautulli and Seerr client it builds -- and every one
+    of those closes released nothing, because ``AsyncClient.aclose()`` closes exactly one
+    thing (its transport), that transport was the guard, and ``AsyncBaseTransport.aclose`` is
+    a no-op the guard inherited. The real connection pool was never told."""
+
+    async def test_the_wrapped_transport_is_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        closed: list[bool] = []
+        real = httpx2.AsyncHTTPTransport
+
+        class WatchedTransport(real):  # type: ignore[misc,valid-type]
+            async def aclose(self) -> None:
+                closed.append(True)
+                await super().aclose()
+
+        monkeypatch.setattr("reaper.clients.base.httpx2.AsyncHTTPTransport", WatchedTransport)
+
+        async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY):
+            pass
+
+        assert closed == [True]
+
+    async def test_the_guard_delegates_rather_than_inheriting_the_no_op(self) -> None:
+        """Pinned on the guard directly too. The client-level test above would still pass if
+        someone gave ``BaseClient`` its own second close path, and the defect would be back
+        for anyone constructing a ``GuardedTransport`` some other way."""
+        closed: list[bool] = []
+
+        class WatchedTransport(httpx2.AsyncHTTPTransport):
+            async def aclose(self) -> None:
+                closed.append(True)
+                await super().aclose()
+
+        inner = WatchedTransport()
+        await GuardedTransport(inner, READ_ONLY).aclose()
+
+        assert closed == [True]
 
 
 class TestTypedMutationMethods:
