@@ -9,6 +9,7 @@ themselves at random, or (far worse) silently survive an edit the human never sa
 from __future__ import annotations
 
 import itertools
+import json
 from collections.abc import Sequence
 
 import pytest
@@ -16,12 +17,14 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import ValidationError
 
+from reaper.engine import policy as policy_module
 from reaper.engine.gates import Facts, GateId
 from reaper.engine.observation import Absent, Known
 from reaper.engine.policy import (
     DEFAULT_MOVIE_POLICY,
     DEFAULT_TV_POLICY,
     SCHEMA_VERSION,
+    SCORER_VERSION,
     GateSetting,
     PolicyBody,
     ProfileSettings,
@@ -196,14 +199,71 @@ class TestSimulatorHashesCoverOnlyBehavior:
         # It is still part of the body an approval is bound to (rule 113).
         assert old.policy_hash() != current.policy_hash()
 
-    def test_a_scorer_bump_invalidates_stored_scores_but_replays_exactly(self) -> None:
-        # The one version field that IS behavior: a new scorer means the stored scores are
-        # not comparable (scoring_hash must move), but a replay runs the new scorer over the
-        # frozen Facts, so the evidence is still good (evidence_hash must not).
-        a = _policy(scorer_version=1)
-        b = _policy(scorer_version=2)
-        assert a.scoring_hash() != b.scoring_hash()
-        assert a.evidence_hash() == b.evidence_hash()
+    def test_a_scorer_bump_invalidates_stored_scores_but_replays_exactly(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The one version field that IS behavior: a new scorer means the stored scores are
+        not comparable (scoring_hash must move), but a replay runs the new scorer over the
+        frozen Facts, so the evidence is still good (evidence_hash must not).
+
+        Driven by bumping the CONSTANT rather than by building two bodies that disagree
+        about it, because ``_pin_to_the_running_scorer`` makes the second impossible: the
+        field tracks the running code, so a body claiming the superseded scorer cannot
+        exist. Bumping the constant is also the thing that really happens.
+        """
+        before_scoring = _policy().scoring_hash()
+        before_evidence = _policy().evidence_hash()
+
+        monkeypatch.setattr(policy_module, "SCORER_VERSION", SCORER_VERSION + 1)
+
+        assert _policy().scoring_hash() != before_scoring
+        assert _policy().evidence_hash() == before_evidence
+
+    def test_a_stored_scorer_pin_does_not_outlive_the_scorer(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """What binds an approval is ``policy_hash``, and it has to be able to MOVE when the
+        scorer does. The field took its value from the stored JSON, so a row written under
+        scorer N still read back as N after the constant was bumped: the hash was
+        byte-identical either side, ``live_policy_hash`` still matched a plan approved under
+        the superseded scorer, and the executor deleted on its numbers with no re-scan
+        refusal (rule 113). Two snapshots scored by different scorers hashed the same too.
+        """
+        stored = _policy().model_dump(mode="json")
+        assert stored["scorer_version"] == SCORER_VERSION
+        approved_under = PolicyBody.model_validate(stored).policy_hash()
+
+        monkeypatch.setattr(policy_module, "SCORER_VERSION", SCORER_VERSION + 1)
+
+        # The same stored row, read by the newer code. It must not hash to the approval.
+        reloaded = PolicyBody.model_validate(stored)
+        assert reloaded.scorer_version == SCORER_VERSION + 1
+        assert reloaded.policy_hash() != approved_under
+
+    def test_the_pin_holds_however_the_body_was_built(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A pin that held for a body loaded from the database and not for one built in code
+        would be the half-fix, and it is the easy one to write: a frozen model's top-level
+        "after" validator is silently ignored when it returns a copy rather than mutating
+        through ``object.__setattr__``, and only on the ``__init__`` path."""
+        stored = _policy().model_dump(mode="json")
+        monkeypatch.setattr(policy_module, "SCORER_VERSION", SCORER_VERSION + 1)
+
+        assert PolicyBody.model_validate(stored).scorer_version == SCORER_VERSION + 1
+        assert PolicyBody(**stored).scorer_version == SCORER_VERSION + 1
+        assert (
+            PolicyBody.model_validate_json(json.dumps(stored)).scorer_version == SCORER_VERSION + 1
+        )
+
+    def test_a_body_from_a_newer_reaper_is_still_refused(self) -> None:
+        """The pin overwrites what the row said, so the bound that refuses a body this code
+        cannot interpret has to keep running first, not be papered over by it."""
+        stored = _policy().model_dump(mode="json")
+        stored["scorer_version"] = SCORER_VERSION + 1
+
+        with pytest.raises(ValidationError, match="less than or equal"):
+            PolicyBody.model_validate(stored)
 
     def test_every_body_field_is_classified(self) -> None:
         """A new field lands in one of the three sets, or in the evidence-bearing list here.

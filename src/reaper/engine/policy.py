@@ -304,7 +304,38 @@ class PolicyBody(Frozen):
     """
 
     schema_version: int = Field(default=SCHEMA_VERSION, ge=1, le=SCHEMA_VERSION)
+
     scorer_version: int = Field(default=SCORER_VERSION, ge=1, le=SCORER_VERSION)
+    """Which scorer produced the numbers under this policy. See ``_pin_to_the_running_scorer``
+    for why it is not simply whatever the row said."""
+
+    @model_validator(mode="after")
+    def _pin_to_the_running_scorer(self) -> Self:
+        """This field tracks the CODE, not the row. Load it, then overwrite it.
+
+        ``le=SCORER_VERSION`` above still does the work it was written for: a body from a
+        newer Reaper is refused, because we genuinely cannot interpret it. But a body from an
+        OLDER one loaded back as whatever it stored, which made the version a fossil of the
+        save rather than a statement about the scorer now running -- so ``policy_hash()`` was
+        byte-identical either side of a bump, ``live_policy_hash`` still matched an approval
+        made under the superseded scorer, and the executor deleted files on its numbers with
+        no re-scan refusal (rule 113). Two snapshots scored by different scorers hashed the
+        same, so the journal could not tell them apart either.
+
+        Pinning it here makes the docstring on ``SCORER_VERSION`` true: a bump moves every
+        policy's hash, which voids pending approvals and any autonomy grant keyed to it, and
+        routes the simulator to a frozen-facts replay rather than to stale stored scores
+        (``scoring_hash``). The operator re-scans, which is the point.
+
+        Written with ``object.__setattr__`` rather than by returning a modified copy because
+        this model is frozen and a top-level "after" validator that returns anything but
+        ``self`` is silently ignored on the ``__init__`` path -- which would leave the pin
+        holding for a body loaded from the database and not for one built in code, the exact
+        half-fix this rule exists to prevent.
+        """
+        if self.scorer_version != SCORER_VERSION:
+            object.__setattr__(self, "scorer_version", SCORER_VERSION)
+        return self
 
     media_type: Literal["movie", "tv"] = "movie"
 
