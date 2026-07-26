@@ -13,7 +13,7 @@ paths:
 Blockers, not suggestions. **Rule numbers are permanent** (tests cite them); where two
 overlap, the more specific governs. Rules binding every file are in the root `CLAUDE.md`;
 the backend's are in `.claude/rules/backend.md`. Holds 17–20, 36, 39–51, 53–54, 60–62,
-66–67, 69, 79–80, 85–86, 120–123, 137.
+66–67, 69, 79–80, 85–86, 120–123, 138.
 
 ## React correctness
 
@@ -127,7 +127,7 @@ covering two controls, and never help detached from the row it explains. *Known 
 exception:* the `.warn` banner (ScanBar + the review card) merges into `.notice-warn` whenever
 the review UI is next touched.
 
-**137. An anchored popover is measured against the viewport before it is drawn.** Absolutely
+**138. An anchored popover is measured against the viewport before it is drawn.** Absolutely
 placing a popover at `left: 0` inside its anchor is right only while that anchor is far enough
 from the right edge — and on a phone it is not: the toolbar wraps, so `＋ Filter` and the last
 chip of a row both end up flush against it. What runs past the edge is not clipped and cannot be

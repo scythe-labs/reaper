@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Keeping an anchored popover on screen (rule 137).
+// Keeping an anchored popover on screen (rule 138).
 //
 // A popover left-aligned to its anchor runs off the right edge as soon as that anchor sits near
 // the edge -- which on a phone is most of a toolbar row. Nothing catches it: the page does not

@@ -2647,7 +2647,7 @@ a.rating-chip:hover {
 .suggest > input {
   min-width: 9rem;
 }
-/* Slid back on screen by --pop-shift, the same way the queue's filter menus are (rule 137,
+/* Slid back on screen by --pop-shift, the same way the queue's filter menus are (rule 138,
    popoverFit.ts): this box grows to its widest option, so a long library or collection name pushed
    it off the right edge of a phone from an input already near that edge. The max-width caps how
    wide one name may make it, and .suggest-opt trims what is left over. */
@@ -4679,7 +4679,7 @@ button.sm {
    --pop-shift is how far `usePopoverShift` (popoverFit.ts) had to pull the menu left to keep it on
    a narrow screen; 0 whenever it already fits, which is every desktop width. The max-width is the
    same promise made in CSS alone: the menu is never wider than the screen it has to fit on. Both
-   halves are rule 137. */
+   halves are rule 138. */
 .filter-menu {
   position: absolute;
   top: calc(100% + 6px);
