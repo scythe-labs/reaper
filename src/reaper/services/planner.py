@@ -287,6 +287,31 @@ def _plannable_size(candidate: Candidate) -> int:
     return candidate.size_bytes
 
 
+def _refuse_without_a_canary(plannable: list[Candidate], max_unmeasured: int) -> None:
+    """A plan whose first item has no measured size has no canary, only a first casualty.
+
+    Called on the FINAL plannable list, after every narrowing. It used to run on the whole
+    effective set, about a hundred lines before ``only_media_keys`` cut that set down --
+    so "Reap just these" over nothing but unmeasured items sailed past a check that had
+    been satisfied by measured items the plan then dropped, and the first thing the run
+    deleted was an item of unknown cost. Rule 5/30: the check has to see the set that will
+    actually be acted on.
+
+    Vacuous when the allowance is off, since ``build_plan`` then plans measured items only.
+    An empty list is not this function's refusal to make: the caller says "nothing is
+    condemned" for that, which is the truer sentence.
+    """
+    if max_unmeasured <= 0 or not plannable:
+        return
+    if any(c.size_bytes is not None for c in plannable):
+        return
+    raise PlanError(
+        "Reaper couldn't measure any of these items, so it has nothing safe to test "
+        "the run on. The first thing a run deletes has to be something whose size it "
+        "knows. Check these in Sonarr or Radarr, then run a new scan."
+    )
+
+
 async def build_plan(
     session: AsyncSession,
     *,
@@ -377,16 +402,9 @@ async def build_plan(
     #
     # Sorting last is necessary but NOT sufficient for the canary rule: with nothing
     # measured to sort ahead of it, the tail becomes the whole plan and ordinal 0 is an
-    # item of unknown cost. So a plan with no measured item at all is refused outright.
-    # The test item exists to make the first mistake one whose cost was known in advance;
-    # a run that cannot offer such an item has no canary, only a first casualty.
-    if max_unmeasured > 0 and held_back and not measured:
-        raise PlanError(
-            "Reaper couldn't measure any of these items, so it has nothing safe to test "
-            "the run on. The first thing a run deletes has to be something whose size it "
-            "knows. Check these in Sonarr or Radarr, then run a new scan."
-        )
-
+    # item of unknown cost. So a plan with no measured item at all is refused outright --
+    # checked below, against the final list, for the reason ``_refuse_without_a_canary``
+    # gives.
     plannable = measured + held_back if max_unmeasured > 0 else measured
 
     if only_media_keys is not None:
@@ -484,6 +502,10 @@ async def build_plan(
                 "Remove the spare first if you really mean to delete them."
             )
         plannable = [c for c in plannable if c.media_key in requested]
+
+    # Every narrowing above is done, so this is the exact set the run will act on -- which
+    # is the only set the canary rule means anything over (rule 5/30).
+    _refuse_without_a_canary(plannable, max_unmeasured)
 
     # Derived from what actually ended up in the plan, rather than decided up front by the
     # allowance. Deciding it up front made ``omitted`` empty whenever the allowance was

@@ -1371,6 +1371,48 @@ class TestTheCanaryRuleHoldsWhenNothingIsMeasured:
                 max_unmeasured=5,
             )
 
+    async def test_reap_just_these_over_only_unmeasured_items_is_refused(
+        self, session: AsyncSession
+    ) -> None:
+        """The narrowed set is the one that matters (rule 5/30). A library holding plenty
+        of measured items used to satisfy the canary check on their behalf, a hundred lines
+        before "Reap just these" dropped every one of them -- so a hand-picked selection of
+        unmeasured items got a plan whose ordinal 0 had unknown cost."""
+        snapshot_id = await _snapshot_with(
+            session,
+            [("radarr:1:1", 1 * GB), ("radarr:1:2", 2 * GB), ("radarr:1:3", None)],
+        )
+
+        with pytest.raises(PlanError, match="nothing safe to test"):
+            await build_plan(
+                session,
+                snapshot_id=snapshot_id,
+                approved_by="admin",
+                max_unmeasured=5,
+                only_media_keys=["radarr:1:3"],
+            )
+
+    async def test_a_selection_keeping_one_measured_item_still_plans(
+        self, session: AsyncSession
+    ) -> None:
+        """The control. The refusal is about having no canary, not about the selection
+        containing an unmeasured item, so a mixed pick still plans -- measured first."""
+        snapshot_id = await _snapshot_with(
+            session,
+            [("radarr:1:1", 1 * GB), ("radarr:1:2", 2 * GB), ("radarr:1:3", None)],
+        )
+
+        run = await build_plan(
+            session,
+            snapshot_id=snapshot_id,
+            approved_by="admin",
+            max_unmeasured=5,
+            only_media_keys=["radarr:1:1", "radarr:1:3"],
+        )
+
+        ordered = [s.media_key for s in await _steps(session, run.id)]
+        assert ordered[0] == "radarr:1:1"  # the canary has a known cost
+
 
 class TestTheHeldBackNoticeSurvivesTheAllowance:
     """Turning the allowance ON must not make the plan LESS honest than leaving it off."""
