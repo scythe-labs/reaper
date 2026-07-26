@@ -63,6 +63,13 @@ a pass.
 `backend` and `frontend` are whole-tree passes. They are expensive and belong on a cadence —
 before a `dev` → `main` promotion — not on a normal change.
 
+For the deep pre-promotion pass on the deletion path, run the saved workflow rather than doing
+it by hand: `Workflow({name: 'reaper-safety-review'})`. It fans out 7 reviewers over the safety
+files and verifies only the tier 1–2 candidates, which holds it near 16–19 agents. The first,
+uncapped version of that same pass spawned 43, because every candidate got a verifier and
+nothing bounded the second stage. **Ask before running it** — it is a large, billable fan-out,
+and a normal change never needs it.
+
 **Lanes are not a partition of the files, they are a partition of the *risk*.** Reviewing
 backend and frontend separately leaves the seam unreviewed by construction: the confirmation
 phrase rendered client-side against the one recomputed server-side, query-key invalidation
