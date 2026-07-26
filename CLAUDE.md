@@ -141,6 +141,19 @@ Run the relevant subset while iterating; run the full set before a commit. **Alw
 common CI break.** When a change is observable in the app, *drive it end-to-end* (the
 `verify` skill), don't stop at green tests.
 
+**Read the exit code, not the tail of the output.** `npm --prefix frontend run build | tail -4`
+reports the exit status of `tail`, which always succeeds — a failing `tsc` scrolls past and the
+gate looks green. This is not hypothetical: a TypeScript error was committed that way, because
+the `&& git commit` after it ran on the pipe's success. Run each gate on its own and check `$?`
+(`cmd > /tmp/out 2>&1; echo $?`), or drop the pipe entirely. Same trap with `| head`, `| grep`,
+and any `set -o pipefail`-less chain.
+
+**The frontend gates are eslint, vitest, and `build` — there is no prettier gate.** `package.json`
+has no prettier script and CI never runs one, so the tree is not prettier-formatted. Running
+`npx prettier --write` reflows hundreds of lines of untouched code and buries a two-line change
+in noise; if you run prettier at all, run it on nothing you did not write. Match the surrounding
+style by hand instead.
+
 ## Dev environment
 
 - **API :8420, frontend :5173** (Vite proxies `/api`). In an interactive session start them
