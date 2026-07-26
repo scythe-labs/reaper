@@ -20,6 +20,7 @@ import respx
 from reaper.clients.arr import RadarrClient, SonarrClient
 from reaper.clients.base import IntegrationError
 from reaper.clients.plextv import PlexTvClient
+from reaper.clients.seerr import SeerrClient
 from reaper.clients.tautulli import ALLOWED_IMAGE_TYPES, TautulliClient
 from reaper.config import RuntimeSafety
 from reaper.services.plex_link import (
@@ -150,6 +151,78 @@ class TestEveryListReadRefusesANonListBody:
         )
         async with RadarrClient("https://radarr.test", "k", safety=READ_ONLY) as client:
             assert await client.movies() == []
+
+
+class TestAShortSeerrWalkRefusesRatherThanUndercounting:
+    """``build_request_index`` sets ``available=True`` when every Seerr "was read in full",
+    and its docstring says exactly why that matters: a confident ``Known(value=False)`` off
+    a partial view adds delete pressure to a title a blinded portal in fact holds a request
+    for. The walk could end short and return normally, so nothing upstream could tell a
+    complete read from a truncated one, and the claim was false without anyone noticing
+    (rules 56/89, 7/24).
+
+    The existing guard only fired on rows-without-a-total. The undetected case is its
+    mirror: a total that promises more, and a page that hands back none."""
+
+    @staticmethod
+    def _page(mock: respx.Router, path: str, *responses: httpx.Response) -> None:
+        mock.get(host="seerr.test", path=path).mock(side_effect=list(responses))
+
+    def _client(self) -> SeerrClient:
+        return SeerrClient("https://seerr.test", "k", safety=READ_ONLY)
+
+    async def test_a_page_that_cannot_be_read_is_not_a_page_with_no_rows(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """``results: null`` used to coerce to [] and end the walk as though it were done."""
+        self._page(
+            httpx2_mock,
+            "/api/v1/request",
+            httpx.Response(200, json={"pageInfo": {"results": 500}, "results": None}),
+        )
+        async with self._client() as client:
+            with pytest.raises(IntegrationError, match="did not return a list of results"):
+                await client.all_requests()
+
+    async def test_an_empty_page_before_the_total_is_reached_refuses(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """The server says there are 500 and hands back none on page two. Refusing costs
+        the requester index for this scan, which makes every lookup Unknown, which keeps."""
+        full = [{"id": i, "type": "movie", "media": {"tmdbId": i}} for i in range(100)]
+        self._page(
+            httpx2_mock,
+            "/api/v1/request",
+            httpx.Response(200, json={"pageInfo": {"results": 500}, "results": full}),
+            httpx.Response(200, json={"pageInfo": {"results": 500}, "results": []}),
+        )
+        async with self._client() as client:
+            with pytest.raises(IntegrationError, match="stopped at 100 of 500"):
+                await client.all_requests()
+
+    async def test_a_portal_with_no_requests_at_all_is_still_fine(
+        self, httpx2_mock: respx.Router
+    ) -> None:
+        """The control. A genuine zero must not raise, or a fresh Seerr would degrade
+        every scan."""
+        self._page(
+            httpx2_mock,
+            "/api/v1/request",
+            httpx.Response(200, json={"pageInfo": {"results": 0}, "results": []}),
+        )
+        async with self._client() as client:
+            assert await client.all_requests() == []
+
+    async def test_the_user_walk_carries_the_same_guard(self, httpx2_mock: respx.Router) -> None:
+        """Rule 72: the same loop, twenty lines down."""
+        self._page(
+            httpx2_mock,
+            "/api/v1/user",
+            httpx.Response(200, json={"pageInfo": {"results": 500}, "results": None}),
+        )
+        async with self._client() as client:
+            with pytest.raises(IntegrationError, match="did not return a list of results"):
+                await client.users()
 
 
 class TestSendRetriesTransientTransportErrors:

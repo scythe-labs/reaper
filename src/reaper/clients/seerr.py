@@ -355,7 +355,12 @@ class SeerrClient(BaseClient):
             raise IntegrationError(self.service, "/request did not return an object")
 
         total = int((payload.get("pageInfo") or {}).get("results") or 0)
-        results = [_parse_request(r, self.instance_key) for r in (payload.get("results") or [])]
+        rows = payload.get("results")
+        if not isinstance(rows, list):
+            # A page whose rows cannot be read is not a page with no rows. Coerced to [],
+            # it ended the walk below as though the walk were finished (rule 56/89).
+            raise IntegrationError(self.service, "/request did not return a list of results")
+        results = [_parse_request(r, self.instance_key) for r in rows]
         if results and total <= 0:
             # Rows came back but no total did: the envelope shape changed (pageInfo moved
             # or was renamed). Treating that as total=0 would stop after one page and
@@ -364,15 +369,29 @@ class SeerrClient(BaseClient):
         return results, total
 
     async def all_requests(self, *, filter_: str = "available") -> list[MediaRequest]:
-        """Every request, paged through to the end."""
+        """Every request, paged through to the end. Complete, or it raises.
+
+        The completeness matters more here than the count suggests. ``build_request_index``
+        sets ``available=True`` when every Seerr "was read in full", and its own docstring
+        says why: a confident ``Known(value=False)`` off a partial view adds delete pressure
+        to a title a blinded portal in fact holds a request for. Returning short and normal
+        made that claim false without anything noticing (rules 56/89 and 7/24).
+        """
         out: list[MediaRequest] = []
         skip = 0
         while True:
             page, total = await self.requests(take=DEFAULT_PAGE_SIZE, skip=skip, filter_=filter_)
             out.extend(page)
             skip += DEFAULT_PAGE_SIZE
-            if not page or skip >= total:
+            if skip >= total:
                 break
+            if not page:
+                # The server says there are more and handed back none. Refusing costs the
+                # requester index for this scan (every lookup becomes Unknown, which keeps);
+                # continuing would report a partial set as the whole truth.
+                raise IntegrationError(
+                    self.service, f"/request stopped at {len(out)} of {total} requests"
+                )
         log.info("seerr.requests_loaded", count=len(out), filter=filter_)
         return out
 
@@ -389,7 +408,11 @@ class SeerrClient(BaseClient):
             payload = await self.get_json("/api/v1/user", params={"take": take, "skip": skip})
             if not isinstance(payload, dict):
                 raise IntegrationError(self.service, "/user did not return an object")
-            results = payload.get("results") or []
+            results = payload.get("results")
+            if not isinstance(results, list):
+                # Unreadable rows are not zero rows. Same defect as :meth:`requests`, and
+                # fixed the same way (rules 56/89 and 72).
+                raise IntegrationError(self.service, "/user did not return a list of results")
             total = int((payload.get("pageInfo") or {}).get("results") or 0)
             if results and total <= 0:
                 # Rows but no total: the envelope shape changed. Refuse rather than stop
@@ -397,8 +420,12 @@ class SeerrClient(BaseClient):
                 raise IntegrationError(self.service, "/user returned rows but no pageInfo total")
             out.extend(_parse_user(r) for r in results)
             skip += take
-            if not results or skip >= total:
+            if skip >= total:
                 break
+            if not results:
+                raise IntegrationError(
+                    self.service, f"/user stopped at {len(out)} of {total} accounts"
+                )
         log.info("seerr.users_loaded", count=len(out))
         return out
 
