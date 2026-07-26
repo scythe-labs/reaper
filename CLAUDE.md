@@ -10,13 +10,13 @@ refreshes Plex. Python 3.13 / FastAPI backend + React 19 / Vite frontend, one co
 
 ## Where the engineering rules live
 
-135 numbered blockers, distilled and adversarially verified across six review passes. **The
+139 numbered blockers, distilled and adversarially verified across six review passes. **The
 numbers are permanent** — tests and source comments cite them by number (`rule 28` in
 `snapshot.py`, `rule 88` in `tests/test_lists_matching.py`), so never renumber and never reuse
 a number for a different rule. A comment may only cite a rule that exists: 37 comments once
 cited rules 70–87 while the list ended at 69, making every one of them unverifiable.
 `tests/test_repo_hygiene.py` now fails on a citation with no rule behind it. New rules append
-to the scoped file that governs them and continue from 136.
+to the scoped file that governs them and continue from 140.
 
 They live in `.claude/rules/`, scoped by `paths` frontmatter so each set loads when you read a
 file it governs — and since a file must be read before it can be edited, the rules for a file
@@ -25,7 +25,7 @@ are always in context before you change it:
 | File | Governs | Rules |
 | --- | --- | --- |
 | `.claude/rules/backend.md` | `src/reaper/**/*.py`, `alembic/**/*.py` — safety path, engine, evidence, clients, auth, persistence | 1–6, 8–14, 22–23, 26–35, 38, 52, 55–59, 63, 65, 70–71, 73–78, 81–84, 87–117, 124–131 |
-| `.claude/rules/frontend.md` | `frontend/src/**/*.{ts,tsx,css}` and `frontend/index.html` (rule 69 governs it) — UI grammar, the review queue, the two-level spare, gating surfaces | 17–20, 36, 39–51, 53–54, 60–62, 66–67, 69, 79–80, 85–86, 120–123 |
+| `.claude/rules/frontend.md` | `frontend/src/**/*.{ts,tsx,css}` and `frontend/index.html` (rule 69 governs it) — UI grammar, the review queue, the two-level spare, gating surfaces | 17–20, 36, 39–51, 53–54, 60–62, 66–67, 69, 79–80, 85–86, 120–123, 138–139 |
 | `.claude/rules/tests.md` | `tests/**/*.py`, `frontend/src/**/*.test.ts{,x}`, `frontend/src/test/**` — test discipline | 37, 118–119, 132–133, 135 |
 
 Ten rules bind every file and stay here, under *Rules that apply everywhere*. Where two rules

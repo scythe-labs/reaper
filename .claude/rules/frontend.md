@@ -13,7 +13,7 @@ paths:
 Blockers, not suggestions. **Rule numbers are permanent** (tests cite them); where two
 overlap, the more specific governs. Rules binding every file are in the root `CLAUDE.md`;
 the backend's are in `.claude/rules/backend.md`. Holds 17–20, 36, 39–51, 53–54, 60–62,
-66–67, 69, 79–80, 85–86, 120–123, 138.
+66–67, 69, 79–80, 85–86, 120–123, 138–139.
 
 ## React correctness
 
@@ -142,6 +142,18 @@ on. Two popovers answer this another way and are correct as they are: `.user-dro
 `right: 0` in a corner it never leaves, and the spare-length menu clamps its own `position: fixed`
 coordinates (`OverrideControls.toggleMenu`). A new popover left-aligned to an anchor with no fit
 pass is a blocker, and so is fixing one of these and leaving its twin (rule 72).
+
+**139. Text the operator did not choose is given a break opportunity.** A requester handle, a
+title, a path, a host — anything arriving from a portal, a file system, or someone else's
+keyboard — can be one long unbroken string, and on a phone it paints straight through the box
+holding it. Where the page can scroll, the layout slides sideways; where the container clips (a
+side panel, a sheet), the tail is simply unreachable, which is rule 138's failure reached by a
+different route. So an element rendering text from outside the app carries `overflow-wrap:
+anywhere`, the idiom already at a dozen sites in `index.css`, and the fix lands on every surface
+rendering that same value (rule 72): the Scales card's `.fair-name` and the person panel's
+`.scales-head-id h2` are one name in two places. **Wrap, do not truncate** — two handles
+differing only in their tail truncate to the same string, and the operator reading them is
+deciding whose files to delete.
 
 **67. Values coupled across TSX and CSS derive from one declaration.** A width, gap, or count
 that must agree between a component and a stylesheet lives in one custom property both read, or

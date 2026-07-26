@@ -3590,6 +3590,11 @@ a.rating-chip:hover {
   font-size: 1rem;
   font-weight: 650;
   letter-spacing: -0.01em;
+  /* A portal handle can be one long unbroken string with nothing to break on, and it then
+     paints past the card and gives the whole page a sideways scroll on a phone. The panel
+     renders the same name and needs the same treatment (.scales-head-id h2), where it is
+     worse: there the overrun is clipped and no scroll reaches it. */
+  overflow-wrap: anywhere;
 }
 .fair-sub {
   font-size: 0.82rem;
@@ -3726,6 +3731,9 @@ a.rating-chip:hover {
 .scales-head-id h2 {
   font-size: 1.2rem;
   margin: 0;
+  /* The .fair-name break, on the panel's copy of the name. Both branches of ProfileName put
+     the name in this h2, linked or not, so the one selector covers each. */
+  overflow-wrap: anywhere;
 }
 
 /* The name as a link to the requester's portal page. Text at rest (the title-link idiom, so
