@@ -467,6 +467,12 @@ REPLAY_PAYLOAD = PolicyIn(
 )
 REPLAY_BODY = _to_body(REPLAY_PAYLOAD)
 
+#: The shipped movie policy as an UPGRADED install stores it: identical in every way that
+#: decides anything, except that it was written before the current ``SCHEMA_VERSION``. The
+#: wire schema does not carry that field, so this is the body whose round trip used to come
+#: back with a different hash and kill the simulator outright.
+STORED_OLD_BODY = DEFAULT_MOVIE_POLICY.model_copy(update={"schema_version": SCHEMA_VERSION - 1})
+
 
 def _facts(**overrides: Any) -> Facts:
     """One item's evidence, readable end to end unless a test says otherwise."""
@@ -642,3 +648,113 @@ class TestTheWireRoundTripPreservesBothHashes:
     def test_the_shipped_defaults_round_trip_to_the_same_hashes(self, policy: PolicyBody) -> None:
         assert self._round_trip(policy).scoring_hash() == policy.scoring_hash()
         assert self._round_trip(policy).evidence_hash() == policy.evidence_hash()
+
+
+@pytest.fixture
+def upgraded_install_client(tmp_path: Path) -> Iterator[TestClient]:
+    """An install whose stored policy predates a ``SCHEMA_VERSION`` bump.
+
+    The hashes are recorded exactly as a scan records them -- from the STORED body -- while
+    the request will carry that same policy back through the wire schema. Nothing here is
+    contrived except the version number: this is what every upgraded install looks like.
+    """
+    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    engine = sa_create_engine(settings.sync_database_url)
+    Base.metadata.create_all(engine)
+
+    now = utcnow()
+    with Session(engine) as session:
+        snapshot = Snapshot(
+            created_at=now,
+            policy_hash=combine_hashes(
+                STORED_OLD_BODY.policy_hash(), DEFAULT_TV_POLICY.policy_hash()
+            ),
+            scoring_hash=combine_hashes(
+                STORED_OLD_BODY.scoring_hash(), DEFAULT_TV_POLICY.scoring_hash()
+            ),
+            evidence_hash=combine_hashes(
+                STORED_OLD_BODY.evidence_hash(), DEFAULT_TV_POLICY.evidence_hash()
+            ),
+            horizon_at=now,
+            item_count=1,
+            degraded=False,
+        )
+        session.add(snapshot)
+        session.flush()
+        session.add(
+            Candidate(
+                snapshot_id=snapshot.id,
+                media_key="radarr:1:1",
+                title="Example Movie 1",
+                media_type="movie",
+                size_bytes=SIZE,
+                verdict="condemn",
+                score=90,
+                coverage_bp=10_000,
+                explanation_json=_healthy(),
+                facts_json=json.dumps(facts_codec.facts_to_dict(_facts())),
+                created_at=now,
+            )
+        )
+        session.commit()
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+class TestAnUpgradedInstallStillGetsNumbers:
+    """The operator-visible symptom, pinned at the route.
+
+    The three hash tests above pin the mechanism; this one pins what an operator actually
+    saw. On an install whose stored policy predated a ``SCHEMA_VERSION`` bump, the simulator
+    answered "Needs a fresh scan" for **every** edit and no scan could clear it, because each
+    scan recorded the stored version again while the route hashed the round-tripped one. The
+    panel that exists to make a threshold a decision rather than a guess was simply dead.
+
+    Asserting through ``POST /api/policy/simulate`` rather than on the hashes is the point: a
+    future regression in either hash, in the wire schema, or in the tier order fails here.
+    """
+
+    @staticmethod
+    def _simulate(client: TestClient, body: PolicyIn) -> dict[str, Any]:
+        r = client.post(
+            "/api/policy/simulate",
+            json=body.model_dump(mode="json"),
+            headers={"X-Reaper-CSRF": "1"},
+        )
+        assert r.status_code == 200, r.text
+        result: dict[str, Any] = r.json()
+        return result
+
+    def test_the_stored_policy_round_trips_to_an_exact_answer(
+        self, upgraded_install_client: TestClient
+    ) -> None:
+        """The reproduction: hand the server back the policy it just gave you."""
+        wire = _policy_out(
+            STORED_OLD_BODY, "Movies", requests_app_configured=True, settings=ProfileSettings()
+        ).body
+        result = self._simulate(upgraded_install_client, wire)
+
+        assert result["exact"] is True
+        assert result["stale_reason"] is None
+        # ...and it reports real numbers, not an all-zero "exact" answer: the stored score of
+        # 90 is past the shipped threshold of 70.
+        assert result["condemned"] == 1
+        assert result["reclaimable_bytes"] == SIZE
+
+    def test_moving_only_the_threshold_stays_exact_and_moves_the_count(
+        self, upgraded_install_client: TestClient
+    ) -> None:
+        """Tier 1 on an upgraded install: the tuning loop the whole panel exists for."""
+        wire = _policy_out(
+            STORED_OLD_BODY, "Movies", requests_app_configured=True, settings=ProfileSettings()
+        ).body
+        above = self._simulate(upgraded_install_client, wire.model_copy(update={"condemn_at": 95}))
+        assert above["exact"] is True
+        assert above["condemned"] == 0  # the stored 90 no longer clears the line
+
+        below = self._simulate(upgraded_install_client, wire.model_copy(update={"condemn_at": 60}))
+        assert below["exact"] is True
+        assert below["condemned"] == 1
