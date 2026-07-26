@@ -91,6 +91,40 @@ async def _run_steps(session: AsyncSession, run: ReapRun) -> list[ActionStep]:
     )
 
 
+async def _saved_limits_or_refuse(session: AsyncSession) -> ProfileSettings:
+    """The caps and grace the operator saved, or a refusal saying they could not be read.
+
+    ``active_profile`` deliberately never raises: it is read by the scan, by execute, and by
+    the very settings page an operator would use to repair a broken blob, so a hard error
+    would take out the fix along with everything else. What it does instead is fall back to
+    the SHIPPED DEFAULTS and flag it, and those defaults can be looser than what was saved --
+    a run cap of 5 becomes 10, a grace of 30 becomes 14.
+
+    Every route that acts on those numbers used to call ``active_profile_settings``, which
+    drops the flag on the floor. So a profile that stopped validating left the one route that
+    deletes bounded by numbers nobody chose, with nothing anywhere saying so. The scan path
+    already degrades on this (``scan_runner``); this is the same refusal for the routes that
+    plan, preview and send (rules 65/91).
+
+    Deliberately NOT applied to the other readers, which display rather than delete (rule
+    72, deferred in writing): ``list_runs`` renders numbers it never acts on, and taking out
+    the page an operator reads to see what is pending would be the wrong blast radius for a
+    fault the deleting route already refuses; the policy editor's two reads only size a
+    warning. ``api/whitelist``'s grace-clock write is the one worth revisiting -- a default
+    grace is SHORTER than a saved one, so it starts the clock early -- but refusing there
+    would refuse a *spare*, which is the operator's keep action, and no reap can run
+    meanwhile because the scan degrades.
+    """
+    profile = await active_profile(session)
+    if profile.repaired:
+        raise HTTPException(
+            409,
+            "Reaper couldn't read the limits you saved, so it won't reap. Open Policy, go "
+            "to Pace and limits, and save your limits again.",
+        )
+    return profile.settings
+
+
 class _RunReads:
     """Per-request memo for the three reads every run's output needs.
 
@@ -243,7 +277,7 @@ async def create_run(request: Request, payload: CreateRunIn | None = None) -> Ru
                 snapshot_id=snapshot.id,
                 approved_by="api",
                 only_media_keys=only,
-                max_unmeasured=(await active_profile_settings(session)).max_unmeasured_per_run,
+                max_unmeasured=(await _saved_limits_or_refuse(session)).max_unmeasured_per_run,
             )
         except PlanError as exc:
             raise HTTPException(422, str(exc)) from exc
@@ -326,7 +360,7 @@ async def dry_run(request: Request, run_id: int) -> RunReportOut:
 
         # The owner's configured caps, not a hardcoded default. This is what lets a real
         # (large) condemned set be simulated: the cap is a decision the owner makes.
-        profile_settings = await active_profile_settings(session)
+        profile_settings = await _saved_limits_or_refuse(session)
         executor = Executor(session, safety=safety, settings=profile_settings, dry_run=True)
         try:
             report = await executor.execute(run_id)
@@ -470,7 +504,7 @@ async def execute_run(request: Request, run_id: int, payload: ExecuteRunIn) -> R
                     "plan may have changed since the page loaded. Reload, review, and confirm "
                     "again.",
                 )
-            profile_settings = await active_profile_settings(session)
+            profile_settings = await _saved_limits_or_refuse(session)
             status.total = len(planned)
 
         # Build the live clients now, in the request, so a misconfigured run is refused

@@ -49,7 +49,7 @@ Last verified against the code: 2026-07-26.
    seven-group adversarial pass over the safety files on 2026-07-26 raised 33 candidates; 14
    survived independent verification and 19 were refuted. The four tier-1 findings — a
    protection that could not fire — are fixed. Open: four that widen what gets deleted or lose
-   the audit trail (#65, #67), five smaller ones rolled into #68, and #69, the paging twins
+   the audit trail (#65), five smaller ones rolled into #68, and #69, the paging twins
    deferred in writing from the #60 fix. The run artifact is `.claude/review-findings/`
    (gitignored); refuted candidates are in `.claude/skills/reaper-review/references/refuted.md`
    so the next pass does not re-raise them.

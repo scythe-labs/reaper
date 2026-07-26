@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from reaper.clock import utcnow
@@ -28,6 +29,7 @@ from reaper.db.models import (
     Instance,
     InstanceKind,
     PlexServer,
+    Profile,
     Snapshot,
 )
 from reaper.db.models import Policy as PolicyModel
@@ -763,6 +765,77 @@ class TestTheProfileControlsTheCaps:
         settings = client.get("/api/profile").json()
         settings["grace_days"] = 3
         assert client.put("/api/profile", json=settings).status_code == 422
+
+
+class TestLimitsNobodySavedDoNotBoundAReap:
+    """``active_profile`` never raises on purpose: the settings page an operator would use
+    to repair a broken blob reads the same function. It falls back to the SHIPPED DEFAULTS
+    and flags it, and those defaults can be LOOSER than what was saved (a run cap of 5
+    becomes 10, a grace of 30 becomes 14). Every route that acted on the numbers read them
+    through ``active_profile_settings``, which drops the flag, so a profile that stopped
+    validating left the deleting route bounded by numbers nobody chose and said nothing.
+    The scan path already refuses in this state (rules 65/91); these are the rest."""
+
+    @staticmethod
+    def _break_the_saved_limits(tmp_path: Path) -> None:
+        """Corrupt the stored blob out of band, which is how this really happens: a value
+        that stopped validating across an upgrade, or a hand-edited row."""
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = sa_create_engine(settings.sync_database_url)
+        with Session(engine) as session:
+            row = session.execute(select(Profile).order_by(Profile.id.asc()).limit(1)).scalar_one()
+            row.settings_json = "not json at all"
+            session.commit()
+        engine.dispose()
+
+    def test_planning_and_previewing_refuse(self, client: TestClient, tmp_path: Path) -> None:
+        """Planning is covered as well as previewing because a plan built under the wrong
+        allowance is the one an operator then approves."""
+        run = client.post("/api/runs").json()  # planned while the profile still read
+        saved = client.get("/api/profile").json()
+        assert client.put("/api/profile", json=saved).status_code == 200
+        self._break_the_saved_limits(tmp_path)
+
+        assert client.post("/api/runs").status_code == 409
+        assert client.post(f"/api/runs/{run['id']}/dry-run").status_code == 409
+
+    def test_the_reap_itself_refuses(self, armed_client: TestClient, tmp_path: Path) -> None:
+        """The one that counts. Armed, with the right phrase for a plan built while the
+        profile still read, so nothing else in the gate chain can be what refuses."""
+        run = armed_client.post("/api/runs").json()
+        saved = armed_client.get("/api/profile").json()
+        assert armed_client.put("/api/profile", json=saved).status_code == 200
+        self._break_the_saved_limits(tmp_path)
+
+        reaped = armed_client.post(
+            f"/api/runs/{run['id']}/execute",
+            json={"confirmation_phrase": run["confirmation_phrase"]},
+        )
+
+        assert reaped.status_code == 409
+        assert "limits you saved" in reaped.json()["detail"]
+
+    def test_the_refusal_says_what_to_fix(self, client: TestClient, tmp_path: Path) -> None:
+        """Rule 21. The operator has to be able to act on this without reading the code, so
+        it names the page and the section, not the field that failed to validate."""
+        saved = client.get("/api/profile").json()
+        client.put("/api/profile", json=saved)
+        self._break_the_saved_limits(tmp_path)
+
+        detail = client.post("/api/runs").json()["detail"]
+        assert "couldn't read the limits you saved" in detail
+        assert "Pace and limits" in detail
+
+    def test_the_run_list_still_renders(self, client: TestClient, tmp_path: Path) -> None:
+        """The deliberate exception. Listing shows numbers, it does not act on them, and
+        taking out the page an operator reads to see what is pending would be the wrong
+        blast radius for a fault the deleting route already refuses."""
+        client.post("/api/runs")
+        saved = client.get("/api/profile").json()
+        client.put("/api/profile", json=saved)
+        self._break_the_saved_limits(tmp_path)
+
+        assert client.get("/api/runs").status_code == 200
 
 
 class TestSnapshot:
