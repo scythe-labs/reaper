@@ -16,9 +16,30 @@
 #
 # Wired as an InstructionsLoaded hook in .claude/settings.json. That event
 # cannot block anything (its exit code is ignored), so this only ever observes.
+#
+# Payload shape (confirmed empirically 2026-07-26, and against the hooks
+# reference). The event fires ONCE PER FILE, so `file_path` is a single string,
+# never a list:
+#
+#     {"session_id": ..., "transcript_path": ..., "cwd": ...,
+#      "hook_event_name": "InstructionsLoaded",
+#      "load_reason": "path_glob_match",              # or session_start,
+#                                                     # nested_traversal,
+#                                                     # include, compact
+#      "memory_type": "Project",
+#      "file_path": "<abs>/.claude/rules/backend.md", # the file that loaded
+#      "globs": ["src/reaper/**/*.py", ...],          # its paths: frontmatter
+#      "trigger_file_path": "<abs>/src/reaper/..."}   # the read that pulled it
+#
+# The first version of this script guessed `.matcher`/`.instruction_files` and
+# logged its own `//` fallbacks, so 31 consecutive loads recorded as "?  |" and
+# read like data. A parse that cannot find its keys now logs PARSE-FAILED and
+# the payload's actual key names, so the next schema drift announces itself
+# instead of quietly flatlining.
 set -uo pipefail
 
-log_dir="${CLAUDE_PROJECT_DIR:-.}/.claude"
+project_dir="${CLAUDE_PROJECT_DIR:-.}"
+log_dir="${project_dir}/.claude"
 log_file="${log_dir}/instructions-loaded.log"
 
 # Never let a logging failure disturb a session.
@@ -26,17 +47,59 @@ mkdir -p "${log_dir}" 2>/dev/null || exit 0
 
 payload="$(cat 2>/dev/null || true)"
 
-# Pull the load reason and any file paths out of the hook payload. jq is not a
-# project dependency, so fall back to a grep when it is missing.
-if command -v jq >/dev/null 2>&1; then
-  detail="$(printf '%s' "${payload}" |
-    jq -r '[(.matcher // .reason // "?"), ((.instruction_files // .files // []) | join(" "))] | join(" | ")' \
-    2>/dev/null)"
+# python3 is a project dependency (3.13), so parse with it and keep a grep
+# fallback for the case where it is somehow absent. Paths are logged relative to
+# the repo so a line stays readable at a glance.
+if command -v python3 >/dev/null 2>&1; then
+  detail="$(printf '%s' "${payload}" | python3 -c '
+import json, os, sys
+
+root = os.environ.get("CLAUDE_PROJECT_DIR", "") or os.getcwd()
+
+
+def rel(p):
+    """Repo-relative when the path is inside the repo, absolute when it is not.
+
+    User-level memory (~/.claude/CLAUDE.md) loads on session_start and lives
+    outside the project, where relpath would render it as a run of "..".
+    """
+    if not p:
+        return "-"
+    try:
+        r = os.path.relpath(p, root)
+    except ValueError:  # different drive, or a path relpath cannot express
+        return p
+    return p if r.startswith(os.pardir) else r
+
+
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    print("PARSE-FAILED | payload was not JSON")
+    sys.exit(0)
+
+reason = d.get("load_reason")
+loaded = d.get("file_path")
+if reason is None and loaded is None:
+    # The schema moved. Say so, and name what we did get, so the fix is obvious.
+    print("PARSE-FAILED | payload keys: " + ",".join(sorted(d)))
+    sys.exit(0)
+
+trigger = rel(d.get("trigger_file_path"))
+print((reason or "?") + " | " + rel(loaded) + " | triggered by " + trigger)
+' 2>/dev/null)"
 else
-  detail="$(printf '%s' "${payload}" | tr ',' '\n' | grep -oE '"[^"]*(CLAUDE\.md|rules/[^"]*\.md)"' | tr -d '"' | tr '\n' ' ')"
+  reason="$(printf '%s' "${payload}" | grep -oE '"load_reason"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/')"
+  loaded="$(printf '%s' "${payload}" | grep -oE '(^|[{,])[[:space:]]*"file_path"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/')"
+  trigger="$(printf '%s' "${payload}" | grep -oE '"trigger_file_path"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/')"
+  if [ -z "${reason}" ] && [ -z "${loaded}" ]; then
+    detail="PARSE-FAILED | no load_reason or file_path (grep fallback; python3 absent)"
+  else
+    detail="${reason:-?} | ${loaded#"${project_dir}"/} | triggered by ${trigger:-–}"
+  fi
 fi
 
-[ -z "${detail}" ] && detail="(no file detail in payload)"
+[ -z "${detail}" ] && detail="PARSE-FAILED | parser produced no output"
 
 printf '%s  %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${detail}" >>"${log_file}" 2>/dev/null || true
 exit 0

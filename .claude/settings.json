@@ -2,7 +2,7 @@
   "hooks": {
     "InstructionsLoaded": [
       {
-        "matcher": "session_start|path_glob_match|compact",
+        "matcher": "session_start|path_glob_match|nested_traversal|include|compact",
         "hooks": [
           {
             "type": "command",
