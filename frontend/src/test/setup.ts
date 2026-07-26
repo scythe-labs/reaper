@@ -18,24 +18,58 @@ window.scrollTo = () => {};
 // console.error inside a test prints nothing, while CI on Node 24 prints it), so the one place
 // the warning is visible is the CI log nobody reads. 302 of these accumulated behind a green
 // suite before anyone looked. Failing the test is the only form of this that survives locally.
+//
+// A state update outside act(...) fails the test for the same reason: it says the test asserted
+// on a moment the component had already left, because something it never awaited settled behind
+// the assertions. A promise a test forgot to await resolves as the body returns, every run.
 let missingQueryFn: string[] = [];
+let outsideAct: string[] = [];
 const forwardError = console.error.bind(console);
 console.error = (...args: unknown[]) => {
-  if (typeof args[0] === "string" && args[0].includes("No queryFn was passed")) {
-    missingQueryFn.push(args[0]);
+  if (typeof args[0] === "string") {
+    if (args[0].includes("No queryFn was passed")) missingQueryFn.push(args[0]);
+    // "An update to %s inside a test was not wrapped in act(...)", the component name second.
+    if (args[0].includes("was not wrapped in act(") && !fromQueryScheduler()) {
+      outsideAct.push(String(args[1] ?? "a component"));
+    }
   }
   forwardError(...args);
 };
 
+/** Whether the update being warned about is React Query handing a settled query to its
+ *  observers, which it does on a `setTimeout(0)` of its own.
+ *
+ *  That timer fires wherever the run's timing puts it: inside the act() of whatever the test
+ *  awaited next if it gets there in time, and after the test if the machine is loaded enough
+ *  that it does not. Three consecutive runs of this suite disagreed over two such tests, and a
+ *  gate that reports the load average is worth less than no gate. It is the one update whose
+ *  timing is not the test's own, so it is the one this does not judge -- what a test CAN do
+ *  about a query is not leave it pending, which is what `seedSettings` is for. */
+function fromQueryScheduler(): boolean {
+  return (new Error().stack ?? "").includes("query-core");
+}
+
 afterEach(() => {
-  const seen = missingQueryFn;
+  const queries = missingQueryFn;
+  const unacted = outsideAct;
   missingQueryFn = [];
-  if (seen.length === 0) return;
-  // The message opens with the query hash, e.g. `[["profile"]]: No queryFn ...`.
-  const keys = [...new Set(seen.map((m) => m.slice(0, m.indexOf("]:") + 1)))];
-  throw new Error(
-    `Ran a query with no queryFn: ${keys.join(", ")}. The mock for "../api" is missing a ` +
-      `function a hook in this tree reads, so that query rendered as a failed read. Add it to ` +
-      `the mock; src/test/apiFixtures.ts holds the payloads. See rule 135.`,
-  );
+  outsideAct = [];
+  if (queries.length > 0) {
+    // The message opens with the query hash, e.g. `[["profile"]]: No queryFn ...`.
+    const keys = [...new Set(queries.map((m) => m.slice(0, m.indexOf("]:") + 1)))];
+    throw new Error(
+      `Ran a query with no queryFn: ${keys.join(", ")}. The mock for "../api" is missing a ` +
+        `function a hook in this tree reads, so that query rendered as a failed read. Add it to ` +
+        `the mock; src/test/apiFixtures.ts holds the payloads. See rule 135.`,
+    );
+  }
+  if (unacted.length > 0) {
+    const names = [...new Set(unacted)];
+    throw new Error(
+      `Updated state outside act(...): ${names.join(", ")}. Something this test never awaited ` +
+        `settled after its last act() returned, so the assertions above ran on a moment that ` +
+        `had already passed. Await it inside act (\`await act(async () => ...)\`), or hold it ` +
+        `in flight so the moment the test asserts is the one it means. See rule 135.`,
+    );
+  }
 });

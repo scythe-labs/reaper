@@ -7,7 +7,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candidate, Chip, Group, ShowStatus, Verdict } from "../api";
-import { DEFAULT_GENERAL, DEFAULT_PROFILE } from "../test/apiFixtures";
+import { DEFAULT_GENERAL, DEFAULT_PROFILE, seedSettings } from "../test/apiFixtures";
 import { ReviewQueue } from "./ReviewQueue";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -127,9 +127,9 @@ function renderQueue(
     offset: 0,
     snapshotId: 1,
   });
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  const queryClient = seedSettings(
+    new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }),
+  );
   return render(
     <QueryClientProvider client={queryClient}>
       <ReviewQueue

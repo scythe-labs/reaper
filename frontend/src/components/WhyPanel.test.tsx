@@ -11,7 +11,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type CandidateDetail, type SignalContribution } from "../api";
-import { DEFAULT_GENERAL, DEFAULT_PROFILE } from "../test/apiFixtures";
+import { DEFAULT_GENERAL, DEFAULT_PROFILE, seedSettings } from "../test/apiFixtures";
 import { WhyPanel, allocateShares } from "./WhyPanel";
 
 vi.mock("../api", () => ({
@@ -131,7 +131,7 @@ function detail(
 }
 
 function show(item: CandidateDetail) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = seedSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
   return render(
     <QueryClientProvider client={client}>
       <WhyPanel item={item} onClose={() => {}} />

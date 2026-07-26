@@ -57,6 +57,21 @@ than the path it means to check — the review-queue and reap-plan suites were d
 `src/test/setup.ts` fails the test on it; `src/test/apiFixtures.ts` holds the payloads, chosen
 as the shipped defaults so adding one does not move what a passing test renders.
 
+**A state update outside `act(...)` fails the run on the same terms**, with one exclusion that is
+load-bearing. Such an update says the test asserted on a moment the component had already left: a
+promise nothing awaited settled behind the assertions. The exclusion is React Query handing a
+settled query to its observers, which rides a `setTimeout(0)` — that timer lands inside the next
+act() or after the test depending on how loaded the machine is, and three consecutive runs of
+this suite disagreed over two tests that were doing nothing wrong. `setup.ts` reads the stack to
+tell the two apart, because a gate that reports the load average is worth less than no gate.
+
+What a test *can* do about a query is not leave one pending: a tree reading settings the test
+does not vary gets them from `seedSettings()`, not a mock alone. A mocked read answers a
+microtask later, which for a synchronous test body is after every assertion it makes — it
+asserts the pending panel, not the one an operator sees. Never seed a key the test *does* vary:
+seeded data is fresh, so nothing fetches, and a suite that means to reject or stall that read
+would be quietly answered instead.
+
 **The second half is the general rule: a test may not report a problem as console output.**
 Vitest's console interception drops it entirely on some Node versions — on Node 26 a bare
 `console.error` inside a test prints nothing, while CI on Node 24 prints it — so 302 of these

@@ -39,13 +39,26 @@ describe("useReviewFreshness", () => {
     expect(onSilentRefresh).not.toHaveBeenCalled();
   });
 
-  it("refreshes quietly when a newer scan lands and the reviewer is idle", () => {
-    const { hook, onSilentRefresh } = setup({
+  it("refreshes quietly when a newer scan lands and the reviewer is idle", async () => {
+    // The refresh is held in flight, then landed and settled, so both moments are the test's to
+    // name. The default mock resolves on its own in a microtask nothing here awaits: these
+    // assertions would then describe a refresh that had already ended -- and the settle would
+    // update state after the test, outside act.
+    let settle = () => {};
+    const onSilentRefresh = vi.fn(() => new Promise<void>((resolve) => (settle = resolve)));
+    const props = {
       viewSnapshotId: 42,
       latestSnapshotId: 43,
       isBusy: () => false,
-    });
+      onSilentRefresh,
+    };
+    const { hook } = setup(props);
     expect(onSilentRefresh).toHaveBeenCalledTimes(1);
+    expect(hook.result.current.showBar).toBe(false);
+    expect(hook.result.current.showMarker).toBe(false);
+    // It lands snapshot 43 and settles: the swap happened, and nothing was ever shown.
+    act(() => hook.rerender({ ...props, viewSnapshotId: 43 }));
+    await act(async () => settle());
     expect(hook.result.current.showBar).toBe(false);
     expect(hook.result.current.showMarker).toBe(false);
   });

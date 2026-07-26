@@ -8,7 +8,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candidate, Group, Links, Verdict } from "../api";
-import { DEFAULT_GENERAL } from "../test/apiFixtures";
+import { DEFAULT_GENERAL, seedSettings } from "../test/apiFixtures";
 import { ShowPanel } from "./ShowPanel";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -92,9 +92,9 @@ function group(seasons: Candidate[]): Group {
 }
 
 function renderPanel(g: Group) {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  const queryClient = seedSettings(
+    new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }),
+  );
   return render(
     <QueryClientProvider client={queryClient}>
       <ShowPanel group={g} onOpenSeason={() => {}} onClose={() => {}} />
