@@ -188,6 +188,40 @@ is the same failure as §12 itself, one level up — see engineering rule 7. Cor
 describe the stored toggle. **If the host ceiling is wanted back, it is a code change, not a
 doc change.**
 
+### 13. The simulator answers or refuses — **it refused forever, and nobody could tell**
+
+Found on a live install, not in a test (measured 2026-07-26). Every policy edit showed
+"Needs a fresh scan", and **scanning did not clear it**. Both fast tiers of
+`api.routes.simulate` were unreachable, so the panel an operator tunes a deletion threshold
+with had been dead since the last `SCHEMA_VERSION` bump.
+
+`schema_version` is the *storage shape* of a policy body, and the wire schema does not carry
+it: `_policy_out` builds `PolicyIn` field by field. So a body that round-tripped through the
+API came back stamped with the current code default, while the stored row kept the older
+number. That field was folded into **both** simulator hashes, and the two sides are computed
+from different bodies — the scan hashes the *stored* body, the route hashes the
+*round-tripped* one. The mismatch was therefore permanent and self-renewing: each new scan
+recorded the stored value again.
+
+The tell, and the cheapest possible reproduction: POST the server's own
+`GET /api/policy` body straight back to `/api/policy/simulate`. It answered `exact: false`
+about a policy it had just handed out, while the snapshot's stored hashes matched the active
+policies' computed hashes exactly — which rules out the snapshot and points at the round trip.
+
+⇒ `schema_version` moved to `PolicyBody._NON_BEHAVIORAL_FIELDS`, excluded from both simulator
+hashes and still covered by `policy_hash`, so an approval stays bound to the exact body it
+was planned under. `scorer_version` stayed in `scoring_hash`, where it belongs — a new scorer
+really does invalidate stored scores — and joined the replayable set, so a bump now routes to
+the exact replay instead of a refusal.
+
+⇒ **The general lesson is about the allow-list.** Defaulting an unclassified field to "needs
+a fresh scan" is right for evidence and wrong for bookkeeping, and the failure is invisible:
+a hash mismatch cannot say *why* it mismatched, so a permanently dead feature looks exactly
+like a stale one. Anything that decides whether a feature answers **at all** must cover only
+fields that change the answer, and a lossy round trip through a wire schema must be tested as
+a round trip. `tests/test_simulate_hardening.py::TestTheWireRoundTripPreservesBothHashes`
+asserts on the hashes rather than a field list, so it fails for any future dropped field.
+
 ---
 
 

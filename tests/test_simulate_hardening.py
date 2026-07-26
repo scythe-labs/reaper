@@ -38,7 +38,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
-from reaper.api.routes import _contribution, _fired_gates, _has_blocked_protections, _to_body
+from reaper.api.routes import (
+    _contribution,
+    _fired_gates,
+    _has_blocked_protections,
+    _policy_out,
+    _to_body,
+)
 from reaper.api.schemas import GateSettingIn, PolicyIn, SignalSettingIn
 from reaper.clock import utcnow
 from reaper.config import Settings
@@ -50,8 +56,10 @@ from reaper.engine.observation import Absent, Known
 from reaper.engine.policy import (
     DEFAULT_MOVIE_POLICY,
     DEFAULT_TV_POLICY,
+    SCHEMA_VERSION,
     GateSetting,
     PolicyBody,
+    ProfileSettings,
     SignalSetting,
     combine_hashes,
 )
@@ -603,3 +611,34 @@ class TestTheFrozenFactsReplay:
         assert result["condemned"] == 1  # the dormant row, never the held reap
         assert result["protected"] == 2  # the keep-list row AND the held reap
         assert result["abstained"] == 0
+
+
+class TestTheWireRoundTripPreservesBothHashes:
+    """A body that survives ``PolicyBody -> PolicyIn -> _to_body`` keeps both simulator hashes.
+
+    This is the test whose absence let the simulator die silently. ``_policy_out`` builds the
+    wire body field by field, so a ``PolicyBody`` field it forgets is not merely missing from
+    the response: the route reconstructs it from the code default, and if that field feeds
+    either simulator hash the reconstructed hash can never match the one the scan recorded
+    from the stored body. The simulator then answers "Needs a fresh scan" forever, and
+    scanning does not help, because each scan records the stored value again.
+
+    Asserting on the hashes rather than on a field list is deliberate: it fails for ANY future
+    field dropped from the wire, without anyone remembering to extend a list (rule 103).
+    """
+
+    @staticmethod
+    def _round_trip(body: PolicyBody) -> PolicyBody:
+        """Through the real response builder and the real request parser, not a copy."""
+        out = _policy_out(body, "Movies", requests_app_configured=True, settings=ProfileSettings())
+        return _to_body(out.body)
+
+    def test_a_body_stored_under_an_older_schema_version_still_simulates(self) -> None:
+        stored = DEFAULT_MOVIE_POLICY.model_copy(update={"schema_version": SCHEMA_VERSION - 1})
+        assert self._round_trip(stored).scoring_hash() == stored.scoring_hash()
+        assert self._round_trip(stored).evidence_hash() == stored.evidence_hash()
+
+    @pytest.mark.parametrize("policy", [DEFAULT_MOVIE_POLICY, DEFAULT_TV_POLICY])
+    def test_the_shipped_defaults_round_trip_to_the_same_hashes(self, policy: PolicyBody) -> None:
+        assert self._round_trip(policy).scoring_hash() == policy.scoring_hash()
+        assert self._round_trip(policy).evidence_hash() == policy.evidence_hash()

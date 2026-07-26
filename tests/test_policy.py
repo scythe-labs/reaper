@@ -179,6 +179,70 @@ class TestEvidenceHash:
         assert a.evidence_hash() != b.evidence_hash()
 
 
+class TestSimulatorHashesCoverOnlyBehavior:
+    """Neither simulator hash may move for a field that cannot change an answer.
+
+    A field that is pure bookkeeping, folded into these hashes, does not merely cost one
+    extra scan: it makes the simulator refuse *permanently*, because the scan records the
+    stored body's hash while the route computes the round-tripped one. ``schema_version``
+    did exactly that on any install whose policy predated a version bump.
+    """
+
+    def test_a_stored_schema_version_does_not_disable_the_simulator(self) -> None:
+        old = _policy(schema_version=SCHEMA_VERSION - 1)
+        current = _policy(schema_version=SCHEMA_VERSION)
+        assert old.scoring_hash() == current.scoring_hash()
+        assert old.evidence_hash() == current.evidence_hash()
+        # It is still part of the body an approval is bound to (rule 113).
+        assert old.policy_hash() != current.policy_hash()
+
+    def test_a_scorer_bump_invalidates_stored_scores_but_replays_exactly(self) -> None:
+        # The one version field that IS behavior: a new scorer means the stored scores are
+        # not comparable (scoring_hash must move), but a replay runs the new scorer over the
+        # frozen Facts, so the evidence is still good (evidence_hash must not).
+        a = _policy(scorer_version=1)
+        b = _policy(scorer_version=2)
+        assert a.scoring_hash() != b.scoring_hash()
+        assert a.evidence_hash() == b.evidence_hash()
+
+    def test_every_body_field_is_classified(self) -> None:
+        """A new field lands in one of the three sets, or in the evidence-bearing list here.
+
+        The allow-list makes "unclassified" mean "needs a fresh scan", which is the safe
+        default for evidence but the wrong one for bookkeeping. This fails when a field is
+        added so the author has to decide which it is, rather than discovering it on a live
+        server the way ``schema_version`` was found. (``name`` is deliberately absent: a
+        policy's name lives on the row, not in the hashed body.)
+        """
+        known = (
+            PolicyBody._POST_SCORE_FIELDS
+            | PolicyBody._EVIDENCE_REPLAYABLE_FIELDS
+            | PolicyBody._NON_BEHAVIORAL_FIELDS
+        )
+        # Everything else is evidence-bearing: it changes what a scan gathers.
+        evidence_bearing = {
+            "media_type",
+            "keep_last_seasons",
+            "keep_first_season",
+            "keep_last_scope",
+            "season_lookahead",
+            "keep_in_progress",
+            "in_progress_hold_days",
+            "keep_specials",
+            "protect_incomplete_seasons",
+            "flag_keep_conflicts",
+            "gates",
+            "keep_tags",
+            "keep_tags_match",
+        }
+        actual = set(DEFAULT_TV_POLICY.model_dump(mode="json"))
+        assert actual == known | evidence_bearing, (
+            "A PolicyBody field is unclassified. Decide whether it changes an answer "
+            "(leave it out of _NON_BEHAVIORAL_FIELDS) or is bookkeeping (add it), then "
+            "list it here."
+        )
+
+
 class TestFloorsThatCannotBeZero:
     """0 never means 'disabled' and blank never means 'unlimited'.
 
