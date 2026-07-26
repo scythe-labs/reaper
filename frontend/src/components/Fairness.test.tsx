@@ -72,7 +72,13 @@ describe("PersonCard", () => {
       />,
     );
 
+    // Two separate statements of the clean state, and the card does not always carry both:
+    // the chip is the one below 640px drops (index.css, the .fair-card grid block), so the
+    // legend is all a phone has left. jsdom applies no media queries and cannot tell them
+    // apart, so pin the wording of each -- otherwise the only assertion here is the one a
+    // phone never renders.
     expect(screen.getByText(/nothing to reclaim/i)).toBeInTheDocument();
+    expect(screen.getByText(/nothing reclaimable/i)).toBeInTheDocument();
     const card = screen.getByRole("button", { name: /marlow/i });
     expect(card).toBeInTheDocument();
     await userEvent.click(card);
