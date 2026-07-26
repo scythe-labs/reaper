@@ -135,6 +135,36 @@ const VERDICT_SCHEMA = {
   required: ['real', 'reasoning'],
 }
 
+// Every agent writes its own result to disk BEFORE returning it. A workflow's
+// return value only becomes durable once the whole run finishes and the caller
+// processes it, so a run that dies partway -- a lost session, an exhausted
+// quota -- used to leave its verified work recoverable only by hand-parsing
+// the session's raw JSONL. Writing per agent makes each result durable the
+// moment it exists, which is the only point at which nothing can be lost.
+const RUN = (args && args.runId) || 'latest'
+const OUT = '.claude/review-findings/' + RUN
+
+// Verifiers legitimately write a throwaway test to check whether a claimed
+// trigger fires -- a test outside tests/ would not see conftest's fixtures, so
+// "never write to the repo" is the wrong rule. Bound it instead: one namespaced
+// path, and never an edit to something that already exists.
+const WRITE_RULES = `
+You are REVIEWING, not changing the code. Never edit or delete an existing repo file -- not
+source, not tests, not docs. If you need a throwaway test to check whether a trigger really
+fires, create it at tests/test_zz_scratch_<something>.py, run it, and delete it before you
+return. That path is the only file you may create besides the one named below.
+`
+
+const persistFirst = (path, what) => `
+BEFORE you return anything, use the Write tool to save ${what} to:
+
+    ${path}
+
+Write it as JSON, exactly the object you are about to return. Do this FIRST -- if this run is
+interrupted after you finish but before it completes, that file is the only place your work
+survives. Create parent directories as needed. Then return the same object as your answer.
+`
+
 const reviewPrompt = (g) => `You are reviewing Reaper's DELETION PATH. Reaper permanently removes media files from a
 self-hosted server. The prime directive: every ambiguity resolves toward KEEPING the file.
 
@@ -163,7 +193,10 @@ Zero findings is a valid and useful answer -- return an empty array rather than 
 ALREADY REFUTED or ALREADY REPORTED -- do NOT raise these again:
 ${REFUTED.map((r) => '  - ' + r).join('\n')}
 
-Also answer the rules_loaded instrumentation field honestly.`
+Also answer the rules_loaded instrumentation field honestly. Report only what you can see in
+this context -- a previous run's reviewer confidently reported a rules file as absent that the
+InstructionsLoaded hook recorded loading four times for the exact file it named.
+${WRITE_RULES}${persistFirst(OUT + '/review-' + g.key + '.json', 'your findings')}`
 
 const verifyPrompt = (f) => `Adversarially verify this code-review finding. YOUR JOB IS TO REFUTE IT.
 
@@ -180,7 +213,11 @@ really follows.
 Default to real=false when uncertain. A plausible-but-wrong finding costs more than a missed
 one here, because it sends someone editing the deletion path for no reason.
 
-If it survives, correct the line number and the tier if they are wrong.`
+If it survives, correct the line number and the tier if they are wrong.
+${WRITE_RULES}${persistFirst(
+  OUT + '/verify-' + f.group + '-' + f.line + '.json',
+  'your verdict, plus the finding it judges (copy the file/line/title/tier through so the file stands alone)'
+)}`
 
 phase('Review')
 

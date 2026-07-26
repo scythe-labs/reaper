@@ -238,3 +238,8 @@ frontend/public/vendor/
 
 # Written by the InstructionsLoaded hook (scripts/log-instructions-loaded.sh).
 .claude/instructions-loaded.log
+
+# Review findings, written by each agent as it finishes so a run that dies
+# partway -- a lost session, an exhausted quota -- still leaves its verified
+# work on disk. Interim artifacts: a pass worth keeping goes to docs/history/.
+.claude/review-findings/
