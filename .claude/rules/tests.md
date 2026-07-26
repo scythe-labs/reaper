@@ -9,7 +9,7 @@ paths:
 # Test blockers
 
 Blockers, not suggestions. **Rule numbers are permanent** — cite them in test docstrings the
-way the existing suite does (`rule 88`, `rule 118`). Holds 37, 118–119, 132–133, 135–136.
+way the existing suite does (`rule 88`, `rule 118`). Holds 37, 118–119, 132–133, 135–137.
 
 **37. Tests that boot the app are hermetic.** Use the shared autouse `_hermetic` fixture in
 `tests/conftest.py`, which stubs env seeding and startup network. Never let a test read the
@@ -106,3 +106,25 @@ Vitest's console interception drops it entirely on some Node versions — on Nod
 warnings accumulated behind a green suite, visible only in a log nobody reads. Anything a test
 needs to tell you must fail it. To read console output locally at all, run
 `npx vitest run <file> --disableConsoleIntercept`.
+
+**137. A test acts on a control only once the control can be acted on, because user-event
+reports "disabled" as success.** `selectOptions`, `upload` and `click` each return having
+dispatched nothing when the target is disabled — a bare `return` at the top of
+`utility/selectOptions.js`, no error, no warning — so a test that acts one turn early does
+*nothing at all* and then fails downstream, on the state its no-op never produced. That reads as
+a bug in the component.
+
+`PlexPanel`'s connection picker is the case that taught it: its options come from the fast, local
+status read, but the picker stays disabled until the slower plex.tv lookup answers, and both
+picker tests acted the instant the picker appeared. They passed only because the mocked lookup was
+an already-resolved promise. Put the answer one `setTimeout(0)` behind and both fail with "Unable
+to find an element with the text: Manual address" — exactly what CI printed, about one run in
+fourteen. The whole margin was a single event-loop turn, which a loaded machine hands out freely.
+
+So **wait for the control, not for the page**: `await waitFor(() => expect(control).toBeEnabled())`
+before acting, wherever a query's loading state disables it. Finding an element is not the same as
+the element being usable, and an `await findBy*` satisfied by markup a *different, faster* read
+rendered proves nothing about the one that enables it. A control whose label changes with the
+loading state ("Refresh"/"Refreshing…", "Scan library"/"Scanning…") gates itself and needs nothing
+extra; one whose accessible name holds still does not — a `<select>` is the usual shape, and
+`LogsPanel`'s level picker, disabled until its settings land, is the next one waiting.

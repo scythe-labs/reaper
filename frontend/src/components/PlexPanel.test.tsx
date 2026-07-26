@@ -51,9 +51,22 @@ function discovered(uri: string): PlexResourceConnection {
 }
 
 /** The connection picker, found through the option every state renders. */
-async function connectionSelect(): Promise<HTMLSelectElement> {
-  const manual = await screen.findByRole("option", { name: "Manual address…" });
+function connectionSelect(): HTMLSelectElement {
+  const manual = screen.getByRole("option", { name: "Manual address…" });
   return manual.closest("select") as HTMLSelectElement;
+}
+
+/** The same picker, once the plex.tv lookup has answered and it can actually be used.
+ *
+ *  Its options come from the fast, local status read, so the picker is on screen a turn before
+ *  it works: it stays disabled while the lookup runs. user-event reports a disabled select as
+ *  SUCCESS -- `selectOptions` returns having dispatched nothing -- so a test that acted in that
+ *  window silently did nothing, then failed a second later on an editor that never opened. These
+ *  two passed only because the mocked lookup is an already-resolved promise: one event-loop turn
+ *  of slack, which a loaded machine hands out freely, is the whole margin. Rule 137. */
+async function usableConnectionSelect(): Promise<HTMLSelectElement> {
+  await waitFor(() => expect(connectionSelect()).toBeEnabled());
+  return connectionSelect();
 }
 
 function renderPanel(connections: PlexResourceConnection[] = [discovered(LOCAL)]) {
@@ -103,7 +116,7 @@ describe("the connection picker", () => {
     const user = userEvent.setup();
     renderPanel();
 
-    const connection = await connectionSelect();
+    const connection = await usableConnectionSelect();
     // The typed address is its own option, and it is the one selected.
     expect(connection.value).toBe(TYPED);
     expect(screen.getByRole("option", { name: `Manual · ${TYPED}` })).toBeInTheDocument();
@@ -119,7 +132,7 @@ describe("the connection picker", () => {
     const user = userEvent.setup();
     renderPanel([]);
 
-    await user.selectOptions(await connectionSelect(), "__manual__");
+    await user.selectOptions(await usableConnectionSelect(), "__manual__");
     expect(await screen.findByText("Manual address")).toBeInTheDocument();
   });
 });
@@ -161,7 +174,7 @@ describe("when plex.tv's list comes back without the linked server", () => {
     expect(screen.queryByRole("option", { name: "Someone else's server" })).not.toBeInTheDocument();
     const server = screen.getByRole("option", { name: "Example server" }).closest("select");
     expect(server).toBeDisabled();
-    expect(await connectionSelect()).toBeDisabled();
+    expect(connectionSelect()).toBeDisabled();
 
     // And the other server's addresses are not on offer either.
     expect(screen.queryByRole("option", { name: /10-0-0-9/ })).not.toBeInTheDocument();
