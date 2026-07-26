@@ -437,4 +437,56 @@ describe("the all-seasons list", () => {
     expect(screen.getByText(/still kept until the next scan judges them again/)).toBeInTheDocument();
     expect(document.querySelector(".show-inherit-mark .mk-inf")).toBeNull();
   });
+  it("marks a season whose own spare ran out, so its row does not disagree with itself", async () => {
+    // The row already draws the third state twice -- a dashed-green score badge and a dashed
+    // strip square (rule 49). The chip beside them said a solid "Spared", so one row claimed
+    // both "your decision holds" and "your decision ran out". The season is kept either way,
+    // which is why the sentence still leads with that; what it adds is the spare running out
+    // and a scan being what ends it (rule 61).
+    const withShow = (id: number, n: number, extra: Partial<Candidate>): Candidate => ({
+      ...season(id, n, "abstain", 80, null),
+      show_override: "reap",
+      ...extra,
+    });
+    const live = withShow(51, 1, {
+      override: "spare",
+      override_own: "spare",
+      spare_expires_at: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+    });
+    const spent = withShow(52, 2, {
+      override: "spare",
+      override_own: "spare",
+      spare_expires_at: new Date(Date.now() - 3 * 86_400_000).toISOString(),
+    });
+    apiMock.group.mockResolvedValue({
+      group_key: "sonarr:5:42",
+      title: "Example Show",
+      year: 2012,
+      poster_url: null,
+      summary: null,
+      size_bytes: 2 * 1024 ** 3,
+      unknown_size_seasons: 0,
+      reason: null,
+      library: null,
+      chip: null,
+      show_override: "reap",
+      show_spare_expires_at: null,
+      links: {} as Group["links"],
+      show_status: null,
+      seasons: [live, spent],
+    } as Group);
+    renderQueue();
+    await expandSeasons();
+
+    // The live spare keeps the solid chip and the plain sentence.
+    const solid = await screen.findByText("Spared", { selector: ".status-chip" });
+    expect(solid.className).toContain("status-hand-spare");
+    expect(solid.className).not.toContain("status-spare-expired");
+    // The spent one says so, on the dashed fill, and adds what happens next.
+    const spentChip = screen.getByText("Spare expired", { selector: ".status-chip" });
+    expect(spentChip.className).toContain("status-spare-expired");
+    expect(
+      screen.getByText(/Your spare ran out, so the next scan judges it again\./),
+    ).toBeInTheDocument();
+  });
 });

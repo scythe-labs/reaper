@@ -123,12 +123,20 @@ export function OverrideControls({
   const remaining = spareRemaining(spareExpiresAt);
   const counting = spared && !remaining.forever && !remaining.expired;
   const expired = spared && remaining.expired;
+  // On the fixed track the label is the COUNT, in both states that have one -- "27d" live,
+  // "0d" spent. "Expired" was tried there and measured in a real browser: it renders "Expir…",
+  // because the track (`--ov-btn-w`, rule 51) leaves the label about 47px once the caret, the
+  // padding and the glyph are out, and the word wants more. A clipped word is worse than a
+  // count, and the count is the same shape the resting `OverrideMark` already draws for this
+  // state (the dashed dial plus "0d"), so the button and the mark it replaces on hover now
+  // match. The dashed fill and dial say "spent"; the word is in the accessible name and the
+  // tooltip, and the footer below spells it out where there is room.
   const spareLabel = !spared
     ? "Spare"
     : expired
       ? roomy
         ? "Spare expired"
-        : "Expired"
+        : remaining.short
       : counting
         ? roomy
           ? `Spared ${remaining.short}`
@@ -165,13 +173,15 @@ export function OverrideControls({
           disabled={pending}
           aria-pressed={override === "spare"}
           // On the narrow surfaces the visible label is abbreviated to fit the fixed track, so
-          // name the button in full for a screen reader. The visible text ("87d", "Expired")
-          // stays a substring of that name, which is what WCAG 2.5.3 (Label in Name) asks for.
+          // name the button in full for a screen reader. The visible text is the count ("87d"
+          // live, "0d" spent), and it stays a substring of that name -- which is what WCAG
+          // 2.5.3 (Label in Name) asks for, and why the spent name carries the count too
+          // rather than reading "Spared, expired" over a button that visibly says "0d".
           aria-label={
             roomy
               ? undefined
               : expired
-                ? "Spared, expired"
+                ? `Spared ${remaining.short}, expired`
                 : counting
                   ? `Spared ${remaining.short} left`
                   : undefined

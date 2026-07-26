@@ -732,7 +732,7 @@ function ShowInheritBanner({
  *    - a HELD reap (the engine can't honor it yet, own or inherited): a dashed-red "Kept for now"
  *      chip plus the reason it is held (the same "why" the refused OverrideChip would carry);
  *    - a season the owner decided AGAINST its show: a solid chip and a one-line "kept / removed
- *      anyway".
+ *      anyway" -- dashed green, and saying so, when the spare doing the keeping has run out.
  *  The chips reuse the shared `.status-chip` tones (rule 18) and the score's color still comes
  *  from `handFate`, so the two can't disagree (rule 49). Only reached when the show has an
  *  override; a season with no whole-show decision keeps its own scan chip back in SeasonList. */
@@ -758,9 +758,22 @@ function seasonDivergence(
   if (own == null || own === showOverride) return { chip: null, reason: null };
   // Decided against the show: it goes the opposite way, and says so beside its control.
   if (own === "spare") {
+    // The spare's own three states again, because this chip sits inches from the score badge
+    // and the strip square that already draw them (rule 49). A spent spare wears the dashed
+    // green, not the solid "you chose this and it holds" -- solid beside a dashed badge on one
+    // row is the row disagreeing with itself. It still keeps the season either way, so the
+    // sentence beneath is the same one; what changes is that it says the spare ran out, and
+    // that a scan is what ends it (rule 61).
+    const expired = handFate(season) === "spare-expired";
     return {
-      chip: <span className="status-chip status-hand-spare">Spared</span>,
-      reason: "Kept even though the whole show is set to reap.",
+      chip: (
+        <span className={`status-chip ${expired ? "status-spare-expired" : "status-hand-spare"}`}>
+          {expired ? "Spare expired" : "Spared"}
+        </span>
+      ),
+      reason: expired
+        ? "Kept even though the whole show is set to reap. Your spare ran out, so the next scan judges it again."
+        : "Kept even though the whole show is set to reap.",
     };
   }
   return {

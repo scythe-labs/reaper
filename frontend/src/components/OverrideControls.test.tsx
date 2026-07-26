@@ -99,7 +99,7 @@ describe("a spare whose clock has passed", () => {
   // has run out, so it must not wear the solid fill that means "you chose this and it holds".
   it("says so, and wears the dashed fill rather than the solid one", () => {
     const { container } = draw({ override: "spare", spareExpiresAt: inDays(-3) });
-    const btn = screen.getByRole("button", { name: "Spared, expired" });
+    const btn = screen.getByRole("button", { name: "Spared 0d, expired" });
     expect(btn.className).toContain("expired");
     // Still `active` and still aria-pressed: the item IS spared, and clicking still clears it.
     expect(btn.className).toContain("active");
@@ -109,10 +109,14 @@ describe("a spare whose clock has passed", () => {
   });
 
   it("abbreviates on the fixed track and spells it out in the footer", () => {
+    // The fixed track (--ov-btn-w, rule 51) leaves the label about 47px; "Expired" was measured
+    // in a real browser rendering as "Expir…" there. So the narrow label is the COUNT, the same
+    // shape the live countdown and the resting mark use, and the word rides in the accessible
+    // name -- which must still contain the visible text (WCAG 2.5.3).
     const narrow = draw({ override: "spare", spareExpiresAt: inDays(-3) });
-    expect(screen.getByRole("button", { name: "Spared, expired" }).textContent).toContain(
-      "Expired",
-    );
+    const short = screen.getByRole("button", { name: "Spared 0d, expired" });
+    expect(short.textContent).toContain("0d");
+    expect(short.textContent).not.toContain("Expired");
     narrow.unmount();
     // The footer has the room, so it takes the fuller label -- and needs no aria-label, because
     // the visible text already names the state.
