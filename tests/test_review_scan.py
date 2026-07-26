@@ -792,6 +792,30 @@ class TestProtectionSyncDegradations:
         reasons = await protection_sync_degradations(cache_engine, {"reaper-keep": "error: boom"})
         assert reasons == []
 
+    async def test_a_failed_whitelist_whose_row_is_disabled_degrades(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """A retired slug keeps its members, so counting rows alone said it still protects.
+
+        ``lists.retire_absent`` disables a superseded slug with ``enabled = 0`` and leaves
+        its membership rows in place. But the gate reads membership through
+        ``load_membership_index``, which joins ``WHERE l.enabled = 1`` -- so those rows
+        protect nothing. A slug carries the operator's match mode, so flipping keep-tags
+        from "any" to "all" and back retires and revives slugs in normal use; landing a
+        failed sync in that window let a disabled list vouch for it and skip the degrade,
+        which is the fail-open this check exists to prevent (rules 2 and 115).
+        """
+        await _seed_list(
+            cache_engine,
+            slug="reaper-keep",
+            kind="whitelist",
+            members=50,
+            last_synced_at=int(NOW.timestamp()) - 3600,  # fresh, so staleness is not the cause
+            enabled=0,
+        )
+        reasons = await protection_sync_degradations(cache_engine, {"reaper-keep": "error: boom"})
+        assert any("reaper-keep" in r for r in reasons)
+
     async def test_a_failed_whitelist_stale_beyond_the_bound_degrades(
         self, cache_engine: AsyncEngine
     ) -> None:
@@ -867,8 +891,13 @@ async def _seed_list(
     members: int,
     mode: str = "hard",
     last_synced_at: int | None = None,
+    enabled: int = 1,
 ) -> None:
-    """Write a protection_list row (with mode + kind) and ``members`` membership rows."""
+    """Write a protection_list row (with mode + kind) and ``members`` membership rows.
+
+    ``enabled`` defaults to 1, matching the column's own ``NOT NULL DEFAULT 1``. Pass 0 for
+    a slug ``retire_absent`` has superseded: those keep their membership rows on purpose.
+    """
     from reaper.services import lists
 
     await lists.ensure_schema(engine)
@@ -876,12 +905,18 @@ async def _seed_list(
         await conn.execute(
             text(
                 "INSERT INTO protection_list "
-                "(slug, display_name, mode, kind, weight, last_error, last_synced_at) "
-                "VALUES (:slug, :slug, :mode, :kind, 0, 'error: boom', :synced) "
+                "(slug, display_name, mode, kind, weight, enabled, last_error, last_synced_at) "
+                "VALUES (:slug, :slug, :mode, :kind, 0, :enabled, 'error: boom', :synced) "
                 "ON CONFLICT(slug) DO UPDATE SET mode = :mode, kind = :kind, "
-                "last_synced_at = :synced"
+                "enabled = :enabled, last_synced_at = :synced"
             ),
-            {"slug": slug, "kind": kind, "mode": mode, "synced": last_synced_at},
+            {
+                "slug": slug,
+                "kind": kind,
+                "mode": mode,
+                "synced": last_synced_at,
+                "enabled": enabled,
+            },
         )
         for i in range(members):
             await conn.execute(

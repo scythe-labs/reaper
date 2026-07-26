@@ -2247,9 +2247,21 @@ async def protection_sync_degradations(
             # as hard-shaped: fail closed rather than guess.
             if mode is not None and str(mode) != lists.ListMode.HARD.value:
                 continue
+            # Count only members of an ENABLED list, because only an enabled list protects
+            # anything. ``lists.retire_absent`` disables a superseded slug with
+            # ``enabled = 0`` and deliberately KEEPS its members, so a disabled row still
+            # reads as populated -- and a slug carries the operator's match mode, so
+            # flipping keep-tags from "any" to "all" and back retires and revives slugs in
+            # normal use. Counting rows alone let a disabled list vouch for a failed sync
+            # and skip the degrade, which is exactly the state where the gate protects
+            # nothing (rules 2 and 115).
             members = (
                 await conn.execute(
-                    text("SELECT COUNT(*) FROM protection_list_item WHERE slug = :slug"),
+                    text(
+                        "SELECT COUNT(*) FROM protection_list_item i "
+                        "JOIN protection_list l ON l.slug = i.slug "
+                        "WHERE i.slug = :slug AND l.enabled = 1"
+                    ),
                     {"slug": slug},
                 )
             ).scalar_one()
