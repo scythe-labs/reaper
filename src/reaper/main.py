@@ -252,11 +252,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         catch_up.cancel()
         # A background scan (api/scan.py) is detached from any request, so cancel it here
         # rather than leaving a pending task when the loop stops. A scan writes only our own
-        # rows and can be dropped, so it is cancelled but not awaited.
+        # rows and can be dropped, so it is canceled but not awaited.
         scan_task = getattr(app.state, "scan_task", None)
         if scan_task is not None and not scan_task.done():
             scan_task.cancel()
-        # A reap (api/runs.py) is detached too, but it is DELETING -- so it must be cancelled
+        # A reap (api/runs.py) is detached too, but it is DELETING -- so it must be canceled
         # AND awaited before the engines go, so the executor's CancelledError branch marks the
         # run ABORTED and its finally commits that state and tidies Plex against the still-live
         # DB and clients. Bounded, so a slow Plex cannot hang shutdown forever; if it exceeds

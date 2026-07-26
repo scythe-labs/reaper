@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "InstructionsLoaded": [
+      {
+        "matcher": "session_start|path_glob_match|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "scripts/log-instructions-loaded.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

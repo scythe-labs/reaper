@@ -24,7 +24,7 @@ a threshold of 60 costs.
 
 **Engine-complete, not yet reachable.** No route, CLI or UI calls :func:`run` today, so
 nothing an operator can click runs a backtest; operator-facing copy must not tell them
-to run one until it ships. PLAN.md tracks the wiring (a ``POST /api/policy/backtest``
+to run one until it ships. docs/STATUS.md tracks the wiring (a ``POST /api/policy/backtest``
 plus the calibration prior) as open work.
 
 ## The honesty problem

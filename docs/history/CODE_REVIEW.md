@@ -1,3 +1,21 @@
+# The fifth review pass — archived
+
+> **FROZEN 2026-07-26. Do not work from this file.**
+>
+> The whole-backend adversarial review at `dev @ d3c3839` (2026-07-24): two passes, 100
+> findings. **All 100 are remediated** — see `CODE_REVIEW_PHASES.md` in this directory, whose
+> ten phases are all recorded DONE with gates.
+>
+> **Its own preamble is wrong.** The text below still asserts that "all 53 of Part II's
+> findings are still open on this tree," and that CLAUDE.md's numbered rules stop at 69.
+> Neither was true after 2026-07-24. Ignore both claims.
+>
+> **The `# Agent Rules` section here is superseded.** Those rules became CLAUDE.md 88-119 and
+> now live in `.claude/rules/`, where several were deliberately **reworded against what was
+> actually built** rather than what this review proposed. Follow `.claude/rules/`, never this
+> copy. Kept for the failure modes and the reasoning, which are still the best record of why
+> those rules exist.
+
 # Backend code review — `dev` @ `d3c3839`, 2026-07-24
 
 > **This file holds two passes.** **Part I** is a second, independent whole-backend pass run

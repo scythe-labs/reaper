@@ -126,7 +126,8 @@ def redact_secrets(_logger: WrappedLogger, _method: str, event_dict: EventDict) 
 #   Tautulli, Plex and MDBList all carry their credential in the query string -- while a
 #   Discord webhook carries its token in the PATH -- so an unquieted HTTP logger writes
 #   those secrets straight to the log in cleartext. Both httpx and httpx2 are pinned here:
-#   Reaper is mid-migration off the unmaintained httpx onto httpx2 (see docs/PLAN.md), and
+#   Reaper is mid-migration off the unmaintained httpx onto httpx2 (see
+#   docs/history/PLAN-narrative.md), and
 #   httpx2 renames its loggers to "httpx2"/"httpcore2" -- quiet only "httpx" and the secret
 #   leak silently returns the moment a client moves over. (notify/discord.py is already on
 #   httpx2.)

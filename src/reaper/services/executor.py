@@ -572,7 +572,7 @@ _MOVIE_COMPARABLE = frozenset({SizeSource.RADARR})
 #: And for seasons, which delete file by file and re-read the summed episode files.
 #: ``SONARR_FILES`` is that same quantity. ``SONARR`` is the season FOLDER and is a known
 #: mismatch: the folder side is the larger number, so the comparison reads as a shrink and
-#: the growth interlock has been desensitised since it was written. It stays admissible
+#: the growth interlock has been desensitized since it was written. It stays admissible
 #: because it is the only season measurement Reaper takes today, and removing it would
 #: keep every season. Preferring ``SONARR_FILES`` at scan time is what actually repairs
 #: the interlock, and is deliberately a separate change.
@@ -938,7 +938,7 @@ class Executor:
 
         # Set by the cancel path so the finally below commits the run's state but does NOT
         # sit in Plex's settle-wait. See _commit_and_finalize.
-        cancelled = False
+        canceled = False
         try:
             # -- interlock 3: caps abort the whole run ----------------------
             # Inside the guarded block, so a breach becomes a visible ABORTED report the
@@ -965,7 +965,7 @@ class Executor:
             # durable before the cancellation propagates. Every removed file is already
             # journalled per item, so nothing is lost by aborting here. The Plex tidy-up is
             # deliberately NOT run: see _commit_and_finalize.
-            cancelled = True
+            canceled = True
             report.state = RunState.ABORTED
             report.aborted_reason = "The run was stopped before it finished."
             if not self._dry_run:
@@ -1001,11 +1001,11 @@ class Executor:
             # backgrounding the run) skipped it, orphaning Plex entries and leaving the run
             # EXECUTING. See _commit_and_finalize for why it is best-effort.
             if not self._dry_run:
-                await self._commit_and_finalize(cancelled=cancelled)
+                await self._commit_and_finalize(canceled=canceled)
 
         return report
 
-    async def _commit_and_finalize(self, *, cancelled: bool = False) -> None:
+    async def _commit_and_finalize(self, *, canceled: bool = False) -> None:
         """Make the run's final state durable, then purge Plex's now-stale entries.
 
         The final state is committed BEFORE the purge: the purge can wait on Plex scans for
@@ -1019,7 +1019,7 @@ class Executor:
         exclusion check *after* its file is already gone; it is gated on a section actually
         having been refreshed (a file really was removed), and _finalize_plex never raises.
 
-        ``cancelled`` is the one case it is skipped. A hard cancel is the container going
+        ``canceled`` is the one case it is skipped. A hard cancel is the container going
         down, and the purge polls ``is_refreshing`` for up to
         ``_plex_settle_attempts * _plex_settle_delay`` PER affected section before it can
         even decide -- so honoring it here would hold shutdown open for tens of seconds
@@ -1032,7 +1032,7 @@ class Executor:
             await self._session.commit()
         except Exception as exc:  # pragma: no cover - defensive; a failed final commit re-plans
             log.warning("reap.final_commit_failed", error=str(exc))
-        if cancelled:
+        if canceled:
             if self._affected_sections:
                 log.info("reap.trash_purge_deferred", sections=len(self._affected_sections))
             return

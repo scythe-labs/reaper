@@ -76,7 +76,7 @@ function DiagramNodeBox({ node }: { node: DiagramNode }) {
 }
 
 /** A hand-drawn flowchart (no Mermaid dependency): a centered spine of nodes joined by
- *  labelled connectors, each decision able to shed a side branch. Every node is real, readable
+ *  labeled connectors, each decision able to shed a side branch. Every node is real, readable
  *  text; the container scrolls sideways on a narrow pane rather than clipping. */
 function DocDiagram({ block }: { block: DiagramBlock }) {
   return (
