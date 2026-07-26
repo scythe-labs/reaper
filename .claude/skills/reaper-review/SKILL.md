@@ -13,17 +13,48 @@ this codebase has, and it is usually silent.
 
 ## Argument
 
-The argument names a lane from the table below, optionally followed by a target — a commit, a
-branch, or paths. Either part may be absent: with no lane, review the `diff` lane; with no
-target, review the working diff. Positional `$1` substitution is deliberately not used here,
-because it does not reliably resolve to the first word of a multi-word argument.
+The argument may name a lane from the table below, optionally followed by a target — a commit,
+a branch, or paths. **Both parts are optional, and the lane normally should be.** With no lane,
+derive it from the diff (see *Selecting the lane*); with no target, review the working diff.
+Naming a lane explicitly overrides the derivation and runs only that lane. Positional `$1`
+substitution is deliberately not used here, because it does not reliably resolve to the first
+word of a multi-word argument.
 
 Adding `fix` anywhere in the argument (`/reaper-review fix`, `/reaper-review safety fix`) means
 apply the findings after reporting them — see *Applying the fixes* below.
 
+## Selecting the lane
+
+**Derive it; do not ask.** The changed paths determine the lanes mechanically, so read the diff
+first (`git diff --name-only`, or `git diff --name-only dev...HEAD` on a branch) and match:
+
+| A changed path matching… | fires |
+| --- | --- |
+| `src/reaper/engine/{gates,verdict,signals,policy}.py`, `src/reaper/services/{executor,planner,snapshot,season_pruning}.py`, `src/reaper/clients/{base,plex}.py`, `src/reaper/api/runs.py`, `frontend/src/components/{DeletionToggle,ReapConfirm}.tsx`, `frontend/src/useSafety.ts` | `safety` |
+| `src/reaper/api/*.py` (any router or `schemas.py`), `frontend/src/api.ts`, or a changed component prop/query key | `seam` |
+| anything else under `src/reaper/**`, `alembic/**`, or `frontend/src/**` | `diff` |
+
+**The lanes are additive and run as separate passes.** A change touching the executor and
+adding a route fires `safety`, `seam`, and `diff` — three passes, because they are three
+different questions and a reviewer holding all three at once checks each side and skips the
+contract between them, which is the exact blind spot `seam` exists to close. The extra cost
+lands only on changes that genuinely cross the risk boundaries, which are the changes that
+warrant it.
+
+Run them concurrently, as separate subagents, not as one widened prompt.
+
+**Say which lanes fired and why**, in one line, before reporting findings: `safety (executor.py),
+seam (api/runs.py, api.ts) — 2 lanes`. If the operator disagrees they can name a lane explicitly
+next time, and a wrong derivation is then visible instead of silent.
+
+A diff touching only docs, tests, or config fires nothing. Say so and stop rather than inventing
+a pass.
+
+## The lanes
+
 | Lane | Scope |
 | --- | --- |
-| `diff` | the working diff, or `git diff dev...HEAD` on a branch. **The default and the common case.** |
+| `diff` | the changed lines themselves, and what they reach. The baseline pass — it runs for any code change, alongside whatever else fired. |
 | `safety` | `engine/{gates,verdict,signals,policy}.py`, `services/{executor,planner,snapshot,season_pruning}.py`, both transport guards (`clients/base.py`'s `GuardedTransport` and its `GuardedSession` twin in `clients/plex.py` — rule 72 means a fix to one is reviewed against the other), the execute route at `api/runs.py:399`, and the arming UI. Spans both trees on purpose. |
 | `seam` | route ↔ `api/schemas.py` ↔ frontend client method ↔ props ↔ query keys, for every surface the change touches. |
 | `backend` | `src/reaper/**`, `alembic/**` |
@@ -36,7 +67,8 @@ before a `dev` → `main` promotion — not on a normal change.
 backend and frontend separately leaves the seam unreviewed by construction: the confirmation
 phrase rendered client-side against the one recomputed server-side, query-key invalidation
 after execute, a route returning a shape the SPA misreads. Each single-tree reviewer sees half
-of that and neither is wrong to skip it. When a change adds or alters a surface, run `seam`.
+of that and neither is wrong to skip it. That is why `seam` is a lane the diff can fire on its
+own, rather than something anyone has to remember to ask for.
 
 ## Before you look for anything
 
