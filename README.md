@@ -25,8 +25,8 @@ cleanup, and do it well. Reaper's reason to exist is the thing they don't do:
   It explains the **keeps** too, not only the deletes.
 - **Curated lists as protection.** Never reap anything in the IMDb Top 250.
   No other tool ingests curated lists as a protection source.
-- **A grace period you can cancel**, surfaced to your users as a
-  *Leaving Soon* label in Plex.
+- **A countdown your users can see**, surfaced as a *Leaving Soon* label in Plex.
+  Watching a title keeps it; so does sparing it by hand.
 
 ## Safety
 
@@ -143,7 +143,8 @@ database, encrypted, and is edited in the UI.
 |---|---|---|
 | `.env` | `REAPER_SECRET_KEY`, `REAPER_SECRET_KEY_OLD` *(both optional)* | They decrypt the database's secrets, so they cannot live inside it |
 | `.env` | data dir, host, port, logging | Needed before anything else exists |
-| `.env` | `REAPER_RECOVERY`, `REAPER_ALLOW_UNARMED_LEAVING_SOON` | Must work when the UI is broken or untrusted, and neither has a UI |
+| `.env` | `REAPER_RECOVERY` | Must work when the UI has locked you out, so it has no setting in the UI |
+| `.env` | `REAPER_ALLOW_UNARMED_LEAVING_SOON` | Seeds the first run only; after that the UI owns it, under **Settings → Plex → Leaving Soon**, as "Update while read-only" |
 | `.env` | `REAPER_DESTRUCTIVE_ACTIONS_ENABLED` | Seeds the first run only; the UI owns it after that ([details](#the-deletion-switch)) |
 | `.env` | `REAPER_SERVE_SPA` | Development only, so Vite can serve the UI instead. Production leaves it on |
 | **DB** (encrypted) | Instance URLs + API keys, the Discord webhook, policies, schedules, whitelist | Editable and rotatable without a redeploy |

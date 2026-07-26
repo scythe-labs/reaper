@@ -33,8 +33,11 @@ cheaper than the excuse. `tests/test_repo_hygiene.py` keeps it that way.
   `(measured <date>)`, evidence as ratios and orders of magnitude, and a `⇒` consequence line.
   **Negative results count** — "we tried X and it was worse" stops the next person re-trying X.
 - **You learned what predicts that nobody will watch a title** → `SIGNALS.md`. It is cited from
-  four places in `src/`, so read it before touching `signals.py`, `policy.py`, or
-  `calibration.py`.
+  five places in `src/` — `engine/signals.py`, `engine/policy.py` (twice), `engine/gates.py` and
+  `api/routes.py` — so read it before touching those, and before `engine/backtest.py`, which holds
+  the rewatch curve `SIGNALS.md` tabulates (`FALLBACK_REWATCH_PRIOR`). `engine/calibration.py`
+  cites it nowhere and holds only the machinery to fit a per-operator replacement, which has no
+  caller in `src/`.
 - **A review pass, a migration, a finished remediation** → `docs/history/`, with a banner
   saying it is frozen and what supersedes it. Never edit an archived file to bring it up to
   date; that is what makes an archive lie.

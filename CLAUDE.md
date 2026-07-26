@@ -24,9 +24,9 @@ are always in context before you change it:
 
 | File | Governs | Rules |
 | --- | --- | --- |
-| `.claude/rules/backend.md` | `src/reaper/**`, `alembic/**` — safety path, engine, evidence, clients, auth, persistence | 1–6, 8–14, 22–23, 26–35, 38, 52, 55–59, 63, 65, 70–71, 73–78, 81–84, 87–117, 124–131 |
-| `.claude/rules/frontend.md` | `frontend/src/**` — UI grammar, the review queue, the two-level spare, gating surfaces | 17–20, 36, 39–51, 53–54, 60–62, 66–67, 69, 79–80, 85–86, 120–123 |
-| `.claude/rules/tests.md` | `tests/**`, `*.test.tsx` — test discipline | 37, 118–119, 132–133 |
+| `.claude/rules/backend.md` | `src/reaper/**/*.py`, `alembic/**/*.py` — safety path, engine, evidence, clients, auth, persistence | 1–6, 8–14, 22–23, 26–35, 38, 52, 55–59, 63, 65, 70–71, 73–78, 81–84, 87–117, 124–131 |
+| `.claude/rules/frontend.md` | `frontend/src/**/*.{ts,tsx,css}` and `frontend/index.html` (rule 69 governs it) — UI grammar, the review queue, the two-level spare, gating surfaces | 17–20, 36, 39–51, 53–54, 60–62, 66–67, 69, 79–80, 85–86, 120–123 |
+| `.claude/rules/tests.md` | `tests/**/*.py`, `frontend/src/**/*.test.ts{,x}` — test discipline | 37, 118–119, 132–133 |
 
 Nine rules bind every file and stay here, under *Rules that apply everywhere*. Where two rules
 overlap, the more specific one governs. Read the governing file before working in a tree you
@@ -63,7 +63,13 @@ haven't touched this session.
   edit the line that is now wrong, never append beside it. Measured findings, including
   negative results, go to `docs/LEARNINGS.md`. `docs/README.md` says what belongs where: state,
   knowledge, and history have different lifespans and never share a file.
-- **Commit only when asked**; end commit messages with the `Co-Authored-By` trailer.
+- **Commit as you go, in focused commits — don't wait to be asked.** One commit tells one
+  story: a feature, a bug fix, a cleanup that stands on its own. A fix ships with the test
+  that pins it and the doc line it corrects, because those are the same story. Nothing else
+  rides along. **The reviewer's attention is the scarce resource, so balance it both ways:**
+  don't dribble one change across a string of tiny commits, and don't lump unrelated work into
+  a big one. Aim for the fewest commits that each still stand alone and read clearly. End
+  commit messages with the `Co-Authored-By` trailer.
 
 ## Rules that apply everywhere
 
@@ -151,7 +157,8 @@ common CI break.** When a change is observable in the app, *drive it end-to-end*
 
 ## Architecture
 
-- `src/reaper/clients/` — the **only** place HTTP lives. `GuardedTransport` (and its
+- `src/reaper/clients/` — the **only** place HTTP lives (one sanctioned exception,
+  `notify/discord.py`'s webhook POST; see rule 33). `GuardedTransport` (and its
   `GuardedSession` twin for plexapi) refuses any mutating request unless deletion is armed on
   the host **and** the executor declared the intent to the journal first.
 - `src/reaper/engine/` — `gates` (hard, fail-closed protections), `signals` (soft weighted
@@ -187,8 +194,10 @@ streaming veto and played-since-approval check) each resolve toward keeping the 
 - `docs/README.md` — what belongs in which file, and the rule that keeps them current.
 - `docs/STATUS.md` — **start here.** What is true right now: milestones, open work, decisions
   locked. Small and edited in place.
-- `docs/LEARNINGS.md`, `docs/SIGNALS.md` — findings from real data. Read `SIGNALS.md` before
-  touching `signals.py`, `policy.py`, or `calibration.py`; it is cited from four places in `src/`.
+- `docs/LEARNINGS.md`, `docs/SIGNALS.md` — findings from real data. `SIGNALS.md` is cited from
+  five places in `src/`: `engine/signals.py`, `engine/policy.py` (twice), `engine/gates.py`, and
+  `api/routes.py`. Read it before touching any of them, and before the rewatch curve in
+  `engine/backtest.py`.
 - `docs/SIZE_TRUTH_PLAN.md` — the one feature plan still live (4 of 9 stages remain).
 - `docs/history/` — frozen: the retired plan narrative and the review passes, including the
   finding IDs behind the numbered rules. Never edit an archived file to bring it up to date.

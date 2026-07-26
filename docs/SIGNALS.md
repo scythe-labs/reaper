@@ -2,7 +2,7 @@
 
 > Derived by replaying a large Tautulli history against the library it belongs to, on
 > one active Plex server. Every number here was measured, and is quoted as a ratio: the
-> **shape** generalises, the absolute values are that server's and yours will differ.
+> **shape** generalizes, the absolute values are that server's and yours will differ.
 >
 > **Read the section on population first.** It is the part that took two wrong turns to
 > get right, and it will bite you too.
@@ -40,7 +40,7 @@ exactly the buckets the policy cares about most.
 
 | Dormant for | Over all history keys (**wrong**) | Over the actual library (**right**) |
 |---|---|---|
-| 0–365d | ~44% | **~60%** |
+| 0–365d | ~44% | **~61%** |
 | 365–548d | ~31% | ~31% |
 | 548–730d | ~30% | ~32% |
 | 730–1095d | ~19% | **~30%** |
@@ -60,7 +60,7 @@ following year — over the **correct** population:
 
 | Dormant for | Rewatched within a year |
 |---|---|
-| 0–365 days | **~60%** |
+| 0–365 days | **~61%** |
 | 365–548 | ~31% |
 | 548–730 | ~32% |
 | 730–1095 | ~30% |
@@ -117,8 +117,9 @@ the engine simpler by dropping them, drop them.
 
 **Roughly one deletion in eight is a film someone comes back for.** That is the honest
 number, at the best settings measured. It is not a tuning failure — it is what an active
-library looks like. It is the reason the grace period, the *Leaving Soon* collection,
-and the human approval gate are not optional decoration.
+library looks like. It is the reason the *Leaving Soon* warning and the human approval
+gate are not optional decoration. (The warning is what the grace countdown drives; the
+countdown itself holds nothing back.)
 
 ---
 
@@ -131,7 +132,9 @@ would expect by picking randomly among films **of the same age**.
 lift = (age_matched_expected_regret − actual_regret) / age_matched_expected_regret
 ```
 
-- **lift > 0** — the scorer picks better than age alone. The signal earns its keep.
+- **lift > 0.05** — the scorer picks better than age alone. This is the code's own bar
+  (`backtest.beats_random`): at or below it the backtest prints "not beating age alone,
+  do not arm this policy," so a merely positive lift does not earn its keep.
 - **lift ≈ 0** — the signal is dormancy in a trenchcoat.
 - **lift < 0** — the signal is *worse than nothing*; it displaces dormancy.
 
@@ -141,10 +144,16 @@ it can have the wrong sign.
 
 ## Your library is not this library
 
-The rewatch curve is a property of **an audience**, not of physics. Reaper therefore
-derives it from your own Tautulli history at calibration time (`engine/calibration.py`)
-and only falls back to a documented default curve when there is too little history to
-fit one. The backtest labels which of the two it used, in every summary it prints.
+The rewatch curve is a property of **an audience**, not of physics. A household of three
+has nothing in common with a server used by a hundred people.
 
-If you see *"borrowed from another library"* in a backtest summary, the numbers are a
-starting point and nothing more. **Recalibrate before trusting a threshold.**
+**Today every prior in use is the one above.** `engine/calibration.derive` can fit a curve
+from the owner's own Tautulli history, and is tested, but it has **no caller anywhere in
+`src/`** — not even the backtest, which imports only `RewatchPrior` and `NotCalibratedError`
+from it. Its only callers are the tests, and the backtest that would consume it is itself
+unreachable (see `docs/STATUS.md`, M3c and M3g). So `backtest.FALLBACK_REWATCH_PRIOR` is
+what anything actually reads, and it is one library's curve.
+
+Treat the numbers here as a shape to reason about, never as a measurement of *your* server.
+The machinery to label a borrowed curve exists (`backtest.prior_is_derived`) and will start
+reporting the moment the backtest gets a route.

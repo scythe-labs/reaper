@@ -1649,22 +1649,30 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
     same viewport. Move the threshold, and the count, the byte total and the histogram
     move with it -- instantly, without touching Sonarr, Radarr or Tautulli.
 
-    **And it only works for the thresholds.** The simulator re-compares *stored* scores
-    and verdicts against new numbers, through the same ``engine.verdict`` decision the
-    scan uses. That is exact for ``condemn_at`` and ``coverage_floor_bp``. It is simply
-    wrong for anything else: change a signal weight or a gate, and every stored score was
-    produced by the old ones. There is no way to recover the new answer from the snapshot
-    -- it would take re-reading the library.
+    **It works for whatever the frozen evidence can still answer, and refuses the rest.**
+    Three tiers, most exact first, enumerated again at the branch below:
+
+    1. ``scoring_hash`` matches -- re-compare the *stored* scores and verdicts against the
+       new numbers, through the same ``engine.verdict`` decision the scan uses. Exact for
+       ``condemn_at`` and ``coverage_floor_bp``, and the cheapest path.
+    2. Scoring changed but ``evidence_hash`` matches, and there is at least one governed row
+       and every one of them froze its Facts -- **replay** the real
+       ``score``/``evaluate_all``/``decide_verdict`` over ``Candidate.facts_json`` under the
+       edited policy (``_replay_simulation``). Exact for every field in
+       ``PolicyBody._EVIDENCE_REPLAYABLE_FIELDS``: a weight, a rating bar, a custom condemn
+       rule, a graded keep, or a protect condition. Still zero API calls.
+    3. Otherwise the edit changed what a scan would *gather* (a watch window, a keep tag, a
+       season rule, any gate) -- the frozen evidence is stale, so it **returns nothing but
+       the reason**. A plausible wrong answer is worse than a blank: the owner acts on it.
+
+    Tier 2 needs a snapshot that actually froze its evidence: a pre-facts-freeze snapshot
+    has a null ``evidence_hash`` or rows with no ``facts_json``, and falls to tier 3.
 
     Two kinds of row are never re-decided on score: a row with a protection that could
     not be checked stays abstained at any threshold (the scan refuses to condemn on
     unchecked protections), and a row under a hand override follows the owner's decision
     whatever the threshold: a spare protects, and a reap condemns when the engine
     honors it (services.condemned).
-
-    So rather than return a confident, stale number, it compares the candidate policy's
-    ``scoring_hash`` against the snapshot's and, when they differ, **returns nothing but
-    the reason**. A plausible wrong answer is worse than a blank: the owner acts on it.
 
     With separate movie and TV policies, the snapshot's scoring hash is the *combination* of
     both. Editing one leaves the other untouched, so we recombine the candidate policy with the
@@ -1741,9 +1749,9 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
             return SimulationOut(
                 exact=False,
                 stale_reason=(
-                    "You changed how the scan reads your library (a watch window, a keep tag, or "
-                    f"a season rule), so the last scan's evidence no longer fits this {kind} "
-                    "policy. Run a scan to apply it, then this becomes exact again."
+                    "You changed what the scan reads: a protection, a watch window, a keep tag, or "
+                    f"a season rule. The last scan's evidence no longer fits your {kind} policy. "
+                    "Run a scan to apply it, then this becomes exact again."
                 ),
                 condemned=0,
                 protected=0,

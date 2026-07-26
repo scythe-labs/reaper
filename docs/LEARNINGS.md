@@ -31,8 +31,8 @@ detail.
   *cheaper* and *dearer*.
 - **The best policy measured still carries ~12% regret** — roughly one deletion in
   eight is a film someone comes back for. Not a tuning failure: it is what an active
-  library looks like, and it is why the grace period and the human approval gate are
-  not decoration.
+  library looks like, and it is why the *Leaving Soon* warning and the human approval gate
+  are not decoration.
 - **Dormancy does essentially all the work.** `FEW_WATCHERS` and `LOW_RATING` add no
   measurable skill on top of it.
 - **Removing `SIZE` from the score was right.** Size measures *reward*, not *risk*;
@@ -91,12 +91,20 @@ been watched by *someone*, eventually; only a fraction still have watchers this 
 ⇒ Popularity is windowed (365d default). There is deliberately no way to spell
 "all time".
 
-### 5. A play after deletion is a regret — **not if it's within grace**
+### 5. A play after deletion is a regret — **not if the live check would spare it**
 
-An item played 2 days after condemnation is still in quarantine; the live pre-delete
-check spares it. Counting rescues as failures slanders the policy.
+A play shortly after condemnation is often a rescue rather than a failure, and counting
+rescues as failures slanders the policy.
 
-⇒ Regrets and rescues are split at the grace boundary.
+⇒ In `engine/backtest.py`, regrets and rescues are split at the grace boundary.
+
+**Superseded in reasoning, not in split.** The justification above ("still in quarantine")
+described a hold that does not exist: nothing on the deletion path reads the grace window,
+so an item is deletable from the moment it is condemned. What actually spares a late play
+is the executor's live per-item vetoes, which fire on a play *after the plan was approved* —
+not on a boundary N days out. The backtest still splits on the boundary, so its `rescued`
+count is a best case; `BacktestResult.rescued` says so, and M3c must fix or label it before
+any of these figures reach an operator.
 
 ### 6. SQLite stores timezones — **it does not**
 
@@ -109,10 +117,13 @@ check spares it. Counting rescues as failures slanders the policy.
 Shipping one library's rewatch rates as a hardcoded prior makes every lift number on
 every *other* library meaningless.
 
-⇒ `engine/calibration.py` derives the prior from the operator's own history, and the
-backtest labels which prior it used in every summary it prints.
+⇒ **Intended, not shipped.** `engine/calibration.derive` can fit the prior from the
+operator's own history and `backtest.prior_is_derived` can label which prior was used, but
+neither has a caller in `src/`: every number in use is `backtest.FALLBACK_REWATCH_PRIOR`,
+one library's curve. Tracked as M3g in `docs/STATUS.md`, blocked behind the unwired
+backtest (M3c).
 
-### 8. The simulator can re-decide a snapshot under any policy — **only the thresholds**
+### 8. The simulator can re-decide a snapshot under any policy — **only what the frozen evidence still answers**
 
 The zero-API-call simulator re-compares **stored** scores against new numbers. That is
 exact for `condemn_at` and `coverage_floor_bp` and simply *wrong* for anything else:
@@ -122,8 +133,23 @@ the most dangerous screen in the product — the stale number looks exactly as
 authoritative as the true one.
 
 ⇒ `PolicyBody.scoring_hash()` covers the signals and gates but not the thresholds. The
-snapshot records it, and the simulator **refuses to report any numbers** when it
-differs, saying so and telling you to re-scan.
+snapshot records it, and while it matches, re-comparing stored scores is exact.
+
+**Superseded in part — freezing the Facts bought back most of what this gave up.** The
+stale number was the danger, not re-scoring itself: once a scan froze each item's
+evidence (`Candidate.facts_json`), a weight edit could be answered *exactly* by replaying
+the real `score` / `evaluate_all` / `decide_verdict` over that frozen evidence, still with
+zero API calls. So `simulate` is now three tiers (`api.routes.simulate`): stored-score
+re-compare while `scoring_hash` matches; **replay** while `evidence_hash` matches, which
+covers weights, rating bars, custom condemn rules, graded keeps and protect conditions —
+`PolicyBody._EVIDENCE_REPLAYABLE_FIELDS` is the authority, not this sentence; and only then
+the refusal.
+
+⇒ The refusal is now scoped to edits that change what a scan would *gather* — a watch
+window, a keep tag, a season rule, any gate — where the frozen evidence really is stale.
+The replayable set is an **allow-list**, so a field nobody classified falls into the
+refusal rather than into a plausible wrong preview. The lesson survives its own fix: the
+rule was never "only thresholds are safe," it was "never show a number you cannot derive."
 
 ### 9. Rounding the score after deciding the verdict — **two answers to one question**
 
@@ -482,7 +508,7 @@ server. The absolute numbers are that server's; the **shape** is the finding.
 
 | Dormant for | Rewatched within the next year |
 |---|---|
-| 0–365d | ~60% |
+| 0–365d | ~61% |
 | 365–548d | ~31% |
 | 548–730d | ~32% |
 | 730–1095d | ~30% |
@@ -500,10 +526,11 @@ is a film someone comes back for. That is not a tuning failure — it is what an
 library looks like, and it is why the grace period and the human approval gate are not
 decoration.
 
-⇒ This curve is a property of *an audience*, not a constant. Reaper therefore **derives
-it from the operator's own history** at calibration time and only falls back to a
-documented default when there is too little history to fit one. Never ship someone
-else's rewatch curve as if it were physics.
+⇒ This curve is a property of *an audience*, not a constant, so never ship someone else's
+rewatch curve as if it were physics. **Reaper still does**: `engine/calibration.derive`
+exists to fit the curve per operator but has no caller in `src/`, so the hardcoded
+`backtest.FALLBACK_REWATCH_PRIOR` is what every number reads today. Wiring it is M3g in
+`docs/STATUS.md`.
 
 ---
 
@@ -803,7 +830,9 @@ name — under rules that keep it corroboration rather than guessing:
 
 Accepted residual, weighed and documented rather than guarded: an *arr rename that lands
 exactly on the sibling copy's file name mis-picks until Plex rescans — transient,
-same-content only, and gated by the grace window plus supervised execution.
+same-content only, and caught by supervised execution (a person reads the list and types
+the phrase). Note the grace window is **not** part of that guard: nothing on the deletion
+path reads it.
 
 Verified on a live scan: **about a quarter of the stuck items bound by name alone** —
 each one a split-section copy whose file name carries a quality marker, each to its own

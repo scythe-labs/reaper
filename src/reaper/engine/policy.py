@@ -299,8 +299,8 @@ class PolicyBody(Frozen):
     """The hashed, immutable part of a policy.
 
     Everything here changes what Reaper would *decide*. Anything that changes only
-    how much it may *do* (caps) or how long it waits (grace) lives on the Profile,
-    so that tightening a cap does not void every pending approval.
+    how much it may *do* (caps) or how long a flagged title is shown as leaving (grace)
+    lives on the Profile, so that tightening a cap does not void every pending approval.
     """
 
     schema_version: int = Field(default=SCHEMA_VERSION, ge=1, le=SCHEMA_VERSION)
@@ -569,13 +569,16 @@ class PolicyBody(Frozen):
         ``condemn_at`` and ``coverage_floor_bp`` are compared against those results
         afterwards.
 
-        This is what makes the zero-API-call simulator honest. Re-deciding a stored
-        snapshot at a new threshold is exact. Re-deciding it under a new *weight* or a
-        new *gate* is not -- the stored scores and verdicts were produced by the old
-        ones, and there is no way to recover the new answer without re-reading the
-        library. So the snapshot records this hash, the simulator compares against it,
-        and when they differ it **refuses to report numbers** rather than reporting
-        confident, stale ones.
+        This is the **first** of the simulator's three tiers, and what makes the
+        zero-API-call path honest. Re-deciding a stored snapshot at a new threshold is
+        exact, so while this hash matches, re-comparing the stored scores is enough.
+        When it differs, the stored scores were produced by different weights or gates
+        and cannot be reused -- so the simulator falls through to ``evidence_hash``,
+        which decides whether the frozen Facts may be *replayed* under the edited policy
+        (tier 2, still exact and still zero API calls) or whether the edit changed what
+        a scan would gather at all, in which case it **refuses to report numbers**
+        rather than reporting confident, stale ones (tier 3). The three tiers are
+        enumerated in ``api.routes.simulate``.
         """
         payload = {
             k: v
@@ -628,7 +631,8 @@ class PolicyBody(Frozen):
 
 
 class ProfileSettings(Frozen):
-    """The mutable part: how much Reaper may do, and how long it waits.
+    """The mutable part: how much Reaper may do, and how long a flagged title shows as
+    leaving.
 
     Kept *out* of the hash on purpose. Tightening a cap or lengthening the grace
     period is always safe, and voiding every pending approval because the owner
@@ -662,9 +666,12 @@ class ProfileSettings(Frozen):
     only ever loosens, and the executor re-reads it at execute time."""
 
     grace_days: int = Field(default=14, ge=7)
-    """How long a condemned item sits, cancellable, before it is actually deleted.
-    Floored at 7: a grace period shorter than a week is one your users cannot
-    realistically act on."""
+    """How long a condemned item is shown as leaving, so the household can catch it.
+
+    A **notice** window, not a gate: nothing on the deletion path reads it (see the module
+    docstring on ``services/grace.py``), so it drives the Leaving Soon shelf and the
+    Discord notice and never defers a send. Floored at 7: a countdown shorter than a week
+    is one your users cannot realistically act on."""
 
     max_unmeasured_per_run: int = Field(default=0, ge=0, le=25)
     """How many items with no size a single run may delete. ``0``, the default, means
@@ -1105,11 +1112,12 @@ DEFAULT_MOVIE_POLICY = PolicyBody(
         GateSetting(gate=GateId.DATA_HORIZON),
         GateSetting(gate=GateId.CURATED_LIST),
         # THE MOST IMPORTANT GATE. Nothing under three years dormant may be deleted at
-        # all, whatever else it scores. The rewatch rate decays slowly through the
-        # first two years and then falls off a cliff at roughly three -- so below this
-        # line, deleting is close to a coin-flip against your users. A GATE, not a
-        # weight: a weight can be outvoted, and that is exactly how an early version
-        # ended up condemning films with a large chance of coming back.
+        # all, whatever else it scores. The measured rewatch rate decays slowly after the
+        # first year and its tail never reaches zero (docs/SIGNALS.md, "There is no
+        # cliff"): ~30% at two to three years, ~19% past three. Three years is where the
+        # odds stop being close to one in three, not where the risk ends. A GATE, not a
+        # weight: a weight can be outvoted, and that is exactly how an early version ended
+        # up condemning films with a large chance of coming back.
         GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095),
         # "Keep well-rated titles". The bars themselves live in keep_rating_rules below;
         # this setting is only the on/off switch. The default bar is IMDb 7.5 from at
@@ -1124,9 +1132,10 @@ DEFAULT_MOVIE_POLICY = PolicyBody(
         GateSetting(gate=GateId.SERVER_POPULARITY, threshold=3, window_days=365),
     ),
     signals=(
-        # Dormancy dominates, and the numbers come from the measured rewatch curve:
-        # floor at 365 (below which a third of films come back) and saturating at 1825
-        # (beyond which the rate is 2%).
+        # Dormancy dominates, and the numbers come from the measured rewatch curve
+        # (backtest.FALLBACK_REWATCH_PRIOR): floor at 365 (below which ~61% of films are
+        # played again within the year) and saturating at 1825 (beyond which the rate is
+        # still ~13%, never zero -- nothing is ever free to delete).
         SignalSetting(signal=SignalId.UNWATCHED, weight=70, saturate_at=1825, floor=365),
         SignalSetting(signal=SignalId.FEW_WATCHERS, weight=20, saturate_at=3),
         SignalSetting(signal=SignalId.LOW_RATING, weight=10, saturate_at=60),
