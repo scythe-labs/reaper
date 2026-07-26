@@ -3895,6 +3895,26 @@ class TestAFileThatLandsWhileTheSeasonIsBeingPruned:
         assert sonarr.delete_calls == []
         assert "while Reaper was working" in report.outcomes[0].detail
 
+    async def test_the_operator_is_told_the_season_was_left_unmonitored(
+        self, session: AsyncSession
+    ) -> None:
+        """This skip is reached AFTER the unmonitor took and was verified, so the season is
+        spared but not untouched: Sonarr has stopped grabbing for it. Told only "Kept", an
+        operator would never think to turn monitoring back on. The files-vanished skip twenty
+        lines below already says this; this one did not (rules 7/24 and 72)."""
+        snapshot_id = await _snapshot_one(
+            session, media_key="sonarr:1:42:3", rating_key=701, media_type="season"
+        )
+        run = await _plan(session, snapshot_id)
+        sonarr = self._ImportingSonarr()
+
+        report = await _real(session, run, _gateway(sonarr={1: sonarr}))
+
+        assert sonarr.unmonitor_calls == [(42, 3)]  # it really did happen
+        outcome = report.outcomes[0]
+        said = (outcome.detail + " " + " ".join(c.label for c in outcome.checks)).lower()
+        assert "left unmonitored" in said
+
 
 class TestASeasonWithNothingLeftToDelete:
     """The episode file ids are resolved live, immediately before the delete. If that resolve

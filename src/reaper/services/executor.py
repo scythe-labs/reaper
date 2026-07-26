@@ -2014,12 +2014,17 @@ class Executor:
                 season=ref.season,
                 arrived=len(unmeasured),
             )
+            # Says the season was left unmonitored, exactly as the files-vanished skip below
+            # does. Both are reached AFTER the unmonitor took and was verified, so the season
+            # is spared but not untouched: Sonarr has stopped grabbing for it, and an operator
+            # told only "Kept" would never think to turn it back on. ``_mark_skipped`` rebuilds
+            # the checklist as one line, so the verified unmonitor is not visible there either.
             return self._mark_skipped(
                 delete,
                 f"{len(unmeasured)} more file(s) landed in season {ref.season} while Reaper "
-                "was working, so it is no longer what was approved. Kept. Run a new scan to "
-                "review it as it is now.",
-                check="It changed while Reaper was working. Kept.",
+                "was working, so it is no longer what was approved. Nothing was deleted, and "
+                "the season was left unmonitored. Run a new scan to review it as it is now.",
+                check="It changed while Reaper was working. The season was left unmonitored.",
             )
         file_ids = resolved
         if not file_ids:
