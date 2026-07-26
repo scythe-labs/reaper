@@ -561,6 +561,20 @@ class PolicyBody(Frozen):
     #: snapshot without re-reading anything. Changing anything else does not.
     _POST_SCORE_FIELDS: ClassVar[frozenset[str]] = frozenset({"condemn_at", "coverage_floor_bp"})
 
+    #: Bookkeeping, not behavior: this cannot change a score, a verdict, or what a scan
+    #: gathers, so it is excluded from BOTH simulator hashes. ``policy_hash`` still covers it,
+    #: so an approval stays bound to the exact body it was planned under (rule 113).
+    #:
+    #: ``schema_version`` earned its place here the hard way. It is the *storage shape*, and
+    #: the wire schema does not carry it, so a body round-tripped through ``api.schemas``
+    #: came back stamped with the current code default while the stored row kept the older
+    #: number. Both hashes then differed forever: the scan recorded the stored body's hash and
+    #: the simulator computed the round-tripped one, so every edit read "Needs a fresh scan"
+    #: and **scanning could not clear it**. Any install whose policy predated a version bump
+    #: had a permanently dead simulator. A hash that decides whether a feature answers at all
+    #: must cover only fields that change the answer.
+    _NON_BEHAVIORAL_FIELDS: ClassVar[frozenset[str]] = frozenset({"schema_version"})
+
     def scoring_hash(self) -> str:
         """Identifies the policy's *scoring behavior*, ignoring the thresholds.
 
@@ -579,11 +593,16 @@ class PolicyBody(Frozen):
         a scan would gather at all, in which case it **refuses to report numbers**
         rather than reporting confident, stale ones (tier 3). The three tiers are
         enumerated in ``api.routes.simulate``.
+
+        ``scorer_version`` is deliberately still in here: if the scorer itself changed, the
+        stored scores are not comparable and this hash must say so, which is what routes a
+        scorer bump to tier 2 rather than to stale stored scores. ``schema_version`` is not
+        (see ``_NON_BEHAVIORAL_FIELDS``).
         """
         payload = {
             k: v
             for k, v in self.model_dump(mode="json").items()
-            if k not in self._POST_SCORE_FIELDS
+            if k not in self._POST_SCORE_FIELDS and k not in self._NON_BEHAVIORAL_FIELDS
         }
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         return hashlib.sha256(canonical.encode("ascii")).hexdigest()
@@ -595,10 +614,15 @@ class PolicyBody(Frozen):
     #: "needs a fresh scan" (safe) rather than a stale replay (a plausible wrong preview).
     #: Notably ``gates`` is NOT here: the popularity gate's window changes the frozen
     #: watcher counts, so any gate edit re-scans -- a conservative, correct choice.
+    #: ``scorer_version`` belongs here for the same reason the weights do: a replay runs the
+    #: CURRENT ``score``/``evaluate_all``/``decide_verdict`` over the frozen Facts, so a new
+    #: scorer's answer is reproduced exactly. It stays in ``scoring_hash``, which is what
+    #: routes a scorer bump to the replay instead of to the stale stored scores.
     _EVIDENCE_REPLAYABLE_FIELDS: ClassVar[frozenset[str]] = frozenset(
         {
             "condemn_at",
             "coverage_floor_bp",
+            "scorer_version",
             "signals",
             "custom_condemn",
             "graded_keeps",
@@ -620,11 +644,16 @@ class PolicyBody(Frozen):
         When it differs, the edit changed the evidence itself -- the popularity window, a
         keep-tag, a season-pruning rule, the media type -- so the frozen Facts are stale and
         a real scan is required. The set of replayable fields is an allow-list, so an
-        unclassified field falls into this hash and forces the safe, honest fresh scan."""
+        unclassified field falls into this hash and forces the safe, honest fresh scan.
+
+        The allow-list is the right default and it has one sharp edge: a field that is pure
+        bookkeeping falls in here too and forces a rescan that can never help. That is what
+        ``schema_version`` did, permanently (see ``_NON_BEHAVIORAL_FIELDS``). Classify a new
+        field into one of the three sets when you add it."""
         payload = {
             k: v
             for k, v in self.model_dump(mode="json").items()
-            if k not in self._EVIDENCE_REPLAYABLE_FIELDS
+            if k not in self._EVIDENCE_REPLAYABLE_FIELDS and k not in self._NON_BEHAVIORAL_FIELDS
         }
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
         return hashlib.sha256(canonical.encode("ascii")).hexdigest()
