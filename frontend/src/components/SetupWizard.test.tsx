@@ -2,10 +2,11 @@
 //
 // The one behavior that matters on the first-run screen: once the first scan is running you
 // can leave for the app immediately, instead of being held on the wizard until it finishes.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { testQueryClient } from "../test/queryClient";
 import { SetupWizard } from "./SetupWizard";
 
 // The wizard embeds the services and Plex panels; they make their own queries and are not
@@ -46,7 +47,7 @@ const RUNNING = {
 };
 
 function renderWizard(onSkip: () => void = () => {}) {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const qc = testQueryClient();
   return render(
     <QueryClientProvider client={qc}>
       <SetupWizard onSkip={onSkip} />

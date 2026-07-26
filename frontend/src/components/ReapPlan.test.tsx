@@ -3,12 +3,13 @@
 // plan can list titles that scan would now protect, so the warning has to sit in the summary
 // that carries Execute, next to the button that rebuilds it. These pin that it is there, and
 // that "we could not check" is said out loud rather than rendering nothing.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Run, Snapshot } from "../api";
 import { DEFAULT_PROFILE, IDLE_SCAN } from "../test/apiFixtures";
+import { testQueryClient } from "../test/queryClient";
 import { ReapPlan } from "./ReapPlan";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -71,9 +72,7 @@ const snapshot: Snapshot = {
 };
 
 async function buildPlan() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  const queryClient = testQueryClient();
   const { container } = render(
     <QueryClientProvider client={queryClient}>
       <ReapPlan onGoToDeletion={() => {}} onGoToPlexSettings={() => {}} onGoToReview={() => {}} />
@@ -177,9 +176,7 @@ describe("the plan the page is showing", () => {
     // one query, so a failed fetch used to unmount all of it with no message and no retry, and
     // clicking a history row simply looked like it did nothing (rule 36).
     apiMock.run.mockRejectedValue(new Error("the server dropped it"));
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
+    const queryClient = testQueryClient();
     render(
       <QueryClientProvider client={queryClient}>
         <ReapPlan onGoToDeletion={() => {}} onGoToPlexSettings={() => {}} onGoToReview={() => {}} />
@@ -200,9 +197,7 @@ describe("the plan the page is showing", () => {
       degraded: true,
       degraded_reason: "A source didn't answer.",
     });
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
+    const queryClient = testQueryClient();
     render(
       <QueryClientProvider client={queryClient}>
         <ReapPlan onGoToDeletion={() => {}} onGoToPlexSettings={() => {}} onGoToReview={() => {}} />

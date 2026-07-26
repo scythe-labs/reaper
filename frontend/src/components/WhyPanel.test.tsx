@@ -7,11 +7,12 @@
 //      looked and it was fine", and a row with nothing recorded must never be drawn as if
 //      it argued for keeping the file.
 //   3. The rules that did not apply are tucked away, never dropped.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type CandidateDetail, type SignalContribution } from "../api";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, seedSettings } from "../test/apiFixtures";
+import { testQueryClient } from "../test/queryClient";
 import { WhyPanel, allocateShares } from "./WhyPanel";
 
 vi.mock("../api", () => ({
@@ -131,7 +132,7 @@ function detail(
 }
 
 function show(item: CandidateDetail) {
-  const client = seedSettings(new QueryClient({ defaultOptions: { queries: { retry: false } } }));
+  const client = seedSettings(testQueryClient());
   return render(
     <QueryClientProvider client={client}>
       <WhyPanel item={item} onClose={() => {}} />

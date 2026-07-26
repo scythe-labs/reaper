@@ -3,12 +3,13 @@
 // states have to be honest: a reclaimable card names the disk; a clean card says so plainly;
 // and either one opens the person's full breakdown. The page says out loud when it is
 // loading, could not load, or has no scan to sit on.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { FairnessReport, RequesterRow } from "../api";
+import { testQueryClient } from "../test/queryClient";
 import { Fairness, PersonCard } from "./Fairness";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -44,7 +45,7 @@ function row(over: Partial<RequesterRow> = {}): RequesterRow {
 }
 
 function renderWithClient(ui: ReactElement) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = testQueryClient();
   return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
 }
 

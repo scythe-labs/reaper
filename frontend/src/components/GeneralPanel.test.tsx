@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Every row on the General panel has its own Save button, so a save has to be scoped to its own
 // row: pressing one must never quietly throw away what is being typed in another.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GeneralSettings } from "../api";
+import { testQueryClient } from "../test/queryClient";
 import { GeneralPanel } from "./Settings";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -40,9 +41,7 @@ beforeEach(() => {
 });
 
 function renderPanel() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  const queryClient = testQueryClient();
   render(
     <QueryClientProvider client={queryClient}>
       <GeneralPanel />

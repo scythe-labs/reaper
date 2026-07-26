@@ -8,11 +8,12 @@
 //     and says so, rather than quietly meaning "the first page";
 //   - nothing else can be pressed while a bulk write is in flight.
 // The compact dormancy span is pinned here too: it rewrites a string the server writes.
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type Candidate, type GroupSeasonMark, type Verdict } from "../api";
+import { testQueryClient } from "../test/queryClient";
 import {
   compactSpan,
   DEFAULT_FILTERS,
@@ -116,9 +117,7 @@ function BreakdownProbe() {
 }
 
 function renderQueue(verdict: Verdict = "condemn", latestScanSnapshotId: number | null = null) {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  const queryClient = testQueryClient();
   return render(
     <QueryClientProvider client={queryClient}>
       <BreakdownProbe />
@@ -220,9 +219,7 @@ describe("keeping the list in step with the latest scan", () => {
     // snapshot, so keeping it open would leave the operator deciding from stale evidence (B-7).
     const onClearItemSelection = vi.fn();
     apiMock.candidates.mockResolvedValue(page([movie(1), movie(2)], 2, 0, 1));
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
+    const queryClient = testQueryClient();
     render(
       <QueryClientProvider client={queryClient}>
         <ReviewQueue
@@ -943,7 +940,7 @@ describe("keyboard activation of a revealed Spare/Reap button", () => {
     const rowKeyDown = vi.fn();
     // OverrideControls reads the default spare length from the general-settings query, so it
     // needs a client even in isolation; unresolved, the default reads as 0 (forever).
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const queryClient = testQueryClient();
     render(
       <QueryClientProvider client={queryClient}>
         <div onKeyDown={rowKeyDown}>
@@ -1253,7 +1250,7 @@ describe("what a card says after a hand decision", () => {
 // pick spares at that length, so the menu is the action, not a form.
 describe("the Spare length menu", () => {
   function renderControls(onSet = vi.fn()) {
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const queryClient = testQueryClient();
     render(
       <QueryClientProvider client={queryClient}>
         <OverrideControls override={null} onSet={onSet} onClear={vi.fn()} pending={false} />
@@ -1369,9 +1366,7 @@ describe("switching tabs", () => {
   }
 
   function queue(verdict: Verdict) {
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
+    const queryClient = testQueryClient();
     return (
       <QueryClientProvider client={queryClient}>
         <ReviewQueue

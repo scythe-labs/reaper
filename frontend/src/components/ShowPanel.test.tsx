@@ -4,11 +4,12 @@
 //     kept, unlike a condemned movie where reap is a no-op -- but Reap falls away once every
 //     season is already condemned;
 //   - the decision acts on the show's group key, and a failed save says so.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candidate, Group, Links, Verdict } from "../api";
 import { DEFAULT_GENERAL, seedSettings } from "../test/apiFixtures";
+import { testQueryClient } from "../test/queryClient";
 import { ShowPanel } from "./ShowPanel";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -92,9 +93,7 @@ function group(seasons: Candidate[]): Group {
 }
 
 function renderPanel(g: Group) {
-  const queryClient = seedSettings(
-    new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }),
-  );
+  const queryClient = seedSettings(testQueryClient());
   return render(
     <QueryClientProvider client={queryClient}>
       <ShowPanel group={g} onOpenSeason={() => {}} onClose={() => {}} />

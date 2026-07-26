@@ -22,6 +22,18 @@ window.scrollTo = () => {};
 // A state update outside act(...) fails the test for the same reason: it says the test asserted
 // on a moment the component had already left, because something it never awaited settled behind
 // the assertions. A promise a test forgot to await resolves as the body returns, every run.
+//
+// It judges EVERY such update, with no exemption for the framework (rule 136). There was one,
+// for React Query's `setTimeout(0)` notification, on the reading that its timing was the
+// machine's rather than the test's -- and it was wrong. What it tolerated had two fixable
+// causes: `refetchOnWindowFocus` refetching the queue's own reads whenever user-event clicked
+// something focusable (`src/test/queryClient.ts`), and a mid-test `await import(...)` of
+// user-event, which is a bare await outside act for a fetch to land in. The tell was that it
+// reproduced on one test, five runs out of five; a race does not do that.
+//
+// An exempted warning still PRINTED, so a green CI run carried an act warning nobody could act
+// on -- the same "warning nobody reads" this file exists to delete, now with the gate's own
+// blessing. Nothing here warns: it fails, or it has nothing to say.
 let missingQueryFn: string[] = [];
 let outsideAct: string[] = [];
 const forwardError = console.error.bind(console);
@@ -29,25 +41,12 @@ console.error = (...args: unknown[]) => {
   if (typeof args[0] === "string") {
     if (args[0].includes("No queryFn was passed")) missingQueryFn.push(args[0]);
     // "An update to %s inside a test was not wrapped in act(...)", the component name second.
-    if (args[0].includes("was not wrapped in act(") && !fromQueryScheduler()) {
+    if (args[0].includes("was not wrapped in act(")) {
       outsideAct.push(String(args[1] ?? "a component"));
     }
   }
   forwardError(...args);
 };
-
-/** Whether the update being warned about is React Query handing a settled query to its
- *  observers, which it does on a `setTimeout(0)` of its own.
- *
- *  That timer fires wherever the run's timing puts it: inside the act() of whatever the test
- *  awaited next if it gets there in time, and after the test if the machine is loaded enough
- *  that it does not. Three consecutive runs of this suite disagreed over two such tests, and a
- *  gate that reports the load average is worth less than no gate. It is the one update whose
- *  timing is not the test's own, so it is the one this does not judge -- what a test CAN do
- *  about a query is not leave it pending, which is what `seedSettings` is for. */
-function fromQueryScheduler(): boolean {
-  return (new Error().stack ?? "").includes("query-core");
-}
 
 afterEach(() => {
   const queries = missingQueryFn;
@@ -69,7 +68,7 @@ afterEach(() => {
       `Updated state outside act(...): ${names.join(", ")}. Something this test never awaited ` +
         `settled after its last act() returned, so the assertions above ran on a moment that ` +
         `had already passed. Await it inside act (\`await act(async () => ...)\`), or hold it ` +
-        `in flight so the moment the test asserts is the one it means. See rule 135.`,
+        `in flight so the moment the test asserts is the one it means. See rule 136.`,
     );
   }
 });

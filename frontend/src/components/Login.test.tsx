@@ -3,10 +3,11 @@
 // unreachable. It keeps its own markup (it slides up rather than appearing over a scrim),
 // so these pin the part it borrows from ModalShell: Tab stays inside the sheet, in both
 // directions, instead of landing on the sign-in buttons behind it.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { testQueryClient } from "../test/queryClient";
 import { Login } from "./Login";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -28,9 +29,7 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 async function openSheet() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  const queryClient = testQueryClient();
   render(
     <QueryClientProvider client={queryClient}>
       <Login />
@@ -87,9 +86,7 @@ describe("the Plex sign-in popup", () => {
     const open = vi.fn<typeof window.open>(() => null);
     vi.stubGlobal("open", open);
 
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
+    const queryClient = testQueryClient();
     render(
       <QueryClientProvider client={queryClient}>
         <Login />
@@ -110,9 +107,7 @@ describe("the recovery card", () => {
     // code never reaches the in-app Logs tab or the files that tab downloads. The card used
     // to say "to its log", which sent people to Settings -> Logs to find nothing (U-11).
     window.history.pushState({}, "", "/recover");
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-    });
+    const queryClient = testQueryClient();
     render(
       <QueryClientProvider client={queryClient}>
         <Login />

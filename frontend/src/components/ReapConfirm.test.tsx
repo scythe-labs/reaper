@@ -5,11 +5,12 @@
 // in flight the sheet shows live progress and a graceful Stop -- and, because the run is
 // now detached on the server, the sheet closes freely (the app-wide bar keeps the count
 // and Stop), and reopening shows the report.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, type ReapStatus, type Run, type RunReport } from "../api";
+import { testQueryClient } from "../test/queryClient";
 import { ReapConfirm } from "./ReapConfirm";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -82,9 +83,7 @@ function status(overrides: Partial<ReapStatus> = {}): ReapStatus {
 const runningStatus = status({ running: true, run_id: run.id, phase: "reaping", total: 1 });
 
 function renderSheet(onClose: () => void = () => {}, seedStatus?: ReapStatus) {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  const queryClient = testQueryClient();
   // The status cache is shared with the app-wide bar and is already warm when this sheet is
   // opened from it. Seeding it reproduces that, which is what the dry-run skip reads.
   if (seedStatus) queryClient.setQueryData(["reapStatus"], seedStatus);

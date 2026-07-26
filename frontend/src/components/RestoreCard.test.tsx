@@ -2,10 +2,11 @@
 // The restore card takes the admin password, so it holds one only while it is being used.
 // The card is local to Settings.tsx, so these drive it the way an operator reaches it: the
 // Backup panel, a staged file, then the password box that appears with the summary.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testQueryClient } from "../test/queryClient";
 import { Settings } from "./Settings";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -33,9 +34,7 @@ const SUMMARY = {
 };
 
 function renderBackupPanel() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  const queryClient = testQueryClient();
   render(
     <QueryClientProvider client={queryClient}>
       <Settings initialPanel="backup" />

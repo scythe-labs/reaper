@@ -4,11 +4,12 @@
 // a suggested-but-unconfirmed pick wears a "suggested" tag that clears once they choose, saving
 // sends the map they see, and a list that could not be read fails to a visible notice, never a
 // silent empty list.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Instance, PlexLibrary, RootFolder, SeerrService } from "../api";
+import { testQueryClient } from "../test/queryClient";
 import { ServiceModal } from "./ServiceModal";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -81,7 +82,7 @@ function renderModal(
   else apiMock.plexLibraries.mockResolvedValue(libraries);
   apiMock.updateInstance.mockResolvedValue(instance);
   const onClose = vi.fn();
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const queryClient = testQueryClient();
   render(
     <QueryClientProvider client={queryClient}>
       <ServiceModal kind="sonarr" instance={instance} onClose={onClose} />
@@ -214,7 +215,7 @@ function renderSeerrModal(
   if (arrs instanceof Error) apiMock.instances.mockRejectedValue(arrs);
   else apiMock.instances.mockResolvedValue(arrs);
   apiMock.updateInstance.mockResolvedValue(instance);
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const queryClient = testQueryClient();
   render(
     <QueryClientProvider client={queryClient}>
       <ServiceModal kind="seerr" instance={instance} onClose={vi.fn()} />

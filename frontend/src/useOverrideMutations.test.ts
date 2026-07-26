@@ -14,11 +14,13 @@
 // "jumps out of the list" regression.
 
 import { act, renderHook } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testQueryClient } from "./test/queryClient";
 import { api } from "./api";
 import { useOverrideMutations } from "./useOverrideMutations";
+import type { QueryClient } from "@tanstack/react-query";
 
 vi.mock("./api", () => ({
   api: { override: vi.fn().mockResolvedValue({}), clearOverride: vi.fn().mockResolvedValue({}) },
@@ -61,7 +63,7 @@ const queueRefetchType = (spy: ReturnType<typeof vi.spyOn>) => {
 };
 
 const setup = () => {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = testQueryClient();
   seedCandidates(client);
   const invalidateSpy = vi.spyOn(client, "invalidateQueries");
   const wrapper = ({ children }: { children: ReactNode }) =>

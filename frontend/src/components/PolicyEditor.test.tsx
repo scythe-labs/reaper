@@ -5,11 +5,12 @@
 // to fix them: a policy that could not be read showed no way to replace it, and a preset
 // click left the removal lane over budget with Save disabled. Each test here fails if
 // either fix is reverted.
-import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { CustomCondemn, Policy, PolicyBody, ProfileSettings } from "../api";
 import { DocsProvider } from "../docs/DocsContext";
+import { testQueryClient } from "../test/queryClient";
 import { PolicyEditor } from "./PolicyEditor";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -159,9 +160,7 @@ function renderEditor(
     examples_newly_condemned: [],
     protected_by: [],
   });
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  const queryClient = testQueryClient();
   return render(
     <QueryClientProvider client={queryClient}>
       <DocsProvider>

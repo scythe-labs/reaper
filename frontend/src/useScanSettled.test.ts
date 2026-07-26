@@ -6,13 +6,14 @@
 // after a scan. It belongs on the shell, and these pin the edge it fires on.
 
 import { renderHook } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { createElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
+import { testQueryClient } from "./test/queryClient";
 import { SCAN_SETTLED_KEYS, useScanSettled } from "./useScanSettled";
 
 function harness() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = testQueryClient();
   const invalidated: string[] = [];
   vi.spyOn(client, "invalidateQueries").mockImplementation((filters) => {
     invalidated.push(JSON.stringify(filters?.queryKey));

@@ -9,7 +9,7 @@ paths:
 # Test blockers
 
 Blockers, not suggestions. **Rule numbers are permanent** — cite them in test docstrings the
-way the existing suite does (`rule 88`, `rule 118`). Holds 37, 118–119, 132–133, 135.
+way the existing suite does (`rule 88`, `rule 118`). Holds 37, 118–119, 132–133, 135–136.
 
 **37. Tests that boot the app are hermetic.** Use the shared autouse `_hermetic` fixture in
 `tests/conftest.py`, which stubs env seeding and startup network. Never let a test read the
@@ -57,20 +57,48 @@ than the path it means to check — the review-queue and reap-plan suites were d
 `src/test/setup.ts` fails the test on it; `src/test/apiFixtures.ts` holds the payloads, chosen
 as the shipped defaults so adding one does not move what a passing test renders.
 
-**A state update outside `act(...)` fails the run on the same terms**, with one exclusion that is
-load-bearing. Such an update says the test asserted on a moment the component had already left: a
-promise nothing awaited settled behind the assertions. The exclusion is React Query handing a
-settled query to its observers, which rides a `setTimeout(0)` — that timer lands inside the next
-act() or after the test depending on how loaded the machine is, and three consecutive runs of
-this suite disagreed over two tests that were doing nothing wrong. `setup.ts` reads the stack to
-tell the two apart, because a gate that reports the load average is worth less than no gate.
+**A mock gap hides from that gate when the read goes through an arrow.** The gate sees
+`queryFn: api.profile` handed `undefined`. It cannot see `queryFn: () => api.vocabularyValues(f)`,
+where the queryFn exists and throws inside — React Query files that as an ordinary rejection, the
+tree renders its failed-read branch, and nothing says a word. `SeasonList.test.tsx` was doing
+exactly this with the queue's genre and library filter values. When adding a module mock, read
+the tree's `queryFn`s, not just its hooks.
 
-What a test *can* do about a query is not leave one pending: a tree reading settings the test
-does not vary gets them from `seedSettings()`, not a mock alone. A mocked read answers a
-microtask later, which for a synchronous test body is after every assertion it makes — it
-asserts the pending panel, not the one an operator sees. Never seed a key the test *does* vary:
-seeded data is fresh, so nothing fetches, and a suite that means to reject or stall that read
-would be quietly answered instead.
+**136. A state update outside `act(...)` fails the run, with no exemption for the framework.**
+Such an update says the test asserted on a moment the component had already left: something it
+never awaited settled behind the assertions. There was briefly an exclusion here, for React
+Query's `setTimeout(0)` notification, on the reading that its timing belonged to the machine
+rather than the test — "a gate that reports the load average is worth less than no gate." That
+reading was wrong, and it is worth knowing why, because the shape recurs: **an exempted warning
+still printed**, so a green CI run carried an act warning nobody could act on, and the exemption
+turned a fixable defect into permanent noise. The tell was that it reproduced on the same single
+test five runs out of five. A race does not do that. Fail or say nothing; there is no third
+setting.
+
+Two causes were behind it, and each is a standing rule:
+
+- **Test clients come from `testQueryClient()` (`src/test/queryClient.ts`), never `new
+  QueryClient`.** React Query's defaults retry failed reads and refetch on window focus, both
+  right in a browser and both async a test never asked for. `refetchOnWindowFocus` is the one
+  that bites: user-event's click fires real focus events, so a click on anything focusable
+  refetches every stale query and the result lands after the assertions, naming a component the
+  test never touched. All 31 hand-rolled clients had turned off `retry` and none had turned off
+  this.
+- **Import `userEvent` at the top of the file.** `await import("@testing-library/user-event")`
+  mid-test is a bare await outside `act`, and a fetch issued by `render()` lands in exactly that
+  gap. This was the last warning in the suite.
+
+Measured and rejected, so nobody spends the afternoon twice: wrapping the assertions in
+`waitFor` does NOT fix one of these — it returns on the first check, and an assertion that
+already passes never waits. Nor does seeding the query the test is ABOUT, whose fetch is the
+point. Nor does making the scheduler synchronous (`notifyManager.setScheduler(cb => cb())`),
+which is worse: more of these warnings, and the suite stops terminating. Fix the async.
+
+Seeding is a narrower lever: a tree reading settings the test does not vary gets them from
+`seedSettings()`, not a mock alone. A mocked read answers a microtask later, which for a
+synchronous test body is after every assertion it makes — it asserts the pending panel, not the
+one an operator sees. Never seed a key the test *does* vary: seeded data is fresh, so nothing
+fetches, and a suite that means to reject or stall that read would be quietly answered instead.
 
 **The second half is the general rule: a test may not report a problem as console output.**
 Vitest's console interception drops it entirely on some Node versions — on Node 26 a bare

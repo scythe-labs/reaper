@@ -3,11 +3,13 @@
 // the open list must say "loading" and "failed" out loud (an open chevron over silence
 // reads as broken), and every season is actable in place -- each carries its own Spare/Reap,
 // judged by that season's own verdict (rule 51), whatever tab you opened the show from.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candidate, Chip, Group, ShowStatus, Verdict } from "../api";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, seedSettings } from "../test/apiFixtures";
+import { testQueryClient } from "../test/queryClient";
 import { ReviewQueue } from "./ReviewQueue";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -16,17 +18,22 @@ const { apiMock } = vi.hoisted(() => ({
     group: vi.fn(),
     profile: vi.fn(),
     general: vi.fn(),
+    vocabularyValues: vi.fn(),
   },
 }));
 
 vi.mock("../api", () => ({ api: apiMock }));
 
-// The queue reads two settings for the whole list, through hooks no test here names: the
-// unmeasured allowance (["profile"]) and the expand-seasons and spare-length preferences
-// (["general-settings"]). Rule 135.
+// Three reads the queue makes for the whole list, through hooks no test here names: the
+// unmeasured allowance (["profile"]), the expand-seasons and spare-length preferences
+// (["general-settings"]), and the genre and library filter choices. Rule 135. The last one
+// is called THROUGH an arrow (`() => api.vocabularyValues("genre")`), so leaving it out of
+// the mock does not trip the missing-queryFn gate -- the queryFn exists and throws inside,
+// and the filter menus quietly render the failed read.
 beforeEach(() => {
   apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);
   apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
+  apiMock.vocabularyValues.mockResolvedValue({ field: "", values: [] });
 });
 
 function season(
@@ -127,9 +134,7 @@ function renderQueue(
     offset: 0,
     snapshotId: 1,
   });
-  const queryClient = seedSettings(
-    new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }),
-  );
+  const queryClient = seedSettings(testQueryClient());
   return render(
     <QueryClientProvider client={queryClient}>
       <ReviewQueue
@@ -145,7 +150,6 @@ function renderQueue(
 }
 
 async function expandSeasons() {
-  const { userEvent } = await import("@testing-library/user-event");
   const user = userEvent.setup();
   await user.click(await screen.findByRole("button", { name: /3 seasons/ }));
   return user;
@@ -189,7 +193,6 @@ describe("the show card", () => {
     const onSelect = vi.fn();
     const onSelectGroup = vi.fn();
     renderQueue({ onSelect, onSelectGroup });
-    const { userEvent } = await import("@testing-library/user-event");
     const user = userEvent.setup();
     // Season 2's square carries the candidate id 2; clicking it opens that season, not
     // the show. The square sits inside the card head (which opens the show), so the click

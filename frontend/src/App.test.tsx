@@ -5,10 +5,11 @@
 // read as a failure rather than as "no scan has run yet" (which is a positive claim, and the
 // wrong one). UserMenu's sign-out failure notice has to survive the focus move that
 // disabling its own button causes.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testQueryClient } from "./test/queryClient";
 import { ScanFreshness, ScanLine, UserMenu } from "./App";
 import { ApiError, type AuthUser, type Snapshot } from "./api";
 
@@ -118,9 +119,7 @@ const user: AuthUser = {
 };
 
 function renderMenu() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  const queryClient = testQueryClient();
   return render(
     <QueryClientProvider client={queryClient}>
       <UserMenu user={user} />

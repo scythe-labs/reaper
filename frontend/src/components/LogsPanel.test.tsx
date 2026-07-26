@@ -2,10 +2,11 @@
 // Two things the log viewer must not get wrong: it may only claim to be retrying when a
 // retry is actually scheduled ("Follow new lines" is the only thing that schedules one), and
 // every option in the level filter has to filter something different from its neighbors.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testQueryClient } from "../test/queryClient";
 import { LogsPanel } from "./LogsPanel";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -27,9 +28,7 @@ function page(seq: number) {
 }
 
 function renderPanel() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  const queryClient = testQueryClient();
   render(
     <QueryClientProvider client={queryClient}>
       <LogsPanel />

@@ -3,10 +3,11 @@
 // press WILL do (the operator's default length); spared, it says what is in force on THIS item.
 // The bug that motivated it: a 90-day spare under a Forever default left the button reading
 // "∞ Spared" -- the wrong glyph, and no sign of when the spare ends.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { testQueryClient } from "../test/queryClient";
 import { OverrideControls, OverrideMark } from "./OverrideControls";
 import { QueueSettingsContext, type QueueSettings } from "./queueSettings";
 
@@ -23,7 +24,7 @@ function draw(props: Partial<Parameters<typeof OverrideControls>[0]> = {}, defau
     unmeasured: { holdsBack: true, isPending: false, isError: false },
   };
   return render(
-    <QueryClientProvider client={new QueryClient()}>
+    <QueryClientProvider client={testQueryClient()}>
       <QueueSettingsContext.Provider value={shared}>
         <OverrideControls
           override={null}

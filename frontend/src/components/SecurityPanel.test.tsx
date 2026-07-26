@@ -2,10 +2,11 @@
 // The admin password arms deletion and is the anti-lockout fallback, so the form must not let
 // a typo through: it confirms the new password, and it says out loud why Save is off (too
 // short, with a live count; or the two entries disagree) instead of a silently gray button.
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { testQueryClient } from "../test/queryClient";
 import { SecurityPanel } from "./Settings";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -21,9 +22,7 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 function renderPanel() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-  });
+  const queryClient = testQueryClient();
   render(
     <QueryClientProvider client={queryClient}>
       <SecurityPanel />
