@@ -18,6 +18,9 @@ branch, or paths. Either part may be absent: with no lane, review the `diff` lan
 target, review the working diff. Positional `$1` substitution is deliberately not used here,
 because it does not reliably resolve to the first word of a multi-word argument.
 
+Adding `fix` anywhere in the argument (`/reaper-review fix`, `/reaper-review safety fix`) means
+apply the findings after reporting them — see *Applying the fixes* below.
+
 | Lane | Scope |
 | --- | --- |
 | `diff` | the working diff, or `git diff dev...HEAD` on a branch. **The default and the common case.** |
@@ -100,6 +103,22 @@ Two things go in the working tree, not the report:
   rule, appended at 134+ to the scoped file that governs it. One rule, in the file, in the same
   change. Do not emit a list of "agent rules" — that duplicates `.claude/rules/` and puts
   pressure on numbers that are permanent.
+
+## Applying the fixes
+
+Only when the argument said `fix`. Report first, then apply — never silently.
+
+Apply only findings whose verdict is CONFIRMED, and only where the fix is the one the finding
+names. A PLAUSIBLE finding is reported and left alone: its trigger was never proven, so editing
+the deletion path on the strength of it trades a hypothetical bug for a real diff. Say which
+ones you skipped and why.
+
+Run the gates the change touches before you hand back — for backend edits at minimum
+`uv run ruff format .`, `uv run ruff check .`, `uv run mypy src/reaper`, and the test files
+covering what you changed. A fix that breaks a test means the finding was wrong about the
+mechanism: return the corrected variant, or withdraw the finding to `references/refuted.md`.
+
+Commit each fix as its own story, with the test that pins it, per `CLAUDE.md`.
 
 ## Do not
 
