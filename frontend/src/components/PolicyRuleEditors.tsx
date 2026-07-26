@@ -15,10 +15,11 @@
 
 // The ramp phrasing per field, offered as an extra choice in the condition dropdown.
 // Curated: a phrase exists only where more-of-the-number honestly means more reason to
-import { useEffect, useId, useState } from "react";
+import { type CSSProperties, useEffect, useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, type Condition, type CustomCondemn, type GradedKeep, type VocabField } from "../api";
 import { FIELD_TO_GATE, FIELD_TO_SIGNAL, humanDays, OP_LABELS } from "./PolicyEditor";
+import { usePopoverShift } from "./popoverFit";
 import {
   FixedQuantity,
   QuantityInput,
@@ -137,6 +138,12 @@ function SuggestInput({
   // arrow keys are on; without them, arrowing moves the highlight and announces nothing.
   const listboxId = useId();
   const optionId = (i: number) => `${listboxId}-option-${i}`;
+  // The list is left-aligned to the input, which on a phone can be the last box on a wrapped row
+  // and so flush with the right edge; this slides it back on screen (popoverFit.ts). Called above
+  // the early return so the hook order holds for both branches -- a number field renders no list,
+  // and the ref it reads is simply null.
+  const popRef = useRef<HTMLUListElement>(null);
+  const popShift = usePopoverShift(popRef, "suggest");
 
   if (!isText) {
     // A number that has a unit wears it in the box, not in a placeholder that vanishes the
@@ -215,7 +222,13 @@ function SuggestInput({
         }}
       />
       {show && (
-        <ul className="suggest-pop" role="listbox" id={listboxId}>
+        <ul
+          className="suggest-pop"
+          role="listbox"
+          id={listboxId}
+          ref={popRef}
+          style={{ "--pop-shift": `${popShift}px` } as CSSProperties}
+        >
           {matches.map((v, i) => (
             <li
               key={v}

@@ -44,6 +44,7 @@ import { useOverrideMutations } from "../useOverrideMutations";
 import { useReviewFreshness } from "../useReviewFreshness";
 import { ReapConfirm } from "./ReapConfirm";
 import { KeptByShowNote, OverrideControls, OverrideMark } from "./OverrideControls";
+import { usePopoverShift } from "./popoverFit";
 import {
   CaretIcon,
   CheckIcon,
@@ -180,6 +181,42 @@ function FilterChip({
         ×
       </button>
     </span>
+  );
+}
+
+/** Both filter popovers -- the ＋ Filter menu and a chip's value picker -- in one component, so
+ *  neither can drift from the other.
+ *
+ *  The menu is absolutely positioned inside its `.filter-anchor`, which is what keeps it glued to
+ *  its control as the page scrolls. Left-aligned to that anchor it ran clean off the right edge of
+ *  a phone screen -- the ＋ Filter button sits at the end of the toolbar row, and a wrapped chip
+ *  can land there too -- so `usePopoverShift` slides it back (see `popoverFit.ts`). */
+function FilterMenu({
+  role,
+  label,
+  children,
+}: {
+  role: "menu" | "listbox";
+  /** Names the menu for a screen reader, and heads it for everyone else. */
+  label: string;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLUListElement>(null);
+  const shift = usePopoverShift(ref, "filter-anchor");
+
+  return (
+    <ul
+      ref={ref}
+      className="filter-menu"
+      role={role}
+      aria-label={label}
+      style={{ "--pop-shift": `${shift}px` } as CSSProperties}
+    >
+      <li className="filter-menu-head" aria-hidden="true">
+        {label}
+      </li>
+      {children}
+    </ul>
   );
 }
 
@@ -2045,10 +2082,7 @@ export function ReviewQueue({
                 Filter
               </button>
               {openMenu === "add" && (
-                <ul className="filter-menu" role="menu" aria-label="Add a filter">
-                  <li className="filter-menu-head" aria-hidden="true">
-                    Add a filter
-                  </li>
+                <FilterMenu role="menu" label="Add a filter">
                   {addableDimensions.map((d) => (
                     <li key={d.id} role="none">
                       <button
@@ -2063,11 +2097,11 @@ export function ReviewQueue({
                         <span className="filter-mi-ic" aria-hidden="true">
                           {d.icon}
                         </span>
-                        {d.label}
+                        <span className="filter-mi-label">{d.label}</span>
                       </button>
                     </li>
                   ))}
-                </ul>
+                </FilterMenu>
               )}
             </span>
           )}
@@ -2178,10 +2212,7 @@ export function ReviewQueue({
                     </button>
                   </span>
                   {openMenu === d.id && (
-                    <ul className="filter-menu" role="listbox" aria-label={d.label}>
-                      <li className="filter-menu-head" aria-hidden="true">
-                        {d.label}
-                      </li>
+                    <FilterMenu role="listbox" label={d.label}>
                       {d.options.map((o) => (
                         <li key={o.value} role="none">
                           <button
@@ -2203,7 +2234,7 @@ export function ReviewQueue({
                           </button>
                         </li>
                       ))}
-                    </ul>
+                    </FilterMenu>
                   )}
                 </span>
               );

@@ -2647,12 +2647,17 @@ a.rating-chip:hover {
 .suggest > input {
   min-width: 9rem;
 }
+/* Slid back on screen by --pop-shift, the same way the queue's filter menus are (rule 138,
+   popoverFit.ts): this box grows to its widest option, so a long library or collection name pushed
+   it off the right edge of a phone from an input already near that edge. The max-width caps how
+   wide one name may make it, and .suggest-opt trims what is left over. */
 .suggest-pop {
   position: absolute;
   top: calc(100% + 4px);
-  left: 0;
+  left: var(--pop-shift, 0px);
   z-index: 30;
   min-width: 100%;
+  max-width: min(20rem, calc(100vw - 1.5rem));
   max-height: 14rem;
   overflow-y: auto;
   margin: 0;
@@ -2669,6 +2674,8 @@ a.rating-chip:hover {
   font-size: 0.85rem;
   cursor: pointer;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .suggest-opt.active {
   background: var(--hover);
@@ -4668,14 +4675,18 @@ button.sm {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
-/* The add-filter and value popovers: one look for both. Absolutely placed under the anchor. */
+/* The add-filter and value popovers: one look for both. Absolutely placed under the anchor.
+   --pop-shift is how far `usePopoverShift` (popoverFit.ts) had to pull the menu left to keep it on
+   a narrow screen; 0 whenever it already fits, which is every desktop width. The max-width is the
+   same promise made in CSS alone: the menu is never wider than the screen it has to fit on. Both
+   halves are rule 138. */
 .filter-menu {
   position: absolute;
   top: calc(100% + 6px);
-  left: 0;
+  left: var(--pop-shift, 0px);
   z-index: 30;
   min-width: 190px;
-  max-width: 260px;
+  max-width: min(260px, calc(100vw - 1.5rem));
   max-height: 18rem;
   overflow-y: auto;
   margin: 0;

@@ -13,7 +13,7 @@ paths:
 Blockers, not suggestions. **Rule numbers are permanent** (tests cite them); where two
 overlap, the more specific governs. Rules binding every file are in the root `CLAUDE.md`;
 the backend's are in `.claude/rules/backend.md`. Holds 17–20, 36, 39–51, 53–54, 60–62,
-66–67, 69, 79–80, 85–86, 120–123.
+66–67, 69, 79–80, 85–86, 120–123, 138.
 
 ## React correctness
 
@@ -126,6 +126,22 @@ well per row.
 covering two controls, and never help detached from the row it explains. *Known deferred
 exception:* the `.warn` banner (ScanBar + the review card) merges into `.notice-warn` whenever
 the review UI is next touched.
+
+**138. An anchored popover is measured against the viewport before it is drawn.** Absolutely
+placing a popover at `left: 0` inside its anchor is right only while that anchor is far enough
+from the right edge — and on a phone it is not: the toolbar wraps, so `＋ Filter` and the last
+chip of a row both end up flush against it. What runs past the edge is not clipped and cannot be
+scrolled to, because the page has no horizontal scroll, so half a menu is simply unreachable, and
+the operator picks from the half they can see. Every anchor-aligned popover therefore takes its
+offset from `usePopoverShift` (`components/popoverFit.ts`) and reads it back as `--pop-shift`, and
+caps its width so one long value cannot make it wider than the screen. **Measure on every render,
+not once on open:** a list that refilters as you type changes width while it is open. The pull is
+leftward only and stops at the near gutter — a popover pushed right of its anchor loses the line
+back to the control that opened it, and one dragged off the left loses the side every label starts
+on. Two popovers answer this another way and are correct as they are: `.user-dropdown` is
+`right: 0` in a corner it never leaves, and the spare-length menu clamps its own `position: fixed`
+coordinates (`OverrideControls.toggleMenu`). A new popover left-aligned to an anchor with no fit
+pass is a blocker, and so is fixing one of these and leaving its twin (rule 72).
 
 **67. Values coupled across TSX and CSS derive from one declaration.** A width, gap, or count
 that must agree between a component and a stylesheet lives in one custom property both read, or
