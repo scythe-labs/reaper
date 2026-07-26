@@ -34,3 +34,14 @@ never rests on an environmental accident.**
 - A test whose evidence is a closed port, a non-root uid, or any other property of the machine
   is not a proof: stub the boundary, assert what was actually sent, and add a case no
   environment can skip.
+
+**132. Test infrastructure may not imply coverage that does not exist.** A fixture, helper, or
+`conftest.py` comment naming a function's poll loop reads as "this is covered" — so if that
+function has no test, either write one or stop naming it. This is rule 7/24's obligation
+applied to the suite itself: the fixture is the claim, the test is the citation.
+
+**133. A test leaves no process-global state behind, and never rests on a clock production
+also samples.** Anything mutating process-global configuration (logging, env, registries)
+restores it, or the next xdist worker inherits it. An assertion that re-reads the wall clock
+production also reads passes every day except the one where it straddles a boundary: freeze
+the clock or assert a range, never sample twice and compare.

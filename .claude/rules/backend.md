@@ -94,6 +94,20 @@ recorded *and enforced at execute time*, with operator copy telling them to re-s
 policy edit does not trigger a scan on its own. A plan built after the edit is refused too, not
 just one built before it. Never leave a hash recorded and unread.
 
+**124. A protection derived from viewing position anchors on the most recent play, never the
+highest ordinal.** Anchoring the mid-binge guard on the highest season *number* a viewer
+touched gives a re-watcher or an out-of-order viewer no protection at all, and a position
+derived that way can land outside the set that actually exists — protecting nothing while
+reading as a live guard. Derive the anchor from the latest play, and check that the anchored
+position is a member of the set before treating it as cover. Specials count as a season.
+
+**127. An interlock documented as covering every path is invoked on every path.** Season
+pruning once never refreshed Plex, so the end-of-run trash interlock never ran for TV
+libraries at all while its docstring claimed it applied to every deletion routed through an
+*arr. When a docstring says "every," grep every route to that interlock and either wire the
+missing ones or narrow the claim, in the same change (rule 117 is the same failure for a gate
+that cannot fire; rule 7/24 for the claim itself).
+
 **116. A degraded snapshot's side effects are gated with its plan.** Un-plannable also means
 un-announced: grace clocks, the Leaving Soon shelf, and Discord all read the condemned set, and
 none may act on evidence the scan itself declared untrustworthy.
@@ -325,6 +339,23 @@ disaster.
 a configured trusted proxy.** `X-Forwarded-Proto` passes the same `trusted_proxies` check
 `X-Forwarded-For` already does.
 
+**125. A single-use credential is consumed only after the operation it authorizes succeeds.**
+Burning a recovery token before the target is resolved means a recoverable error (a 409 name
+clash) spends the operator's only 15-minute token without signing anyone in. Mark it used on
+the success path, or restore it on any error that leaves the operator able to retry.
+
+**126. A two-stage swap of irreplaceable material is crash-atomic, and its failure message
+never claims a state the code did not verify.** A restore interrupted between its two move
+loops must not leave the staged key and salt deleted while the database they decrypt is
+already live. Stage, then swap so that any interruption leaves one complete set intact, and
+never print "your current data was kept" from a path that did not confirm it (rule 7/24, and
+the prime directive).
+
+**130. A KDF cost is bound to a stated threat model, and raised by forward-compatible
+rotation.** Record the cost parameter alongside the material it derived, and register prior
+costs decrypt-only so raising the cost cannot brick tokens already stored. A cost chosen once
+and never revisited is a silent expiry date on rule 13's "salted KDF."
+
 ## Persistence & migrations
 
 **58. A check-then-write re-reads inside the write transaction.** Splitting a state check into a
@@ -350,6 +381,12 @@ column-shape tuple to force it, which drops the whole mirror.
 destructive-path list or string carries `max_length`.** A `min()` cap with no floor lets
 `limit=-1` become `LIMIT -1`, which is unbounded.
 
+**131. A bound enforced by a consumer derives from the same declaration the producer honors.**
+A backup writer that can exceed the member cap its own restore refuses produces an artifact
+only it can read. Where a producer and a consumer must agree on a limit, both read one
+constant, and a test writes at the limit and reads it back. This is rule 67 generalized off
+the TSX/CSS pair to any producer/consumer bound.
+
 ## Jobs, notifications, and side effects
 
 **8. Notifications and side-effecting writes are idempotent across repeated calls,** keyed on
@@ -373,6 +410,17 @@ save can never 500-and-half-apply what boot survives.
 
 **102. A task created with `create_task` has a done-callback that logs its exception.** A
 fire-and-forget startup or maintenance task must not swallow a raise at GC time.
+
+**128. Cancellation does bounded work.** Never run a network settle-wait, a poll loop, or a
+purge inside a `CancelledError` handler or its `finally`: a hard cancel is usually the
+container going down, and holding shutdown open for tens of seconds can also leave the remote
+half-tidied. Make the state durable there, and defer the cosmetic tidy-up to the next run.
+`executor._commit_and_finalize`'s `canceled` branch is the model.
+
+**129. State with a TTL has a sweeper, not only lazy expiry on presentation.** Expired auth
+sessions pruned only when the same token is presented again grow the table forever. Pair every
+expiry rule with the job that enforces it, and honor rule 55: the sweeper's off switch governs
+every path that runs it.
 
 **115. A protection-list slug that changes shape disables its predecessor in the same
 transaction.** Slugs derived from operator settings (match mode, instance id) leave orphaned rows

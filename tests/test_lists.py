@@ -327,7 +327,7 @@ class TestImdbTop250:
             return_value=httpx.Response(200, json=_top250_payload(count=12))
         )
 
-        with pytest.raises(Exception, match="truncated"):
+        with pytest.raises(IntegrationError, match="truncated"):
             await sync(engine, ImdbTop250())
 
     async def test_a_failed_fetch_leaves_the_previous_list_intact(

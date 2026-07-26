@@ -235,3 +235,6 @@ frontend/public/vendor/
 # every later `actions/checkout` then runs `git submodule foreach` against it and
 # warns twice per job. One such link reached dev before this line existed.
 .claude/worktrees/
+
+# Written by the InstructionsLoaded hook (scripts/log-instructions-loaded.sh).
+.claude/instructions-loaded.log
