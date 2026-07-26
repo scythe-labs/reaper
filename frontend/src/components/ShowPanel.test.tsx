@@ -8,10 +8,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candidate, Group, Links, Verdict } from "../api";
+import { DEFAULT_GENERAL } from "../test/apiFixtures";
 import { ShowPanel } from "./ShowPanel";
 
 const { apiMock } = vi.hoisted(() => ({
-  apiMock: { override: vi.fn(), clearOverride: vi.fn() },
+  apiMock: { override: vi.fn(), clearOverride: vi.fn(), general: vi.fn() },
 }));
 
 vi.mock("../api", () => ({ api: apiMock }));
@@ -103,6 +104,9 @@ function renderPanel(g: Group) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The Spare control reads the default spare length (["general-settings"]) on its own, so the
+  // mock has to answer it or the panel renders a failed read. Rule 135.
+  apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
 });
 
 describe("the show panel's whole-show buttons", () => {

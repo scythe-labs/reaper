@@ -9,11 +9,22 @@
 //   3. The rules that did not apply are tucked away, never dropped.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type CandidateDetail, type SignalContribution } from "../api";
+import { DEFAULT_GENERAL, DEFAULT_PROFILE } from "../test/apiFixtures";
 import { WhyPanel, allocateShares } from "./WhyPanel";
 
-vi.mock("../api", () => ({ api: { override: vi.fn(), clearOverride: vi.fn() } }));
+vi.mock("../api", () => ({
+  api: { override: vi.fn(), clearOverride: vi.fn(), profile: vi.fn(), general: vi.fn() },
+}));
+
+// The panel reads two settings on its own, through hooks no test here names: the unmeasured
+// allowance (["profile"], via useHoldsBackUnmeasured) and the default spare length
+// (["general-settings"], via the Spare control). Rule 135.
+beforeEach(() => {
+  vi.mocked(api.profile).mockResolvedValue(DEFAULT_PROFILE);
+  vi.mocked(api.general).mockResolvedValue(DEFAULT_GENERAL);
+});
 
 function signal(over: Partial<SignalContribution> & { id: string }): SignalContribution {
   return { contribution: 0, weight: 10, detail: "a reason", evaluated: true, ...over };

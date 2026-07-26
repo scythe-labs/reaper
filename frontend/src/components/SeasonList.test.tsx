@@ -5,18 +5,29 @@
 // judged by that season's own verdict (rule 51), whatever tab you opened the show from.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Candidate, Chip, Group, ShowStatus, Verdict } from "../api";
+import { DEFAULT_GENERAL, DEFAULT_PROFILE } from "../test/apiFixtures";
 import { ReviewQueue } from "./ReviewQueue";
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     candidates: vi.fn(),
     group: vi.fn(),
+    profile: vi.fn(),
+    general: vi.fn(),
   },
 }));
 
 vi.mock("../api", () => ({ api: apiMock }));
+
+// The queue reads two settings for the whole list, through hooks no test here names: the
+// unmeasured allowance (["profile"]) and the expand-seasons and spare-length preferences
+// (["general-settings"]). Rule 135.
+beforeEach(() => {
+  apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);
+  apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
+});
 
 function season(
   id: number,

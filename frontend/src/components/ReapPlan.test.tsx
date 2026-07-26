@@ -8,6 +8,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Run, Snapshot } from "../api";
+import { DEFAULT_PROFILE, IDLE_SCAN } from "../test/apiFixtures";
 import { ReapPlan } from "./ReapPlan";
 
 const { apiMock } = vi.hoisted(() => ({
@@ -20,6 +21,8 @@ const { apiMock } = vi.hoisted(() => ({
     latestSnapshot: vi.fn(),
     reapBreakdown: vi.fn(),
     plexTrash: vi.fn(),
+    profile: vi.fn(),
+    scanStatus: vi.fn(),
   },
 }));
 
@@ -27,6 +30,15 @@ vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   api: apiMock,
 }));
+
+// The breakdown inside the plan reads the unmeasured allowance (["profile"], via
+// useHoldsBackUnmeasured) and the scan poll (["scanStatus"]) on its own. Without them it
+// rendered its "we could not read the allowance" branch, which drops the title count from the
+// headline -- silently, under tests that pass. Rule 135.
+beforeEach(() => {
+  apiMock.profile.mockResolvedValue(DEFAULT_PROFILE);
+  apiMock.scanStatus.mockResolvedValue(IDLE_SCAN);
+});
 
 const run = {
   id: 3,

@@ -3,12 +3,13 @@ paths:
   - "tests/**/*.py"
   - "frontend/src/**/*.test.ts"
   - "frontend/src/**/*.test.tsx"
+  - "frontend/src/test/**"
 ---
 
 # Test blockers
 
 Blockers, not suggestions. **Rule numbers are permanent** — cite them in test docstrings the
-way the existing suite does (`rule 88`, `rule 118`). Holds 37, 118–119, 132–133.
+way the existing suite does (`rule 88`, `rule 118`). Holds 37, 118–119, 132–133, 135.
 
 **37. Tests that boot the app are hermetic.** Use the shared autouse `_hermetic` fixture in
 `tests/conftest.py`, which stubs env seeding and startup network. Never let a test read the
@@ -45,3 +46,20 @@ also samples.** Anything mutating process-global configuration (logging, env, re
 restores it, or the next xdist worker inherits it. An assertion that re-reads the wall clock
 production also reads passes every day except the one where it straddles a boundary: freeze
 the clock or assert a range, never sample twice and compare.
+
+**135. A module mock answers everything the tree under test reads, and a gap fails the run —
+because a warning cannot.** Replacing a module wholesale (`vi.mock("../api", () => ({ api:
+apiMock }))`) hands every consumer `undefined` for whatever the mock omits, including reads no
+test in the file names: a panel about scoring still mounts `useHoldsBackUnmeasured`, which
+fetches `["profile"]`. React Query answers a missing `queryFn` with an error state, so the tree
+renders its "we could not read it" fallback and the test passes against the fallback rather
+than the path it means to check — the review-queue and reap-plan suites were doing exactly that.
+`src/test/setup.ts` fails the test on it; `src/test/apiFixtures.ts` holds the payloads, chosen
+as the shipped defaults so adding one does not move what a passing test renders.
+
+**The second half is the general rule: a test may not report a problem as console output.**
+Vitest's console interception drops it entirely on some Node versions — on Node 26 a bare
+`console.error` inside a test prints nothing, while CI on Node 24 prints it — so 302 of these
+warnings accumulated behind a green suite, visible only in a log nobody reads. Anything a test
+needs to tell you must fail it. To read console output locally at all, run
+`npx vitest run <file> --disableConsoleIntercept`.
