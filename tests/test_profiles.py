@@ -273,6 +273,38 @@ class TestACorruptPolicyBodyNeverRaises:
             (RatingSource.IMDB, 75, 1000)
         ]
 
+    async def test_a_body_needing_both_repairs_keeps_the_rating_bar(
+        self, session: AsyncSession
+    ) -> None:
+        """The two shims used to race: the rebalance re-read the RAW body and lost the bar.
+
+        A body that predates the rating-bar move AND carries weights that no longer total
+        100 needs both repairs. The recovery ran first and produced a body with the bar put
+        back, but that body still failed to validate -- on the weights -- so the code fell
+        through and rebalanced the ORIGINAL, dropping the recovered bar on the floor. The
+        operator was then told only that their units moved, and saving the draft the editor
+        opens on wrote the loss back permanently (rules 105 and 65).
+        """
+        legacy = json.loads(DEFAULT_MOVIE_POLICY.model_dump_json())
+        del legacy["keep_rating_rules"]
+        for gate in legacy["gates"]:
+            if gate["gate"] == "rating_floor":
+                gate["enabled"], gate["threshold"], gate["secondary"] = True, 75, 1000
+        for signal in legacy["signals"]:  # weights no longer total 100
+            signal["weight"] *= 2
+
+        await _store_policy(session, json.dumps(legacy))
+
+        active = await active_policy(session, "movie")
+
+        assert active.rescaled is True
+        assert active.rating_rules_recovered is True  # the bar survived the rebalance
+        assert active.fell_back is False
+        assert sum(s.weight for s in active.body.signals) == 100
+        assert [(r.source, r.floor, r.min_votes) for r in active.body.keep_rating_rules] == [
+            (RatingSource.IMDB, 75, 1000)
+        ]
+
     async def test_a_deliberately_empty_rating_bar_is_left_alone(
         self, session: AsyncSession
     ) -> None:

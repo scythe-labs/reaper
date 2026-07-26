@@ -249,10 +249,28 @@ async def active_policy(session: AsyncSession, media_type: str = "movie") -> Act
         # body that json.loads could not read either. Both that and a body that decodes to
         # something other than an object (a list, a number, null) fall through to the
         # shipped default below; neither may escape as an exception.
-        repaired = rebalance(raw) if isinstance(raw, dict) else None
+        # Compose the two shims, never race them. A body that needs its rating bar put back
+        # AND needs rescaling arrives here with `restored` already holding the recovered
+        # bar, because the validate above failed on the weights, not on the bar. Rebalancing
+        # `raw` would silently drop that recovery: the operator would be told their weights
+        # were rescaled and nothing about the protection that vanished, and saving the draft
+        # the editor opens would write the loss back permanently (rules 105 and 65).
+        source = restored if isinstance(restored, dict) else raw
+        repaired = rebalance(source) if isinstance(source, dict) else None
         if repaired is not None:
-            log.info("policy.rebalanced", media_type=media_type, name=row.name)
-            return ActivePolicy(PolicyBody.model_validate(repaired), row.name, rescaled=True)
+            recovered = source is restored
+            log.info(
+                "policy.rebalanced",
+                media_type=media_type,
+                name=row.name,
+                rating_rules_recovered=recovered,
+            )
+            return ActivePolicy(
+                PolicyBody.model_validate(repaired),
+                row.name,
+                rescaled=True,
+                rating_rules_recovered=recovered,
+            )
         log.warning("policy.unreadable", media_type=media_type, name=row.name)
         return ActivePolicy(default, "default", fell_back=True)
 
