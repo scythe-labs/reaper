@@ -5,8 +5,9 @@
 // "∞ Spared" -- the wrong glyph, and no sign of when the spare ends.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { OverrideControls } from "./OverrideControls";
+import { OverrideControls, OverrideMark } from "./OverrideControls";
 import { QueueSettingsContext, type QueueSettings } from "./queueSettings";
 
 vi.mock("../api", () => ({ api: { general: vi.fn(), profile: vi.fn() } }));
@@ -93,47 +94,94 @@ describe("the Spare button, spared", () => {
 });
 
 describe("a spare whose clock has passed", () => {
-  // Its own state, not a variant of either neighbor. The item is genuinely still kept -- the
-  // planner, the ledger and the executor all read every spare on file, and only a scan realizes
-  // the expiry -- so the button must not go dark as though policy had it back. But the decision
-  // has run out, so it must not wear the solid fill that means "you chose this and it holds".
-  it("says so, and wears the dashed fill rather than the solid one", () => {
-    const { container } = draw({ override: "spare", spareExpiresAt: inDays(-3) });
-    const btn = screen.getByRole("button", { name: "Spared 0d, expired" });
+  // The one state where this control stops being a toggle. The other two answer "is this
+  // spared" and press to undo themselves; a spent spare has nothing left to undo, and what the
+  // operator opened the row to do is keep the item again. So it offers a fresh spare, and
+  // clearing the spent row moves into the length menu, which has room to say what it does.
+  const SPENT = { override: "spare", spareExpiresAt: inDays(-3) } as const;
+  const SPENT_NAME = "Spare again, the last one expired";
+
+  it("offers a fresh spare instead of resting as a pressed decision", () => {
+    const { container } = draw(SPENT);
+    const btn = screen.getByRole("button", { name: SPENT_NAME });
+    // Dashed, so the row still says a spare ran out right here...
     expect(btn.className).toContain("expired");
-    // Still `active` and still aria-pressed: the item IS spared, and clicking still clears it.
-    expect(btn.className).toContain("active");
-    expect(btn.getAttribute("aria-pressed")).toBe("true");
+    // ...but not the solid fill or the pressed state, which mean "your decision, and it holds".
+    expect(btn.className).not.toContain("active");
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
     // Not ∞ either: it was a timed spare, and saying "forever" would be the other lie.
     expect(forever(container)).toBe(false);
   });
 
-  it("abbreviates on the fixed track and spells it out in the footer", () => {
-    // The fixed track (--ov-btn-w, rule 51) leaves the label about 47px; "Expired" was measured
-    // in a real browser rendering as "Expir…" there. So the narrow label is the COUNT, the same
-    // shape the live countdown and the resting mark use, and the word rides in the accessible
-    // name -- which must still contain the visible text (WCAG 2.5.3).
-    const narrow = draw({ override: "spare", spareExpiresAt: inDays(-3) });
-    const short = screen.getByRole("button", { name: "Spared 0d, expired" });
-    expect(short.textContent).toContain("0d");
-    expect(short.textContent).not.toContain("Expired");
-    narrow.unmount();
-    // The footer has the room, so it takes the fuller label -- and needs no aria-label, because
-    // the visible text already names the state.
-    draw({ override: "spare", spareExpiresAt: inDays(-3), roomy: true });
-    const wide = screen.getByRole("button", { name: "Spare expired" });
-    expect(wide.getAttribute("aria-label")).toBeNull();
+  it("presses through to a new spare, never to clearing the spent one", async () => {
+    // The mis-affordance this replaced: the green button on a spent spare CLEARED it, so the
+    // one obvious press did the opposite of what the operator came for.
+    const onSet = vi.fn();
+    const onClear = vi.fn();
+    draw({ ...SPENT, onSet, onClear }, 30);
+    await userEvent.setup().click(screen.getByRole("button", { name: SPENT_NAME }));
+    expect(onSet).toHaveBeenCalledWith("spare", 30);
+    expect(onClear).not.toHaveBeenCalled();
   });
 
-  it("tells the operator the file is still kept, and never dates it in the past tense", () => {
-    // The whole point of drawing this state: an expired spare that read as a plain "Spared"
-    // left no way to know it had run out, and a "Kept until <a day last week>" tooltip was a
-    // promise about a day already gone.
-    draw({ override: "spare", spareExpiresAt: inDays(-3), roomy: true });
-    const title = screen.getByRole("button", { name: "Spare expired" }).getAttribute("title") ?? "";
+  it("shows the plain word, and names what a press does rather than a status", () => {
+    // "0d" is not a smaller amount of "27d" -- it is none of it, and in a pressed green button
+    // it read as an active decision with nothing left, a contradiction rather than a state.
+    // ("Expired" cannot go on the fixed track at all: rule 51 leaves about 47px, and a real
+    // browser renders it "Expir…".) The visible text stays inside the accessible name either
+    // way, which is what WCAG 2.5.3 asks for.
+    const narrow = draw(SPENT);
+    const short = screen.getByRole("button", { name: SPENT_NAME });
+    expect(short.textContent).toContain("Spare");
+    expect(short.textContent).not.toContain("0d");
+    narrow.unmount();
+    // The footer has the room to say it is a repeat.
+    draw({ ...SPENT, roomy: true });
+    expect(screen.getByRole("button", { name: SPENT_NAME }).textContent).toContain("Spare again");
+  });
+
+  it("never claims in a tooltip that a scan will hand the file back", () => {
+    // This control knows only THIS item's own spare, so it must not assert what still keeps the
+    // file: a season inside a longer show spare is kept regardless, and "still kept until the
+    // next scan judges it again" would be false there. It states the fact and the action; the
+    // row's chip and KeptByShowNote answer the fate question from the covering spare.
+    draw({ ...SPENT, roomy: true });
+    const title = screen.getByRole("button", { name: SPENT_NAME }).getAttribute("title") ?? "";
+    // Never a keep-until day already gone, either.
     expect(title).not.toMatch(/^Kept until/);
-    expect(title).toMatch(
-      /^Your spare expired on .+\. Still kept until the next scan judges it again$/,
-    );
+    expect(title).toMatch(/^Your spare expired on .+\. Click to spare it again$/);
+    expect(title).not.toMatch(/next scan/);
+  });
+
+  it("keeps a way to clear it, in the menu, where the row can say what it is", async () => {
+    const onClear = vi.fn();
+    const user = userEvent.setup();
+    draw({ ...SPENT, onClear, roomy: true });
+    await user.click(screen.getByRole("button", { name: "Choose how long to keep it" }));
+    await user.click(screen.getByRole("menuitem", { name: "Clear this spare" }));
+    expect(onClear).toHaveBeenCalled();
+  });
+
+  it("offers no clear row on an item with no spare of its own to clear", async () => {
+    draw({}, 30);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Choose how long to keep it" }));
+    expect(screen.queryByRole("menuitem", { name: "Clear this spare" })).not.toBeInTheDocument();
+  });
+});
+
+describe("the resting mark", () => {
+  it("draws nothing for a spent spare, so it cannot contradict the button", () => {
+    // The mark is what a row carrying a decision looks like at rest (rule 46). A spent spare is
+    // no longer a decision in force at this level -- the button it hands over to on hover
+    // offers a fresh one -- so resting as "0d" announced a decision the control no longer
+    // holds. A live spare and a forever one still rest as their own icon.
+    const { container: spent } = render(<OverrideMark override="spare" spareExpiresAt={inDays(-3)} />);
+    expect(spent).toBeEmptyDOMElement();
+
+    const { container: live } = render(<OverrideMark override="spare" spareExpiresAt={inDays(27)} />);
+    expect(live.textContent).toContain("27d");
+
+    const { container: ever } = render(<OverrideMark override="spare" spareExpiresAt={null} />);
+    expect(ever.textContent).toContain("∞");
   });
 });

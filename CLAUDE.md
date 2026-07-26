@@ -388,7 +388,8 @@ Safari alone. New variants are blockers, like the rules above.
     out by the same hover. Never park the full buttons on every row at rest, and never show the
     icon and the buttons at once. Give the toggling buttons a fixed width so a label change
     (Spare↔Spared, Reap↔Reaping) never resizes them: a shrinking button left a red ghost in the
-    region it vacated, in Safari only.
+    region it vacated, in Safari only. A **spent** spare is not a decision at rest and draws no
+    mark at all (see rule 122): the row rests bare, and its button offers a fresh spare.
 47. **Card hover is the accent, additive on the open card.** A card's hover is the accent edge,
     not gray; the open (`card-selected`) card keeps its accent selection bar on hover and deepens
     it, never trading it for the plain hover (which reads as a deselect). Any `:hover` that can
@@ -854,3 +855,43 @@ sharpens an earlier rule, the newer, more specific obligation governs.
      evidence is a closed port, a non-root uid, or any other property of the machine is not
      a proof: stub the boundary and assert what was actually sent, and add a case no
      environment can skip (T-2, T-4, T-5, T-7, T-8; sharpens rule 22).
+
+## Blockers from the two-level spare pass (2026-07-25)
+
+Direct constraints from the review of how a season row reads a spare when its own and its
+show's overlap. Written as blockers, not suggestions; where one sharpens an earlier rule
+(120 → 50/61, 121 → 50, 122 → 46) the newer, more specific obligation governs.
+
+120. **Precedence answers which decision is read; it never answers what will happen.** A
+     surface that COLORS a row or asserts its fate reads the *covering* spare
+     (`spare_covers_until`, from `whitelist.covering_spare_expiry`: own or show, whichever
+     runs longer, forever winning outright). A control reads the spare in force by
+     precedence (`spare_expires_at`, `effective_spare_expiry`), because that is the key it
+     toggles and clears. Reading one field for both jobs drew dashed "expired" over a file a
+     show spare keeps forever, and promised "then Reaper judges it again" about a
+     re-judgment that changes nothing. A level must be *spared* to contribute cover, so a
+     season spare lapsing under a show set to REAP still reads expired: there the file
+     really is handed back. Derive it server-side and put it on every shape that colors,
+     `GroupSeasonMark` included -- threading a show's decision down to each strip square is
+     the `showReapReaches` bug waiting to happen (sharpens rules 50/61).
+121. **A control that stops being a toggle stops looking like one, in all three signals at
+     once.** When a press no longer undoes the state shown -- a spent spare, whose press now
+     sets a fresh one -- the fill, `aria-pressed` and the click handler move together off
+     one `pressed` flag; never leave a pressed-looking button whose press does something
+     else. The undo it displaced moves to a surface with room to name it (the length menu's
+     "Clear this spare"), never disappears. A count is how much is LEFT, so "0d" is not a
+     smaller "27d" and must never sit in a lit button: it read as an active decision with
+     none of itself remaining (sharpens rule 50).
+122. **A control that knows only its own level never asserts the item's fate.** The Spare
+     button's tooltip states what happened to *its* spare and what a press does
+     (`spareRemaining().expiredOn`), never `note`'s "still kept until the next scan judges
+     it again", which is false wherever a show-level spare outlasts it. What is still
+     keeping the file is the covering spare's question, answered beside it by the row's chip
+     and `KeptByShowNote`. Same reason a spent spare draws no resting mark: the mark is a
+     decision in force, and that one no longer is (extends rule 46).
+123. **Every branch a control can clear names what clearing does, in both directions.**
+     `KeptByShowNote` told the operator "clearing this one won't remove it" when clearing was
+     harmless and said nothing when clearing dropped the file onto the reap list. Warning
+     only on the safe side is backwards for a codebase whose every ambiguity resolves toward
+     keeping the file: a new branch ships its consequence clause, and the destructive one
+     ships it first.

@@ -95,7 +95,7 @@ const SPARE_SKEW_SLACK_MS = 3_600_000;
  *  Three states, and each field is filled for exactly the ones that may print it, so a surface
  *  can never render a string belonging to a state it is not in:
  *
- *  | state    | `short` | `phrase`      | `until`           | `note`                     |
+ *  | state    | `short` | `phrase`      | `until`           | `note` / `expiredOn`       |
  *  | -------- | ------- | ------------- | ----------------- | -------------------------- |
  *  | forever  | `""`    | `""`          | `""`              | `""`                       |
  *  | counting | `"27d"` | `27 days left`| `Kept until Aug 18`| `""`                      |
@@ -125,12 +125,28 @@ export function spareRemaining(iso: string | null): {
    *  One derivation, so the button, the chip and the panel cannot word it three ways (rule
    *  104). */
   note: string;
+  /** Just the fact, without `note`'s claim about what happens next: "Your spare expired on
+   *  Aug 18". For the surfaces that know only this item's OWN spare and so cannot say whether
+   *  anything still keeps the file -- the Spare button, whose item may sit inside a show spare
+   *  that outlasts it. `note` is right wherever the covering spare IS this one. Empty in every
+   *  other state, and the same date wording as `note`, from the one derivation. */
+  expiredOn: string;
 } {
   if (!iso) {
-    return { forever: true, days: 0, expired: false, short: "", phrase: "", until: "", note: "" };
+    return {
+      forever: true,
+      days: 0,
+      expired: false,
+      short: "",
+      phrase: "",
+      until: "",
+      note: "",
+      expiredOn: "",
+    };
   }
   const ms = new Date(iso).getTime() - Date.now();
   if (ms <= 0) {
+    const expiredOn = `Your spare expired on ${date(iso)}`;
     return {
       forever: false,
       days: 0,
@@ -138,7 +154,8 @@ export function spareRemaining(iso: string | null): {
       short: "0d",
       phrase: "expired",
       until: "",
-      note: `Your spare expired on ${date(iso)}. Still kept until the next scan judges it again`,
+      note: `${expiredOn}. Still kept until the next scan judges it again`,
+      expiredOn,
     };
   }
   // Round up so a partial day still shows, but only after shaving the small clock-skew slack --
@@ -152,5 +169,6 @@ export function spareRemaining(iso: string | null): {
     phrase: days === 1 ? "1 day left" : `${days} days left`,
     until: `Kept until ${date(iso)}`,
     note: "",
+    expiredOn: "",
   };
 }
