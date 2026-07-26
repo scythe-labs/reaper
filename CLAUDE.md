@@ -10,13 +10,13 @@ refreshes Plex. Python 3.13 / FastAPI backend + React 19 / Vite frontend, one co
 
 ## Where the engineering rules live
 
-133 numbered blockers, distilled and adversarially verified across six review passes. **The
+134 numbered blockers, distilled and adversarially verified across six review passes. **The
 numbers are permanent** — tests and source comments cite them by number (`rule 28` in
 `snapshot.py`, `rule 88` in `tests/test_lists_matching.py`), so never renumber and never reuse
 a number for a different rule. A comment may only cite a rule that exists: 37 comments once
 cited rules 70–87 while the list ended at 69, making every one of them unverifiable.
 `tests/test_repo_hygiene.py` now fails on a citation with no rule behind it. New rules append
-to the scoped file that governs them and continue from 134.
+to the scoped file that governs them and continue from 135.
 
 They live in `.claude/rules/`, scoped by `paths` frontmatter so each set loads when you read a
 file it governs — and since a file must be read before it can be edited, the rules for a file
@@ -28,7 +28,7 @@ are always in context before you change it:
 | `.claude/rules/frontend.md` | `frontend/src/**/*.{ts,tsx,css}` and `frontend/index.html` (rule 69 governs it) — UI grammar, the review queue, the two-level spare, gating surfaces | 17–20, 36, 39–51, 53–54, 60–62, 66–67, 69, 79–80, 85–86, 120–123 |
 | `.claude/rules/tests.md` | `tests/**/*.py`, `frontend/src/**/*.test.ts{,x}` — test discipline | 37, 118–119, 132–133 |
 
-Nine rules bind every file and stay here, under *Rules that apply everywhere*. Where two rules
+Ten rules bind every file and stay here, under *Rules that apply everywhere*. Where two rules
 overlap, the more specific one governs. Read the governing file before working in a tree you
 haven't touched this session.
 
@@ -113,6 +113,17 @@ closing a fix to a copied pattern (paging loops, section resolution, error mappi
 the pattern's siblings and fix or explicitly defer each in writing. A "when next touched"
 deferral is honored the moment ANY commit touches the twin, not only when someone remembers.
 
+**134. A gate is judged by its exit code, never by the output you kept.** A pipeline exits with
+its LAST command's status, so `npm --prefix frontend run build | tail -4` reports `tail`'s
+success and a failing `tsc` scrolls past; anything chained after it with `&&` then runs on a
+broken tree. That is not hypothetical — a TypeScript error reached a commit exactly this way,
+because the `&& git commit` after the pipe saw the pipe succeed. Run each gate on its own and
+read the status (`cmd > /tmp/out 2>&1; echo "exit: $?"`, or a `for` loop over the gate names),
+and only pipe a command whose success you are not currently deciding on. `| head` is worse
+still: it SIGPIPEs the writer, so the command dies partway and reports that as its own result.
+This binds every verification in this file, and reporting a gate as green on a pipe's exit code
+is a false statement about the work.
+
 ## Branch & merge workflow
 
 - **`dev` is the default branch, and all work lands there.** Push to `dev`, or to a feature
@@ -141,12 +152,8 @@ Run the relevant subset while iterating; run the full set before a commit. **Alw
 common CI break.** When a change is observable in the app, *drive it end-to-end* (the
 `verify` skill), don't stop at green tests.
 
-**Read the exit code, not the tail of the output.** `npm --prefix frontend run build | tail -4`
-reports the exit status of `tail`, which always succeeds — a failing `tsc` scrolls past and the
-gate looks green. This is not hypothetical: a TypeScript error was committed that way, because
-the `&& git commit` after it ran on the pipe's success. Run each gate on its own and check `$?`
-(`cmd > /tmp/out 2>&1; echo $?`), or drop the pipe entirely. Same trap with `| head`, `| grep`,
-and any `set -o pipefail`-less chain.
+**Read the exit code, not the tail of the output** — rule 134, and the one that silently
+defeats every other gate on this list.
 
 **The frontend gates are eslint, vitest, and `build` — there is no prettier gate.** `package.json`
 has no prettier script and CI never runs one, so the tree is not prettier-formatted. Running
