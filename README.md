@@ -279,6 +279,18 @@ npm install
 npm run dev          # http://localhost:5173, proxies /api to the app on :8420
 ```
 
+```bash
+npm run lint && npm run format:check
+npm run test
+npm run build        # tsc --noEmit, then vite build
+```
+
+Both languages are machine-formatted and both are checked in CI: `ruff format` for Python,
+prettier for `frontend/`, sharing one width (100). Run `npm run format` and `ruff format .`
+before committing rather than matching style by hand. `.git-blame-ignore-revs` lists the
+whitespace-only commits; `git config blame.ignoreRevsFile .git-blame-ignore-revs` once per
+clone keeps `git blame` pointing at the commit that changed a line's meaning.
+
 In production there is no separate server: `npm run build` emits `frontend/dist`, and
 FastAPI serves it via `app.frontend()` as low-priority routes — the `/api` routes are
 matched first, and anything else falls back to `index.html`. Both dev and production

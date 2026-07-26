@@ -86,6 +86,13 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # The counterpart to `ruff format --check` in the check job above -- the whole point
+      # of adopting prettier was that one half of the tree had a formatting gate and the
+      # other half was argued by hand. printWidth matches ruff's line-length; see
+      # frontend/prettier.config.mjs for why, and for why nothing else is configured.
+      - name: Format
+        run: npm run format:check
+
       # Component tests (vitest + Testing Library), led by the reap confirmation's
       # client-side execute gate -- the one UI surface in front of a deletion.
       - name: Test

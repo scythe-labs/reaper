@@ -143,23 +143,28 @@ uv run mypy src/reaper                 # src only; tests are not type-checked
 uv run pytest
 uv run alembic upgrade head            # then `alembic check` for model/migration drift
 npm --prefix frontend run lint         # eslint; the two react-hooks rules are errors
+npm --prefix frontend run format:check # prettier; `run format` writes
 npm --prefix frontend run test         # vitest component tests (the execute gate first)
 npm --prefix frontend run build        # tsc --noEmit, then vite build
 ```
 
-Run the relevant subset while iterating; run the full set before a commit. **Always run
-`uv run ruff format .` (not just `--check`) before staging — format failures are the most
-common CI break.** When a change is observable in the app, *drive it end-to-end* (the
-`verify` skill), don't stop at green tests.
+Run the relevant subset while iterating; run the full set before a commit. **Always run the
+writing form of both formatters before staging — `uv run ruff format .` and `npm --prefix
+frontend run format`, not just `--check` — format failures are the most common CI break.**
+When a change is observable in the app, *drive it end-to-end* (the `verify` skill), don't
+stop at green tests.
 
 **Read the exit code, not the tail of the output** — rule 134, and the one that silently
 defeats every other gate on this list.
 
-**The frontend gates are eslint, vitest, and `build` — there is no prettier gate.** `package.json`
-has no prettier script and CI never runs one, so the tree is not prettier-formatted. Running
-`npx prettier --write` reflows hundreds of lines of untouched code and buries a two-line change
-in noise; if you run prettier at all, run it on nothing you did not write. Match the surrounding
-style by hand instead.
+**Both halves of the tree are machine-formatted, so never hand-argue style.** `ruff format`
+owns Python, prettier owns `frontend/`, and both run in CI. They share one width: prettier's
+`printWidth` is 100 because that is ruff's `line-length`. Everything else is prettier's
+default, measured against this tree rather than assumed —
+`frontend/prettier.config.mjs` carries the numbers. Write code at whatever shape is clearest,
+run the formatter, and stage what it gives you. If a reformat ever sweeps files you did not
+touch, that means someone skipped the gate; land the sweep as its own commit and add it to
+`.git-blame-ignore-revs`.
 
 ## Dev environment
 
