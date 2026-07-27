@@ -119,6 +119,11 @@
      rule on source order and silently does nothing. It is only used under that breakpoint. */
   --navbar-h: 2.7rem;
 
+  /* The masthead's bottom gap. Declared once because .views cancels exactly this much with a
+     negative margin to reach the border its active cut is drawn on (rule 67): if the two ever
+     drift apart the cut floats above the rule or hangs below it. */
+  --masthead-pad-b: 1rem;
+
   /* Form control standard. Every text / number / select box shares this chrome, so the
      app reads as one surface (see .set-control, .rule-control, .field-sm, .condition-add,
      .search-input, .log-search, .pw-form, .local-form, .qty): padding
@@ -426,9 +431,9 @@ a:hover {
   display: flex;
   align-items: center;
   gap: 1rem;
-  /* No bottom padding: the rail's own buttons carry that gap now, so their bottom edge is the
-     border their active cut is drawn on (.views, below). */
-  padding: 0.35rem 0 0;
+  /* The brand and the user menu keep this gap above the border; .views alone gives it back with
+     a negative margin, so only the rail touches the rule its cut is drawn on (.views, below). */
+  padding: 0.35rem 0 var(--masthead-pad-b);
   border-bottom: 1px solid var(--border);
 }
 
@@ -485,16 +490,18 @@ a:hover {
   border-radius: 999px;
 }
 
-/* The section rail. `align-self: stretch` + `align-items: flex-end` puts every button's bottom
-   edge on the masthead's content-box bottom, which (the masthead's padding-bottom being 0) is
-   the 1px border itself -- so the active cut is a segment OF that rule rather than a second line
-   floating above it. The buttons carry the bottom gap the masthead's padding used to. */
+/* The section rail. `align-self: stretch` + `align-items: flex-end` put every button's bottom edge
+   on the rail's own bottom edge, and the negative bottom margin cancels the masthead's padding so
+   that edge IS the 1px border -- making the active cut a segment OF that rule rather than a second
+   line floating above it. The masthead keeps its padding, so the brand and the user menu still sit
+   clear of the border; the rail is the one child that reaches it. The phone bar takes .views out of
+   the masthead entirely and resets this margin. */
 .views {
   display: flex;
   align-items: flex-end;
   align-self: stretch;
   gap: 0.15rem;
-  margin: 0 auto;
+  margin: 0 auto calc(-1 * var(--masthead-pad-b));
 }
 
 .view-tab {
@@ -1339,6 +1346,12 @@ main.split {
      deciding what to delete. On a phone that line is the scarce thing. */
   .brand-sub {
     display: none;
+  }
+  /* The rail is what pushes the user menu to the far corner on a wide screen, by way of its own
+     `margin: 0 auto`. Here the rail has left the masthead for the bottom bar, so the menu has to
+     claim that free space itself and stay in the corner it occupies at every other width. */
+  .user-menu {
+    margin-left: auto;
   }
 }
 
