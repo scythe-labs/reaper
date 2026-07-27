@@ -872,11 +872,31 @@ def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | Non
             # A deliberate "decide this yourself" flag -- today, the season keep-rule
             # conflict -- not a plumbing failure. The one blocked case that wants eyes.
             if str(entry.get("gate") or "") == "season_progression":
-                return ChipOut(
-                    tone="look",
-                    text="Needs a look · watched more than a season your rule keeps",
-                    why="watched more than a season your rule keeps",
-                )
+                # Two conflict shapes reach here and only ONE of them made a comparison
+                # (``services.season_pruning.PruneConflict.message``). A conflict is also
+                # raised when the kept season's watcher count could not be read at all --
+                # ``detect_conflicts`` treats that as a hold rather than letting an unread
+                # number clear a protection -- and that message says so in its own words,
+                # but it does not START with "could not check", so the guard above passes
+                # it through. Asserting the comparison there states arithmetic against a
+                # number nobody took, which is the exact sentence ``detect_conflicts``'s
+                # docstring records having deliberately removed from the message; the chip
+                # was still printing it, one line above the panel's own denial.
+                #
+                # Each claim needs a POSITIVE match, so a reworded message degrades to the
+                # vague-but-true chip below rather than back to the false one.
+                if "more than watched Season" in detail:
+                    return ChipOut(
+                        tone="look",
+                        text="Needs a look · watched more than a season your rule keeps",
+                        why="watched more than a season your rule keeps",
+                    )
+                if "could not check who watched" in detail:
+                    return ChipOut(
+                        tone="look",
+                        text="Needs a look · couldn't check who watched a season it's keeping",
+                        why="Reaper couldn't check who watched a season it's keeping",
+                    )
             return ChipOut(
                 tone="look",
                 text="Needs a look · left for you to decide",

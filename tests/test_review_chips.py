@@ -30,14 +30,35 @@ from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.gates import PROTECT, Facts, GateConfig, GateId, MinDormancyGate
 from reaper.engine.observation import Absent, Known
 from reaper.main import create_app
+from reaper.services.season_pruning import PruneConflict
 from reaper.services.snapshot import HAND_SPARE_DETAIL
 
 from ._auth import login
 
-CONFLICT_SENTENCE = (
-    "2 people watched Season 3, more than watched Season 1, which your keep rule "
-    "protects. Reaper left it for you to decide instead of removing it."
-)
+
+def _conflict_detail(*, kept_watchers: int | None) -> str:
+    """A real keep-rule conflict's stored detail, from the one producer that words it.
+
+    Built rather than transcribed (rule 119): a hand-typed copy of this sentence had
+    already drifted from ``PruneConflict.message``, which is how the chip below it went
+    on asserting a comparison the message itself had stopped making.
+
+    ``kept_watchers=None`` is the shape that matters here. It is not "nobody watched the
+    kept season" -- it is "that season's history could not be read at all", which
+    ``detect_conflicts`` raises as a conflict rather than let an unread number clear a
+    protection, and which the message states in those words.
+    """
+    return PruneConflict(
+        pruned_season=3,
+        kept_season=1,
+        pruned_watchers=2,
+        kept_watchers=kept_watchers,
+        kept_reason="within the last 2 seasons (rank 1)",
+    ).message
+
+
+#: The counted shape: a comparison really was made, so the chip may state it.
+CONFLICT_SENTENCE = _conflict_detail(kept_watchers=0)
 
 
 def _never_played_facts(days_dormant: int) -> Facts:
@@ -279,6 +300,29 @@ class TestChip:
         assert chip is not None
         assert chip.tone == "look"
         assert chip.text == "Needs a look · watched more than a season your rule keeps"
+
+    def test_an_unreadable_kept_season_claims_no_comparison(self) -> None:
+        """The twin of the dormancy chip's fabricated play, one gate over.
+
+        A conflict is ALSO raised when the kept season's watcher count could not be read,
+        and the operator is shown only this chip on a queue card. Claiming the season
+        "watched more than" another states arithmetic against a number nobody took --
+        the sentence ``detect_conflicts`` deliberately removed from the message, which
+        the chip went on printing one line above the panel's own denial.
+        """
+        detail = _conflict_detail(kept_watchers=None)
+        assert "could not check who watched" in detail, "the producer stopped saying this"
+
+        chip = _chip(
+            _exp(82, unknown=[{"gate": "season_progression", "detail": detail}]),
+            "abstain",
+            82,
+        )
+
+        assert chip is not None
+        assert chip.tone == "look"
+        assert "watched more than" not in chip.text
+        assert chip.text == "Needs a look · couldn't check who watched a season it's keeping"
 
     def test_any_future_deliberate_flag_still_wants_eyes(self) -> None:
         """A blocked detail that is a sentence of its own (not "could not check") is a
