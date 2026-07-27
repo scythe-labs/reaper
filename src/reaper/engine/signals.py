@@ -248,11 +248,16 @@ def _numeric(observation: Observation[float] | Observation[int]) -> float | None
 def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 365) -> SignalResult:
     """One signal. Always in ``[0, weight]``.
 
-    ``window_days`` is the popularity window, used only to phrase the "few watches" detail
-    as "in the last <period>"; it never changes a number, only how one reads. It is an
-    upper bound on that phrase rather than the phrase itself: a mirror shallower than the
-    window covers only part of it (``Facts.history_reach_days``), and the shorter span is
-    what gets named.
+    ``window_days`` is the popularity window -- the span ``distinct_watchers`` was counted
+    over. It phrases the "few watches" detail as "in the last <period>", and it moves
+    numbers: FEW_WATCHERS is withheld entirely when the watch mirror does not reach back
+    that far (``fields.reach_shortfall``, rule 140), taking zero pressure and leaving its
+    weight in the denominator so coverage falls with it.
+
+    It moves them in one direction only. A window the history cannot cover withdraws
+    pressure and lowers coverage, never the reverse, so a caller that understates the
+    window can only ever charge LESS than the evidence supports. The span is named
+    unconditionally because it is only named once the mirror covers it.
     """
     if not config.enabled:
         return SignalResult(
@@ -333,8 +338,21 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
             # gets -- zero pressure, weight retained in the denominator, coverage honestly
             # discounted (rules 31, 140). The gate refuses to answer here too
             # (``gates.ServerPopularityGate``), off the same shared derivation.
+            #
+            # Asked only of a count we could actually read. An Unknown input has its own
+            # cause -- a season Plex never matched is the common one -- and answering it
+            # with the mirror's depth points the operator at their history retention while
+            # the real problem is a Plex match. Both twins resolve the unreadable input
+            # first for that reason (``gates.ServerPopularityGate``'s ``_blocked``,
+            # ``fields.evaluate``), and a genuine Absent must reach the NOT_APPLICABLE tail
+            # below rather than this arm (rule 93). Numbers are identical either way; only
+            # the sentence changes.
             span = f"in the last {humanize_window(window_days)}"
-            short = fields.reach_shortfall(fields.RECENT_WATCHERS, facts, window_days=window_days)
+            short = (
+                fields.reach_shortfall(fields.RECENT_WATCHERS, facts, window_days=window_days)
+                if watchers is not None
+                else None
+            )
             if short is not None:
                 return SignalResult(
                     config.signal,
@@ -459,9 +477,22 @@ def evaluate_custom(
                 state=SignalState.UNREADABLE,
             )
         # A Known watcher count the mirror does not reach far enough to support is a lower
-        # bound, and this ramp is monotone in it -- so a graded removal rule on "people who
-        # watched it recently" would charge pressure off history nobody has. Same treatment
-        # as the Unknown above, which is what keeps coverage honest about it (rule 140).
+        # bound, so it is reported unchecked rather than scored (rule 140). Deliberately
+        # more conservative than the direction alone requires, and worth saying which way
+        # it runs: ``_ramp`` is monotone INCREASING in the count and ``GradedCondemnSpec``
+        # has no direction knob, so a truncated count lands at or below the true fraction
+        # and this rule can only ever UNDER-charge. That is the safe direction already --
+        # unlike the built-in FEW_WATCHERS branch above, whose inverted
+        # ``saturate_at - watchers`` turns the same truncation into over-charging.
+        #
+        # The reason to withhold anyway is that the graded arm has no "already earned"
+        # outcome to preserve. ``fields._survives_more_history`` can let a comparison stand
+        # because more history cannot overturn it; a ramp has no such threshold, so every
+        # value it produces is honest-but-incomplete. Same treatment as the Unknown above,
+        # which is what keeps coverage honest about it.
+        # (``watchers_all_time`` cannot reach here at all -- protect-only, refused by
+        # ``GradedCondemnSpec._valid_graded`` -- so ``recent_watchers`` is the only field
+        # this arm ever sees.)
         if (short := fields.reach_shortfall(spec, facts, window_days=window_days)) is not None:
             return SignalResult(
                 config.name,

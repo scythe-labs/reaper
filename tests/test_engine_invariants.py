@@ -43,6 +43,7 @@ from reaper.engine.signals import (
     SignalId,
     SignalState,
     evaluate_keep,
+    evaluate_signal,
     score,
 )
 from reaper.engine.verdict import (
@@ -695,6 +696,35 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
         # floor instead of hidden behind a coverage of 1.0 (rule 31).
         assert short.coverage == pytest.approx(0.8)
         assert "could not tell who watched it" in few.detail
+
+    def test_a_count_we_could_not_read_names_its_own_cause_not_the_mirror_s_depth(
+        self,
+    ) -> None:
+        """A season Plex never matched, on a server whose mirror is short.
+
+        Two things are wrong at once and only one of them is the operator's problem. The
+        reach check must not answer for an input that was never readable: told "your watch
+        history only goes back 3 months", an operator goes and lengthens their Tautulli
+        retention, and the season is still unmatched afterwards. Both twins resolve the
+        unreadable input first (``gates.ServerPopularityGate``'s ``_blocked``,
+        ``fields.evaluate``); this pins the third against them (rule 72).
+        """
+        facts = replace(
+            _popularity_facts(0, Known(value=90.0, source="t")),
+            distinct_watchers=Unknown(reason="Plex has not matched this season", source="p"),
+        )
+        result = evaluate_signal(
+            SignalConfig(SignalId.FEW_WATCHERS, weight=20, saturate_at=3),
+            facts,
+            window_days=self.WINDOW,
+        )
+
+        # Same numbers either way -- withheld, weight retained. Only the sentence differs.
+        assert result.pressure == 0.0
+        assert result.evaluated is False
+        assert result.state is SignalState.UNREADABLE
+        assert result.detail == "could not tell who watched it"
+        assert "watch history only goes back" not in result.detail
 
     def test_a_graded_removal_rule_on_the_same_count_is_bounded_too(self) -> None:
         """The authored twin of the signal above. A removal rule graded on "people who
