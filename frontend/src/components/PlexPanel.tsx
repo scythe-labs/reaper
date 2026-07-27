@@ -523,6 +523,7 @@ export function PlexPanel() {
               <div className="set-control">
                 <input
                   type="text"
+                  className="input-host"
                   value={manualHost}
                   onChange={(e) => setManualHost(e.target.value)}
                   placeholder="plex.example.net"

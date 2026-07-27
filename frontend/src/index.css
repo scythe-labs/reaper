@@ -7039,9 +7039,19 @@ button.danger:hover:not(:disabled) {
 /* A row whose control is a CLUSTER rather than one box -- the API key's field plus its four
    buttons -- keeps the old shrink-to-fit column. Capping it at the single-box width would
    wrap those buttons onto two further lines for nothing, and a masked, read-only key is not
-   one of the boxes rule 40 is lining up. */
+   one of the boxes rule 40 is lining up.
+   The label column carries a FLOOR, because `auto` with no floor is unbounded and the API
+   key's cluster is wide: measured, that column went to 39.6px at 768px and to ZERO from 700px
+   down, taking the row to 4,895px tall -- one word per line for the longest help paragraph on
+   the page, the one an operator reads to decide whether to hand a key to a third-party
+   dashboard. The `auto` track bottoms out at 272px (the keyfield's own width), so at the
+   tightest two-column width the floor may reach about 16.9rem before the cluster starts
+   overhanging the label; 14rem clears that by 2.9rem and keeps the full 24px gutter. It cannot
+   overflow the PAGE at any value -- `justify-self: end` sends the squeeze leftward into the
+   label instead -- so a too-large floor here fails silently and `scrollWidth` will not catch
+   it. Measure the gutter, not the overflow. */
 .set-row.set-row-cluster {
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(14rem, 1fr) auto;
 }
 .set-row.set-row-cluster .set-control {
   justify-self: end;
@@ -7206,10 +7216,16 @@ button.danger:hover:not(:disabled) {
    Growing also means the box's LEFT edge holds still as a Save appears and goes: it gives the
    width back from the right, where the text is not.
    Only a direct child: the accent hex field and a QuantityInput's number sit inside their own
-   joined chrome and keep the widths those set. */
+   joined chrome and keep the widths those set.
+   The basis is `0`, not `auto`, and that is the whole rule. `.set-control` wraps, and flex
+   line-breaking runs BEFORE shrinking: with an `auto` basis the box asks for its content width
+   first, so a long value pushed the sibling onto a second line instead of the box giving way --
+   which is the Refresh button above, back again on every screen wider than the phone. Measured
+   with a 37-character server name, `auto` wrapped it at all of 641-1400px and `0` at none of
+   them, the select settling at exactly what the button leaves (352 - 8 gap - 68 button). */
 .set-row .set-control > input,
 .set-row .set-control > select {
-  flex: 1 1 auto;
+  flex: 1 1 0;
   min-width: 0;
 }
 /* The boxes whose width IS their meaning do not grow: a port is four digits wide, and the API
@@ -7226,6 +7242,22 @@ button.danger:hover:not(:disabled) {
 .set-row .set-control input.input-port {
   min-width: 5rem;
   width: 5rem;
+}
+/* The manual hostname, stated the way the API key states its own and for the same reason: it
+   sits in a cluster row, whose column shrink-wraps, so there is nothing for a percentage or a
+   grown flex basis to resolve against. Left to the browser it fell back to the default
+   twenty-character size -- 167.7px, measured -- which is the exact fault the `.set-row` block
+   above exists to fix, reappearing in the one row that opted out of the fix. */
+.set-row .set-control > input.input-host {
+  width: 15rem;
+  min-width: 0;
+}
+/* On a phone it fills the width, like the keyfield and every other box. Placed immediately
+   below its base rule for that rule's own source-order reason. */
+@media (max-width: 640px) {
+  .set-row .set-control > input.input-host {
+    width: 100%;
+  }
 }
 @media (max-width: 640px) {
   /* The cluster row is named alongside the base one in every rule here. A media query adds no
@@ -7258,6 +7290,13 @@ button.danger:hover:not(:disabled) {
   .set-row .set-control > input,
   .set-row .set-control > select {
     min-width: 0;
+    /* Back to a content basis, which is what the stack wants. The `0` basis above exists to
+       stop a box shoving its sibling onto a second line, and here a second line is the LAYOUT:
+       the row has the full width, so host/port/SSL/Save are meant to wrap. With a zero basis
+       they all share one line instead and split it evenly, which took the manual hostname
+       field to 84px on a 390px screen -- about six characters. Measured: with this line the
+       narrow widths are byte-identical to not touching the basis at all. */
+    flex-basis: auto;
     /* The cap has to go with the stack. It exists to stop a long value eating the label
        column, and there is no label column here -- left in place it clamped the box at the
        track width, so anything from about 400px to this breakpoint stopped short of the edge

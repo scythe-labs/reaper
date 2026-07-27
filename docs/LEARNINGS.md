@@ -1491,6 +1491,24 @@ past the right edge. Measured in WebKit against the real page at a range of widt
   came off the control, because the cap was clamping the blown-out track back to something that
   nearly fit. Removing a cap does not create an overflow; it reveals the one the grid was already
   computing. Re-drive the narrow widths whenever a `max-width` leaves a layout.
+- **In a wrapping flex row, the basis decides who yields, and `auto` means nobody does.** Line
+  breaking runs *before* shrinking, so a box with `flex: 1 1 auto` asks for its full content width
+  first and the sibling beside it is pushed to the next line — the box never gives way, because it
+  was never asked to. Measured with a 37-character server name beside a Refresh button: `auto`
+  wrapped the button at all of 641–1400px, `flex-basis: 0` at none of them, with the box settling
+  at exactly what the button leaves. The trap is that `1 1 auto` reads like the accommodating
+  option and is the rigid one. **But the fix does not generalize down the page:** where a row
+  stacks and the wrap *is* the intended layout, a zero basis makes every box split the line evenly
+  instead, which took a hostname field to 84px — six characters — on a 390px screen. So the basis
+  is `0` where boxes share a track with a button, and `auto` again inside the stacked breakpoint.
+  Two declarations, opposite values, for the same elements at different widths.
+- **`scrollWidth` is the wrong instrument for a grid whose overflow goes leftward.** A cluster row
+  ends its control with `justify-self: end`, so when its `auto` track is squeezed the control
+  overhangs *into the label column*, never off the page: `scrollWidth − clientWidth` stayed 0 at
+  every column floor from 12rem to 24rem while the label column was being crushed to nothing. The
+  label column had in fact reached 0px wide and a row 4,895px tall — one word per line — with the
+  page reporting no overflow at all. Measure the gutter between the two columns, not the document
+  width, wherever a track can be squeezed from one side.
 
 ## Prior art
 
