@@ -78,7 +78,14 @@ export const SIGNAL_META: Record<string, { label: string; help: string }> = {
     label: "How long it's gone unwatched",
     // Was "The biggest single signal", which describes the shipped mix rather than the
     // control, and goes stale the first time the operator moves a slider.
-    help: "The longer since anyone played it, the stronger the reason to remove it. It earns its full points only at the far end.",
+    //
+    // "Untouched", never "since anyone played it": `engine/dormancy.py`'s
+    // `reference_instant` is `last_played or max(added_at, horizon)`, so a play is one of
+    // three anchors. This is the copy that TEACHES the control, and the recipe in
+    // `docs/content/understandingPolicy.ts` points operators at this signal for
+    // never-played backlog -- exactly the titles whose clock starts at arrival instead
+    // (rule 72, with the review chip fixed for the same divergence).
+    help: "The longer it sits untouched, the stronger the reason to remove it. The clock starts at the last play, or at the day it arrived when there has never been one. It earns its full points only at the far end.",
   },
   few_watchers: {
     label: "How few people watch it",
