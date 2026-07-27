@@ -184,7 +184,16 @@ def to_facts(vector: dict[str, Any]) -> Facts:
 
 
 def guard_result(vector: dict[str, Any]) -> GateResult | None:
-    """The season-pruning guard outcome recorded for this vector, as the scan merges it."""
+    """The season-pruning guard outcome recorded for this vector, as the scan merges it.
+
+    ``"unknown"`` models ONE of the two blocked shapes ``season_scan.guard_result`` can
+    emit: the keep-rule conflict whose comparison was made and lost, which defers to the
+    owner and which a hand reap therefore settles. The other -- a conflict whose kept
+    season could not be read at all, a plumbing failure that HOLDS a hand reap -- has no
+    vector here, because nothing in the policy sweep varies it. It is pinned directly, in
+    ``tests/test_season_scan.py`` and ``tests/test_override_truth.py`` (rule 132: this
+    helper must not read as coverage of an arm it does not build).
+    """
     guard = vector.get("guard")
     if not guard:
         return None
@@ -192,7 +201,11 @@ def guard_result(vector: dict[str, Any]) -> GateResult | None:
         return GateResult(GateId.SEASON_PROGRESSION, PROTECT, detail="season guard")
     if guard["state"] == "unknown":
         return GateResult(
-            GateId.SEASON_PROGRESSION, ABSTAIN, blocked=True, detail="keep-rule conflict"
+            GateId.SEASON_PROGRESSION,
+            ABSTAIN,
+            blocked=True,
+            detail="keep-rule conflict",
+            defers_to_owner=True,
         )
     return GateResult(GateId.SEASON_PROGRESSION, ABSTAIN, detail="prunable")
 

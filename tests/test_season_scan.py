@@ -336,12 +336,11 @@ class TestGuardResult:
         assert result.outcome == ABSTAIN
         assert result.blocked is False
 
-    def test_the_conflict_block_defers_to_the_owner_never_reads_as_plumbing(self) -> None:
-        """The honor of a hand reap on a keep-rule conflict (verdict.block_holds_reap) rests
-        on the guard NEVER dressing this block as a "could not check ..." plumbing failure --
-        it is a deliberate "you decide", so a reap overrules it. Pinned here so a reword of
-        the conflict message that starts "could not check" (which would fail closed and hold
-        the reap) fails loudly instead of silently un-honoring the owner's decision."""
+    def test_a_conflict_that_made_the_comparison_defers_to_the_owner(self) -> None:
+        """Season 1 was watched 40 times against Season 4's once: the comparison WAS made
+        and the keep rule lost it. That is the deliberate "you decide" flag, so a hand reap
+        is the decision it asked for and the block does not hold it
+        (``verdict.block_holds_reap``)."""
         plan = plan_series_prune(
             series_title="S",
             seasons=[_season(n) for n in range(1, 5)],
@@ -352,8 +351,33 @@ class TestGuardResult:
         result = season_scan.guard_result(plan, 1)
 
         assert result.blocked is True
+        assert result.defers_to_owner is True
+        assert block_holds_reap(result.gate.value, defers_to_owner=result.defers_to_owner) is False
+
+    def test_a_conflict_whose_comparison_failed_holds_the_hand_reap(self) -> None:
+        """The other arm, and the one that shipped broken: Season 4 is kept by the rule but
+        is on disk without ever being resolved in Plex, so nobody could read who watched it
+        (``kept_watchers=None``). ``_detect_conflicts`` holds the season rather than letting
+        an unread number clear a protection -- and then the Reap button released it anyway,
+        because the arm meant to catch this tested ``detail.startswith("could not check")``
+        while the message opens with the watcher count. It is a plumbing failure, so it
+        holds the reap; the wording is now free to change without moving that."""
+        plan = plan_series_prune(
+            series_title="S",
+            seasons=[_season(n) for n in range(1, 5)],
+            keep_last=1,
+            keep_first_season=False,
+            watchers_by_season={1: 40, 2: 1, 3: 1, 4: None},
+        )
+        result = season_scan.guard_result(plan, 1)
+
+        assert result.blocked is True
+        assert result.defers_to_owner is False
+        assert block_holds_reap(result.gate.value, defers_to_owner=result.defers_to_owner) is True
+        # The wording is what used to decide this, so pin that it no longer can: the
+        # message does not carry the prefix the old arm looked for, and the reap is held
+        # regardless.
         assert not result.detail.startswith("could not check")
-        assert block_holds_reap(result.gate.value, result.detail) is False
 
 
 # ---------------------------------------------------------------------------

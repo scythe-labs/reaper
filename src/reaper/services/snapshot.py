@@ -1479,8 +1479,18 @@ def _explain(
                 {"gate": r.gate.value, "detail": r.detail}
                 for r in evaluation.checked_and_did_not_fire
             ],
+            # ``defers_to_owner`` is written on every entry, never omitted when False, so
+            # a row frozen by THIS version is distinguishable from one frozen before the
+            # flag existed. ``condemned.reap_override_verdict`` reads that difference:
+            # present-and-False holds a hand reap, absent holds it too, and only
+            # present-and-True releases one (rule 104's explicit thaw).
             "protections_unknown": [
-                {"gate": r.gate.value, "detail": r.detail} for r in evaluation.could_not_be_checked
+                {
+                    "gate": r.gate.value,
+                    "detail": r.detail,
+                    "defers_to_owner": r.defers_to_owner,
+                }
+                for r in evaluation.could_not_be_checked
             ],
         }
     )

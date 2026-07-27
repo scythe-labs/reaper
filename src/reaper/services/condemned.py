@@ -135,7 +135,17 @@ def reap_override_verdict_decoded(explanation: object, *, score: int) -> str:
         # the scan uses, so a stored explanation and a live evaluation agree.
         blocked_holds_reap=bad_match
         or any(
-            block_holds_reap(str(e.get("gate") or ""), str(e.get("detail") or "")) for e in unknown
+            block_holds_reap(
+                str(e.get("gate") or ""),
+                # ``is True`` is the thaw, not a style tic. A row frozen before the flag
+                # shipped carries no key at all, and there is nothing in it that can tell
+                # a made comparison from a refused one -- the wording that used to stand
+                # in for the flag is exactly what failed. So absent reads as "does not
+                # defer" and the reap is held, the keep direction (rule 104). The window
+                # is one scan long: the next scan re-freezes every row with the key.
+                defers_to_owner=e.get("defers_to_owner") is True,
+            )
+            for e in unknown
         ),
         score=score,
         coverage_bp=0,

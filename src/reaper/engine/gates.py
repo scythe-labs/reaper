@@ -131,6 +131,25 @@ class GateResult:
     displaying them alike is the entire Deleterr failure class.
     """
 
+    defers_to_owner: bool = False
+    """Only meaningful on a ``blocked`` result: this block is a deliberate "the owner
+    should decide" flag, NOT a source Reaper could not read.
+
+    Today exactly one producer sets it -- ``season_scan.guard_result``'s keep-rule
+    conflict, where the comparison WAS made and came out against the rule
+    (``season_pruning.PruneConflict`` with a readable ``kept_watchers``). A hand reap
+    overrules that, because the reap IS the decision the flag asked for
+    (``verdict.block_holds_reap``).
+
+    **The default is the whole point.** It is ``False``, so a blocked result holds a hand
+    reap unless its producer explicitly says otherwise, and a new gate, a new blocked
+    branch, or a producer that simply forgets fails closed. The flag this replaced was
+    inferred from the detail text (``detail.startswith("could not check")``), which put
+    the fail-closed direction behind a wording the producer was free to change -- and the
+    one message the arm existed for opens with the watcher count instead, so it never
+    matched and a hand reap removed a season whose comparison could not be made.
+    """
+
     @property
     def fired(self) -> bool:
         return self.outcome == PROTECT

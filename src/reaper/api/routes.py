@@ -901,22 +901,36 @@ def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | Non
                 # (``services.season_pruning.PruneConflict.message``). A conflict is also
                 # raised when the kept season's watcher count could not be read at all --
                 # ``detect_conflicts`` treats that as a hold rather than letting an unread
-                # number clear a protection -- and that message says so in its own words,
-                # but it does not START with "could not check", so the guard above passes
-                # it through. Asserting the comparison there states arithmetic against a
-                # number nobody took, which is the exact sentence ``detect_conflicts``'s
-                # docstring records having deliberately removed from the message; the chip
-                # was still printing it, one line above the panel's own denial.
+                # number clear a protection. Asserting the comparison there states
+                # arithmetic against a number nobody took, which is the exact sentence
+                # ``detect_conflicts``'s docstring records having deliberately removed from
+                # the message; the chip was still printing it, one line above the panel's
+                # own denial.
                 #
-                # Each claim needs a POSITIVE match, so a reworded message degrades to the
-                # vague-but-true chip below rather than back to the false one.
-                if "more than watched Season" in detail:
+                # The producer now says which shape this is, so read the flag rather than
+                # the sentence (rule 92). It is the SAME flag ``verdict.block_holds_reap``
+                # decides the reap on, so the chip and the decision can no longer disagree
+                # -- and they did, back when both read the wording: the reap-honoring half
+                # matched a prefix the message never had while the chip matched inside it.
+                defers = entry.get("defers_to_owner")
+                if defers is None:
+                    # A row frozen before the flag shipped. Recover it from the wording,
+                    # and only by POSITIVE match on the two shapes that existed then, so an
+                    # unrecognized message degrades to the vague-but-true chip below rather
+                    # than to a confident wrong one. Nothing safety-bearing rides on this:
+                    # the reap decision reads the absent flag as "does not defer" and holds
+                    # the file either way (``condemned.reap_override_verdict``).
+                    if "more than watched Season" in detail:
+                        defers = True
+                    elif "could not check who watched" in detail:
+                        defers = False
+                if defers is True:
                     return ChipOut(
                         tone="look",
                         text="Needs a look · watched more than a season your rule keeps",
                         why="watched more than a season your rule keeps",
                     )
-                if "could not check who watched" in detail:
+                if defers is False:
                     return ChipOut(
                         tone="look",
                         text="Needs a look · couldn't check who watched a season it's keeping",

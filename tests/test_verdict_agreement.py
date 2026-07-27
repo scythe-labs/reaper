@@ -196,9 +196,10 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
 
     def test_a_reap_override_overrules_a_keep_rule_conflict(self) -> None:
         """The keep-rule conflict flags a season for a human to decide -- a *blocked*
-        ABSTAIN, but a plain-language "you decide", not a "could not check". With no
-        override it abstains (needs a look); a hand reap IS the decision it asked for, so
-        it condemns -- unlike a protection that could not be checked, which still holds."""
+        ABSTAIN that says "you decide" rather than "could not check", which the producer
+        marks with ``defers_to_owner``. With no override it abstains (needs a look); a hand
+        reap IS the decision it asked for, so it condemns -- unlike a protection that could
+        not be checked, which still holds."""
         conflict = Evaluation(
             results=[
                 GateResult(
@@ -206,6 +207,7 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
                     ABSTAIN,
                     detail="5 people watched it, more than a season your keep rule protects",
                     blocked=True,
+                    defers_to_owner=True,
                 )
             ]
         )
@@ -215,9 +217,14 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         assert _verdict(conflict, 90, 10_000, policy, override="reap") == "condemn"
 
     def test_a_reap_override_still_yields_when_the_season_guard_could_not_run(self) -> None:
-        """Belt-and-suspenders: a deferrable gate whose block is a genuine "could not
-        check" still holds the reap. The gate id alone never opens a fail-open path, so a
-        real plumbing failure on the season guard is treated like any unchecked protection."""
+        """Belt-and-suspenders: a deferrable gate whose block is a real plumbing failure
+        still holds the reap. The gate id alone never opens a fail-open path, so a failure
+        on the season guard is treated like any unchecked protection.
+
+        Note what carries it: the result simply does not claim ``defers_to_owner``, which
+        is the default. That is the fix for the arm that shipped broken -- it used to be
+        inferred from the detail starting "could not check", and the one real message it
+        had to catch opens with the watcher count instead."""
         plumbing = Evaluation(
             results=[
                 GateResult(
@@ -231,3 +238,27 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
 
         assert _verdict(plumbing, 100, 10_000, policy, override="reap") == "protect"
+
+    def test_a_conflict_whose_comparison_was_refused_holds_the_reap(self) -> None:
+        """The same fail-closed arm in the wording the season guard really emits, which is
+        what made this reachable: the message names the count first and only then says the
+        comparison could not be made, so ``startswith("could not check")`` never saw it and
+        a hand reap removed the season. Nothing about the wording decides it now."""
+        refused = Evaluation(
+            results=[
+                GateResult(
+                    GateId.SEASON_PROGRESSION,
+                    ABSTAIN,
+                    detail=(
+                        "40 people watched Season 1. Reaper could not check who watched "
+                        "Season 4, which it is keeping because it is one of the newest "
+                        "seasons your rule keeps. Left for you to decide instead of "
+                        "removing it."
+                    ),
+                    blocked=True,
+                )
+            ]
+        )
+        policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
+
+        assert _verdict(refused, 100, 10_000, policy, override="reap") == "protect"

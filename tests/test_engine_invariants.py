@@ -420,15 +420,17 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         """The owner's reap button does not release a file on evidence Reaper could not
         read. What holds it is the gate *id*: ``server_popularity`` is not one of
         ``verdict.DEFERRABLE_BLOCK_GATES``, the "you decide this" flags a reap is meant to
-        settle. The detail plays no part, which is asserted below rather than assumed --
-        an earlier version of this test read as though the wording were the interlock, and
-        so could not fail when the wording changed."""
+        settle. Nothing on the result plays any part, which is asserted below rather than
+        assumed -- an earlier version of this test read as though the wording were the
+        interlock, and so could not fail when the wording changed."""
         assert GateId.SERVER_POPULARITY not in DEFERRABLE_BLOCK_GATES
 
         result = self.gate.evaluate(_popularity_facts(0, Known(value=90.0, source="t")))
 
-        assert block_holds_reap(result.gate.value, result.detail) is True
-        assert block_holds_reap(result.gate.value, "any future wording at all") is True
+        assert block_holds_reap(result.gate.value, defers_to_owner=result.defers_to_owner) is True
+        # Even a producer that wrongly claimed the deferral cannot open the path on a gate
+        # the deferral list does not name. The two conditions are independent on purpose.
+        assert block_holds_reap(result.gate.value, defers_to_owner=True) is True
         assert (
             decide_verdict(
                 protected=False,

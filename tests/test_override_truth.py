@@ -72,25 +72,63 @@ BLOCKED = json.dumps(
 )
 # The keep-rule conflict: the season guard flags a prunable season watched MORE than one
 # the rule keeps, and hands the call to a human. It rides in `protections_unknown` (blocked,
-# so the scan abstains and asks for a look) but its detail is a plain-language decision for
-# the owner, never a "could not check ...". A hand reap IS that decision, so it condemns.
+# so the scan abstains and asks for a look), and `defers_to_owner` marks it as a decision
+# for the owner rather than a source Reaper could not read. A hand reap IS that decision,
+# so it condemns.
 KEEP_RULE_CONFLICT = json.dumps(
     {
         "protections_unknown": [
             {
                 "gate": "season_progression",
                 "detail": "5 people watched this season, more than one your keep rule protects.",
+                "defers_to_owner": True,
             }
         ]
     }
 )
-# Belt-and-suspenders: even a deferrable gate holds the reap if its block is a genuine
-# plumbing failure ("could not check ..."), so the gate id alone can never open a fail-open
-# path. (The season guard does not emit such a block today; this pins that it stays safe.)
+# Belt-and-suspenders: even a deferrable gate holds the reap when its block is a genuine
+# plumbing failure, so the gate id alone can never open a fail-open path.
 CONFLICT_BUT_PLUMBING = json.dumps(
     {
         "protections_unknown": [
-            {"gate": "season_progression", "detail": "could not check the sequential guard"}
+            {
+                "gate": "season_progression",
+                "detail": "could not check the sequential guard",
+                "defers_to_owner": False,
+            }
+        ]
+    }
+)
+# The shape that shipped broken, in the wording the season guard really emits: the kept
+# season is on disk but was never resolved in Plex, so the comparison could not be made at
+# all (`season_pruning.PruneConflict` with `kept_watchers=None`). Note where the phrase
+# sits -- the message opens with the watcher count, so the old
+# `detail.startswith("could not check")` arm never matched it and the reap went through.
+CONFLICT_COMPARISON_REFUSED = json.dumps(
+    {
+        "protections_unknown": [
+            {
+                "gate": "season_progression",
+                "detail": (
+                    "40 people watched Season 1. Reaper could not check who watched "
+                    "Season 4, which it is keeping because it is one of the newest "
+                    "seasons your rule keeps. Left for you to decide instead of "
+                    "removing it."
+                ),
+                "defers_to_owner": False,
+            }
+        ]
+    }
+)
+# A row frozen before the flag shipped: same conflict, no `defers_to_owner` key at all.
+# Nothing in it can tell a made comparison from a refused one, so it holds (rule 104).
+LEGACY_CONFLICT_NO_FLAG = json.dumps(
+    {
+        "protections_unknown": [
+            {
+                "gate": "season_progression",
+                "detail": "5 people watched this season, more than one your keep rule protects.",
+            }
         ]
     }
 )
@@ -116,9 +154,24 @@ class TestReapOverrideVerdict:
         assert reap_override_verdict(KEEP_RULE_CONFLICT, score=90) == "condemn"
 
     def test_a_deferrable_gate_that_actually_failed_still_wins(self) -> None:
-        """A "could not check ..." block holds the reap even on a deferrable gate: the
-        gate id alone never opens a fail-open path (belt-and-suspenders)."""
+        """A block that is a real plumbing failure holds the reap even on a deferrable
+        gate: the gate id alone never opens a fail-open path (belt-and-suspenders)."""
         assert reap_override_verdict(CONFLICT_BUT_PLUMBING, score=90) == "protect"
+
+    def test_a_conflict_whose_comparison_was_refused_holds_the_reap(self) -> None:
+        """The bug this pins: a hand reap removed a season whose keep-rule comparison
+        Reaper had explicitly declined to make. The suspenders were a
+        ``detail.startswith("could not check")`` test, and the one message the arm existed
+        for opens with the watcher count instead, so it never matched. Now the producer
+        says so in a typed field and the wording decides nothing."""
+        assert reap_override_verdict(CONFLICT_COMPARISON_REFUSED, score=90) == "protect"
+
+    def test_a_row_frozen_before_the_flag_holds_the_reap(self) -> None:
+        """The thaw, and it points at keeping (rule 104). A stored row that predates
+        ``defers_to_owner`` carries nothing that can tell a made comparison from a refused
+        one -- the wording that used to stand in for it is exactly what failed -- so it
+        holds. Self-clearing: the next scan re-freezes every row with the key."""
+        assert reap_override_verdict(LEGACY_CONFLICT_NO_FLAG, score=90) == "protect"
 
     def test_a_match_problem_reads_as_blocked(self) -> None:
         assert reap_override_verdict(UNMATCHED, score=99) == "protect"
@@ -139,6 +192,7 @@ class TestReapOverrideVerdict:
             assert reap_override_verdict(KEEP_RULE_CONFLICT, score=score) == "condemn"
             assert reap_override_verdict(STRUCTURAL, score=score) == "protect"
             assert reap_override_verdict(CONFLICT_BUT_PLUMBING, score=score) == "protect"
+            assert reap_override_verdict(CONFLICT_COMPARISON_REFUSED, score=score) == "protect"
 
 
 # --- fixtures over a real database ------------------------------------------

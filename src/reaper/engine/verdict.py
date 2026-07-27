@@ -48,39 +48,50 @@ from reaper.engine.gates import GateId, GateResult
 #: keep direction. Removing it would be the only change here that could release a file.
 STRUCTURAL_GATES = frozenset({GateId.STREAMING_NOW, GateId.UNMANAGED})
 
-#: Gates whose *blocked* result is a deliberate "the owner should decide" flag, not a
-#: source Reaper could not read. Today: the season keep-rule conflict (``season_scan.
-#: guard_result``) -- a season the keep rule would prune, but that was watched MORE than a
-#: season the rule keeps, so Reaper refuses to auto-approve and leaves the call to a human.
-#: Like any block it forces ABSTAIN (needs a look) when the owner has not decided, but a
-#: hand *reap* overrules it: the reap IS the decision the flag asked for. This is the
-#: opposite of a protection that could not be checked (a plumbing failure), which still
-#: holds a reap, fail-closed. A gate listed here must NEVER emit a *blocked* result for a
-#: real plumbing failure; if one ever does, the ``could not check ...`` detail keeps it
-#: fail-closed regardless (see :func:`block_holds_reap`), so the gate id alone can never
-#: open a fail-open path.
+#: Gates whose *blocked* result MAY be a deliberate "the owner should decide" flag rather
+#: than a source Reaper could not read. Today: the season keep-rule conflict
+#: (``season_scan.guard_result``) -- a season the keep rule would prune, but that was
+#: watched MORE than a season the rule keeps, so Reaper refuses to auto-approve and leaves
+#: the call to a human. Like any block it forces ABSTAIN (needs a look) when the owner has
+#: not decided, but a hand *reap* overrules it: the reap IS the decision the flag asked
+#: for. This is the opposite of a protection that could not be checked (a plumbing
+#: failure), which still holds a reap, fail-closed.
+#:
+#: Membership is necessary and NOT sufficient. A gate listed here still emits *blocked*
+#: results for real plumbing failures -- the keep-rule conflict does exactly that when the
+#: kept season's watcher count could not be read at all -- so the second condition is the
+#: per-result ``GateResult.defers_to_owner`` flag, which its producer must set explicitly
+#: (see :func:`block_holds_reap`). Two independent conditions, and BOTH fail closed: the
+#: gate id alone can never open a fail-open path, and neither can a producer that forgets.
 DEFERRABLE_BLOCK_GATES = frozenset({GateId.SEASON_PROGRESSION})
 _DEFERRABLE_GATE_VALUES = frozenset(g.value for g in DEFERRABLE_BLOCK_GATES)
 
 
-def block_holds_reap(gate_value: str, detail: str) -> bool:
+def block_holds_reap(gate_value: str, *, defers_to_owner: bool) -> bool:
     """Whether one *blocked* gate result must still hold a hand reap.
 
     A block holds a reap by default: not being able to confirm a protection is not
-    permission to remove the file (fail-closed). The one exception is a deliberate "the
-    owner should decide" deferral (:data:`DEFERRABLE_BLOCK_GATES`, today the keep-rule
-    conflict) -- a hand reap IS that decision, so it does not hold. Belt-and-suspenders: a
-    ``could not check ...`` detail is a genuine plumbing failure even on a deferrable gate,
-    so it always holds; the gate id alone never opens a fail-open path.
+    permission to remove the file (fail-closed). The one exception needs BOTH halves --
+    a gate in :data:`DEFERRABLE_BLOCK_GATES` *and* a result whose producer set
+    ``defers_to_owner``, meaning it is a deliberate "you decide this" flag. A hand reap IS
+    that decision, so that one combination does not hold.
 
-    Takes primitives (a gate's string value and its detail) so the one classifier serves
+    ``defers_to_owner`` used to be inferred here from the detail text -- a
+    ``could not check ...`` prefix was read as the plumbing failure that keeps a
+    deferrable gate fail-closed. It never fired. The one message that arm exists for is
+    the keep-rule conflict whose kept season could not be read, and it opens with the
+    watcher count ("N people watched Season X. Reaper could not check who watched Season
+    Y..."), so the prefix never matched and a hand reap removed a season whose comparison
+    Reaper had explicitly refused to make. The wording could not simply be reordered
+    either: ``api.routes._chip`` positively matches inside that same string to pick the
+    operator's chip, so one string was carrying two consumers wanting opposite things from
+    it (rule 92). The flag is typed and the wording is now free to change.
+
+    Takes primitives (a gate's string value and that flag) so the one classifier serves
     both the GateResult path (scan, simulator replay) and the stored-explanation path
     (``services.condemned.reap_override_verdict``) without a second transcription.
     """
-    defers_to_owner = gate_value in _DEFERRABLE_GATE_VALUES and not detail.startswith(
-        "could not check"
-    )
-    return not defers_to_owner
+    return not (gate_value in _DEFERRABLE_GATE_VALUES and defers_to_owner)
 
 
 def reap_held_by_blocks(results: Iterable[GateResult]) -> bool:
@@ -88,10 +99,14 @@ def reap_held_by_blocks(results: Iterable[GateResult]) -> bool:
 
     The GateResult-level companion to :func:`block_holds_reap`, so ``snapshot._verdict`` and
     the simulator replay classify blocks the same way. A snapshot with no blocked result, or
-    only deferrable ones (the keep-rule conflict), returns ``False`` -- a hand reap is
-    honored. A single un-checkable protection returns ``True`` and the reap is held.
+    only deferrable ones (the keep-rule conflict the owner is being asked to settle),
+    returns ``False`` -- a hand reap is honored. A single un-checkable protection returns
+    ``True`` and the reap is held.
     """
-    return any(r.blocked and block_holds_reap(r.gate.value, r.detail) for r in results)
+    return any(
+        r.blocked and block_holds_reap(r.gate.value, defers_to_owner=r.defers_to_owner)
+        for r in results
+    )
 
 
 def decide_verdict(

@@ -413,6 +413,15 @@ def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
       look. It renders amber, not green.
     * **Cleanly prunable** -> ABSTAIN, recorded so the panel shows the guard ran and had
       nothing to protect here.
+
+    The conflict arm carries ``defers_to_owner``, and only when the comparison was
+    actually made. ``_detect_conflicts`` raises a conflict in two shapes: one where the
+    kept season's watcher count was read and lost, which is the deliberate "you decide"
+    flag a hand reap is entitled to overrule; and one where that count could NOT be read
+    (``kept_watchers is None`` -- on disk, but never resolved in Plex), which is a
+    plumbing failure held fail-closed like any other. Both are blocked, both send the item
+    to a human, and only the first releases a hand reap
+    (``verdict.block_holds_reap``).
     """
     for protected in plan.protected:
         if protected.season_number == season_number:
@@ -421,7 +430,11 @@ def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
     for conflict in plan.conflicts:
         if conflict.pruned_season == season_number:
             return GateResult(
-                GateId.SEASON_PROGRESSION, GATE_ABSTAIN, blocked=True, detail=conflict.message
+                GateId.SEASON_PROGRESSION,
+                GATE_ABSTAIN,
+                blocked=True,
+                detail=conflict.message,
+                defers_to_owner=conflict.kept_watchers is not None,
             )
 
     return GateResult(
