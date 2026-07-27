@@ -369,6 +369,9 @@ def _facts(**over: Any) -> Any:
         "plex_rating_key": 700,
         "season_added_at": utcnow() - timedelta(days=4000),
         "horizon": utcnow() - timedelta(days=4000),
+        # Sampled once per scan on ``snapshot.ScanContext``, so the builder is handed it
+        # rather than measuring it. Default deep enough that the popularity gate answers.
+        "reach_days": 4000,
         "last_played": None,
         "watchers_window": 0,
         "watchers_all_time": 0,
@@ -393,8 +396,11 @@ class TestSeasonsRecordTheHistoryReachToo:
     ``test_fact_layer_states.TestTheScanRecordsHowFarBackItsHistoryReaches``.
     """
 
-    def test_the_season_builder_records_the_reach(self) -> None:
-        facts = _facts(horizon=utcnow() - timedelta(days=200))
+    def test_the_season_builder_records_the_reach_it_was_given(self) -> None:
+        """Given, not measured: the reach is sampled once per scan on
+        ``snapshot.ScanContext`` so the two lanes cannot freeze different values, and this
+        builder's job is only to carry it onto the season's own Facts."""
+        facts = _facts(horizon=utcnow() - timedelta(days=200), reach_days=200)
 
         assert facts.history_reach_days == Known(value=200, source="tautulli")
 
@@ -403,7 +409,7 @@ class TestSeasonsRecordTheHistoryReachToo:
         for a season whose own watch facts are not. Were it to ride on the rating key,
         every unmatched season would block on the reach instead of on the honest
         "Plex has not matched this" the watch facts already carry."""
-        facts = _facts(plex_rating_key=None, horizon=utcnow() - timedelta(days=200))
+        facts = _facts(plex_rating_key=None, horizon=utcnow() - timedelta(days=200), reach_days=200)
 
         assert facts.history_reach_days == Known(value=200, source="tautulli")
 
@@ -1044,6 +1050,7 @@ class TestGatherEndToEnd:
             sonarrs=[_source(_FakeSonarr(series))],
             tautulli=tautulli,  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
             keep_last_seasons=2,
@@ -1107,6 +1114,7 @@ class TestGatherEndToEnd:
             tautulli=tautulli,  # type: ignore[arg-type]
             plex=plex,  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
             keep_last_seasons=2,
@@ -1162,6 +1170,7 @@ class TestGatherEndToEnd:
             tautulli=tautulli,  # type: ignore[arg-type]
             plex=plex,  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
             keep_last_seasons=2,
@@ -1205,6 +1214,7 @@ class TestGatherEndToEnd:
             sonarrs=[_source(sonarr)],
             tautulli=tautulli,  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
             keep_last_seasons=2,
@@ -1224,6 +1234,7 @@ class TestGatherEndToEnd:
             sonarrs=[_source(sonarr_on)],
             tautulli=tautulli,  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
             keep_last_seasons=2,
@@ -1308,6 +1319,7 @@ class TestGatherEndToEnd:
             tautulli=tautulli,  # type: ignore[arg-type]
             plex=plex,  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
             keep_last_seasons=2,
@@ -1406,6 +1418,7 @@ class TestGatherEndToEnd:
             tautulli=tautulli,  # type: ignore[arg-type]
             plex=plex,  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
             keep_last_seasons=2,
@@ -1485,6 +1498,7 @@ class TestGatherEndToEnd:
             sonarrs=[_source(_FakeSonarr(series))],
             tautulli=tautulli,  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
             keep_last_seasons=2,
@@ -1523,6 +1537,7 @@ class TestGatherEndToEnd:
             sonarrs=[_source(_FakeSonarr(series))],
             tautulli=tautulli,  # type: ignore[arg-type]
             horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
             keep_last_seasons=2,
@@ -1555,6 +1570,7 @@ class TestGatherEndToEnd:
             sonarrs=[_source(_FakeSonarr(series))],
             tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
             horizon=utcnow(),
+            reach_days=0,
             active_rating_keys=set(),
             activity_degraded=False,
             keep_last_seasons=2,
@@ -1589,6 +1605,7 @@ class TestGatherEndToEnd:
                 sonarrs=[_source(_FakeSonarr(series))],
                 tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
                 horizon=utcnow() - timedelta(days=4000),
+                reach_days=4000,
                 active_rating_keys=set(),
                 activity_degraded=False,
                 keep_last_seasons=2,
@@ -1632,6 +1649,7 @@ class TestGatherEndToEnd:
                 sonarrs=[_source(_FakeSonarr(series))],
                 tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
                 horizon=utcnow(),
+                reach_days=0,
                 active_rating_keys=set(),
                 activity_degraded=False,
                 keep_last_seasons=2,
@@ -1666,6 +1684,7 @@ class TestGatherEndToEnd:
                 sonarrs=[_source(_FakeSonarr(series))],
                 tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
                 horizon=utcnow(),
+                reach_days=0,
                 active_rating_keys=set(),
                 activity_degraded=False,
                 keep_last_seasons=2,
@@ -1700,6 +1719,7 @@ class TestGatherEndToEnd:
             sonarrs=[_source(_DeadSonarr())],
             tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
             horizon=utcnow(),
+            reach_days=0,
             active_rating_keys=set(),
             activity_degraded=False,
             keep_last_seasons=2,

@@ -105,6 +105,17 @@ class ScanContext:
     active_rating_keys: set[int] = field(default_factory=set)
     degraded_reasons: list[str] = field(default_factory=list)
 
+    reach_days: int = field(init=False)
+    """How far back the watch mirror reaches, in days -- sampled ONCE, here.
+
+    A property of the mirror and not of an item, so it belongs beside ``horizon`` rather
+    than in the per-item builder. Derived at construction because the horizon is: reading
+    the clock again per item let one scan freeze two different reaches, and an item built
+    after the day count ticked up to the popularity window would be answered where an
+    identical item built a moment earlier was held (``gates.ServerPopularityGate``). Both
+    lanes take it from here, so the movie and season builders cannot disagree either.
+    """
+
     activity_degraded: bool = False
     """True when we could not read what is playing right now.
 
@@ -129,6 +140,9 @@ class ScanContext:
     protection is REMOVED by the missing evidence, which is the inverted direction this
     codebase fails closed against.
     """
+
+    def __post_init__(self) -> None:
+        self.reach_days = history_reach_days(self.horizon, now=utcnow())
 
     @property
     def degraded(self) -> bool:
@@ -378,11 +392,10 @@ def build_facts(
         distinct_watchers=recent,
         distinct_watchers_all_time=all_time,
         # How much of the popularity window those counts could actually see. Scan-wide
-        # rather than per-item, but it is read alongside the count it qualifies, so it
-        # rides on the same record (see ``Facts.history_reach_days``).
-        history_reach_days=Known(
-            value=history_reach_days(context.horizon, now=utcnow()), source="tautulli"
-        ),
+        # rather than per-item, so it is sampled once on the context and only carried here,
+        # where it is read alongside the count it qualifies (see ``Facts.history_reach_days``
+        # and ``ScanContext.reach_days``).
+        history_reach_days=Known(value=context.reach_days, source="tautulli"),
         size_bytes=(
             Known(value=item.size_bytes, source="radarr")
             if item.size_bytes is not None
@@ -628,6 +641,7 @@ async def scan(
                 tautulli=tautulli,
                 plex=plex,
                 horizon=context.horizon,
+                reach_days=context.reach_days,
                 active_rating_keys=context.active_rating_keys,
                 activity_degraded=context.activity_degraded,
                 keep_last_seasons=tv_policy.keep_last_seasons,

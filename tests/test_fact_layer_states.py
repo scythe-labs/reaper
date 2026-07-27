@@ -238,6 +238,31 @@ class TestTheScanRecordsHowFarBackItsHistoryReaches:
 
         assert facts.history_reach_days == Known(value=90, source="tautulli")
 
+    def test_the_reach_is_the_scans_own_sample_not_a_fresh_clock_read(self) -> None:
+        """Sampled once, on the context, because it describes the mirror and not the item.
+
+        Re-reading the clock inside the per-item builder let one scan freeze two different
+        reaches: an item built after the day count ticked up to the popularity window was
+        answered where an identical item built moments earlier was held. The distinctive
+        value here cannot arise from the horizon, so this fails if the derivation moves
+        back into the builder.
+        """
+        context = ScanContext(horizon=utcnow() - timedelta(days=90))
+        context.reach_days = 4242
+
+        facts = build_facts(
+            _raw(),
+            context,
+            membership_index=_EMPTY_INDEX,
+            imdb={},
+            last_played={},
+            watchers_window={10: 0},
+            watchers_all_time={10: 0},
+            whitelisted=set(),
+        )
+
+        assert facts.history_reach_days == Known(value=4242, source="tautulli")
+
     def test_a_title_watched_before_a_young_horizon_is_held_not_condemned(self) -> None:
         """The issue, driven through the builder and the shipped gate.
 

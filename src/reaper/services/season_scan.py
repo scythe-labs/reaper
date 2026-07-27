@@ -76,7 +76,7 @@ from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
 from reaper.db.models import SizeSource
 from reaper.engine import identity
-from reaper.engine.dormancy import dormancy_days, history_reach_days, reference_instant
+from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.gates import ABSTAIN as GATE_ABSTAIN
 from reaper.engine.gates import PROTECT as GATE_PROTECT
 from reaper.engine.gates import Facts, GateId, GateResult
@@ -439,6 +439,7 @@ def build_season_facts(
     plex_rating_key: int | None,
     season_added_at: datetime | None,
     horizon: datetime,
+    reach_days: int,
     last_played: datetime | None,
     watchers_window: int | None,
     watchers_all_time: int | None,
@@ -578,10 +579,10 @@ def build_season_facts(
         distinct_watchers=recent,
         distinct_watchers_all_time=all_time,
         # The movie lane's twin (``snapshot.build_facts``, rule 72): the same mirror backs
-        # both counts, so both must say how far back it reaches.
-        history_reach_days=Known(
-            value=history_reach_days(horizon, now=utcnow()), source="tautulli"
-        ),
+        # both counts, so both must say how far back it reaches -- and from the same
+        # instant, which is why this is passed in rather than measured here
+        # (``snapshot.ScanContext.reach_days``).
+        history_reach_days=Known(value=reach_days, source="tautulli"),
         size_bytes=(
             Known(value=season.size_on_disk, source="sonarr")
             if season.size_on_disk is not None
@@ -982,6 +983,7 @@ async def gather(
     tautulli: TautulliClient,
     plex: PlexClient | None = None,
     horizon: datetime,
+    reach_days: int,
     active_rating_keys: set[int],
     activity_degraded: bool,
     keep_last_seasons: int,
@@ -1379,6 +1381,7 @@ async def gather(
                 item,
                 stats=stats,
                 horizon=horizon,
+                reach_days=reach_days,
                 now=now,
                 active_rating_keys=active_rating_keys,
                 activity_degraded=activity_degraded,
@@ -1414,6 +1417,7 @@ def _judge_series(
     *,
     stats: SeasonWatchStats,
     horizon: datetime,
+    reach_days: int,
     now: datetime | None = None,
     active_rating_keys: set[int],
     activity_degraded: bool,
@@ -1550,6 +1554,7 @@ def _judge_series(
             plex_rating_key=plex_key,
             season_added_at=in_plex.added_at if in_plex else None,
             horizon=horizon,
+            reach_days=reach_days,
             last_played=stats.last_played.get(plex_key) if plex_key else None,
             watchers_window=stats.watchers_window.get(plex_key) if plex_key else None,
             watchers_all_time=stats.watchers_all_time.get(plex_key) if plex_key else None,
