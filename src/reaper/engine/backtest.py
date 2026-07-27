@@ -521,11 +521,20 @@ async def run(
         # quality, ...) read Absent: a boolean rule simply does not match, and a graded
         # rule adds zero pressure while keeping its weight in the denominator -- the same
         # fail-safe reading a live scan gives Absent. A known v1 limitation.
+        # The SAME window the count was taken over, at the top of this function:
+        # ``facts_as_of`` counted ``distinct_watchers`` over ``popularity_window``, and every
+        # reader of that count now checks the mirror's reach against the span the count
+        # claims to cover (rule 140, ``fields.reach_shortfall``). Omitting it scores against
+        # ``score()``'s 365-day default while the fact was built over the operator's own
+        # window, so a policy that moved the window rehearses a deletion production refuses
+        # -- measured at 100.00/100 with coverage 1.0 against production's 0.00/100 and
+        # coverage 0.0, on a 730-day window over a 400-day mirror.
         item_score = score(
             signals,
             facts,
             custom_condemn=custom_condemn,
             keeps=keeps,
+            window_days=popularity_window,
         )
         verdict = decide_verdict(
             protected=evaluation.protected,

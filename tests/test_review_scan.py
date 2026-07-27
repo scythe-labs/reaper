@@ -34,6 +34,7 @@ from reaper.engine import backtest as bt
 from reaper.engine import identity
 from reaper.engine.backtest import BacktestResult, Item, run
 from reaper.engine.calibration import Bucket, RewatchPrior
+from reaper.engine.gates import GateId
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import Score
 from reaper.ratings import Rating, RatingSource
@@ -621,6 +622,62 @@ class TestTheBacktestVerdictMatchesProduction:
             horizon=NOW - timedelta(days=3000),
         )
         assert result.condemned == []  # 4000bp coverage is below the 5000bp floor
+
+    @pytest.mark.parametrize("window", [1, 30, 90, 730, 1095])
+    async def test_the_window_scored_against_is_the_policy_s_own(
+        self, cache_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch, window: int
+    ) -> None:
+        """The span the count was taken over is the span its reach is checked against.
+
+        ``facts_as_of`` counts ``distinct_watchers`` over the policy's popularity window,
+        and since rule 140 every reader of that count checks ``Facts.history_reach_days``
+        against the span the count claims to cover. Passing one span to the fact builder
+        and a different one to ``score()`` compares a count to a reach it was never taken
+        over, and it fails OPEN: a 730-day window over a 400-day mirror scored against the
+        365-day default takes full FEW_WATCHERS pressure at coverage 1.0, where production
+        withholds it at coverage 0.0.
+
+        **365 is deliberately not in the sweep.** It is ``score()``'s own default, so it is
+        the one value that cannot tell a window that was passed from a window that was
+        omitted -- which is exactly why every other backtest fixture, all of which pin 365,
+        left this invisible behind a green suite. The low end is the 1 day the field
+        actually allows (``PolicyBody`` bounds ``window_days`` ``ge=1``).
+
+        The spy reads the kwarg with ``.get`` rather than subscripting, so an omitted
+        window fails this on the VALUE it scored against. Subscripting would raise
+        ``KeyError`` instead, which passes for the wrong reason: it pins that the argument
+        is passed at all, not that the right span reaches the scorer.
+        """
+        seen: list[int | None] = []
+        real_score = bt.score
+
+        def _spy(*args: object, **kwargs: object) -> Score:
+            seen.append(kwargs.get("window_days"))  # type: ignore[arg-type]
+            return real_score(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(bt, "score", _spy)
+        policy = DEFAULT_MOVIE_POLICY.model_copy(
+            update={
+                "gates": [
+                    g.model_copy(update={"window_days": window, "enabled": True})
+                    if g.gate is GateId.SERVER_POPULARITY
+                    else g
+                    for g in DEFAULT_MOVIE_POLICY.gates
+                ]
+            }
+        )
+        assert policy.popularity_window_days() == window
+
+        await run(
+            cache_engine,
+            [_bt_item()],
+            policy,
+            gates=[],
+            cutoff=NOW - timedelta(days=365),
+            horizon=NOW - timedelta(days=3000),
+        )
+
+        assert seen == [window]
 
 
 # ---------------------------------------------------------------------------
