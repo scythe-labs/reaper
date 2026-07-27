@@ -515,7 +515,9 @@ export function PlexPanel() {
           )}
 
           {linked && manualOpen && (
-            <div className="set-row">
+            // A cluster, not a box: host, port, an SSL switch and Save belong on one line, so
+            // this row keeps the shrink-to-fit control column (see `.set-row-cluster`).
+            <div className="set-row set-row-cluster">
               <span className="set-label">Manual address</span>
               <p className="help">Hostname or IP, port, and whether to use SSL.</p>
               <div className="set-control">
@@ -580,6 +582,14 @@ export function PlexPanel() {
               Where links to your library open. Keep the default unless you host your own Plex Web.
               Clear it and save to go back to the default.
             </p>
+            {/* This row and Manual address above keep their own inline Save, where the General
+                panel now has one save bar for the whole panel (rule 43). Deferred on purpose,
+                not missed: these two save through different routes than `saveGeneral`, so
+                collecting them costs a shared draft model this change does not need. What DID
+                have to land on them is the reflow behind it (rule 72), and it has: the box
+                grows into the track and gives the width back from the right, so its left edge
+                and its text hold still as this button appears. Whoever gives Plex a save bar
+                takes both rows together. */}
             <div className="set-control">
               <input
                 type="url"

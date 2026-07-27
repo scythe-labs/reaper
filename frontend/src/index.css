@@ -138,6 +138,15 @@
      context -- compact numbers 5rem, unit selects ~5.25rem, wide text fields 15-22rem --
      but the chrome above never does. Reuse it; don't fork it. */
 
+  /* The width of a settings row's control track, and so of every box that fills it. Declared
+     once (rule 67): `.set-row` sizes its second grid column from it and the control standard's
+     `max-width` caps against it, so the two can never drift and leave a box wider than the
+     column holding it. It lives on :root rather than on `.set-rows` because an undefined
+     custom property inside `minmax()` invalidates the whole `grid-template-columns`
+     declaration -- a row outside that wrapper would silently collapse to one column instead
+     of failing visibly. */
+  --set-control-w: 22rem;
+
   --shadow-sm: 0 1px 2px rgba(16, 18, 27, 0.06), 0 1px 3px rgba(16, 18, 27, 0.05);
   --shadow-md: 0 2px 6px rgba(16, 18, 27, 0.07), 0 8px 24px rgba(16, 18, 27, 0.07);
   --shadow-lg: 0 12px 40px rgba(16, 18, 27, 0.16), 0 4px 12px rgba(16, 18, 27, 0.1);
@@ -3155,6 +3164,15 @@ a.rating-chip:hover {
 }
 .savebar-what strong {
   color: var(--text);
+}
+/* Why Save is off, under the list of what is unsaved -- the slot `.budget` uses, so it reads
+   as the rest of the bar's sentence rather than becoming a second notice beside it. The field
+   it names carries its own error too (rule 42); this one exists because the bar can be at the
+   foot of a long panel, well away from the box it is waiting on. */
+.savebar-blocked {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--condemn);
 }
 
 /* The 100-point removal budget (PointsBudget in PolicyEditor). Lives inside .savebar-what
@@ -6260,6 +6278,39 @@ button.sm {
   }
 }
 
+/* The settings rail's narrow-screen form: one picker instead of nine wrapped tabs. Nine
+   labels stop fitting one line at about 820px, so the rail spends two lines from there down
+   and three below 375px -- 131px of a short screen restating where you already are.
+   `Settings` swaps the two in JS on NARROW_SCREEN_QUERY rather than showing both and hiding
+   one, so only one of them is ever in the accessibility tree; there is deliberately no CSS
+   media query here to keep in step with that constant.
+   A native <select> is the right control: nine sections is an open list, not a binary hidden
+   in a dropdown (rule 41), and the phone draws the list itself, so nothing has to be measured
+   against the viewport edge (rule 138). The POLICY rail shares `.settings-nav` /
+   `.settings-tab` and is deliberately NOT changed with it (rule 72): four labels rather than
+   nine, and it reports which section you have scrolled to, which a closed dropdown cannot
+   show. */
+.settings-picker {
+  display: block;
+  margin-bottom: 1.25rem;
+}
+/* The control standard, unforked -- only the width and the weight are its own. The weight is
+   the `.settings-tab.active` treatment carried over: this names the section you are on. */
+.settings-picker select {
+  width: 100%;
+  padding: 0.42rem 0.6rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+}
+.settings-picker select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 /* Settings panels fill the page frame like every other page; the row grid keeps labels
    readable on the left and controls on the right however wide the card runs. */
 .panel {
@@ -6934,7 +6985,14 @@ button.danger:hover:not(:disabled) {
 }
 .set-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  /* A FIXED control track, never `auto`. An `auto` track shrink-wraps its contents, so every
+     control used to size itself: a <select> to its widest option, an <input> to the browser's
+     default twenty-character width. Measured in one column, the same three rows came out at
+     168px (application name), 249px (time zone) and 147px (theme) -- the "boxes and drop downs
+     should be the same size" report. It also made the `width: 100%` in the 640px block below
+     inert, because 100% of a shrink-to-fit parent resolves back to the content width, which is
+     why a phone never showed a full-width field either. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, var(--set-control-w));
   gap: 0.25rem 1.5rem;
   align-items: center;
   padding: 0.85rem 1.1rem;
@@ -6958,7 +7016,12 @@ button.danger:hover:not(:disabled) {
 .set-row .set-control {
   grid-column: 2;
   grid-row: 1 / span 2;
-  justify-self: end;
+  /* `stretch`, not `end`: the box has to BE the track before a control can fill it. Under
+     `end` the box shrank to its contents and took every control's width down with it. The
+     contents still sit against the row's right edge, so a Switch or a Segmented keeps its
+     natural size on the same edge the boxes end on. */
+  justify-self: stretch;
+  justify-content: flex-end;
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -6966,6 +7029,16 @@ button.danger:hover:not(:disabled) {
      word per line when it hasn't: the API-key row alone carries a 15rem input plus three
      buttons, which is wider than the control column gets on a tablet in portrait. */
   flex-wrap: wrap;
+}
+/* A row whose control is a CLUSTER rather than one box -- the API key's field plus its four
+   buttons -- keeps the old shrink-to-fit column. Capping it at the single-box width would
+   wrap those buttons onto two further lines for nothing, and a masked, read-only key is not
+   one of the boxes rule 40 is lining up. */
+.set-row.set-row-cluster {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.set-row.set-row-cluster .set-control {
+  justify-self: end;
 }
 .set-row.dimmed .set-label,
 .set-row.dimmed .help {
@@ -6979,6 +7052,10 @@ button.danger:hover:not(:disabled) {
 }
 .set-row.accent-row .set-control {
   justify-self: initial;
+  /* This row stacks, so its parts start on the left margin the label starts on. It has to say
+     so: the two-column rows push their contents to the right edge the boxes line up on, and
+     inheriting that sent the swatch and hex field to the far side of a full-width row. */
+  justify-content: flex-start;
   margin-top: 0.55rem;
 }
 .set-row.accent-row .help {
@@ -7109,12 +7186,31 @@ button.danger:hover:not(:disabled) {
   background: var(--bg);
   color: var(--text);
   font-size: 0.88rem;
-  min-width: 15rem;
   /* A long value (a plex.direct hostname, say) must not squeeze the label column
      into a sliver: the control caps and ellipsizes, the full value stays readable
-     in the dropdown itself. */
-  max-width: 22rem;
+     in the dropdown itself. The cap is the track width, so a cluster row -- which keeps a
+     shrink-to-fit column -- still stops at the same place a single box does. */
+  max-width: var(--set-control-w);
   text-overflow: ellipsis;
+}
+/* A control that IS the row's box takes whatever the track leaves it: on its own it fills the
+   track, and beside a button it takes what the button does not, so the two stay on one line.
+   `flex`, not `width: 100%` -- a box at 100% leaves no room for a sibling and pushes it onto a
+   second line, which is how the Plex server row's Refresh button ended up under its picker.
+   Growing also means the box's LEFT edge holds still as a Save appears and goes: it gives the
+   width back from the right, where the text is not.
+   Only a direct child: the accent hex field and a QuantityInput's number sit inside their own
+   joined chrome and keep the widths those set. */
+.set-row .set-control > input,
+.set-row .set-control > select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* The boxes whose width IS their meaning do not grow: a port is four digits wide, and the API
+   key sets its own so the buttons beside it keep the room they need. */
+.set-row .set-control input.input-port,
+.set-row .set-control > input.keyfield {
+  flex: none;
 }
 .set-row .set-control input:focus,
 .set-row .set-control select:focus {
@@ -7126,18 +7222,30 @@ button.danger:hover:not(:disabled) {
   width: 5rem;
 }
 @media (max-width: 640px) {
-  .set-row {
+  /* The cluster row is named alongside the base one in every rule here. A media query adds no
+     specificity, so `.set-row` (0,1,0) alone would lose to `.set-row.set-row-cluster` (0,2,0)
+     above and that row alone would keep a two-column grid on a phone. */
+  .set-row,
+  .set-row.set-row-cluster {
     grid-template-columns: 1fr;
   }
-  .set-row .set-control {
+  .set-row .set-control,
+  .set-row.set-row-cluster .set-control {
     grid-column: 1;
     grid-row: 3;
-    justify-self: start;
+    /* `stretch` so the row's box can fill the width, and the contents start on the left
+       margin every label starts on rather than hanging off the right edge. */
+    justify-self: stretch;
+    justify-content: flex-start;
   }
-  .set-row .set-control input,
-  .set-row .set-control select {
+  .set-row .set-control > input,
+  .set-row .set-control > select {
     min-width: 0;
-    width: 100%;
+    /* The cap has to go with the stack. It exists to stop a long value eating the label
+       column, and there is no label column here -- left in place it clamped the box at the
+       track width, so anything from about 400px to this breakpoint stopped short of the edge
+       while still calling itself full width. */
+    max-width: none;
   }
   .set-row .set-control input.input-port {
     width: 5rem;
@@ -7355,7 +7463,22 @@ button.danger:hover:not(:disabled) {
   font-size: 0.82rem;
   letter-spacing: 0.08em;
   color: var(--muted);
-  min-width: 17rem;
+}
+/* Its width is stated at a specificity that clears the control-standard rules, which also
+   match this input. It cannot ride on `width: 100%` like the single-box rows: the key row is
+   a cluster (field plus four buttons), so its column shrink-wraps, and a percentage width
+   inside a shrink-to-fit box has nothing to resolve against. */
+.set-row .set-control > input.keyfield {
+  width: 17rem;
+  min-width: 0;
+}
+/* On a phone it fills the width like every other box. Placed immediately BELOW its base rule,
+   not up in the 640px settings block: the two selectors are the same specificity, so source
+   order decides, and written earlier this would have lost to the 17rem above it. */
+@media (max-width: 640px) {
+  .set-row .set-control > input.keyfield {
+    width: 100%;
+  }
 }
 
 /* A link dressed as the standard button, for rows whose control opens a page. */

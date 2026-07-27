@@ -31,6 +31,7 @@ import {
 } from "../api";
 import { useBackGuard } from "../backnav";
 import { bytes, count, since } from "../format";
+import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { useSafety } from "../useSafety";
 import { JobStatus, useJobFlash } from "./JobStatus";
 import { LogsPanel } from "./LogsPanel";
@@ -167,10 +168,11 @@ export function GeneralPanel() {
     mutationFn: api.saveGeneral,
     onSuccess: (data, sent) => {
       // Re-seed from the canonical stored values (rule 39) -- but only the fields this Save
-      // actually sent. Every row on this panel has its own Save button, so re-seeding all of
-      // them made one row's Save quietly discard every other row's in-progress edit: type a
-      // new application URL, press Save on the NAME row, and the typed URL and its own Save
-      // button both vanish, with nothing on screen to say why (B-18).
+      // actually sent. The save bar sends every dirty field at once, so it no longer takes one
+      // row's Save to reach here; the controls that still save on the spot do. A Switch or a
+      // select (the reverse-proxy toggle, the expand-seasons mode) writes immediately, and
+      // re-seeding every field on its response would wipe whatever text was half-typed at the
+      // time, with nothing on screen to say why (B-18).
       //
       // Setting the query cache stays unconditional: it is the canonical stored state, and it
       // is what re-applies the accent app-wide so a save re-tints everything.
@@ -261,12 +263,45 @@ export function GeneralPanel() {
       : allTimeZones();
   const accentValid = isHexColor(accent);
   const accentDirty = accent.trim().toLowerCase() !== data.accent_color.toLowerCase();
-  const proxiesDirty =
-    proxies
-      .split(",")
-      .map((p) => p.trim())
-      .filter(Boolean)
-      .join(", ") !== data.trusted_proxies.join(", ");
+  const proxyList = proxies
+    .split(",")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const proxiesDirty = proxyList.join(", ") !== data.trusted_proxies.join(", ");
+  // Only while a length is in force: Forever hides the box, so its draft cannot be dirty.
+  const spareDirty = data.default_spare_days > 0 && spareDays !== data.default_spare_days;
+
+  // One save for the panel (rule 43). Each of these rows used to carry its own Save, rendered
+  // inside the right-aligned control box, so the first keystroke made the button appear and
+  // shoved the field being typed in 71px to the left -- then back again on undo. The bar names
+  // what is unsaved and sends all of it in one request. The controls that take effect the
+  // moment they change (the two Switches, the theme and expand-seasons selects) are not drafts
+  // and do not join it.
+  const pending: { label: string; patch: Parameters<typeof api.saveGeneral>[0] }[] = [];
+  if (nameDirty)
+    pending.push({ label: "Application name", patch: { application_name: name.trim() } });
+  if (urlDirty) pending.push({ label: "Application URL", patch: { application_url: url.trim() } });
+  if (tzDirty) pending.push({ label: "Time zone", patch: { timezone: tz } });
+  if (accentDirty)
+    pending.push({ label: "Accent color", patch: { accent_color: accent.trim().toLowerCase() } });
+  if (spareDirty)
+    pending.push({ label: "Default spare length", patch: { default_spare_days: spareDays } });
+  // Only while the switch is on. Turning it off disables the box, and a bar naming a field the
+  // operator cannot reach to fix is worse than one that waits for them to turn it back on.
+  if (proxiesDirty && data.proxy_trust_enabled)
+    pending.push({ label: "Trusted proxy addresses", patch: { trusted_proxies: proxyList } });
+  // A half-typed hex code would be stored as the app-wide accent, so the whole save waits on
+  // it rather than silently dropping that one field from a bar that just named it.
+  const accentBlocks = accentDirty && !accentValid;
+
+  const discardDrafts = () => {
+    setName(data.application_name);
+    setUrl(data.application_url ?? "");
+    setTz(data.timezone);
+    setAccent(data.accent_color);
+    setProxies(data.trusted_proxies.join(", "));
+    if (data.default_spare_days > 0) setSpareDays(data.default_spare_days);
+  };
 
   return (
     <div className="panel">
@@ -289,15 +324,6 @@ export function GeneralPanel() {
                 onChange={(e) => setName(e.target.value)}
                 aria-label="Application name"
               />
-              {nameDirty && (
-                <button
-                  className="primary"
-                  disabled={save.isPending}
-                  onClick={() => save.mutate({ application_name: name.trim() })}
-                >
-                  Save
-                </button>
-              )}
             </div>
           </div>
           <div className="set-row">
@@ -314,15 +340,6 @@ export function GeneralPanel() {
                 onChange={(e) => setUrl(e.target.value)}
                 aria-label="Application URL"
               />
-              {urlDirty && (
-                <button
-                  className="primary"
-                  disabled={save.isPending}
-                  onClick={() => save.mutate({ application_url: url.trim() })}
-                >
-                  Save
-                </button>
-              )}
             </div>
           </div>
           <div className="set-row">
@@ -336,15 +353,6 @@ export function GeneralPanel() {
                   </option>
                 ))}
               </select>
-              {tzDirty && (
-                <button
-                  className="primary"
-                  disabled={save.isPending}
-                  onClick={() => save.mutate({ timezone: tz })}
-                >
-                  Save
-                </button>
-              )}
             </div>
           </div>
         </div>
@@ -382,15 +390,6 @@ export function GeneralPanel() {
                   onChange={(e) => setAccent(e.target.value)}
                 />
               </span>
-              {accentDirty && (
-                <button
-                  className="primary"
-                  disabled={save.isPending || !accentValid}
-                  onClick={() => save.mutate({ accent_color: accent.trim().toLowerCase() })}
-                >
-                  Save
-                </button>
-              )}
               {accent.toLowerCase() !== DEFAULT_ACCENT && (
                 <button className="link" onClick={() => setAccent(DEFAULT_ACCENT)}>
                   Reset to default
@@ -516,15 +515,6 @@ export function GeneralPanel() {
                     disabled={save.isPending}
                     onChange={(n) => setSpareDays(Math.max(1, Math.min(3650, n)))}
                   />
-                  {spareDays !== data.default_spare_days && (
-                    <button
-                      className="primary"
-                      disabled={save.isPending}
-                      onClick={() => save.mutate({ default_spare_days: spareDays })}
-                    >
-                      Save
-                    </button>
-                  )}
                 </>
               )}
             </div>
@@ -535,7 +525,9 @@ export function GeneralPanel() {
       <div className="set-group">
         <h3>API access</h3>
         <div className="set-rows">
-          <div className="set-row">
+          {/* A cluster, not a box: the key field plus four buttons. It keeps a shrink-to-fit
+              control column so those buttons stay on one line (see `.set-row-cluster`). */}
+          <div className="set-row set-row-cluster">
             <span className="set-label">API key</span>
             {/* This sentence is the whole basis on which an operator decides to hand a key
                 to a third-party dashboard, so it names what the fence in api/middleware.py
@@ -676,22 +668,6 @@ export function GeneralPanel() {
                 onChange={(e) => setProxies(e.target.value)}
                 aria-label="Trusted proxy addresses"
               />
-              {proxiesDirty && data.proxy_trust_enabled && (
-                <button
-                  className="primary"
-                  disabled={save.isPending}
-                  onClick={() =>
-                    save.mutate({
-                      trusted_proxies: proxies
-                        .split(",")
-                        .map((p) => p.trim())
-                        .filter(Boolean),
-                    })
-                  }
-                >
-                  Save
-                </button>
-              )}
             </div>
           </div>
         </div>
@@ -702,6 +678,31 @@ export function GeneralPanel() {
       </div>
 
       {save.error && <p className="notice notice-error">{save.error.message}</p>}
+
+      {/* The one save affordance on this panel (rule 43), the same bar the policy editor uses:
+          it names what is unsaved, saves all of it in one press, and offers Discard. Rendered
+          only while there is something to save, and sticky at the foot of the screen, so the
+          field being typed in never moves. */}
+      {pending.length > 0 && (
+        <div className="savebar">
+          <span className="savebar-what">
+            Unsaved changes: <strong>{pending.map((p) => p.label).join(" · ")}</strong>
+            {accentBlocks && (
+              <span className="savebar-blocked">Enter a hex code like #25c3ff to save.</span>
+            )}
+          </span>
+          <button className="ghost" disabled={save.isPending} onClick={discardDrafts}>
+            Discard
+          </button>
+          <button
+            className="primary"
+            disabled={save.isPending || accentBlocks}
+            onClick={() => save.mutate(Object.assign({}, ...pending.map((p) => p.patch)))}
+          >
+            {save.isPending ? "Saving…" : "Save changes"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -2088,23 +2089,45 @@ export function SecurityPanel() {
 
 export function Settings({ initialPanel }: { initialPanel?: Panel | undefined }) {
   const [panel, setPanel] = useState<Panel>(initialPanel ?? "general");
+  // Nine labels stop fitting one line well above this, but the app already has exactly one
+  // definition of a narrow screen and a second would be worse than swapping a little early:
+  // below this width the section rail is a bottom bar, so a compact settings header is the
+  // same shape. Rendered as one or the other, never both hidden by CSS, so only the control
+  // in use is in the accessibility tree. jsdom has no matchMedia, so a test sees the rail.
+  const narrow = useMediaQuery(NARROW_SCREEN_QUERY);
   return (
     <div className="settings">
-      <nav className="settings-nav" aria-label="Settings sections">
-        {PANELS.map((p) => (
-          <button
-            key={p.id}
-            className={panel === p.id ? "settings-tab active" : "settings-tab"}
-            // Reserve the bold (active) width so switching panels never shifts the rail.
-            data-label={p.label}
-            // The active panel is stated, not just colored, the same as the masthead.
-            aria-current={panel === p.id ? "page" : undefined}
-            onClick={() => setPanel(p.id)}
+      {narrow ? (
+        <nav className="settings-picker" aria-label="Settings sections">
+          <select
+            value={panel}
+            aria-label="Settings section"
+            onChange={(e) => setPanel(e.target.value as Panel)}
           >
-            {p.label}
-          </button>
-        ))}
-      </nav>
+            {PANELS.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </nav>
+      ) : (
+        <nav className="settings-nav" aria-label="Settings sections">
+          {PANELS.map((p) => (
+            <button
+              key={p.id}
+              className={panel === p.id ? "settings-tab active" : "settings-tab"}
+              // Reserve the bold (active) width so switching panels never shifts the rail.
+              data-label={p.label}
+              // The active panel is stated, not just colored, the same as the masthead.
+              aria-current={panel === p.id ? "page" : undefined}
+              onClick={() => setPanel(p.id)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </nav>
+      )}
       <div className="settings-body">
         {panel === "general" && <GeneralPanel />}
         {panel === "services" && <ServicesPanel />}
