@@ -1433,6 +1433,17 @@ past the right edge. Measured in WebKit against the real page at a range of widt
   past an edge that cannot be scrolled to) reached from inside a control rather than from the
   page. Any check for this needs to measure a `select` against its **widest option**, not
   against its own rendered text, which is by then already the truncated one.
+- **Font boosting is testable in a simulator and invisible to headless WebKit.** Turning the
+  phone landscape put one notice in two type sizes, which is WebKit's text autosizing scaling
+  a block by *that block's* own width. Headless desktop WebKit implements neither the bug nor
+  its opt-out: it drops `-webkit-text-size-adjust` *and* the unprefixed `text-size-adjust` at
+  parse time (a probe rule kept its `color` and lost both), because autosizing is mobile-only.
+  So the fix was written blind, against the standard remedy alone, and then confirmed on an
+  iOS simulator, where the oversized clause came back to the size of the sentence it finishes.
+  The opt-out belongs on `html` and reads `100%`, not `none`, which would also take away the
+  reader's own text-size setting and pinch zoom. The general lesson outlives this bug: for
+  anything mobile-WebKit-only, Playwright can tell you nothing either way, and a simulator is
+  the cheapest engine that can. The overflow fixes above were confirmed the same way.
 - **Deferred, in writing (rule 72).** Seven more bare-`1fr` collapses share the pattern:
   `.add-grid`, `.set-row`, `.about-kv`, `.backup-facts`, `.kv2`, `.safety-row.pw-row` and
   `.docs-body`. All are Settings/docs label-and-value grids that this pass could not drive

@@ -326,6 +326,18 @@
   box-sizing: border-box;
 }
 
+/* WebKit scales text by a factor it derives from the BLOCK's width, not the page's ("text
+   autosizing" / font boosting), so it fires unevenly and only where blocks are wide -- which
+   is why turning the phone landscape put one notice in two sizes ("when you're ready." large,
+   the sentence it finishes small) and grew "589 items - 6.0 TiB would be freed" past the
+   heading above it. This file sizes its own type deliberately; nothing here wants a second
+   opinion scaled off a container width. `100%` rather than `none`: `none` would also take
+   away the reader's own text-size setting and pinch zoom, which are theirs to keep. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
   background: var(--bg);
