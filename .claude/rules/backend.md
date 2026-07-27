@@ -10,7 +10,7 @@ Blockers, not suggestions, distilled from six adversarial review passes. **Rule 
 permanent** (tests and comments cite them); where two overlap, the more specific governs.
 Rules binding every file are in the root `CLAUDE.md`; the SPA's are in
 `.claude/rules/frontend.md`. Holds 1–6, 8–14, 22–23, 26–35, 38, 52, 55–59, 63, 65, 70–71,
-73–78, 81–84, 87–117, 124–131.
+73–78, 81–84, 87–117, 124–131, 140.
 
 ## The safety / deletion path
 
@@ -454,3 +454,19 @@ unreadable state to the operator rather than printing a fabricated number in its
 auth-purge list, generated-asset manifests, and server-defined id lists either derive from one
 declaration or are covered by a test that fails when the set changes. When the guard flags a
 member, classify it in writing as considered-and-kept rather than silencing it.
+
+## Sweeping the readers of a fact
+
+**140. Narrowing what a fact *means* obliges you to sweep every reader of that fact, not only
+the one that motivated the change.** Rule 72 sweeps twins of the *function* you fixed; this
+sweeps consumers of the *value* you re-qualified. When you add a fact that bounds another
+fact's validity (a history reach, a coverage span, an as-of instant), grep every `read=` and
+`facts.<field>` site for the bounded fact — built-in gates, signals, graded keeps, the
+operator-authored rule registry (`engine/fields.py`), the season roll-up — and make each one
+consult the bound or record in writing why it need not. A bound honored by one reader is a
+protection that holds in one lane and silently does not in the next, which is
+indistinguishable from the bug the bound was added to fix. `Facts.history_reach_days` is the
+case: the reach was recorded and `ServerPopularityGate` taught to fail closed past it, while
+`CustomProtectGate`, `evaluate_keep` and `evaluate_signal` went on reading the same two
+truncated watcher counts at full confidence — an operator's own keep rule reporting green
+"0 people have ever watched it" from a mirror that cannot establish it.

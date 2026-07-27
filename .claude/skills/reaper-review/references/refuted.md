@@ -143,6 +143,47 @@ candidate was the one that shared the fixed bug's *subject* (dormancy) rather th
 two agents had to argue down; searching by defect found the real twin thirty lines below the
 fix, in the same function, under a different gate. Hunt the assertion, not the topic.
 
+## Refuted at `394cc3a` (2026-07-27, reviewing the history-reach commit, PR #81)
+
+Three lanes fired (`safety` on gates/signals/snapshot, `seam` on `api/routes.py`, `diff` on the
+rest). **A process note worth more than the table: all three lanes independently reported the
+same comment defect** -- the new block's comment cited `verdict.block_holds_reap` as what makes
+the `could not check` wording hold a hand reap, and that function reads the prefix only for a
+*deferrable* gate. Convergence across independently-prompted lanes was the signal it was real,
+and each lane had measured it in-process rather than reasoning about it. Fixed in `1b1458c`,
+`951e2ef`, `69d69f8`, `e0c7ca5`.
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| safety | `horizon` can be `None` at any of the three new `history_reach_days(...)` sites, crashing the scan | All three parameters are non-optional `datetime`. `snapshot.py` resolves `mirror.earliest is None` to `utcnow()` *before* building the `ScanContext`, and `season_scan`/`backtest.facts_as_of` take `horizon: datetime`. `Snapshot.horizon_at` is `nullable=False` in the frozen baseline, so the simulate route cannot see a `None` either. |
+| safety | The replay backfill computes a reach *deeper* than the scan's own, re-opening the bug inside the simulator | Inverted. `Snapshot.created_at` is stamped *before* the judge loop, so a per-item reach is >= the replay's, i.e. the replay blocks at least as often. Keep direction, and three tests pin both arms plus the never-overwrite rule. |
+| safety | A negative or absurd reach (clock skew, a future horizon, an epoch-0 row) breaks the gate | Negative falls to `reach.value < window` and blocks; `humanize_days(-1)` is "less than a day". `history_sync` drops a row whose date and started are both falsy, so epoch 0 cannot enter, and a deep-but-wrong horizon merely fails to *fix* rather than regressing anything. |
+| safety | The new `blocked=True` distorts something that counts blocked gates | Every consumer is boolean or list-shaped, none a count: `Evaluation.blocked`, `reap_held_by_blocks`, `reap_override_verdict_decoded`, `routes._has_blocked_protections`, `WhyPanel.LeftForYou`. `breakdown.hand_reaped_held` rises, which is the reported-not-silent direction it exists for. |
+| safety | The block widens something on a season, or fails to propagate | Seasons are their own `Candidate` rows with their own Facts; episodes are never judged individually; `season_pruning` reads no gate results. An unresolved season's `distinct_watchers` is `Unknown`, so `_blocked` fires before the reach check. |
+| safety | The executor or planner re-derives a verdict and could disagree with the block | Neither imports `evaluate_all`/`decide_verdict`, and no Facts reaches the executor. Blocked -> abstain -> not planned. The change cannot reach a send. |
+| safety | The PROTECT branch needs a reach check too | Sound as written. Every mirror row is at or after the horizon, so the count is a valid lower bound; `count >= floor` on a lower bound implies the true count clears the floor. No over-count path either. |
+| safety | A fourth `_watch_stats`-shaped query was missed (rule 72) | Checked all of them: `fairness.py` is display-only and unwindowed, `calibration.py` windows from its own cutoff, `backtest._plays` takes all plays, and `season_scan`'s mid-binge guard already fails closed on a missing row. **The real miss was not a query but a *reader*** -- the finding behind rule 140. |
+| safety | `history_sync.days_since_horizon` is a second, differently-rounded implementation of `dormancy.history_reach_days` (rule 3/22) | Pre-existing and dead: zero callers, so no divergence is observable. Worth deleting on the next touch, not a finding. |
+| safety | `Facts.history_reach_days` becomes operator-authorable, or breaks the codec | `fields.REGISTRY` is hand-written and excludes it. `facts_codec` picks it up from the `Observation[float]` annotation, so it freezes and thaws, and an older row gets `Unknown`, which the gate reads as un-checkable. |
+| seam | `simulate` 500s or serves a wrong tier when `horizon_at` is NULL or predates the column | `nullable=False` in the frozen baseline, and `_latest_snapshot` does a full entity load, so there is no deferred-column IO either. |
+| seam | The new detail falls through `WhyPanel`'s `/^could not check (.+?): (.+)$/` and blanks the panel | It parses cleanly: check = "who watched it in the last year", cause = the reach clause. Both halves miss `CHECK_COPY`/`CAUSE_COPY` and take the documented raw fallbacks. |
+| seam | An unmapped cause renders as a lowercase bold heading, unlike every mapped one | Real but pre-existing: `CAUSE_COPY` already lacks "no IMDb id to look up" and two others, so `rating_floor` on a movie with no IMDb id does this today. |
+| seam | `routes.py`'s `if "could not check who watched" in detail` now matches the popularity detail and emits the season chip | Unreachable: the enclosing guard skips any detail *starting* with "could not check", and the inner branch additionally requires `gate == "season_progression"`. |
+| seam | `_kept_phrase`'s `_WATCHED_HERE_RE` no longer matches | The PROTECT branch's wording is byte-unchanged; the reach check sits strictly below it. |
+| seam | `_dormant_for` breaks on the reworded low-watchers detail | It reads the `unwatched` signal's "not watched in " prefix; the reword touched only `few_watchers`, whose detail no consumer in either tree parses. |
+| seam | `GateOutcomeOut`/`api.ts` narrow the gate id, or a `Record<GateId, ...>` lookup misses a blocked `server_popularity` | Both sides are `str`. `GATE_META` is read only for `protected_by`, with a `titleCase` fallback, and a blocked gate never appears there. |
+| seam | The gate's PROTECT detail claims "in the last year" on a mirror covering three months | Literally true (three months is inside one year) and the file is kept. The absence-vs-asserted-event distinction landing on the safe side. |
+| seam | The `"this scan did not record how far back your watch history goes"` arm is dead | Correct that it is unreachable today (every builder sets the field and the replay always fills it), but it is the fail-closed default for an unforeseen builder, not a claim about a safeguard. |
+| diff | `history_reach_days(horizon, now=cutoff)` can go negative when the cutoff precedes the horizon | Unreachable. With the horizon after the cutoff there are no plays at or before the cutoff, so `dormancy_days` goes negative and `facts_as_of` returns `None` before any Facts is built. Verified by direct call. |
+| diff | `humanize_window(covered)` mis-renders a non-integer or sub-1 `covered`, and `covered >= 1` leaves a gap at 1.4 | `history_reach_days` returns `int` and `window_days` is `int`, so `covered` is integral on every production path. Sub-1 routes to "in the history Reaper holds". |
+| diff | `_policy_lab.mirror_reach_days` derives the reach from items, so it can claim depth the mirror lacked | It is a genuine floor: a play logged N days ago proves a row that old, so the max can only *understate*, which makes the gate block more. The fixture's value sits far above every window the suite sweeps. |
+| diff | `lru_cache` on a function reading the fixture leaves process-global state (rule 133) | Pure function of a committed read-only JSON file, one cache per xdist worker, nothing mutates it. |
+| diff | Rule 68 -- the fixture generator needs a matching change and a drift test for the new field | `scripts/policy_lab_extract.py` computes its baseline *through* `tests._policy_lab.to_facts`, so it picks the field up automatically. The pinned-baseline test is the drift guard and is green. |
+| diff | Rule 35 -- a fact builder was missed | All four `Facts(` sites in `src/` are covered (`snapshot`, `season_scan`, `backtest`, the codec thaw). `calibration.py` constructs no Facts. |
+| diff | The two new builder tests sample `utcnow()` twice and compare against a fixed day count (rule 133) | Production's sample is microseconds later, so the day count is unconditional. The flake rule 133 guards against cannot occur here. |
+| diff | `docs/STATUS.md`'s "masked by the shipped 1095-day dormancy floor" overstates the masking | Verified: dormancy is clamped to the reach, so condemning under a 1095-day floor requires a reach of at least 1095, hence a window fully spanned. The new branch genuinely cannot fire on shipped defaults. |
+| diff | `services.history_sync` does not actually "name it that" (the reach), per the new Facts docstring | It does: "where :func:`horizon` is the reach question." |
+
 ## Refutations later found to be wrong
 
 None yet. When one lands here, record what the verifier missed — that reasoning is worth more
