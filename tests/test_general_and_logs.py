@@ -18,8 +18,10 @@ The rules pinned here:
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -27,6 +29,7 @@ import pytest
 import structlog
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
+from sqlalchemy.orm import Session as SyncSession
 from starlette.requests import Request
 
 from reaper import logbuffer
@@ -34,7 +37,9 @@ from reaper.api.middleware import _api_key_allowed, api_key_throttle
 from reaper.auth.proxy import client_ip, parse_proxy_networks
 from reaper.config import Settings, parse_trusted_proxies
 from reaper.db.base import Base
+from reaper.db.models import AppSetting
 from reaper.main import create_app
+from reaper.services import app_settings
 from tests._auth import login
 
 
@@ -85,6 +90,20 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
         yield c
 
 
+def _store_raw(tmp_path: Path, key: str, value: object) -> None:
+    """Put an app-setting row straight into the database the ``client`` fixture is on,
+    holding whatever shape an older build left there. Goes around the API deliberately: the
+    point is a stored value today's request models would never let through."""
+    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    engine = sa_create_engine(settings.sync_database_url)
+    with SyncSession(engine) as session:
+        session.merge(
+            AppSetting(key=key, value_json=json.dumps(value), updated_at=datetime.now(UTC))
+        )
+        session.commit()
+    engine.dispose()
+
+
 def _bare(client: TestClient) -> TestClient:
     """A second client over the SAME app: no cookies, no CSRF header, no session."""
     return TestClient(client.app)  # type: ignore[arg-type]
@@ -103,7 +122,7 @@ class TestGeneralSettings:
             "application_url": None,
             "accent_color": "#25c3ff",
             "api_key_set": False,
-            "expand_seasons_default": False,
+            "expand_seasons_mode": "off",
             "default_spare_days": 0,
             "proxy_trust_enabled": False,
             "trusted_proxies": [],
@@ -126,15 +145,40 @@ class TestGeneralSettings:
         data = client.put("/api/settings/general", json={"accent_color": ""}).json()
         assert data["accent_color"] == "#25c3ff"
 
-    def test_expand_seasons_default_round_trips(self, client: TestClient) -> None:
+    def test_every_expand_seasons_mode_round_trips(self, client: TestClient) -> None:
         # Off on a fresh install, so an existing library keeps its collapsed cards.
-        assert client.get("/api/settings/general").json()["expand_seasons_default"] is False
-        data = client.put("/api/settings/general", json={"expand_seasons_default": True}).json()
-        assert data["expand_seasons_default"] is True
-        assert client.get("/api/settings/general").json()["expand_seasons_default"] is True
-        # Turning it back off is a real choice and is kept.
-        data = client.put("/api/settings/general", json={"expand_seasons_default": False}).json()
-        assert data["expand_seasons_default"] is False
+        assert client.get("/api/settings/general").json()["expand_seasons_mode"] == "off"
+        for mode in app_settings.EXPAND_SEASONS_MODES:
+            data = client.put("/api/settings/general", json={"expand_seasons_mode": mode}).json()
+            assert data["expand_seasons_mode"] == mode
+            assert client.get("/api/settings/general").json()["expand_seasons_mode"] == mode
+
+    def test_an_unknown_expand_seasons_mode_is_refused_and_changes_nothing(
+        self, client: TestClient
+    ) -> None:
+        client.put("/api/settings/general", json={"expand_seasons_mode": "mobile"})
+        refused = client.put("/api/settings/general", json={"expand_seasons_mode": "tablet"})
+        assert refused.status_code == 422
+        assert client.get("/api/settings/general").json()["expand_seasons_mode"] == "mobile"
+
+    @pytest.mark.parametrize(
+        ("stored", "expected"),
+        [
+            (True, "both"),  # the old switch on meant every screen
+            (False, "off"),
+            ("tablet", "off"),  # a hand-edited row, or one from a build since rolled back
+            (3, "off"),
+        ],
+    )
+    def test_the_boolean_this_replaced_still_reads(
+        self, client: TestClient, tmp_path: Path, stored: object, expected: str
+    ) -> None:
+        """The switch became a four-way choice with no migration, so the row an install
+        already has is still the boolean and must keep answering. Anything the mode set does
+        not contain reads as the shipped default rather than raising a display preference
+        into a 500."""
+        _store_raw(tmp_path, app_settings.EXPAND_SEASONS_MODE_KEY, stored)
+        assert client.get("/api/settings/general").json()["expand_seasons_mode"] == expected
 
     def test_default_spare_days_round_trips(self, client: TestClient) -> None:
         # Zero on a fresh install: a plain Spare keeps forever, exactly as before.

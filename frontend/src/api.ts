@@ -767,6 +767,11 @@ export interface About {
   cache_db_bytes: number;
 }
 
+/** Which screens the review queue opens a show's season list on by default. Mirrors
+ *  `app_settings.ExpandSeasonsMode`; "both" is what the on/off switch this replaced meant
+ *  when it was on. */
+export type ExpandSeasonsMode = "off" | "desktop" | "both" | "mobile";
+
 export interface GeneralSettings {
   application_name: string;
   application_url: string | null;
@@ -777,8 +782,8 @@ export interface GeneralSettings {
   accent_color: string;
   /** Whether a key exists at all; the value only leaves through the reveal call. */
   api_key_set: boolean;
-  /** Whether the review queue opens each show with its season list already expanded. */
-  expand_seasons_default: boolean;
+  /** Which screens the review queue opens each show's season list expanded on. */
+  expand_seasons_mode: ExpandSeasonsMode;
   /** How long a plain Spare press keeps an item, in days. 0 means forever (the shipped
    *  default). A single title can still be spared for a different length from its menu. */
   default_spare_days: number;
@@ -1429,7 +1434,7 @@ export const api = {
     application_url?: string;
     timezone?: string;
     accent_color?: string;
-    expand_seasons_default?: boolean;
+    expand_seasons_mode?: ExpandSeasonsMode;
     default_spare_days?: number;
     proxy_trust_enabled?: boolean;
     trusted_proxies?: string[];

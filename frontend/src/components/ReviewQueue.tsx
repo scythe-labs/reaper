@@ -40,6 +40,7 @@ import {
 } from "../api";
 import { useBackGuard } from "../backnav";
 import { bytes, count, itemBytes, spareRemaining, totalBytes } from "../format";
+import { NARROW_SCREEN_QUERY, useMediaQuery } from "../useMediaQuery";
 import { useOverrideMutations } from "../useOverrideMutations";
 import { useReviewFreshness } from "../useReviewFreshness";
 import { ReapConfirm } from "./ReapConfirm";
@@ -72,7 +73,12 @@ import {
   type FilterDimension,
   type QueueFilters,
 } from "./queueFilters";
-import { QueueSettingsContext, useHoldsBackUnmeasured, type QueueSettings } from "./queueSettings";
+import {
+  QueueSettingsContext,
+  shouldExpandSeasons,
+  useHoldsBackUnmeasured,
+  type QueueSettings,
+} from "./queueSettings";
 import {
   groupReapEffective,
   handFate,
@@ -1729,7 +1735,16 @@ export function ReviewQueue({
     queryFn: api.general,
     staleTime: 5 * 60 * 1000,
   });
-  const expandSeasonsByDefault = generalSettings?.expand_seasons_default ?? false;
+  // ...and which screens it applies to. A phone's season list is long enough to bury the next
+  // card, so the two screen sizes are separately choosable. Live rather than read once: drag a
+  // window across the boundary and untouched cards re-seed to match, which is also what makes
+  // the setting observable without a reload. `useMediaQuery` reports false where matchMedia is
+  // missing, so that fallback is the wide screen -- the same one App's `fullSheet` assumes.
+  const narrowScreen = useMediaQuery(NARROW_SCREEN_QUERY);
+  const expandSeasonsByDefault = shouldExpandSeasons(
+    generalSettings?.expand_seasons_mode ?? "off",
+    narrowScreen,
+  );
   // What a bulk Spare keeps items for: the operator's default length (0 = forever). The
   // per-card menu offers other lengths; the bulk bar acts on the whole selection at once, so
   // it uses the default and its glyph (∞ or a clock) shows which that is.

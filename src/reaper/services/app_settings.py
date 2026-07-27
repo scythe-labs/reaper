@@ -21,7 +21,7 @@ Every value is stored as JSON so the column stays one shape whatever the type.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, Literal, get_args
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import tzlocal
@@ -89,11 +89,24 @@ APPLICATION_URL_KEY = "application_url"
 #: A ``#rrggbb`` string, purely cosmetic. Unlike the per-browser theme it is stored on the
 #: server, so every browser that opens this install sees it. Validated at the API edge.
 ACCENT_COLOR_KEY = "accent_color"
-#: Whether the review queue opens each TV show with its season list already expanded.
-#: A display preference only -- it sets the starting state of the queue's show cards,
-#: never a deletion behavior. Stored on the server like the accent, so every browser
-#: that opens this install starts the same way. Off by default.
-EXPAND_SEASONS_DEFAULT_KEY = "expand_seasons_default"
+#: Where the review queue opens each TV show with its season list already expanded --
+#: ``off``, ``desktop``, ``both``, or ``mobile`` (see ``EXPAND_SEASONS_MODES``). A display
+#: preference only: it sets the starting state of the queue's show cards, never a deletion
+#: behavior. Stored on the server like the accent, so every browser that opens this install
+#: starts the same way. Off by default.
+#:
+#: The key still spells the boolean this replaced, deliberately: an install that turned the
+#: old switch on keeps its row untouched and no migration runs. ``get_expand_seasons_mode``
+#: maps the two legacy booleans across.
+EXPAND_SEASONS_MODE_KEY = "expand_seasons_default"
+#: The screens the queue may open seasons on. ``both`` is what the old ``True`` meant --
+#: every screen -- so a stored ``True`` thaws to it. The type is the one declaration; the
+#: tuple and the name lookup derive from it, and the API's request/response models import
+#: the type itself, so the set cannot drift across the three (rule 103).
+ExpandSeasonsMode = Literal["off", "desktop", "both", "mobile"]
+EXPAND_SEASONS_MODES: tuple[ExpandSeasonsMode, ...] = get_args(ExpandSeasonsMode)
+_EXPAND_SEASONS_BY_NAME: dict[str, ExpandSeasonsMode] = {m: m for m in EXPAND_SEASONS_MODES}
+DEFAULT_EXPAND_SEASONS_MODE: ExpandSeasonsMode = "off"
 #: How long a plain Spare press keeps an item, in days. ``0`` means forever -- the shipped
 #: default and the original behavior, so an existing install's Spare button keeps items for
 #: good until the operator sets a length. A single title can still be spared for a different
@@ -277,14 +290,29 @@ async def set_accent_color(session: AsyncSession, color: str | None) -> None:
     await _set(session, ACCENT_COLOR_KEY, cleaned or None)
 
 
-async def get_expand_seasons_default(session: AsyncSession) -> bool:
-    """Whether the review queue starts each show's season list expanded. Off until the
-    operator turns it on, so an existing install keeps its collapsed cards."""
-    return bool(await _get(session, EXPAND_SEASONS_DEFAULT_KEY, default=False))
+async def get_expand_seasons_mode(session: AsyncSession) -> ExpandSeasonsMode:
+    """Which screens the review queue starts each show's season list expanded on -- one of
+    ``EXPAND_SEASONS_MODES``. Off until the operator picks a screen, so an existing install
+    keeps its collapsed cards.
+
+    This setting used to be a boolean, and the stored row is untouched by the change (no
+    migration), so both spellings can be in the table: ``True`` meant "expanded everywhere"
+    and thaws to ``both``, ``False`` to ``off``. Anything else -- a hand-edited row, a value
+    from a newer build that was rolled back -- also reads as ``off``, the shipped default,
+    rather than raising a display preference into a 500.
+    """
+    stored = await _get(session, EXPAND_SEASONS_MODE_KEY, default=None)
+    if isinstance(stored, bool):
+        return "both" if stored else DEFAULT_EXPAND_SEASONS_MODE
+    if isinstance(stored, str):
+        return _EXPAND_SEASONS_BY_NAME.get(stored, DEFAULT_EXPAND_SEASONS_MODE)
+    return DEFAULT_EXPAND_SEASONS_MODE
 
 
-async def set_expand_seasons_default(session: AsyncSession, *, enabled: bool) -> None:
-    await _set(session, EXPAND_SEASONS_DEFAULT_KEY, bool(enabled))
+async def set_expand_seasons_mode(session: AsyncSession, *, mode: ExpandSeasonsMode) -> None:
+    """Store which screens open seasons. The API edge validates against the same
+    ``ExpandSeasonsMode``, so an unknown value never reaches here."""
+    await _set(session, EXPAND_SEASONS_MODE_KEY, mode)
 
 
 async def get_default_spare_days(session: AsyncSession) -> int:

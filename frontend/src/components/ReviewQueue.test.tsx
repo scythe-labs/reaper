@@ -11,9 +11,12 @@
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api, type Candidate, type GroupSeasonMark, type Verdict } from "../api";
+import { DEFAULT_GENERAL } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
+import { NARROW_SCREEN_QUERY } from "../useMediaQuery";
+import { shouldExpandSeasons } from "./queueSettings";
 import {
   compactSpan,
   DEFAULT_FILTERS,
@@ -162,21 +165,19 @@ class NoopObserver {
   }
 }
 
+// A test that stubs matchMedia must not leave it stubbed for the next one (rule 133); the
+// beforeEach re-stubs IntersectionObserver either way.
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 beforeEach(() => {
   vi.stubGlobal("IntersectionObserver", NoopObserver);
   vi.clearAllMocks();
   apiMock.vocabularyValues.mockResolvedValue({ values: [] });
   apiMock.group.mockResolvedValue(null);
   apiMock.profile.mockResolvedValue({ max_unmeasured_per_run: 0 });
-  apiMock.general.mockResolvedValue({
-    application_name: "Reaper",
-    application_url: null,
-    accent_color: "#25c3ff",
-    api_key_set: false,
-    expand_seasons_default: false,
-    proxy_trust_enabled: false,
-    trusted_proxies: [],
-  });
+  apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
   apiMock.reapBreakdown.mockResolvedValue({
     has_snapshot: true,
     will_reap: 0,
@@ -494,20 +495,53 @@ describe("the expand-seasons-by-default preference", () => {
     expect(expander).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("opens a show's season list by default when the preference is on", async () => {
-    apiMock.general.mockResolvedValue({
-      application_name: "Reaper",
-      application_url: null,
-      accent_color: "#25c3ff",
-      api_key_set: false,
-      expand_seasons_default: true,
-      proxy_trust_enabled: false,
-      trusted_proxies: [],
-    });
+  // Every combination of the "expand seasons by default" preference and the screen it is read
+  // on, written from the spec rather than from the branch (rule 119). The decision is pure, so
+  // the table is exhaustive and instant; the two renders below prove it is actually wired.
+  it.each([
+    { mode: "off", narrow: false, expanded: false },
+    { mode: "off", narrow: true, expanded: false },
+    { mode: "desktop", narrow: false, expanded: true },
+    { mode: "desktop", narrow: true, expanded: false },
+    { mode: "both", narrow: false, expanded: true },
+    { mode: "both", narrow: true, expanded: true },
+    { mode: "mobile", narrow: false, expanded: false },
+    { mode: "mobile", narrow: true, expanded: true },
+  ] as const)(
+    "'$mode' on a narrow=$narrow screen starts the season list expanded=$expanded",
+    ({ mode, narrow, expanded }) => {
+      expect(shouldExpandSeasons(mode, narrow)).toBe(expanded);
+    },
+  );
+
+  // The two renders that prove the table above is actually consulted, and consulted with BOTH
+  // of its arguments. Each asserts an expansion that only happens if its argument arrived, so
+  // neither can pass against a preference that never loaded -- which a "stays collapsed"
+  // assertion would do quite happily.
+  it("opens a show's season list when the preference covers this screen", async () => {
+    // jsdom has no matchMedia, so useMediaQuery reports false: the wide screen, which
+    // "desktop" covers. This pins that the stored mode reaches the card.
+    apiMock.general.mockResolvedValue({ ...DEFAULT_GENERAL, expand_seasons_mode: "desktop" });
     apiMock.candidates.mockResolvedValue(page([season(1, "condemn"), season(2, "condemn")]));
     renderQueue("condemn");
     // The preference resolves on its own query, so the card may mount collapsed and expand a
     // tick later; wait for the expanded state rather than asserting the first frame.
+    const expander = await screen.findByRole("button", { name: "2 seasons" });
+    await waitFor(() => expect(expander).toHaveAttribute("aria-expanded", "true"));
+  });
+
+  it("opens it on a narrow screen when the preference is the phone one", async () => {
+    // The same card under "mobile", with the viewport reporting narrow. It can only expand if
+    // the media query reached the decision too -- ignore that argument and this stays shut.
+    vi.stubGlobal("matchMedia", () => ({
+      matches: true,
+      media: NARROW_SCREEN_QUERY,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    apiMock.general.mockResolvedValue({ ...DEFAULT_GENERAL, expand_seasons_mode: "mobile" });
+    apiMock.candidates.mockResolvedValue(page([season(1, "condemn"), season(2, "condemn")]));
+    renderQueue("condemn");
     const expander = await screen.findByRole("button", { name: "2 seasons" });
     await waitFor(() => expect(expander).toHaveAttribute("aria-expanded", "true"));
   });

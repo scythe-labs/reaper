@@ -44,6 +44,7 @@ from reaper.crypto import SecretBox
 from reaper.db.models import AppSetting, InstanceKind, PlexServer
 from reaper.notify.discord import DiscordNotifier, Embed, build_notifier
 from reaper.services import admin_password, app_settings, instances, leaving_soon
+from reaper.services.app_settings import ExpandSeasonsMode
 from reaper.services.plex_link import (
     PlexLinkError,
     PlexLinkRetryableError,
@@ -1371,9 +1372,9 @@ class GeneralSettingsOut(BaseModel):
     api_key_set: bool
     """Whether a key exists at all -- the value itself only leaves through the
     dedicated reveal route, never rides along on a settings read."""
-    expand_seasons_default: bool
-    """Whether the review queue opens each show with its season list already expanded.
-    A display preference; off until turned on."""
+    expand_seasons_mode: ExpandSeasonsMode
+    """Which screens the review queue opens each show's season list expanded on. A display
+    preference; ``off`` until the operator picks a screen."""
     default_spare_days: int
     """How long a plain Spare press keeps an item, in days. ``0`` means forever -- the shipped
     default and the original behavior. A single title can still be spared for a different length
@@ -1391,7 +1392,8 @@ class GeneralSettingsIn(BaseModel):
     """An IANA time-zone name, validated to a real zone at the edge. ``None`` leaves it
     unchanged."""
     accent_color: str | None = Field(default=None, max_length=7)
-    expand_seasons_default: bool | None = None
+    expand_seasons_mode: ExpandSeasonsMode | None = None
+    """Which screens the review queue opens seasons on. ``None`` leaves it unchanged."""
     default_spare_days: int | None = Field(default=None, ge=0, le=3650)
     """Days a plain Spare keeps an item; ``0`` = forever. ``None`` leaves it unchanged."""
     proxy_trust_enabled: bool | None = None
@@ -1409,7 +1411,7 @@ async def _general_out(session: AsyncSession, settings: Settings) -> GeneralSett
         timezone=await app_settings.get_timezone(session, settings),
         accent_color=await app_settings.get_accent_color(session),
         api_key_set=(await session.get(AppSetting, app_settings.API_KEY_KEY)) is not None,
-        expand_seasons_default=await app_settings.get_expand_seasons_default(session),
+        expand_seasons_mode=await app_settings.get_expand_seasons_mode(session),
         default_spare_days=await app_settings.get_default_spare_days(session),
         proxy_trust_enabled=await app_settings.proxy_trust_enabled(session, settings),
         trusted_proxies=await app_settings.get_trusted_proxies(session, settings),
@@ -1521,10 +1523,8 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
             await app_settings.set_timezone(session, cleaned_timezone)
         if payload.accent_color is not None:
             await app_settings.set_accent_color(session, payload.accent_color)
-        if payload.expand_seasons_default is not None:
-            await app_settings.set_expand_seasons_default(
-                session, enabled=payload.expand_seasons_default
-            )
+        if payload.expand_seasons_mode is not None:
+            await app_settings.set_expand_seasons_mode(session, mode=payload.expand_seasons_mode)
         if payload.default_spare_days is not None:
             await app_settings.set_default_spare_days(session, days=payload.default_spare_days)
         if payload.proxy_trust_enabled is not None:

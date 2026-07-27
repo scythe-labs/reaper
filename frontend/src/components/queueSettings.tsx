@@ -15,7 +15,18 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { createContext, useContext } from "react";
-import { api } from "../api";
+import { api, type ExpandSeasonsMode } from "../api";
+
+/** Whether a show card starts with its season list open, given the operator's preference and
+ *  which screen they are on.
+ *
+ *  A phone's season list is long enough to bury the next card, so the two screen sizes are
+ *  separately choosable and "both" is the only value that opens on either. Pure and exported
+ *  so all eight combinations are pinned by a table, rather than by eight async renders whose
+ *  "stays collapsed" half would pass just as well against a preference that never loaded. */
+export function shouldExpandSeasons(mode: ExpandSeasonsMode, narrowScreen: boolean): boolean {
+  return mode === "both" || mode === (narrowScreen ? "mobile" : "desktop");
+}
 
 /** The two stored settings every row in the queue reads, subscribed to ONCE.
  *

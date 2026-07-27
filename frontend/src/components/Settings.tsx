@@ -22,6 +22,7 @@ import {
 import { accentInk, DEFAULT_ACCENT, isHexColor } from "../accent";
 import {
   api,
+  type ExpandSeasonsMode,
   type Instance,
   type InstanceTest,
   type RestoreSummary,
@@ -461,14 +462,26 @@ export function GeneralPanel() {
         <div className="set-rows">
           <div className="set-row">
             <span className="set-label">Expand seasons by default</span>
-            <p className="help">TV shows in the review queue open with every season showing.</p>
+            <p className="help">
+              TV shows in the review queue open with every season showing. Mobile means a narrow
+              screen, like a phone.
+            </p>
             <div className="set-control">
-              <Switch
-                checked={data.expand_seasons_default}
+              {/* Four choices, so a select rather than a Segmented (rule 41), on the same
+                  control standard as the Theme picker above. */}
+              <select
+                value={data.expand_seasons_mode}
+                aria-label="Expand seasons by default"
                 disabled={save.isPending}
-                ariaLabel="Expand seasons by default"
-                onChange={(enabled) => save.mutate({ expand_seasons_default: enabled })}
-              />
+                onChange={(e) =>
+                  save.mutate({ expand_seasons_mode: e.target.value as ExpandSeasonsMode })
+                }
+              >
+                <option value="off">Off</option>
+                <option value="desktop">Desktop</option>
+                <option value="both">Desktop &amp; mobile</option>
+                <option value="mobile">Mobile</option>
+              </select>
             </div>
           </div>
           <div className="set-row">

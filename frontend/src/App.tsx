@@ -28,7 +28,7 @@ import { WhyClose, WhyPanel } from "./components/WhyPanel";
 import { DocsProvider } from "./docs/DocsContext";
 import { bytes, count, date, souls } from "./format";
 import { usePageScrollLock } from "./pageScrollLock";
-import { useMediaQuery } from "./useMediaQuery";
+import { NARROW_SCREEN_QUERY, useMediaQuery } from "./useMediaQuery";
 import { useSafety } from "./useSafety";
 import { useScanSettled } from "./useScanSettled";
 
@@ -587,9 +587,10 @@ function Dashboard({ user }: { user: AuthUser }) {
   const listView = view === "review" || view === "fairness";
   // A phone shows the panel as a full-screen sheet over the list (`main.split .why` below 900px
   // in index.css); a wider screen keeps the list visible beside it. That is what decides whether
-  // the window scroll still tracks the list while a panel is open (used just below). 900px must
-  // match that full-screen-sheet breakpoint (rule 67).
-  const fullSheet = useMediaQuery("(max-width: 900px)");
+  // the window scroll still tracks the list while a panel is open (used just below). The width
+  // must match that full-screen-sheet breakpoint, so it comes from the one declaration both
+  // readers share (rule 67).
+  const fullSheet = useMediaQuery(NARROW_SCREEN_QUERY);
 
   // Keep the reviewer's place when a panel opens or closes. Opening turns the list into the
   // side-by-side split (the cards make room for the panel) and closing takes it back; that

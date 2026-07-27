@@ -1,6 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { useEffect, useState } from "react";
 
+/** The width at or below which this is a phone, for the JS that has to agree with the CSS.
+ *
+ *  900px is where index.css already turns the review queue into one column, brings up the
+ *  bottom nav bar, and makes `main.split .why` a full-screen sheet. Both JS readers of that
+ *  boundary take it from here rather than spelling it again (rule 67): App's `fullSheet`,
+ *  which decides whether the window scroll still tracks the list, and the review queue's
+ *  "expand seasons by default" mode, which opens a show's season list on one screen size and
+ *  not the other. Change this and change the `900px` blocks in index.css with it. */
+export const NARROW_SCREEN_QUERY = "(max-width: 900px)";
+
 /** Read a CSS media query from JS and keep it in step as the viewport crosses the query.
  *
  *  Where `matchMedia` is missing -- jsdom under the tests, and any engine too old to have it

@@ -31,7 +31,7 @@ export const DEFAULT_GENERAL: GeneralSettings = {
   timezone: "UTC",
   accent_color: "#38bdf8",
   api_key_set: false,
-  expand_seasons_default: false,
+  expand_seasons_mode: "off",
   default_spare_days: 0,
   proxy_trust_enabled: false,
   trusted_proxies: [],
