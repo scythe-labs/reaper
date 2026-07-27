@@ -145,6 +145,16 @@ class DiscordNotifier:
         and it stays" would offer a runway the code does not enforce: the owner can reap on
         day one. What is true is the outcome, unconditioned on the clock -- watching it
         keeps it, and a person starts every removal.
+
+        The shelf is NOT an unwatched set, so this says nothing about whether anyone has
+        played these. ``services.leaving_soon`` builds it from the in-grace slice of
+        ``condemned.effective_condemned``, which merges hand reaps, and a hand reap
+        overrules a fired ``min_dormancy`` (that gate is not in ``verdict.STRUCTURAL_GATES``)
+        -- so the most ordinary way onto this shelf is the owner watching something, finding
+        it in Sanctuary the next day, and reaping it to reclaim the space. The blanket
+        "Unwatched" this used to open with then told the whole household that a film one of
+        them watched last night had gone unplayed. The dormancy that would let it branch per
+        title is not on this call, so the claim is dropped rather than guessed.
         """
         if not titles:
             return False
@@ -160,7 +170,7 @@ class DiscordNotifier:
             Embed(
                 title=f"{count} {noun} leaving soon",
                 description=(
-                    f"Unwatched, and on the list to go. Watch one and it stays. Nothing "
+                    f"Watch one and it stays. Nothing "
                     f"is removed automatically: they show as leaving for the next "
                     f"{grace_days} days, and every removal is started by hand.\n\n"
                     f"{lines}{link}"
