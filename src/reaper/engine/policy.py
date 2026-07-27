@@ -1045,9 +1045,32 @@ def inspect(
         )
 
     disabled = {g.gate for g in body.gates if not g.enabled}
+    # Each of these states the consequence THIS switch has, verified against the code that
+    # would deliver it (rules 7/24 and 25). Both used to name a consequence that cannot
+    # occur, because the outcome each described is delivered somewhere the switch does not
+    # reach:
+    #
+    # * The active-stream veto lives in the executor and is unconditional -- ``_reap_one``
+    #   calls ``_being_watched_now`` on every real send without ever consulting the policy
+    #   gate, and ``execute`` refuses a real run outright when Plex is missing. So turning
+    #   the gate off cannot delete a file mid-play. What it does do is let the title be
+    #   condemned, listed, and approved, and then skipped at the last moment.
+    # * The horizon defense is the dormancy CLAMP in fact derivation
+    #   (``services.snapshot.build_facts``, ``max(added_at, horizon)``), which runs whatever
+    #   this switch says. ``DataHorizonGate`` can never PROTECT -- its own docstring says so,
+    #   and ``evaluate`` has only a blocked branch and an abstain -- and its one independent
+    #   job is failing closed on an Unknown dormancy, which ``MinDormancyGate`` also does.
     for gate, why in (
-        (GateId.STREAMING_NOW, "Reaper could delete a file while someone is watching it."),
-        (GateId.DATA_HORIZON, "Media older than your watch history would look never-watched."),
+        (
+            GateId.STREAMING_NOW,
+            "A title someone is watching still reaches your reap list. Reaper skips it at "
+            "the last moment, so a run removes less than it showed you.",
+        ),
+        (
+            GateId.DATA_HORIZON,
+            "Reaper drops one of the two checks that keep a title whose unwatched time it "
+            "could not read.",
+        ),
     ):
         if gate in disabled:
             warnings.append(

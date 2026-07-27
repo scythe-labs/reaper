@@ -123,6 +123,26 @@ get backwards by reasoning; render both.
 | frontend | `min-width: 2.9rem` makes the four-digit fit worse than before | Backwards. At 320px the "1,000" box goes from 59.2px wide holding 67px of content on `dev` (7.8px hidden) to 57.5 holding 61 (3.5px hidden), and from 360px up it now fits outright where `dev` did not. The floor only binds below a ~300px viewport. |
 | frontend | The unit `<select>`'s right edge is clipped by `.qty`'s `overflow: hidden` at <=322px, the same defect as the "MB"/"ME" clipping the author already fixed | The ~2px clipped is border, not copy: the select's text measures 55px inside a 56px box, so every option still reads in full. |
 
+## Refuted at `c8b0ddc` (2026-07-26, the "does any other string claim a play?" sweep)
+
+Five lanes ran (`diff`, `seam`, and three themed sweeps) after an operator caught the review
+queue asserting "Kept · watched too recently" about a title with zero plays all time. The class
+hunted was **an operator-facing string asserting a fact the evidence does not establish**. Two
+independent agents killed the lead candidate, which is worth recording precisely because it
+looks like the fixed bug and is not.
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| engine-signals | `signals.py:271`'s `"not watched in {span}"`, and its consumers `routes._dormant_for` → the amber pill `Not watched in {span}` (`ReviewQueue.tsx:331`), assert a prior play on a never-played title exactly as the fixed chip did | **The distinction that decides the whole class: "watched too recently" is true only if a play exists; "not watched in X" is true whether or not one does.** The string states an ABSENCE, and where the span runs from arrival rather than a play it is still literally true. The coverage direction is safe too: `reference_instant` returns `last_played or max(added_at, horizon)`, so the reference is always ≥ the horizon and the span can never reach back past the evidence. Every divergence from the deeper truth *understates* dormancy (a 10-year-old file behind a 1-year mirror reads "not watched in 1 year"), which is the keep direction. |
+| api-simulate | The frozen `distinct_watchers` re-phrased under a draft popularity window would repeat the popularity-coverage finding in the simulator | Tier 3 refuses to simulate at all when the edit touches a watch window or any gate, so `policy.popularity_window_days()` in `_replay_simulation` always equals the scan's, and no per-item detail is returned regardless. |
+| frontend-queue | `ReviewQueue.tsx:328` `DormantPill` — the closest visual twin of the fixed chip | Same reasoning as the lead: literally true for a never-played title, and the horizon clamp only ever understates. Only the implicature of a prior play is wrong, and that is not this class. |
+
+**The generalizable lesson, and the reason this entry is long:** the sweep's most obvious
+candidate was the one that shared the fixed bug's *subject* (dormancy) rather than its *defect*
+(asserting an event that may not have happened). Searching by subject surfaced a false positive
+two agents had to argue down; searching by defect found the real twin thirty lines below the
+fix, in the same function, under a different gate. Hunt the assertion, not the topic.
+
 ## Refutations later found to be wrong
 
 None yet. When one lands here, record what the verifier missed — that reasoning is worth more

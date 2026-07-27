@@ -29,11 +29,15 @@ bug a shipping competitor actually has, and each one resolves toward *keeping* a
   season must not pin a show forever. A viewer whose last-watched time cannot be read
   keeps their hold.
 
-* **Never touch a currently-airing (or still-downloading) season.** Maintainerr #949: a
+* **Never touch a season that is mid-run or short of episodes.** Maintainerr #949: a
   mid-season break longer than the timeout leaves the back half permanently undownloaded.
-  A season Sonarr is still filling is not a candidate for removal. The still-downloading
+  A season Sonarr is still filling is not a candidate for removal. The missing-episodes
   half is the only one an operator can turn off (``protect_incomplete``), for an ended show
-  Sonarr permanently lists as missing an episode; the airing half always applies.
+  Sonarr permanently lists as missing an episode; the mid-run half always applies. Neither
+  observation is as sharp as it sounds, and the reasons shown to the operator say only what
+  was seen: Sonarr reports *download intent*, not a live queue, and ``airing_seasons``
+  returns the season to *treat as* airing rather than one known to be broadcasting. See
+  :func:`_protection_reason`.
 
 * **Keep-rule conflict detector.** If the rule would remove a season that has *strictly
   more* viewers than one it keeps, that is almost certainly not what the owner wants
@@ -75,17 +79,24 @@ def _because(kept_reason: str) -> str:
     """Turn a kept season's protection reason into a "because ..." clause, so a conflict
     names *why* the season it was compared against is being kept -- not just "your keep
     rule." Reads season_pruning's own closed vocabulary (the strings ``_protection_reason``
-    returns); anything unrecognized falls back to a safe generic clause, never an error."""
-    if kept_reason.startswith("Sonarr is still downloading"):
-        return "Sonarr is still downloading it"
-    if kept_reason == "currently airing":
-        return "it is currently airing"
-    if kept_reason.startswith("the first season"):
-        return "it is the first season, so the show can still be started"
+    returns); anything unrecognized falls back to a safe generic clause, never an error.
+
+    The clauses restate their reason, they never sharpen it. The mid-binge one used to
+    rewrite "part-way through the show" as "part-way through *it*", which moves the claim
+    onto this particular season -- and ``sequential_protections`` may have picked this
+    season precisely because it is the untouched NEXT one (``_anchor_positions`` returns
+    ``_next_after``), so the same sentence could say nobody has played it and that someone
+    is midway through it."""
+    if kept_reason.startswith("episodes are missing"):
+        return "episodes are missing from it"
+    if kept_reason.startswith("the newest season of a show"):
+        return "it is the newest season of a show that is still running"
+    if kept_reason.startswith("the earliest season"):
+        return "it is the earliest season on disk, so there is somewhere to start"
     if kept_reason.startswith("within the last") or kept_reason.startswith("this show has only"):
         return "it is one of the newest seasons your rule keeps"
     if kept_reason.startswith("a viewer is part-way"):
-        return "a viewer is part-way through it"
+        return "a viewer is part-way through the show"
     return "your season rule keeps it"
 
 
@@ -104,7 +115,7 @@ class PruneConflict:
     kept distinct from ``0`` (read, and nobody watched) because collapsing the two is what
     produced a message asserting a count nobody ever took."""
     #: Why the kept season is being kept -- its ``ProtectedSeason.reason``, so the message
-    #: can name the real protection ("still downloading") instead of a vague "keep rule."
+    #: can name the real protection ("episodes are missing") instead of a vague "keep rule."
     kept_reason: str
 
     @property
@@ -408,12 +419,26 @@ def _protection_reason(
 
     if n == SPECIALS_SEASON and keep_specials:
         return "specials are never auto-pruned"
+    # Each reason names what was OBSERVED, not what it is usually a sign of. These read as
+    # facts about the show on a panel the operator is checking against Sonarr, so a reason
+    # that overstates its evidence is routinely wrong out loud (rule 21):
+    #
+    # * ``is_incomplete`` is ``wanted_episode_count > episode_file_count``, which
+    #   ``clients.sonarr_stats`` documents as download *intent*, not a live queue. An ended
+    #   show permanently missing one aired episode would say "still downloading" forever --
+    #   the very case this module's docstring names as why the switch exists.
+    # * ``airing_seasons`` returns the season to *treat as* airing: the newest
+    #   content-bearing season of any series Sonarr calls running. A continuing show
+    #   between seasons is the ordinary case, not an edge, and nothing is airing then.
+    # * ``first_real`` is the minimum over seasons that HAVE files, so where season 1 was
+    #   never downloaded or was deleted by hand, season 2 was called "the first season" and
+    #   keeping it does not let anyone start the show.
     if protect_incomplete and season.is_incomplete:
-        return "Sonarr is still downloading this season"
+        return "episodes are missing from this season"
     if n in airing:
-        return "currently airing"
+        return "the newest season of a show that is still running"
     if keep_first_season and n == first_real:
-        return "the first season is kept so the show can still be started"
+        return "the earliest season on disk, so there is somewhere to start"
     if apply_keep_last and rank is not None and rank <= keep_last:
         if keep_last >= total_ranked:
             plural = "s" if total_ranked != 1 else ""

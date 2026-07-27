@@ -19,6 +19,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from reaper.api.fairness import _row_out
 from reaper.clients.base import IntegrationError
 from reaper.clients.seerr import (
     MediaRequest,
@@ -164,8 +165,8 @@ class TestRollUp:
     def test_a_protected_title_is_never_reclaimable_even_if_the_requester_never_watched(
         self,
     ) -> None:
-        """The Little Fockers case: nobody on this row watched it, but the scan protects it
-        (watched too recently, on a keep list, ...). Scales must never contradict Review."""
+        """Nobody on this row watched it, but the scan protects it anyway (it hasn't sat
+        untouched long enough, it's on a keep list, ...). Scales must never contradict Review."""
         report = roll_up(
             [_req(plex_id=100, name="Alice")],
             [_cand(verdict="protect", title="Kept By The Scan")],
@@ -376,6 +377,33 @@ class TestRollUp:
         assert all(r.reclaimable_bytes == 4 * GB for r in report.rows)
         # The file is deleted once, however many unlinked users asked for it.
         assert report.total_reclaimable_items == 1
+        # And each row carries the None, so the surfaces reading played_by_them can tell
+        # "we looked and they watched nothing" from "we cannot see their history at all".
+        # That figure is a STRUCTURAL zero here -- _roll_up counts plays only inside
+        # `if pid is not None` -- and Scales rendered it as a definite 0%.
+        assert all(r.plex_id is None for r in report.rows)
+        assert all(r.played_by_them == 0 for r in report.rows)
+
+    def test_the_board_puts_the_missing_plex_account_on_the_wire(self) -> None:
+        """The card cannot guard a None it was never sent. ``RequesterRowOut`` did not carry
+        ``plex_id`` at all, so the board had no way to tell an unmeasurable person from a
+        measured one, whatever the roll-up knew (rules 63, 93)."""
+        rows = [
+            _req(plex_id=None, seerr_id=11, name="Ada", tmdb=1, imdb=None, request_id=1),
+            _req(plex_id=100, seerr_id=22, name="Bea", tmdb=2, imdb=None, request_id=2),
+        ]
+        report = roll_up(
+            rows,
+            [
+                _cand(cid=9, verdict="condemn", size=4 * GB, tmdb=1, imdb=None),
+                _cand(cid=10, verdict="condemn", size=4 * GB, tmdb=2, imdb=None),
+            ],
+            {},
+        )
+
+        out = [_row_out(r) for r in report.rows]
+
+        assert {r.name: r.plex_id for r in out} == {"Ada": None, "Bea": 100}
 
     def test_two_portals_reusing_one_seerr_id_stay_separate_rows(self) -> None:
         """Each Seerr numbers its own users, so a user id is unique only within one portal:

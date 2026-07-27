@@ -1070,7 +1070,13 @@ export function PolicyEditor({
   const popularity = draft.gates.find((g) => g.gate === "server_popularity" && g.enabled);
   const keepClauses = [
     popularity ? `watched by ${popularity.threshold || 1}+ people` : null,
-    dormancy ? `played in the last ${humanDays(dormancy.threshold)}` : null,
+    // "Untouched", never "played": this gate's clock runs from the last play only when
+    // there IS one, and otherwise from the day the file arrived (engine/dormancy.py's
+    // reference_instant). It therefore keeps titles nobody has ever played, so a clause
+    // saying "played in the last N" was false about exactly the items it protects most --
+    // the same claim the review queue's chip used to make, on the sentence this comment
+    // block below calls the one an operator scans before arming (rules 21/72).
+    dormancy ? `untouched for less than ${humanDays(dormancy.threshold)}` : null,
   ].filter((c): c is string => c !== null);
   // TV's protections are built the same way, and for the same reason: every clause is
   // pushed only when its own switch is on. The line used to assert two of them flat, so
@@ -1558,12 +1564,19 @@ export function PolicyEditor({
                       update({ protect_incomplete_seasons })
                     }
                   />
-                  <span className="rule-name">Never remove a season that's still downloading</span>
+                  {/* Sonarr reports one thing here -- it wants episodes it does not have
+                      (`wanted_episode_count > episode_file_count`, see
+                      `clients/sonarr_stats.py`) -- and an active download and an ended show
+                      permanently short one aired episode look identical in it. So the switch
+                      is named for what was seen, and the help text names both causes rather
+                      than promising a download is under way (rule 21, and rule 72 with
+                      `services/season_pruning.py`'s reason for the same check). */}
+                  <span className="rule-name">Never remove a season with episodes missing</span>
                 </label>
                 <p className="help rule-help">
-                  Keeps a season Sonarr is still filling in, so a removal never fights an active
-                  download. Turn it off for ended shows that Sonarr permanently lists as missing an
-                  episode.
+                  Keeps a season Sonarr wants more episodes for, so a removal never fights a
+                  download. Sonarr says the same thing about an ended show permanently missing an
+                  episode, so turn this off if that is your library.
                 </p>
               </li>
 

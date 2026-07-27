@@ -52,7 +52,14 @@ GB = 1024**3
 NOW = utcnow()
 
 CAUTIOUS = json.dumps(
-    {"protections_fired": [{"gate": "season_progression", "detail": "currently airing"}]}
+    {
+        "protections_fired": [
+            {
+                "gate": "season_progression",
+                "detail": "the newest season of a show that is still running",
+            }
+        ]
+    }
 )
 STRUCTURAL = json.dumps(
     {"protections_fired": [{"gate": "streaming_now", "detail": "playing right now"}]}

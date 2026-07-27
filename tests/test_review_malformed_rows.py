@@ -232,19 +232,19 @@ class TestTheExtractorsThemselves:
         for raw in ("[1, 2]", "null", "not json", '"a string"', "7"):
             exp = _decode_explanation(raw)
             assert exp is None
-            assert _primary_reason(exp, verdict) is None
+            assert _primary_reason(exp, verdict, 50) is None
             assert _chip(exp, verdict, 50) is None
             assert _dormant_for(exp) is None
 
     def test_entries_that_are_not_objects_are_dropped(self) -> None:
         exp = _decode_explanation(MALFORMED["radarr:1:4"])
         assert exp is not None
-        assert _primary_reason(exp, "protect") is None
+        assert _primary_reason(exp, "protect", 50) is None
 
     def test_an_entry_without_a_detail_yields_nothing(self) -> None:
         exp = _decode_explanation(MALFORMED["radarr:1:5"])
         assert exp is not None
-        assert _primary_reason(exp, "protect") is None
+        assert _primary_reason(exp, "protect", 50) is None
 
     def test_a_non_dict_match_says_it_could_not_be_read(self) -> None:
         """A match block that is THERE but unreadable holds a hand reap
@@ -257,7 +257,7 @@ class TestTheExtractorsThemselves:
         """
         exp = _decode_explanation(MALFORMED["radarr:1:6"])
         assert exp is not None
-        reason = _primary_reason(exp, "abstain")
+        reason = _primary_reason(exp, "abstain", 50)
         assert reason == "Kept to be safe: Reaper couldn't read what this matched in Plex."
         # Still not an AttributeError, and still not claiming a status Plex reported.
         assert "threshold" not in (reason or "")

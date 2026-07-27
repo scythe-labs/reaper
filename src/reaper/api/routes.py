@@ -665,7 +665,7 @@ def _contribution(entry: dict[str, Any]) -> float:
     return float(value) if isinstance(value, int | float) else 0.0
 
 
-def _primary_reason(exp: dict[str, Any] | None, verdict: str) -> str | None:
+def _primary_reason(exp: dict[str, Any] | None, verdict: str, score: int) -> str | None:
     """The single line the card shows: *why* Reaper judged this, not what it is about.
 
     A spared item leads with the protection that saved it; a reaped one with its strongest
@@ -675,6 +675,10 @@ def _primary_reason(exp: dict[str, Any] | None, verdict: str) -> str | None:
     Takes the DECODED explanation (``_decode_explanation``), and like every sibling
     extractor treats an unreadable one as "no reason to show", never as an error: display
     extraction must never drop a row off the queue.
+
+    ``score`` comes from the row, not from ``exp``, so this reads the same number ``_chip``
+    does (rule 104): the stored explanation carries its own copy, and two readers picking
+    different sources is how the chip and the line beneath it come to disagree.
     """
     if not isinstance(exp, dict):
         return None
@@ -709,6 +713,17 @@ def _primary_reason(exp: dict[str, Any] | None, verdict: str) -> str | None:
     unknown = _entries(exp, "protections_unknown")
     if unknown:
         return _detail_of(unknown[0])
+    # An abstain that got this far was stopped by the score or by the coverage floor, and
+    # they are different decisions with different remedies: one says move the slider, the
+    # other says fix the evidence source. ``decide_verdict``'s order settles which -- past
+    # every blocked case, an abstain at or above the threshold can only be the floor. This
+    # is the same branch ``_chip`` makes (see the threshold block there), and until it was
+    # made here too the panel printed the chip "Too little of it could be checked" directly
+    # above "Scored below your threshold." Rule 61 forced this same correction on this line
+    # once already, for the unreadable-match case; the coverage arm was left behind.
+    threshold = exp.get("threshold")
+    if isinstance(threshold, int) and score >= threshold:
+        return "Kept to be safe: too little of it could be checked."
     return "Scored below your threshold."
 
 
@@ -744,15 +759,22 @@ _KEEP_LAST_RE = re.compile(r"^within the last (\d+) seasons")
 
 
 def _kept_season_phrase(detail: str) -> str:
-    """The chip phrase for a fired season keep rule (season_pruning's closed reasons)."""
+    """The chip phrase for a fired season keep rule (season_pruning's closed reasons).
+
+    Three of these reasons were reworded to name what Sonarr actually reported rather than
+    what it usually means (see ``_protection_reason``), so an explanation stored by an older
+    scan carries the retired spelling. Those fall through to the generic phrase below, which
+    is vague but true -- the same degrade every unrecognized detail takes, and the reason
+    this parser has a fallback at all. The next scan restores the specific phrase.
+    """
     if detail.startswith("specials"):
         return "specials are never removed"
-    if detail.startswith("Sonarr is still downloading"):
-        return "still downloading"
-    if detail == "currently airing":
-        return "currently airing"
-    if detail.startswith("the first season"):
-        return "the first season stays"
+    if detail.startswith("episodes are missing"):
+        return "episodes are missing"
+    if detail.startswith("the newest season of a show"):
+        return "the show is still running"
+    if detail.startswith("the earliest season"):
+        return "the earliest season stays"
     if keep_last := _KEEP_LAST_RE.match(detail):
         return f"in the last {keep_last.group(1)} seasons you keep"
     if detail.startswith("this show has only"):
@@ -793,7 +815,14 @@ def _kept_phrase(gate: str, detail: str) -> str:
     if gate == "min_dormancy":
         if detail.startswith("no watch history"):
             return "no watch history, kept to be safe"
-        return "watched too recently"
+        # "Untouched", never "watched": this gate's clock runs from the last play only when
+        # there IS one, and otherwise from the day the file arrived
+        # (``engine.dormancy.reference_instant``). So the fired branch covers a title nobody
+        # has ever played, and the chip this function used to return -- "watched too
+        # recently" -- asserted a play that never happened, on a card whose own panel said
+        # "nobody watched it in the last year" three lines above. ``MinDormancyGate`` words
+        # its own detail "untouched" for exactly this reason; the chip beside it now does too.
+        return "hasn't sat untouched long enough"
     if gate == "unmanaged":
         # Retired gate, kept for stored explanations only -- a snapshot taken before the
         # retirement can still be read back, and this is what renders its chip. No new scan
@@ -865,11 +894,31 @@ def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | Non
             # A deliberate "decide this yourself" flag -- today, the season keep-rule
             # conflict -- not a plumbing failure. The one blocked case that wants eyes.
             if str(entry.get("gate") or "") == "season_progression":
-                return ChipOut(
-                    tone="look",
-                    text="Needs a look · watched more than a season your rule keeps",
-                    why="watched more than a season your rule keeps",
-                )
+                # Two conflict shapes reach here and only ONE of them made a comparison
+                # (``services.season_pruning.PruneConflict.message``). A conflict is also
+                # raised when the kept season's watcher count could not be read at all --
+                # ``detect_conflicts`` treats that as a hold rather than letting an unread
+                # number clear a protection -- and that message says so in its own words,
+                # but it does not START with "could not check", so the guard above passes
+                # it through. Asserting the comparison there states arithmetic against a
+                # number nobody took, which is the exact sentence ``detect_conflicts``'s
+                # docstring records having deliberately removed from the message; the chip
+                # was still printing it, one line above the panel's own denial.
+                #
+                # Each claim needs a POSITIVE match, so a reworded message degrades to the
+                # vague-but-true chip below rather than back to the false one.
+                if "more than watched Season" in detail:
+                    return ChipOut(
+                        tone="look",
+                        text="Needs a look · watched more than a season your rule keeps",
+                        why="watched more than a season your rule keeps",
+                    )
+                if "could not check who watched" in detail:
+                    return ChipOut(
+                        tone="look",
+                        text="Needs a look · couldn't check who watched a season it's keeping",
+                        why="Reaper couldn't check who watched a season it's keeping",
+                    )
             return ChipOut(
                 tone="look",
                 text="Needs a look · left for you to decide",
@@ -987,7 +1036,7 @@ def _candidate_out(
         video_resolution=r.video_resolution,
         library=r.library_title,
         dormant_for=_dormant_for(explanation),
-        reason=_primary_reason(explanation, r.verdict),
+        reason=_primary_reason(explanation, r.verdict, r.score),
         spared=override == "spare",
         override=override,
         override_own=override_own,

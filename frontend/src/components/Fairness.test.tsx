@@ -26,6 +26,7 @@ const GB = 1024 ** 3;
 function row(over: Partial<RequesterRow> = {}): RequesterRow {
   return {
     identity: "plex:7",
+    plex_id: 7,
     name: "marlow",
     requests_made: 52,
     gb_granted_bytes: 549 * GB,
@@ -98,6 +99,31 @@ describe("PersonCard", () => {
   it("wears the selection bar when it is the open card", () => {
     const { container } = render(<PersonCard row={row()} selected onSelect={vi.fn()} />);
     expect(container.querySelector(".fair-card.selected")).not.toBeNull();
+  });
+
+  it("states the watched share as a share when the account is linked", () => {
+    render(<PersonCard row={row()} selected={false} onSelect={vi.fn()} />);
+    expect(screen.getByText("58%")).toBeInTheDocument();
+    expect(screen.getByText(/they watched/i)).toBeInTheDocument();
+  });
+
+  // A requester whose Seerr account nobody linked to a Plex account has no history Reaper
+  // can read: `fairness._roll_up` counts plays only inside `if pid is not None`, so
+  // `played_by_them` is a structural 0, not a measured one. The card drew that as a red 0%,
+  // a confident zero about somebody nobody looked at, on the screen where the operator
+  // decides whose files to delete.
+  it("says the history is unreadable rather than showing a red zero", () => {
+    render(
+      <PersonCard
+        row={row({ identity: "local:portal:4", plex_id: null, played_by_them: 0 })}
+        selected={false}
+        onSelect={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/no plex account/i)).toBeInTheDocument();
+    expect(screen.queryByText("0%")).not.toBeInTheDocument();
+    expect(screen.queryByText(/they watched/i)).not.toBeInTheDocument();
   });
 });
 

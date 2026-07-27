@@ -42,7 +42,11 @@ export const understandingPolicy: Doc = {
     steps([
       {
         title: "Connect your watch history first.",
-        text: "Every score starts from how long a title has gone unplayed, which Reaper reads from your history source. Connect it and let one scan finish against real data before you tune anything.",
+        // "Reads from your history source" was the same overstatement one step earlier:
+        // the history source supplies the last play when there is one, and it also sets
+        // how far back Reaper is willing to count. Neither is the whole answer for a title
+        // nobody has ever played. See `engine/dormancy.py`.
+        text: "Every score starts from how long a title has sat untouched, and your history source is what tells Reaper when it was last played and how far back it can look. Connect it and let one scan finish against real data before you tune anything.",
       },
       {
         title: "Start on the Cautious footing.",
@@ -110,7 +114,16 @@ export const understandingPolicy: Doc = {
     table(
       ["Signal", "What it means", "Movie points", "TV points"],
       [
-        ["How long it's gone unwatched", "Time since anyone last played it", "70", "60"],
+        // Not "time since anyone last played it": `engine/dormancy.py` measures from the
+        // last play, or from the day the file arrived when there has never been one, or
+        // from the start of your history when that is later. The recipe further down this
+        // page sends operators here for never-played requests, which is the second of those.
+        [
+          "How long it's gone unwatched",
+          "How long it has sat untouched, counted from the last play or from the day it arrived",
+          "70",
+          "60",
+        ],
         ["How few people watch it", "Fewer recent viewers means more pressure", "20", "15"],
         ["How old a season is", "Older seasons carry more pressure (TV only)", "not used", "15"],
         ["How low it's rated", "Lower ratings add a little pressure", "10", "10"],
@@ -157,7 +170,11 @@ export const understandingPolicy: Doc = {
           "Anything being watched at that moment",
           "On, re-checked live",
         ],
-        ["Don't judge what predates your history", "Titles older than your watch history", "On"],
+        // Not "Titles older than your watch history": that outcome comes from the dormancy
+        // clamp in fact derivation, not from this switch, and the gate itself can only
+        // abstain (see `components/policyMeta.ts`). The row has to say what it keeps,
+        // because the sentence above this table promises every row keeps something.
+        ["Stop if the unwatched time can't be read", "Anything Reaper couldn't measure", "On"],
         ["Honor protected lists", "Titles on a curated list", "On (IMDb Top 250)"],
       ],
     ),

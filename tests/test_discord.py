@@ -73,6 +73,13 @@ class TestLeavingSoon:
         assert "Nothing is removed automatically" in body
         # The retired promise, which offered a runway the code does not enforce.
         assert "in the next 14 days and it stays" not in body
+        # The shelf is not an unwatched set. A hand reap overrules a fired min_dormancy and
+        # lands the item here, so the most ordinary way onto this list is the owner watching
+        # something and reaping it the next day to reclaim the space. The blanket
+        # "Unwatched" this once opened with announced that to the whole household as a fact
+        # about a film one of them had just played.
+        assert "Unwatched" not in body
+        assert "unwatched" not in body
 
     async def test_a_single_title_is_singular(self, httpx2_mock: respx.Router) -> None:
         route = httpx2_mock.post(WEBHOOK).mock(return_value=httpx.Response(204))

@@ -42,8 +42,16 @@ function RefreshIcon() {
 }
 
 /** Share of their OWN requests this person has watched at least once. A behavioral signal
- *  (did the asker use what they asked for), kept apart from the disk balance below. */
-function watchedPct(row: RequesterRow): number {
+ *  (did the asker use what they asked for), kept apart from the disk balance below.
+ *
+ *  `null` when there is no history to take a share OF. A Seerr account nobody linked to a
+ *  Plex account has no watches Reaper can see at all: `fairness._roll_up` counts plays only
+ *  inside `if pid is not None`, so `played_by_them` is structurally 0 rather than measured,
+ *  and `plays_by`'s own docstring makes guarding the None the caller's job. Rendering that
+ *  as a red 0% told the operator a confident zero about somebody Reaper never looked at, on
+ *  the screen where they decide whose files to delete. `ScalesPanel` is the twin (rule 72). */
+function watchedPct(row: RequesterRow): number | null {
+  if (row.plex_id == null) return null;
   if (row.requests_made === 0) return 0;
   return Math.round((100 * row.played_by_them) / row.requests_made);
 }
@@ -132,10 +140,20 @@ export function PersonCard({
       </div>
 
       <div className="fair-side">
-        <span className="fair-watched">
-          <span className={`fair-pct ${watched >= 50 ? "good" : "bad"}`}>{watched}%</span>
-          <span className="fair-pct-lbl">they watched</span>
-        </span>
+        {watched === null ? (
+          <span
+            className="fair-watched"
+            title="Their request account isn't linked to a Plex account, so Reaper can't see what they watched."
+          >
+            <span className="fair-pct muted">Unknown</span>
+            <span className="fair-pct-lbl">no Plex account</span>
+          </span>
+        ) : (
+          <span className="fair-watched">
+            <span className={`fair-pct ${watched >= 50 ? "good" : "bad"}`}>{watched}%</span>
+            <span className="fair-pct-lbl">they watched</span>
+          </span>
+        )}
         {hasReclaim ? (
           <span className="status-chip status-pressure">{bytes(reclaim)} to reclaim</span>
         ) : (
