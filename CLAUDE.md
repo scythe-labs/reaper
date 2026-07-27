@@ -63,6 +63,19 @@ haven't touched this session.
   edit the line that is now wrong, never append beside it. Measured findings, including
   negative results, go to `docs/LEARNINGS.md`. `docs/README.md` says what belongs where: state,
   knowledge, and history have different lifespans and never share a file.
+- **A confirmed bug you are not fixing becomes an issue before the session ends — don't wait to
+  be asked.** A defect left in a transcript is lost when the session is: nobody greps a dead
+  conversation, and "I flagged it in the summary" is not a record. So every confirmed defect
+  leaves the session one of two ways, fixed or filed. This binds *every* session, not just
+  `/reaper-review` — most bugs are found while building something else, which is exactly when
+  the temptation to note it and move on is strongest. Filing needs no approval; say what you
+  filed in the summary rather than asking first. **Only what you confirmed**: a defect whose
+  trigger you could not demonstrate goes to
+  `.claude/skills/reaper-review/references/unproven.md` with the evidence that would settle it,
+  because an issue asserts a defect exists. That skill's *Opening issues* section holds the
+  mechanics and they are unchanged — Gitea via `tea` (`gh` does not reach it), one issue per
+  *fix* rather than per finding, a duplicate check on the `finding:` fingerprint first, the
+  commit pinned with `--referenced-version`, and a title naming what the operator loses.
 - **Commit as you go, in focused commits — don't wait to be asked.** One commit tells one
   story: a feature, a bug fix, a cleanup that stands on its own. A fix ships with the test
   that pins it and the doc line it corrects, because those are the same story. Nothing else

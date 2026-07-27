@@ -234,9 +234,17 @@ No transcript of the verification, no quoted diffs, no reasoning chain — those
 `.claude/review-findings/`, and the issue can say "verifier notes in the run artifact" if
 anyone needs them. An issue nobody finishes reading is an issue nobody acts on.
 
-**Always show the planned issue list and get an explicit go-ahead before creating any.** Filing
-is outward-facing and hard to undo quietly, and the grouping is a judgment the operator may
-want to change.
+**File them, then show what you filed — do not ask first.** The standing authorization is the
+`CLAUDE.md` golden rule: a confirmed defect leaves the session fixed or filed, and a round trip
+for permission is how the second option quietly becomes neither. Report the list with issue
+numbers in the run summary, grouped the way you filed it, so a grouping the operator would have
+made differently is still visible and still cheap to change — an issue is edited or closed in
+one command, where a lost finding is gone.
+
+Two things still hold the gate. **Only CONFIRMED findings**, because an issue asserts a defect
+exists. And **the duplicate check runs before every create**, because re-running a review must
+not re-file what is already open; that check, not an approval prompt, is what keeps the tracker
+from flooding.
 
 ## Do not
 
