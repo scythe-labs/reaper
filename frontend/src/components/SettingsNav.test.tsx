@@ -27,7 +27,7 @@ const PANELS = [
   "Jobs",
   "Notifications",
   "Security",
-  "Backup",
+  "Backup & Restore",
   "Logs",
   "About",
 ];

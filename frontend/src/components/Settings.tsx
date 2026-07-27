@@ -65,7 +65,9 @@ const PANELS: { id: Panel; label: string }[] = [
   { id: "jobs", label: "Jobs" },
   { id: "notifications", label: "Notifications" },
   { id: "security", label: "Security" },
-  { id: "backup", label: "Backup" },
+  // Named for both halves, matching the panel's own heading: restoring is the half an operator
+  // comes looking for under pressure, and a tab reading "Backup" alone hides it.
+  { id: "backup", label: "Backup & Restore" },
   { id: "logs", label: "Logs" },
   { id: "about", label: "About" },
 ];
