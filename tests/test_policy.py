@@ -573,16 +573,42 @@ class TestTheDangerousConfigDetector:
 
         warnings = inspect(body, ProfileSettings())
 
-        assert any(w.severity == "danger" and "watching it" in w.message for w in warnings)
+        assert any(w.severity == "danger" and "someone is watching" in w.message for w in warnings)
 
     def test_disabling_the_data_horizon_gate_is_dangerous(self) -> None:
-        """The #1 mass-deletion vector: Tautulli cannot import pre-install history,
-        so everything watched before it looks never-watched."""
+        """Still a danger, but for the reason this switch actually owns.
+
+        The pre-install-history problem is answered by the dormancy CLAMP in
+        ``snapshot.build_facts``, which runs whatever this switch says, so the warning may
+        not promise that titles would start looking never-watched. ``DataHorizonGate`` can
+        only fail closed on an Unknown dormancy, and ``MinDormancyGate`` does that too, so
+        what is lost is one of two checks (rules 7/24, 25).
+        """
         body = _policy(gates=(GateSetting(gate=GateId.DATA_HORIZON, enabled=False),))
 
         warnings = inspect(body, ProfileSettings())
 
         assert any(w.severity == "danger" for w in warnings)
+        message = next(w.message for w in warnings if w.field.endswith("data_horizon.enabled"))
+        assert "never-watched" not in message
+        assert "could not read" in message
+
+    def test_the_streaming_warning_names_what_the_switch_can_actually_do(self) -> None:
+        """The executor's active-stream veto is unconditional: ``_reap_one`` calls
+        ``_being_watched_now`` before every real send without consulting the policy gate,
+        and ``execute`` refuses a real run with no Plex at all. So turning this gate off
+        cannot delete a file mid-play, and the warning must not say it can (rule 7/24).
+        What it does is let the title be condemned, listed and approved, then skipped."""
+        body = _policy(gates=(GateSetting(gate=GateId.STREAMING_NOW, enabled=False),))
+
+        message = next(
+            w.message
+            for w in inspect(body, ProfileSettings())
+            if w.field.endswith("streaming_now.enabled")
+        )
+
+        assert "delete" not in message
+        assert "reap list" in message
 
     def test_a_very_low_threshold_is_dangerous(self) -> None:
         warnings = inspect(_policy(condemn_at=20), ProfileSettings())

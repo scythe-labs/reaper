@@ -157,7 +157,11 @@ export const understandingPolicy: Doc = {
           "Anything being watched at that moment",
           "On, re-checked live",
         ],
-        ["Don't judge what predates your history", "Titles older than your watch history", "On"],
+        // Not "Titles older than your watch history": that outcome comes from the dormancy
+        // clamp in fact derivation, not from this switch, and the gate itself can only
+        // abstain (see `components/policyMeta.ts`). The row has to say what it keeps,
+        // because the sentence above this table promises every row keeps something.
+        ["Stop if the unwatched time can't be read", "Anything Reaper couldn't measure", "On"],
         ["Honor protected lists", "Titles on a curated list", "On (IMDb Top 250)"],
       ],
     ),

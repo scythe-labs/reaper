@@ -49,8 +49,15 @@ export const GATE_META: Record<string, GateMeta> = {
     help: "Right now this is the IMDb Top 250. Anything on it is kept.",
   },
   data_horizon: {
-    label: "Don't judge what predates your history",
-    help: "Tautulli can't see plays from before it was installed, so anything older than your history is left alone rather than assumed unwatched.",
+    // Was "Don't judge what predates your history", promising an outcome this switch does
+    // not control. Tautulli can't see plays from before it was installed, and the defense
+    // against that is the dormancy CLAMP in fact derivation (`services/snapshot.py`
+    // `build_facts`, `max(added_at, horizon)`), which runs in either switch position.
+    // `DataHorizonGate` can never keep a file -- its `evaluate` has a blocked branch and an
+    // abstain, no PROTECT -- and its one independent job is failing closed when the
+    // unwatched time is Unknown. So the switch is named for that (rules 25, 21).
+    label: "Stop if the unwatched time can't be read",
+    help: "A title Reaper couldn't measure is left alone rather than judged. Either way, unwatched time is never counted further back than your history goes, so nothing older than it looks never-watched.",
   },
   // `unmanaged` ("Only touch what Sonarr or Radarr manages") was here. Its gate is retired
   // (see `engine/gates.py`): Reaper builds its candidate list by asking Sonarr and Radarr
