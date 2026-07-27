@@ -10,8 +10,9 @@
 // place (rule 67).
 //
 // All are `aria-hidden`: each sits inside a button whose accessible name is the section label,
-// which the phone bar keeps in the tree via `.visually-hidden` rather than dropping it. A screen
-// reader must not read the decoration on top of the name.
+// which the phone bar keeps in the tree by CLIPPING rather than dropping -- `.view-label` in
+// index.css's 900px block, never `display: none`. A screen reader must not read the decoration on
+// top of the name.
 //
 // Reap draws nothing of its own. It wears the app's ONE scythe (ScytheGlyph -> brand/scythe),
 // because a second scythe drawn to a different curve is exactly the parallel implementation

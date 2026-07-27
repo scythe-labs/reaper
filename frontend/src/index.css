@@ -725,8 +725,9 @@ button.link:hover:not(:disabled) {
   padding: 0.6rem 1rem;
 }
 
-/* The pill inside the segmented track: the masthead/queue tab (.tab) and the policy toggle
-   button (.seg) are the same control, so they share one definition. */
+/* The pill inside the segmented track: the queue's lane tab (.tab) and the policy toggle
+   button (.seg) are the same control, so they share one definition. The masthead's section nav
+   used to be a third member and is now the .views rail instead. */
 .tab,
 .seg {
   background: none;
@@ -764,7 +765,7 @@ button.link:hover:not(:disabled) {
    -- never widens it and shoves its neighbors sideways (the tab/nav "wiggle"). A hidden,
    zero-height copy of the label at the bold weight sets the width; the visible text rides above
    it. `visibility: hidden` keeps the strut out of the accessibility tree. Applied to every
-   control that bolds when active (masthead nav + queue tabs `.tab`, policy toggle `.seg`, the
+   control that bolds when active (queue lane tabs `.tab`, policy toggle `.seg`, the
    settings/policy rails `.settings-tab`, the docs index `.docs-index-item`); each needs a
    `data-label` of its visible text, and one without simply keeps the old behavior. */
 .tab[data-label]::after,
@@ -1357,9 +1358,9 @@ main.split {
 
 /* ---- review queue -------------------------------------------------------- */
 
-/* Container base is shared with .views/.segmented near the top of the file; only the
-   queue-specific top margin and hug-content width live here, so the active pill reads like
-   the masthead's rather than floating on an underline. */
+/* Container base is shared with .segmented near the top of the file; only the queue-specific
+   top margin and hug-content width live here. The masthead's nav is deliberately NOT in this
+   track any more, so a lane switcher and a section switcher no longer wear the same chrome. */
 .tabs {
   margin-top: 1rem;
   width: fit-content;
@@ -4377,8 +4378,8 @@ a.rating-chip:hover {
   outline-offset: 1px;
 }
 
-/* .segmented (container) and .seg (pill) are defined alongside .views/.tabs and .tab near
-   the top of the file -- one shared segmented-control so the three never diverge. */
+/* .segmented (container) and .seg (pill) are defined alongside .tabs and .tab near the top of
+   the file -- one shared segmented-control so the two never diverge. */
 
 .check {
   display: flex;
