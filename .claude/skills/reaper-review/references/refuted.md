@@ -313,6 +313,44 @@ who answered yes; the measurement that removed the control-track candidate's "de
 objection was that releasing the track moves the control's right edge 0.00px at every width, so
 the reserved 312px buys no alignment at all.
 
+## Refuted at `65359be` (2026-07-27, reviewing the rule-140 reader sweep, PR #93)
+
+Two lanes fired by path (`safety` on `engine/{gates,signals}.py` + `services/snapshot.py`,
+`diff` on the rest); no `seam`, since no route, schema or frontend file changed. The commit
+teaches the four readers of the two watcher counts to check the mirror's reach first. **The
+core derivation survived both lanes untouched** — `history_shortfall`, `reach_shortfall`,
+`FieldSpec.reach_span` and `_survives_more_history` were each attacked independently and held.
+Everything that did survive was a comment, a fixture, or the one reader nobody swept.
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| engine-fields | `_survives_more_history` gets `Op.LTE` backwards, or mis-composes against CONDEMN's AND and PROTECT's OR | All four outcomes × both lanes walked: a lower bound already clearing a `gte` floor stays clear, one already exceeding an `lte` ceiling stays exceeded, and the two overturnable outcomes are exactly the dangerous pair. `NUMERIC_OPS` is exactly `(GTE, LTE)`, both handled; the `case _:` returns `False` (block), so even a future numeric op fails closed. |
+| safety | The new blocked arm withdraws a PROTECT and widens deletion | A blocked `CustomProtectGate` is `ABSTAIN, blocked=True`, which `decide_verdict` resolves to abstain, and `GateId.CUSTOM` is absent from `verdict.DEFERRABLE_BLOCK_GATES`, so it holds a hand reap too. No path to condemn. |
+| safety | `evaluate_keep`'s `evaluated=False` corrupts coverage accounting | `score()` computes coverage over `results` only; keeps are deliberately excluded. `KeepResult.evaluated` is read only by the stored-explanation writer. |
+| safety | `window_days=None` reaches `reach_shortfall` in production | `CustomProtectGate` is constructed at exactly one production site (`scan_runner.py:157`) with the policy's window, simulate included via the same `build_gates`; `evaluate_custom`/`evaluate_keep` are reached only from `score()`, whose parameter is typed `int`. The `None` arm is a fail-closed default for an unforeseen caller. |
+| safety | A future `added_at` makes `days_since_added` negative and disables the check | True and correct: an item that did not exist yet has no plays the mirror could have missed. |
+| safety | The reach is frozen on `ScanContext` while `days_since_added` samples `utcnow()` per item (rule 104 dual clock) | Real but inert: at most one day of drift, and it raises `needed`, which blocks more. |
+| safety | `evaluate_rules`' new `window_days` mis-composes the two lanes | Moot: `evaluate_rules` has no caller in `src/` at all (test-only). Production custom condemn rules go one condition at a time through `evaluate_custom` → `fields.evaluate`. |
+| safety | The mid-binge guard is a second unswept mirror reader | Declined: `sequential_protections` reads per-user positions, not a watcher count, and is already time-bounded by `in_progress_hold_days`. |
+| engine-fields | `days_unwatched` is mirror-derived and needs a `reach_span` too | `reference_instant` clamps it to `max(added_at, horizon)`, so it can never exceed the reach; every divergence *understates* dormancy, the keep direction on both a `gte` condemn and an `lte` protect rule. The branch's own LEARNINGS entry states this correctly. |
+| diff | `scan_runner.build_gates`'s window differs from the one `_watch_stats` counted with | Proven rather than assumed: `snapshot.py:600` builds `build_gates(movie_policy)`/`build_gates(tv_policy)`, and the counts come from the same object's `popularity_window_days()` per media type. |
+| diff | `season_scan.build_season_facts` is missing an import, or uses the show's arrival date rather than the season's | `dormancy_days`/`utcnow` are imported and already used ten lines above; `season_added_at` is fed from `in_plex.added_at`, the Plex *season* row. |
+| diff | `backtest.facts_as_of`'s "the guard at the top returns None otherwise" is untrue | The guard is `if item.added_at is None or item.added_at > cutoff: return None`. The claim holds exactly. |
+| rule 35 | A fact builder was missed | All four `Facts(` sites in `src/` set it (`snapshot`, `season_scan`, `backtest`, and `facts_codec` via the derived `_OBS_FIELDS`); `calibration.py` builds none. A row predating the field thaws `Unknown` (rule 104), which blocks. |
+| rule 21 | The new operator strings breach plain language | All plain, no em dashes, no ids or internal vocabulary. The longest (`"kept fully: could not check … only goes back 3 months"`) stacks three clauses in the `WhyPanel` keeps list, but the two-clause form it extends is pre-existing and the panel prints an explanatory note directly beneath it. |
+| docs | `docs/STATUS.md`'s carried-forward "masked by the shipped 1095-day dormancy floor" is now false for the new readers | Still holds: condemning under that floor needs dormancy ≥ 1095, dormancy is clamped to the reach, so the reach must already span any ≤1095-day window. |
+
+**The generalizable lesson, and why it is worth the space: the sweep's own scope was the
+defect.** Rule 140 was written by the commit under review and names "the season roll-up" in its
+own text, and the season roll-up is precisely what went unswept — because it reads no `Facts`.
+Every reader the sweep *did* find was found by grepping `facts.<field>`, and the one it missed
+holds the same truncated count in a local variable (`season_scan.season_watch_stats` →
+`watchers_by_season` → `season_pruning._detect_conflicts`), where no grep for the fact's name
+reaches it. Filed as #94. **Sweep the value, not the attribute path** — and note that the
+`394cc3a` pass recorded the mirror-image version of this same lesson one commit earlier ("the
+real miss was not a query but a *reader*"). Twice now the missed site was the one that did not
+look like the others.
+
 ## Refutations later found to be wrong
 
 None yet. When one lands here, record what the verifier missed — that reasoning is worth more

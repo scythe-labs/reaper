@@ -637,11 +637,11 @@ class TestTheBacktestVerdictMatchesProduction:
         365-day default takes full FEW_WATCHERS pressure at coverage 1.0, where production
         withholds it at coverage 0.0.
 
-        **365 is deliberately not in the sweep.** It is ``score()``'s own default, so it is
-        the one value that cannot tell a window that was passed from a window that was
-        omitted -- which is exactly why every other backtest fixture, all of which pin 365,
-        left this invisible behind a green suite. The low end is the 1 day the field
-        actually allows (``PolicyBody`` bounds ``window_days`` ``ge=1``).
+        **365 is deliberately not in the sweep** (rule 141). It is ``score()``'s own
+        default, so it is the one value that cannot tell a window that was passed from a
+        window that was omitted -- which is exactly why every other backtest fixture, all
+        of which pin 365, left this invisible behind a green suite. The low end is the 1
+        day the field actually allows (``PolicyBody`` bounds ``window_days`` ``ge=1``).
 
         The spy reads the kwarg with ``.get`` rather than subscripting, so an omitted
         window fails this on the VALUE it scored against. Subscripting would raise

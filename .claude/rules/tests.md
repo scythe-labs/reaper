@@ -9,7 +9,7 @@ paths:
 # Test blockers
 
 Blockers, not suggestions. **Rule numbers are permanent** — cite them in test docstrings the
-way the existing suite does (`rule 88`, `rule 118`). Holds 37, 118–119, 132–133, 135–137.
+way the existing suite does (`rule 88`, `rule 118`). Holds 37, 118–119, 132–133, 135–137, 141.
 
 **37. Tests that boot the app are hermetic.** Use the shared autouse `_hermetic` fixture in
 `tests/conftest.py`, which stubs env seeding and startup network. Never let a test read the
@@ -140,3 +140,23 @@ user-event throw instead of return at its three `isDisabled` short-circuits
 (`utility/selectOptions.js`, `utility/upload.js`, `system/pointer/mouse.js`), then run the suite:
 a test with no margin fails, and one acting on a disabled control says so. Those two were the
 only ones. Re-run it that way rather than reasoning about which awaits are load-bearing.
+
+**141. A fixture that pins the same value as the production default cannot prove the value was
+passed.** Where a function takes an argument that also has a default, a test supplying the
+default tests nothing about the wiring: an omitted argument and a correctly-passed one produce
+identical output, so the assertion passes either way. `backtest.run` scored every item against
+`score()`'s 365-day default instead of the operator's popularity window, and every backtest
+fixture in the suite pinned `window_days=365` — the same number — so 2,578 green tests could not
+see it. The bug was found by reading, not by running.
+
+So **choose fixture values that differ from the default, and sweep more than one.** A single
+non-default value proves the argument reaches the callee; a sweep proves the *right* one does,
+and catches a caller that passes a constant. Exclude the default from the sweep deliberately and
+say why, or it silently contributes a case that cannot fail.
+
+The same trap sits one level down, in how the assertion reads the value. Capturing it with
+`kwargs["name"]` makes an omission raise `KeyError`, which fails the test for the wrong reason:
+it pins *that an argument was passed*, not *which*. Read it with `.get` and assert on the value,
+so the failure names the span that was actually used. This is rule 118's "a test that cannot
+discriminate must never be left reading as a proof," applied to defaulted arguments rather than
+to interlock arms.
