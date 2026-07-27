@@ -331,14 +331,13 @@ Everything that did survive was a comment, a fixture, or the one reader nobody s
 | safety | A future `added_at` makes `days_since_added` negative and disables the check | True and correct: an item that did not exist yet has no plays the mirror could have missed. |
 | safety | The reach is frozen on `ScanContext` while `days_since_added` samples `utcnow()` per item (rule 104 dual clock) | Real but inert: at most one day of drift, and it raises `needed`, which blocks more. |
 | safety | `evaluate_rules`' new `window_days` mis-composes the two lanes | Moot: `evaluate_rules` has no caller in `src/` at all (test-only). Production custom condemn rules go one condition at a time through `evaluate_custom` → `fields.evaluate`. |
-| safety | The mid-binge guard is a second unswept mirror reader | Declined: `sequential_protections` reads per-user positions, not a watcher count, and is already time-bounded by `in_progress_hold_days`. |
 | engine-fields | `days_unwatched` is mirror-derived and needs a `reach_span` too | `reference_instant` clamps it to `max(added_at, horizon)`, so it can never exceed the reach; every divergence *understates* dormancy, the keep direction on both a `gte` condemn and an `lte` protect rule. The branch's own LEARNINGS entry states this correctly. |
-| diff | `scan_runner.build_gates`'s window differs from the one `_watch_stats` counted with | Proven rather than assumed: `snapshot.py:600` builds `build_gates(movie_policy)`/`build_gates(tv_policy)`, and the counts come from the same object's `popularity_window_days()` per media type. |
+| diff | `scan_runner.build_gates`'s window differs from the one `_watch_stats` counted with | Proven rather than assumed: `scan_runner.py:600-601` builds `build_gates(movie_policy)`/`build_gates(tv_policy)`, and the counts come from the same object's `popularity_window_days()` per media type. |
 | diff | `season_scan.build_season_facts` is missing an import, or uses the show's arrival date rather than the season's | `dormancy_days`/`utcnow` are imported and already used ten lines above; `season_added_at` is fed from `in_plex.added_at`, the Plex *season* row. |
 | diff | `backtest.facts_as_of`'s "the guard at the top returns None otherwise" is untrue | The guard is `if item.added_at is None or item.added_at > cutoff: return None`. The claim holds exactly. |
 | rule 35 | A fact builder was missed | All four `Facts(` sites in `src/` set it (`snapshot`, `season_scan`, `backtest`, and `facts_codec` via the derived `_OBS_FIELDS`); `calibration.py` builds none. A row predating the field thaws `Unknown` (rule 104), which blocks. |
 | rule 21 | The new operator strings breach plain language | All plain, no em dashes, no ids or internal vocabulary. The longest (`"kept fully: could not check … only goes back 3 months"`) stacks three clauses in the `WhyPanel` keeps list, but the two-clause form it extends is pre-existing and the panel prints an explanatory note directly beneath it. |
-| docs | `docs/STATUS.md`'s carried-forward "masked by the shipped 1095-day dormancy floor" is now false for the new readers | Still holds: condemning under that floor needs dormancy ≥ 1095, dormancy is clamped to the reach, so the reach must already span any ≤1095-day window. |
+| docs | `docs/STATUS.md`'s carried-forward "masked by the shipped 1095-day dormancy floor" is now false for the new readers | **Half-refuted, and recorded as such rather than retired.** The argument holds for every reader whose span is the popularity *window*: condemning under that floor needs dormancy ≥ 1095, dormancy is clamped to the reach, so the reach already spans any ≤1095-day window. It does NOT hold for the all-time count, whose span is the item's AGE, not a window — an item dormant 1200 days behind a 1200-day reach but added 3000 days ago has every shipped gate answering normally while an operator's `watchers_all_time gte 1` protection returns blocked. Keep-direction, so not a fail-open, but the floor masks nothing there and STATUS.md now says which half it covers. |
 
 **The generalizable lesson, and why it is worth the space: the sweep's own scope was the
 defect.** Rule 140 was written by the commit under review and names "the season roll-up" in its
@@ -347,11 +346,43 @@ Every reader the sweep *did* find was found by grepping `facts.<field>`, and the
 holds the same truncated count in a local variable (`season_scan.season_watch_stats` →
 `watchers_by_season` → `season_pruning._detect_conflicts`), where no grep for the fact's name
 reaches it. Filed as #94. **Sweep the value, not the attribute path** — and note that the
-`394cc3a` pass recorded the mirror-image version of this same lesson one commit earlier ("the
-real miss was not a query but a *reader*"). Twice now the missed site was the one that did not
-look like the others.
+`394cc3a` pass recorded the mirror-image version of this same lesson 22 commits and four
+review passes back ("the real miss was not a query but a *reader*"). Twice now the missed site
+was the one that did not look like the others, and the second time nobody reread the first.
 
 ## Refutations later found to be wrong
 
-None yet. When one lands here, record what the verifier missed — that reasoning is worth more
-than the finding, because it is the failure mode of the review process itself.
+### The mid-binge guard, refuted at `65359be` and confirmed hours later at `23f86fc`
+
+**Refuted as:** "The mid-binge guard is a second unswept mirror reader — declined:
+`sequential_protections` reads per-user positions, not a watcher count, and is already
+time-bounded by `in_progress_hold_days`."
+
+**It is real.** Filed as #95. Driven through the real `active_progress` and
+`plan_series_prune`, one viewer who finished Season 3 120 days ago under the shipped 180-day
+hold, identical but for the mirror:
+
+```
+mirror reaches 400 days:  prunable=[1, 2, 3]     protected=[(4, 'a viewer is part-way through the show')]
+mirror reaches  90 days:  prunable=[1, 2, 3, 4]  protected=[]
+```
+
+**What the verifier missed, which is the part worth keeping.** Both halves of the refutation
+were true statements that did not support the conclusion.
+
+- *"Reads per-user positions, not a watcher count"* — correct, and irrelevant. Rule 140 binds
+  readers of a re-qualified **value**, not readers of one named field. Both queries are
+  unwindowed over `watch_event`, so both inherit the horizon whatever shape they read it into.
+  The refutation checked what the guard reads instead of where it comes from.
+- *"Already time-bounded by `in_progress_hold_days`"* — the bound runs the wrong way.
+  `in_progress_hold_days` is not a bound on the mirror; it is the span the guard *claims* to
+  cover, so a mirror shallower than it is precisely the unsupported claim. A window that
+  defines the claim was mistaken for a window that constrains the evidence.
+
+**And the deeper miss: it was filed in the wrong place to begin with.** Nobody had shown the
+trigger could not occur — the word in the row is "Declined", not "refuted" — so it belonged in
+`unproven.md` with the evidence that would settle it. Putting a live candidate in the file the
+next pass reads *in order to skip things* is how a real defect gets one line of prose and no
+further looks. **"Declined", "unreachable today", and "not worth acting on" are three different
+verdicts and none of them is a refutation.** A row here has to mean someone demonstrated the
+trigger cannot occur; anything softer goes to `unproven.md` or to an issue.

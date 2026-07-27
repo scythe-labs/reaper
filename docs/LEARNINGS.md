@@ -1546,6 +1546,59 @@ which is why `Facts.days_since_added` is measured from the arrival date itself.
 Worth noting because the shortcut was written down as the fix and reads entirely plausible;
 it survives until you ask what `reference_instant` does with the horizon.
 
+## A span passed to one consumer and defaulted at the next (2026-07-27)
+
+Measured while reviewing the rule 140 sweep. `backtest.run` computes the operator's popularity
+window once, hands it to `facts_as_of` to count `distinct_watchers` over, and then called
+`score()` without it — so the count was built over the operator's span and validated against
+the shipped 365-day default. On a 730-day window over a 400-day mirror:
+
+| policy weights | window passed | window defaulted |
+| --- | --- | --- |
+| all 100 on FEW_WATCHERS | 0.00/100, coverage 0.00 | 100.00/100, coverage 1.00 |
+| shipped 70/20/10 | 1.68/100, coverage 0.80 | 21.68/100, coverage 1.00 |
+
+**The direction is the counter-intuitive part, and it is worth stating twice: understating the
+window charges MORE, not less.** A shorter window is *easier* for the mirror to cover, so the
+shortfall check stops firing and the signal takes full pressure at full coverage on a count the
+true window could not establish. The first draft of the fix wrote this backwards in a docstring
+— reasoning that "a window the history cannot cover withdraws pressure" and then concluding that
+understating it must therefore withdraw pressure too, when understating it *removes* the
+withholding. A reviewer caught it by sweeping the value instead of reading the sentence.
+
+Two general forms, both cheap to check and both missed by a green suite of 2,578 tests:
+
+- **A fixture that pins the same value as the production default cannot prove the value was
+  passed.** Every backtest fixture used 365, which is exactly `score()`'s default, so an omitted
+  argument and a correct one produced identical output. Now rule 141.
+- **One span with two consumers needs both pinned.** The first fix spied on `score` alone, which
+  proved the repaired line and nothing about the sibling call four lines above it: hardcoding
+  `facts_as_of(popularity_window_days=365)` left the entire suite green while withdrawing a
+  PROTECT and adding 20 points of pressure at coverage 1.0.
+
+## The lab's own fixture decides what a 440-vector sweep can see (2026-07-27)
+
+Stating `Facts.days_since_added` as `Unknown` in `tests/_policy_lab.py` — the only honest
+reading, since a vector records plays and not an arrival date — takes half the outcome matrix
+for `watchers_all_time` out of reach, measured over all 440 vectors:
+
+| rule | outcome |
+| --- | --- |
+| graded keep | `{40.0: 440}` — every vector at the maximum discount |
+| protect `gte 1` | 415 matched, 25 blocked, **0** checked-and-did-not-fire |
+| protect `lte 5` | 268 blocked, 172 checked-and-did-not-fire, **0** matched |
+
+The two surviving arms are exactly the outcomes `fields._survives_more_history` lets through as
+already earned. That is the guard working. But "a keep never raises a score" now holds against a
+constant, and would stay green if the ramp broke outright.
+
+**The tempting repair is fail-open and must be refused.** A floor on the age derived from the
+oldest play (the mirror of `mirror_reach_days`, which is sound) makes `reach >= age` pass *more*
+readily, so it would hand the lab counts the real scan refuses. Understating a reach blocks
+more; understating an age blocks less. **A lower bound is only safe on the side of the
+comparison where more evidence can only tighten the answer** — check which side you are on
+before reusing the trick.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs
