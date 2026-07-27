@@ -122,6 +122,17 @@ class BacktestResult:
     considered: int = 0
     skipped_not_yet_added: int = 0
 
+    blocked_unreadable: int = 0
+    """Items a protection could not be *checked* on, so no verdict was earned.
+
+    Distinct from ``protected`` (a protection fired) and from an abstain on the score:
+    these are rehearsals that could not run at all. It is a whole-run condition more often
+    than a per-item one -- a mirror shallower than ``cutoff`` plus the popularity window
+    blocks every item, since the windowed watcher count is then a lower bound everywhere
+    (``gates.ServerPopularityGate``) -- and without a count of its own the run reports as a
+    policy that would delete nothing, which reads identically to a policy that is simply
+    cautious. Whoever wires M3c must be able to tell those apart."""
+
     grace_days: int = 14
 
     condemned: list[tuple[str, float, int]] = field(default_factory=list)
@@ -248,6 +259,13 @@ class BacktestResult:
             f"  protected            {self.protected:,} items",
             f"  could not judge      {self.skipped_not_yet_added:,} (not yet added at the cutoff)",
         ]
+        if self.blocked_unreadable:
+            share = self.blocked_unreadable / self.considered if self.considered else 0.0
+            lines += [
+                f"  could not check      {self.blocked_unreadable:,} "
+                f"({share:.0%} of them -- a protection was unreadable, so these were "
+                "not rehearsed)",
+            ]
         lines += [
             f"  rescued in grace     {len(self.rescued):,} "
             f"(played within {self.grace_days}d, so the pre-delete check spares them)",
@@ -516,6 +534,11 @@ async def run(
             result.protected += 1
             continue
         if verdict != "condemn":
+            # An abstain has two very different causes and the summary must not blur them:
+            # a protection that could not be checked means the rehearsal did not run on
+            # this item, while a low score means it ran and the policy kept the file.
+            if evaluation.blocked:
+                result.blocked_unreadable += 1
             continue
 
         result.condemned.append((item.title, item_score.value, item.size_bytes))

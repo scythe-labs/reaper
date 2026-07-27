@@ -13,6 +13,7 @@ from datetime import timedelta
 from reaper.clock import utcnow
 from reaper.engine.backtest import BacktestResult, Item, facts_as_of, rewatch_prior
 from reaper.engine.calibration import Bucket, RewatchPrior
+from reaper.engine.gates import GateConfig, GateId, ServerPopularityGate
 from reaper.engine.observation import Known
 
 NOW = utcnow()
@@ -109,6 +110,51 @@ class TestFactsAreRebuiltAsOfTheCutoff:
         assert facts is not None
         assert isinstance(facts.days_observed_unwatched, Known)
         assert round(facts.days_observed_unwatched.value) == 635  # 1000 - 365
+
+    def test_the_reach_is_measured_from_the_cutoff_not_from_today(self) -> None:
+        """A replay standing at the cutoff had only the history that existed then.
+
+        The reach is what tells ``ServerPopularityGate`` whether a windowed watcher count
+        covers the window it names, so measuring it from today would hand the rehearsal
+        evidence the live scan did not have at that date -- the gate would answer where
+        production could not, and the backtest would flatter the policy.
+        """
+        facts = facts_as_of(_item(added_days_ago=1000), [], cutoff=CUTOFF, horizon=HORIZON)
+
+        assert facts is not None
+        assert isinstance(facts.history_reach_days, Known)
+        # 3000 (horizon) - 365 (cutoff), not 3000.
+        assert round(facts.history_reach_days.value) == 2635
+
+    def test_a_mirror_too_young_for_the_window_is_reported_not_scored_as_zero(self) -> None:
+        """A rehearsal that could not run must not read as a policy that deletes nothing.
+
+        With the mirror installed 500 days ago and a cutoff a year back, only 135 days of
+        history stood behind the popularity window at that date, so the count is a lower
+        bound and every item blocks. The old summary printed "would have deleted 0 items"
+        and "No regrets", which is what a maximally cautious policy also prints.
+        """
+        recent_horizon = NOW - timedelta(days=500)
+        facts = facts_as_of(_item(added_days_ago=1000), [], cutoff=CUTOFF, horizon=recent_horizon)
+
+        assert facts is not None
+        assert isinstance(facts.history_reach_days, Known)
+        assert round(facts.history_reach_days.value) == 135
+
+        gate = ServerPopularityGate(
+            GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=365)
+        )
+        assert gate.evaluate(facts).blocked is True
+
+        result = BacktestResult(cutoff=CUTOFF, condemn_at=70, considered=4, blocked_unreadable=4)
+        assert "could not check      4" in result.summary()
+        assert "100% of them" in result.summary()
+
+    def test_a_run_with_nothing_blocked_stays_quiet_about_it(self) -> None:
+        """The line is a report of trouble, so it must not appear when there is none."""
+        result = BacktestResult(cutoff=CUTOFF, condemn_at=70, considered=4)
+
+        assert "could not check" not in result.summary()
 
     def test_a_never_played_item_older_than_the_horizon_counts_from_the_horizon(
         self,
