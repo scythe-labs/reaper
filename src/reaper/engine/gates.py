@@ -227,6 +227,24 @@ class Facts:
     ``season_rank`` precedent -- so it never condemns and never protects where it does
     not apply."""
 
+    # --- how far the evidence itself reaches ------------------------------------------
+
+    history_reach_days: Observation[float] = _UNSET
+    """How many days of watch history the mirror held when this item was judged.
+
+    Not about the item: it is the *reach* of the evidence every windowed count is drawn
+    from (``services.history_sync`` names it that). ``distinct_watchers`` is only a
+    complete answer while the reach covers the policy's window. Under that, a count below
+    the floor is a lower bound rather than "nobody watched it", and the plays it cannot
+    see are exactly the ones that would have fired the protection -- so
+    ``ServerPopularityGate`` fails closed instead of printing a claim about a year it saw
+    three months of.
+
+    Defaulted like the custom-rule fields above so historical and hand-built Facts need
+    not enumerate it, and read as un-checkable unless ``Known`` -- the keep direction, and
+    what a stored snapshot predating the field thaws as (rule 104).
+    """
+
     ratings: tuple[Rating, ...] = ()
     """Every interpretable rating the scan froze for this item, one per source (IMDb,
     TMDb, Rotten Tomatoes critics/audience, Metacritic). Read only by the multi-source
@@ -412,7 +430,12 @@ class StreamingNowGate:
 
 @dataclass(frozen=True, slots=True)
 class ServerPopularityGate:
-    """Keep what your users actually watch, regardless of who asked for it."""
+    """Keep what your users actually watch, regardless of who asked for it.
+
+    The count is drawn from a mirror that begins somewhere (``Facts.history_reach_days``),
+    so this gate asks its question twice: how many people watched it, and whether the
+    evidence goes back far enough for that number to mean what it says.
+    """
 
     config: GateConfig
     id: GateId = GateId.SERVER_POPULARITY
@@ -433,6 +456,32 @@ class ServerPopularityGate:
                 self.id,
                 PROTECT,
                 detail=f"watched here: {count} {people} in the last {window_text}",
+            )
+        # Everything below here says the protection did NOT fire, and that is only an
+        # answer if the mirror actually saw the whole window. A history reaching back
+        # three months cannot report who watched a title over a year: the count it returns
+        # is a lower bound, and the plays it cannot see are precisely the ones that would
+        # have kept the file. Printing "nobody watched it" there is the horizon vector
+        # (``DataHorizonGate``, ``services.history_sync``) arriving down the watcher lane
+        # instead of the dormancy one, so fail closed (rules 2, 93).
+        #
+        # The PROTECT above deliberately needs no such check: a play seen inside part of
+        # the window did happen inside the window, so a lower bound that already clears
+        # the floor clears it however much more history arrives.
+        reach = facts.history_reach_days
+        if not isinstance(reach, Known) or reach.value < window:
+            short = (
+                f"your watch history only goes back {humanize_days(reach.value)}"
+                if isinstance(reach, Known)
+                else "this scan did not record how far back your watch history goes"
+            )
+            return GateResult(
+                self.id,
+                ABSTAIN,
+                blocked=True,
+                # "could not check ..." is load-bearing, not phrasing: it is what keeps a
+                # hand reap from overruling this block (``verdict.block_holds_reap``).
+                detail=f"could not check who watched it in the last {window_text}: {short}",
             )
         if count == 0:
             return GateResult(
@@ -563,7 +612,10 @@ class DataHorizonGate:
 
     Tautulli cannot import Plex history from before it was installed, so everything watched
     before that looks never-watched -- the single biggest mass-deletion vector in the whole
-    ecosystem. The real defense against it lives in fact *derivation*, not in this gate:
+    ecosystem. It arrives down two lanes, and neither defense is this gate's. On the watcher
+    lane, ``ServerPopularityGate`` refuses to report a protection as checked over a window
+    its history does not span (``Facts.history_reach_days``). On the dormancy lane, which is
+    the rest of this docstring, the defense lives in fact *derivation*:
     dormancy is measured from ``max(added_at, horizon)`` (see ``services.snapshot.build_facts``,
     ``engine.backtest.facts_as_of`` and ``engine.calibration.derive``), so a pre-horizon item
     is clamped to the horizon rather than read as decades dormant.

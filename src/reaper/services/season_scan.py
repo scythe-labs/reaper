@@ -76,7 +76,7 @@ from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
 from reaper.db.models import SizeSource
 from reaper.engine import identity
-from reaper.engine.dormancy import dormancy_days, reference_instant
+from reaper.engine.dormancy import dormancy_days, history_reach_days, reference_instant
 from reaper.engine.gates import ABSTAIN as GATE_ABSTAIN
 from reaper.engine.gates import PROTECT as GATE_PROTECT
 from reaper.engine.gates import Facts, GateId, GateResult
@@ -577,6 +577,11 @@ def build_season_facts(
         days_observed_unwatched=dormancy,
         distinct_watchers=recent,
         distinct_watchers_all_time=all_time,
+        # The movie lane's twin (``snapshot.build_facts``, rule 72): the same mirror backs
+        # both counts, so both must say how far back it reaches.
+        history_reach_days=Known(
+            value=history_reach_days(horizon, now=utcnow()), source="tautulli"
+        ),
         size_bytes=(
             Known(value=season.size_on_disk, source="sonarr")
             if season.size_on_disk is not None
@@ -730,6 +735,9 @@ async def season_watch_stats(
     if not season_keys:
         return stats
 
+    # Unclamped by the horizon, like the movie twin (`snapshot._watch_stats`): the clamp
+    # would move no count, and the reach is carried on `Facts.history_reach_days` and read
+    # by the shared popularity gate (rule 72).
     since = int((utcnow() - timedelta(days=window_days)).timestamp())
     keys = sorted(season_keys)
 

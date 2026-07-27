@@ -384,6 +384,30 @@ def _facts(**over: Any) -> Any:
     return season_scan.build_season_facts(**base)
 
 
+class TestSeasonsRecordTheHistoryReachToo:
+    """Rule 72: the movie builder's fix lands on its twin in the same change.
+
+    Both lanes count watchers out of the same ``watch_event`` mirror over the same
+    policy window, so both need to say how far back that mirror reaches or
+    ``ServerPopularityGate`` (shared by both) blocks every season forever. See
+    ``test_fact_layer_states.TestTheScanRecordsHowFarBackItsHistoryReaches``.
+    """
+
+    def test_the_season_builder_records_the_reach(self) -> None:
+        facts = _facts(horizon=utcnow() - timedelta(days=200))
+
+        assert facts.history_reach_days == Known(value=200, source="tautulli")
+
+    def test_an_unresolved_season_still_records_it(self) -> None:
+        """The reach is a property of the mirror, not of the season, so it is known even
+        for a season whose own watch facts are not. Were it to ride on the rating key,
+        every unmatched season would block on the reach instead of on the honest
+        "Plex has not matched this" the watch facts already carry."""
+        facts = _facts(plex_rating_key=None, horizon=utcnow() - timedelta(days=200))
+
+        assert facts.history_reach_days == Known(value=200, source="tautulli")
+
+
 class TestBuildSeasonFacts:
     def test_an_unresolved_season_has_unknown_watch_facts(self) -> None:
         """No Plex rating key means no history to read. Dormancy, popularity and streaming

@@ -50,7 +50,7 @@ from reaper.clients.tautulli import TautulliClient
 from reaper.clock import from_epoch, utcnow
 from reaper.db.models import Candidate, FirstFlagged, SizeSource, Snapshot
 from reaper.engine import facts_codec, identity
-from reaper.engine.dormancy import dormancy_days, reference_instant
+from reaper.engine.dormancy import dormancy_days, history_reach_days, reference_instant
 from reaper.engine.gates import Evaluation, Facts, Gate, GateResult, evaluate_all
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.engine.policy import PolicyBody, combine_hashes
@@ -377,6 +377,12 @@ def build_facts(
         days_observed_unwatched=dormancy,
         distinct_watchers=recent,
         distinct_watchers_all_time=all_time,
+        # How much of the popularity window those counts could actually see. Scan-wide
+        # rather than per-item, but it is read alongside the count it qualifies, so it
+        # rides on the same record (see ``Facts.history_reach_days``).
+        history_reach_days=Known(
+            value=history_reach_days(context.horizon, now=utcnow()), source="tautulli"
+        ),
         size_bytes=(
             Known(value=item.size_bytes, source="radarr")
             if item.size_bytes is not None
@@ -1915,6 +1921,13 @@ async def _watch_stats(
     # and Unknown protects) rather than crashing the scan with 'no such table'.
     await history_sync.ensure_schema(engine)
 
+    # Deliberately NOT clamped up to the data horizon, though a window reaching past it is
+    # exactly the bug this guards. Clamping here would change no count: the horizon IS the
+    # oldest row, so there is nothing between it and `window_start` to find, and the query
+    # would return the same number while reading as though the hole were closed. The hole
+    # is in what the number MEANS, so it is closed where the number is interpreted --
+    # `Facts.history_reach_days` records the reach and `gates.ServerPopularityGate` refuses
+    # to report a protection as checked over a window the mirror does not span.
     window_start = int((utcnow() - timedelta(days=window_days)).timestamp())
 
     # One pass over the movie rows for all three figures, where three separate GROUP BY
@@ -1974,6 +1987,9 @@ async def _fold_merged_watch_stats(
     all_keys = sorted({key for group in groups.values() for key in group})
     if not all_keys:
         return
+    # Unclamped by the horizon for the reason spelled out in `_watch_stats`: the clamp
+    # would move no count, and the reach is carried on `Facts.history_reach_days` instead
+    # (rule 72).
     window_start = int((utcnow() - timedelta(days=window_days)).timestamp())
     per_key: dict[int, list[Any]] = {}
     async with engine.connect() as conn:

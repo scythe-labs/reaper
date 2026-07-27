@@ -20,9 +20,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from structlog.testing import capture_logs
 
+from reaper.clock import utcnow
 from reaper.engine import identity
+from reaper.engine.gates import GateConfig, GateId, ServerPopularityGate
 from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
+from reaper.engine.verdict import decide_verdict
 from reaper.services import lists
 from reaper.services.snapshot import RawItem, ScanContext, _reported_size, build_facts
 
@@ -203,6 +206,76 @@ class TestASizeWeCouldNotReadIsUnknown:
         facts = _facts(_raw(size_bytes=8_000_000_000))
 
         assert facts.size_bytes == Known(value=8_000_000_000, source="radarr")
+
+
+class TestTheScanRecordsHowFarBackItsHistoryReaches:
+    """The watcher lane's half of the horizon defense.
+
+    Dormancy has been clamped to the horizon since early on (``dormancy.reference_instant``),
+    so an item older than the mirror reads as dormant since the mirror's edge rather than
+    for decades. The *watcher count* had no equivalent: it was counted over
+    ``utcnow() - window_days`` whatever the mirror held, so on a history younger than the
+    window a title several people watched inside that window counted as nobody, and the
+    gate printed "Nobody here watched it in the last year" about a year it had not seen.
+
+    The count itself cannot be fixed by clamping the query -- there are no rows before the
+    horizon to find -- so the scan records the reach instead and the gate refuses to
+    answer past it.
+    """
+
+    def test_the_builder_records_the_reach_from_the_scan_horizon(self) -> None:
+        now = utcnow()
+        facts = build_facts(
+            _raw(),
+            ScanContext(horizon=now - timedelta(days=90)),
+            membership_index=_EMPTY_INDEX,
+            imdb={},
+            last_played={},
+            watchers_window={10: 0},
+            watchers_all_time={10: 0},
+            whitelisted=set(),
+        )
+
+        assert facts.history_reach_days == Known(value=90, source="tautulli")
+
+    def test_a_title_watched_before_a_young_horizon_is_held_not_condemned(self) -> None:
+        """The issue, driven through the builder and the shipped gate.
+
+        The mirror reaches back 90 days; the operator lowered the dormancy floor, so the
+        clamp no longer saves the item on its own; several people watched this title eight
+        months ago, which is inside the year-long window and outside the mirror. The scan
+        sees a zero, and must not call it one.
+        """
+        gate = ServerPopularityGate(
+            GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=365)
+        )
+        facts = build_facts(
+            _raw(),
+            ScanContext(horizon=utcnow() - timedelta(days=90)),
+            membership_index=_EMPTY_INDEX,
+            imdb={},
+            last_played={},
+            watchers_window={10: 0},  # what the mirror can see: nobody, in 90 days
+            watchers_all_time={10: 0},
+            whitelisted=set(),
+        )
+
+        result = gate.evaluate(facts)
+
+        assert result.blocked is True
+        assert result.detail.startswith("could not check")
+        assert (
+            decide_verdict(
+                protected=False,
+                blocked=True,
+                blocked_holds_reap=True,
+                score=100,
+                coverage_bp=10_000,
+                condemn_at=1,
+                coverage_floor_bp=0,
+            )
+            == "abstain"
+        )
 
 
 class TestWatchCountsFromAStaleMirrorAreNotZero:

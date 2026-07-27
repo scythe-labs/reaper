@@ -101,6 +101,7 @@ Last verified against the code: 2026-07-26.
 | Protect authoring | **Catalog + user-authored protect rules** (worst case is nothing deletes) |
 | Signals | **Unsigned**, fixed denominator including unknown weights |
 | Observations | **Known / Absent / Unknown** — never conflated |
+| Watch-history reach | The popularity gate answers only for a window its history spans (`Facts.history_reach_days`). Below that, a count under the floor is a *lower bound*, so the gate reports "could not check" and the file is held — rather than narrowing the claim and deleting on it. Masked by the shipped 1095-day dormancy floor; it bites operators who lowered it |
 | Delete mode | Grace is a **notice** window, not a gate: it starts a DB-only countdown and drives Leaving Soon + Discord. Nothing on the deletion path reads it, so what actually spares a file at send time is the live played-since-approval and streaming vetoes |
 | Autonomy | An **earned grant keyed to `policy_hash`** — any edit reverts to approval-required |
 | Caps | **Four**: items + bytes, per-run + rolling 30-day |

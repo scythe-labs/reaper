@@ -48,7 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from reaper.clock import from_epoch
 from reaper.engine.calibration import NotCalibratedError, RewatchPrior
-from reaper.engine.dormancy import dormancy_days, reference_instant
+from reaper.engine.dormancy import dormancy_days, history_reach_days, reference_instant
 from reaper.engine.gates import Evaluation, Facts, Gate, evaluate_all
 from reaper.engine.observation import Absent, Known
 from reaper.engine.policy import PolicyBody
@@ -374,6 +374,10 @@ def facts_as_of(
         days_observed_unwatched=Known(value=days_unwatched, source="tautulli"),
         distinct_watchers=Known(value=len(recent_watchers), source="tautulli"),
         distinct_watchers_all_time=Known(value=len(all_time_watchers), source="tautulli"),
+        # Measured from the cutoff, not from today: a replay standing at last April had
+        # only the history that existed then, and the popularity gate must be as unable to
+        # see past the horizon in rehearsal as it is in the live scan.
+        history_reach_days=Known(value=history_reach_days(horizon, now=cutoff), source="tautulli"),
         size_bytes=Known(value=item.size_bytes, source="radarr"),
         # Stated plainly: today's ratings. IMDb scores move slowly and there is no
         # historical archive, so pretending to know the 2025 value would be fiction.

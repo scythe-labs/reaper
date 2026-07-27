@@ -249,7 +249,10 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
     """One signal. Always in ``[0, weight]``.
 
     ``window_days`` is the popularity window, used only to phrase the "few watches" detail
-    as "in the last <period>"; it never changes a number, only how one reads.
+    as "in the last <period>"; it never changes a number, only how one reads. It is an
+    upper bound on that phrase rather than the phrase itself: a mirror shallower than the
+    window covers only part of it (``Facts.history_reach_days``), and the shorter span is
+    what gets named.
     """
     if not config.enabled:
         return SignalResult(
@@ -315,16 +318,31 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
             # Inverted, but still unsigned: FEWER watchers means MORE pressure.
             # The pressure is computed from the shortfall, never as a negative.
             raw = max(0.0, float(config.saturate_at) - watchers) if watchers is not None else None
+            # Named against the span the mirror actually covered, which is the window only
+            # while the history reaches that far back. The gate refuses to answer at all
+            # below that (``gates.ServerPopularityGate``); this lane is soft pressure, not
+            # a protection, so it narrows the claim rather than withholding it -- but it
+            # must not keep saying "in the last year" about a year it never saw.
+            reach = facts.history_reach_days
+            covered = (
+                min(float(window_days), reach.value) if isinstance(reach, Known) else window_days
+            )
+            # A mirror less than a day deep has no span worth naming, and "in the last less
+            # than a day" is not a sentence. Say what is true without naming one.
+            span = (
+                f"in the last {humanize_window(covered)}"
+                if covered >= 1
+                else "in the history Reaper holds"
+            )
             if watchers is None and isinstance(observation, Absent):
                 detail = "no watch history recorded for it"
             elif watchers is None:
                 detail = "could not tell who watched it"
             elif watchers == 0:
-                detail = f"nobody watched it in the last {humanize_window(window_days)}"
+                detail = f"nobody watched it {span}"
             else:
                 people = "person" if watchers == 1 else "people"
-                window_text = humanize_window(window_days)
-                detail = f"only {watchers:.0f} {people} watched it in the last {window_text}"
+                detail = f"only {watchers:.0f} {people} watched it {span}"
         case SignalId.LOW_RATING:
             observation = facts.imdb_rating_tenths
             rating = _numeric(observation)

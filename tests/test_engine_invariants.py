@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import fields as dataclass_fields
 from dataclasses import replace
 
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -43,6 +44,7 @@ from reaper.engine.signals import (
     evaluate_keep,
     score,
 )
+from reaper.engine.verdict import block_holds_reap, decide_verdict, reap_held_by_blocks
 from reaper.ratings import Rating, RatingSource
 
 _IMDB_BAR = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=1000)
@@ -83,6 +85,11 @@ def facts(draw: st.DrawFn) -> Facts:
         is_managed=draw(observations(st.booleans())),
         in_curated_list=draw(observations(st.text(max_size=20))),
         is_whitelisted=draw(observations(st.booleans())),
+        # Drawn across the popularity gate's 365-day window in both directions, so the
+        # sweep keeps reaching the gate's answering branches. Left at its default this is
+        # `Absent`, which the gate reads as un-checkable: every example would block, and
+        # the invariants below would hold for a reason that has nothing to do with them.
+        history_reach_days=draw(observations(st.floats(0, 5000, allow_nan=False))),
     )
 
 
@@ -335,6 +342,132 @@ class TestRatingGate:
         assert result.outcome == ABSTAIN
 
 
+def _popularity_facts(watchers: int, reach: Observation[float]) -> Facts:
+    """A minimal Facts carrying only what the popularity gate reads."""
+    return Facts(
+        title="x",
+        days_observed_unwatched=Known(value=900.0, source="t"),
+        distinct_watchers=Known(value=watchers, source="t"),
+        distinct_watchers_all_time=Known(value=watchers, source="t"),
+        size_bytes=Known(value=1, source="t"),
+        imdb_rating_tenths=Absent(source="t"),
+        imdb_votes=Absent(source="t"),
+        season_rank=Absent(source="t"),
+        is_streaming_now=Known(value=False, source="t"),
+        is_managed=Known(value=True, source="t"),
+        in_curated_list=Absent(source="t"),
+        is_whitelisted=Known(value=False, source="t"),
+        history_reach_days=reach,
+    )
+
+
+class TestThePopularityWindowCannotOutrunTheHistory:
+    """A watcher count is only an answer for as much of the window the mirror saw.
+
+    Tautulli cannot import plays from before it was installed, so a history younger than
+    the popularity window covers only part of it. The count is then a *lower bound*: the
+    plays it cannot see are exactly the ones that would have kept the file. Reading that
+    as "nobody watched it" is the horizon vector arriving down the watcher lane, which the
+    dormancy lane was hardened against years earlier and this one was not.
+
+    The window here is the shipped 365 days and the floor the shipped 3.
+    """
+
+    gate = ServerPopularityGate(GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=365))
+
+    def test_a_history_shorter_than_the_window_cannot_report_nobody(self) -> None:
+        """The bug, stated as the scan met it: a mirror three months deep, a title nobody
+        played in those three months, and a year-long window. The gate must not answer."""
+        result = self.gate.evaluate(_popularity_facts(0, Known(value=90.0, source="t")))
+
+        assert result.outcome == ABSTAIN
+        assert result.blocked is True
+        assert "Nobody here watched it" not in result.detail
+        assert "could not check who watched it in the last year" in result.detail
+        assert "only goes back 3 months" in result.detail
+
+    def test_a_count_between_one_and_the_floor_is_a_lower_bound_too(self) -> None:
+        """Not only the zero case. Two watchers seen inside a partly-covered window says
+        nothing about how many the uncovered part holds, so "only 2 people" is a claim
+        about a year the gate did not see either."""
+        result = self.gate.evaluate(_popularity_facts(2, Known(value=90.0, source="t")))
+
+        assert result.blocked is True
+        assert "Only 2 people" not in result.detail
+
+    def test_the_block_is_worded_so_a_hand_reap_cannot_overrule_it(self) -> None:
+        """``verdict.block_holds_reap`` classifies on the ``could not check`` prefix, so
+        the wording is an interlock rather than phrasing: reword it and the owner's reap
+        button silently starts releasing files on evidence Reaper could not read."""
+        result = self.gate.evaluate(_popularity_facts(0, Known(value=90.0, source="t")))
+
+        assert block_holds_reap(result.gate.value, result.detail) is True
+        assert (
+            decide_verdict(
+                protected=False,
+                blocked=True,
+                blocked_holds_reap=reap_held_by_blocks([result]),
+                score=100,
+                coverage_bp=10_000,
+                condemn_at=1,
+                coverage_floor_bp=0,
+                override="reap",
+            )
+            == "protect"
+        )
+
+    def test_enough_watchers_still_protect_on_a_short_history(self) -> None:
+        """The lower bound only ever *understates*. Three people seen inside the covered
+        part did watch it within the window, so the protection is earned and fires -- and
+        keeps its own wording, which the review chip parses (``routes._kept_phrase``)."""
+        result = self.gate.evaluate(_popularity_facts(3, Known(value=90.0, source="t")))
+
+        assert result.outcome == PROTECT
+        assert result.blocked is False
+        assert result.detail == "watched here: 3 people in the last year"
+
+    def test_a_history_covering_the_window_answers_as_it_always_did(self) -> None:
+        """The whole point of the reach check is that it changes nothing once the
+        evidence is there. Two years of history over a one-year window is a real
+        no-watchers finding, and it still reads as one."""
+        result = self.gate.evaluate(_popularity_facts(0, Known(value=730.0, source="t")))
+
+        assert result.outcome == ABSTAIN
+        assert result.blocked is False
+        assert result.detail == "Nobody here watched it in the last year."
+
+    @pytest.mark.parametrize(
+        "reach",
+        [
+            Unknown(reason="this scan did not record it", source="snapshot"),
+            Absent(source="unset"),
+        ],
+        ids=["unknown", "absent"],
+    )
+    def test_an_unrecorded_reach_blocks_rather_than_assuming_depth(
+        self, reach: Observation[float]
+    ) -> None:
+        """A snapshot frozen before the reach was a fact thaws it as ``Unknown`` (rule
+        104), and a Facts built by hand leaves it ``Absent``. Neither is permission to
+        claim a year of coverage, so both fail closed."""
+        result = self.gate.evaluate(_popularity_facts(0, reach))
+
+        assert result.blocked is True
+        assert result.detail.startswith("could not check")
+
+    def test_a_shorter_window_the_history_does_cover_is_answerable(self) -> None:
+        """The operator's remedy, and proof the check is against the *configured* window
+        rather than a fixed span: narrowing the window to what the mirror holds gets a
+        real answer back."""
+        gate = ServerPopularityGate(
+            GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=90)
+        )
+        result = gate.evaluate(_popularity_facts(0, Known(value=90.0, source="t")))
+
+        assert result.blocked is False
+        assert result.detail == "Nobody here watched it in the last 3 months."
+
+
 class TestExplainability:
     def test_every_gate_reports_even_when_it_does_not_fire(self) -> None:
         """No short-circuit. The 'checked and did not fire, with the numbers' block
@@ -352,6 +485,10 @@ class TestExplainability:
             is_managed=Known(value=True, source="radarr"),
             in_curated_list=Absent(source="lists"),
             is_whitelisted=Known(value=False, source="plex"),
+            # Deeper than both the popularity window and the 900 days above, so the
+            # watcher count is a complete answer and the gate reports it rather than
+            # blocking. A scan always knows this; only a hand-built Facts can omit it.
+            history_reach_days=Known(value=1200.0, source="tautulli"),
             # A below-floor IMDb rating, so the rating gate reports its actual number.
             ratings=_imdb(6.0, votes=50_000),
         )

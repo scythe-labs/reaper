@@ -20,6 +20,7 @@ import json
 import re
 from collections import Counter
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
@@ -66,8 +67,10 @@ from reaper.config import Settings
 from reaper.db.models import Candidate, FirstFlagged, Instance, InstanceKind, PlexServer, Snapshot
 from reaper.db.models import Policy as PolicyModel
 from reaper.engine import facts_codec
+from reaper.engine.dormancy import history_reach_days
 from reaper.engine.fields import Lane, MediaType, vocabulary
 from reaper.engine.gates import PROTECT, GateId, GateResult
+from reaper.engine.observation import Known
 from reaper.engine.policy import (
     ConditionSpec,
     GateSetting,
@@ -1583,7 +1586,11 @@ _SIM_YIELD_EVERY = 500
 
 
 async def _replay_simulation(
-    rows: list[Candidate], policy: PolicyBody, decisions: dict[str, str]
+    rows: list[Candidate],
+    policy: PolicyBody,
+    decisions: dict[str, str],
+    *,
+    reach_days: int | None,
 ) -> SimulationOut:
     """Re-decide the governed rows by replaying the REAL engine over each row's frozen Facts.
 
@@ -1593,6 +1600,15 @@ async def _replay_simulation(
     hand override through the scan's own ``snapshot.effective_fate`` -- so the counts are
     bit-identical to a fresh scan under this policy, with zero API calls. Exact for weight,
     rating-bar, custom-rule, protect-condition and threshold edits.
+
+    ``reach_days`` is how far back the watch history reached when the snapshot was taken,
+    recomputed from the snapshot's own stored ``horizon_at``. Rows frozen before
+    ``Facts.history_reach_days`` existed thaw it as ``Unknown`` (rule 104), which the
+    popularity gate reads as un-checkable and blocks on -- correct for a fact nobody
+    recorded, but it would report every older row as held and break the bit-identical
+    promise above. The snapshot row carries the horizon that a re-scan would measure the
+    same way, so the gap is filled from stored evidence rather than left as a guess. It
+    only ever *fills*: a row that froze its own reach keeps it.
 
     Both calls are production's, never a lookalike (rules 3/22). This loop used to assemble
     the evaluate / score / round / decide pipeline itself and push the hand override straight
@@ -1626,6 +1642,11 @@ async def _replay_simulation(
         if index % _SIM_YIELD_EVERY == 0:
             await asyncio.sleep(0)
         facts, extra = facts_codec.facts_from_dict(json.loads(row.facts_json or "{}"))
+        if reach_days is not None and not isinstance(facts.history_reach_days, Known):
+            facts = replace(
+                facts,
+                history_reach_days=Known(value=reach_days, source="tautulli"),
+            )
         override = whitelist.effective_override(row.media_key, decisions)
 
         # A hand spare enters as an extra PROTECT so the simulator applies it LIVE -- the stored
@@ -1796,7 +1817,14 @@ async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
                 PolicyBody.evidence_hash
             )
             if replayable and rows and all(r.facts_json for r in rows):
-                return await _replay_simulation(list(rows), body, decisions)
+                return await _replay_simulation(
+                    list(rows),
+                    body,
+                    decisions,
+                    # From the snapshot's own two stored instants, so a row frozen before
+                    # the reach was a fact replays on the reach that scan actually had.
+                    reach_days=history_reach_days(snapshot.horizon_at, now=snapshot.created_at),
+                )
             kind = "movies" if body.media_type == "movie" else "TV"
             return SimulationOut(
                 exact=False,

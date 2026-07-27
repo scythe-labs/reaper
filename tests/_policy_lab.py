@@ -15,6 +15,7 @@ sizes and vote counts, genre tokens, season numbers. No titles, ids, keys, or ho
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,26 @@ VERDICT_RANK = {"protect": 0, "abstain": 1, "condemn": 2}
 def load_fixture() -> dict[str, Any]:
     with FIXTURE.open() as f:
         return json.load(f)
+
+
+@lru_cache(maxsize=1)
+def mirror_reach_days() -> float:
+    """How far back the watch history behind these vectors reached, as a lower bound.
+
+    The reach is a property of the *mirror*, not of an item, so a fixture that records
+    items has no field for it -- but it is recoverable from what the fixture does record:
+    a play logged 3,000 days ago proves the mirror held a row that old, so the oldest play
+    across every vector is a floor under the real reach.
+
+    Stated rather than left to the default, which is ``Absent``: ``ServerPopularityGate``
+    reads that as "cannot check how far back the history goes" and blocks, so a lab that
+    omitted it would pin a baseline of 440 un-checkable rows and stop exercising the gate
+    at all (rule 132 -- infrastructure may not imply coverage it does not have).
+    """
+    return max(
+        (day for v in load_fixture()["vectors"] for day in v.get("play_recency_days", ())),
+        default=0.0,
+    )
 
 
 def to_observation(name: str, obs: dict[str, Any]) -> Known[Any] | Absent | Unknown:
@@ -126,6 +147,7 @@ def to_facts(vector: dict[str, Any]) -> Facts:
         release_age_days=to_observation("release_age_days", f["release_age_days"]),
         quality=to_observation("quality", f["quality"]),
         show_ended=to_observation("show_ended", f["show_ended"]),
+        history_reach_days=Known(value=mirror_reach_days(), source="lab"),
         ratings=_ratings_from(f),
     )
 

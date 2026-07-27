@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from collections.abc import Iterator
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -758,3 +759,123 @@ class TestAnUpgradedInstallStillGetsNumbers:
         below = self._simulate(upgraded_install_client, wire.model_copy(update={"condemn_at": 60}))
         assert below["exact"] is True
         assert below["condemned"] == 1
+
+
+# ---------------------------------------------------------------------------
+# The replay's watch-history reach
+# ---------------------------------------------------------------------------
+
+
+#: The replay draft with the keep-what-people-watch protection switched on. The fixture
+#: above leaves that gate out entirely, so nothing there reaches the reach check.
+REACH_PAYLOAD = PolicyIn(
+    condemn_at=70,
+    coverage_floor_bp=0,
+    gates=[
+        GateSettingIn.model_validate(g)
+        for g in [*GATES, {"gate": "server_popularity", "threshold": 3, "window_days": 365}]
+    ],
+    signals=[SignalSettingIn.model_validate(s) for s in SIGNALS],
+)
+REACH_BODY = _to_body(REACH_PAYLOAD)
+
+
+def _reach_client(
+    tmp_path: Path, *, horizon_days: int, frozen_reach: float | None = None
+) -> Iterator[TestClient]:
+    """One dormant, unwatched, unprotected row a replay would condemn on score alone.
+
+    ``horizon_days`` is how deep the SNAPSHOT says the watch history went.
+    ``frozen_reach`` is what the ROW itself recorded: ``None`` drops the key entirely,
+    which is exactly what a row frozen before ``Facts.history_reach_days`` existed looks
+    like on disk.
+    """
+    settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+    engine = sa_create_engine(settings.sync_database_url)
+    Base.metadata.create_all(engine)
+
+    now = utcnow()
+    # Encoded by production's own codec rather than transcribed (rule 119); only the
+    # deletion is done by hand, because no Facts can express "this key was never written".
+    frozen = facts_codec.facts_to_dict(
+        _facts()
+        if frozen_reach is None
+        else _facts(history_reach_days=Known(value=frozen_reach, source="test"))
+    )
+    if frozen_reach is None:
+        del frozen["obs"]["history_reach_days"]
+    with Session(engine) as session:
+        snapshot = Snapshot(
+            created_at=now,
+            policy_hash=combine_hashes(
+                DEFAULT_MOVIE_POLICY.policy_hash(), DEFAULT_TV_POLICY.policy_hash()
+            ),
+            scoring_hash="b" * 64,
+            evidence_hash=combine_hashes(
+                REACH_BODY.evidence_hash(), DEFAULT_TV_POLICY.evidence_hash()
+            ),
+            horizon_at=now - timedelta(days=horizon_days),
+            item_count=1,
+            degraded=False,
+        )
+        session.add(snapshot)
+        session.flush()
+        session.add(
+            Candidate(
+                snapshot_id=snapshot.id,
+                media_key="radarr:1:1",
+                title="Example Movie 1",
+                media_type="movie",
+                size_bytes=SIZE,
+                verdict="abstain",
+                score=50,
+                coverage_bp=10_000,
+                explanation_json=_healthy(),
+                facts_json=json.dumps(frozen),
+                created_at=now,
+            )
+        )
+        session.commit()
+    engine.dispose()
+
+    with TestClient(create_app(settings)) as c:
+        login(c, settings)
+        yield c
+
+
+class TestTheReplayKnowsHowFarTheStoredHistoryReached:
+    """A row frozen before the reach was a fact still replays against a real reach.
+
+    ``facts_from_dict`` thaws a field the snapshot predates as ``Unknown`` (rule 104), and
+    ``ServerPopularityGate`` blocks on that -- correct for a fact nobody recorded, but it
+    would report every pre-upgrade row as held and break this tier's promise to be
+    bit-identical to a fresh scan. The snapshot row carries ``horizon_at``, which is the
+    same instant a re-scan would measure from, so the gap is filled from stored evidence.
+    """
+
+    def _condemned(self, client: TestClient) -> int:
+        response = client.post("/api/policy/simulate", json=REACH_PAYLOAD.model_dump())
+        assert response.status_code == 200, response.text
+        body: dict[str, Any] = response.json()
+        assert body["exact"] is True, body.get("stale_reason")
+        return int(body["condemned"])
+
+    def test_a_deep_stored_horizon_lets_an_older_row_be_judged(self, tmp_path: Path) -> None:
+        """Two years of history behind a one-year window: the count is a real answer, so
+        the row is condemned exactly as it was before the reach existed."""
+        for client in _reach_client(tmp_path, horizon_days=800):
+            assert self._condemned(client) == 1
+
+    def test_a_shallow_stored_horizon_holds_the_row(self, tmp_path: Path) -> None:
+        """Three months of history behind a one-year window. The zero watcher count is a
+        lower bound, so the protection cannot be reported as checked and the row is held --
+        the whole point of the fix, arriving through the simulator too."""
+        for client in _reach_client(tmp_path, horizon_days=90):
+            assert self._condemned(client) == 0
+
+    def test_a_row_that_froze_its_own_reach_keeps_it(self, tmp_path: Path) -> None:
+        """The fill never overwrites. This row recorded a 90-day reach; the snapshot's
+        horizon says 800. Replaying it on the snapshot's number would re-judge frozen
+        evidence against something the scan did not see, so the row's own value wins."""
+        for client in _reach_client(tmp_path, horizon_days=800, frozen_reach=90.0):
+            assert self._condemned(client) == 0

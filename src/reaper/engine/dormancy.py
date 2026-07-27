@@ -45,3 +45,18 @@ def dormancy_days(reference: datetime, *, now: datetime) -> int:
     disagree, and inventing a 0 there would score an item on a contradiction.
     """
     return (now - reference).days
+
+
+def history_reach_days(horizon: datetime, *, now: datetime) -> int:
+    """How many days of watch history we hold -- the *reach* of the evidence.
+
+    :func:`reference_instant` uses the horizon to stop dormancy claiming more time than we
+    can see. This answers the other half: how much of a *window* the mirror covers, which
+    is what a windowed watcher count needs before a number below the floor may be read as
+    "nobody watched it" (``gates.ServerPopularityGate``).
+
+    Floored like :func:`dormancy_days`, and for the same reason read the other way round:
+    reach sits on the *keep* lane, so shortening it can only withhold a protection Reaper
+    is not sure of, never grant one it has not earned (rule 31).
+    """
+    return (now - horizon).days
