@@ -1509,6 +1509,19 @@ past the right edge. Measured in WebKit against the real page at a range of widt
   label column had in fact reached 0px wide and a row 4,895px tall — one word per line — with the
   page reporting no overflow at all. Measure the gutter between the two columns, not the document
   width, wherever a track can be squeezed from one side.
+- **A fixed track and an `auto` one are visually identical for a right-aligned control, so the
+  track's width is spent entirely on the column beside it.** `.set-row` reserves a 352px control
+  column, but `.set-control` is `justify-self: stretch` with `justify-content: flex-end`, so the
+  control already rests on the row's right edge whatever the track measures. Releasing the track to
+  `auto` with `justify-self: end` moved a 40px `Switch`'s right edge **0.00px at 641, 768, 900 and
+  1200px**, and left its size untouched; the only thing that changed was the help paragraph, which
+  stopped wrapping — the reverse-proxy row went 291.9px → 153.1px at 641px, 11 lines to 4. Above
+  900px it changes no height at all, because by then the label column already clears `.help`'s 62ch
+  cap (499.9px), so the whole cost lives at ≤768px. "The boxes line up on one track" is therefore a
+  claim about *boxes*: a switch, a button or a link on that track pays up to 312px of label width
+  for an alignment it was getting for free. **The general form: before accepting a layout cost as
+  the price of an alignment, measure whether the alignment survives without it.** This one sat in
+  `unproven.md` as a design judgment waiting on a mockup, and it was a two-minute measurement.
 
 ## Prior art
 

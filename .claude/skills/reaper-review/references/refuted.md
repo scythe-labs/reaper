@@ -288,6 +288,31 @@ bar's Discard constitutes a promise. Convergence across independent lanes was th
 than a defect. It was reported as such and filed unproven rather than fixed, since editing a
 settings panel on the strength of a split verdict is how a review introduces a bug.
 
+## Refuted at `b33bff1` (2026-07-27, settling the four open entries in `unproven.md`)
+
+This pass raised nothing of its own. It took the four candidates sitting in `unproven.md` and
+supplied the evidence each one had named as the thing that would settle it. One died.
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| tests | The policy lab's `mirror_reach_days` fallback recreates the gap its own docstring documents, so a `default=0.0` regeneration silently stops exercising `ServerPopularityGate` while reporting green (rule 7/24) | Answered by its own settling criterion, and answered no. Regenerating vectors and baseline together the way `scripts/policy_lab_extract.py:376-381` writes them, from a play-free candidate set, takes the sweep to **exit 1 with two tests erroring** — both variants: `play_recency_days` merely emptied (55/440 vectors still exercise the gate, 385 blocked) and a faithful play-free extract (0/440 exercised, 440 blocked, which is the docstring's "440 un-checkable rows" reproduced literally). `ServerPopularityGate` fails closed at reach `0.0` (`gates.py:481-503`), so no vector can reach `condemn`, and the subject generator at `test_policy_permutations.py:593-601` dies on `StopIteration`. Not a knife-edge: sweeping the reach shows a clean cliff at the 365-day window, with 0/100/300/334/364 all giving 0 condemns and 365/400/3108 all giving 45. The committed fixture exercises the gate on 440/440. |
+
+Worth carrying forward: the catch is real but **indirect**. The failure reads `StopIteration`,
+not "the popularity gate stopped being exercised," and no test anywhere asserts a floor on how
+many vectors must exercise a given gate. A reviewer wanting a legible signal could add one. The
+candidate as written is refuted all the same, because the sweep does go red.
+
+**The other three left `unproven.md` confirmed** and so are not recorded here. The FEW_WATCHERS
+coverage half was folded into issue #83 as rule 140's third reader, rather than filed separately:
+a probe through `build_facts` → `build_gates` → `judge_facts` with the popularity gate off, a
+90-day mirror and the 365-day fallback window returned `coverage_bp = 10000` while the signal took
+its full `20.00/20` pressure, and `0.00/20` once the mirror reached the identical plays. The two
+settings candidates became #90 and #91. The question the `ef0278d` note above left open — whether
+a save bar's Discard is a promise the other control on that row must honor — went to the operator,
+who answered yes; the measurement that removed the control-track candidate's "design judgment"
+objection was that releasing the track moves the control's right edge 0.00px at every width, so
+the reserved 312px buys no alignment at all.
+
 ## Refutations later found to be wrong
 
 None yet. When one lands here, record what the verifier missed — that reasoning is worth more
