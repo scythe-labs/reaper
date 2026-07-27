@@ -6278,9 +6278,12 @@ button.sm {
   }
 }
 
-/* The settings rail's narrow-screen form: one picker instead of nine wrapped tabs. Nine
-   labels stop fitting one line at about 820px, so the rail spends two lines from there down
-   and three below 375px -- 131px of a short screen restating where you already are.
+/* The settings rail's narrow-screen form: one picker instead of nine wrapped tabs. Measured
+   with the nine shipped labels, `Backup & Restore` included: the rail holds one line down to
+   880px, takes a second from 860px, and a third from 470px -- 131px of a short screen
+   restating where you already are. (It drops back to two lines under 400px, where the padding
+   trim above buys a line back. Re-measure these if a label is renamed: the longest one sets
+   them, which is why renaming that tab moved the first threshold 50px.)
    `Settings` swaps the two in JS on NARROW_SCREEN_QUERY rather than showing both and hiding
    one, so only one of them is ever in the accessibility tree; there is deliberately no CSS
    media query here to keep in step with that constant.

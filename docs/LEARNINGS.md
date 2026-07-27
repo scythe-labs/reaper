@@ -1482,8 +1482,11 @@ past the right edge. Measured in WebKit against the real page at a range of widt
   help text sharing that track both ran off a page with no sideways scroll. `min-width: 0` on the
   select does not help: the floor belongs to the *track*, and to the grid item above it, so both
   `.set-control` and the flex container need it too. Every column is now `minmax(0, 1fr)`,
-  including each twin's phone variant, which is where this bites and where five of them still
-  carried the bare form.
+  including each twin's phone variant, which is where this bites and where **all seven** still
+  carried the bare form. Four of them (`.add-grid`, `.about-kv`, `.backup-facts`, `.kv2`) carried
+  it at the base rule too; the other three were already `minmax` there and bare only on the
+  phone, which is the direction that hides — the wide layout looks right and nobody re-drives
+  the narrow one.
 - **A width cap can hide a collapse.** This one was invisible until the mobile `max-width: 22rem`
   came off the control, because the cap was clamping the blown-out track back to something that
   nearly fit. Removing a cap does not create an overflow; it reveals the one the grid was already
