@@ -111,8 +111,12 @@
   --radius-lg: 18px;
 
   /* The phone section bar's height, excluding the safe-area inset it adds underneath. Declared
-     once because three other rules have to clear it: the app's bottom padding, the bulk-action
-     bar and the scan toast (rule 67). It is only used under the 900px breakpoint. */
+     once because four other rules have to clear it (rule 67): the app's bottom padding, in the
+     900px block that draws the bar; and the three surfaces that also anchor to the foot of the
+     screen -- the bulk-action bar, the scan toast and the policy save bar -- each in a 900px
+     block sitting immediately BELOW its own base rule. That placement is load-bearing: a media
+     query adds no specificity, so an override written beside the bar instead loses to the base
+     rule on source order and silently does nothing. It is only used under that breakpoint. */
   --navbar-h: 2.7rem;
 
   /* Form control standard. Every text / number / select box shares this chrome, so the
@@ -1336,14 +1340,6 @@ main.split {
   .brand-sub {
     display: none;
   }
-  /* The two surfaces that also sit at the foot of the screen, lifted clear of the bar off its
-     one height declaration. */
-  .bulk-bar {
-    bottom: calc(var(--navbar-h) + env(safe-area-inset-bottom, 0px) + 0.6rem);
-  }
-  .scan-toast {
-    bottom: calc(var(--navbar-h) + env(safe-area-inset-bottom, 0px) + 0.7rem);
-  }
 }
 
 /* ---- review queue -------------------------------------------------------- */
@@ -1483,6 +1479,15 @@ main.split {
   box-shadow: var(--shadow-lg);
   pointer-events: none;
   animation: scan-toast 2.6s var(--ease) forwards;
+}
+/* Clear the phone's section bar. This override MUST sit after the base rule, not up in the
+   900px block that declares the bar: a media query adds no specificity, so at equal specificity
+   source order decides and the later declaration wins. Written in that block first, it lost to
+   the `bottom: 1.1rem` above and did nothing. */
+@media (max-width: 900px) {
+  .scan-toast {
+    bottom: calc(var(--navbar-h) + env(safe-area-inset-bottom, 0px) + 0.7rem);
+  }
 }
 .scan-toast-check {
   display: inline-flex;
@@ -3039,6 +3044,15 @@ a.rating-chip:hover {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   box-shadow: var(--shadow-md);
+}
+/* Clear the phone's section bar, same as .bulk-bar and .scan-toast, and placed after the base
+   rule for the same source-order reason. This one is the sharpest of the three: the save bar is
+   the ONLY save affordance on the page (rule 43), so a Save tap landing on a nav icon instead
+   changes view, unmounts the editor, and drops the whole draft with nothing said. */
+@media (max-width: 900px) {
+  .savebar {
+    bottom: calc(var(--navbar-h) + env(safe-area-inset-bottom, 0px) + 0.6rem);
+  }
 }
 .savebar-what {
   flex: 1 1 16rem;
@@ -5805,6 +5819,16 @@ button.sm {
      sideways rather than wrapping to a ragged second row. */
   flex-wrap: nowrap;
   overflow-x: auto;
+}
+/* Clear the phone's section bar, which is fixed over the foot of the screen. Same placement rule
+   as .scan-toast above: this has to follow the base `bottom: 1rem`, because a media query adds no
+   specificity and the later declaration wins. Sitting up in the 900px block instead, it was inert
+   and the bar's controls -- the only way to spare or reap several items at once -- sat behind the
+   nav icons, unreachable on a phone. */
+@media (max-width: 900px) {
+  .bulk-bar {
+    bottom: calc(var(--navbar-h) + env(safe-area-inset-bottom, 0px) + 0.6rem);
+  }
 }
 .bulk-count {
   font-size: 0.9rem;
