@@ -87,15 +87,20 @@ export function SettingsIcon() {
   // A gear. Nothing in the reaper's world means "configure this install", and the themed
   // candidates each said something false -- a key reads as access, an hourglass as time, which
   // grace already owns. Recognition wins here.
+  //
+  // The teeth are a single closed outline (flanks straight, the gaps between them arcs of the
+  // root circle), not spokes radiating off a ring: detached rays around a disc are a SUN, which
+  // is what the first draft of this icon drew. Six teeth rather than eight because the gaps stay
+  // countable at the 21px the bar renders it at, where eight silt up into a bumpy circle.
   return (
     <svg className="view-ico" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      <circle cx="8" cy="8" r="2.4" stroke="currentColor" strokeWidth="1.3" />
       <path
-        d="M8 1.4V3M8 13v1.6M14.6 8H13M3 8H1.4M12.66 3.34 11.53 4.47M4.47 11.53 3.34 12.66M12.66 12.66 11.53 11.53M4.47 4.47 3.34 3.34"
+        d="M6.61 3.72L6.8 1.82L9.2 1.82L9.39 3.72A4.5 4.5 0 0 1 11.01 4.66L12.75 3.87L13.96 5.95L12.4 7.06A4.5 4.5 0 0 1 12.4 8.94L13.96 10.05L12.75 12.13L11.01 11.34A4.5 4.5 0 0 1 9.39 12.28L9.2 14.18L6.8 14.18L6.61 12.28A4.5 4.5 0 0 1 4.99 11.34L3.25 12.13L2.04 10.05L3.6 8.94A4.5 4.5 0 0 1 3.6 7.06L2.04 5.95L3.25 3.87L4.99 4.66A4.5 4.5 0 0 1 6.61 3.72Z"
         stroke="currentColor"
         strokeWidth="1.3"
-        strokeLinecap="round"
+        strokeLinejoin="round"
       />
+      <circle cx="8" cy="8" r="2.05" stroke="currentColor" strokeWidth="1.3" />
     </svg>
   );
 }
