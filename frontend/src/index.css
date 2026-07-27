@@ -805,12 +805,22 @@ button.link:hover:not(:disabled) {
    straight off a narrow phone. Buy the room back from the padding rather than from the
    labels -- reading every option at once is the whole point of this control, so truncating
    one, hiding one behind a sideways scroll, or dropping one into a dropdown all defeat it
-   (rule 41). Three options at 0.55rem still clear a 320px screen. */
+   (rule 41). Clearing the SCREEN is the wrong test on its own, though: the preset picker sits
+   inside a card, and at 0.55rem it still ran past `.intent-band`'s content box below 340px. */
 @media (max-width: 400px) {
   .tab,
   .seg {
     padding-left: 0.55rem;
     padding-right: 0.55rem;
+  }
+}
+/* So below 340px the pills give up a little more, and the band gives up padding to meet them
+   (see the note beside `.intent-band`); measured, the two together leave the track inside the
+   card at 320px with room to spare. The lane switcher sits in no card and keeps its width. */
+@media (max-width: 340px) {
+  .seg {
+    padding-left: 0.45rem;
+    padding-right: 0.45rem;
   }
 }
 
@@ -2928,6 +2938,17 @@ a.rating-chip:hover {
     scroll-margin-top: 6rem;
   }
 }
+/* Narrower still and the four labels stop pairing two to a line at all, so the rail takes a
+   THIRD and 6rem no longer clears it. Measured in WebKit against the real labels: the rail is
+   137.8px through 328px and 93px from 329px, and at 96px of margin all four headings landed
+   42px INSIDE the rail -- the section you asked for, with nothing on screen naming it. This
+   breakpoint is the width where the labels stop pairing, not a round number: re-measure it if
+   a section is ever renamed. */
+@media (max-width: 328px) {
+  .policy-section {
+    scroll-margin-top: 9rem;
+  }
+}
 .policy-divider {
   height: 1px;
   background: var(--border);
@@ -2941,6 +2962,17 @@ a.rating-chip:hover {
   background: var(--surface);
   padding: 0.9rem 1rem;
   margin: 0.2rem 0 1.5rem;
+}
+/* The preset picker in here floors at its own labels (see the pill-track note), and 1rem a
+   side leaves it less content box than that floor on a narrow phone: at 320px the track ran
+   20px past the padding and its rounded end crossed the card's border, so the control hung
+   out of the panel holding it. The card's padding is the cheaper give of the two -- padding
+   is decoration and the control is not. */
+@media (max-width: 400px) {
+  .intent-band {
+    padding-left: 0.6rem;
+    padding-right: 0.6rem;
+  }
 }
 .intent-summary {
   margin: 0 0 0.75rem;
@@ -4357,13 +4389,14 @@ a.rating-chip:hover {
    matrix -- but the two value columns become shrinkable and the boxes shrink with them. */
 @media (max-width: 400px) {
   .pace-matrix {
+    /* Column 1 stays `max-content`, so the row header keeps its one line and no `white-space`
+       here could change that: a max-content track is sized from the max-content contribution,
+       which ignores soft wrap opportunities by definition. Relaxing the header to `normal` was
+       measured to leave the column at an identical 62.4x19.8px, so it is not worth writing --
+       wrapping it would mean giving up the `max-content` track, and the boxes do not need the
+       room. */
     grid-template-columns: max-content minmax(0, 1fr) minmax(0, 1fr);
     column-gap: 0.4rem;
-  }
-  /* The row header is the one thing here that can take two lines without losing meaning,
-     so it wraps instead of holding a nowrap column the boxes would have to pay for. */
-  .pace-matrix .row-h {
-    white-space: normal;
   }
   /* The box fills its column instead of hugging its content, and the NUMBER takes the give:
      `.qty` is `overflow: hidden`, so a unit squeezed out of the box is CLIPPED rather than
@@ -6202,10 +6235,11 @@ button.sm {
   border-bottom-color: var(--accent);
   font-weight: 600;
 }
-/* The rail wraps, so it never overflows -- but it pays for its padding in LINES, and a third
-   line would park the heading under the stuck rail on a jump, since `.policy-section`'s
-   6rem scroll-margin is cut to clear exactly two (see the note there). Trimming the same
-   padding the pill tracks give up above holds it at two. */
+/* The rail wraps, so it never overflows -- but it pays for its padding in LINES, and each line
+   is height `.policy-section`'s scroll-margin has to clear on a jump. This trim holds it to two
+   from 330px up, which is where the labels can still pair; below that they cannot pair at any
+   padding, so the third line is genuine and the scroll-margin step at 328px is what answers it
+   (see the note beside `.policy-section`). */
 @media (max-width: 400px) {
   .settings-tab {
     padding-left: 0.45rem;

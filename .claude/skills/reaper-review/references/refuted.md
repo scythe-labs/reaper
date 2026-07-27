@@ -105,6 +105,24 @@ stops holding — which is why the reason is recorded rather than just the verdi
 | --- | --- | --- |
 | safety | A **hung** safety read (not a failed one) leaves the section nav's armed dot in its pending state, which draws identically to "deletion is off" | Verified PLAUSIBLE, never CONFIRMED: it needs a request that neither resolves nor rejects, so it is bounded to the initial fetch, and `fetchApi` sets no timeout. The operator's ruling is that the dot going quiet costs visibility, not safety, because nothing downstream will act on that state: the executor re-reads the armed flag before every item (`executor._still_armed`, called at `executor.py:1175` through the `armed_recheck` the execute route injects at `api/runs.py:567`), and `ReapConfirm` derives `armed` from `destructive_enabled === true`, so a pending or errored read leaves Execute disabled through all three states. `SafetyBanner` carries the identical `isLoading` branch and predates this change, so a fix is one edit to both twins (rule 72) and belongs with a request timeout in `fetchApi`, not with the nav. |
 
+## Refuted at `c73e959` (2026-07-26, reviewing the narrow-phone overflow fix)
+
+One lane fired (`diff`, `frontend/src/index.css`). Three candidates survived and were fixed;
+these were raised and died. **A process note worth more than the table: the reviewer's first
+read called the surviving rail finding *pre-existing and narrowed by the change*, and it is the
+opposite — comparing against `git show dev:frontend/src/index.css` in the same harness showed
+the change introduced it.** A before/after claim about a layout is cheap to test and easy to
+get backwards by reasoning; render both.
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| frontend | The new media blocks use unscoped selectors (`.tab`, `.seg`, `.settings-tab`), so they restyle components the change was not aimed at — the hazard raised at `60e035a` | Every consumer is a pill track or rail where less padding is the intent: `.tab` only `ReviewQueue.tsx:1973`, `.seg` only `Segmented.tsx:29`, `.settings-tab` only `Settings.tsx:2084` and `PolicyEditor.tsx:1200`. `App.tsx:102` uses `view-tab`, a different class with its own rules. The `fill` variant is floored by `min-width: 5.25rem` and measures 176.8px at every width. The Settings rail is not sticky, so it has no scroll-margin coupling to break. |
+| frontend | `1fr` -> `minmax(0, 1fr)` converts "the page scrolls sideways" into "a child overflows a clipped ancestor and is unreachable" — rule 138 reached from inside | No `overflow: hidden/clip` on `html`, `body`, `#root`, `.app`, `main`, `main.split` or `.editor`. The only clipped containers inside the newly capped column are `.rules-table` and `.card`; measured with long realistic rows down to 320px, `scrollWidth === clientWidth` and every Remove button stayed inside, because `.rules-row`'s `auto` tracks fall back to min-content and wrap. |
+| frontend | `.qty` moving from `inline-flex` to `flex` shifts the baseline between the number and its unit | A grid item is blockified regardless, so the used value was already `flex`. Measured identical geometry. |
+| frontend | The 400px pace block is beaten by the 640px block above it, or by the base `.qty` rules that sit later in the file, so the fix silently does not apply | The later base rules lose on specificity, and the 640px block is beaten because the heavier `.qty-narrow` selector is repeated at equal specificity inside the 400px block. Measured widths match intent at every breakpoint. |
+| frontend | `min-width: 2.9rem` makes the four-digit fit worse than before | Backwards. At 320px the "1,000" box goes from 59.2px wide holding 67px of content on `dev` (7.8px hidden) to 57.5 holding 61 (3.5px hidden), and from 360px up it now fits outright where `dev` did not. The floor only binds below a ~300px viewport. |
+| frontend | The unit `<select>`'s right edge is clipped by `.qty`'s `overflow: hidden` at <=322px, the same defect as the "MB"/"ME" clipping the author already fixed | The ~2px clipped is border, not copy: the select's text measures 55px inside a 56px box, so every option still reads in full. |
+
 ## Refutations later found to be wrong
 
 None yet. When one lands here, record what the verifier missed — that reasoning is worth more

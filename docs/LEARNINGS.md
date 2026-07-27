@@ -1444,6 +1444,34 @@ past the right edge. Measured in WebKit against the real page at a range of widt
   reader's own text-size setting and pinch zoom. The general lesson outlives this bug: for
   anything mobile-WebKit-only, Playwright can tell you nothing either way, and a simulator is
   the cheapest engine that can. The overflow fixes above were confirmed the same way.
+- **The fix surfaced two defects the bug had been hiding, and the review caught them, not the
+  sweep.** Capping `.editor` narrows the column from an over-stretched 324px to a true 280px at
+  a 320px viewport, and two controls that had been riding on the over-stretch stopped fitting.
+  The section rail's four labels stop pairing two to a line below 329px, so it takes a *third*
+  line (137.8px) while `.policy-section`'s scroll-margin stayed 96px: every rail click parked
+  the heading 42px *inside* the sticky rail. And the preset picker, floored at its own labels,
+  ran 20px past `.intent-band`'s content box with its rounded end 3px outside the card border.
+  Both measured absent on `dev`. **The generalizable lesson: after a change that makes something
+  narrower, "does anything still overflow" is the wrong question on its own — ask what now
+  WRAPS that did not.** Line counts are load-bearing anywhere a sticky header and a
+  scroll-margin have to agree, and neither one announces the coupling.
+- **Measure against the container, not only the viewport.** The overflow sweep read 0 at every
+  width while the picker hung outside its own card, because nothing had left the *screen*. This
+  is the same shape as the clipped "MB" above, and the second time in one change that a check
+  measuring one boundary was blind to a control failing at a different one. A layout assertion
+  should name the box it is asserting against.
+- **A `max-content` track ignores soft wrap opportunities, so `white-space: normal` on its child
+  does nothing.** `.pace-matrix .row-h` was relaxed to `normal` to let "Disk freed" take two
+  lines and give the quantity boxes the column width back. Measured, the column is an identical
+  62.4x19.8px either way: max-content sizing is defined over the max-content contribution, which
+  does not consider wrapping. Wrapping that header means giving up the `max-content` track, not
+  changing `white-space`.
+- **Two engines disagreed on where the rail wraps, so the breakpoint follows the one the bug is
+  in.** WebKit takes the third line through 328px, headless Chrome through about 326px. The
+  breakpoint is set from WebKit, because that is the engine the report came from; in Chrome the
+  cost of the mismatch is a slightly over-generous jump offset on a 327px screen, which nobody
+  can see. Where engines disagree on a pixel, the reported one wins and the other absorbs the
+  rounding.
 - **Deferred, in writing (rule 72).** Seven more bare-`1fr` collapses share the pattern:
   `.add-grid`, `.set-row`, `.about-kv`, `.backup-facts`, `.kv2`, `.safety-row.pw-row` and
   `.docs-body`. All are Settings/docs label-and-value grids that this pass could not drive
