@@ -787,6 +787,20 @@ button.link:hover:not(:disabled) {
   min-width: 5.25rem;
   text-align: center;
 }
+/* A pill track is a flex row, and a flex item floors at its own min-content, so the track
+   itself cannot get narrower than its labels laid end to end however narrow the screen is:
+   the lane switcher held 300px and the preset picker 304px at every viewport, and both ran
+   straight off a narrow phone. Buy the room back from the padding rather than from the
+   labels -- reading every option at once is the whole point of this control, so truncating
+   one, hiding one behind a sideways scroll, or dropping one into a dropdown all defeat it
+   (rule 41). Three options at 0.55rem still clear a 320px screen. */
+@media (max-width: 400px) {
+  .tab,
+  .seg {
+    padding-left: 0.55rem;
+    padding-right: 0.55rem;
+  }
+}
 
 /* ---- user menu ----------------------------------------------------------- */
 
@@ -1262,7 +1276,10 @@ main.split {
    their width. The list stays clickable: picking another card swaps the sheet. */
 @media (max-width: 1100px) {
   main.split {
-    grid-template-columns: 1fr;
+    /* `minmax(0, ...)` for the same reason the two-column form above carries it, and the
+       reason `.editor` does: a bare `1fr` is `minmax(auto, 1fr)`, whose `auto` floor lets one
+       un-shrinkable descendant widen the column and drag every sibling off the screen. */
+    grid-template-columns: minmax(0, 1fr);
   }
   main.split .why {
     position: fixed;
@@ -2466,9 +2483,15 @@ a.rating-chip:hover {
   align-items: start;
   margin-top: 1.25rem;
 }
+/* `minmax(0, ...)`, not a bare `1fr`: `1fr` means `minmax(auto, 1fr)`, and that `auto` floors
+   the column at its widest child's min-content. One un-shrinkable control inside (the preset
+   picker's pill track, the pace matrix's max-content columns) then set the whole column to
+   362px on a 344px phone and STRETCHED every sibling to match -- the context band, the section
+   rail, every card -- carrying the entire page off the right edge. Letting the column shrink
+   keeps a too-wide child's problem to that child. */
 @media (max-width: 900px) {
   .editor {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -4316,6 +4339,55 @@ a.rating-chip:hover {
   }
 }
 
+/* Narrower still, and the three `max-content` tracks above stop being affordable at all:
+   max-content is fixed by construction, so the matrix held 324px and the grace/unknown rows
+   331px however small the screen got. The 2x2 reading survives -- it is the point of the
+   matrix -- but the two value columns become shrinkable and the boxes shrink with them. */
+@media (max-width: 400px) {
+  .pace-matrix {
+    grid-template-columns: max-content minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: 0.4rem;
+  }
+  /* The row header is the one thing here that can take two lines without losing meaning,
+     so it wraps instead of holding a nowrap column the boxes would have to pay for. */
+  .pace-matrix .row-h {
+    white-space: normal;
+  }
+  /* The box fills its column instead of hugging its content, and the NUMBER takes the give:
+     `.qty` is `overflow: hidden`, so a unit squeezed out of the box is CLIPPED rather than
+     merely tight -- "MB" rendered as "ME" and still measured as fitting. */
+  .pace-matrix .qty {
+    display: flex;
+    min-width: 0;
+  }
+  .pace-matrix .qty input[type="number"],
+  .pace-matrix .qty.qty-narrow input[type="number"] {
+    width: auto;
+    flex: 1 1 0;
+    /* Four digits and the stepper: the per-run title cap tops out at 1,000, and the note
+       above is right that a ceiling you can reach but not read is worse than no ceiling. */
+    min-width: 2.9rem;
+    padding-left: 0.35rem;
+    padding-right: 0.25rem;
+  }
+  .pace-matrix .qty select {
+    width: 3.5rem;
+    padding-left: 0.35rem;
+    padding-right: 0.35rem;
+  }
+  /* A nowrap label beside its control does not fit a phone, so it steps above it. */
+  .pace-extra {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0.3rem;
+  }
+  .pace-extra .ex-label {
+    padding-top: 0;
+  }
+  .pace-extra .ex-ctl {
+    margin-bottom: 0.7rem;
+  }
+}
+
 .run-history {
   margin-top: 2rem;
 }
@@ -6117,6 +6189,16 @@ button.sm {
   color: var(--text);
   border-bottom-color: var(--accent);
   font-weight: 600;
+}
+/* The rail wraps, so it never overflows -- but it pays for its padding in LINES, and a third
+   line would park the heading under the stuck rail on a jump, since `.policy-section`'s
+   6rem scroll-margin is cut to clear exactly two (see the note there). Trimming the same
+   padding the pill tracks give up above holds it at two. */
+@media (max-width: 400px) {
+  .settings-tab {
+    padding-left: 0.45rem;
+    padding-right: 0.45rem;
+  }
 }
 
 /* Settings panels fill the page frame like every other page; the row grid keeps labels

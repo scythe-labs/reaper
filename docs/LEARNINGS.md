@@ -1407,6 +1407,38 @@ later it snaps back to where I was", only in the home-screen PWA.
   yet (nothing moves, no race), and every step asks `history.state` for our own marker first, so
   a drift costs nothing instead of an exit.
 
+## One grid line took the whole Policy page off a narrow phone (2026-07-26)
+
+Reported from Safari on a phone: the Policy page's context band, section rail and cards all ran
+past the right edge. Measured in WebKit against the real page at a range of widths.
+
+- **`1fr` is `minmax(auto, 1fr)`, and that `auto` is a floor, not a preference.** Both
+  two-column grids that collapse on a phone (`.editor`, `main.split`) were written
+  `minmax(0, 1fr) minmax(340px, 440px)` at desktop and then dropped to a bare `1fr` in the
+  collapse, losing the `minmax(0, ...)` exactly where it matters most. The `auto` floor is the
+  widest descendant's min-content, so one un-shrinkable control set the column to 362px on a
+  344px screen and **stretched every sibling to match**. Measured at 320px: 143 elements
+  overflowed, of which **141 were collateral** — they were not too wide, they were stretched.
+  Relaxing the one track took it to 2. The lesson generalizes past this bug: a single-column
+  collapse should always be `minmax(0, 1fr)`, because a bare `1fr` converts any one child's
+  overflow into the whole page's.
+- **A flex row cannot get narrower than its labels laid end to end.** `.tabs` and `.segmented`
+  floored at 300px and 304px at *every* viewport, so the lane switcher ran off a narrow phone
+  on its own, with no grid to blame. Same shape for `.pace-matrix`, whose three `max-content`
+  tracks are fixed by construction (324px), and `.pace-extra` (331px).
+- **Negative result: an overflow count can read clean while a control is unreadable.** The
+  first fix passed "nothing extends past the viewport" while rendering the size unit as "ME"
+  instead of "MB" — `.qty` is `overflow: hidden`, so a unit squeezed out of its box is
+  *clipped*, and a clipped element measures as fitting. This is rule 138's failure (content
+  past an edge that cannot be scrolled to) reached from inside a control rather than from the
+  page. Any check for this needs to measure a `select` against its **widest option**, not
+  against its own rendered text, which is by then already the truncated one.
+- **Deferred, in writing (rule 72).** Seven more bare-`1fr` collapses share the pattern:
+  `.add-grid`, `.set-row`, `.about-kv`, `.backup-facts`, `.kv2`, `.safety-row.pw-row` and
+  `.docs-body`. All are Settings/docs label-and-value grids that this pass could not drive
+  end-to-end, and none is known to overflow today. They are the twins to fix the moment any
+  commit touches them.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs
