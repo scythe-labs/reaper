@@ -84,6 +84,13 @@ independent verifier killed. Re-raising one costs a full verify cycle and return
 Each entry records the commit it was refuted at — if the cited code has changed since, the
 refutation is stale and the candidate is live again.
 
+**Read `references/unproven.md` too.** It holds the other outcome: candidates that survived a
+read but whose trigger nobody proved, so they were neither fixed nor filed. Each says what
+evidence would settle it. If this pass can supply that evidence cheaply, do — confirming or
+killing one of these is worth more than a fresh tier-4 finding, and the entry then leaves the
+file. Same staleness rule: the commit it was raised at is recorded, and a changed citation means
+re-derive.
+
 **Do not restate the numbered rules.** `.claude/rules/*.md` holds 133 blockers, distilled from
 six adversarial passes, and they load automatically when you read a file they govern — reading
 `src/reaper/engine/gates.py` pulls in `backend.md` before you can edit it. They are already in
@@ -175,9 +182,12 @@ be closed by the same edit, they are one issue.
 | tier 3–4 | grouped by shared root cause, or by shared file and theme; the body lists each as a checklist item |
 | twins under rule 72 (the same defect in sibling functions) | always **one** issue, because the rule requires them fixed together |
 
-**Only CONFIRMED findings.** A PLAUSIBLE or unverified one stays in `.claude/review-findings/`
-until something confirms it. An issue asserts a defect exists; do not assert what a verifier
-declined to.
+**Only CONFIRMED findings.** An issue asserts a defect exists; do not assert what a verifier
+declined to. A PLAUSIBLE or unverified one is appended to `references/unproven.md` instead,
+under the commit it was raised at, with the evidence that would settle it — **not** left in
+`.claude/review-findings/`, which is gitignored interim scratch and does not survive the
+worktree it was written in. An unproven candidate outlives the run that raised it, so it is
+filed where the next run reads.
 
 **Cap at 8 issues per run.** Past that, the remaining confirmed findings go into a single
 tracking issue that lists them all, so nothing is lost and the tracker is not flooded. Say in
