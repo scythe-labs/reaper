@@ -28,7 +28,37 @@ Verifier transcripts, reasoning chains, and per-agent run notes stay in the giti
 `.claude/review-findings/`, which is interim by design. Only the candidate itself belongs here,
 because only the candidate outlives the run.
 
-## Nothing open
+## Open
+
+### Scales' per-person figures come from the same mirror, and nothing says how far it reaches
+
+Raised at `d9bd6db` (2026-07-27), while sweeping rule 140's readers for issue #83.
+
+`services/fairness.WatchEvidence` carries its own `plays_by_user` and `distinct_watchers`,
+computed from plays it queries directly rather than read off `Facts` — which is why it is
+correctly *outside* #83's sweep: it reads no bounded fact, and it gates nothing, having been
+rebuilt to sit on the last scan instead of re-judging (rule 38 killed the parallel verdict
+path that once consumed it).
+
+But it draws on the same watch mirror, so its counts carry the same truncation: on a Tautulli
+installed six months ago, "who watches what" is a lower bound per person, and the people it
+under-counts are whoever stopped watching before the horizon. Attribution is where that is
+least visible and most consequential — a share-of-library number is exactly the kind of figure
+an operator reads as complete.
+
+**Not a confirmed defect, and deliberately not filed as one.** Unlike the three readers in
+#83, nothing here withdraws a protection or adds condemn pressure; the question is whether any
+Scales copy *claims* a completeness the mirror cannot support. That was not checked.
+
+**What would settle it:** read the Scales strings and the route that feeds them
+(`services/fairness.py`, its API route, and the SPA surface rendering it) and decide one
+thing — does any of it state or imply an all-time or whole-library reading? If yes, it is a
+rule 21/rule 7-24 honesty fix (name the span, as `ServerPopularityGate` now does) and becomes
+an issue. If every figure is already phrased as "in the history Reaper holds" or equivalent,
+this is refuted and moves to `refuted.md`. Rule 78 is the neighboring constraint: attribution
+already has to honor the request's *scope*, and this asks the same question of its *span*.
+
+## Settled earlier
 
 Empty as of `b33bff1` (2026-07-27), and **empty is the intended resting state, not a gap.** The
 four entries raised at `394cc3a` and `ef0278d` were settled in one pass, each by the evidence it
