@@ -95,6 +95,16 @@ below 640px so the balance bar reaches the card edge.
 | frontend | The new media block's selectors are unscoped (`.fair-avatar`, `.fair-balance`, `.fair-legend`, `.fair-row1`, `.fair-watched`), and `ScalesPanel.tsx` reuses `.fair-avatar` (:231) and `.fair-balance` (:247), so the panel's header and bar get grid placement meant for the card | The declarations really do compute on the panel — measured `grid-column: 2/-1` on the panel's bar at ≤640px against `auto/auto` at 900px — but they are inert, because grid placement only applies to a grid item and neither parent is a grid: `.scales-head-id` is `display: flex` (`index.css:3720`) and `.block` is `display: block` (`:1983`). Rendering the panel at 320/390/500/640px against the stylesheet with and without the block gives identical geometry in every column (`barW`, `barRightGap`, `whyOverflow`, name overrun). A latent hazard if either parent ever becomes a grid, not a present defect. |
 | frontend | The grid reflow makes the phone card taller, trading the bar fix for lost vertical density | Backwards. Measured at 390px the cards got *shorter* (180→147, 199→180, 217→180), and at 320px markedly so (277→180, 275→180, 296→180), because dropping the duplicated chip removes a whole row. |
 
+## Accepted by the operator at `a454a9f` (2026-07-26, reviewing the section nav, #71)
+
+Not refutations. These survived verification and were then judged not worth acting on, with the
+reason. A later pass must not re-raise one as new, and must re-open it only if the reason below
+stops holding — which is why the reason is recorded rather than just the verdict.
+
+| Lane | Finding | Why it stands unfixed |
+| --- | --- | --- |
+| safety | A **hung** safety read (not a failed one) leaves the section nav's armed dot in its pending state, which draws identically to "deletion is off" | Verified PLAUSIBLE, never CONFIRMED: it needs a request that neither resolves nor rejects, so it is bounded to the initial fetch, and `fetchApi` sets no timeout. The operator's ruling is that the dot going quiet costs visibility, not safety, because nothing downstream will act on that state: the executor re-reads the armed flag before every item (`executor._still_armed`, called at `executor.py:1175` through the `armed_recheck` the execute route injects at `api/runs.py:567`), and `ReapConfirm` derives `armed` from `destructive_enabled === true`, so a pending or errored read leaves Execute disabled through all three states. `SafetyBanner` carries the identical `isLoading` branch and predates this change, so a fix is one edit to both twins (rule 72) and belongs with a request timeout in `fetchApi`, not with the nav. |
+
 ## Refutations later found to be wrong
 
 None yet. When one lands here, record what the verifier missed — that reasoning is worth more
