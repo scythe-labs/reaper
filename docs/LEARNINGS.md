@@ -1472,11 +1472,22 @@ past the right edge. Measured in WebKit against the real page at a range of widt
   cost of the mismatch is a slightly over-generous jump offset on a 327px screen, which nobody
   can see. Where engines disagree on a pixel, the reported one wins and the other absorbs the
   rounding.
-- **Deferred, in writing (rule 72).** Seven more bare-`1fr` collapses share the pattern:
-  `.add-grid`, `.set-row`, `.about-kv`, `.backup-facts`, `.kv2`, `.safety-row.pw-row` and
-  `.docs-body`. All are Settings/docs label-and-value grids that this pass could not drive
-  end-to-end, and none is known to overflow today. They are the twins to fix the moment any
-  commit touches them.
+- **The seven deferred twins are done, and one of them did overflow.** `.add-grid`, `.set-row`,
+  `.about-kv`, `.backup-facts`, `.kv2`, `.safety-row.pw-row` and `.docs-body` were recorded here
+  as bare-`1fr` collapses to fix the moment any commit touched them. A commit touched `.set-row`,
+  and the deferral came due: the note's "none is known to overflow today" had already stopped
+  being true. Plex's connection picker holds a full `plex.direct` address as its only option
+  while the server list is still loading, and a `<select>`'s min-content is its widest option, so
+  the row's `auto` floor forced the track to **593px inside a 350px card** — the select and the
+  help text sharing that track both ran off a page with no sideways scroll. `min-width: 0` on the
+  select does not help: the floor belongs to the *track*, and to the grid item above it, so both
+  `.set-control` and the flex container need it too. Every column is now `minmax(0, 1fr)`,
+  including each twin's phone variant, which is where this bites and where five of them still
+  carried the bare form.
+- **A width cap can hide a collapse.** This one was invisible until the mobile `max-width: 22rem`
+  came off the control, because the cap was clamping the blown-out track back to something that
+  nearly fit. Removing a cap does not create an overflow; it reveals the one the grid was already
+  computing. Re-drive the narrow widths whenever a `max-width` leaves a layout.
 
 ## Prior art
 

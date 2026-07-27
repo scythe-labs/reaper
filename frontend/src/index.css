@@ -6513,7 +6513,7 @@ button.danger:hover:not(:disabled) {
 
 .add-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 0.7rem;
 }
 
@@ -6523,7 +6523,7 @@ button.danger:hover:not(:disabled) {
    own query.) */
 @media (max-width: 640px) {
   .add-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .rb-bar {
     grid-template-columns: 9rem 1fr auto;
@@ -7025,6 +7025,9 @@ button.danger:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  /* The box may shrink below its contents. A flex container's floor is `auto`, so without this
+     a long <option> sets a min-content the track has to honor (see the 640px block). */
+  min-width: 0;
   /* Inert while the row has room, and the difference between a readable label and one
      word per line when it hasn't: the API-key row alone carries a 15rem input plus three
      buttons, which is wider than the control column gets on a tablet in portrait. */
@@ -7172,7 +7175,7 @@ button.danger:hover:not(:disabled) {
   font-weight: 600;
 }
 .set-row.set-status {
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   padding: 0.6rem 1.1rem;
   color: var(--muted);
   font-size: 0.82rem;
@@ -7227,7 +7230,15 @@ button.danger:hover:not(:disabled) {
      above and that row alone would keep a two-column grid on a phone. */
   .set-row,
   .set-row.set-row-cluster {
-    grid-template-columns: 1fr;
+    /* `minmax(0, 1fr)`, never a bare `1fr`, which means `minmax(auto, 1fr)`: that `auto` floor
+       is the content's MIN-content, and a <select>'s min-content is its widest option, which no
+       `min-width: 0` on the select itself can lower. Plex's connection picker holds a full
+       plex.direct address while the server list is still loading, and it forced this track to
+       593px inside a 350px card -- the select, and the help text sharing the track, both ran off
+       the side of a page that cannot scroll sideways. `.set-row` was named in LEARNINGS as one
+       of seven deferred bare-`1fr` collapses to fix the moment any commit touched it; this is
+       that commit (rule 72). */
+    grid-template-columns: minmax(0, 1fr);
   }
   .set-row .set-control,
   .set-row.set-row-cluster .set-control {
@@ -7237,6 +7248,9 @@ button.danger:hover:not(:disabled) {
        margin every label starts on rather than hanging off the right edge. */
     justify-self: stretch;
     justify-content: flex-start;
+    /* A grid item's own floor is `auto` too, so the track above can only shrink if the box
+       sitting in it may. */
+    min-width: 0;
   }
   .set-row .set-control > input,
   .set-row .set-control > select {
@@ -7292,7 +7306,7 @@ button.danger:hover:not(:disabled) {
 /* About: a plain fact sheet. */
 .about-kv {
   display: grid;
-  grid-template-columns: 11rem 1fr;
+  grid-template-columns: 11rem minmax(0, 1fr);
   gap: 0.55rem 1.1rem;
   font-size: 0.92rem;
   padding: 1rem 1.1rem;
@@ -7308,7 +7322,7 @@ button.danger:hover:not(:disabled) {
 }
 @media (max-width: 560px) {
   .about-kv {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.1rem;
   }
   .about-kv dd {
@@ -7320,7 +7334,7 @@ button.danger:hover:not(:disabled) {
    set-rows padding, since here it sits directly inside a .rules-card. */
 .backup-facts {
   display: grid;
-  grid-template-columns: 9rem 1fr;
+  grid-template-columns: 9rem minmax(0, 1fr);
   gap: 0.45rem 1.1rem;
   font-size: 0.9rem;
   margin: 0.9rem 0 0;
@@ -7338,7 +7352,7 @@ button.danger:hover:not(:disabled) {
 }
 @media (max-width: 560px) {
   .backup-facts {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.1rem 1.1rem;
   }
   .backup-facts dd {
@@ -7399,7 +7413,7 @@ button.danger:hover:not(:disabled) {
 }
 .kv2 {
   display: grid;
-  grid-template-columns: 8rem 1fr;
+  grid-template-columns: 8rem minmax(0, 1fr);
   gap: 0.3rem 1rem;
   font-size: 0.85rem;
 }
@@ -7448,7 +7462,7 @@ button.danger:hover:not(:disabled) {
 
 @media (max-width: 560px) {
   .kv2 {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 0.1rem;
   }
 }
@@ -7762,7 +7776,7 @@ button.danger:hover:not(:disabled) {
 }
 @media (max-width: 640px) {
   .safety-row.pw-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -8789,7 +8803,7 @@ button.danger:hover:not(:disabled) {
    index only stacks above the text once even that runs out. */
 @media (max-width: 640px) {
   .docs-body {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
   }
   .docs-index {
