@@ -245,6 +245,27 @@ class Facts:
     what a stored snapshot predating the field thaws as (rule 104).
     """
 
+    days_since_added: Observation[float] = _UNSET
+    """Days since the item arrived on the server -- the span an ALL-TIME count needs.
+
+    ``distinct_watchers`` needs the reach to cover the policy's window;
+    ``distinct_watchers_all_time`` needs it to cover the item's whole life here, which is
+    this number. Only with both can a count be read as the answer rather than a lower
+    bound (``fields.reach_shortfall``).
+
+    ``days_observed_unwatched`` cannot stand in for it, though it looks like it could.
+    Dormancy is deliberately clamped to the mirror's edge --
+    ``dormancy.reference_instant`` measures a never-played item from
+    ``max(added_at, horizon)``, and a played one from a play the mirror by definition
+    holds -- so it is never larger than ``history_reach_days``, and comparing the two
+    would pronounce every all-time count complete. This one is measured from the arrival
+    date itself and is free to exceed the reach, which is exactly the case that must fail
+    closed.
+
+    Defaulted like ``history_reach_days`` above, and read the same way: anything but
+    ``Known`` is "cannot establish", the keep direction (rule 104).
+    """
+
     ratings: tuple[Rating, ...] = ()
     """Every interpretable rating the scan froze for this item, one per source (IMDb,
     TMDb, Rotten Tomatoes critics/audience, Metacritic). Read only by the multi-source
@@ -428,14 +449,36 @@ class StreamingNowGate:
         return GateResult(self.id, ABSTAIN, detail="Nobody is watching it right now.")
 
 
-#: How much shorter than the window a reach must be before the block names it in days.
-#: Both spans are phrased by ``clock.humanize_days``, whose months are 30 days and whose
-#: years are 365, so 360 days renders "12 months" while the 365-day window renders "year":
-#: true, and it reads to the operator as though the history were LONGER than the window it
-#: cannot cover. One whole month of margin is the cheapest bound that cannot invert,
-#: because a reach at least a month short always renders a smaller leading unit. Inside the
-#: margin the copy states the comparison instead of the number, which is shorter anyway.
+#: How much shorter than the span it must cover a reach must be before the copy names it
+#: in days. Both spans are phrased by ``clock.humanize_days``, whose months are 30 days and
+#: whose years are 365, so 360 days renders "12 months" while a 365-day span renders
+#: "year": true, and it reads to the operator as though the history were LONGER than the
+#: span it cannot cover. One whole month of margin is the cheapest bound that cannot
+#: invert, because a reach at least a month short always renders a smaller leading unit.
+#: Inside the margin the copy states the comparison instead of the number, which is shorter
+#: anyway.
 _REACH_NAMEABLE_MARGIN_DAYS = 30
+
+
+def history_shortfall(reach: Observation[float], needed: float) -> str | None:
+    """Why the watch mirror cannot cover ``needed`` days, in the operator's words.
+
+    ``None`` when it does cover them -- the only case in which a count drawn from the
+    mirror may be read as the answer rather than as a lower bound, because the plays a
+    short mirror cannot see are precisely the ones that would have kept the file.
+
+    The single derivation behind every reader of a watcher count (rules 104, 140):
+    ``ServerPopularityGate`` below asks it about the policy's popularity window, and
+    ``fields.reach_shortfall`` asks it for the operator-authored protect, condemn and keep
+    lanes. A bound honored in one lane and not the next is the bug it exists to prevent.
+    """
+    if not isinstance(reach, Known):
+        return "this scan did not record how far back your watch history goes"
+    if reach.value >= needed:
+        return None
+    if reach.value <= needed - _REACH_NAMEABLE_MARGIN_DAYS:
+        return f"your watch history only goes back {humanize_days(reach.value)}"
+    return "your watch history does not go back that far"
 
 
 @dataclass(frozen=True, slots=True)
@@ -478,14 +521,7 @@ class ServerPopularityGate:
         # The PROTECT above deliberately needs no such check: a play seen inside part of
         # the window did happen inside the window, so a lower bound that already clears
         # the floor clears it however much more history arrives.
-        reach = facts.history_reach_days
-        if not isinstance(reach, Known) or reach.value < window:
-            if not isinstance(reach, Known):
-                short = "this scan did not record how far back your watch history goes"
-            elif reach.value <= window - _REACH_NAMEABLE_MARGIN_DAYS:
-                short = f"your watch history only goes back {humanize_days(reach.value)}"
-            else:
-                short = "your watch history does not go back that far"
+        if (short := history_shortfall(facts.history_reach_days, window)) is not None:
             return GateResult(
                 self.id,
                 ABSTAIN,

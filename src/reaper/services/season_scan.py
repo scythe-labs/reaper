@@ -583,6 +583,14 @@ def build_season_facts(
         # instant, which is why this is passed in rather than measured here
         # (``snapshot.ScanContext.reach_days``).
         history_reach_days=Known(value=reach_days, source="tautulli"),
+        # The span an all-time count would need, from THIS season's own arrival date --
+        # the same reason dormancy uses it above, a season backfilled into an old show
+        # arrived recently. The movie lane's twin (``snapshot.build_facts``, rule 72).
+        days_since_added=(
+            Known(value=dormancy_days(season_added_at, now=utcnow()), source="plex")
+            if season_added_at is not None
+            else Unknown(reason="no added-at date for this season", source="plex")
+        ),
         size_bytes=(
             Known(value=season.size_on_disk, source="sonarr")
             if season.size_on_disk is not None

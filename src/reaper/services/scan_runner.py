@@ -148,7 +148,14 @@ def build_gates(policy: PolicyBody) -> list[Gate]:
     # title and shows up in the why-panel exactly like a stock protection.
     from reaper.engine.fields import CustomProtectGate
 
-    gates.extend(CustomProtectGate(c.to_condition()) for c in policy.protect_conditions)
+    # The window rides along because a protect rule may be authored on a watcher count,
+    # which the watch mirror only supports as far back as it reaches (rule 140,
+    # ``fields.reach_shortfall``). It is the same window the fact was counted over
+    # (``snapshot._watch_stats``), so the two can never describe different spans.
+    window = policy.popularity_window_days()
+    gates.extend(
+        CustomProtectGate(c.to_condition(), window_days=window) for c in policy.protect_conditions
+    )
     return gates
 
 

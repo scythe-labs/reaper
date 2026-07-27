@@ -1523,6 +1523,29 @@ past the right edge. Measured in WebKit against the real page at a range of widt
   the price of an alignment, measure whether the alignment survives without it.** This one sat in
   `unproven.md` as a design judgment waiting on a mockup, and it was a two-minute measurement.
 
+## Dormancy cannot bound an all-time count, by construction (2026-07-27)
+
+Qualifying the two watcher counts by the mirror's reach needs a *span* to compare the reach
+against. Recent watchers has an obvious one, the policy's popularity window. All-time
+watchers needs the item's whole life on the server, and the tempting shortcut —
+`Facts.days_observed_unwatched`, which is already there and needs no plumbing — cannot serve.
+
+**It can never exceed the reach.** `dormancy.reference_instant` returns
+`last_played or max(added_at, horizon)`. A never-played item is therefore measured from the
+mirror's edge whenever it predates the mirror, and a played one is measured from a play the
+mirror by definition holds. Either way `days_observed_unwatched <= history_reach_days` for
+every item, so `reach >= dormancy` is true always and a guard written that way fires never.
+The clamp is deliberate and correct — it is what stops a year-deep mirror claiming a file has
+been ignored for five — and it is exactly what makes the value useless as this bound.
+
+The general form: **a value already clamped to X cannot be used to test whether X is big
+enough.** Reuse of a nearby field is cheap right up until the field's own safety clamp is the
+thing you are trying to measure. What the bound needs is a number free to exceed the reach,
+which is why `Facts.days_since_added` is measured from the arrival date itself.
+
+Worth noting because the shortcut was written down as the fix and reads entirely plausible;
+it survives until you ask what `reference_instant` does with the horizon.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs

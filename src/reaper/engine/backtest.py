@@ -396,6 +396,11 @@ def facts_as_of(
         # only the history that existed then, and the popularity gate must be as unable to
         # see past the horizon in rehearsal as it is in the live scan.
         history_reach_days=Known(value=history_reach_days(horizon, now=cutoff), source="tautulli"),
+        # Measured from the cutoff too, for the same reason: at that date the item had
+        # been on the server for exactly this long, and an all-time count needs the mirror
+        # to span it (``Facts.days_since_added``). ``added_at`` is non-None and at or
+        # before the cutoff -- the guard at the top of this function returns None otherwise.
+        days_since_added=Known(value=dormancy_days(item.added_at, now=cutoff), source="plex"),
         size_bytes=Known(value=item.size_bytes, source="radarr"),
         # Stated plainly: today's ratings. IMDb scores move slowly and there is no
         # historical archive, so pretending to know the 2025 value would be fiction.

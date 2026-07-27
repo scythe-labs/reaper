@@ -34,7 +34,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from reaper.clock import humanize_days
-from reaper.engine.gates import ABSTAIN, PROTECT, Facts, GateId, GateResult
+from reaper.engine.gates import ABSTAIN, PROTECT, Facts, GateId, GateResult, history_shortfall
 from reaper.engine.observation import Known, Observation, Unknown
 
 
@@ -76,6 +76,25 @@ class FieldType(enum.StrEnum):
 NUMERIC_OPS = (Op.GTE, Op.LTE)
 BOOL_OPS = (Op.EQ,)
 TEXT_OPS = (Op.EQ, Op.IN, Op.CONTAINS)
+
+
+class ReachSpan(enum.StrEnum):
+    """How much watch history a field's value needs before it means what it says.
+
+    Watcher counts come from a mirror that begins somewhere
+    (``Facts.history_reach_days``). Under that span the count is a LOWER BOUND, not an
+    answer, and the plays it cannot see are exactly the ones that would have kept the
+    file. A spec carrying one of these is asking every lane that reads it to check the
+    reach first (rule 140); a spec carrying ``None`` reads a fact the mirror does not
+    bound -- a size, a rating, a genre.
+    """
+
+    POPULARITY_WINDOW = "popularity_window"
+    """Counted over the policy's popularity window, so the mirror must span it."""
+
+    ITEM_LIFETIME = "item_lifetime"
+    """Counted over all time, so the mirror must span the item's whole life here
+    (``Facts.days_since_added``)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,6 +276,11 @@ class FieldSpec:
     bars: BarPhrases | None = None
     """Overrides the phrasing of the rule's own number. Defaults by field type."""
 
+    reach_span: ReachSpan | None = None
+    """Set where the value is drawn from the watch mirror and is only an answer while
+    the mirror reaches far enough. Declared here, on the field, so every lane that reads
+    it through this registry inherits the check rather than each remembering it."""
+
     def allows(self, lane: Lane, op: Op) -> bool:
         return lane in self.lanes and op in self.ops
 
@@ -309,6 +333,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         ops=NUMERIC_OPS,
         read=lambda f: f.distinct_watchers,
         value_phrase="{} person|people watched it recently",
+        reach_span=ReachSpan.POPULARITY_WINDOW,
     ),
     FieldSpec(
         key="watchers_all_time",
@@ -327,6 +352,7 @@ REGISTRY: tuple[FieldSpec, ...] = (
         ops=NUMERIC_OPS,
         read=lambda f: f.distinct_watchers_all_time,
         value_phrase="{} person|people has|have ever watched it",
+        reach_span=ReachSpan.ITEM_LIFETIME,
     ),
     FieldSpec(
         key="imdb_rating",
@@ -495,6 +521,15 @@ REGISTRY: tuple[FieldSpec, ...] = (
 
 BY_KEY: dict[str, FieldSpec] = {spec.key: spec for spec in REGISTRY}
 
+RECENT_WATCHERS: FieldSpec = BY_KEY["recent_watchers"]
+"""The windowed watcher count's spec, resolved once here rather than looked up by string.
+
+``signals.evaluate_signal``'s built-in ``FEW_WATCHERS`` branch reads the same fact this
+spec declares and has to consult the same reach bound (rule 140). Reaching it through
+``BY_KEY.get("recent_watchers")`` would hand back ``None`` the day that key is renamed, and
+``reach_shortfall(None, ...)`` means "no bound applies" -- the guard would switch itself off
+in silence, in the condemn direction. Subscripting here raises at import instead."""
+
 
 def vocabulary(lane: Lane, media_type: MediaType | None = None) -> list[FieldSpec]:
     """The fields available in one lane, optionally narrowed to one media type.
@@ -595,12 +630,75 @@ class ConditionResult:
     detail: str
 
 
-def evaluate(condition: Condition, facts: Facts) -> ConditionResult:
+def reach_shortfall(spec: FieldSpec | None, facts: Facts, *, window_days: int | None) -> str | None:
+    """Why the watch mirror cannot support this field's value, in the operator's words.
+
+    ``None`` when it can, and for every field the mirror does not bound. The one place
+    the two watcher counts are qualified, so the protect lane, the condemn lane, the
+    graded keeps and the built-in ``FEW_WATCHERS`` signal cannot drift apart (rule 140).
+
+    ``window_days`` is the policy's popularity window -- the span
+    ``distinct_watchers`` was counted over, and the one every production caller derives
+    from ``policy.PolicyBody.popularity_window_days``, the same call that built the count
+    (``snapshot._watch_stats``), so the two can never describe different spans. ``None``
+    means the caller did not state it, and that is deliberately not a license to assume
+    the shipped default: against an operator running a longer window, a truncated count
+    would be read as complete, which is the exact fail-open this guards. It resolves to
+    "cannot establish" instead.
+    """
+    if spec is None or spec.reach_span is None:
+        return None
+    if spec.reach_span is ReachSpan.POPULARITY_WINDOW:
+        if window_days is None:
+            return "this scan did not record the window the count covers"
+        return history_shortfall(facts.history_reach_days, float(window_days))
+    # ITEM_LIFETIME. An all-time count needs the mirror to reach back to the day the item
+    # arrived; without the arrival date there is no span to compare the reach against, so
+    # the count cannot be established either way.
+    age = facts.days_since_added
+    if not isinstance(age, Known):
+        return "this scan did not record when it was added"
+    return history_shortfall(facts.history_reach_days, float(age.value))
+
+
+def _survives_more_history(op: Op, *, matched: bool) -> bool:
+    """Would this outcome still hold once the plays the mirror cannot see arrived?
+
+    A count drawn from a mirror that does not reach far enough is a LOWER BOUND, and the
+    history it is missing can only ever RAISE it. Two of the four outcomes are therefore
+    already earned and need no reach at all: "at least N" that the truncated count
+    *already* clears stays cleared however much more history arrives, and "at most N"
+    that it *already* exceeds stays exceeded. The other two are the ones a deeper mirror
+    could overturn, and they are exactly the dangerous pair -- an unmatched ``gte``
+    withdraws a protection ("nobody has ever watched it"), and a matched ``lte`` lands a
+    removal rule's full weight ("nobody watched it recently").
+
+    Only ``NUMERIC_OPS`` reach here, since only numeric specs carry a ``reach_span``;
+    anything else is treated as overturnable, which is the keep direction.
+    """
+    match op:
+        case Op.GTE:
+            return matched
+        case Op.LTE:
+            return not matched
+        case _:  # pragma: no cover -- no text or bool spec is reach-bounded
+            return False
+
+
+def evaluate(
+    condition: Condition, facts: Facts, *, window_days: int | None = None
+) -> ConditionResult:
     """Evaluate one condition against one item.
 
     An ``Unknown`` never matches, and says so. In the protect lane that means the
     protection does not fire but is reported as *blocked* -- amber, not green -- so
     "we could not check" is visibly different from "we checked and it was fine".
+
+    A ``Known`` value the evidence cannot actually support reads the same way. See
+    ``reach_shortfall``: a watcher count from a mirror that does not reach far enough is
+    a lower bound, so the outcomes it could still overturn are blocked rather than
+    reported as checked. ``window_days`` defaults to ``None`` -- "not stated" -- because
+    guessing it is the fail-open direction.
     """
     spec = condition.spec()
     observation = spec.read(facts)
@@ -640,6 +738,22 @@ def evaluate(condition: Condition, facts: Facts) -> ConditionResult:
             matched=False,
             blocked=True,
             detail=f"could not check {spec.label.lower()}: {exc}",
+        )
+
+    # A Known value the evidence cannot actually carry. Checked AFTER the comparison
+    # because only the outcome says whether the reach matters: the two earned outcomes
+    # above are true of any deeper mirror, and blocking them would withhold a protection
+    # the operator's own rule did fire (and, on the condemn lane, drop pressure that was
+    # honestly measured). The other two are reported as unchecked, in the same amber
+    # "could not check" shape as an Unknown input, prefix included -- ``api.routes._chip``
+    # and ``WhyPanel`` both read it.
+    if not _survives_more_history(condition.op, matched=matched) and (
+        (short := reach_shortfall(spec, facts, window_days=window_days)) is not None
+    ):
+        return ConditionResult(
+            matched=False,
+            blocked=True,
+            detail=f"could not check {spec.label.lower()}: {short}",
         )
 
     return ConditionResult(matched=matched, blocked=False, detail=detail)
@@ -885,8 +999,14 @@ class CustomProtectGate:
     condition: Condition
     id: GateId = GateId.CUSTOM
 
+    window_days: int | None = None
+    """The policy's popularity window, so a rule on a windowed watcher count can tell
+    whether the mirror covered it (``reach_shortfall``). Built from the policy in
+    ``services.scan_runner.build_gates``; ``None`` reads as un-establishable, which
+    blocks rather than assumes."""
+
     def evaluate(self, facts: Facts) -> GateResult:
-        result = evaluate(self.condition, facts)
+        result = evaluate(self.condition, facts, window_days=self.window_days)
         if result.blocked:
             return GateResult(self.id, ABSTAIN, blocked=True, detail=result.detail)
         if result.matched:
@@ -894,7 +1014,9 @@ class CustomProtectGate:
         return GateResult(self.id, ABSTAIN, detail=f"checked your rule: {result.detail}")
 
 
-def evaluate_rules(rules: RuleSet, facts: Facts) -> RuleSetResult:
+def evaluate_rules(
+    rules: RuleSet, facts: Facts, *, window_days: int | None = None
+) -> RuleSetResult:
     """Evaluate a lane.
 
     CONDEMN is a flat AND: every condition must match, and a single blocked
@@ -903,7 +1025,9 @@ def evaluate_rules(rules: RuleSet, facts: Facts) -> RuleSetResult:
     PROTECT is an OR of conditions: *any* reason to keep a file is sufficient. That
     is safe by construction, which is exactly why this lane may be user-authored.
     """
-    results = tuple(evaluate(condition, facts) for condition in rules.conditions)
+    results = tuple(
+        evaluate(condition, facts, window_days=window_days) for condition in rules.conditions
+    )
     if not results:
         return RuleSetResult(matched=False, blocked=False, results=())
 

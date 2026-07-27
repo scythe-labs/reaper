@@ -318,22 +318,32 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
             # Inverted, but still unsigned: FEWER watchers means MORE pressure.
             # The pressure is computed from the shortfall, never as a negative.
             raw = max(0.0, float(config.saturate_at) - watchers) if watchers is not None else None
-            # Named against the span the mirror actually covered, which is the window only
-            # while the history reaches that far back. The gate refuses to answer at all
-            # below that (``gates.ServerPopularityGate``); this lane is soft pressure, not
-            # a protection, so it narrows the claim rather than withholding it -- but it
-            # must not keep saying "in the last year" about a year it never saw.
-            reach = facts.history_reach_days
-            covered = (
-                min(float(window_days), reach.value) if isinstance(reach, Known) else window_days
-            )
-            # A mirror less than a day deep has no span worth naming, and "in the last less
-            # than a day" is not a sentence. Say what is true without naming one.
-            span = (
-                f"in the last {humanize_window(covered)}"
-                if covered >= 1
-                else "in the history Reaper holds"
-            )
+            # The count is only an answer while the mirror spans the window. Under that it
+            # is a LOWER BOUND, and the pressure this signal charges comes from the
+            # shortfall below ``saturate_at`` -- so a truncated count charges pressure the
+            # evidence does not support, and lands it at full confidence: ``score()``
+            # counts the signal evaluated because its input was Known, keeping its weight
+            # in the numerator AND reporting coverage 1.0, so ``coverage_floor_bp`` cannot
+            # see the hole. Measured at 20.00/20 pressure with coverage_bp 10000 on a
+            # 90-day mirror against the 365-day window, where the same title takes 0.00/20
+            # once the mirror reaches the identical plays.
+            #
+            # So withhold it rather than narrow it: route to the UNREADABLE arm below (raw
+            # None on a non-Absent observation), which is the treatment Unknown already
+            # gets -- zero pressure, weight retained in the denominator, coverage honestly
+            # discounted (rules 31, 140). The gate refuses to answer here too
+            # (``gates.ServerPopularityGate``), off the same shared derivation.
+            span = f"in the last {humanize_window(window_days)}"
+            short = fields.reach_shortfall(fields.RECENT_WATCHERS, facts, window_days=window_days)
+            if short is not None:
+                return SignalResult(
+                    config.signal,
+                    0.0,
+                    config.weight,
+                    f"could not tell who watched it {span}: {short}",
+                    evaluated=False,
+                    state=SignalState.UNREADABLE,
+                )
             if watchers is None and isinstance(observation, Absent):
                 detail = "no watch history recorded for it"
             elif watchers is None:
@@ -393,12 +403,18 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
     )
 
 
-def evaluate_custom(config: CustomSignalConfig, facts: Facts) -> SignalResult:
+def evaluate_custom(
+    config: CustomSignalConfig, facts: Facts, *, window_days: int | None = None
+) -> SignalResult:
     """One user-authored condemnation signal. Always in ``[0, weight]``.
 
     Unsigned like every signal: a matched boolean rule (or a graded field above its floor)
     adds pressure; an ``Unknown`` input adds none but keeps its weight in the denominator,
     so a custom rule can only ever push the score DOWN on missing data.
+
+    ``window_days`` is the policy's popularity window, needed because a rule may be
+    authored on a watcher count, whose value the watch mirror only supports so far back
+    (``fields.reach_shortfall``).
     """
     if not config.enabled:
         return SignalResult(
@@ -442,6 +458,19 @@ def evaluate_custom(config: CustomSignalConfig, facts: Facts) -> SignalResult:
                 evaluated=False,
                 state=SignalState.UNREADABLE,
             )
+        # A Known watcher count the mirror does not reach far enough to support is a lower
+        # bound, and this ramp is monotone in it -- so a graded removal rule on "people who
+        # watched it recently" would charge pressure off history nobody has. Same treatment
+        # as the Unknown above, which is what keeps coverage honest about it (rule 140).
+        if (short := fields.reach_shortfall(spec, facts, window_days=window_days)) is not None:
+            return SignalResult(
+                config.name,
+                0.0,
+                config.weight,
+                f"could not check {label.lower()}: {short}",
+                evaluated=False,
+                state=SignalState.UNREADABLE,
+            )
         fraction = _ramp(raw, float(config.floor), float(config.saturate_at))
         return SignalResult(
             config.name,
@@ -463,7 +492,7 @@ def evaluate_custom(config: CustomSignalConfig, facts: Facts) -> SignalResult:
             evaluated=False,
             state=SignalState.UNREADABLE,
         )
-    result = fields.evaluate(config.condition, facts)
+    result = fields.evaluate(config.condition, facts, window_days=window_days)
     if result.blocked:
         # Unknown input: could not check, so it cannot add pressure. Weight retained.
         return SignalResult(
@@ -487,12 +516,17 @@ def evaluate_custom(config: CustomSignalConfig, facts: Facts) -> SignalResult:
     )
 
 
-def evaluate_keep(config: KeepConfig, facts: Facts) -> KeepResult:
+def evaluate_keep(
+    config: KeepConfig, facts: Facts, *, window_days: int | None = None
+) -> KeepResult:
     """One user-authored graded keep. A discount in ``[0, max_discount]``, fail-closed.
 
     A value we cannot read yields the FULL discount -- missing data pushes toward keeping.
     An ``Absent`` value (we looked, there genuinely is none) yields no discount: absence is
     real evidence, not a reason to keep.
+
+    A value the watch mirror does not reach far enough to support reads as the first of
+    those, not the second (``window_days``, ``fields.reach_shortfall``).
     """
     if not config.enabled:
         return KeepResult(config.name, 0.0, 0, "disabled", evaluated=True)
@@ -516,6 +550,22 @@ def evaluate_keep(config: KeepConfig, facts: Facts) -> KeepResult:
             float(config.max_discount),
             config.max_discount,
             f"kept fully: could not check {label.lower()}",
+            evaluated=False,
+        )
+
+    if (short := fields.reach_shortfall(spec, facts, window_days=window_days)) is not None:
+        # A Known watcher count from a mirror that does not reach far enough is a lower
+        # bound. On the default ``high_keeps`` direction the ramp is monotone in it, so the
+        # discount comes out too SMALL -- the keep quietly shrinks on evidence nobody has,
+        # which is the one direction that loses a file. (``low_keeps`` errs the generous
+        # way, but both take the same arm: the honest report is that it was not checked,
+        # and a keep is never the place to split that hair.) The maximum discount is the
+        # same fail-closed answer an Unknown gets above.
+        return KeepResult(
+            config.name,
+            float(config.max_discount),
+            config.max_discount,
+            f"kept fully: could not check {label.lower()}: {short}",
             evaluated=False,
         )
 
@@ -585,13 +635,21 @@ def score(
     never raise a score, and never un-protect a gate-protected item (that is decided before
     the score is ever read; see ``services.snapshot._verdict``).
 
-    ``window_days`` is passed through purely for phrasing the "few watches" detail; it is
-    never part of any number.
+    ``window_days`` is the policy's popularity window -- the span ``distinct_watchers`` was
+    counted over. It phrases the "few watches" detail, and it is the span every reader of a
+    watcher count checks the mirror's reach against before treating that count as an answer
+    (``fields.reach_shortfall``, rule 140). So it does move numbers, in one direction only:
+    a window the history does not cover withdraws pressure and lowers coverage, never the
+    reverse. Pass the policy's own value; the default here is the shipped window and agrees
+    with ``policy.PolicyBody.popularity_window_days``'s fallback, but a policy that has
+    changed it and a caller that omits it would disagree in the fail-open direction.
     """
     results = [evaluate_signal(config, facts, window_days=window_days) for config in configs]
-    results += [evaluate_custom(config, facts) for config in custom_condemn]
+    results += [
+        evaluate_custom(config, facts, window_days=window_days) for config in custom_condemn
+    ]
 
-    keep_results = [evaluate_keep(keep, facts) for keep in keeps]
+    keep_results = [evaluate_keep(keep, facts, window_days=window_days) for keep in keeps]
     keep_discount = sum(kr.discount for kr in keep_results)
 
     denominator = sum(r.weight for r in results)

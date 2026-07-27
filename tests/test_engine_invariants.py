@@ -41,6 +41,7 @@ from reaper.engine.signals import (
     Score,
     SignalConfig,
     SignalId,
+    SignalState,
     evaluate_keep,
     score,
 )
@@ -269,6 +270,11 @@ class TestProtectionAlwaysBeatsScore:
             is_managed=Known(value=True, source="t"),
             in_curated_list=Absent(source="t"),
             is_whitelisted=Known(value=True, source="t"),  # <- the whitelist
+            # Deeper than the popularity window, so the zero watcher count is a real
+            # measurement and FEW_WATCHERS charges its full pressure. The point of this
+            # test is that a maximal score still loses to a protection, so the score has
+            # to actually be maximal.
+            history_reach_days=Known(value=4000.0, source="t"),
         )
 
         assert score(ALL_SIGNALS, item).value > 90  # it looks maximally deletable
@@ -347,8 +353,16 @@ class TestRatingGate:
         assert result.outcome == ABSTAIN
 
 
-def _popularity_facts(watchers: int, reach: Observation[float]) -> Facts:
-    """A minimal Facts carrying only what the popularity gate reads."""
+def _popularity_facts(
+    watchers: int, reach: Observation[float], *, added_days: float = 800.0
+) -> Facts:
+    """A minimal Facts carrying only what the popularity gate reads.
+
+    ``added_days`` is how long the item has been on the server -- the span an ALL-TIME
+    count needs the mirror to cover, which the windowed gate does not read but the
+    operator-authored lanes do (``Facts.days_since_added``). Defaulted well past the
+    reaches these tests use, so a test that does not name it is exercising the window.
+    """
     return Facts(
         title="x",
         days_observed_unwatched=Known(value=900.0, source="t"),
@@ -363,6 +377,7 @@ def _popularity_facts(watchers: int, reach: Observation[float]) -> Facts:
         in_curated_list=Absent(source="t"),
         is_whitelisted=Known(value=False, source="t"),
         history_reach_days=reach,
+        days_since_added=Known(value=added_days, source="p"),
     )
 
 
@@ -497,6 +512,235 @@ class TestThePopularityWindowCannotOutrunTheHistory:
 
         assert result.blocked is False
         assert result.detail == "Nobody here watched it in the last 3 months."
+
+
+class TestEveryReaderOfTheSameCountHonorsTheReach:
+    """Rule 140's sweep. The reach was recorded and the gate above taught to fail closed
+    past it, while three other readers of the same two counts went on reading them at full
+    confidence: the operator's own protect rules, the graded keeps, and the built-in
+    ``FEW_WATCHERS`` signal. A bound honored in one lane and silently not in the next is
+    indistinguishable from the bug the bound was added to fix.
+
+    The shipped window is 365 days throughout, and ``_popularity_facts`` puts the item on
+    the server 800 days ago -- so a 90-day mirror can support neither count.
+    """
+
+    WINDOW = 365
+
+    def _protect(self, field: str, value: int) -> fields.CustomProtectGate:
+        return fields.CustomProtectGate(
+            fields.Condition(field=field, op=fields.Op.GTE, value=value),
+            window_days=self.WINDOW,
+        )
+
+    def test_an_operator_keep_rule_does_not_report_green_over_history_reaper_lacks(
+        self,
+    ) -> None:
+        """The headline. A Tautulli installed three months ago, a title three people
+        watched two years ago: no mirror rows, so ``watchers_all_time >= 1`` does not
+        match and the panel used to say green, "checked your rule: 0 people have ever
+        watched it, under your 1". The operator's own protection covered nothing."""
+        result = self._protect("watchers_all_time", 1).evaluate(
+            _popularity_facts(0, Known(value=90.0, source="t"))
+        )
+
+        assert result.outcome == ABSTAIN
+        assert result.blocked is True  # amber, not green
+        assert "checked your rule" not in result.detail
+        assert result.detail.startswith("could not check")
+        assert "only goes back 3 months" in result.detail
+
+    def test_the_built_in_gate_and_an_operator_rule_agree_on_identical_facts(self) -> None:
+        """Side by side, which is how the split was found: the built-in gate returned
+        ABSTAIN blocked=True on exactly these Facts while the operator's own rule returned
+        ABSTAIN blocked=False. One bound, one answer, whichever lane asks."""
+        item = _popularity_facts(0, Known(value=90.0, source="t"))
+        built_in = ServerPopularityGate(
+            GateConfig(GateId.SERVER_POPULARITY, threshold=1, window_days=self.WINDOW)
+        ).evaluate(item)
+        authored = self._protect("recent_watchers", 1).evaluate(item)
+
+        assert built_in.blocked is authored.blocked is True
+
+    def test_a_count_that_already_clears_the_rule_still_fires(self) -> None:
+        """The asymmetry, and it is what keeps the bound from costing protections. A
+        truncated count only ever UNDERSTATES, so three watchers already seen inside the
+        covered part cannot be un-seen by a deeper mirror: the protection is earned and
+        fires. Blocking here would withdraw a keep the operator's rule did win."""
+        for field in ("recent_watchers", "watchers_all_time"):
+            result = self._protect(field, 3).evaluate(
+                _popularity_facts(3, Known(value=90.0, source="t"))
+            )
+
+            assert result.outcome == PROTECT, field
+            assert result.blocked is False, field
+
+    def test_a_mirror_that_covers_the_span_answers_exactly_as_before(self) -> None:
+        """The check changes nothing once the evidence is there -- the same promise the
+        gate's own reach test makes."""
+        item = _popularity_facts(0, Known(value=1200.0, source="t"))
+
+        for field in ("recent_watchers", "watchers_all_time"):
+            result = self._protect(field, 1).evaluate(item)
+
+            assert result.outcome == ABSTAIN, field
+            assert result.blocked is False, field
+            assert result.detail.startswith("checked your rule"), field
+
+    def test_the_all_time_bound_is_the_items_own_age_not_the_window(self) -> None:
+        """A year of history answers a year-long window, and still cannot say who has
+        *ever* watched a file that arrived 800 days ago. Reading the two counts against
+        one span is what made the all-time half look already fixed.
+
+        This is also why dormancy cannot stand in for the arrival date:
+        ``days_observed_unwatched`` is clamped to the mirror's edge, so it can never
+        exceed the reach and comparing the two would pronounce every all-time count
+        complete."""
+        item = _popularity_facts(0, Known(value=400.0, source="t"), added_days=800.0)
+
+        assert self._protect("recent_watchers", 1).evaluate(item).blocked is False
+        assert self._protect("watchers_all_time", 1).evaluate(item).blocked is True
+
+    def test_an_unrecorded_arrival_date_blocks_rather_than_assuming(self) -> None:
+        """A snapshot frozen before ``days_since_added`` was a fact thaws it Unknown
+        (rule 104). That is not permission to claim the mirror covers the item's life."""
+        item = replace(
+            _popularity_facts(0, Known(value=1200.0, source="t")),
+            days_since_added=Unknown(reason="this scan did not record it", source="snapshot"),
+        )
+
+        assert self._protect("watchers_all_time", 1).evaluate(item).blocked is True
+
+    def test_the_window_reaches_the_rule_through_the_real_gate_builder(self) -> None:
+        """The plumbing, not a hand-built gate. ``build_gates`` is what hands the policy's
+        window to each authored protection; without it every such rule would read as
+        un-establishable and block the whole library. Both directions are asserted, so a
+        window that never arrives cannot pass as the bound working."""
+        from reaper.engine.policy import DEFAULT_MOVIE_POLICY, ConditionSpec
+        from reaper.services.scan_runner import build_gates
+
+        policy = DEFAULT_MOVIE_POLICY.model_copy(
+            update={
+                "protect_conditions": (
+                    ConditionSpec(field="recent_watchers", op=fields.Op.GTE, value=1),
+                )
+            }
+        )
+        authored = [g for g in build_gates(policy) if isinstance(g, fields.CustomProtectGate)]
+        assert len(authored) == 1
+        assert authored[0].window_days == policy.popularity_window_days()
+
+        short = authored[0].evaluate(_popularity_facts(0, Known(value=90.0, source="t")))
+        covered = authored[0].evaluate(_popularity_facts(0, Known(value=1200.0, source="t")))
+
+        assert short.blocked is True
+        assert covered.blocked is False
+
+    def test_a_graded_keep_on_a_truncated_count_takes_the_full_discount(self) -> None:
+        """The second reader. ``evaluate_keep`` already gives the full discount on an
+        Unknown, so the correct treatment existed and was bypassed on a Known(0) the
+        mirror cannot support: the keep quietly shrank to nothing on evidence nobody has.
+        """
+        keep = KeepConfig(
+            name="Keep what people have watched",
+            max_discount=30,
+            field="watchers_all_time",
+            floor=0,
+            saturate_at=3,
+        )
+
+        short = evaluate_keep(
+            keep, _popularity_facts(0, Known(value=90.0, source="t")), window_days=self.WINDOW
+        )
+        covered = evaluate_keep(
+            keep, _popularity_facts(0, Known(value=1200.0, source="t")), window_days=self.WINDOW
+        )
+
+        assert short.discount == 30.0
+        assert short.evaluated is False
+        assert "could not check" in short.detail
+        # ...and a mirror that does cover it reports the real, zero, discount.
+        assert covered.discount == 0.0
+        assert covered.evaluated is True
+
+    def test_few_watchers_withdraws_its_pressure_and_lets_coverage_see_the_hole(self) -> None:
+        """The third reader, and the one that can condemn. The signal read the same
+        truncated count for its PRESSURE, and ``score()`` counted it evaluated because the
+        input was Known -- so its weight landed in the numerator AND coverage resolved to
+        1.0, which is what kept ``coverage_floor_bp`` from ever seeing the gap.
+        """
+        configs = [
+            SignalConfig(SignalId.UNWATCHED, weight=80, saturate_at=730),
+            SignalConfig(SignalId.FEW_WATCHERS, weight=20, saturate_at=3),
+        ]
+        short = score(
+            configs, _popularity_facts(0, Known(value=90.0, source="t")), window_days=self.WINDOW
+        )
+        covered = score(
+            configs, _popularity_facts(0, Known(value=1200.0, source="t")), window_days=self.WINDOW
+        )
+
+        few = {r.signal: r for r in short.results}[SignalId.FEW_WATCHERS]
+        few_covered = {r.signal: r for r in covered.results}[SignalId.FEW_WATCHERS]
+
+        # What it used to do on the 90-day mirror, and what it correctly does once the
+        # mirror reaches the identical plays: full pressure, reported at total coverage.
+        assert few_covered.pressure == 20.0
+        assert covered.coverage == 1.0
+
+        assert few.pressure == 0.0
+        assert few.evaluated is False
+        assert few.state is SignalState.UNREADABLE
+        # The weight stays in the denominator, so the hole is visible to the coverage
+        # floor instead of hidden behind a coverage of 1.0 (rule 31).
+        assert short.coverage == pytest.approx(0.8)
+        assert "could not tell who watched it" in few.detail
+
+    def test_a_graded_removal_rule_on_the_same_count_is_bounded_too(self) -> None:
+        """The authored twin of the signal above. A removal rule graded on "people who
+        watched it recently" charges pressure off the same lower bound, so it takes the
+        same treatment: none, with the weight retained."""
+        rule = CustomSignalConfig(
+            name="Nobody watches it",
+            weight=20,
+            kind="graded",
+            field="recent_watchers",
+            floor=0,
+            saturate_at=3,
+        )
+        short = score(
+            [],
+            _popularity_facts(0, Known(value=90.0, source="t")),
+            custom_condemn=[rule],
+            window_days=self.WINDOW,
+        )
+
+        assert short.results[0].pressure == 0.0
+        assert short.results[0].evaluated is False
+        assert short.coverage == 0.0
+
+    def test_a_condemn_rule_that_already_exceeds_its_bar_is_still_measured(self) -> None:
+        """The asymmetry on the condemn lane. "at most 2 watchers" that a truncated count
+        already EXCEEDS stays exceeded however much more history arrives, so it is a real
+        finding and reads as one -- the bound withholds only what a deeper mirror could
+        overturn."""
+        item = _popularity_facts(9, Known(value=90.0, source="t"))
+
+        exceeded = fields.evaluate(
+            fields.Condition(field="recent_watchers", op=fields.Op.LTE, value=2),
+            item,
+            window_days=self.WINDOW,
+        )
+        # ...while the matching direction, which a deeper mirror could overturn, does not.
+        overturnable = fields.evaluate(
+            fields.Condition(field="recent_watchers", op=fields.Op.LTE, value=20),
+            item,
+            window_days=self.WINDOW,
+        )
+
+        assert exceeded.blocked is False
+        assert exceeded.matched is False
+        assert overturnable.blocked is True
 
 
 class TestExplainability:

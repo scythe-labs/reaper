@@ -760,6 +760,11 @@ def _evidence(days: float, watchers: int, rank: int, rating: int, size_gb: float
         is_managed=Known(value=True, source="r"),
         in_curated_list=Absent(source="l"),
         is_whitelisted=Known(value=False, source="l"),
+        # Deeper than the popularity window, so FEW_WATCHERS scores the count instead of
+        # reporting it unreadable. These tests are about weight arithmetic, and a signal
+        # withheld for a short mirror would move every number in them.
+        history_reach_days=Known(value=4000.0, source="t"),
+        days_since_added=Known(value=800.0, source="p"),
     )
 
 

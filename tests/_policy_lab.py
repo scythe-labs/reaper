@@ -148,6 +148,13 @@ def to_facts(vector: dict[str, Any]) -> Facts:
         quality=to_observation("quality", f["quality"]),
         show_ended=to_observation("show_ended", f["show_ended"]),
         history_reach_days=Known(value=mirror_reach_days(), source="lab"),
+        # Stated, and stated Unknown, which is the one honest reading here (rule 35). The
+        # span an all-time count needs is how long the item has been on the server, and
+        # unlike the reach above that is NOT recoverable from what the fixture records: a
+        # vector holds plays, not an arrival date, and inventing one would hand the lab
+        # evidence the real scan never had. Unknown blocks a rule authored on
+        # ``watchers_all_time``, which is the keep direction; no lab policy authors one.
+        days_since_added=Unknown(reason="the lab fixture records no arrival date", source="lab"),
         ratings=_ratings_from(f),
     )
 

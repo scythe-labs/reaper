@@ -49,6 +49,11 @@ def _facts(**overrides: object) -> Facts:
         "is_managed": Known(value=True, source="radarr"),
         "in_curated_list": Absent(source="lists"),
         "is_whitelisted": Known(value=False, source="plex"),
+        # Deep enough that a watcher count is the answer rather than a lower bound, so
+        # these tests measure the rule they are about and not the reach bound
+        # (``fields.reach_shortfall``); the twin in tests/test_fields.py says the rest.
+        "history_reach_days": Known(value=4000.0, source="tautulli"),
+        "days_since_added": Known(value=800.0, source="plex"),
     }
     return Facts(**{**base, **overrides})  # type: ignore[arg-type]
 

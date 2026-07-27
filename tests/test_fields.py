@@ -43,6 +43,14 @@ def _facts(**overrides: object) -> Facts:
         "is_managed": Known(value=True, source="radarr"),
         "in_curated_list": Absent(source="lists"),
         "is_whitelisted": Known(value=False, source="plex"),
+        # A mirror deeper than any window or arrival age these tests use, so a watcher
+        # count reads as the answer it is written to be rather than as a lower bound
+        # (``fields.reach_shortfall``). Left at the ``_UNSET`` default every one of them
+        # would block instead, and pass or fail for a reason that is not what it is
+        # testing. ``tests/_policy_lab.py`` seeds the reach the same way; the tests that
+        # are ABOUT the bound override these two.
+        "history_reach_days": Known(value=4000.0, source="tautulli"),
+        "days_since_added": Known(value=800.0, source="plex"),
     }
     return Facts(**{**base, **overrides})  # type: ignore[arg-type]
 
@@ -135,7 +143,9 @@ class TestCondemnIsAFlatAnd:
                 Condition(field="recent_watchers", op=Op.LTE, value=0),
             ),
         )
-        assert evaluate_rules(rules, _facts()).matched is True
+        # The window the count was taken over: "nobody watched it in the last year" is
+        # only a match the mirror can support once it reaches back a year (_facts does).
+        assert evaluate_rules(rules, _facts(), window_days=365).matched is True
 
     def test_one_failing_condition_is_enough_to_spare_it(self) -> None:
         rules = RuleSet(
@@ -404,7 +414,9 @@ class TestAnExplanationSaysWhatItFound:
 
     def test_a_count_of_one_is_not_pluralised(self) -> None:
         facts = _facts(distinct_watchers=Known(value=1, source="tautulli"))
-        detail = evaluate(Condition(field="recent_watchers", op=Op.GTE, value=3), facts).detail
+        detail = evaluate(
+            Condition(field="recent_watchers", op=Op.GTE, value=3), facts, window_days=365
+        ).detail
 
         assert detail == "1 person watched it recently, under your 3"
 
@@ -505,7 +517,14 @@ class TestAnExplanationSaysWhatItFound:
         seen = 0
         for spec in BY_KEY.values():
             for op in spec.ops:
-                result = evaluate(Condition(field=spec.key, op=op, value=targets[spec.type]), facts)
+                # Stated, so the watcher fields explain their comparison rather than
+                # reporting it unchecked -- this is the explanation matrix, and the
+                # reach bound has its own tests.
+                result = evaluate(
+                    Condition(field=spec.key, op=op, value=targets[spec.type]),
+                    facts,
+                    window_days=365,
+                )
                 detail = result.detail
                 seen += 1
 

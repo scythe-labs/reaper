@@ -396,6 +396,14 @@ def build_facts(
         # where it is read alongside the count it qualifies (see ``Facts.history_reach_days``
         # and ``ScanContext.reach_days``).
         history_reach_days=Known(value=context.reach_days, source="tautulli"),
+        # And how much history an ALL-TIME count would need: back to the day it arrived.
+        # Measured from the arrival date itself, never from dormancy, which is clamped to
+        # the mirror's edge and so can never report the shortfall (``Facts.days_since_added``).
+        days_since_added=(
+            Known(value=dormancy_days(item.added_at, now=utcnow()), source="plex")
+            if item.added_at is not None
+            else Unknown(reason="no added-at date", source="plex")
+        ),
         size_bytes=(
             Known(value=item.size_bytes, source="radarr")
             if item.size_bytes is not None
