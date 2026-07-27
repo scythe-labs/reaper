@@ -1564,12 +1564,19 @@ export function PolicyEditor({
                       update({ protect_incomplete_seasons })
                     }
                   />
-                  <span className="rule-name">Never remove a season that's still downloading</span>
+                  {/* Sonarr reports one thing here -- it wants episodes it does not have
+                      (`wanted_episode_count > episode_file_count`, see
+                      `clients/sonarr_stats.py`) -- and an active download and an ended show
+                      permanently short one aired episode look identical in it. So the switch
+                      is named for what was seen, and the help text names both causes rather
+                      than promising a download is under way (rule 21, and rule 72 with
+                      `services/season_pruning.py`'s reason for the same check). */}
+                  <span className="rule-name">Never remove a season with episodes missing</span>
                 </label>
                 <p className="help rule-help">
-                  Keeps a season Sonarr is still filling in, so a removal never fights an active
-                  download. Turn it off for ended shows that Sonarr permanently lists as missing an
-                  episode.
+                  Keeps a season Sonarr wants more episodes for, so a removal never fights a
+                  download. Sonarr says the same thing about an ended show permanently missing an
+                  episode, so turn this off if that is your library.
                 </p>
               </li>
 

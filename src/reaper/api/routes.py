@@ -759,15 +759,22 @@ _KEEP_LAST_RE = re.compile(r"^within the last (\d+) seasons")
 
 
 def _kept_season_phrase(detail: str) -> str:
-    """The chip phrase for a fired season keep rule (season_pruning's closed reasons)."""
+    """The chip phrase for a fired season keep rule (season_pruning's closed reasons).
+
+    Three of these reasons were reworded to name what Sonarr actually reported rather than
+    what it usually means (see ``_protection_reason``), so an explanation stored by an older
+    scan carries the retired spelling. Those fall through to the generic phrase below, which
+    is vague but true -- the same degrade every unrecognized detail takes, and the reason
+    this parser has a fallback at all. The next scan restores the specific phrase.
+    """
     if detail.startswith("specials"):
         return "specials are never removed"
-    if detail.startswith("Sonarr is still downloading"):
-        return "still downloading"
-    if detail == "currently airing":
-        return "currently airing"
-    if detail.startswith("the first season"):
-        return "the first season stays"
+    if detail.startswith("episodes are missing"):
+        return "episodes are missing"
+    if detail.startswith("the newest season of a show"):
+        return "the show is still running"
+    if detail.startswith("the earliest season"):
+        return "the earliest season stays"
     if keep_last := _KEEP_LAST_RE.match(detail):
         return f"in the last {keep_last.group(1)} seasons you keep"
     if detail.startswith("this show has only"):

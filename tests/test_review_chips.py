@@ -163,12 +163,29 @@ class TestKeptChipWording:
                 "not managed by Sonarr or Radarr",
             ),
             ("season_progression", "specials are never auto-pruned", "specials are never removed"),
-            ("season_progression", "Sonarr is still downloading this season", "still downloading"),
-            ("season_progression", "currently airing", "currently airing"),
+            ("season_progression", "episodes are missing from this season", "episodes are missing"),
+            (
+                "season_progression",
+                "the newest season of a show that is still running",
+                "the show is still running",
+            ),
+            (
+                "season_progression",
+                "the earliest season on disk, so there is somewhere to start",
+                "the earliest season stays",
+            ),
+            # A snapshot stored before these three were reworded carries the retired
+            # spelling, and degrades to the generic phrase rather than to a wrong one.
+            (
+                "season_progression",
+                "Sonarr is still downloading this season",
+                "your season rule keeps it",
+            ),
+            ("season_progression", "currently airing", "your season rule keeps it"),
             (
                 "season_progression",
                 "the first season is kept so the show can still be started",
-                "the first season stays",
+                "your season rule keeps it",
             ),
             (
                 "season_progression",
@@ -622,7 +639,7 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                             {
                                 "gate": "season_progression",
                                 "detail": (
-                                    "the first season is kept so the show can still be started"
+                                    "the earliest season on disk, so there is somewhere to start"
                                 ),
                             }
                         ],

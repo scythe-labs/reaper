@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.services.season_pruning import (
+    _because,
     active_progress,
     plan_series_prune,
     sequential_protections,
@@ -93,13 +94,120 @@ class TestKeepFirstSeason:
         seasons = [_season(n) for n in range(1, 6)]
         plan = plan_series_prune(series_title="Show", seasons=seasons, keep_last=1)
         assert 1 not in plan.prunable
-        assert "first season" in _reasons(plan)[1]
+        assert "the earliest season on disk" in _reasons(plan)[1]
 
     def test_it_uses_the_lowest_real_season_not_literally_one(self) -> None:
         """A show whose earliest season on disk is 2 keeps season 2 as its first."""
         seasons = [_season(2), _season(3), _season(4)]
         plan = plan_series_prune(series_title="Show", seasons=seasons, keep_last=1)
         assert 2 not in plan.prunable
+
+
+class TestEveryKeepReasonStatesOnlyWhatWasObserved:
+    """A kept season's reason is read on a panel the operator can check against Sonarr,
+    so a reason that overstates its evidence gets caught being wrong and costs the panel
+    its credibility on the rows that matter (rule 21).
+
+    Three of these reasons named what the observation is *usually* a sign of rather than
+    the observation: a download in progress, a season on the air, the pilot. Each is
+    routinely false, and each case below is the ordinary shape rather than an edge.
+    """
+
+    def test_a_permanently_short_season_is_not_called_a_download(self) -> None:
+        """``is_incomplete`` is ``wanted > on-disk``, which ``clients.sonarr_stats``
+        documents as download *intent*, not a live queue. An ended show permanently
+        missing one aired episode is indistinguishable from one mid-download here, and it
+        is the case the operator's off switch exists for, so it would have read "still
+        downloading" forever."""
+        seasons = [_season(1), _season(2, files=9, wanted=10)]
+        plan = plan_series_prune(
+            series_title="Show", seasons=seasons, keep_last=0, keep_first_season=False
+        )
+        reason = _reasons(plan)[2]
+        assert 2 not in plan.prunable
+        assert "download" not in reason
+        assert reason == "episodes are missing from this season"
+
+    def test_a_show_between_seasons_is_not_called_currently_airing(self) -> None:
+        """``season_scan.airing_seasons`` returns the season to *treat as* airing: the
+        newest content-bearing season of any series Sonarr still calls running. A
+        continuing show in the gap between seasons is the ordinary state, not an edge, and
+        nothing about it is on the air."""
+        seasons = [_season(n) for n in range(1, 4)]
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=seasons,
+            keep_last=0,
+            keep_first_season=False,
+            airing_seasons={3},
+        )
+        reason = _reasons(plan)[3]
+        assert 3 not in plan.prunable
+        assert "airing" not in reason
+        assert reason == "the newest season of a show that is still running"
+
+    def test_the_earliest_season_on_disk_is_not_called_the_first(self) -> None:
+        """``first_real`` is the minimum over seasons that HAVE files. Where season 1 was
+        never downloaded or was deleted by hand, season 2 wore the reason -- and keeping
+        season 2 does not let anyone start the show, which is the whole justification the
+        sentence offered."""
+        seasons = [_season(2), _season(3), _season(4)]
+        plan = plan_series_prune(series_title="Show", seasons=seasons, keep_last=1)
+        reason = _reasons(plan)[2]
+        assert 2 not in plan.prunable
+        assert "first season" not in reason
+        assert reason == "the earliest season on disk, so there is somewhere to start"
+
+    def test_the_mid_binge_clause_stays_about_the_show(self) -> None:
+        """``_because`` restates a reason for the conflict message, it never sharpens it.
+        It used to rewrite "part-way through the show" as "part-way through *it*", moving
+        the claim onto one season -- and ``sequential_protections`` protects the untouched
+        NEXT season too, so the same sentence could say nobody had played it while
+        claiming someone was midway through it."""
+        assert _because("a viewer is part-way through the show") == (
+            "a viewer is part-way through the show"
+        )
+
+    def test_every_reason_this_module_produces_has_a_because_clause(self) -> None:
+        """``_protection_reason`` and ``_because`` are one closed vocabulary, and a reword
+        landing on only one side degrades every conflict message to the generic clause
+        with nothing failing. So drive the real producer over every branch that reaches
+        ``_because`` and check each is still recognized (rule 119).
+
+        Specials are the one reason with no clause of its own: ``_detect_conflicts``
+        excludes Season 0 from both sides, so it can never be the kept season in a message.
+        """
+        plans = [
+            # Missing episodes, a mid-binge hold, and the newest season of a running show.
+            plan_series_prune(
+                series_title="Show",
+                seasons=[_season(0), _season(1, files=9, wanted=10), _season(2), _season(3)],
+                keep_last=1,
+                airing_seasons={3},
+                progress_by_user={"someone": {2: 4}},
+            ),
+            # The earliest season on disk, and the keep-last rank clause beside it.
+            plan_series_prune(
+                series_title="Show",
+                seasons=[_season(2), _season(3), _season(4)],
+                keep_last=2,
+            ),
+            # The whole-show variant of keep-last: the rule reaches further than the disk.
+            plan_series_prune(
+                series_title="Show",
+                seasons=[_season(1), _season(2)],
+                keep_last=3,
+                keep_first_season=False,
+            ),
+        ]
+        produced = {r for plan in plans for r in _reasons(plan).values()}
+        produced -= {"specials are never auto-pruned"}
+        for reason in produced:
+            assert _because(reason) != "your season rule keeps it", reason
+        # And the fixtures really did reach every clause, so a branch losing its parser
+        # cannot hide behind a thin set. Counted on the clauses, not the reasons: the
+        # keep-last one carries the rank, so it is several strings and one clause.
+        assert len({_because(r) for r in produced}) == 5, sorted(produced)
 
 
 class TestSpecialsAndIncomplete:
@@ -119,7 +227,7 @@ class TestSpecialsAndIncomplete:
             series_title="Show", seasons=seasons, keep_last=0, keep_first_season=False
         )
         assert 2 not in plan.prunable
-        assert "downloading" in _reasons(plan)[2]
+        assert "episodes are missing" in _reasons(plan)[2]
 
 
 class TestAiring:
@@ -133,7 +241,7 @@ class TestAiring:
             airing_seasons={3},
         )
         assert 3 not in plan.prunable
-        assert "airing" in _reasons(plan)[3]
+        assert "still running" in _reasons(plan)[3]
 
 
 class TestSequentialProgression:
@@ -384,10 +492,10 @@ class TestKeepRuleConflict:
             keep_first_season=False,
             watchers_by_season={1: 0, 2: 0, 3: 4, 4: 3},
         )
-        assert "still downloading" in _reasons(plan)[4]  # season 4 kept only for that
+        assert "episodes are missing" in _reasons(plan)[4]  # season 4 kept only for that
         conflict = next(c for c in plan.conflicts if c.pruned_season == 3)
         assert conflict.kept_season == 4
-        assert "Sonarr is still downloading it" in conflict.message
+        assert "episodes are missing from it" in conflict.message
         assert "which your keep rule protects" not in conflict.message
 
     def test_the_message_names_a_keep_last_kept_season(self) -> None:
@@ -413,7 +521,7 @@ class TestIncompleteSeasonProtection:
             series_title="Show", seasons=seasons, keep_last=0, keep_first_season=False
         )
         assert 2 not in plan.prunable
-        assert "still downloading" in _reasons(plan)[2]
+        assert "episodes are missing" in _reasons(plan)[2]
 
     def test_the_protection_can_be_switched_off(self) -> None:
         """protect_incomplete=False: an ended show Sonarr permanently lists as missing an
@@ -548,7 +656,7 @@ class TestKeepSpecialsToggle:
             keep_specials=False,
         )
         assert 0 not in plan.prunable
-        assert "downloading" in _reasons(plan)[0]
+        assert "episodes are missing" in _reasons(plan)[0]
 
 
 class TestKeepLastScope:
