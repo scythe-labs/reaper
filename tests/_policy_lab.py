@@ -150,10 +150,31 @@ def to_facts(vector: dict[str, Any]) -> Facts:
         history_reach_days=Known(value=mirror_reach_days(), source="lab"),
         # Stated, and stated Unknown, which is the one honest reading here (rule 35). The
         # span an all-time count needs is how long the item has been on the server, and
-        # unlike the reach above that is NOT recoverable from what the fixture records: a
-        # vector holds plays, not an arrival date, and inventing one would hand the lab
-        # evidence the real scan never had. Unknown blocks a rule authored on
-        # ``watchers_all_time``, which is the keep direction; no lab policy authors one.
+        # unlike the reach above that is NOT recoverable in the safe direction. The oldest
+        # play under a vector does prove the item is at least that old, but a FLOOR under
+        # the age makes ``reach >= age`` pass more readily, so it would hand the lab a
+        # count the real scan would have refused -- the opposite of ``mirror_reach_days``,
+        # where understating the reach only ever blocks more.
+        #
+        # What that costs, measured over all 440 vectors, because rule 132 forbids
+        # implying coverage the fixture does not have. ``test_policy_permutations`` DOES
+        # author rules on this field -- ``TestProtectConditions`` sweeps every PROTECT-lane
+        # key and ``NUMERIC_VALUES`` lists ``watchers_all_time`` -- and half the outcome
+        # matrix is now unreachable for it:
+        #
+        #   graded keep    -> {40.0: 440}: every vector at the maximum discount, so
+        #                     "a keep never raises a score" holds trivially and would stay
+        #                     green if the ramp broke outright. ``recent_watchers`` still
+        #                     spreads across six values.
+        #   protect gte 1  -> 415 matched, 25 blocked, 0 checked-and-did-not-fire
+        #   protect lte 5  -> 268 blocked, 172 checked-and-did-not-fire, 0 matched
+        #
+        # The two surviving arms are exactly the outcomes ``_survives_more_history`` lets
+        # through as already earned; the two a deeper mirror could overturn are all
+        # blocked. That is the guard working, not a bug, but the sweep no longer exercises
+        # the ramp or either overturnable arm for this field. Closing it properly needs an
+        # arrival date in the fixture, which is a regeneration
+        # (``scripts/policy_lab_extract.py``), not a default.
         days_since_added=Unknown(reason="the lab fixture records no arrival date", source="lab"),
         ratings=_ratings_from(f),
     )

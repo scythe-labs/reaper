@@ -60,9 +60,10 @@ already has to honor the request's *scope*, and this asks the same question of i
 
 ## Settled earlier
 
-Empty as of `b33bff1` (2026-07-27), and **empty is the intended resting state, not a gap.** The
-four entries raised at `394cc3a` and `ef0278d` were settled in one pass, each by the evidence it
-had itself named:
+**Empty is the intended resting state of the Open section above, not a gap** — an entry sitting
+there across many passes is itself the finding. The four entries raised at `394cc3a` and
+`ef0278d` were settled in one pass at `b33bff1` (2026-07-27), each by the evidence it had itself
+named:
 
 - Watcher pressure on an under-covered window — **confirmed**, folded into issue #83 as rule 140's
   third reader (`evaluate_signal` alongside `CustomProtectGate` and `evaluate_keep`).

@@ -1610,6 +1610,18 @@ async def _replay_simulation(
     same way, so the gap is filled from stored evidence rather than left as a guess. It
     only ever *fills*: a row that froze its own reach keeps it.
 
+    ``Facts.days_since_added`` is the one gap that CANNOT be filled the same way, so the
+    bit-identical promise above is narrowed by exactly this much: a row frozen before that
+    field existed reads every rule authored on ``watchers_all_time`` as un-establishable
+    (``fields.reach_shortfall``'s ITEM_LIFETIME arm has no span to compare the reach
+    against) until the next scan re-freezes it. Unlike the reach there is no stored source
+    to recover it from -- ``Candidate`` carries no arrival date, and
+    ``Facts.days_since_added`` rules out deriving it from dormancy, which is clamped to the
+    mirror's edge. The divergence is the keep direction: a blocked protect condition forces
+    abstain and a blocked keep takes its full discount, so the preview under-counts
+    removals rather than promising one the scan would refuse. Closing it properly means an
+    arrival date on ``Candidate`` in an additive migration.
+
     Both calls are production's, never a lookalike (rules 3/22). This loop used to assemble
     the evaluate / score / round / decide pipeline itself and push the hand override straight
     through ``decide_verdict``; that is the same drift the policy lab had to be pulled back
