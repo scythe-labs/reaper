@@ -1070,7 +1070,13 @@ export function PolicyEditor({
   const popularity = draft.gates.find((g) => g.gate === "server_popularity" && g.enabled);
   const keepClauses = [
     popularity ? `watched by ${popularity.threshold || 1}+ people` : null,
-    dormancy ? `played in the last ${humanDays(dormancy.threshold)}` : null,
+    // "Untouched", never "played": this gate's clock runs from the last play only when
+    // there IS one, and otherwise from the day the file arrived (engine/dormancy.py's
+    // reference_instant). It therefore keeps titles nobody has ever played, so a clause
+    // saying "played in the last N" was false about exactly the items it protects most --
+    // the same claim the review queue's chip used to make, on the sentence this comment
+    // block below calls the one an operator scans before arming (rules 21/72).
+    dormancy ? `untouched for less than ${humanDays(dormancy.threshold)}` : null,
   ].filter((c): c is string => c !== null);
   // TV's protections are built the same way, and for the same reason: every clause is
   // pushed only when its own switch is on. The line used to assert two of them flat, so
