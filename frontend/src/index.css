@@ -116,8 +116,13 @@
      screen -- the bulk-action bar, the scan toast and the policy save bar -- each in a 900px
      block sitting immediately BELOW its own base rule. That placement is load-bearing: a media
      query adds no specificity, so an override written beside the bar instead loses to the base
-     rule on source order and silently does nothing. It is only used under that breakpoint. */
-  --navbar-h: 2.7rem;
+     rule on source order and silently does nothing. It is only used under that breakpoint.
+
+     The number is a touch target, not a look. Each tab stretches the full height of the bar, so
+     this value IS the target's short side, and 2.7rem (43.2px) sat under every floor there is:
+     44px for WCAG 2.2 SC 2.5.5 and Apple's HIG, 48px for Material. 3.5rem clears all three with
+     room. Raising it is free for the surfaces above, which read it rather than restating it. */
+  --navbar-h: 3.5rem;
 
   /* The masthead's bottom gap. Declared once because .views cancels exactly this much with a
      negative margin to reach the border its active cut is drawn on (rule 67): if the two ever
@@ -571,11 +576,13 @@ a:hover {
   display: inline-block;
 }
 /* Sized here for all five icons at once, so the bar's icon size is one declaration (rule 67).
-   Hidden on a wide screen, where the rail reads as words. */
+   Hidden on a wide screen, where the rail reads as words. 24px is where both iOS and Material
+   draw a tab icon, and it is what the taller bar has room for; the glyphs are drawn on a 16-unit
+   grid, so they scale to it cleanly. */
 .view-ico {
   display: none;
-  width: 21px;
-  height: 21px;
+  width: 24px;
+  height: 24px;
 }
 /* Deletion armed, said as a mark on the one section that does it. `SafetyBanner` states the
    same fact in words on every view, which is why this is aria-hidden in App.tsx. Amber is the

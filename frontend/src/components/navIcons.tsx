@@ -92,7 +92,7 @@ export function SettingsIcon() {
   // The teeth are a single closed outline (flanks straight, the gaps between them arcs of the
   // root circle), not spokes radiating off a ring: detached rays around a disc are a SUN, which
   // is what the first draft of this icon drew. Six teeth rather than eight because the gaps stay
-  // countable at the 21px the bar renders it at, where eight silt up into a bumpy circle.
+  // countable at the 24px the bar renders it at, where eight silt up into a bumpy circle.
   return (
     <svg className="view-ico" viewBox="0 0 16 16" fill="none" aria-hidden="true">
       <path
