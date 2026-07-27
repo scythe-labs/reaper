@@ -428,6 +428,16 @@ class StreamingNowGate:
         return GateResult(self.id, ABSTAIN, detail="Nobody is watching it right now.")
 
 
+#: How much shorter than the window a reach must be before the block names it in days.
+#: Both spans are phrased by ``clock.humanize_days``, whose months are 30 days and whose
+#: years are 365, so 360 days renders "12 months" while the 365-day window renders "year":
+#: true, and it reads to the operator as though the history were LONGER than the window it
+#: cannot cover. One whole month of margin is the cheapest bound that cannot invert,
+#: because a reach at least a month short always renders a smaller leading unit. Inside the
+#: margin the copy states the comparison instead of the number, which is shorter anyway.
+_REACH_NAMEABLE_MARGIN_DAYS = 30
+
+
 @dataclass(frozen=True, slots=True)
 class ServerPopularityGate:
     """Keep what your users actually watch, regardless of who asked for it.
@@ -470,11 +480,12 @@ class ServerPopularityGate:
         # the floor clears it however much more history arrives.
         reach = facts.history_reach_days
         if not isinstance(reach, Known) or reach.value < window:
-            short = (
-                f"your watch history only goes back {humanize_days(reach.value)}"
-                if isinstance(reach, Known)
-                else "this scan did not record how far back your watch history goes"
-            )
+            if not isinstance(reach, Known):
+                short = "this scan did not record how far back your watch history goes"
+            elif reach.value <= window - _REACH_NAMEABLE_MARGIN_DAYS:
+                short = f"your watch history only goes back {humanize_days(reach.value)}"
+            else:
+                short = "your watch history does not go back that far"
             return GateResult(
                 self.id,
                 ABSTAIN,

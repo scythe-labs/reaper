@@ -466,6 +466,26 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         assert result.blocked is True
         assert result.detail.startswith("could not check")
 
+    def test_a_reach_just_under_the_window_never_reads_as_longer_than_it(self) -> None:
+        """``humanize_days`` counts a month as 30 days and a year as 365, so 364 days
+        renders "12 months, 4 days" while the 365-day window renders "year". Both are
+        true, and printing them side by side told the operator their history goes back
+        longer than the window Reaper says it cannot cover. Inside the margin the block
+        states the comparison instead, which is shorter and cannot invert."""
+        for reach in (336.0, 360.0, 364.0):
+            result = self.gate.evaluate(_popularity_facts(0, Known(value=reach, source="t")))
+
+            assert result.blocked is True
+            assert result.detail == (
+                "could not check who watched it in the last year: "
+                "your watch history does not go back that far"
+            ), f"reach {reach}"
+
+        # A month or more short still names the number, which is the useful case: the
+        # comparison alone would not tell them how much history they actually have.
+        named = self.gate.evaluate(_popularity_facts(0, Known(value=335.0, source="t")))
+        assert "only goes back 11 months, 5 days" in named.detail
+
     def test_a_shorter_window_the_history_does_cover_is_answerable(self) -> None:
         """The operator's remedy, and proof the check is against the *configured* window
         rather than a fixed span: narrowing the window to what the mirror holds gets a
