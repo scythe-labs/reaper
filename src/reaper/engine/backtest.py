@@ -526,9 +526,17 @@ async def run(
         # reader of that count now checks the mirror's reach against the span the count
         # claims to cover (rule 140, ``fields.reach_shortfall``). Omitting it scores against
         # ``score()``'s 365-day default while the fact was built over the operator's own
-        # window, so a policy that moved the window rehearses a deletion production refuses
-        # -- measured at 100.00/100 with coverage 1.0 against production's 0.00/100 and
-        # coverage 0.0, on a 730-day window over a 400-day mirror.
+        # window, so the rehearsal charges pressure the live scan withholds.
+        #
+        # Measured on a 730-day window over a 400-day mirror, stating the policy each figure
+        # needs, because the headline number is not reachable under the shipped weights:
+        #   all 100 weight on FEW_WATCHERS: 100.00/100 coverage 1.00, against 0.00/100
+        #     coverage 0.00 when the window is passed.
+        #   shipped 70/20/10 weights:        21.68/100 coverage 1.00, against 1.68/100
+        #     coverage 0.80.
+        # Under the shipped weights neither figure crosses ``condemn_at`` 70, so what the
+        # default costs there is the coverage floor's sight of the hole (1.00 vs 0.80), not
+        # a condemnation outright. The pressure is charged either way.
         item_score = score(
             signals,
             facts,

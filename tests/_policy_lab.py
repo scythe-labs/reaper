@@ -164,8 +164,11 @@ def to_facts(vector: dict[str, Any]) -> Facts:
         #
         #   graded keep    -> {40.0: 440}: every vector at the maximum discount, so
         #                     "a keep never raises a score" holds trivially and would stay
-        #                     green if the ramp broke outright. ``recent_watchers`` still
-        #                     spreads across six values.
+        #                     green if the ramp broke outright. The unbounded twin still
+        #                     spreads: ``recent_watchers`` gives four discount values under
+        #                     the sweep's own ``saturate_at`` (the field's largest
+        #                     ``NUMERIC_VALUES`` entry, 3), and six at the 5 used here, so
+        #                     the collapse is the reach bound and not the spec.
         #   protect gte 1  -> 415 matched, 25 blocked, 0 checked-and-did-not-fire
         #   protect lte 5  -> 268 blocked, 172 checked-and-did-not-fire, 0 matched
         #

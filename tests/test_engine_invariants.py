@@ -726,6 +726,40 @@ class TestEveryReaderOfTheSameCountHonorsTheReach:
         assert result.detail == "could not tell who watched it"
         assert "watch history only goes back" not in result.detail
 
+    def test_a_genuine_absence_is_still_bounded_by_the_mirror_that_observed_it(self) -> None:
+        """The exemption above is for ``Unknown`` ONLY, and this is why.
+
+        "We looked and there is genuinely nothing" is a claim about the window. A mirror
+        that does not span the window cannot support it -- it establishes only that nothing
+        happened in the part it holds -- so rule 93's precondition (a GENUINE absence) is
+        not met and rule 140 governs as the more specific. Exempting ``Absent`` alongside
+        ``Unknown`` would report coverage 1.0 on a count the mirror cannot establish, which
+        is the hole this whole branch exists to close, and would put this signal on the
+        opposite side of its own twin: ``ServerPopularityGate._blocked`` matches ``Unknown``
+        only, so an ``Absent`` count falls through to the gate's shortfall arm and blocks.
+        """
+        cfg = SignalConfig(SignalId.FEW_WATCHERS, weight=20, saturate_at=3)
+        absent = replace(
+            _popularity_facts(0, Known(value=90.0, source="t")),
+            distinct_watchers=Absent(source="t"),
+        )
+        short = evaluate_signal(cfg, absent, window_days=self.WINDOW)
+
+        assert short.state is SignalState.UNREADABLE
+        assert short.evaluated is False
+        assert "watch history only goes back" in short.detail
+
+        # ...and once the mirror does span the window, the same absence is real evidence:
+        # evaluated, weight retained, coverage intact, no pressure (rule 93).
+        covered = evaluate_signal(
+            cfg,
+            replace(absent, history_reach_days=Known(value=1200.0, source="t")),
+            window_days=self.WINDOW,
+        )
+        assert covered.state is SignalState.NOT_APPLICABLE
+        assert covered.evaluated is True
+        assert covered.pressure == 0.0
+
     def test_a_graded_removal_rule_on_the_same_count_is_bounded_too(self) -> None:
         """The authored twin of the signal above. A removal rule graded on "people who
         watched it recently" charges pressure off the same lower bound, so it takes the

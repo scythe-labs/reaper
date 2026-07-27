@@ -34,7 +34,7 @@ from reaper.engine import backtest as bt
 from reaper.engine import identity
 from reaper.engine.backtest import BacktestResult, Item, run
 from reaper.engine.calibration import Bucket, RewatchPrior
-from reaper.engine.gates import GateId
+from reaper.engine.gates import Facts, GateId
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import Score
 from reaper.ratings import Rating, RatingSource
@@ -637,25 +637,40 @@ class TestTheBacktestVerdictMatchesProduction:
         365-day default takes full FEW_WATCHERS pressure at coverage 1.0, where production
         withholds it at coverage 0.0.
 
-        **365 is deliberately not in the sweep** (rule 141). It is ``score()``'s own
-        default, so it is the one value that cannot tell a window that was passed from a
+        **Both consumers of the span are pinned, not just the one that was broken.** The
+        invariant is "one span, two readers": ``facts_as_of`` BUILDS the count over it and
+        ``score`` VALIDATES the reach against it, and either one drifting to its own 365
+        default reopens the same hole. Spying only on ``score`` would prove the fixed line
+        and nothing about the line four above it -- hardcoding ``popularity_window_days=365``
+        at the ``facts_as_of`` call leaves the whole suite green while withdrawing a PROTECT
+        and adding 20 points of pressure at coverage 1.0.
+
+        **365 is deliberately not in the sweep** (rule 141). It is the default of both
+        callees, so it is the one value that cannot tell a window that was passed from a
         window that was omitted -- which is exactly why every other backtest fixture, all
         of which pin 365, left this invisible behind a green suite. The low end is the 1
-        day the field actually allows (``PolicyBody`` bounds ``window_days`` ``ge=1``).
+        day the field actually allows (``GateSetting`` bounds ``window_days`` ``ge=1``).
 
-        The spy reads the kwarg with ``.get`` rather than subscripting, so an omitted
-        window fails this on the VALUE it scored against. Subscripting would raise
-        ``KeyError`` instead, which passes for the wrong reason: it pins that the argument
-        is passed at all, not that the right span reaches the scorer.
+        Each spy reads its kwarg with ``.get`` rather than subscripting, so an omission
+        fails on the VALUE that was used. Subscripting would raise ``KeyError`` instead,
+        which passes for the wrong reason: it pins that an argument was passed at all, not
+        that the right span reached the callee.
         """
-        seen: list[int | None] = []
+        scored: list[int | None] = []
+        built: list[int | None] = []
         real_score = bt.score
+        real_facts_as_of = bt.facts_as_of
 
-        def _spy(*args: object, **kwargs: object) -> Score:
-            seen.append(kwargs.get("window_days"))  # type: ignore[arg-type]
+        def _score_spy(*args: object, **kwargs: object) -> Score:
+            scored.append(kwargs.get("window_days"))  # type: ignore[arg-type]
             return real_score(*args, **kwargs)  # type: ignore[arg-type]
 
-        monkeypatch.setattr(bt, "score", _spy)
+        def _facts_spy(*args: object, **kwargs: object) -> Facts | None:
+            built.append(kwargs.get("popularity_window_days"))  # type: ignore[arg-type]
+            return real_facts_as_of(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(bt, "score", _score_spy)
+        monkeypatch.setattr(bt, "facts_as_of", _facts_spy)
         policy = DEFAULT_MOVIE_POLICY.model_copy(
             update={
                 "gates": [
@@ -677,7 +692,54 @@ class TestTheBacktestVerdictMatchesProduction:
             horizon=NOW - timedelta(days=3000),
         )
 
-        assert seen == [window]
+        # One span, both readers: the builder counted over it and the scorer checked the
+        # reach against it. Equal to each other is not enough -- both must equal the policy.
+        assert built == [window]
+        assert scored == [window]
+
+    async def test_a_window_the_mirror_cannot_cover_withholds_the_signal_in_rehearsal(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The sweep above proves the span travels; this proves it changes the outcome.
+
+        Its fixture deliberately reaches back 3000 days, past every window it sweeps, so
+        ``reach_shortfall`` returns ``None`` in all five cases and the withheld arm is never
+        entered. That is the arm the fix exists to reach, so it gets a case of its own: a
+        730-day window over a mirror that only goes back 500 days.
+        """
+        policy = DEFAULT_MOVIE_POLICY.model_copy(
+            update={
+                "gates": [
+                    g.model_copy(update={"window_days": 730, "enabled": True})
+                    if g.gate is GateId.SERVER_POPULARITY
+                    else g
+                    for g in DEFAULT_MOVIE_POLICY.gates
+                ]
+            }
+        )
+
+        deep = await run(
+            cache_engine,
+            [_bt_item()],
+            policy,
+            gates=[],
+            cutoff=NOW - timedelta(days=365),
+            horizon=NOW - timedelta(days=3000),
+        )
+        short = await run(
+            cache_engine,
+            [_bt_item()],
+            policy,
+            gates=[],
+            cutoff=NOW - timedelta(days=365),
+            horizon=NOW - timedelta(days=500),
+        )
+
+        # Same policy, same item, same cutoff. Only the mirror's depth differs, and the
+        # shallow one cannot establish the 730-day count, so the rehearsal declines to
+        # charge for it and says so by scoring the item lower.
+        assert deep.considered == short.considered == 1
+        assert short.condemned_bytes <= deep.condemned_bytes
 
 
 # ---------------------------------------------------------------------------

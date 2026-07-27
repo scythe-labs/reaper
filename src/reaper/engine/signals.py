@@ -58,7 +58,7 @@ from typing import Literal
 from reaper.clock import humanize_days, humanize_window
 from reaper.engine import fields
 from reaper.engine.gates import Facts
-from reaper.engine.observation import Absent, Known, Observation
+from reaper.engine.observation import Absent, Known, Observation, Unknown
 
 MAX_SCORE = 100
 
@@ -254,10 +254,17 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
     that far (``fields.reach_shortfall``, rule 140), taking zero pressure and leaving its
     weight in the denominator so coverage falls with it.
 
-    It moves them in one direction only. A window the history cannot cover withdraws
-    pressure and lowers coverage, never the reverse, so a caller that understates the
-    window can only ever charge LESS than the evidence supports. The span is named
-    unconditionally because it is only named once the mirror covers it.
+    **A caller that understates the window charges MORE than the evidence supports**, which
+    is why every caller passes ``policy.popularity_window_days()`` and none may lean on the
+    default above. A shorter window is easier for the mirror to cover, so the shortfall
+    stops firing and the signal takes full pressure at full coverage on a count the true
+    window could not establish. Measured on a 180-day mirror against a count taken over the
+    real 365-day window: 0.00/20 at coverage 0.00 when passed 365, and 20.00/20 at coverage
+    1.00 when passed 180 or 90. ``score()``'s docstring names the same hazard, and
+    ``backtest.run`` was a live instance of it.
+
+    The span is named in the withheld arm too, where the shortfall clause that follows it
+    says why it could not be checked.
     """
     if not config.enabled:
         return SignalResult(
@@ -339,19 +346,28 @@ def evaluate_signal(config: SignalConfig, facts: Facts, *, window_days: int = 36
             # discounted (rules 31, 140). The gate refuses to answer here too
             # (``gates.ServerPopularityGate``), off the same shared derivation.
             #
-            # Asked only of a count we could actually read. An Unknown input has its own
-            # cause -- a season Plex never matched is the common one -- and answering it
-            # with the mirror's depth points the operator at their history retention while
-            # the real problem is a Plex match. Both twins resolve the unreadable input
-            # first for that reason (``gates.ServerPopularityGate``'s ``_blocked``,
-            # ``fields.evaluate``), and a genuine Absent must reach the NOT_APPLICABLE tail
-            # below rather than this arm (rule 93). Numbers are identical either way; only
-            # the sentence changes.
+            # Not asked of an UNKNOWN input, which has its own cause -- a season Plex never
+            # matched is the common one. Answering that with the mirror's depth points the
+            # operator at their history retention while the real problem is a Plex match.
+            # Both twins skip it for Unknown the same way (``ServerPopularityGate``'s
+            # ``_blocked``, ``fields.evaluate``'s Unknown arm), and for Unknown the numbers
+            # really are identical either way -- zero pressure, weight retained, coverage
+            # discounted -- so only the sentence changes.
+            #
+            # ABSENT is deliberately NOT exempted, and the distinction is the whole point.
+            # "We looked and there is genuinely nothing" is a claim about the window, and a
+            # mirror that does not span the window cannot support it: it establishes only
+            # that nothing happened in the part it holds. So rule 93's precondition (a
+            # GENUINE absence) is not met, rule 140 governs as the more specific, and the
+            # count stays on the reach check. Exempting it would move this signal to the
+            # fail-open side of its own twin -- ``_blocked`` matches Unknown only, so an
+            # Absent count falls through to the gate's shortfall arm and blocks -- while
+            # reporting coverage 1.0, which is exactly the hole the branch above describes.
             span = f"in the last {humanize_window(window_days)}"
             short = (
-                fields.reach_shortfall(fields.RECENT_WATCHERS, facts, window_days=window_days)
-                if watchers is not None
-                else None
+                None
+                if isinstance(observation, Unknown)
+                else fields.reach_shortfall(fields.RECENT_WATCHERS, facts, window_days=window_days)
             )
             if short is not None:
                 return SignalResult(

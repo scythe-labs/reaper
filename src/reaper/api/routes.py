@@ -1611,11 +1611,16 @@ async def _replay_simulation(
     only ever *fills*: a row that froze its own reach keeps it.
 
     ``Facts.days_since_added`` is the one gap that CANNOT be filled the same way, so the
-    bit-identical promise above is narrowed by exactly this much: a row frozen before that
-    field existed reads every rule authored on ``watchers_all_time`` as un-establishable
-    (``fields.reach_shortfall``'s ITEM_LIFETIME arm has no span to compare the reach
-    against) until the next scan re-freezes it. Unlike the reach there is no stored source
-    to recover it from -- ``Candidate`` carries no arrival date, and
+    bit-identical promise above is narrowed by exactly this much: on a row frozen before that
+    field existed, a rule authored on ``watchers_all_time`` reads as un-establishable
+    wherever a deeper mirror could still overturn it (``fields.reach_shortfall``'s
+    ITEM_LIFETIME arm has no span to compare the reach against), until the next scan
+    re-freezes it. Not every such rule -- ``fields._survives_more_history`` lets the two
+    already-earned outcomes through untouched, so an "at least N" the count already clears
+    and an "at most N" it already exceeds still evaluate normally. Measured over the 440 lab
+    vectors: ``gte 1`` gives 415 matched against 25 blocked, ``lte 5`` gives 172 checked and
+    268 blocked -- half the outcome matrix, not all of it. Unlike the reach there is no
+    stored source to recover it from -- ``Candidate`` carries no arrival date, and
     ``Facts.days_since_added`` rules out deriving it from dormancy, which is clamped to the
     mirror's edge. The divergence is the keep direction: a blocked protect condition forces
     abstain and a blocked keep takes its full discount, so the preview under-counts
