@@ -148,32 +148,40 @@ async def get_fairness(request: Request) -> FairnessReportOut:
         unmatched=[_unmatched_out(u) for u in report.unmatched],
         no_snapshot=report.no_snapshot,
         horizon_at=report.horizon_at.isoformat() if report.horizon_at else None,
-        rows=[
-            RequesterRowOut(
-                identity=row.identity,
-                name=row.name,
-                requests_made=row.requests_made,
-                gb_granted_bytes=row.gb_granted_bytes,
-                played_by_them=row.played_by_them,
-                reclaimable_items=row.reclaimable_items,
-                reclaimable_bytes=row.reclaimable_bytes,
-                # Capped for transport: the count above stays exact, the list is the heaviest
-                # 25 (sorted in the service) so the view can name a few and say "+N more".
-                reclaimable=[
-                    ReclaimableTitleOut(
-                        title=t.title,
-                        size_bytes=t.size_bytes,
-                        item_id=t.item_id,
-                        group_key=t.group_key,
-                    )
-                    for t in row.reclaimable[:25]
-                ],
-                seerr_total=row.seerr_total,
-                movie_at_limit=row.movie_at_limit,
-                tv_at_limit=row.tv_at_limit,
+        rows=[_row_out(row) for row in report.rows],
+    )
+
+
+def _row_out(row: fairness.RequesterRow) -> RequesterRowOut:
+    """One board row on the wire. Its own function so a test can assert what the board is
+    actually sent without transcribing this mapping (rule 119)."""
+    return RequesterRowOut(
+        identity=row.identity,
+        # Carried so the card can guard it. `played_by_them` below is only ever counted for
+        # a linked account (`fairness._roll_up`), so without this the board cannot tell a
+        # measured zero from a person whose history Reaper cannot see, and it drew both the
+        # same (rule 93).
+        plex_id=row.plex_id,
+        name=row.name,
+        requests_made=row.requests_made,
+        gb_granted_bytes=row.gb_granted_bytes,
+        played_by_them=row.played_by_them,
+        reclaimable_items=row.reclaimable_items,
+        reclaimable_bytes=row.reclaimable_bytes,
+        # Capped for transport: the count above stays exact, the list is the heaviest
+        # 25 (sorted in the service) so the view can name a few and say "+N more".
+        reclaimable=[
+            ReclaimableTitleOut(
+                title=t.title,
+                size_bytes=t.size_bytes,
+                item_id=t.item_id,
+                group_key=t.group_key,
             )
-            for row in report.rows
+            for t in row.reclaimable[:25]
         ],
+        seerr_total=row.seerr_total,
+        movie_at_limit=row.movie_at_limit,
+        tv_at_limit=row.tv_at_limit,
     )
 
 

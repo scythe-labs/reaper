@@ -924,6 +924,15 @@ class RequesterRowOut(BaseModel):
     """The cross-portal person key: ``plex:{id}`` when linked, else ``local:{portal}:{id}``.
     Stable and always present, unique across portals (a bare Seerr id collides), so the
     frontend keys cards on it and opens the drawer by it (GET /fairness/people/{identity})."""
+    plex_id: int | None = None
+    """Their Plex account, or None for a Seerr account nobody linked to one.
+
+    On the wire so the card can tell "we looked and they watched nothing" apart from "we
+    cannot see their history at all". ``played_by_them`` below is structurally 0 for a None
+    (``fairness._roll_up`` only counts plays inside ``if pid is not None``), and a card that
+    renders that as a definite 0% tells the operator a confident zero about someone Reaper
+    never measured, while they decide whose files to delete. Never a key: rule 63 keys rows
+    on ``identity``, which is always present."""
     name: str
     requests_made: int
     gb_granted_bytes: int

@@ -819,6 +819,10 @@ export interface RequesterRow {
   /** The cross-portal person key (`plex:{id}` when linked, else `local:{portal}:{id}`):
    *  stable, always present, and unique across portals, so cards key on it, not the name. */
   identity: string;
+  /** Their Plex account, or `null` for a request account nobody linked to one. Guard this
+   *  before reading `played_by_them`: the server can only count plays for a linked account,
+   *  so a `null` here makes that figure a structural zero rather than a measured one. */
+  plex_id: number | null;
   name: string;
   requests_made: number;
   gb_granted_bytes: number;

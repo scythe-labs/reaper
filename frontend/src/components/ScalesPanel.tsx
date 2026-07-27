@@ -121,8 +121,14 @@ function Fate({ verdict }: { verdict: string }) {
 }
 
 /** How much of it they watched, in the item's own terms: a movie's plays, a series' distinct
- *  episodes watched. Never a raw play sum for a show, which reads as inflated next to Tautulli. */
-function watchedLabel(t: PersonTitle): string {
+ *  episodes watched. Never a raw play sum for a show, which reads as inflated next to Tautulli.
+ *
+ *  `canSeeHistory` is false for a request account nobody linked to a Plex account. There is
+ *  then no history to read: `fairness._roll_up` fills `watched_by_them` only inside
+ *  `if pid is not None`, so every row would say "not watched" as a fact about a person
+ *  Reaper never looked at. Same guard as the board's `watchedPct` (rule 72). */
+function watchedLabel(t: PersonTitle, canSeeHistory: boolean): string {
+  if (!canSeeHistory) return "can't see their history";
   if (t.watched_by_them <= 0) return "not watched";
   if (t.media_type === "movie") return `watched ${count(t.watched_by_them)}×`;
   const n = count(t.watched_by_them);
@@ -132,7 +138,15 @@ function watchedLabel(t: PersonTitle): string {
 /** One requested title: what it is, when it arrived, whether they watched it, its fate, and
  *  who else asked. The whole row opens that item's real card in Review (a movie or lone
  *  season by id, a whole show by its group), so the reasoning is one click away. */
-function TitleRow({ t, onOpen }: { t: PersonTitle; onOpen: (() => void) | null }) {
+function TitleRow({
+  t,
+  onOpen,
+  canSeeHistory,
+}: {
+  t: PersonTitle;
+  onOpen: (() => void) | null;
+  canSeeHistory: boolean;
+}) {
   const kind = t.media_type === "movie" ? "Movie" : "Series";
   // Some stored titles already carry their year (e.g. "Some Show (2019)"); don't print it
   // twice. Only append the year when the title does not already end with it.
@@ -164,8 +178,8 @@ function TitleRow({ t, onOpen }: { t: PersonTitle; onOpen: (() => void) | null }
       <span className="scales-title-side">
         <Fate verdict={t.verdict} />
         <span className="scales-size">{itemBytes(t.size_bytes)}</span>
-        <span className={`scales-watch ${t.watched_by_them > 0 ? "yes" : "no"}`}>
-          {watchedLabel(t)}
+        <span className={`scales-watch ${canSeeHistory && t.watched_by_them > 0 ? "yes" : "no"}`}>
+          {watchedLabel(t, canSeeHistory)}
         </span>
       </span>
     </>
@@ -209,8 +223,14 @@ export function ScalesPanel({
   const used = Math.max(0, granted - reclaim);
   const usedPct = granted > 0 ? (100 * used) / granted : 100;
   const reclaimPct = granted > 0 ? (100 * reclaim) / granted : 0;
-  const watched =
-    detail.requests_in_scan > 0
+  // Null when their request account has no Plex account behind it: `played_by_them` is then
+  // structurally 0 (`fairness._roll_up` counts plays only inside `if pid is not None`), so a
+  // red 0% would be a measurement Reaper never took. Same guard as the board's `watchedPct`
+  // (rule 72), and the rows below take it too.
+  const canSeeHistory = detail.plex_id != null;
+  const watched = !canSeeHistory
+    ? null
+    : detail.requests_in_scan > 0
       ? Math.round((100 * detail.played_by_them) / detail.requests_in_scan)
       : 0;
   const hasReclaim = detail.reclaimable_items > 0;
@@ -262,9 +282,21 @@ export function ScalesPanel({
             <span className="fair-stat-sub">disk they asked for</span>
           </div>
           <div className="fair-stat">
-            <span className={`fair-stat-num ${watched >= 50 ? "green" : "red"}`}>{watched}%</span>
-            <span className="fair-stat-lbl">They watched</span>
-            <span className="fair-stat-sub">of what they asked for</span>
+            {watched === null ? (
+              <>
+                <span className="fair-stat-num muted">Unknown</span>
+                <span className="fair-stat-lbl">They watched</span>
+                <span className="fair-stat-sub">no Plex account, so no history to read</span>
+              </>
+            ) : (
+              <>
+                <span className={`fair-stat-num ${watched >= 50 ? "green" : "red"}`}>
+                  {watched}%
+                </span>
+                <span className="fair-stat-lbl">They watched</span>
+                <span className="fair-stat-sub">of what they asked for</span>
+              </>
+            )}
           </div>
           <div className="fair-stat">
             <span className="fair-stat-num">{count(detail.requests_in_scan)}</span>
@@ -327,6 +359,7 @@ export function ScalesPanel({
                 key={`${t.item_id ?? t.group_key ?? t.title}-${i}`}
                 t={t}
                 onOpen={opener(t)}
+                canSeeHistory={canSeeHistory}
               />
             ))}
           </div>

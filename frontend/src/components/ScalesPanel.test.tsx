@@ -188,6 +188,33 @@ describe("ScalesPanel", () => {
     expect(screen.getByText("Size unknown")).toBeInTheDocument();
   });
 
+  // The board's twin (rule 72). With no Plex account behind the request account there is no
+  // history to read at all: `fairness._roll_up` fills `played_by_them` and each title's
+  // `watched_by_them` only inside `if pid is not None`. The panel drew that as a red 0% tile
+  // and a definite "not watched" on every row, which is a measurement nobody took.
+  it("says the history is unreadable when no Plex account is linked", () => {
+    render(
+      <ScalesPanel
+        detail={detail({
+          plex_id: null,
+          played_by_them: 0,
+          titles: [
+            title({ verdict: "protect", watched_by_them: 0 }),
+            title({ title: "Nightferry", item_id: 102, watched_by_them: 0 }),
+          ],
+        })}
+        onClose={vi.fn()}
+        onOpenItem={vi.fn()}
+        onOpenGroup={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("0%")).not.toBeInTheDocument();
+    expect(screen.queryByText(/not watched/)).not.toBeInTheDocument();
+    expect(screen.getByText(/no plex account, so no history to read/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/can't see their history/i)).toHaveLength(2);
+  });
+
   it("reads a series' watch figure as distinct episodes, not raw plays", () => {
     render(
       <ScalesPanel
