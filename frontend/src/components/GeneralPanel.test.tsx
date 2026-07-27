@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The General panel has one save affordance (rule 43): a bar that names every unsaved field and
-// sends them together. What still has to hold is that the controls saving on the spot -- the two
-// Switches, the theme and expand-seasons selects -- never throw away text being typed elsewhere.
+// sends them together. What still has to hold is that the controls saving on the spot -- the
+// reverse-proxy Switch, the expand-seasons select and the spare-length Segmented -- never throw
+// away text being typed elsewhere.
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -29,6 +30,18 @@ const STORED: GeneralSettings = {
   default_spare_days: 0,
   proxy_trust_enabled: false,
   trusted_proxies: [],
+};
+
+// The same row with the two fields that gate themselves switched ON. `STORED` leaves
+// `default_spare_days` at 0 and the proxy switch off, which is exactly the state in which
+// `spareDirty` and the proxy entry can never be reached -- so against `STORED` alone the bar is
+// only ever pinned over two plain strings, and the number and array shapes never travel through
+// it at all. Deleting either gate used to leave the whole suite green.
+const STORED_BOTH_ON: GeneralSettings = {
+  ...STORED,
+  default_spare_days: 30,
+  proxy_trust_enabled: true,
+  trusted_proxies: ["10.0.0.0/8"],
 };
 
 beforeEach(() => {
@@ -134,6 +147,51 @@ describe("the save bar", () => {
     await person.click(saveChanges());
 
     await waitFor(() => expect(name).toHaveValue("Trimmed"));
+  });
+
+  it("carries the number and the list shapes, not just the strings", async () => {
+    // The two fields that gate themselves on stored state: `default_spare_days` is only a draft
+    // while a length is already in force, and the proxy list only while the switch is on. Both
+    // gates are unreachable against the default fixture, so this is the only test that sends a
+    // number or an array through the bar -- and the only one that fails if either gate goes.
+    apiMock.general.mockResolvedValue(STORED_BOTH_ON);
+    const person = renderPanel();
+    const days = await screen.findByLabelText("Default spare length in days");
+    const proxies = screen.getByLabelText("Trusted proxy addresses");
+
+    await person.clear(days);
+    await person.type(days, "90");
+    await person.clear(proxies);
+    await person.type(proxies, "10.0.0.0/8, 192.168.0.0/16");
+
+    await waitFor(() => expect(bar()!.textContent).toContain("Default spare length"));
+    expect(bar()!.textContent).toContain("Trusted proxy addresses");
+
+    await person.click(saveChanges());
+    await waitFor(() => expect(apiMock.saveGeneral).toHaveBeenCalledTimes(1));
+    expect(apiMock.saveGeneral.mock.calls[0]![0]).toEqual({
+      default_spare_days: 90,
+      // Split, trimmed and emptied-out, the way the box's text becomes a list.
+      trusted_proxies: ["10.0.0.0/8", "192.168.0.0/16"],
+    });
+  });
+
+  it("says why a refused save was refused, inside the bar", async () => {
+    // The route writes all six fields or none, so a refusal costs every draft on the panel. The
+    // bar is sticky and the panel is six groups tall, so a notice rendered outside the bar sits
+    // at the document foot -- off screen for anyone editing the top group, which is where five
+    // of the six fields are. Rule 42: the reason renders where the failed press was.
+    apiMock.saveGeneral.mockRejectedValue(new Error("That web address isn't valid."));
+    const person = renderPanel();
+    const name = await screen.findByLabelText("Application name");
+
+    await person.clear(name);
+    await person.type(name, "Second install");
+    await person.click(saveChanges());
+
+    await waitFor(() => expect(bar()!.textContent).toContain("That web address isn't valid."));
+    // Still unsaved, and still named: nothing was written, and the bar keeps offering it.
+    expect(bar()!.textContent).toContain("Application name");
   });
 });
 

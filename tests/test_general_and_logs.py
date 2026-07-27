@@ -215,6 +215,53 @@ class TestGeneralSettings:
         response = client.put("/api/settings/general", json={"trusted_proxies": ["not-an-address"]})
         assert response.status_code == 422
 
+    def test_one_bad_field_writes_none_of_the_others(self, client: TestClient) -> None:
+        """The General panel's save bar sends every unsaved field in ONE request, so a body
+        carrying five good fields and one bad one is the shape the operator actually produces.
+        This route's docstring promises "nothing is changed" on a refusal, and it holds because
+        all four validations run before the first write and one commit ends them -- but every
+        other test here sends a single field, so nothing pinned it. Moving any `set_*` above a
+        check would half-apply a six-field save with the operator told it failed."""
+        before = client.get("/api/settings/general").json()
+
+        response = client.put(
+            "/api/settings/general",
+            json={
+                "application_name": "Media Reaper",
+                "timezone": "America/New_York",
+                "accent_color": "#25c3ff",
+                "default_spare_days": 30,
+                "trusted_proxies": ["172.16.0.0/12"],
+                # The one that is refused, checked before any of the five is written.
+                "application_url": "reaper.local",
+            },
+        )
+        assert response.status_code == 422
+        assert "http" in response.json()["detail"]
+        assert client.get("/api/settings/general").json() == before
+
+        # The same body with that field corrected writes all six, so the test cannot pass by
+        # the route simply refusing everything.
+        response = client.put(
+            "/api/settings/general",
+            json={
+                "application_name": "Media Reaper",
+                "timezone": "America/New_York",
+                "accent_color": "#25c3ff",
+                "default_spare_days": 30,
+                "trusted_proxies": ["172.16.0.0/12"],
+                "application_url": "https://reaper.example.com",
+            },
+        )
+        assert response.status_code == 200
+        saved = response.json()
+        assert saved["application_name"] == "Media Reaper"
+        assert saved["timezone"] == "America/New_York"
+        assert saved["accent_color"] == "#25c3ff"
+        assert saved["default_spare_days"] == 30
+        assert saved["trusted_proxies"] == ["172.16.0.0/12"]
+        assert saved["application_url"] == "https://reaper.example.com"
+
     def test_saving_proxy_trust_applies_immediately(self, client: TestClient) -> None:
         client.put(
             "/api/settings/general",

@@ -277,8 +277,10 @@ export function GeneralPanel() {
   // inside the right-aligned control box, so the first keystroke made the button appear and
   // shoved the field being typed in 71px to the left -- then back again on undo. The bar names
   // what is unsaved and sends all of it in one request. The controls that take effect the
-  // moment they change (the two Switches, the theme and expand-seasons selects) are not drafts
-  // and do not join it.
+  // moment they change are not drafts and do not join it: three of them call `save.mutate`
+  // themselves -- the reverse-proxy `Switch`, the expand-seasons `<select>` and the
+  // spare-length `Segmented` -- and the theme `<select>` calls `applyTheme`, which writes this
+  // browser's own localStorage and never reaches the server, so it has no draft to hold.
   const pending: { label: string; patch: Parameters<typeof api.saveGeneral>[0] }[] = [];
   if (nameDirty)
     pending.push({ label: "Application name", patch: { application_name: name.trim() } });
@@ -506,18 +508,16 @@ export function GeneralPanel() {
               {/* Only while a length is in force -- Forever hides the box, matching how a
                   group's sub-controls disappear when its toggle is off. */}
               {data.default_spare_days > 0 && (
-                <>
-                  <FixedQuantity
-                    value={spareDays}
-                    suffix="days"
-                    min={1}
-                    max={3650}
-                    width="narrow"
-                    ariaLabel="Default spare length in days"
-                    disabled={save.isPending}
-                    onChange={(n) => setSpareDays(Math.max(1, Math.min(3650, n)))}
-                  />
-                </>
+                <FixedQuantity
+                  value={spareDays}
+                  suffix="days"
+                  min={1}
+                  max={3650}
+                  width="narrow"
+                  ariaLabel="Default spare length in days"
+                  disabled={save.isPending}
+                  onChange={(n) => setSpareDays(Math.max(1, Math.min(3650, n)))}
+                />
               )}
             </div>
           </div>
@@ -679,7 +679,12 @@ export function GeneralPanel() {
         </p>
       </div>
 
-      {save.error && <p className="notice notice-error">{save.error.message}</p>}
+      {/* Only when there is no bar to put it in. A control that saves on the spot fails with
+          nothing unsaved, so its refusal has nowhere else to go; a refused BAR save renders
+          inside the bar instead, beside the fields it just refused to write. */}
+      {save.error && pending.length === 0 && (
+        <p className="notice notice-error">{save.error.message}</p>
+      )}
 
       {/* The one save affordance on this panel (rule 43), the same bar the policy editor uses:
           it names what is unsaved, saves all of it in one press, and offers Discard. Rendered
@@ -703,6 +708,13 @@ export function GeneralPanel() {
           >
             {save.isPending ? "Saving…" : "Save changes"}
           </button>
+          {/* Inside the bar, not below the panel (rule 42, and the same slot
+              `PolicyEditor`'s bar uses): the route refuses the whole body before writing any
+              of it, so this sentence is the only thing standing between the operator and the
+              belief that all six fields went in. The bar is sticky, so a notice outside it
+              renders at the document foot -- off screen for anyone editing the top group,
+              which is where five of these six fields are. */}
+          {save.error && <p className="notice notice-error">{save.error.message}</p>}
         </div>
       )}
     </div>
