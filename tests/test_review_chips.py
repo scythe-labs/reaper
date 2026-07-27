@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,9 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import Candidate, Snapshot
+from reaper.engine.dormancy import dormancy_days, reference_instant
+from reaper.engine.gates import PROTECT, Facts, GateConfig, GateId, MinDormancyGate
+from reaper.engine.observation import Absent, Known
 from reaper.main import create_app
 from reaper.services.snapshot import HAND_SPARE_DETAIL
 
@@ -34,6 +38,29 @@ CONFLICT_SENTENCE = (
     "2 people watched Season 3, more than watched Season 1, which your keep rule "
     "protects. Reaper left it for you to decide instead of removing it."
 )
+
+
+def _never_played_facts(days_dormant: int) -> Facts:
+    """A title with no plays at all -- the shape the review queue's Sanctuary lane is full
+    of, and the one the dormancy chip used to describe as recently watched.
+
+    Both watcher counts are a genuine zero, not an unreadable source: this is a file the
+    server has simply never served, so ``distinct_watchers_all_time`` is 0 as well.
+    """
+    return Facts(
+        title="A Film",
+        days_observed_unwatched=Known(value=float(days_dormant), source="tautulli"),
+        distinct_watchers=Known(value=0, source="tautulli"),
+        distinct_watchers_all_time=Known(value=0, source="tautulli"),
+        size_bytes=Known(value=12_000_000_000, source="radarr"),
+        imdb_rating_tenths=Known(value=72, source="imdb"),
+        imdb_votes=Known(value=5000, source="imdb"),
+        season_rank=Absent(source="radarr"),
+        is_streaming_now=Known(value=False, source="plex"),
+        is_managed=Known(value=True, source="radarr"),
+        in_curated_list=Absent(source="lists"),
+        is_whitelisted=Known(value=False, source="plex"),
+    )
 
 
 def _exp(
@@ -96,7 +123,7 @@ class TestKeptChipWording:
             (
                 "min_dormancy",
                 "untouched for just 1 year, 2 months, less than the 3 years Reaper waits",
-                "watched too recently",
+                "hasn't sat untouched long enough",
             ),
             (
                 "min_dormancy",
@@ -138,6 +165,56 @@ class TestKeptChipWording:
     )
     def test_phrase(self, gate: str, detail: str, phrase: str) -> None:
         assert _kept_phrase(gate, detail) == phrase
+
+
+class TestTheKeptChipNeverClaimsAPlayThatDidNotHappen:
+    """A title nobody has ever played reaches ``MinDormancyGate``'s fired branch, because
+    that gate's clock runs from the day the file arrived whenever there is no play to run
+    it from (``engine.dormancy.reference_instant``). The chip beside it used to read
+    "watched too recently" -- a plain fabrication about a title with zero plays all time,
+    printed three lines under the same panel's "nobody watched it in the last year".
+    ``MinDormancyGate`` words its own detail "untouched" for exactly this reason; only the
+    chip was still claiming the play.
+
+    An agreement test, not a transcription (rule 119): it derives the dormancy through the
+    real helper with no play, runs the real gate, and hands the real detail to the real
+    chip, so rewording either half alone fails here rather than drifting quietly.
+    """
+
+    #: A file that arrived recently and was never once played, under an operator waiting a
+    #: year. Its whole life on the server is shorter than the wait, so the gate fires.
+    ARRIVED_DAYS_AGO = 89
+    WAITS_DAYS = 365
+
+    def _phrase_for_a_never_played_title(self) -> str:
+        # One clock reading, not three: a test that re-samples can straddle a day boundary
+        # between the reference and the count and drop a day (rule 133).
+        now = utcnow()
+        reference = reference_instant(
+            last_played=None,
+            added_at=now - timedelta(days=self.ARRIVED_DAYS_AGO),
+            # The watch mirror reaches back further than the file has existed, so the
+            # horizon is not what is being measured here -- the arrival date is.
+            horizon=now - timedelta(days=400),
+        )
+        facts = _never_played_facts(dormancy_days(reference, now=now))
+        result = MinDormancyGate(
+            GateConfig(GateId.MIN_DORMANCY, threshold=self.WAITS_DAYS)
+        ).evaluate(facts)
+
+        assert result.outcome == PROTECT, "the gate must fire for this chip to exist at all"
+        return _kept_phrase("min_dormancy", result.detail)
+
+    def test_the_chip_asserts_no_play(self) -> None:
+        """The regression itself. Nobody watched this, so the chip may not say anyone did."""
+        phrase = self._phrase_for_a_never_played_title()
+
+        assert "watched" not in phrase
+        assert "played" not in phrase
+
+    def test_the_chip_still_names_why_it_is_kept(self) -> None:
+        """Truthful is not enough on its own -- the chip's whole job is to say why."""
+        assert self._phrase_for_a_never_played_title() == "hasn't sat untouched long enough"
 
 
 class TestChip:

@@ -164,8 +164,8 @@ class TestRollUp:
     def test_a_protected_title_is_never_reclaimable_even_if_the_requester_never_watched(
         self,
     ) -> None:
-        """The Little Fockers case: nobody on this row watched it, but the scan protects it
-        (watched too recently, on a keep list, ...). Scales must never contradict Review."""
+        """Nobody on this row watched it, but the scan protects it anyway (it hasn't sat
+        untouched long enough, it's on a keep list, ...). Scales must never contradict Review."""
         report = roll_up(
             [_req(plex_id=100, name="Alice")],
             [_cand(verdict="protect", title="Kept By The Scan")],

@@ -793,7 +793,14 @@ def _kept_phrase(gate: str, detail: str) -> str:
     if gate == "min_dormancy":
         if detail.startswith("no watch history"):
             return "no watch history, kept to be safe"
-        return "watched too recently"
+        # "Untouched", never "watched": this gate's clock runs from the last play only when
+        # there IS one, and otherwise from the day the file arrived
+        # (``engine.dormancy.reference_instant``). So the fired branch covers a title nobody
+        # has ever played, and the chip this function used to return -- "watched too
+        # recently" -- asserted a play that never happened, on a card whose own panel said
+        # "nobody watched it in the last year" three lines above. ``MinDormancyGate`` words
+        # its own detail "untouched" for exactly this reason; the chip beside it now does too.
+        return "hasn't sat untouched long enough"
     if gate == "unmanaged":
         # Retired gate, kept for stored explanations only -- a snapshot taken before the
         # retirement can still be read back, and this is what renders its chip. No new scan
