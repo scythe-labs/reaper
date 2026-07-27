@@ -1335,7 +1335,10 @@ main.split {
    same place, and under a thumb.
 
    The labels stay in the accessibility tree -- clipped, never `display: none` -- so every button
-   in the icon-only bar is still named by its section. */
+   in the icon-only bar is still named by its section.
+
+   COUPLED (rule 67): this 900 is also `NARROW_SCREEN_QUERY` in useMediaQuery.ts, whose two JS
+   readers are named above the `main.split .why` sheet block below. Move them together. */
 @media (max-width: 900px) {
   .app {
     /* Scroll the end of a list out from under the bar. */
@@ -2111,11 +2114,14 @@ a.rating-chip:hover {
    is what wins here, so keep this block below that one. `width: auto` is the one property
    the 1100px block sets that `inset: 0` alone cannot undo.
 
-   COUPLED (rule 67): App.tsx's `fullSheet` -- `useMediaQuery("(max-width: 900px)")` -- asks
-   whether this rule is in force, so that it can stop tracking the list's scroll behind a
-   sheet that covers it. The two 900s must move together. App.tsx already carried the
-   reference this way; this side carried none, so someone editing the query here had nothing
-   telling them a hook depends on it (R-8). */
+   COUPLED (rule 67): TWO JS readers ask whether this rule is in force, and both take the
+   query from `NARROW_SCREEN_QUERY` in useMediaQuery.ts -- the one declaration of this width
+   on that side, so change this 900 and change that constant with it. App.tsx's `fullSheet`
+   stops tracking the list's scroll behind a sheet that covers it, and the review queue's
+   "expand seasons by default" mode opens a show's season list on one screen size and not the
+   other -- which makes this number the stored meaning of the operator's "Mobile" and
+   "Desktop" choices, not just a layout detail. This side once carried no reference at all, so
+   someone editing the query here had nothing telling them a hook depends on it (R-8). */
 @media (max-width: 900px) {
   main.split .why {
     position: fixed;
