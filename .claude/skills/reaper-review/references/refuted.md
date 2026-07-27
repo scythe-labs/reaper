@@ -224,6 +224,70 @@ type checker, a linter nor a test can see either, and the second was only findab
 every `max-width: 900px` block in the stylesheet and asking what it actually does — which is the
 check worth running whenever a comment enumerates what a breakpoint controls.
 
+## Refuted at `ef0278d` (2026-07-27, reviewing the settings control-column branch, PR #88)
+
+Two lanes fired by path (`diff` on `Settings.tsx`, `PlexPanel.tsx`, `index.css`; `seam` because the
+save bar changed `saveGeneral` from one field per press to a merged six-field body), run as three
+concurrent reviewers. No `safety` lane — nothing in the engine, the services, either transport
+guard, the execute route or the arming UI is touched. The CSS lane measured everything in Chrome
+against a harness holding all 23 `.set-row`s from the three consumer files, rendered against
+`origin/dev`'s stylesheet, the branch's, and the intermediate commit `25d4afd`.
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| frontend-settings | `spareDirty`'s new `data.default_spare_days > 0` gate hides the bar while the operator types their first length, so moving off "Forever" is silently lost | The mode control writes immediately, so the gate can never be false while the box is on screen: the `Segmented`'s `onChange` calls `save.mutate({ default_spare_days: mode === "forever" ? 0 : spareDays })`, and driven from a stored `0`, pressing **Days** sent `{"default_spare_days":30}` and only then did the box render. Every writer of `spareDays` is itself gated on, or reached only when, the stored value is already `> 0`. The gate is redundant, not load-bearing. |
+| frontend-settings | `discardDrafts` skipping `setSpareDays` when the stored value is `0` leaves a stale draft the bar cannot show | Same reason: with the stored value `0` the box is not rendered and `spareDirty` is false, so there is no draft to put back. The other five fields are restored to the exact canonical value each dirty-check compares against, and Discard was driven: bar cleared, nothing sent. |
+| frontend-settings | `accentBlocks` can strand the operator with a permanently disabled Save and only Discard as a way out | Three ways out, all on screen: the bar's own "Enter a hex code like #25c3ff to save.", the same sentence on the row (rule 42), and the **Reset to default** link, which renders precisely because a half-typed hex is never `DEFAULT_ACCENT`. Driven with the bar naming only the accent; the button re-enables the moment the hex completes. |
+| frontend-settings | `proxiesDirty && data.proxy_trust_enabled` silently drops typed proxies when the switch is turned off | Recoverable and unchanged from `dev`: the text stays in the (disabled) box, a later save sends only the other fields, and flipping the switch back on brings the bar back naming it. `git show origin/dev` shows the deleted per-row Save carried the identical guard, so this diff neither introduced nor widened it. |
+| frontend-settings | `Object.assign({}, ...pending.map(p => p.patch))` can send an empty body | The button exists only inside `pending.length > 0`, and `pending` is recomputed on the render the click closes over. |
+| frontend-settings | The narrow-screen `<select>` loses the `aria-current` the rail carried, or `<nav aria-label="Settings sections">` around a lone `<select aria-label="Settings section">` double-announces | A native select announces its selected option as the current value, and `SettingsNav.test.tsx` pins it. The landmark name and the control name are each correct for their own element and are read at different moments. |
+| frontend-settings | Something deep-links to a settings tab by its label or DOM shape, so the swap or the "Backup & Restore" relabel breaks it | The only entry point is `initialPanel`, a `Panel` **id**. Repo-wide grep for the old label finds `docs/history/PLAN-narrative.md` (frozen) and one test that passes the id. |
+| frontend-settings | Rule 64: something still names the six deleted per-row Saves | Nothing does. The surviving hits are a comment correctly recording that they are gone, the policy editor's own bar, and the STATUS.md row this PR added. |
+| frontend-settings | The `//` line comment newly placed inside the parenthesized JSX expression in `PlexPanel.tsx` breaks the build or gets moved by prettier | It sits in a JS expression position, not JSX children, and is valid there; all four frontend gates pass on it. |
+| frontend-settings | The `@media (max-width: 400px) { .settings-tab }` block is now dead, since the settings rail no longer renders below 900px | It governs the **Policy** rail, which shares `.settings-nav`/`.settings-tab` and is deliberately left on tabs, as the new block states in writing. Still live. |
+| seam | `put_general` reads every field off the model, so a field the client omits is written as its default | `GeneralSettingsIn` declares all eight fields `\| None = None` and every write is guarded by `is not None`; an existing test already pins that a second single-field save leaves the first alone. |
+| seam | A field validated later commits the earlier fields before it refuses | All four validations precede all eight writes, which share one `session.commit()`. Driven: six valid fields plus one bad `application_url` returns 422 and leaves the entire `GET` payload byte-identical. (Now pinned by a test, since only the ordering held it.) |
+| seam | Writing `trusted_proxies` depends on `proxy_trust_enabled` being present in the same body | `_refresh_proxy_state` re-reads the *stored* switch rather than the payload, so a list-only patch still arms the live middleware. Driven. |
+| seam | A field the client re-seeds from is absent or differently named in the response | `onSuccess` re-seeds five fields and `GeneralSettingsOut` carries all five under identical names, mirrored in `api.ts`. A six-field save round-tripped every value and cleared the bar. |
+| seam | The route can refuse a `default_spare_days` the UI can produce, or a cleared number box sends `null`/`NaN` | Pydantic accepts `0..3650`, the box clamps `1..3650`, and `useTypedNumber` returns early on an empty box and ignores a non-finite parse. |
+| seam | A post-commit failure leaves all six fields saved while the client is told the save failed | The only two post-commit calls cannot raise: the scheduler reschedule wraps every apply in the rule-87 guard, and `parse_proxy_networks` drops malformed entries rather than raising. |
+| seam | The rewritten `GeneralPanel.test.tsx` no longer pins the B-18 regression it claims to | It does: dropping the five `"… " in sent` guards for an unconditional re-seed fails "a control that saves on the spot > leaves an in-progress edit alone" on exactly the assertion the comment names. |
+| seam | `SettingsNav.test.tsx`'s `matchMedia` stub cannot discriminate | It discriminates both ways: hardcoding `narrow = false` fails 2 of 3 tests, hardcoding `narrow = true` fails the third. It does not pin the query *string*, but that is the shape already accepted at `4e069b1`. |
+| seam | `SettingsNav.test.tsx` leaks its stubbed `matchMedia` into later tests | `afterEach(vi.unstubAllGlobals())` clears it, jsdom defines no `matchMedia` for the stub to clobber, and the full suite runs green in one process with the file present. |
+| seam | A pydantic-shaped 422 renders as `[object Object]` | `api.ts` handles the list-shaped `detail` explicitly. The wording is internal-sounding, but no bound and no input attribute changed here, so it is pre-existing. |
+| seam | Typing during an in-flight merged save loses keystrokes when `onSuccess` re-seeds | Unchanged by this PR: the per-row Saves re-seeded the same field on the same `onSuccess`, and the text inputs were never disabled on `save.isPending` on either side. |
+| css | `.savebar` cannot stick on the Settings page, so the only save affordance scrolls away (rule 43) | Measured in a 700px-tall viewport: computed `position: sticky` throughout, pinned at scrollTop 0 and mid-scroll. The whole ancestor chain from `.panel` to `html` computes `overflow: visible`, `contain: none`, `transform: none` — no scrolling or containing ancestor, and `.settings-body` has no CSS rule at all. The 900px lift resolves to `bottom: 65.6px` (`--navbar-h` + 0.6rem) under the same query that makes `.views` the bottom bar. |
+| css | `.set-row .set-control input.input-port { flex: none }` is a descendant selector overriding a direct-child rule, so it may not apply | It applies — (0,3,1) beats (0,2,1) regardless of combinator — and the port field is in fact a direct child. Computed `flex-grow: 0, flex-shrink: 0, width: 80px` at 1200/640/390px. |
+| css | Deleting `min-width: 15rem` shrinks the inputs that are not direct children of `.set-control` (hex field, swatch, `QuantityInput`'s number) | Measured identical before and after at 1200 and 640px: the `.qty` number 57.6px both (its own `min-width: 0` already won on source order), `.hexfield` 136px both, the swatch 44.6px both. The one descendant the deletion did reach is `.switch input`, whose width goes 240px → 40px: on `dev` every settings Switch carried a 200px invisible clickable overhang, which this change removes. |
+| css | The 640px comment's "593px inside a 350px card" is unverifiable or invented | The measurement is real but belongs to this PR's own intermediate state, not to `dev`: the connection select measures **273px on `dev`, 571px on `25d4afd`, 273px on the branch**, with zero overflow on `dev` at 320/350/390px. The bare `1fr` was harmless on `dev` because the same rule's `max-width: 22rem` clamped the select's min-content contribution. LEARNINGS already records exactly this ("A width cap can hide a collapse"). |
+| css | The `.settings-picker` `<select>` forks the control standard or hides a list behind a dropdown (rules 40/41) | It matches the standard property for property; only `width: 100%` and `font-weight: 600` are its own, both declared in the comment, and width is the one dimension rule 40 lets vary. Nine sections is an open list, which is what rule 41 reserves a `<select>` for. |
+| css | Something in `.settings` / `.settings-nav` / `.settings-body` assumed a `.settings-nav` child is always present | `.settings-body` has no CSS rule anywhere in the file, and there is no child, sibling or adjacency selector involving either class. `.settings-picker`'s `margin-bottom` matches `.settings-nav`'s exactly. |
+| css | The seven `1fr` → `minmax(0, 1fr)` conversions let a child overflow a clipped ancestor (rule 138 from inside) | `.about-kv dd` and `.backup-facts dd` both carry `overflow-wrap: anywhere`, so the data-dir path wraps; `.docs-body`'s two children are both `overflow-y: auto`, so their inline-axis minimum was already 0; `.add-grid`'s one consumer sits in a plain panel. Zero overflowing elements measured at every width from 320 to 1400. |
+| css | The 640px block loses to `.set-row.set-row-cluster` on specificity, so the two cluster rows keep a two-column grid on a phone | The block names both selectors at equal weight and sits later in the file, so it wins on source order. Measured at 640px: both cluster rows' `.set-control` is the full row width. |
+| css | Plex's "Waiting for Plex…" box and the multi-server pick list break inside the 352px track | They narrow rather than break: the waiting box gains one wrapped line, and the pick list's rows get *wider* with identical row heights. |
+| css | `justify-content: flex-end` on the base `.set-control` breaks the stacked accent row | The accent row re-declares `flex-start`, and its measured geometry is byte-identical old vs new. `.accent-row` is `display: block`, so the grid and `justify-self` rules never applied there anyway. |
+| css | The `.set-row` comment's "168px / 249px / 147px" measurements are invented | Two of three reproduce exactly on `dev` in the stacked layout (167.7px, 147.2px). The time-zone figure differs only because the widest IANA zone name in the harness differs from theirs. |
+| css | The change is a net regression in page length | Backwards for the whole fixture: including the missing-server state the panel is shorter at every width (−967px at 1200), and `dev` also overflowed horizontally at 768px (`scrollWidth` 929 vs `clientWidth` 768) where the branch measures 768/768. The taller-row findings are real but confined to the everyday no-error case. |
+
+**The generalizable lesson: on a layout commit, the comments are the most productive place to
+look, because each one is a falsifiable claim and the author wrote them believing they were
+true.** Three of the five confirmed findings are a comment asserting something measurement
+denies, and the two sharpest code findings were reached *through* a comment rather than around
+it. The `.set-row` block names its own bug twice — "an `<input>` to the browser's default
+twenty-character width" and "which is how the Plex server row's Refresh button ended up under
+its picker" — and the branch reintroduces both: the manual-address host measures 167.7px, the
+browser default, and Refresh wraps under the picker at every width ≥641px. **Testing a comment's
+claim is cheaper than auditing the code it sits on, and it fails in the direction nobody
+expects**, because a fix that says what it fixes is a fix nobody re-drives afterwards.
+
+**A second note, on lanes disagreeing.** The `diff` and `seam` reviewers reached opposite verdicts
+on identical measured behavior — the spare-length `Segmented` committing a draft the bar had just
+called unsaved. Both drove the same probe and got the same events; they disagreed on whether the
+bar's Discard constitutes a promise. Convergence across independent lanes was the signal at
+`394cc3a`; divergence is the signal here, and it means the question is a product decision rather
+than a defect. It was reported as such and filed unproven rather than fixed, since editing a
+settings panel on the strength of a split verdict is how a review introduces a bug.
+
 ## Refutations later found to be wrong
 
 None yet. When one lands here, record what the verifier missed — that reasoning is worth more

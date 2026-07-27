@@ -86,3 +86,66 @@ case it exists to cover.
 
 **If accepted,** `raise` instead of `default=0.0`: a fixture with no plays cannot support the
 lab's popularity coverage, and saying so at import is what the docstring already claims.
+
+## Raised at `ef0278d` (2026-07-27, reviewing the settings control-column branch, PR #88)
+
+Both entries below are unusual for this file: their **triggers are proven**, driven in a probe or
+measured in a browser. What is unsettled is whether each is a defect, and the answer is a product
+decision rather than a reading of the code. They are here rather than filed because an issue
+asserts a defect exists, and in both cases a competent reviewer declined to.
+
+### 3. The save bar calls a length unsaved that the switch beside it will commit
+
+`frontend/src/components/Settings.tsx` — the Default spare length row, its `Segmented`'s
+`onChange` and the `spareDirty` entry in `pending`. Tier 3.
+
+Driven, from a stored length of 365: type `7` into the box. The bar appears reading `Unsaved
+changes: Default spare length` and offers **Discard**. Press **Forever** instead of Save — that
+sends `{default_spare_days: 0}` immediately *and* the bar vanishes, because `spareDirty` is gated
+on the stored value being `> 0` and the box is now hidden, so the Discard that would have undone
+the draft goes with it. Press **Days** again and it sends `{default_spare_days: 7}`: the number
+the bar had just called unsaved is now stored, without a Save press. The review queue reads the
+same value from the shared `["general-settings"]` cache, so every plain Spare now protects for a
+week instead of a year.
+
+**Why it is not confirmed:** two independent lanes drove the identical probe, got identical
+events, and disagreed. The `seam` lane called it confirmed — the bar asserts a draft contract it
+does not hold for this field. The `diff` lane refuted it — the control "writes what they typed, in
+the mode they asked for; no value is lost and none is invented." Both readings are defensible, and
+the write itself predates this branch: the deleted per-row Save sat beside the same `onChange`.
+What is new is only the affordance around it, a panel-level bar with a Discard.
+
+**What would settle it:** an operator's answer to one question — when the bar says a field is
+unsaved and offers Discard, does pressing a *different* control on that row count as saving it?
+Nothing in the code can answer that.
+
+**If accepted,** the two named fixes are to drop `default_spare_days` from `pending` so the number
+box saves on the spot like its mode switch, or to make the `Segmented` stage `spareDays` rather
+than send it. Either way the enumeration comment above `pending` needs to keep naming it, which it
+now does.
+
+### 4. A fixed control track charges every row the width of the widest control
+
+`frontend/src/index.css` — `.set-row`'s `grid-template-columns: minmax(0,1fr) minmax(0,
+var(--set-control-w))`. Tier 4.
+
+Measured in Chrome across all 23 `.set-row`s: the 352px control track is reserved even when the
+control is a 40px `Switch` or a 68px button, so the label and help column loses up to 312px and
+the rows grow. At 641px the "Behind a reverse proxy" row goes 153.1px → **291.9px** tall (+91%);
+at 768px it is 153.1 → 192.8. Across the three panels, excluding the rare missing-server notice,
+the settings page grows +56px at 1200, +195 at 900, +428 at 800, +755 at 768 and +590 at 641.
+
+**Why it is not confirmed:** it is the deliberate cost of rule 40, which this branch is
+implementing — boxes line up on one track, and the author's own comment says a Switch "keeps its
+natural size on the same edge the boxes end on." Whether ten switch-and-button rows should opt out
+of the track they are aligning to is a design judgment, and this repo requires an approved mockup
+before that class of frontend change. Note also that the same fixture measures *shorter* overall
+once the missing-server state is included, and that `dev` overflowed horizontally at 768px where
+the branch does not — so "the page got longer" is true only of the everyday case.
+
+**What would settle it:** a rendered mockup of the switch rows with and without an `auto` control
+track, judged at 641–768px, which is where the cost concentrates.
+
+**If accepted,** the named fix is a `.set-row-plain` opt-out mirroring `.set-row-cluster`
+(`grid-template-columns: minmax(0,1fr) auto`), applied to the six Switch rows and four
+button/link rows.
