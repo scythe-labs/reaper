@@ -665,7 +665,7 @@ def _contribution(entry: dict[str, Any]) -> float:
     return float(value) if isinstance(value, int | float) else 0.0
 
 
-def _primary_reason(exp: dict[str, Any] | None, verdict: str) -> str | None:
+def _primary_reason(exp: dict[str, Any] | None, verdict: str, score: int) -> str | None:
     """The single line the card shows: *why* Reaper judged this, not what it is about.
 
     A spared item leads with the protection that saved it; a reaped one with its strongest
@@ -675,6 +675,10 @@ def _primary_reason(exp: dict[str, Any] | None, verdict: str) -> str | None:
     Takes the DECODED explanation (``_decode_explanation``), and like every sibling
     extractor treats an unreadable one as "no reason to show", never as an error: display
     extraction must never drop a row off the queue.
+
+    ``score`` comes from the row, not from ``exp``, so this reads the same number ``_chip``
+    does (rule 104): the stored explanation carries its own copy, and two readers picking
+    different sources is how the chip and the line beneath it come to disagree.
     """
     if not isinstance(exp, dict):
         return None
@@ -709,6 +713,17 @@ def _primary_reason(exp: dict[str, Any] | None, verdict: str) -> str | None:
     unknown = _entries(exp, "protections_unknown")
     if unknown:
         return _detail_of(unknown[0])
+    # An abstain that got this far was stopped by the score or by the coverage floor, and
+    # they are different decisions with different remedies: one says move the slider, the
+    # other says fix the evidence source. ``decide_verdict``'s order settles which -- past
+    # every blocked case, an abstain at or above the threshold can only be the floor. This
+    # is the same branch ``_chip`` makes (see the threshold block there), and until it was
+    # made here too the panel printed the chip "Too little of it could be checked" directly
+    # above "Scored below your threshold." Rule 61 forced this same correction on this line
+    # once already, for the unreadable-match case; the coverage arm was left behind.
+    threshold = exp.get("threshold")
+    if isinstance(threshold, int) and score >= threshold:
+        return "Kept to be safe: too little of it could be checked."
     return "Scored below your threshold."
 
 
@@ -1014,7 +1029,7 @@ def _candidate_out(
         video_resolution=r.video_resolution,
         library=r.library_title,
         dormant_for=_dormant_for(explanation),
-        reason=_primary_reason(explanation, r.verdict),
+        reason=_primary_reason(explanation, r.verdict, r.score),
         spared=override == "spare",
         override=override,
         override_own=override_own,

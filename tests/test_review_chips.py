@@ -21,7 +21,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine as sa_create_engine
 from sqlalchemy.orm import Session
 
-from reaper.api.routes import _chip, _decode_explanation, _kept_phrase, _season_number
+from reaper.api.routes import (
+    _chip,
+    _decode_explanation,
+    _kept_phrase,
+    _primary_reason,
+    _season_number,
+)
 from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
@@ -373,6 +379,60 @@ class TestChip:
             assert _chip(_decode_explanation(raw), "abstain", 50) is None
             assert _chip(_decode_explanation(raw), "protect", 50) is None
         assert _chip(None, "abstain", 50) is None
+
+
+class TestTheReasonLineAgreesWithTheChip:
+    """The card's chip and the reason line beneath it read the same explanation, so they
+    must never describe two different decisions about one row.
+
+    An abstain that reaches the end of ``_primary_reason`` was stopped either by the score
+    or by the coverage floor, and the remedies are opposite: move the slider, or fix the
+    evidence source. ``_chip`` made the distinction and ``_primary_reason`` did not, so the
+    panel printed "Too little of it could be checked" directly above "Scored below your
+    threshold." -- about a row whose score was over that threshold.
+
+    Both halves call the real functions rather than a transcription (rule 119): the point
+    is that the two agree, which a copy of either one cannot show.
+    """
+
+    def test_the_coverage_floor_is_not_reported_as_a_low_score(self) -> None:
+        exp = _exp(82)  # threshold 70, so this abstain can only be the coverage floor
+        reason = _primary_reason(exp, "abstain", 82)
+        chip = _chip(exp, "abstain", 82)
+
+        assert chip is not None
+        assert chip.text == "Too little of it could be checked"
+        assert reason == "Kept to be safe: too little of it could be checked."
+        assert "threshold" not in (reason or "")
+
+    def test_a_genuinely_low_score_still_says_so(self) -> None:
+        """The other arm: below the threshold, the score really is the reason, and the
+        line must not degrade to the coverage sentence for every abstain."""
+        exp = _exp(42)
+        reason = _primary_reason(exp, "abstain", 42)
+        chip = _chip(exp, "abstain", 42)
+
+        assert chip is not None
+        assert chip.text == "Scored 42, under your 70"
+        assert reason == "Scored below your threshold."
+
+    def test_a_blocked_check_still_outranks_both(self) -> None:
+        """The coverage branch sits last, so it can only be reached past every blocked
+        case -- adding it must not swallow the unchecked protection above it."""
+        exp = _exp(
+            82,
+            unknown=[{"gate": "min_dormancy", "detail": "could not check x: y"}],
+        )
+        assert _primary_reason(exp, "abstain", 82) == "could not check x: y"
+
+    def test_an_explanation_with_no_threshold_falls_back_rather_than_guessing(self) -> None:
+        """A stored row predating the threshold key, or carrying a malformed one, has no
+        number to compare against. It reports the old line rather than asserting a
+        coverage floor it cannot show fired."""
+        for raw in ("{}", json.dumps({"threshold": "seventy"}), json.dumps({"threshold": None})):
+            exp = _decode_explanation(raw)
+            assert exp is not None
+            assert _primary_reason(exp, "abstain", 82) == "Scored below your threshold."
 
 
 class TestChipWhy:
