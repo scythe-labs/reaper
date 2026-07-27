@@ -44,7 +44,12 @@ from reaper.engine.signals import (
     evaluate_keep,
     score,
 )
-from reaper.engine.verdict import block_holds_reap, decide_verdict, reap_held_by_blocks
+from reaper.engine.verdict import (
+    DEFERRABLE_BLOCK_GATES,
+    block_holds_reap,
+    decide_verdict,
+    reap_held_by_blocks,
+)
 from reaper.ratings import Rating, RatingSource
 
 _IMDB_BAR = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=1000)
@@ -395,13 +400,19 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         assert result.blocked is True
         assert "Only 2 people" not in result.detail
 
-    def test_the_block_is_worded_so_a_hand_reap_cannot_overrule_it(self) -> None:
-        """``verdict.block_holds_reap`` classifies on the ``could not check`` prefix, so
-        the wording is an interlock rather than phrasing: reword it and the owner's reap
-        button silently starts releasing files on evidence Reaper could not read."""
+    def test_a_hand_reap_cannot_overrule_the_block(self) -> None:
+        """The owner's reap button does not release a file on evidence Reaper could not
+        read. What holds it is the gate *id*: ``server_popularity`` is not one of
+        ``verdict.DEFERRABLE_BLOCK_GATES``, the "you decide this" flags a reap is meant to
+        settle. The detail plays no part, which is asserted below rather than assumed --
+        an earlier version of this test read as though the wording were the interlock, and
+        so could not fail when the wording changed."""
+        assert GateId.SERVER_POPULARITY not in DEFERRABLE_BLOCK_GATES
+
         result = self.gate.evaluate(_popularity_facts(0, Known(value=90.0, source="t")))
 
         assert block_holds_reap(result.gate.value, result.detail) is True
+        assert block_holds_reap(result.gate.value, "any future wording at all") is True
         assert (
             decide_verdict(
                 protected=False,

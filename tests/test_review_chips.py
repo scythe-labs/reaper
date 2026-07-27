@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
@@ -33,7 +34,14 @@ from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import Candidate, Snapshot
 from reaper.engine.dormancy import dormancy_days, reference_instant
-from reaper.engine.gates import PROTECT, Facts, GateConfig, GateId, MinDormancyGate
+from reaper.engine.gates import (
+    PROTECT,
+    Facts,
+    GateConfig,
+    GateId,
+    MinDormancyGate,
+    ServerPopularityGate,
+)
 from reaper.engine.observation import Absent, Known
 from reaper.main import create_app
 from reaper.services.season_pruning import PruneConflict
@@ -87,6 +95,18 @@ def _never_played_facts(days_dormant: int) -> Facts:
         is_managed=Known(value=True, source="radarr"),
         in_curated_list=Absent(source="lists"),
         is_whitelisted=Known(value=False, source="plex"),
+    )
+
+
+def _popularity_short_history_facts() -> Facts:
+    """A title nobody played, judged against a watch mirror three months deep.
+
+    The count is a lower bound rather than an answer, which is what makes the popularity
+    gate report the protection as un-checked instead of un-fired.
+    """
+    return replace(
+        _never_played_facts(900),
+        history_reach_days=Known(value=90.0, source="tautulli"),
     )
 
 
@@ -374,6 +394,34 @@ class TestChip:
         )
         assert chip is not None
         assert (chip.tone, chip.text) == ("quiet", "Some checks couldn't run")
+
+    def test_a_history_too_short_for_the_window_reads_as_a_check_that_could_not_run(
+        self,
+    ) -> None:
+        """The popularity gate's reach block, from the production gate rather than a
+        retyped string, because the ``could not check`` prefix is what routes it here.
+
+        A mirror shallower than the popularity window makes the watcher count a lower
+        bound, so the gate reports the protection as un-checked. That is a plumbing
+        failure, not a decision left to the owner, and the two must not wear the same
+        chip. Nothing in ``verdict`` enforces the prefix for this gate -- the reap is held
+        by the gate id -- so this chip and ``WhyPanel``'s check/cause split are the only
+        places a reword shows up, which is why the assertion lives here.
+        """
+        result = ServerPopularityGate(
+            GateConfig(GateId.SERVER_POPULARITY, threshold=3, window_days=365)
+        ).evaluate(_popularity_short_history_facts())
+        assert result.blocked is True
+
+        chip = _chip(
+            _exp(82, unknown=[{"gate": result.gate.value, "detail": result.detail}]),
+            "abstain",
+            82,
+        )
+
+        assert chip is not None
+        assert (chip.tone, chip.text) == ("quiet", "Some checks couldn't run")
+        assert "left for you to decide" not in chip.text
 
     def test_coverage_floor(self) -> None:
         """Past the blocked cases, an abstain at or above the threshold can only be the

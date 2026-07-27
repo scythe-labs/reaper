@@ -479,8 +479,15 @@ class ServerPopularityGate:
                 self.id,
                 ABSTAIN,
                 blocked=True,
-                # "could not check ..." is load-bearing, not phrasing: it is what keeps a
-                # hand reap from overruling this block (``verdict.block_holds_reap``).
+                # What holds a hand reap here is the gate id, NOT this wording:
+                # ``server_popularity`` is absent from ``verdict.DEFERRABLE_BLOCK_GATES``,
+                # so ``verdict.block_holds_reap`` holds the reap on any detail at all.
+                #
+                # The "could not check ..." prefix is still load-bearing, for the two
+                # surfaces that do read it: ``api.routes._chip`` sends a detail starting
+                # with it to "Some checks couldn't run" instead of "left for you to
+                # decide", and ``WhyPanel`` splits it into check and cause. Reword it and a
+                # plumbing failure starts reading to the operator as their own decision.
                 detail=f"could not check who watched it in the last {window_text}: {short}",
             )
         if count == 0:
