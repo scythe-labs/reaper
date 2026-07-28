@@ -136,10 +136,11 @@ class GateResult:
     should decide" flag, NOT a source Reaper could not read.
 
     Today exactly one producer sets it -- ``season_scan.guard_result``'s keep-rule
-    conflict, where the comparison WAS made and came out against the rule
-    (``season_pruning.PruneConflict`` with a readable ``kept_watchers``). A hand reap
-    overrules that, because the reap IS the decision the flag asked for
-    (``verdict.block_holds_reap``).
+    conflict, where every comparison behind the block came back with a number and the rule
+    lost it. That means *every* ``season_pruning.PruneConflict`` naming the season has a
+    readable ``kept_watchers``, not merely the first: one season carries one conflict per
+    kept season, so a single refusal holds the whole block. A hand reap overrules the rest,
+    because the reap IS the decision the flag asked for (``verdict.block_holds_reap``).
 
     **The default is the whole point.** It is ``False``, so a blocked result holds a hand
     reap unless its producer explicitly says otherwise, and a new gate, a new blocked

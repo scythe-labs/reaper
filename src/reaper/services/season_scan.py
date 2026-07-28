@@ -414,28 +414,46 @@ def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
     * **Cleanly prunable** -> ABSTAIN, recorded so the panel shows the guard ran and had
       nothing to protect here.
 
-    The conflict arm carries ``defers_to_owner``, and only when the comparison was
-    actually made. ``_detect_conflicts`` raises a conflict in two shapes: one where the
-    kept season's watcher count was read and lost, which is the deliberate "you decide"
-    flag a hand reap is entitled to overrule; and one where that count could NOT be read
-    (``kept_watchers is None`` -- on disk, but never resolved in Plex), which is a
-    plumbing failure held fail-closed like any other. Both are blocked, both send the item
-    to a human, and only the first releases a hand reap
+    The conflict arm carries ``defers_to_owner``, and only when every comparison behind it
+    came back with a number. ``_detect_conflicts`` raises a conflict in two shapes: one
+    where the kept season's watcher count was read and the rule lost, which is the
+    deliberate "you decide" flag a hand reap is entitled to overrule; and one where that
+    count could NOT be read (``kept_watchers is None`` -- on disk, but never resolved in
+    Plex), which is a plumbing failure held fail-closed like any other. Both are blocked,
+    both send the item to a human, and only the first releases a hand reap
     (``verdict.block_holds_reap``).
+
+    "Came back with a number" is the honest span of the claim, and it is narrower than
+    "the comparison was sound": a count read off a truncated watch mirror is a number all
+    the same, which is open issue #94, not something this flag can settle.
     """
     for protected in plan.protected:
         if protected.season_number == season_number:
             return GateResult(GateId.SEASON_PROGRESSION, GATE_PROTECT, detail=protected.reason)
 
-    for conflict in plan.conflicts:
-        if conflict.pruned_season == season_number:
-            return GateResult(
-                GateId.SEASON_PROGRESSION,
-                GATE_ABSTAIN,
-                blocked=True,
-                detail=conflict.message,
-                defers_to_owner=conflict.kept_watchers is not None,
-            )
+    # EVERY conflict naming this season, not just the first. ``_detect_conflicts`` raises
+    # one per (pruned, kept) pair, so a single pruned season routinely carries both shapes
+    # at once -- on shipped defaults, a kept newest season still resolving in Plex
+    # conflicts with every watched prunable season below it, while an older kept season's
+    # count reads fine.
+    matching = [c for c in plan.conflicts if c.pruned_season == season_number]
+    if matching:
+        # A refused comparison wins, and it decides the message as well as the flag.
+        # Reading only the first conflict let a readable one mask an unread one: the flag
+        # said "compared", the hand reap removed the season, and the operator saw only the
+        # conflict that HAD been compared, so nothing ever told them one had not. That is
+        # #84's own class reached a second way. Reporting the refused conflict keeps the
+        # sentence and the decision the same fact (rule 92) and puts the season nobody
+        # could read in front of the operator.
+        refused = next((c for c in matching if c.kept_watchers is None), None)
+        conflict = refused or matching[0]
+        return GateResult(
+            GateId.SEASON_PROGRESSION,
+            GATE_ABSTAIN,
+            blocked=True,
+            detail=conflict.message,
+            defers_to_owner=refused is None,
+        )
 
     return GateResult(
         GateId.SEASON_PROGRESSION,

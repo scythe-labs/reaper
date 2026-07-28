@@ -379,6 +379,36 @@ class TestGuardResult:
         # regardless.
         assert not result.detail.startswith("could not check")
 
+    def test_a_readable_conflict_does_not_mask_a_refused_one_on_the_same_season(self) -> None:
+        """One pruned season carries a conflict per kept season, so both shapes at once --
+        and reading only the first let a readable comparison mask a refused one, releasing
+        the hand reap that #84 exists to hold. Shipped defaults, and the benign cause
+        ``_detect_conflicts`` calls the commonest: Season 5 is on disk but not yet resolved
+        in Plex, so it is kept AND unreadable while Seasons 1 and 4 read fine.
+
+        The flag answers for EVERY comparison behind the block, so one refusal holds it,
+        and the message follows the decision: the operator is shown the season nobody
+        could read rather than the one that happened to sort first."""
+        plan = plan_series_prune(
+            series_title="S",
+            seasons=[_season(n) for n in range(1, 6)],
+            keep_last=2,
+            keep_first_season=True,
+            watchers_by_season={1: 0, 2: 9, 3: 1, 4: 2, 5: None},
+        )
+        # The premise, asserted rather than assumed: a readable conflict really does come
+        # first for this season, so a first-match read would report "compared" and release.
+        season_2 = [c for c in plan.conflicts if c.pruned_season == 2]
+        assert [c.kept_watchers for c in season_2] == [0, 2, None]
+
+        result = season_scan.guard_result(plan, 2)
+
+        assert result.blocked is True
+        assert result.defers_to_owner is False
+        assert block_holds_reap(result.gate.value, defers_to_owner=result.defers_to_owner) is True
+        # The message names the season that could not be read, not the ones that could.
+        assert "could not check who watched Season 5" in result.detail
+
 
 # ---------------------------------------------------------------------------
 # Facts assembly, and the Unknown discipline
