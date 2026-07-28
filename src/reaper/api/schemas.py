@@ -56,8 +56,17 @@ class GateOutcomeOut(BaseModel):
     the flag existed carries no key, and nothing in it can tell the shapes apart -- the
     wording that used to stand in for the flag is exactly what failed. ``None`` is that row,
     and a plain ``bool`` here would silently assert one shape about every legacy
-    explanation. ``services.snapshot._explain`` writes the key on every entry, never
-    omitting it when ``False``, so present-and-``False`` stays distinguishable from absent.
+    explanation. ``services.snapshot._explain`` writes the key on every
+    ``protections_unknown`` entry, never omitting it when ``False``, so present-and-``False``
+    stays distinguishable from absent ON DISK -- and on the wire the absent key arrives as
+    ``null``, since nothing here or on the route sets ``exclude_none``.
+
+    The same model types ``protections_fired`` and ``protections_checked``, where the key is
+    never written and every entry therefore reads ``None``. That is honest for a gate with no
+    opinion, but it is NOT "no answer recorded" for the one row that appears in two lists: an
+    unestablishable season PROTECT rides in both, and only its ``protections_unknown`` copy
+    carries the flag. Read this field off ``protections_unknown``, which is where the guard
+    that sets it puts its blocked result.
 
     Declared here because a wire schema must name every key the UI reads: ``api.routes._chip``
     already reads it off the stored row, and until this field existed the panel that opens

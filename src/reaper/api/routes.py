@@ -930,9 +930,16 @@ def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | Non
                 #
                 # This chip is no longer its only reader. ``GateOutcomeOut`` serves the flag
                 # to the why panel, whose verdict note branches the same three ways off it
-                # (``WhyPanel.conflictNote``, #86) -- so the card and the panel it opens say
-                # the same thing about the same row. A fourth shape of sentence added here
-                # wants adding there too (rule 72).
+                # (``WhyPanel.conflictNote``, #86) -- so the two agree about the CONFLICT,
+                # clause for clause. A fourth shape of sentence added here wants adding there
+                # too (rule 72).
+                #
+                # They can still lead with different stories, which is not a divergence:
+                # ``_match_status`` is consulted above this loop, so a row that also has Plex
+                # match trouble gets that chip ("Couldn't be found in Plex") while the panel
+                # headline still reads the conflict and names the match separately in
+                # ``KeptNotice``. The chip has one line and must pick; the panel has room for
+                # both.
                 #
                 # A row frozen before the flag carries no key, and nothing in it can tell a
                 # made comparison from a refused one -- the wording that used to stand in

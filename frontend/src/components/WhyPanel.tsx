@@ -297,9 +297,11 @@ function keepRuleConflict(item: CandidateDetail): GateOutcome | undefined {
  *    be described as a comparison.
  *  - `false` -- it could not: either the kept season's count was never readable, or the watch
  *    mirror does not reach back far enough to stand behind the counts. Asserting the
- *    comparison here states arithmetic against a number nobody took, ~40px above `LeftForYou`
- *    printing the producer's own "Reaper cannot tell whether Season N ..." denial of it (#86).
- *    Shares its wording with the card's chip, so the queue and the panel it opens agree.
+ *    comparison here states arithmetic against a number nobody took, which `LeftForYou` then
+ *    denies in the producer's own "Reaper cannot tell whether Season N ..." (#86). Three whole
+ *    sections separate them -- the score breakdown, the keep leanings, the cleared protections
+ *    -- which is a large part of why the contradiction went unseen: nobody had both on screen
+ *    at once. Shares its wording with the card's chip, so the queue and the panel agree.
  *  - absent -- a row frozen before the flag shipped, which can distinguish neither shape and
  *    so names neither. Vague and true beats specific and a coin flip; the next scan resolves
  *    it into one of the two above. */
