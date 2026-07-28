@@ -1423,8 +1423,10 @@ function AboutPanel() {
       {isPending && <p className="muted">Loading…</p>}
       {/* Two cases, not one. React Query keeps the last good row through a failed refetch and
           raises isError beside it, so an undivided `isError` printed "couldn't load this page"
-          directly above the fully drawn page (rule 17/36). Window focus reaches this read, so
-          it took nothing but switching back to the tab. */}
+          directly above the fully drawn page (rule 17/36). The trigger is a remount past
+          `staleTime` -- leaving About and coming back 30 seconds later while the server is
+          unreachable. Not window focus, which `main.tsx` turns off app-wide and only `useSafety`
+          asks back, and not an invalidation: nothing in the app invalidates `["about"]`. */}
       {isError && !data && (
         <p className="notice notice-error">Couldn't load this page. Reload to try again.</p>
       )}
@@ -1574,8 +1576,13 @@ function describeCron(cron: string): string {
 
 function scanScheduleText(job: ScheduledJob | undefined, failed: boolean): string {
   // A failed load is not "still checking": say so, so the row doesn't claim to be checking
-  // forever after the schedule query errored (U-6).
-  if (failed) return "Couldn't check the schedule.";
+  // forever after the schedule query errored (U-6). It only costs the schedule when there is no
+  // last good row to fall back on, though: React Query keeps the previous jobs and raises the
+  // failure beside them, so an undivided `failed` blanked this line while the sibling JobRows
+  // went on printing next-run times off that same held row, under a panel notice saying the rows
+  // are kept but stale. The panel's 1.5s self-poll reaches that state with nobody touching
+  // anything (rule 72: the same split the panel above takes).
+  if (failed && !job) return "Couldn't check the schedule.";
   if (!job) return "Automatic scan: checking…";
   if (job.cron === null) return "Automatic scan is off. It runs when you ask.";
   return `Automatic scan: ${describeCron(job.cron)} · next ${whenText(job.next_run_at)}`;
@@ -1820,7 +1827,14 @@ function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
       </div>
     );
   }
-  if (ls.isError || !ls.data) {
+  // Two states, not one (rule 17/36, and rule 72: the same split JobsPanel takes below). React
+  // Query keeps the last good row through a failed refetch and raises `isError` beside it, so the
+  // undivided test here threw that row away -- and the trigger was this row's OWN success path,
+  // since a finished "Update now" invalidates this query. One blinked refetch after a shelf
+  // update that WORKED reported the shelf status as unknown and took the "N added, M cleared"
+  // confirmation down with it, before it had ever painted. The never-loaded sentence stays for
+  // the read that really never landed, the only case it is true in.
+  if (!ls.data) {
     return (
       <div className="jobrow">
         <div className="jobrow-main">
@@ -1835,6 +1849,9 @@ function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
   }
 
   const { enabled, last } = ls.data;
+  // The row is still the best answer there is, so it renders -- and says it could not be
+  // confirmed, above everything in the row the failed read could have changed.
+  const stale = ls.isError ? <StaleReadNotice what="the shelf status" inline /> : null;
 
   if (!enabled) {
     return (
@@ -1842,6 +1859,7 @@ function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
         <div className="jobrow-main">
           <div className="jobrow-title">{title}</div>
           <div className="jobrow-desc">{desc}</div>
+          {stale}
           <div className="jobrow-sched">
             Off.{" "}
             <button className="link" onClick={onGoToPlex}>
@@ -1867,6 +1885,7 @@ function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
       <div className="jobrow-main">
         <div className="jobrow-title">{title}</div>
         <div className="jobrow-desc">{desc}</div>
+        {stale}
         <JobStatus
           running={running}
           runningLabel="Updating…"
@@ -1944,6 +1963,22 @@ function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
         upkeep.
       </p>
 
+      {schedule.isPending && <p className="muted">Loading the upkeep jobs…</p>}
+      {/* The rows below render from the last good row either way (`schedule.data?.jobs ?? []`),
+          so a failed refetch already keeps them on screen -- only the sentence about them was
+          wrong, and it read worst here: every row carries a next-run time and a running flag,
+          and this query polls itself every 1.5s while anything runs, so it reaches the failed
+          state with the operator doing nothing at all. The never-loaded line stays for the read
+          that really never landed, which is the only case it is true in.
+
+          ABOVE the rows, because the line says what's BELOW may be out of date and `.panel` is
+          plain block flow, so DOM order is reading order: sat after `.set-rows` it pointed at the
+          schedule editor and nothing else. Every other call site puts it over its content. */}
+      {schedule.isError && !schedule.data && (
+        <p className="notice notice-error">Couldn't load the upkeep jobs. Reload to try again.</p>
+      )}
+      {schedule.isError && schedule.data && <StaleReadNotice what="these jobs" />}
+
       <div className="set-rows">
         <ScanRow
           snapshot={snapshot}
@@ -1964,18 +1999,6 @@ function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
             <JobRow key={job.id} job={job} onEdit={() => setEditing(job)} />
           ))}
       </div>
-
-      {schedule.isPending && <p className="muted">Loading the upkeep jobs…</p>}
-      {/* The rows above render from the last good row either way (`schedule.data?.jobs ?? []`),
-          so a failed refetch already keeps them on screen -- only the sentence under them was
-          wrong, and it read worst here: every row carries a next-run time and a running flag,
-          and this query polls itself every 1.5s while anything runs, so it reaches the failed
-          state with the operator doing nothing at all. The never-loaded line stays for the read
-          that really never landed, which is the only case it is true in. */}
-      {schedule.isError && !schedule.data && (
-        <p className="notice notice-error">Couldn't load the upkeep jobs. Reload to try again.</p>
-      )}
-      {schedule.isError && schedule.data && <StaleReadNotice what="these jobs" />}
 
       {editing && (
         <ScheduleModal
@@ -2096,17 +2119,35 @@ function NotificationsPanel({
       </p>
 
       {/* Whether the warning channel exists is only worth stating once it has been read:
-          an unread answer must not claim that nobody is being warned. */}
+          an unread answer must not claim that nobody is being warned.
+
+          Three branches, not two (rule 17/36, rule 72). React Query keeps the last good answer
+          through a failed refetch -- which `save` and `remove` both trigger, since each
+          invalidates this key on success -- and raises the failure beside it. This panel has no
+          early return, so the "couldn't check" sentence printed directly above three controls
+          derived from that very answer, each of them acting as though it HAD been checked: the
+          "leave blank to keep the current webhook" placeholder, an enabled Remove, and a Send
+          test that fires at the stored webhook. The same sentence also rendered over the opposite
+          form when the FIRST read failed, so the two states could not be told apart. It matters
+          twice over here, because the advice it gives is to reload, and a reload throws away a
+          pasted webhook that is a secret and is never shown again once stored. */}
       {isPending ? (
         <p className="muted">Checking whether Discord is connected…</p>
-      ) : isError ? (
+      ) : isError && !data ? (
         <p className="notice notice-error">
           Couldn't check whether Discord is connected. Reload to try again.
         </p>
-      ) : connected ? (
-        <p className="muted">✓ Discord connected. Leaving-soon warnings post to your channel.</p>
       ) : (
-        <p className="muted">No Discord webhook set, so leaving-soon warnings won't be sent.</p>
+        <>
+          {isError && <StaleReadNotice what="whether Discord is connected" />}
+          {connected ? (
+            <p className="muted">
+              ✓ Discord connected. Leaving-soon warnings post to your channel.
+            </p>
+          ) : (
+            <p className="muted">No Discord webhook set, so leaving-soon warnings won't be sent.</p>
+          )}
+        </>
       )}
 
       <div className="add-grid">
