@@ -606,8 +606,16 @@ describe("the gate that counts recent watchers", () => {
     // is not on the page. With `server_popularity` off, `PolicyBody.popularity_window_days`
     // still hands 365 to the operator's own keep-outright rules, so they block library-wide
     // on a window whose picker this editor deliberately hides -- and the rule itself is the
-    // one thing they can act on. Same reason this asserts a POSITION: the catch-all stack at
-    // the foot of the page renders any warning, anchored or not (rule 118).
+    // one thing they can act on.
+    //
+    // The DECOY is what makes the position assertion mean anything, and without it this test
+    // passed with both halves of the anchor reverted (rule 118). The catch-all stack sits a
+    // few lines below the keep card's own block, and `invalidMessage`/`validatorDown` render
+    // nothing here, so with one warning on the page the two slots are the same DOM position
+    // and the assertion cannot tell an anchored warning from an unclaimed one. A second
+    // warning no anchor claims fills the catch-all, and it goes FIRST because
+    // `unanchoredWarnings` preserves payload order: drop the anchor and the keep card's next
+    // sibling becomes the decoy instead.
     renderEditor(
       {
         body: {
@@ -628,6 +636,11 @@ describe("the gate that counts recent watchers", () => {
       null,
       [
         {
+          field: "unanchored_probe",
+          severity: "warn",
+          message: "A warning no anchor claims, so it lands in the catch-all stack.",
+        },
+        {
           field: "protect_conditions",
           severity: "warn",
           message:
@@ -643,6 +656,9 @@ describe("the gate that counts recent watchers", () => {
 
     expect(keepCard).not.toBeNull();
     expect(keepCard?.nextElementSibling).toBe(warning);
+    // The decoy is on the page, so a payload that silently dropped it could not pass the
+    // assertion above by leaving the catch-all empty again.
+    expect(screen.getByText(/A warning no anchor claims/)).toBeInTheDocument();
   });
 
   it("hides the window with the gate, like every other sub-control", async () => {
