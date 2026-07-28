@@ -263,18 +263,31 @@ function KeptNotice({ match }: { match: Match | undefined }) {
 }
 
 /** Is this abstain the keep-rule conflict -- a season the rule would prune but that was
- *  watched more than one it keeps, deliberately left for the owner? Distinct from a plumbing
- *  block ("could not check ..."), which is a genuine we-could-not-look. Mirrors the backend's
- *  own test in ``engine.verdict.block_holds_reap`` / ``api.routes._chip``. */
+ *  watched more than one it keeps, deliberately left for the owner?
+ *
+ *  KNOWN WRONG, tracked as #86, and stated here rather than implied because the consequence
+ *  is operator-facing: the caller promises "Reap it to remove it" on what this returns true
+ *  for. It used to mirror the backend, and no longer does. `engine.verdict.block_holds_reap`
+ *  and `api.routes._chip` both stopped testing the wording, because the prefix test below is
+ *  the one that shipped broken -- a conflict whose kept season could not be read at all opens
+ *  with the watcher count, so it does NOT start with "could not check" and reads here as a
+ *  settleable conflict while the backend holds the reap. The typed answer is
+ *  `GateResult.defers_to_owner`, and `GateOutcome` does not carry it: fixing this needs the
+ *  field added to `api.schemas.GateOutcomeOut` and to `api.ts` first (rule 64), and a
+ *  three-state one, since a stored row predating the flag can tell neither shape. */
 function isKeepRuleConflict(item: CandidateDetail): boolean {
   return item.explanation.protections_unknown.some(
     (o) => o.gate === "season_progression" && !o.detail.startsWith("could not check"),
   );
 }
 
-/** Why a hand reap is still held -- the one thing the engine will not delete past. After the
- *  keep-rule conflict became reap-overridable, a held reap can only be: something playing
- *  right now, or a protection that genuinely could not be checked. The "no app manages it"
+/** Why a hand reap is still held -- the one thing the engine will not delete past. The
+ *  keep-rule conflict is only CONDITIONALLY reap-overridable, so a held reap can be: something
+ *  playing right now, a protection that genuinely could not be checked, or that conflict with
+ *  its comparison refused or its flag missing (`engine.verdict.block_holds_reap`). The last of
+ *  those lands on the "couldn't be checked" branch below, which is true of it -- a kept
+ *  season's history really could not be read -- so the branches are right and only this
+ *  sentence's premise had to change. The "no app manages it"
  *  branch below is a fourth only for a snapshot stored before that gate was retired
  *  (`engine/gates.py`); no new scan can produce one. */
 function heldReapNote(item: CandidateDetail): string {
