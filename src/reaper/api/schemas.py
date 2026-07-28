@@ -40,6 +40,21 @@ class SignalContribution(BaseModel):
 
 
 class GateOutcomeOut(BaseModel):
+    """One protection's outcome on one item.
+
+    ``defers_to_owner`` has three states and folding the third into ``false`` asserts
+    something nobody established: ``true`` means Reaper made the comparison behind this
+    hold, ``false`` means it could not make it, and ``null`` means this row was frozen
+    before the flag existed and cannot tell those two apart. Read it off
+    ``protections_unknown``; entries in the other two lists never carry it, so every one
+    of them reads ``null`` for a reason that is not the third state.
+
+    Said here rather than on the field because a class docstring is the only one of the
+    two that reaches the published document: Pydantic harvests attribute docstrings only
+    under ``use_attribute_docstrings``, which this tree does not set, so the contract
+    below this line is invisible to anyone building against ``/api/docs``.
+    """
+
     gate: str
     detail: str
 

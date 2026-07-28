@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""The API reference's sections, and the guard that keeps a new route out of the flat list.
+"""The API reference's sections, the guard that keeps a new route out of the flat list, and
+what the published schemas say for themselves.
 
 Every operation carries exactly one section. Untagged, it renders at the bottom of
 ``/api/docs`` under "default", below every section an operator would think to look in,
@@ -133,6 +134,28 @@ class TestTheSectionListItself:
         """Rule 21. These strings are operator-facing: they render in the reference."""
         copy = json.dumps(schema["tags"])
         assert "—" not in copy
+
+
+class TestThePublishedSchemasSayWhatTheyMean:
+    def test_the_conflict_flag_names_all_three_of_its_states(self, schema: dict[str, Any]) -> None:
+        """``defers_to_owner`` is true / false / null, and the reflex null-to-false coercion
+        makes a client assert the comparison Reaper refused to make -- #86 reproduced outside
+        the app, against the one contract we publish for it. The document is where a client
+        learns that, and it said nothing at all: the three states were written as an attribute
+        docstring, which Pydantic harvests only under ``use_attribute_docstrings``, set nowhere
+        in ``src/reaper``.
+
+        Read off the SERVED document, never ``GateOutcomeOut.__doc__``: that transcription
+        could not have failed (rule 119), since the contract was there in full the whole time
+        and the published schema still carried none of it. Either carrier passes -- the class
+        description or the property's own -- because what is pinned is that a client can find
+        the third state, not which mechanism puts it there."""
+        gate_outcome = schema["components"]["schemas"]["GateOutcomeOut"]
+        flag = gate_outcome.get("properties", {}).get("defers_to_owner", {})
+        published = f"{gate_outcome.get('description', '')} {flag.get('description', '')}".lower()
+        assert "defers_to_owner" in published, "the flag is unnamed in the published reference"
+        for state in ("true", "false", "null"):
+            assert state in published, f"the reference never says what {state} means"
 
 
 class TestOneProducerOfTheSchema:
