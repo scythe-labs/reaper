@@ -601,6 +601,50 @@ describe("the gate that counts recent watchers", () => {
     expect(gateList?.nextElementSibling).toBe(warning);
   });
 
+  it("anchors the gate-off window warning on the keep rules, the only surface it can be fixed from", async () => {
+    // The twin of the test above, for the case where the control the other one points at
+    // is not on the page. With `server_popularity` off, `PolicyBody.popularity_window_days`
+    // still hands 365 to the operator's own keep-outright rules, so they block library-wide
+    // on a window whose picker this editor deliberately hides -- and the rule itself is the
+    // one thing they can act on. Same reason this asserts a POSITION: the catch-all stack at
+    // the foot of the page renders any warning, anchored or not (rule 118).
+    renderEditor(
+      {
+        body: {
+          ...body(),
+          gates: [
+            {
+              gate: "server_popularity",
+              enabled: false,
+              threshold: 3,
+              secondary: 0,
+              window_days: 365,
+            },
+          ],
+          protect_conditions: [{ field: "recent_watchers", op: "gte", value: 1 }],
+        },
+      },
+      pace,
+      null,
+      [
+        {
+          field: "protect_conditions",
+          severity: "warn",
+          message:
+            "Nothing will be flagged for removal. Your keep rule counts who watched a title " +
+            "in the last year, and your watch history only goes back 3 months. Wait for it to " +
+            "build up, or remove that rule.",
+        },
+      ],
+    );
+
+    const warning = await screen.findByText(/Nothing will be flagged for removal/);
+    const keepCard = screen.getByRole("heading", { name: "Your own keep rules" }).closest("div");
+
+    expect(keepCard).not.toBeNull();
+    expect(keepCard?.nextElementSibling).toBe(warning);
+  });
+
   it("hides the window with the gate, like every other sub-control", async () => {
     renderEditor({
       body: {

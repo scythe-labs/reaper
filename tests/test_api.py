@@ -1655,6 +1655,34 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         be right by the time they have any history."""
         assert self._window_warnings(client) == []
 
+    def test_the_gate_off_case_answers_on_the_rule_that_blocks(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """Switching the protection off does not switch off the span it was measured over.
+
+        ``popularity_window_days`` falls back to 365 and ``build_gates`` hands that to the
+        operator's own keep-outright rule either way, so the block survives the switch. The
+        ANCHOR is the half a route can break on its own: it decides where the SPA renders
+        this, and with the gate off the window picker it would otherwise point at is not on
+        the page at all.
+        """
+        self._seed_mirror(tmp_path, days_back=90)
+        payload = self._policy_body(
+            protect_conditions=[{"field": "recent_watchers", "op": "gte", "value": 1}],
+        )
+        payload["gates"] = [
+            {**g, "enabled": False} if g["gate"] == "server_popularity" else g
+            for g in payload["gates"]  # type: ignore[union-attr]
+        ]
+
+        warnings = client.post("/api/policy/validate", json=payload).json()["warnings"]
+
+        flagged = [w for w in warnings if w["field"] == "protect_conditions"]
+        assert len(flagged) == 1
+        assert "Nothing will be flagged for removal" in flagged[0]["message"]
+        # And nothing on the picker that is not rendered while the gate is off.
+        assert [w for w in warnings if w["field"] == "gates.server_popularity.window_days"] == []
+
     def test_saving_a_policy_answers_with_the_same_warning(
         self, client: TestClient, tmp_path: Path
     ) -> None:

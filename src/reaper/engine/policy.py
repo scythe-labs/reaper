@@ -43,7 +43,7 @@ from typing import Annotated, Any, ClassVar, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from reaper.clock import humanize_window
-from reaper.engine.fields import BY_KEY, Condition, Lane, Op
+from reaper.engine.fields import BY_KEY, Condition, Lane, Op, ReachSpan
 from reaper.engine.gates import GateId, RatingRule, history_shortfall
 from reaper.engine.observation import Known
 from reaper.engine.signals import MAX_SCORE, CustomSignalConfig, KeepConfig, SignalId
@@ -956,6 +956,17 @@ def recover_rating_rules(raw: object) -> dict[str, Any] | None:
     return None
 
 
+def _reads_popularity_window(field_key: str) -> bool:
+    """Is a rule on this field measured against the policy's popularity window?
+
+    The registry owns the answer (``FieldSpec.reach_span``), so a field that gains or loses
+    that bound moves this with it rather than leaving a second list to drift (rule 103). An
+    unknown key is False: a rule that no longer validates cannot be blocking anything.
+    """
+    spec = BY_KEY.get(field_key)
+    return spec is not None and spec.reach_span is ReachSpan.POPULARITY_WINDOW
+
+
 def inspect(
     body: PolicyBody,
     settings: ProfileSettings,
@@ -1044,21 +1055,20 @@ def inspect(
                         )
                     )
 
+    # The span every reader of a watcher count is measured against -- NOT the enabled gate
+    # row. ``PolicyBody.popularity_window_days`` falls back to 365 when the gate is off or
+    # absent, and ``services.scan_runner.build_gates`` hands that fallback to
+    # ``CustomProtectGate`` regardless of the switch, so one bound governs every reader
+    # (rule 140). Reading the row here scoped both warnings below to one of those readers
+    # and left an operator's own keep-outright rule blocking library-wide against a year
+    # they never set and, with the gate off, cannot even see.
+    window_days = body.popularity_window_days()
     popularity = next(
         (g for g in body.gates if g.gate is GateId.SERVER_POPULARITY and g.enabled), None
     )
-    if popularity is not None and popularity.window_days < 30:
-        warnings.append(
-            PolicyWarning(
-                field=f"gates.{GateId.SERVER_POPULARITY.value}.window_days",
-                severity="warn",
-                message=(
-                    f"A {popularity.window_days}-day watch window is very short: almost "
-                    "nothing gets watched inside it, so the few-recent-watchers pressure "
-                    "applies to nearly your whole library. A year is the usual setting."
-                ),
-            )
-        )
+    # Only an enabled gate can carry a window this short: the fallback the disabled case
+    # resolves to is the 365-day default, which never trips it.
+    very_short = popularity is not None and window_days < 30
 
     # The same window in the other direction, and the reason this detector needed a second
     # world-fact at all. ``gates.ServerPopularityGate.evaluate`` fails closed when the mirror
@@ -1073,6 +1083,17 @@ def inspect(
     # other members are held on the season path: ``season_scan``'s lifetime-shortfall
     # conflict and ``season_pruning.progress_is_establishable``. This is the member with a
     # control the operator can turn, so the editor is where it has to be said.
+    #
+    # WHO blocks on this window, which is what makes "nothing will be flagged" true. Only
+    # the PROTECT lane empties the list outright: a blocked protect ABSTAINs every item
+    # (``verdict.decide_verdict``), library-wide, for as long as the shortfall lasts. Two
+    # readers sit in that lane and the built-in gate is only one of them -- an operator's
+    # own keep-outright rule on a popularity-window field is the other, and ``build_gates``
+    # hands it this same span whether the gate is on or off. The condemn and lean lanes read
+    # the same bound (``fields.reach_shortfall``) and are deliberately NOT claimed here: a
+    # withheld removal signal or a keep taking its full discount lowers scores without
+    # proving an empty list, and saying otherwise would be a consequence we cannot show
+    # (rule 7/24). ``graded_keeps`` that could empty it already have their own warning below.
     #
     # ``warn``, not ``danger``: the outcome is that Reaper deletes nothing, which is the
     # keep direction. Every ``danger`` here marks a config that removes MORE.
@@ -1095,26 +1116,72 @@ def inspect(
     reach_clears_dormancy = dormancy_floor is None or (
         history_reach_days is not None and history_reach_days >= dormancy_floor.threshold
     )
-    if popularity is not None and history_reach_days is not None and reach_clears_dormancy:
+    owner_protect_on_window = any(
+        _reads_popularity_window(c.field) for c in body.protect_conditions
+    )
+    short: str | None = None
+    if (popularity is not None or owner_protect_on_window) and (
+        history_reach_days is not None and reach_clears_dormancy
+    ):
         short = history_shortfall(
-            Known(value=history_reach_days, source="tautulli"), float(popularity.window_days)
+            Known(value=history_reach_days, source="tautulli"), float(window_days)
         )
-        if short is not None:
-            window_text = humanize_window(popularity.window_days)
-            warnings.append(
-                PolicyWarning(
-                    field=f"gates.{GateId.SERVER_POPULARITY.value}.window_days",
-                    severity="warn",
-                    # The window is named BEFORE the cause clause, because
-                    # ``history_shortfall``'s in-margin arm is "your watch history does not go
-                    # back that far" and "that far" needs the span to have been said already.
-                    message=(
-                        "Nothing will be flagged for removal. Reaper can't say who watched a "
-                        f"title in the last {window_text} from a shorter history, and {short}. "
-                        "Lower this window to match your history, or wait for it to build up."
-                    ),
-                )
+    if short is not None:
+        window_text = humanize_window(window_days)
+        if popularity is not None:
+            # The window control is on the page while the gate is on (``PolicyEditor``'s
+            # ``GateRow`` renders it under ``gate.enabled``), so the remedy may name it.
+            #
+            # Except when the window is ALSO under the short-window floor, where "lower it"
+            # is advice in the direction the other warning is pushing back on. Both faults
+            # are real and their remedies genuinely oppose, so one message carries the pair
+            # rather than two stacking on one control and cancelling out: shortening cannot
+            # help here, and waiting is the only move that clears the block.
+            remedy = (
+                "Wait for it to build up: a shorter window would leave almost nothing "
+                "counted as watched."
+                if very_short
+                else "Lower this window to match your history, or wait for it to build up."
             )
+            field = f"gates.{GateId.SERVER_POPULARITY.value}.window_days"
+            # The window is named BEFORE the cause clause, because ``history_shortfall``'s
+            # in-margin arm is "your watch history does not go back that far" and "that far"
+            # needs the span to have been said already.
+            message = (
+                "Nothing will be flagged for removal. Reaper can't say who watched a title "
+                f"in the last {window_text} from a shorter history, and {short}. {remedy}"
+            )
+        else:
+            # The gate is off, so the window is the 365-day fallback and its control is not
+            # rendered at all. Anchoring on it would name a box that is not on the page, so
+            # this rides with the rule that is actually blocking, where both remedies are in
+            # reach: the rule can be deleted right there, and waiting always works. Naming
+            # the protection they would have to switch back on to expose the window is
+            # deliberately NOT done -- its label lives in ``frontend`` (``policyMeta.ts``)
+            # and a second spelling here would drift from it (rule 144).
+            field = "protect_conditions"
+            message = (
+                "Nothing will be flagged for removal. Your keep rule counts who watched a "
+                f"title in the last {window_text}, and {short}. Wait for it to build up, or "
+                "remove that rule."
+            )
+        warnings.append(PolicyWarning(field=field, severity="warn", message=message))
+
+    # Only where the shortfall is NOT already speaking for this control: it carries the pair
+    # itself in that case, and stacking both told the operator to raise and to lower the same
+    # number in adjacent sentences.
+    if very_short and short is None:
+        warnings.append(
+            PolicyWarning(
+                field=f"gates.{GateId.SERVER_POPULARITY.value}.window_days",
+                severity="warn",
+                message=(
+                    f"A {window_days}-day watch window is very short: almost nothing gets "
+                    "watched inside it, so the few-recent-watchers pressure applies to nearly "
+                    "your whole library. A year is the usual setting."
+                ),
+            )
+        )
 
     disabled = {g.gate for g in body.gates if not g.enabled}
     # Each of these states the consequence THIS switch has, verified against the code that

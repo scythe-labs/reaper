@@ -780,7 +780,7 @@ export function PolicyEditor({
     (f) => f === "keep_last_seasons" || f === "keep_last_scope",
     (f) => f === "signals",
     (f) => f === "custom_condemn",
-    (f) => f === "graded_keeps",
+    (f) => f === "graded_keeps" || f === "protect_conditions",
     (f) => f === "max_unmeasured_per_run",
   ];
   const unanchoredWarnings = allWarnings.filter((w) => !anchors.some((p) => p(w.field)));
@@ -1619,7 +1619,13 @@ export function PolicyEditor({
           onConditions={(protect_conditions) => update({ protect_conditions })}
           onKeeps={(graded_keeps) => update({ graded_keeps })}
         />
-        <WarnBlock warnings={warningsFor((f) => f === "graded_keeps")} />
+        {/* Both lanes of this card, because both can be warned about and the card is the
+            one surface either can be fixed from. `protect_conditions` carries the
+            gate-off popularity window (`engine/policy.py:inspect`), which has nowhere
+            else to go: with that protection off its window control is not rendered. */}
+        <WarnBlock
+          warnings={warningsFor((f) => f === "graded_keeps" || f === "protect_conditions")}
+        />
 
         {/* A validation failure is an ERROR (red): this policy cannot be saved as-is. */}
         {invalidMessage && (

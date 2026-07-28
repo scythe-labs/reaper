@@ -20,6 +20,7 @@ from pydantic import ValidationError
 
 from reaper.api.schemas import GateSettingIn
 from reaper.engine import policy as policy_module
+from reaper.engine.fields import Op
 from reaper.engine.gates import (
     POLICY_AUTHORABLE_GATES,
     Facts,
@@ -34,6 +35,7 @@ from reaper.engine.policy import (
     DEFAULT_TV_POLICY,
     SCHEMA_VERSION,
     SCORER_VERSION,
+    ConditionSpec,
     GateSetting,
     PolicyBody,
     PolicyWarning,
@@ -671,11 +673,33 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
             )
         )
 
+    def _owner_rule_only(self, **overrides: object) -> PolicyBody:
+        """The gate OFF, with the operator's own keep-outright rule on the same count.
+
+        ``build_gates`` hands ``CustomProtectGate`` the window whether the gate is on or
+        off, so this rule blocks on exactly the span the gate would have used -- here the
+        365-day fallback, which no control on the page shows.
+        """
+        base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
+        return _policy(
+            gates=(GateSetting(**{**base, "enabled": False, **overrides}),),  # type: ignore[arg-type]
+            protect_conditions=(ConditionSpec(field="recent_watchers", op=Op.GTE, value=1),),
+        )
+
     def _window_warnings(self, body: PolicyBody, reach: float | None) -> list[PolicyWarning]:
         return [
             w
             for w in inspect(body, ProfileSettings(), history_reach_days=reach)
             if w.field == f"gates.{GateId.SERVER_POPULARITY.value}.window_days"
+        ]
+
+    def _rule_warnings(self, body: PolicyBody, reach: float | None) -> list[PolicyWarning]:
+        """Warnings anchored on the operator's own keep rules, where the gate-off case has
+        to speak: with the gate off the window control is not rendered at all."""
+        return [
+            w
+            for w in inspect(body, ProfileSettings(), history_reach_days=reach)
+            if w.field == "protect_conditions"
         ]
 
     def test_it_is_flagged_when_the_window_outruns_the_history(self) -> None:
@@ -697,19 +721,50 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         only advice."""
         assert self._window_warnings(self._pop(), reach=None) == []
 
-    def test_it_is_silent_while_the_protection_is_off(self) -> None:
+    def test_the_window_control_stays_silent_while_the_protection_is_off(self) -> None:
         """The editor hides the window control with the gate (``PolicyEditor.tsx``, pinned
-        by ``PolicyEditor.test.tsx``), so warning here would name a control that is not on
-        the page.
-
-        That is the whole reason, and it is narrower than it looks. A disabled gate does
-        NOT mean no reader of a watcher count blocks: ``PolicyBody.popularity_window_days``
-        falls back to 365 with the gate off, and ``build_gates`` hands that span to
-        ``CustomProtectGate``, so an operator's own ``recent_watchers`` rule blocks
-        library-wide over a mirror shorter than a year with nothing on the page saying so.
-        Tracked separately; do not read this test as ruling that case safe.
+        by ``PolicyEditor.test.tsx``), so a warning anchored THERE would name a control that
+        is not on the page. Nothing else about the gate-off case is settled by this: the
+        span is still in force, and the two tests below are where it is spoken for.
         """
         assert self._window_warnings(self._pop(enabled=False), reach=90.0) == []
+
+    def test_the_fallback_window_is_flagged_where_the_owners_own_rule_blocks_on_it(self) -> None:
+        """A disabled gate does NOT mean no reader of a watcher count blocks.
+
+        ``PolicyBody.popularity_window_days`` falls back to 365 with the gate off, and
+        ``build_gates`` hands that span to ``CustomProtectGate`` regardless of the switch,
+        so the owner's own keep-outright rule fails closed library-wide over a mirror
+        shorter than a year. The editor invites exactly this: ``KeepRulesEditor`` only
+        hides a field whose gate is ON, so ``recent_watchers`` becomes authorable the
+        moment the protection is switched off.
+
+        It has to say so somewhere the operator can act, which is the rule itself: the
+        window control is not rendered, so the year in force is unreachable from the page.
+        """
+        flagged = self._rule_warnings(self._owner_rule_only(), reach=90.0)
+
+        assert len(flagged) == 1
+        assert flagged[0].severity == "warn"
+        assert "Nothing will be flagged for removal" in flagged[0].message
+        # The span they never set, named, and the remedy that does not need the hidden box.
+        assert "in the last year" in flagged[0].message
+        assert "remove that rule" in flagged[0].message
+        # And nothing on the window control, which is not on the page to be fixed.
+        assert self._window_warnings(self._owner_rule_only(), reach=90.0) == []
+
+    def test_the_fallback_window_is_silent_with_no_rule_reading_it(self) -> None:
+        """The gate off and no owner rule on a watcher count is the ordinary case: the
+        fallback governs a span nothing in the PROTECT lane asks about, so nothing blocks
+        and there is nothing to report. This is the discriminator for the test above --
+        without it, a warning that fired on every gate-off policy would pass it."""
+        assert self._rule_warnings(self._pop(enabled=False), reach=90.0) == []
+        # A rule on a field the mirror does not bound is silent for the same reason.
+        unbounded = _policy(
+            gates=(GateSetting(gate=GateId.SERVER_POPULARITY, enabled=False, threshold=2),),
+            protect_conditions=(ConditionSpec(field="size_bytes", op=Op.GTE, value=1),),
+        )
+        assert self._rule_warnings(unbounded, reach=90.0) == []
 
     def test_the_dormancy_floor_silences_it_while_it_alone_empties_the_list(self) -> None:
         """The remedy has to be able to work, and under the floor it cannot.
@@ -776,14 +831,41 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         assert len(flagged) == 1
         assert "very short" in flagged[0].message
 
-    def test_both_ends_cannot_fire_at_once(self) -> None:
-        """A 7-day window under a 3-day mirror is short AND outrun. Two warnings on one
-        control is noise, but they are different faults with different remedies, so this
-        pins what the operator actually sees rather than asserting one of them away."""
+    def test_the_two_ends_merge_into_one_message_instead_of_opposing_each_other(self) -> None:
+        """A 7-day window under a 3-day mirror is short AND outrun, and the two remedies
+        genuinely oppose: one end says a year is usual, the other said to lower the window
+        to match the history. Stacked on one control they told the operator to raise and to
+        lower the same number in adjacent sentences, with nothing saying which applied.
+
+        So the shortfall speaks for the control alone and carries the other end's fault in
+        its remedy clause. This names both messages rather than counting severities: a
+        count cannot tell two warnings from two copies of one (rule 118).
+        """
         flagged = self._window_warnings(self._pop(window_days=7), reach=3.0)
 
-        assert [w.severity for w in flagged] == ["warn", "warn"]
-        assert len(flagged) == 2
+        assert len(flagged) == 1
+        assert flagged[0].severity == "warn"
+        message = flagged[0].message
+        # The shortfall is the one that survives -- it names the live outcome, and the
+        # short-window advice describes pressure that cannot land while nothing is flagged.
+        assert "Nothing will be flagged for removal" in message
+        assert "A 7-day watch window is very short" not in message
+        # Its remedy no longer points the way the other end pushes back on.
+        assert "Lower this window" not in message
+        assert "a shorter window would leave almost nothing counted as watched" in message
+
+    def test_each_end_keeps_its_own_message_where_the_other_does_not_hold(self) -> None:
+        """The merge above is only for the overlap. Apart, each fault is real on its own
+        and says the thing it always said, remedy included -- which is what makes the
+        merged message discriminable from either of them."""
+        outrun_only = self._window_warnings(self._pop(), reach=90.0)[0].message
+        assert "Lower this window to match your history" in outrun_only
+        assert "very short" not in outrun_only
+
+        short_only = self._window_warnings(self._pop(window_days=7), reach=800.0)[0].message
+        assert "A 7-day watch window is very short" in short_only
+        assert "A year is the usual setting." in short_only
+        assert "Nothing will be flagged for removal" not in short_only
 
 
 class TestRequestedOnlyScopeWithoutSeerr:
