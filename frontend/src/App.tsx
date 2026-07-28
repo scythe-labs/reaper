@@ -968,8 +968,12 @@ function Authed({ user }: { user: AuthUser }) {
 
   if (isLoading) {
     return (
-      <div className="auth-screen">
-        <span className="spinner spinner-lg" aria-label="Loading" />
+      <div className="auth-screen" role="status">
+        {/* The spinner is the whole screen, and ARIA does not expose a name on a plain span, so
+            the aria-label this used to carry reached nobody: Reaper's first screen announced as
+            an empty page. The word goes in the tree instead of on the element. */}
+        <span className="spinner spinner-lg" aria-hidden="true" />
+        <span className="sr-only">Loading Reaper…</span>
       </div>
     );
   }
@@ -1012,9 +1016,11 @@ export function App() {
 
   if (isLoading) {
     return (
-      <div className="auth-screen">
+      <div className="auth-screen" role="status">
         <div className="auth-aurora" aria-hidden="true" />
-        <span className="spinner spinner-lg" aria-label="Loading" />
+        {/* Same as the setup gate above (rule 72). */}
+        <span className="spinner spinner-lg" aria-hidden="true" />
+        <span className="sr-only">Loading Reaper…</span>
       </div>
     );
   }

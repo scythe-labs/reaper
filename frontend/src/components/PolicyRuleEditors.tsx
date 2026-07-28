@@ -365,8 +365,13 @@ export function RemoveRulesEditor({
               <span className="rules-weight-remove">
                 {r.kind === "graded" ? `up to +${r.weight} points` : `+${r.weight} points`}
               </span>
+              {/* Named for the rule it deletes. These lists stack one "Remove" per authored
+                  rule across three tables on one page, and the sentence saying which rule is
+                  in the sibling `.rules-rule` that no control referenced -- so pressing the
+                  wrong one silently deletes a different rule. */}
               <button
                 className="ghost sm"
+                aria-label={`Remove rule: ${describeCondemn(r, condemnAll)}`}
                 onClick={() => onCondemn(condemn.filter((_, j) => j !== i))}
               >
                 Remove
@@ -611,6 +616,7 @@ export function KeepRulesEditor({
               <span className="rules-weight-keep">kept outright</span>
               <button
                 className="ghost sm"
+                aria-label={`Remove rule: keeps it, always, ${describeCondition(c, allFields)}`}
                 onClick={() => onConditions(conditions.filter((_, j) => j !== i))}
               >
                 Remove
@@ -631,6 +637,7 @@ export function KeepRulesEditor({
                 </span>
                 <button
                   className="ghost sm"
+                  aria-label={`Remove rule: leans, ${f?.label ?? k.field}`}
                   onClick={() => onKeeps(keeps.filter((_, j) => j !== i))}
                 >
                   Remove

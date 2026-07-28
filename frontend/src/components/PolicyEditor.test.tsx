@@ -832,3 +832,49 @@ describe("PolicyEditor warning anchors", () => {
     expect(await screen.findAllByText(twin.message)).toHaveLength(2);
   });
 });
+
+describe("the controls a screen reader has to tell apart", () => {
+  // The two thresholds sit in a `<label className="field">` that wraps the label span, the live
+  // value AND the `.help` paragraph, so every one of those became the control's accessible name:
+  // dragging the condemn slider announced the whole "The higher you set this..." sentence on each
+  // step, and the operator never heard which of the two sliders they were on. An exact-match
+  // `getByLabelText` is what pins it -- before the fix the name was the label plus the help, so
+  // the short string matched nothing.
+  //
+  // Rule 145: this walks a population, so it counts. Asserting "every slider I collected has a
+  // name" reads green when the walk collects nothing. The count below is every `range` this
+  // fixture renders -- the two thresholds plus one per built-in signal in `body()` (3) --
+  // reconciled by hand against the source. Its honest limit: a slider added to a section this
+  // fixture does not mount is missing from both the table and the count, and the two absences
+  // hide each other.
+  it("names both thresholds for their label, never for the help text under it", async () => {
+    renderEditor({ body: body() });
+
+    const condemn = await screen.findByLabelText("Put a title on the list once it scores");
+    const floor = screen.getByLabelText("Judge a title only when there's enough to go on");
+    expect(condemn).toHaveAttribute("type", "range");
+    expect(floor).toHaveAttribute("type", "range");
+
+    const sliders = document.querySelectorAll<HTMLInputElement>('input[type="range"]');
+    expect(sliders).toHaveLength(5);
+    for (const s of sliders) expect(s.getAttribute("aria-label")).toBeTruthy();
+  });
+
+  // A placeholder is an accessible name of last resort, so this box announced itself as the
+  // example text inside it -- and lost even that the moment anything was typed. The tags entered
+  // here are a protection: they are what stops a title being removed.
+  it("names the keep-tag box for what it does, not for its placeholder", async () => {
+    // The box lives inside the keep-tags card, which renders only while its own gate is on
+    // (rule 41), so the gate has to be present and enabled for the control to exist at all.
+    renderEditor({
+      body: {
+        ...body(),
+        gates: [{ gate: "whitelisted", enabled: true, threshold: 0, secondary: 0, window_days: 0 }],
+      },
+    });
+
+    const tagBox = await screen.findByLabelText("Add a keep tag");
+    expect(tagBox.tagName.toLowerCase()).toBe("input");
+    expect(screen.queryByLabelText("add a tag…")).not.toBeInTheDocument();
+  });
+});

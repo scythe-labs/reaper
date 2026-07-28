@@ -926,6 +926,11 @@ function SeasonList({
               onClick={() => onOpen(season.id)}
               role="button"
               tabIndex={0}
+              // Named like the movie and show cards above (rule 72). Without this the row's name
+              // is computed from its contents, so it read out as its score, its chip, the nested
+              // Spare/Reap group label and its size run together -- and this is the row where a
+              // per-season keep-or-delete decision is made.
+              aria-label={`Why ${seasonName(season.title, data.title)} scored ${season.score}`}
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();

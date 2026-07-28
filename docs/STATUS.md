@@ -91,6 +91,20 @@ Last verified against the code: 2026-07-26.
    6); `"size_bytes"` added to `DEGRADABLE` in `tests/_policy_lab.py`; and the test-only
    `snapshot.candidates()` deleted, which has no caller in `src/` and is a standing rule 38
    violation.
+6. **The screen-reader sweep is partly landed.** #132 and #147 were each one nameless control
+   found by hand, and each hand sweep afterwards missed a sibling, so the third pass audited the
+   whole frontend rather than the file named in the issue. Landed so far: every control that
+   could not be told apart by ear now names itself. What is filed rather than fixed is bigger
+   than what landed, and the notice vocabulary is the largest piece of it — 109 hand-rolled
+   sites against **zero** live regions app-wide. Also: the review queue's cards are `role="button"`,
+   which makes every chip, reason and score inside them presentational; the deletion path
+   announces nothing at any stage, arming through progress to the final report; the four `.why`
+   panels are full-screen dialogs under 900px with no dialog semantics; and two menus promise a
+   keyboard contract they never implemented. **The guard is the durable half**: measured against
+   the real pre-#132 tree, `eslint-plugin-jsx-a11y` catches none of the three filed bugs — its
+   `control-has-associated-label` counts `<option>` text as a `<select>`'s label, which is the
+   operator's complaint verbatim — so the gate is a render-time accessible-name census plus a
+   static scan, and no new dependency.
 
 ## Decisions locked
 

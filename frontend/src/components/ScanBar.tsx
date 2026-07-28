@@ -241,7 +241,14 @@ export function ScanRow({
 
       <div className="jobrow-actions">
         <span className="slot-edit">
-          <button className="ghost" onClick={onEdit} disabled={!canEdit}>
+          {/* Named for the row it belongs to: this Edit sits on the Jobs page beside one Edit per
+              upkeep job, and by its own text they are indistinguishable (rule 72). */}
+          <button
+            className="ghost"
+            aria-label="Edit the library scan schedule"
+            onClick={onEdit}
+            disabled={!canEdit}
+          >
             Edit
           </button>
         </span>

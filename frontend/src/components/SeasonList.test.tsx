@@ -550,3 +550,54 @@ describe("the all-seasons list", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("what a screen reader hears on a season row", () => {
+  // The row is a `role="button"`, which makes its own name the whole of what is announced. With
+  // no `aria-label` that name was computed from its contents, so the row read out as its score,
+  // its chip, the nested Spare/Reap group label and its size run together -- and this is the row
+  // where a per-season keep-or-delete decision is made. The movie card, the show card head and
+  // the Scales card all name themselves this way already; only this one did not (rule 72).
+  //
+  // The existing lane test reaches these rows with `{ name: /Season \d/ }`, which matched the
+  // old computed name just as well as the new one -- the name-blind shape that let this hide.
+  // This asserts the exact string instead.
+  it("names the row for the season it opens, not for everything inside it", async () => {
+    const group: Group = {
+      group_key: "sonarr:5:42",
+      title: "Example Show",
+      year: 2012,
+      poster_url: null,
+      summary: null,
+      size_bytes: 3 * 1024 ** 3,
+      unknown_size_seasons: 0,
+      reason: null,
+      library: null,
+      chip: limboSeason.chip,
+      show_override: null,
+      show_spare_expires_at: null,
+      links: {} as Group["links"],
+      show_status: null,
+      seasons: [
+        season(1, 1, "protect", 34, { tone: "kept", text: "Kept · someone is partway through" }),
+        season(2, 2, "condemn", 88, null),
+        limboSeason,
+      ],
+    };
+    apiMock.group.mockResolvedValue(group);
+    renderQueue();
+    await expandSeasons();
+
+    // Rule 145: the population is every row this group renders, counted, not just the one
+    // looked up. A fourth season that opted out of naming itself would fail the length check
+    // even though the three named rows still answer.
+    const list = screen.getByRole("list");
+    const named = within(list).getAllByRole("button", { name: /^Why Season \d+ scored \d+$/ });
+    expect(named).toHaveLength(group.seasons.length);
+    expect(
+      within(list).getByRole("button", { name: "Why Season 1 scored 34" }),
+    ).toBeInTheDocument();
+    expect(
+      within(list).getByRole("button", { name: "Why Season 2 scored 88" }),
+    ).toBeInTheDocument();
+  });
+});

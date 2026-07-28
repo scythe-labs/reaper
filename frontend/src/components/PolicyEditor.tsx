@@ -105,6 +105,10 @@ function KeepTagsEditor({
           </span>
         ))}
         <input
+          // A placeholder is a name of last resort, so this box was announcing itself as the
+          // example text inside it and lost even that the moment anything was typed. Same
+          // defect #136 fixed on the Plex panel's address pair.
+          aria-label="Add a keep tag"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
@@ -1382,6 +1386,11 @@ export function PolicyEditor({
             type="range"
             min={1}
             max={100}
+            // The wrapping <label> encloses the help paragraph too, so without this the name is
+            // the label AND the help run together -- read out in full on every value change, of
+            // the one control that sets the score a title is condemned at. The signal sliders
+            // above already name themselves this way.
+            aria-label="Put a title on the list once it scores"
             value={draft.condemn_at}
             onChange={(e) => update({ condemn_at: Number(e.target.value) })}
           />
@@ -1402,6 +1411,9 @@ export function PolicyEditor({
             min={0}
             max={10000}
             step={500}
+            // Same reason as the threshold slider above (rule 72): the wrapping <label> takes in
+            // the help text, so the name was the whole paragraph.
+            aria-label="Judge a title only when there's enough to go on"
             value={draft.coverage_floor_bp}
             onChange={(e) => update({ coverage_floor_bp: Number(e.target.value) })}
           />

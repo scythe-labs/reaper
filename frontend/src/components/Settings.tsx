@@ -106,14 +106,17 @@ function applyTheme(choice: ThemeChoice) {
 // Quick-pick accents. The first is the built-in default; the rest are a spread of hues that
 // stay clear of the fixed red "remove" and green "keep" verdict colors. Any hex is allowed
 // via the field, so this is a shortcut, not the whole choice.
-const ACCENT_PRESETS = [
-  DEFAULT_ACCENT,
-  "#4f46e5",
-  "#7c3aed",
-  "#0ea5e9",
-  "#14b8a6",
-  "#f59e0b",
-  "#ec4899",
+// Each carries the color's name, because the swatch is a bare colored circle: its only other
+// name would be the hex, which a screen reader spells out one character at a time and which
+// rule 21 would not accept as operator copy either.
+const ACCENT_PRESETS: { value: string; name: string }[] = [
+  { value: DEFAULT_ACCENT, name: "Reaper blue" },
+  { value: "#4f46e5", name: "Indigo" },
+  { value: "#7c3aed", name: "Violet" },
+  { value: "#0ea5e9", name: "Sky" },
+  { value: "#14b8a6", name: "Teal" },
+  { value: "#f59e0b", name: "Amber" },
+  { value: "#ec4899", name: "Pink" },
 ];
 
 // The browser's full IANA zone list, fetched once and cached: it never changes within a
@@ -488,21 +491,29 @@ export function GeneralPanel({
               )}
             </div>
             {!accentValid && <p className="help field-error">Enter a hex code like #25c3ff.</p>}
-            <div className="presets" aria-label="Quick colors">
+            {/* role="group" is what carries the name: ARIA does not expose an aria-label on a
+                plain div, so "Quick colors" reached nobody. Same shape as `Segmented`. */}
+            <div className="presets" role="group" aria-label="Quick colors">
               {ACCENT_PRESETS.map((c) => (
                 <button
-                  key={c}
+                  key={c.value}
                   type="button"
                   className="preset-dot"
-                  style={{ background: c }}
-                  aria-label={c}
-                  aria-pressed={accent.toLowerCase() === c}
-                  onClick={() => setAccent(c)}
+                  style={{ background: c.value }}
+                  aria-label={c.name}
+                  aria-pressed={accent.toLowerCase() === c.value}
+                  onClick={() => setAccent(c.value)}
                 />
               ))}
             </div>
+            {/* A picture of the theme, not working controls: the button is disabled and the link
+                goes nowhere on purpose. Hidden from the accessibility tree so the dead link stops
+                being announced as a real way to reach the deletion switch, and tabIndex -1 keeps
+                it out of the tab order (a focusable element inside aria-hidden is itself a
+                failure). The disabled button is already out of both. */}
             <div
               className="accent-preview"
+              aria-hidden="true"
               style={
                 accentValid
                   ? ({
@@ -516,7 +527,7 @@ export function GeneralPanel({
               <button className="primary" type="button" disabled>
                 Scan library
               </button>
-              <a href="#" onClick={(e) => e.preventDefault()}>
+              <a href="#" tabIndex={-1} onClick={(e) => e.preventDefault()}>
                 Policy → Deletion
               </a>
             </div>
@@ -906,6 +917,11 @@ function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => v
           </p>
         )}
       </div>
+      {/* Each button carries the instance it acts on. A tester with two Sonarr, two Radarr and a
+          Tautulli renders this card five times, and by their visible text alone the buttons are
+          five identical "Test"/"Edit"/"Remove" triplets with nothing saying which service each
+          one would remove. The name is on screen at `.instance-id` above, but nothing bound it
+          to the controls. */}
       <div className="service-card-foot">
         {confirmingRemove ? (
           <>
@@ -913,6 +929,7 @@ function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => v
               type="button"
               className="danger"
               title="Only forgets it in Reaper. Nothing is changed in the service itself."
+              aria-label={`Confirm remove ${instance.name}`}
               onClick={() => {
                 setConfirmingRemove(false);
                 remove.mutate();
@@ -920,19 +937,33 @@ function ServiceCard({ instance, onEdit }: { instance: Instance; onEdit: () => v
             >
               Confirm remove
             </button>
-            <button type="button" onClick={() => setConfirmingRemove(false)}>
+            <button
+              type="button"
+              aria-label={`Keep ${instance.name}`}
+              onClick={() => setConfirmingRemove(false)}
+            >
               Cancel
             </button>
           </>
         ) : (
           <>
-            <button type="button" disabled={testSaved.isPending} onClick={() => testSaved.mutate()}>
+            <button
+              type="button"
+              disabled={testSaved.isPending}
+              aria-label={`Test ${instance.name}`}
+              onClick={() => testSaved.mutate()}
+            >
               {testSaved.isPending ? "Testing…" : "Test"}
             </button>
-            <button type="button" onClick={onEdit}>
+            <button type="button" aria-label={`Edit ${instance.name}`} onClick={onEdit}>
               Edit
             </button>
-            <button type="button" className="danger" onClick={() => setConfirmingRemove(true)}>
+            <button
+              type="button"
+              className="danger"
+              aria-label={`Remove ${instance.name}`}
+              onClick={() => setConfirmingRemove(true)}
+            >
               Remove
             </button>
           </>
@@ -1785,14 +1816,22 @@ function JobRow({ job, onEdit }: { job: ScheduledJob; onEdit: () => void }) {
           </p>
         )}
       </div>
+      {/* The Jobs page stacks this row once per server-returned job, above the scan row and the
+          Leaving Soon row, so "Edit" and "Run now" appear several times over with the job's name
+          sitting in `.jobrow-title` where no control referenced it. */}
       <div className="jobrow-actions">
         <span className="slot-edit">
-          <button className="ghost" onClick={onEdit}>
+          <button className="ghost" aria-label={`Edit ${meta.title}`} onClick={onEdit}>
             Edit
           </button>
         </span>
         <span className="slot-act">
-          <button className="primary" onClick={() => run.mutate()} disabled={running}>
+          <button
+            className="primary"
+            aria-label={`Run ${meta.title} now`}
+            onClick={() => run.mutate()}
+            disabled={running}
+          >
             {running ? "Running…" : "Run now"}
           </button>
         </span>
@@ -1935,7 +1974,12 @@ function LeavingSoonRow({ onGoToPlex }: { onGoToPlex: () => void }) {
       <div className="jobrow-actions">
         <span className="slot-edit" />
         <span className="slot-act">
-          <button className="primary" onClick={() => runSync.mutate()} disabled={running}>
+          <button
+            className="primary"
+            aria-label={`Update ${title} now`}
+            onClick={() => runSync.mutate()}
+            disabled={running}
+          >
             {running ? "Updating…" : "Update now"}
           </button>
         </span>
