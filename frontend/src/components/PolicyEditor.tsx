@@ -801,6 +801,12 @@ export function PolicyEditor({
     if (wasScanning.current && !scanning) {
       void queryClient.invalidateQueries({ queryKey: ["simulate"] });
       void queryClient.invalidateQueries({ queryKey: ["snapshot"] });
+      // And re-validate. A scan syncs watch history first, so it is the one thing that
+      // moves the reach the popularity-window warning is computed from -- the fresh 0 in
+      // the simulator and the sentence explaining that 0 arrive from the same event, and
+      // invalidating only the former shows the count without the reason. The key is
+      // structurally unchanged across a scan, so nothing else re-keys this query.
+      void queryClient.invalidateQueries({ queryKey: ["validate"] });
     }
     wasScanning.current = scanning;
   }, [scanning, queryClient]);
