@@ -548,6 +548,10 @@ export function ServiceModal({
                       <div className="pl-pick">
                         <select
                           className={`pl-select${libMap[f.path] ? "" : " unset"}`}
+                          // The folder name is the only thing telling these rows apart, and it
+                          // lives in a sibling cell the select is not labeled by. Without this
+                          // a screen reader announces every row as "combobox, Not set".
+                          aria-label={`Plex library for ${f.path}`}
                           value={libMap[f.path] ?? ""}
                           onChange={(e) => setFolderLibrary(f.path, e.target.value)}
                         >
@@ -614,6 +618,10 @@ export function ServiceModal({
                       <div className="pl-pick">
                         <select
                           className={`pl-select${serviceMap[svcKey(s)] ? "" : " unset"}`}
+                          // Same reason as the library picker above. The 4K tag is part of the
+                          // visible name here, so it is part of the spoken one too -- a portal
+                          // can carry two services that differ only by it.
+                          aria-label={`Connection for ${s.name}${s.is_4k ? " 4K" : ""}`}
                           value={String(serviceMap[svcKey(s)] ?? "")}
                           onChange={(e) => setServiceInstance(svcKey(s), e.target.value)}
                         >

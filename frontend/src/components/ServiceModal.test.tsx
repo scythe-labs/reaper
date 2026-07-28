@@ -93,10 +93,11 @@ function renderModal(
 
 /** The library select for one root-folder row, found by that row's folder label. */
 function selectForFolder(path: string): HTMLSelectElement {
-  // The grid is flat: each .pl-root cell is immediately followed by its row's .pl-pick cell.
-  const root = screen.getByText(path);
-  const pick = root.nextElementSibling as HTMLElement;
-  return within(pick).getByRole("combobox") as HTMLSelectElement;
+  // By accessible name, not by DOM position: the old walk from the .pl-root cell to its
+  // sibling found these selects while every one of them was nameless (#147), so it could
+  // not have told us they were. Reaching them the way a screen reader does keeps that
+  // regression red instead of invisible.
+  return screen.getByLabelText(`Plex library for ${path}`) as HTMLSelectElement;
 }
 
 describe("ServiceModal HD/4K library map", () => {
@@ -162,6 +163,22 @@ describe("ServiceModal HD/4K library map", () => {
     expect(await screen.findByText(/No Plex libraries yet/i)).toBeInTheDocument();
     expect(screen.queryByText(/couldn't read your Plex libraries/i)).not.toBeInTheDocument();
   });
+
+  it("names every picker after its own folder", async () => {
+    // #147: the folder is in a sibling cell the select is not labeled by, so every row
+    // announced as "combobox, Not set" and an operator on a screen reader could not tell
+    // which folder they were mapping. Picking the wrong one aims Leaving Soon writes and
+    // the Never-Reap read at a library Reaper was never meant to touch.
+    renderModal(sonarr(), [
+      { path: "/tv", suggested_library: "TV" },
+      { path: "/tv-4k", suggested_library: "TV 4K" },
+    ]);
+    await waitFor(() => expect(selectForFolder("/tv-4k").value).toBe("TV 4K"));
+    // Every combobox on the panel has a name, and no two rows share one.
+    const named = screen.getAllByRole("combobox").map((c) => c.getAttribute("aria-label"));
+    expect(named).toEqual(["Plex library for /tv", "Plex library for /tv-4k"]);
+    expect(screen.queryAllByRole("combobox", { name: "" })).toHaveLength(0);
+  });
 });
 
 describe("ServiceModal external URL", () => {
@@ -225,9 +242,8 @@ function renderSeerrModal(
 
 /** The instance select for one service row, found by that row's service name. */
 function selectForService(name: string): HTMLSelectElement {
-  const root = screen.getByText(name);
-  const pick = root.nextElementSibling as HTMLElement;
-  return within(pick).getByRole("combobox") as HTMLSelectElement;
+  // By accessible name, for the reason given on selectForFolder above.
+  return screen.getByLabelText(`Connection for ${name}`) as HTMLSelectElement;
 }
 
 describe("ServiceModal multi-Seerr service map", () => {
@@ -289,6 +305,20 @@ describe("ServiceModal multi-Seerr service map", () => {
       service_instance_map?: Record<string, number>;
     };
     expect(body.service_instance_map).toEqual({ "sonarr:0": 3, "radarr:0": 7 });
+  });
+
+  it("names every picker after its own service, 4K included", async () => {
+    // #147 on this grid. A portal routinely carries an HD and a 4K service under one name,
+    // so the tag is the only thing telling those two rows apart -- it has to be spoken, not
+    // just shown.
+    renderSeerrModal(seerr(), [
+      { service_id: 2, kind: "sonarr", name: "Main TV", is_4k: false, suggested_instance_id: 3 },
+      { service_id: 5, kind: "sonarr", name: "Main TV", is_4k: true, suggested_instance_id: null },
+    ]);
+    await waitFor(() => expect(selectForService("Main TV").value).toBe("3"));
+    const named = screen.getAllByRole("combobox").map((c) => c.getAttribute("aria-label"));
+    expect(named).toEqual(["Connection for Main TV", "Connection for Main TV 4K"]);
+    expect(screen.queryAllByRole("combobox", { name: "" })).toHaveLength(0);
   });
 
   it("shows a notice, not an empty list, when the services can't be read", async () => {
