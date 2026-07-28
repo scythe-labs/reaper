@@ -79,9 +79,18 @@ api_key_throttle = Throttle(threshold=5, base_delay=2.0, max_delay=300.0, decay=
 #:   decrypts every credential.
 #: * The logs. They are not a secret store, but they are a running transcript of the
 #:   library -- titles, the people who watched them, root folders -- and the download
-#:   concatenates every rotating file, so one GET is the whole history. The operator is
-#:   told a key can "read your library"; that has to mean the catalog, not everyone's
-#:   viewing. Denied for the same reason the backup is (S-3).
+#:   concatenates every rotating file, so one GET is the whole history. Denied for the
+#:   same reason the backup is (S-3).
+#:
+#: **The privacy half of that reason does not hold on its own, and the copy no longer
+#: claims it does.** S-3 argued the logs were different because a key was told it could
+#: "read your library", meaning the catalog and not everyone's viewing. But a key reads
+#: ``/api/fairness/people/{identity}``, which is one person's whole viewing breakdown, so
+#: the denylist was never what kept viewing history off a header credential -- it kept the
+#: *log file* off one, which is a narrower and still-good reason. Both descriptions of
+#: this fence now say a key reads who watched what, rather than resting on a distinction
+#: the routes do not draw. Whether the fairness reads belong behind the browser is issue
+#: #117, and is a change to what a key can DO, not to what it is told.
 #:
 #: ``PUT /api/logs/level`` is a write, so the allowlist below already refuses it.
 #:

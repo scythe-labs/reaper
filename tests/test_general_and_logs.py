@@ -454,9 +454,16 @@ class TestTheApiKeyLane:
         )
 
     def test_the_key_cannot_read_the_logs(self, client: TestClient) -> None:
-        """The logs are a running transcript of who watched what, and the download is
-        every rotating file at once. The operator is told a key can "read your library" --
-        the catalog, not everyone's viewing (S-3)."""
+        """The logs are a running transcript of the library, and the download concatenates
+        every rotating file, so one GET is the whole history (S-3).
+
+        Not, any longer, because a key is told it reads "your library" and viewing is not
+        the library: a key reads /api/fairness/people, which is one person's whole viewing
+        breakdown, so that argument never held and both descriptions of the fence have
+        stopped making it. Issue #117 is whether the fairness reads should move behind the
+        browser. What this pins is narrower and still good on its own: the log FILE stays
+        off a header credential.
+        """
         key = self._issue(client)
         bare = _bare(client)
         headers = {"X-Api-Key": key}
