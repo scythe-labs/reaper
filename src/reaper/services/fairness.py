@@ -719,6 +719,13 @@ class PersonDetail:
     """The requester's page on the portal their request came through
     (``{base_url}/users/{seerr_user_id}``), or ``None`` when it cannot be built. Display only;
     the panel opens it in a new tab, and shows the name as plain text when it is ``None``."""
+    horizon_at: datetime | None = None
+    """How far back the watch mirror reaches, the same span :class:`FairnessReport` carries for
+    the board. Every watch figure on this shape -- ``played_by_them`` and each title's
+    ``watched_by_them`` -- is counted with no lower time bound, so a person whose plays all
+    predate this reads as a LOWER BOUND, never a measured zero. The panel prints the span
+    beside those figures and qualifies a zero with it; ``None`` (an empty mirror) is not a
+    deeper span but no span at all, and the panel then asserts no figure."""
 
 
 def _fold_quota(statuses: Iterable[QuotaStatus]) -> QuotaLine:
@@ -1269,4 +1276,8 @@ async def build_person_detail(
         not_in_scan=not_in_scan,
         unmatched=unmatched,
         profile_url=profile_url,
+        # The span every watch figure above was counted over, carried so the drawer can bound
+        # them exactly as the board does. Read here rather than derived from the numbers: a
+        # zero cannot tell "nobody watched it" from "their plays are behind the horizon".
+        horizon_at=await history_sync.horizon(cache_engine),
     )

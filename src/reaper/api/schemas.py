@@ -1041,6 +1041,11 @@ class PersonDetailOut(BaseModel):
     titles: list[PersonTitleOut]
     unmatched: list[UnmatchedRequestOut] = []
     """This person's not-in-scan requests, named and grouped by reason, for the panel."""
+    horizon_at: str | None = None
+    """How far back the watch history reaches. ``played_by_them`` and every title's
+    ``watched_by_them`` are counted with no lower time bound, so a zero is a lower bound
+    against this span, not a measured never-watched; null is an empty mirror, where no watch
+    figure here means anything at all."""
     profile_url: str | None = None
     """The requester's page on their request portal, or null when it can't be built. The
     panel links the name to it, and shows plain text otherwise."""

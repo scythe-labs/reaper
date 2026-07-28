@@ -23,6 +23,10 @@ vi.mock("../api", async (importOriginal) => ({
 
 const GB = 1024 ** 3;
 
+/** How far back the watch mirror reaches, as the report carries it. Every watched figure is
+ *  counted over this span, so a card may only state one when it has one. */
+const HORIZON = "2018-01-11T00:00:00+00:00";
+
 function row(over: Partial<RequesterRow> = {}): RequesterRow {
   return {
     identity: "plex:7",
@@ -53,7 +57,7 @@ function renderWithClient(ui: ReactElement) {
 describe("PersonCard", () => {
   it("leads with the reclaimable disk and opens the person's breakdown", async () => {
     const onSelect = vi.fn();
-    render(<PersonCard row={row()} selected={false} onSelect={onSelect} />);
+    render(<PersonCard row={row()} selected={false} onSelect={onSelect} horizonAt={HORIZON} />);
 
     expect(screen.getByText(/earning its keep/i)).toBeInTheDocument();
     expect(screen.getByText(/to reclaim · 3 titles/i)).toBeInTheDocument();
@@ -70,6 +74,7 @@ describe("PersonCard", () => {
         row={row({ reclaimable_items: 0, reclaimable_bytes: 0, reclaimable: [] })}
         selected={false}
         onSelect={onSelect}
+        horizonAt={HORIZON}
       />,
     );
 
@@ -88,7 +93,7 @@ describe("PersonCard", () => {
 
   it("opens on Enter and Space, for keyboard users", async () => {
     const onSelect = vi.fn();
-    render(<PersonCard row={row()} selected={false} onSelect={onSelect} />);
+    render(<PersonCard row={row()} selected={false} onSelect={onSelect} horizonAt={HORIZON} />);
     const card = screen.getByRole("button", { name: /marlow/i });
     card.focus();
     await userEvent.keyboard("{Enter}");
@@ -97,12 +102,14 @@ describe("PersonCard", () => {
   });
 
   it("wears the selection bar when it is the open card", () => {
-    const { container } = render(<PersonCard row={row()} selected onSelect={vi.fn()} />);
+    const { container } = render(
+      <PersonCard row={row()} selected onSelect={vi.fn()} horizonAt={HORIZON} />,
+    );
     expect(container.querySelector(".fair-card.selected")).not.toBeNull();
   });
 
   it("states the watched share as a share when the account is linked", () => {
-    render(<PersonCard row={row()} selected={false} onSelect={vi.fn()} />);
+    render(<PersonCard row={row()} selected={false} onSelect={vi.fn()} horizonAt={HORIZON} />);
     expect(screen.getByText("58%")).toBeInTheDocument();
     expect(screen.getByText(/they watched/i)).toBeInTheDocument();
   });
@@ -118,10 +125,29 @@ describe("PersonCard", () => {
         row={row({ identity: "local:portal:4", plex_id: null, played_by_them: 0 })}
         selected={false}
         onSelect={vi.fn()}
+        horizonAt={HORIZON}
       />,
     );
 
     expect(screen.getByText(/no plex account/i)).toBeInTheDocument();
+    expect(screen.queryByText("0%")).not.toBeInTheDocument();
+    expect(screen.queryByText(/they watched/i)).not.toBeInTheDocument();
+  });
+
+  // The same confident zero reached the other way, and the one the account guard let past: a
+  // mirror with nothing in it. Every play is invisible, so every card counted 0 out of a real
+  // request total and printed a red 0% about a person whose history was never read at all.
+  it("says the history is unreadable when the mirror holds nothing", () => {
+    render(
+      <PersonCard
+        row={row({ played_by_them: 0 })}
+        selected={false}
+        onSelect={vi.fn()}
+        horizonAt={null}
+      />,
+    );
+
+    expect(screen.getByText(/no watch history/i)).toBeInTheDocument();
     expect(screen.queryByText("0%")).not.toBeInTheDocument();
     expect(screen.queryByText(/they watched/i)).not.toBeInTheDocument();
   });
@@ -135,7 +161,7 @@ describe("Fairness", () => {
     not_in_scan: 7,
     unmatched: [],
     no_snapshot: false,
-    horizon_at: "2018-01-11T00:00:00+00:00",
+    horizon_at: HORIZON,
     rows,
     ...over,
   });
@@ -189,6 +215,20 @@ describe("Fairness", () => {
     renderWithClient(<Fairness />);
     await screen.findByText(/no available requests are in the last scan/i);
     expect(screen.queryByRole("button", { name: /not in the last scan/i })).toBeNull();
+  });
+
+  // Every card's percentage is counted over the mirror's span, so the board names it. It used
+  // to be printed only when there WAS one, which left the state with the least evidence -- a
+  // mirror that has never synced -- as the one carrying no caveat at all.
+  it("names the span the watched figures are counted over, in both directions", async () => {
+    apiMock.fairness.mockResolvedValue(report([row()]));
+    const { unmount } = renderWithClient(<Fairness />);
+    expect(await screen.findByText(/watch history reaches back to/i)).toBeInTheDocument();
+    unmount();
+
+    apiMock.fairness.mockResolvedValue(report([row()], { horizon_at: null }));
+    renderWithClient(<Fairness />);
+    expect(await screen.findByText(/no watch history has been read yet/i)).toBeInTheDocument();
   });
 
   it("asks App to open a person when their card is clicked", async () => {

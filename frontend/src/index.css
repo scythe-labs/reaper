@@ -3810,6 +3810,11 @@ a.rating-chip:hover {
   font-size: 0.82rem;
   margin: 0 0 0.9rem;
 }
+/* The same line inside the person drawer, where it sits directly under the summary tiles
+   rather than above the card list, so the gap belongs on top instead of underneath. */
+.why .fair-horizon {
+  margin: 0.6rem 0 0;
+}
 
 .fair-list {
   display: flex;

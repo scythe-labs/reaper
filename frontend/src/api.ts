@@ -917,6 +917,10 @@ export interface PersonDetail {
   titles: PersonTitle[];
   /** This person's not-in-scan requests, named and grouped by reason, for the panel. */
   unmatched: UnmatchedRequest[];
+  /** How far back the watch history reaches. `played_by_them` and each title's
+   *  `watched_by_them` are counted with no lower time bound, so a zero is a lower bound
+   *  against this span; `null` is an empty mirror, where no watch figure means anything. */
+  horizon_at: string | null;
   /** The requester's page on their request portal, or `null` when it can't be built. The
    *  panel links the name to it, and shows plain text otherwise. */
   profile_url: string | null;

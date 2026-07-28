@@ -17,7 +17,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { type KeyboardEvent } from "react";
 import { api, type RequesterRow } from "../api";
-import { bytes, count, date } from "../format";
+import { bytes, count } from "../format";
+import { type WatchReach, mirrorNote, reachIsMeasured, watchReach } from "./watchReach";
 
 /** The circular-arrow refresh glyph, in the app's 16-grid inline-SVG house style. */
 function RefreshIcon() {
@@ -44,14 +45,16 @@ function RefreshIcon() {
 /** Share of their OWN requests this person has watched at least once. A behavioral signal
  *  (did the asker use what they asked for), kept apart from the disk balance below.
  *
- *  `null` when there is no history to take a share OF. A Seerr account nobody linked to a
- *  Plex account has no watches Reaper can see at all: `fairness._roll_up` counts plays only
- *  inside `if pid is not None`, so `played_by_them` is structurally 0 rather than measured,
- *  and `plays_by`'s own docstring makes guarding the None the caller's job. Rendering that
- *  as a red 0% told the operator a confident zero about somebody Reaper never looked at, on
- *  the screen where they decide whose files to delete. `ScalesPanel` is the twin (rule 72). */
-function watchedPct(row: RequesterRow): number | null {
-  if (row.plex_id == null) return null;
+ *  `null` when there is no history to take a share OF, which `watchReach` answers for both
+ *  surfaces. A Seerr account nobody linked to a Plex account has no watches Reaper can see at
+ *  all: `fairness._roll_up` counts plays only inside `if pid is not None`, so `played_by_them`
+ *  is structurally 0 rather than measured, and `plays_by`'s own docstring makes guarding the
+ *  None the caller's job. An empty mirror is the same zero reached the other way, and used to
+ *  slip through here because this only checked the account. Rendering either as a red 0% told
+ *  the operator a confident zero about somebody Reaper never looked at, on the screen where
+ *  they decide whose files to delete. `ScalesPanel` is the twin (rule 72). */
+function watchedPct(row: RequesterRow, reach: WatchReach): number | null {
+  if (!reachIsMeasured(reach)) return null;
   if (row.requests_made === 0) return 0;
   return Math.round((100 * row.played_by_them) / row.requests_made);
 }
@@ -67,12 +70,19 @@ export function PersonCard({
   row,
   selected,
   onSelect,
+  horizonAt,
 }: {
   row: RequesterRow;
   selected: boolean;
   onSelect: (identity: string) => void;
+  /** How far back the watch mirror reaches, from the report the rows came in. Null is an
+   *  empty mirror, where no play is visible for anyone and the card shows no percentage.
+   *  Required rather than defaulted: a card that silently fell back to a span would be the
+   *  confident zero this exists to stop. */
+  horizonAt: string | null;
 }) {
-  const watched = watchedPct(row);
+  const reach = watchReach(row.plex_id, horizonAt);
+  const watched = watchedPct(row, reach);
   const granted = row.gb_granted_bytes;
   const reclaim = row.reclaimable_bytes;
   const used = Math.max(0, granted - reclaim);
@@ -143,10 +153,16 @@ export function PersonCard({
         {watched === null ? (
           <span
             className="fair-watched"
-            title="Their request account isn't linked to a Plex account, so Reaper can't see what they watched."
+            title={
+              reach.kind === "no_account"
+                ? "Their request account isn't linked to a Plex account, so Reaper can't see what they watched."
+                : "Reaper hasn't read any watch history yet, so it can't see what anyone watched."
+            }
           >
             <span className="fair-pct muted">Unknown</span>
-            <span className="fair-pct-lbl">no Plex account</span>
+            <span className="fair-pct-lbl">
+              {reach.kind === "no_account" ? "no Plex account" : "no watch history"}
+            </span>
           </span>
         ) : (
           <span className="fair-watched">
@@ -272,12 +288,11 @@ export function Fairness({
             {notInScanTile}
           </div>
 
-          {data.horizon_at && (
-            <p className="fair-horizon muted">
-              Watch history reaches back to {date(data.horizon_at)}, so older plays are invisible
-              here.
-            </p>
-          )}
+          {/* Every card's percentage is counted over this span, so it is named whatever the
+              span is. It used to render only when there WAS one, which left the worst case --
+              a mirror that has never synced, where each card said a red 0% -- as the one case
+              with no caveat at all. The drawer prints the same line (rule 72). */}
+          <p className="fair-horizon muted">{mirrorNote(data.horizon_at)}</p>
 
           <div className="fair-list">
             {data.rows.map((row) => (
@@ -286,6 +301,7 @@ export function Fairness({
                 row={row}
                 selected={row.identity === selectedIdentity}
                 onSelect={select}
+                horizonAt={data.horizon_at}
               />
             ))}
           </div>

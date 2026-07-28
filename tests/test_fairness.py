@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from reaper.api.fairness import _row_out
+from reaper.api.fairness import _person_out, _row_out
 from reaper.clients.base import IntegrationError
 from reaper.clients.seerr import (
     MediaRequest,
@@ -29,7 +29,7 @@ from reaper.clients.seerr import (
     TitleInfo,
     UserQuota,
 )
-from reaper.clock import utcnow
+from reaper.clock import from_epoch, utcnow
 from reaper.config import Settings
 from reaper.db.base import Base
 from reaper.db.models import Candidate, Snapshot, WhitelistEntry
@@ -766,16 +766,20 @@ async def _insert_event(
     user_id: int,
     parent: int | None = None,
     gp: int | None = None,
+    watched_at: int = 1,
 ) -> None:
+    """One play in the mirror. ``watched_at`` is an epoch second, and only the tests about the
+    mirror's REACH need to choose it: the oldest one is the horizon, and a horizon test that
+    took the default could not tell a carried value from a coincidence (rule 141)."""
     async with engine.begin() as conn:
         await conn.execute(
             text(
                 "INSERT INTO watch_event (rating_key, parent_rating_key, "
                 "grandparent_rating_key, user_id, watched_at, watched_status, "
                 "percent_complete, media_type) "
-                "VALUES (:rk, :pk, :gp, :uid, 1, 1, 100, 'movie')"
+                "VALUES (:rk, :pk, :gp, :uid, :at, 1, 100, 'movie')"
             ),
-            {"rk": rating_key, "pk": parent, "gp": gp, "uid": user_id},
+            {"rk": rating_key, "pk": parent, "gp": gp, "uid": user_id, "at": watched_at},
         )
 
 
@@ -1230,6 +1234,75 @@ class TestBuildPersonDetail:
         )
         assert detail is not None
         assert detail.played_by_them == 1 and detail.titles[0].watched_by_them == 1
+
+    async def test_the_drawer_carries_the_span_its_watch_figures_were_counted_over(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        """Every watch figure on the drawer is counted over the whole mirror, and the mirror
+        begins at its horizon, so a zero is a LOWER BOUND. The drawer makes the flattest claim
+        of the two Scales surfaces (a per-title "not watched"), and was the one that could not
+        name the window it was claiming over: the board already renders the span, and
+        ``PersonDetail`` never carried it."""
+        factory, cache = report_env
+        # An oldest play well away from `_insert_event`'s default, so a horizon that arrived by
+        # accident is distinguishable from one that was carried (rule 141).
+        await _insert_event(cache, rating_key=555, user_id=1, watched_at=1_700_000_000)
+        await _insert_event(cache, rating_key=555, user_id=1, watched_at=1_800_000_000)
+        portal = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
+
+        detail = await fairness.build_person_detail(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[portal],  # type: ignore[list-item]
+            cache_engine=cache,
+            identity="plex:1",
+        )
+
+        assert detail is not None
+        assert detail.horizon_at == from_epoch(1_700_000_000)
+
+    async def test_an_empty_mirror_leaves_the_drawer_no_span_to_claim_over(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        """A mirror that has never synced is not a deeper horizon, it is no horizon: nothing is
+        visible for anyone, so no figure here means anything. Null rather than a stand-in date,
+        which the drawer would print as a real span and count a zero from."""
+        factory, cache = report_env
+        portal = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
+
+        detail = await fairness.build_person_detail(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[portal],  # type: ignore[list-item]
+            cache_engine=cache,
+            identity="plex:1",
+        )
+
+        assert detail is not None
+        assert detail.played_by_them == 0  # the zero that must not read as a measured never
+        assert detail.horizon_at is None
+
+    async def test_the_drawer_puts_that_span_on_the_wire(
+        self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]
+    ) -> None:
+        """The panel cannot bound a figure by a span it was never sent. ``PersonDetailOut`` did
+        not carry ``horizon_at`` at all, so the drawer had no way to qualify its zeroes whatever
+        the service knew -- the board's twin of this is
+        ``test_the_board_puts_the_missing_plex_account_on_the_wire`` (rules 64, 72, 93)."""
+        factory, cache = report_env
+        await _insert_event(cache, rating_key=555, user_id=1, watched_at=1_700_000_000)
+        portal = _FakeSeerr([_req(plex_id=1, name="Alice", tmdb=1)])
+
+        detail = await fairness.build_person_detail(
+            session_factory=factory,  # type: ignore[arg-type]
+            seerrs=[portal],  # type: ignore[list-item]
+            cache_engine=cache,
+            identity="plex:1",
+        )
+        assert detail is not None
+
+        out = _person_out(detail)
+
+        assert out.horizon_at is not None
+        assert out.horizon_at.startswith("2023-11-14T")  # epoch 1_700_000_000, in UTC
 
     async def test_a_persons_not_in_scan_request_is_listed_and_named(
         self, report_env: tuple[async_sessionmaker[AsyncSession], AsyncEngine]

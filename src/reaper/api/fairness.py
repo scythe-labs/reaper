@@ -211,6 +211,14 @@ async def get_person(request: Request, identity: str) -> PersonDetailOut:
     if detail is None:
         raise HTTPException(404, "No one by that id is in the last scan.")
 
+    return _person_out(detail)
+
+
+def _person_out(detail: fairness.PersonDetail) -> PersonDetailOut:
+    """One person's breakdown on the wire. Its own function for the same reason ``_row_out``
+    is (rule 119): a test can assert what the drawer is actually sent, rather than transcribing
+    this mapping. A field the service derives and this drops is invisible from both sides, and
+    that is exactly how the drawer came to print watch figures it could not bound."""
     quota = detail.quota
     return PersonDetailOut(
         plex_id=detail.plex_id,
@@ -254,5 +262,9 @@ async def get_person(request: Request, identity: str) -> PersonDetailOut:
             for t in detail.titles
         ],
         unmatched=[_unmatched_out(u) for u in detail.unmatched],
+        # The span the watch figures above were counted over, exactly as the board is sent it.
+        # Without it the drawer -- which makes the flattest claim of the two, a per-title "not
+        # watched" -- is the one surface that cannot name the window it is claiming over.
+        horizon_at=detail.horizon_at.isoformat() if detail.horizon_at else None,
         profile_url=detail.profile_url,
     )

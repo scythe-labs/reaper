@@ -13,6 +13,7 @@ import type { PersonDetail, PersonTitle, QuotaLine } from "../api";
 import { useModalOpen } from "../backnav";
 import { bytes, count, date, itemBytes } from "../format";
 import { UnmatchedList } from "./UnmatchedList";
+import { type WatchReach, reachIsMeasured, reachNote, watchReach } from "./watchReach";
 import { WhyClose } from "./WhyPanel";
 
 function initial(name: string): string {
@@ -123,13 +124,16 @@ function Fate({ verdict }: { verdict: string }) {
 /** How much of it they watched, in the item's own terms: a movie's plays, a series' distinct
  *  episodes watched. Never a raw play sum for a show, which reads as inflated next to Tautulli.
  *
- *  `canSeeHistory` is false for a request account nobody linked to a Plex account. There is
- *  then no history to read: `fairness._roll_up` fills `watched_by_them` only inside
- *  `if pid is not None`, so every row would say "not watched" as a fact about a person
- *  Reaper never looked at. Same guard as the board's `watchedPct` (rule 72). */
-function watchedLabel(t: PersonTitle, canSeeHistory: boolean): string {
-  if (!canSeeHistory) return "can't see their history";
-  if (t.watched_by_them <= 0) return "not watched";
+ *  The negative branch is the careful one. `watched_by_them` is counted over the whole mirror
+ *  and the mirror begins at its horizon, so a zero is a LOWER BOUND: it says nothing about
+ *  plays behind that date, which on an install whose history is younger than its library is
+ *  most of them. A bare "not watched" states a verified never as fact on the screen where the
+ *  operator decides whose files to delete, so a zero is only ever printed with the date it
+ *  counts from, and where nothing is readable at all (`reachIsMeasured`, covering both an
+ *  unlinked request account and an empty mirror) it says so instead of naming a number. */
+function watchedLabel(t: PersonTitle, reach: WatchReach): string {
+  if (!reachIsMeasured(reach)) return "can't see their history";
+  if (t.watched_by_them <= 0) return `none since ${date(reach.since)}`;
   if (t.media_type === "movie") return `watched ${count(t.watched_by_them)}×`;
   const n = count(t.watched_by_them);
   return `${n} ${t.watched_by_them === 1 ? "episode" : "episodes"} watched`;
@@ -141,11 +145,11 @@ function watchedLabel(t: PersonTitle, canSeeHistory: boolean): string {
 function TitleRow({
   t,
   onOpen,
-  canSeeHistory,
+  reach,
 }: {
   t: PersonTitle;
   onOpen: (() => void) | null;
-  canSeeHistory: boolean;
+  reach: WatchReach;
 }) {
   const kind = t.media_type === "movie" ? "Movie" : "Series";
   // Some stored titles already carry their year (e.g. "Some Show (2019)"); don't print it
@@ -178,8 +182,10 @@ function TitleRow({
       <span className="scales-title-side">
         <Fate verdict={t.verdict} />
         <span className="scales-size">{itemBytes(t.size_bytes)}</span>
-        <span className={`scales-watch ${canSeeHistory && t.watched_by_them > 0 ? "yes" : "no"}`}>
-          {watchedLabel(t, canSeeHistory)}
+        <span
+          className={`scales-watch ${reachIsMeasured(reach) && t.watched_by_them > 0 ? "yes" : "no"}`}
+        >
+          {watchedLabel(t, reach)}
         </span>
       </span>
     </>
@@ -223,12 +229,15 @@ export function ScalesPanel({
   const used = Math.max(0, granted - reclaim);
   const usedPct = granted > 0 ? (100 * used) / granted : 100;
   const reclaimPct = granted > 0 ? (100 * reclaim) / granted : 0;
-  // Null when their request account has no Plex account behind it: `played_by_them` is then
-  // structurally 0 (`fairness._roll_up` counts plays only inside `if pid is not None`), so a
-  // red 0% would be a measurement Reaper never took. Same guard as the board's `watchedPct`
-  // (rule 72), and the rows below take it too.
-  const canSeeHistory = detail.plex_id != null;
-  const watched = !canSeeHistory
+  // How far Reaper can see into this person's watching, from the one derivation the board's
+  // cards also read (rule 72). Null where there is no reading to report -- no Plex account
+  // behind the request account, or an empty mirror -- because `played_by_them` is then
+  // structurally 0 (`fairness._roll_up` counts plays only inside `if pid is not None`) and a
+  // red 0% would be a measurement nobody took. The rows below take the same `reach`, and the
+  // note under the tiles bounds the percentage that IS shown.
+  const reach = watchReach(detail.plex_id, detail.horizon_at);
+  const note = reachNote(reach);
+  const watched = !reachIsMeasured(reach)
     ? null
     : detail.requests_in_scan > 0
       ? Math.round((100 * detail.played_by_them) / detail.requests_in_scan)
@@ -286,7 +295,11 @@ export function ScalesPanel({
               <>
                 <span className="fair-stat-num muted">Unknown</span>
                 <span className="fair-stat-lbl">They watched</span>
-                <span className="fair-stat-sub">no Plex account, so no history to read</span>
+                <span className="fair-stat-sub">
+                  {reach.kind === "no_account"
+                    ? "no Plex account, so no history to read"
+                    : "no watch history to read yet"}
+                </span>
               </>
             ) : (
               <>
@@ -322,6 +335,10 @@ export function ScalesPanel({
             )}
           </div>
         </div>
+        {/* The span every figure above and every row below is counted over. The board renders
+            the same line, but on a phone this panel is a sheet OVER the board (`main.split
+            .why`), so the board's copy is not on screen to borrow. */}
+        {note && <p className="fair-horizon muted">{note}</p>}
       </section>
 
       {showLimits && (
@@ -359,7 +376,7 @@ export function ScalesPanel({
                 key={`${t.item_id ?? t.group_key ?? t.title}-${i}`}
                 t={t}
                 onOpen={opener(t)}
-                canSeeHistory={canSeeHistory}
+                reach={reach}
               />
             ))}
           </div>
