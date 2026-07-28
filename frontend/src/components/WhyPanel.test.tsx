@@ -695,22 +695,30 @@ describe("the verdict headline", () => {
   // refused one `false`. Passing them independently would let a test pin a pairing the backend
   // cannot produce.
   //
-  // Omitting the flag OMITS THE KEY, rather than setting it to `undefined`. That is the third
-  // real shape -- a row frozen before the field shipped -- and the server sends no key at all
-  // for it, so a fixture carrying the key with an undefined value would be a payload nothing
-  // produces (rule 119). `exactOptionalPropertyTypes` rejects the other spelling anyway.
-  const conflictDetail = (message: string, defersToOwner?: boolean, others: GateOutcome[] = []) =>
+  // The third shape -- a row frozen before the field shipped -- reaches the panel as `null`,
+  // NOT as an absent key. The STORED row carries no key; the RESPONSE always carries one,
+  // because `GateOutcomeOut` declares `defers_to_owner: bool | None = None` and nothing on the
+  // model or the route sets `exclude_none`, so `_explanation_out` serializes the missing key as
+  // `"defers_to_owner": null`. Pass that, and pass it explicitly (rule 119): an omitted key is
+  // the payload nothing produces, and a fixture built on one leaves the only pre-flag shape the
+  // panel can ever be sent untested. `api.ts`'s `?` is defense against a shape the server does
+  // not emit, so a test resting on it pins nothing.
+  //
+  // Required rather than defaulted, so every call site names the generation it means. Reading
+  // an absent key as a *guess* in either direction is the whole defect (#86), and a defaulted
+  // parameter is how a fixture stops saying which one it tests.
+  const conflictDetail = (
+    message: string,
+    defersToOwner: boolean | null,
+    others: GateOutcome[] = [],
+  ) =>
     detail(WORKED_ROWS, {
       verdict: "abstain",
       explanation: {
         ...detail(WORKED_ROWS).explanation,
         protections_unknown: [
           ...others,
-          {
-            gate: "season_progression",
-            detail: message,
-            ...(defersToOwner === undefined ? {} : { defers_to_owner: defersToOwner }),
-          },
+          { gate: "season_progression", detail: message, defers_to_owner: defersToOwner },
         ],
       },
     });
@@ -747,9 +755,14 @@ describe("the verdict headline", () => {
 
   it("claims neither shape for a row frozen before the flag shipped", () => {
     // Nothing in such a row can tell a made comparison from a refused one, so the panel says
-    // neither (rule 142's three-state). Reading an absent flag as `false` would be a guess in
-    // the other direction; reading it as `true` is the bug this issue is.
-    show(conflictDetail(SETTLEABLE_CONFLICT));
+    // neither (rule 142's three-state). Reading it as `false` would be a guess in the other
+    // direction; reading it as `true` is the bug this issue is.
+    //
+    // `null` is what the server actually sends for this row -- see `conflictDetail` above. A
+    // fixture omitting the key instead would leave the branch every real pre-flag row takes
+    // untested, and the natural refactor to `defersToOwner === undefined` would then pass green
+    // while telling every one of them "Reaper couldn't check who watched these seasons".
+    show(conflictDetail(SETTLEABLE_CONFLICT, null));
     expect(screen.getByText("Needs a look")).toBeInTheDocument();
     expect(screen.getByText(/Reaper couldn't settle this one on its own/i)).toBeVisible();
     expect(screen.queryByText(/This was watched more than/i)).not.toBeInTheDocument();
@@ -760,9 +773,17 @@ describe("the verdict headline", () => {
     // A season on a short mirror routinely blocks several gates at once, so the conflict is
     // rarely alone in the list. The old predicate scanned it with `.some()` and could be
     // satisfied by any entry; the note must come from the season row itself.
+    // Verbatim from `engine.gates.ServerPopularityGate`, whose blocked detail is
+    // f"could not check who watched it in the last {window}: {shortfall}" -- the same rule 119
+    // the conflict messages above are copied for. A short mirror blocks this gate on nearly
+    // every row, which is exactly why the conflict is rarely alone in the list.
     show(
       conflictDetail(SETTLEABLE_CONFLICT, true, [
-        fired("server_popularity", "could not check who watched it: Plex has not matched this"),
+        fired(
+          "server_popularity",
+          "could not check who watched it in the last 12 months: your watch history only goes " +
+            "back 3 months",
+        ),
       ]),
     );
     expect(screen.getByText(/This was watched more than a season your keep rule/i)).toBeVisible();

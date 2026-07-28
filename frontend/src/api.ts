@@ -250,9 +250,14 @@ export interface GateOutcome {
   /** Whether the comparison behind a hold is one Reaper actually made. Only the season
    *  keep-rule guard sets it, where a conflict can also mean "a count nobody could read"
    *  or "a watch history too short to stand behind the counts" -- shapes that must never
-   *  be described as a comparison. Optional AND nullable, deliberately: a row scanned
-   *  before the flag shipped carries neither answer and must assert neither (rule 142),
-   *  so `undefined` and `null` both read as "names neither shape", never as `false`. */
+   *  be described as a comparison. A row scanned before the flag shipped carries neither
+   *  answer and must assert neither (rule 142).
+   *
+   *  **`null` is that row, and it is what actually arrives.** The stored explanation has no
+   *  key, but the response always does: `GateOutcomeOut` defaults the field to `None` and
+   *  nothing sets `exclude_none`, so the server serializes it as `null`. The `?` is defense
+   *  against a shape the server does not emit -- never the case to branch on, and never the
+   *  case to test against. Both read as "names neither shape", never as `false`. */
   defers_to_owner?: boolean | null;
 }
 
