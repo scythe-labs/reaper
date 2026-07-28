@@ -73,9 +73,12 @@ haven't touched this session.
   trigger you could not demonstrate goes to
   `.claude/skills/reaper-review/references/unproven.md` with the evidence that would settle it,
   because an issue asserts a defect exists. That skill's *Opening issues* section holds the
-  mechanics and they are unchanged — Gitea via `tea` (`gh` does not reach it), one issue per
-  *fix* rather than per finding, a duplicate check on the `finding:` fingerprint first, the
-  commit pinned with `--referenced-version`, and a title naming what the operator loses.
+  mechanics — Gitea via `tea` (`gh` does not reach it), one issue per *fix* rather than per
+  finding, a duplicate check on the `finding:` fingerprint first, the commit pinned with
+  `--referenced-version`, **three labels (`Kind/` + `Priority/` + `Reviewed/Confirmed`, and
+  priority ranks the operator's loss, not the size of the fix)**, and a title naming what the
+  operator loses. An unlabeled issue is absent from every filter the backlog is triaged
+  through, which wastes the filing.
 - **Commit as you go, in focused commits — don't wait to be asked.** One commit tells one
   story: a feature, a bug fix, a cleanup that stands on its own. A fix ships with the test
   that pins it and the doc line it corrects, because those are the same story. Nothing else
@@ -141,6 +144,11 @@ is a false statement about the work.
 
 - **`dev` is the default branch, and all work lands there.** Push to `dev`, or to a feature
   branch off `dev` that merges back into `dev`.
+- **A pull request carries its `Kind/` and `Priority/` labels, same vocabulary as an issue**
+  (`tea pr create -L "Kind/Bug,Priority/Critical"`, or `tea pr edit <n> --add-labels` after the
+  fact). A PR closing an issue inherits that issue's two; `Reviewed/` is issue triage and stays
+  off a PR. Reviewers filter the queue the same way the backlog is filtered, and an unlabeled
+  PR is missing from it.
 - **`main` is release-only.** Never push to `main` directly. To promote `dev`, open a pull
   request from `dev` → `main` and **squash-merge** it, so `main`'s history is a clean
   sequence of squashed releases while the granular history lives on `dev`. With the `tea`

@@ -203,12 +203,30 @@ finding: <path>:<symbol> — <short-slug>
 
 Match on that, never on the line number, which drifts with every edit above it.
 
-Create with the reviewed commit pinned, so a finding read against a stale tree is detectable:
+Create with the reviewed commit pinned, so a finding read against a stale tree is detectable,
+and **labeled**, so it is reachable by the views the tracker is actually read through:
 
 ```
 tea issue create --title "<outcome, in plain language>" \
-  --description "<body>" --referenced-version "$(git rev-parse --short HEAD)"
+  --description "<body>" --referenced-version "$(git rev-parse --short HEAD)" \
+  --labels "Kind/Bug,Priority/Critical,Reviewed/Confirmed"
 ```
+
+**Three labels, one from each axis, on every issue filed.** An unlabeled issue is missing from
+every "what is critical" and "what is a bug" filter, which is where the backlog gets triaged
+from — so it is findable only by someone already scrolling past it, which is the same failure
+as not filing it. `tea labels` lists what exists; never invent one, and if nothing fits, say so
+in the run summary rather than filing bare.
+
+| Axis | Pick |
+| --- | --- |
+| `Kind/` | `Bug` for a defect; `Enhancement` for a rough edge that works as built; `Security` where the loss is confidentiality, auth, or a secret; `Testing` for a gap in the suite; `Documentation` for a doc-only correction |
+| `Priority/` | `Critical` — a file can be lost, or a protection silently stops covering. `High` — a wrong decision the operator can still catch on the panel. `Medium` — a surface that misleads without costing a file. `Low` — cosmetic |
+| `Reviewed/` | `Confirmed`, always: only CONFIRMED findings become issues at all, so anything filed from here has earned it |
+
+**Priority ranks the operator's loss, never the size of the fix.** A protection that quietly
+stops protecting is `Critical` even when the patch is three lines, because the prime directive
+is what it breaks. Judging it by effort is how a one-line fail-open ends up under a font bug.
 
 The title says what the operator loses, not where the code is wrong: *"A play made after
 approval no longer rescues the file"* beats *"unreadable history body coerced to empty list."*
