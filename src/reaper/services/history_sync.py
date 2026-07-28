@@ -579,10 +579,3 @@ async def last_synced_at(engine: AsyncEngine) -> datetime | None:
             await conn.execute(text("SELECT synced_at FROM history_sync_state WHERE id = 1"))
         ).first()
     return from_epoch(row.synced_at) if row else None
-
-
-async def days_since_horizon(engine: AsyncEngine) -> float | None:
-    earliest = await horizon(engine)
-    if earliest is None:
-        return None
-    return (utcnow() - earliest).total_seconds() / 86_400

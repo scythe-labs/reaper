@@ -982,9 +982,11 @@ def inspect(
     someone to connect a service they already have is worse than saying nothing.
 
     ``history_reach_days`` is the second such fact: how far back the watch mirror goes
-    (``services.history_sync.days_since_horizon``). Same posture and same reason --
-    ``None`` means "could not tell, stay quiet", because a caller that guessed short
-    would tell an operator their window is useless when it is fine.
+    (``dormancy.history_reach_days`` off ``services.history_sync.horizon``, the one
+    derivation ``services.snapshot.ScanContext`` uses for the number the gate reads).
+    Same posture and same reason -- ``None`` means "could not tell, stay quiet", because
+    a caller that guessed short would tell an operator their window is useless when it
+    is fine.
     """
     warnings: list[PolicyWarning] = []
 
