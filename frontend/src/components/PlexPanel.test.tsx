@@ -74,6 +74,10 @@ function renderPanel(
   connections: PlexResourceConnection[] = [discovered(LOCAL)],
   /** Stable across renders, which the prop requires: pass one `vi.fn()`, never an inline arrow. */
   onDirtyChange?: (dirty: boolean) => void,
+  /** Status already in the cache, so the panel mounts with `data` on its FIRST render -- what
+   *  every section switch back to Plex does, since `["plex"]` is read only here and stays fresh.
+   *  A fresh client is a COLD mount, one render behind, which is a different code path. */
+  cached?: PlexStatus,
 ) {
   apiMock.plexResources.mockResolvedValue({
     source: "plex.tv",
@@ -87,6 +91,7 @@ function renderPanel(
     ],
   });
   const queryClient = testQueryClient();
+  if (cached) queryClient.setQueryData(["plex"], cached);
   return render(
     <QueryClientProvider client={queryClient}>
       <PlexPanel onDirtyChange={onDirtyChange} />
@@ -395,6 +400,51 @@ describe("what leaving this panel would lose", () => {
 
     await waitFor(() =>
       expect(screen.getByPlaceholderText("https://app.plex.tv")).toHaveValue("https://app.plex.tv"),
+    );
+
+    expect(dirty).not.toHaveBeenCalledWith(true);
+  });
+
+  it("never reports a draft when the stored status is already cached", async () => {
+    // The warm half of the test above, and the one the guard is actually for. A fresh
+    // `QueryClient` mounts this panel COLD: `data` is undefined on the first render, so the box
+    // and the stored value are both "" and no comparison can go wrong yet. Every render after
+    // the first section switch is warm instead -- `["plex"]` is read only by this panel, nothing
+    // evicts it inside the default window, and `Settings` unmounts and remounts the panel per
+    // section -- so `data` is there on the first render with the box still "". A guard seeded
+    // from `savedWebUrl` agrees with it on that frame and passes, which is #139 surviving on the
+    // twin (rule 72); the confirm built on this report then names Plex settings nobody typed
+    // (rule 146). Cold and warm are one line apart and only one of them fails.
+    const dirty = vi.fn();
+    renderPanel([], dirty, status());
+
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText("https://app.plex.tv")).toHaveValue("https://app.plex.tv"),
+    );
+
+    expect(dirty).not.toHaveBeenCalledWith(true);
+  });
+
+  it("never reports a draft for a cached certificate choice either", async () => {
+    // The certificate switch carries the same guard as the address box and is fixed with it
+    // (rule 72), so it gets the same warm mount. What it does NOT get is a claim of live
+    // exposure: today the status read omits the certificate flag while unlinked and the schema
+    // default is on, so the stored value and this box's initial value are both `true` on every
+    // real server and no operator can reach the frame this pins. The state below is therefore
+    // one the API does not currently produce, and the test says so rather than reading as a
+    // reproduction (rule 118). It pins the SHAPE of the guard: that the flag is a sentinel no
+    // stored value can equal, so nobody rewrites it as one seeded from the stored value and
+    // finds out later, when the route starts sending the flag, that it was inert all along.
+    //
+    // The address is stored empty here so the box and its saved value agree, leaving the
+    // certificate switch as the only thing that can report anything at all.
+    const unlinked = status({ linked: false, verify_tls: false, web_url: "" });
+    apiMock.plexStatus.mockResolvedValue(unlinked);
+    const dirty = vi.fn();
+    renderPanel([], dirty, unlinked);
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Check the server's certificate")).not.toBeChecked(),
     );
 
     expect(dirty).not.toHaveBeenCalledWith(true);

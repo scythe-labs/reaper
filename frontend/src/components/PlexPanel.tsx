@@ -96,7 +96,15 @@ export function PlexPanel({
   // than once per load, so a bare "have we seeded" flag would not cover it: a save or another
   // tab moving the address opens the same window again. Asking which value the box was seeded
   // from closes both.
-  const [seededFrom, setSeededFrom] = useState(savedWebUrl);
+  //
+  // `null`, never `savedWebUrl`: seeding the guard from the very value it has to DIFFER from
+  // leaves it inert exactly where the bug bites. `["plex"]` is cached and `Settings` remounts
+  // this panel on every section switch, so on a return visit `data` is already there on the
+  // FIRST render -- `savedWebUrl` holds the stored address while the box is still "", the two
+  // agree, and the panel reports a draft nobody typed. A sentinel no stored value can equal
+  // (the shape `PolicyEditor` uses for its own draft) fails closed on that frame and still
+  // re-seeds on every change after it.
+  const [seededFrom, setSeededFrom] = useState<string | null>(null);
   useEffect(() => {
     setWebUrl(savedWebUrl);
     setSeededFrom(savedWebUrl);
@@ -108,7 +116,12 @@ export function PlexPanel({
   const [verifyCert, setVerifyCert] = useState(true);
   const verifyRef = useRef(true);
   const savedVerify = data?.verify_tls ?? true;
-  const [verifySeededFrom, setVerifySeededFrom] = useState(savedVerify);
+  // The same sentinel as `seededFrom` above, and for the same reason (rule 72). Latent rather
+  // than live: the status read omits the certificate flag while unlinked and the schema default
+  // is on, so the stored value and this box's initial value are both `true` today and no warm
+  // mount can catch them apart. That is a property of one server route, not of this guard, so
+  // the guard is written to hold without it.
+  const [verifySeededFrom, setVerifySeededFrom] = useState<boolean | null>(null);
   useEffect(() => {
     setVerifyCert(savedVerify);
     verifyRef.current = savedVerify;
@@ -362,7 +375,11 @@ export function PlexPanel({
   // demands a discard for a box that is no longer on screen, and the only exit it leaves is the
   // destructive button.
   const webUrlDirty = seededFrom === savedWebUrl && webUrl.trim() !== savedWebUrl;
-  // The same test that renders this row's Save (below), so the bar and the button agree.
+  // This exact value renders the row's Save (below), so the report and the button agree by
+  // sharing one const rather than by two copies of one expression staying in step. They were
+  // two copies, and adding the seed guard to this one alone made this comment false the same
+  // day it was written: the button appeared beside an unseeded empty box while the panel
+  // reported nothing to lose (rule 7/24).
   //
   // The manual row is behind `linked && manualOpen`, so both belong in its claim: unlinking
   // leaves `manualOpen` set while the row is gone. An empty host is not a draft to lose -- Save
@@ -715,7 +732,10 @@ export function PlexPanel({
                 placeholder="https://app.plex.tv"
                 autoComplete="off"
               />
-              {webUrl.trim() !== savedWebUrl && (
+              {/* `webUrlDirty` above, not a second copy of its comparison: the report and this
+                  button are one claim, and they were two expressions until one of them grew a
+                  seed guard. */}
+              {webUrlDirty && (
                 <button
                   type="button"
                   className="primary sm"

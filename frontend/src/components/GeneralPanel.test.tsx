@@ -70,9 +70,15 @@ function renderPanel() {
 // panel REPORTS rather than what it renders. The two can be wrong in opposite directions: a
 // panel saying it holds nothing loses the draft silently, and one saying it holds something it
 // no longer shows asks for a discard the operator cannot act on.
-function renderReporting() {
+function renderReporting(
+  /** Stored row already in the cache, so the panel mounts with `general.data` on its FIRST
+   *  render -- what returning to this section does. A fresh client is a COLD mount, one render
+   *  behind, and a guard can pass there while failing here. */
+  cached?: GeneralSettings,
+) {
   const onDirtyChange = vi.fn();
   const queryClient = testQueryClient();
+  if (cached) queryClient.setQueryData(["general-settings"], cached);
   render(
     <QueryClientProvider client={queryClient}>
       <GeneralPanel onDirtyChange={onDirtyChange} />
@@ -95,6 +101,22 @@ describe("the save bar", () => {
     // records the call whether or not the frame was ever painted. Asserting on the RENDERED
     // bar could only ever catch it by luck.
     const { onDirtyChange } = renderReporting();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Application name")).toHaveValue(STORED.application_name),
+    );
+
+    expect(onDirtyChange).not.toHaveBeenCalledWith(true);
+  });
+
+  it("never reports a draft when the stored row is already cached", async () => {
+    // The warm twin of the test above (rule 72), and the reason it is worth writing even though
+    // it passes on the first run: the cold test above passes for a reason that has nothing to do
+    // with the guard. A fresh `QueryClient` leaves `general.data` undefined on the first render,
+    // so nothing is compared yet. Returning to this section mounts the panel with the row already
+    // there, and the boxes still on their initial values. `seeded` is `useState(false)`, which no
+    // cached value can make true, so this holds -- and this test is what keeps it that way if the
+    // flag is ever rewritten as one derived from the data (rule 145).
+    const { onDirtyChange } = renderReporting(STORED);
     await waitFor(() =>
       expect(screen.getByLabelText("Application name")).toHaveValue(STORED.application_name),
     );
