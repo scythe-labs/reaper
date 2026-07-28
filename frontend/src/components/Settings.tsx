@@ -132,7 +132,13 @@ function allTimeZones(): string[] {
   return _zoneCache;
 }
 
-export function GeneralPanel() {
+export function GeneralPanel({
+  /** Called whenever the save bar gains or loses a draft, so the section rail can hold a
+   *  switch that would discard one. Pass a STABLE function: it is an effect dependency. */
+  onDirtyChange,
+}: {
+  onDirtyChange?: ((dirty: boolean) => void) | undefined;
+} = {}) {
   const queryClient = useQueryClient();
   const general = useQuery({ queryKey: ["general-settings"], queryFn: api.general });
 
@@ -251,39 +257,29 @@ export function GeneralPanel() {
     },
   });
 
-  if (general.isPending) {
-    return <p className="muted">Loading…</p>;
-  }
-  if (general.isError || !general.data) {
-    return (
-      <p className="notice notice-error">Couldn't load these settings. Reload to try again.</p>
-    );
-  }
+  // The dirty checks and the pending list are computed BEFORE the early returns below, because
+  // the effect that reports them to `Settings` is a hook and a hook may not sit after a
+  // conditional return. Each one is guarded on `data`, which the second early return then
+  // narrows to non-null for the whole render beneath it.
   const data = general.data;
 
-  const nameDirty = name.trim() !== data.application_name;
-  const urlDirty = url.trim() !== (data.application_url ?? "");
-  const tzDirty = tz !== data.timezone;
-  // The current zone may not be in the browser's list (an older engine, or a server-only
-  // zone); keep it selectable so a save never silently drops it.
-  const zoneOptions =
-    data.timezone && !allTimeZones().includes(data.timezone)
-      ? [data.timezone, ...allTimeZones()]
-      : allTimeZones();
+  const nameDirty = !!data && name.trim() !== data.application_name;
+  const urlDirty = !!data && url.trim() !== (data.application_url ?? "");
+  const tzDirty = !!data && tz !== data.timezone;
   const accentValid = isHexColor(accent);
-  const accentDirty = accent.trim().toLowerCase() !== data.accent_color.toLowerCase();
+  const accentDirty = !!data && accent.trim().toLowerCase() !== data.accent_color.toLowerCase();
   const proxyList = proxies
     .split(",")
     .map((p) => p.trim())
     .filter(Boolean);
-  const proxiesDirty = proxyList.join(", ") !== data.trusted_proxies.join(", ");
+  const proxiesDirty = !!data && proxyList.join(", ") !== data.trusted_proxies.join(", ");
   // The two halves of the draft fold back into the one stored number before anything compares
   // them, because Forever IS 0 in that field. Pressing Forever therefore reads as a change to
   // the same field the box edits, and one Discard puts both back. It used to write 0 on the
   // press while the bar, gated on the stored value, unmounted and took its Discard with it --
   // so the number the bar had just called unsaved went in on the next press, without a Save.
   const spareValue = spareForever ? 0 : spareDays;
-  const spareDirty = spareValue !== data.default_spare_days;
+  const spareDirty = !!data && spareValue !== data.default_spare_days;
 
   // One save for the panel (rule 43). Each of these rows used to carry its own Save, rendered
   // inside the right-aligned control box, so the first keystroke made the button appear and
@@ -305,11 +301,37 @@ export function GeneralPanel() {
     pending.push({ label: "Default spare length", patch: { default_spare_days: spareValue } });
   // Only while the switch is on. Turning it off disables the box, and a bar naming a field the
   // operator cannot reach to fix is worse than one that waits for them to turn it back on.
-  if (proxiesDirty && data.proxy_trust_enabled)
+  if (proxiesDirty && data?.proxy_trust_enabled)
     pending.push({ label: "Trusted proxy addresses", patch: { trusted_proxies: proxyList } });
   // A half-typed hex code would be stored as the app-wide accent, so the whole save waits on
   // it rather than silently dropping that one field from a bar that just named it.
   const accentBlocks = accentDirty && !accentValid;
+
+  // What the bar is holding, reported up to `Settings` so that leaving this section can stop and
+  // ask first. The bar IS the definition of a draft here (rule 43), so the two can never
+  // disagree about whether there is something to lose. The cleanup fires on unmount, because a
+  // panel that is gone is holding nothing.
+  const hasDrafts = pending.length > 0;
+  useEffect(() => {
+    onDirtyChange?.(hasDrafts);
+  }, [hasDrafts, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+
+  if (general.isPending) {
+    return <p className="muted">Loading…</p>;
+  }
+  if (general.isError || !data) {
+    return (
+      <p className="notice notice-error">Couldn't load these settings. Reload to try again.</p>
+    );
+  }
+
+  // The current zone may not be in the browser's list (an older engine, or a server-only
+  // zone); keep it selectable so a save never silently drops it.
+  const zoneOptions =
+    data.timezone && !allTimeZones().includes(data.timezone)
+      ? [data.timezone, ...allTimeZones()]
+      : allTimeZones();
 
   const discardDrafts = () => {
     setName(data.application_name);
@@ -2152,6 +2174,32 @@ export function SecurityPanel() {
 
 export function Settings({ initialPanel }: { initialPanel?: Panel | undefined }) {
   const [panel, setPanel] = useState<Panel>(initialPanel ?? "general");
+  // General's save bar can hold six unsaved fields at once, and switching section unmounts the
+  // panel holding them. So the switch waits for a yes, the same two-step confirm the policy
+  // editor's Movies/TV switch uses and in the same place: directly under the control that was
+  // clicked, so that control does not move under the pointer. General is the only panel that
+  // reports a draft; the rest either save on the spot or confirm in their own modal.
+  const [generalDirty, setGeneralDirty] = useState(false);
+  const [pendingSwitch, setPendingSwitch] = useState<Panel | null>(null);
+
+  // The notice exists only because there are edits to lose, so it goes when they do -- by
+  // Discard, or by a Save that stores them. Keyed on the draft rather than on the Discard
+  // handler so the save path is covered too, which is the bug `PolicyEditor` fixed in its own
+  // copy of this: it kept warning about changes that no longer existed.
+  useEffect(() => {
+    if (!generalDirty) setPendingSwitch(null);
+  }, [generalDirty]);
+
+  const switchPanel = (next: Panel) => {
+    if (next === panel) return;
+    if (panel === "general" && generalDirty) {
+      setPendingSwitch(next);
+      return;
+    }
+    setPendingSwitch(null);
+    setPanel(next);
+  };
+  const pendingLabel = PANELS.find((p) => p.id === pendingSwitch)?.label ?? "";
   // Nine labels stop fitting one line well above this, but the app already has exactly one
   // definition of a narrow screen and a second would be worse than swapping a little early:
   // below this width the section rail is a bottom bar, so a compact settings header is the
@@ -2165,7 +2213,7 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
           <select
             value={panel}
             aria-label="Settings section"
-            onChange={(e) => setPanel(e.target.value as Panel)}
+            onChange={(e) => switchPanel(e.target.value as Panel)}
           >
             {PANELS.map((p) => (
               <option key={p.id} value={p.id}>
@@ -2184,18 +2232,39 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
               data-label={p.label}
               // The active panel is stated, not just colored, the same as the masthead.
               aria-current={panel === p.id ? "page" : undefined}
-              onClick={() => setPanel(p.id)}
+              onClick={() => switchPanel(p.id)}
             >
               {p.label}
             </button>
           ))}
         </nav>
       )}
+      {/* Directly under the rail that was clicked, so the rail does not move: the same slot and
+          the same two buttons the policy editor's own switch confirm uses (rule 18). The save
+          bar below names WHICH fields are unsaved, so this does not repeat them. */}
+      {pendingSwitch !== null && (
+        <div className="notice notice-warn">
+          You have unsaved General settings. Switching to {pendingLabel} discards them.{" "}
+          <button
+            type="button"
+            className="danger"
+            onClick={() => {
+              setPendingSwitch(null);
+              setPanel(pendingSwitch);
+            }}
+          >
+            Discard and switch
+          </button>{" "}
+          <button type="button" className="ghost" onClick={() => setPendingSwitch(null)}>
+            Keep editing
+          </button>
+        </div>
+      )}
       <div className="settings-body">
-        {panel === "general" && <GeneralPanel />}
+        {panel === "general" && <GeneralPanel onDirtyChange={setGeneralDirty} />}
         {panel === "services" && <ServicesPanel />}
         {panel === "plex" && <PlexPanel />}
-        {panel === "jobs" && <JobsPanel onGoToPlex={() => setPanel("plex")} />}
+        {panel === "jobs" && <JobsPanel onGoToPlex={() => switchPanel("plex")} />}
         {panel === "notifications" && <NotificationsPanel />}
         {panel === "security" && <SecurityPanel />}
         {panel === "backup" && <BackupPanel />}
