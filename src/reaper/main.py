@@ -31,6 +31,7 @@ from reaper.api.plex_trash import router as plex_trash_router
 from reaper.api.poster import close_artwork_client
 from reaper.api.poster import router as poster_router
 from reaper.api.routes import router
+from reaper.api.runs import profile_router
 from reaper.api.runs import router as runs_router
 from reaper.api.scan import router as scan_router
 from reaper.api.settings import router as settings_router
@@ -407,6 +408,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(scan_router)
     app.include_router(poster_router)
     app.include_router(runs_router)
+    app.include_router(profile_router)
     app.include_router(whitelist_router)
     app.include_router(fairness_router)
     app.include_router(breakdown_router)

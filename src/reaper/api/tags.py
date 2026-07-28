@@ -61,8 +61,8 @@ GROUPS: Final[tuple[tuple[str, tuple[tuple[str, str], ...]], ...]] = (
             ),
             (
                 POLICY,
-                "The rules that flag a title and what is always kept. "
-                "Try a change before you save it.",
+                "What flags a title, what is always kept, and how much one run may "
+                "remove. Try a change before you save it.",
             ),
             (REAP, "Approve a plan, run it, and read back what was removed."),
             (SCALES, "Who watches what, and how much of the library each person accounts for."),
@@ -76,7 +76,7 @@ GROUPS: Final[tuple[tuple[str, tuple[tuple[str, str], ...]], ...]] = (
             (PLEX, "Link a Plex server and choose which libraries Reaper may touch."),
             (JOBS, "Scheduled work: scans, upkeep, and the Leaving Soon shelf."),
             (NOTIFICATIONS, "Where Reaper posts what it is about to delete."),
-            (SECURITY, "Turn deletion on or off, and change the password."),
+            (SECURITY, "The deletion switch from Policy → Deletion, and the password."),
             (BACKUP, "Take a copy of your settings and history, or put one back."),
             (LOGS, "Read the log, download it, and set how much detail it keeps."),
             (ABOUT, "Which version is running."),

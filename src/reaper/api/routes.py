@@ -174,7 +174,7 @@ async def _snapshot_out(session: AsyncSession, snapshot: Snapshot) -> SnapshotOu
     )
 
 
-@router.get("/snapshot/season-shape", tags=[api_tags.REVIEW])
+@router.get("/snapshot/season-shape", tags=[api_tags.POLICY])
 async def season_shape(request: Request) -> SeasonShapeOut:
     """The distribution of content-season counts across shows, for the keep-last advisory.
 

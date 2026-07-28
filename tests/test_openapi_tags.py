@@ -84,6 +84,21 @@ class TestEveryOperationIsFiled:
         empty = set(api_tags.ALL) - _tags_used(schema)
         assert empty == set(), f"declared but nothing is filed under it: {empty}"
 
+    def test_the_policy_pages_routes_file_under_policy(self, schema: dict[str, Any]) -> None:
+        """Three operations sit in files whose other routes belong elsewhere, so nothing
+        about where they are declared suggests the right section. The operator edits all
+        three on the Policy page, and that is what decides it: the two pace routes are
+        Policy, "Pace and limits", and the season-shape advisory is the "from your last
+        scan" line on the same page. ``runs.py``'s router files everything else it holds
+        under Reap, so the pace routes ride a second router.
+
+        Rule 119: the expectation is written from the UI, not read back off the
+        decorators, so re-tagging them has to argue with this list."""
+        filed = {(m, p): op.get("tags", ()) for m, p, op in _operations(schema)}
+        assert filed[("GET", "/api/profile")] == [api_tags.POLICY]
+        assert filed[("PUT", "/api/profile")] == [api_tags.POLICY]
+        assert filed[("GET", "/api/snapshot/season-shape")] == [api_tags.POLICY]
+
 
 class TestTheSectionListItself:
     def test_a_section_is_declared_once(self) -> None:

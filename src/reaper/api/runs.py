@@ -66,6 +66,13 @@ log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api", tags=[api_tags.REAP])
 
+#: The two ``/profile`` routes below carry the caps, and the operator edits those on the
+#: Policy page, not on Reap (``PolicyEditor``'s "Pace and limits"). They get their own
+#: router because FastAPI CONCATENATES a route-level tag with its router's rather than
+#: letting the route override it, so ``@router.get("/profile", tags=[POLICY])`` would file
+#: one operation under two sections -- which ``tests/test_openapi_tags.py`` refuses.
+profile_router = APIRouter(prefix="/api", tags=[api_tags.POLICY])
+
 
 def _sessions(request: Request) -> async_sessionmaker[AsyncSession]:
     factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
@@ -691,7 +698,7 @@ def _settings_out(settings: ProfileSettings, *, recovered: bool = False) -> Prof
     )
 
 
-@router.get("/profile")
+@profile_router.get("/profile")
 async def get_profile(request: Request) -> ProfileSettingsIO:
     """The pace settings: the caps a run obeys, plus the grace window it does *not* (the
     countdown is a notice, see ``services.grace``). Built-in defaults until one is saved.
@@ -703,7 +710,7 @@ async def get_profile(request: Request) -> ProfileSettingsIO:
     return _settings_out(profile.settings, recovered=profile.fell_back)
 
 
-@router.put("/profile")
+@profile_router.put("/profile")
 async def update_profile(request: Request, payload: ProfileSettingsIO) -> ProfileSettingsIO:
     """Update the caps and grace settings.
 
