@@ -985,3 +985,60 @@ implementation forgot can still be found. Here it was one sentence, and it was t
 Copy the file aside first (`cp` to scratch, `cp` back), or commit before mutating. The tell was
 `grep -c` returning 0 for a symbol the edit had just introduced; without that check the pass
 would have run its remaining gates against a tree that had silently lost its own fix.
+## Refuted at `677c81e` (2026-07-28, reviewing the settings-draft-guards branch, PR #130)
+
+Two lanes fired by path (`seam`, because `PlexPanel` and `NotificationsPanel` both gained an
+`onDirtyChange` prop wired in `Settings`; `diff` on `Settings.tsx` and `PlexPanel.tsx`). No
+`safety` lane: nothing under `engine/`, `services/`, either transport guard, the execute route or
+the arming UI is touched. Eight findings survived and were fixed in `19bab87`, `232775d` and
+`afa3983`; the Security/Backup half was deferred in writing and filed as issue #135.
+
+**Rule 146 was written by the previous pass over this same seam, and the branch was built against
+it — so the surviving findings are the ones the rule does not reach.** Three of the four
+behavioral ones are not "is the signal computed in the right states" at all; they are "is the
+value it compares against the same shape as the value it holds." The rule asks whether the report
+survives every early return. It does not ask whether the two things being compared were ever
+spelled the same way, and that is where all three lived.
+
+| Lane | Candidate | Why it died |
+| --- | --- | --- |
+| diff | `webUrlDirty` trims the left side and not the right, so stored whitespace reads as a permanent draft | `set_plex_web_url` does `.strip().rstrip("/")` on write, the route strips again, and the unset value is the clean `DEFAULT_PLEX_WEB_URL`. No path stores whitespace. |
+| diff | The web-address row is behind a condition, so `webUrlDirty` can outlive its box | It sits unconditionally in the Connection `.set-rows`, after both early returns, and its inline Save uses the byte-identical test. The box and the report cannot disagree. |
+| diff | The `!data` branch can hold a typed `webUrl` and report a trapped draft | React Query keeps `data` through a failed refetch, and nothing in the tree resets the cache (no `removeQueries`, `resetQueries` or `clear()` repo-wide), so `!data` implies no successful load ever landed — where `webUrl === savedWebUrl === ""`. Kills the `isPending` variant too. |
+| diff | `manualDirty` disagrees with the row that renders it | The row is `linked && manualOpen`, the check is `linked && manualOpen && …`, and the empty-host arm mirrors Save's `disabled={!manualHost.trim()}`. `setConnection.onSuccess` closes the row and clears the flag together. |
+| diff | `manualUri`'s 32400 default disagrees with `openManual`'s 443 seed for https | For https it does not: `new URL("https://h:443").port` is `""`, so the 443 fallback is what made that round trip exact. Only the **http** and port-less shapes broke, which is the finding that was fixed — the https half of this candidate is genuinely fine. |
+| diff | The unmount cleanup's `false` clobbers a newly mounted panel's `true` | Three distinct `useState` setters, and React flushes deleted-tree passive cleanups before the new tree's passive mounts. Even one shared setter would order correctly. |
+| diff | The webhook panel reports a draft it has already saved | `save.onSuccess` clears the box, and `remove.onSuccess` does the same, so `typed` goes false on the success path. |
+| diff | The `NotificationsPanel` comment overstates the box's reachability | Verified line by line: no early return, and the loading and failed-check branches swap only the one status paragraph. The box, its help and all three buttons render unconditionally. The claim is true as written. |
+| diff | `dirtyPanels` being a fresh object literal each render re-fires an effect | Read synchronously at the one call site; the effect depends on the derived boolean, never on the object. |
+| diff | `webUrlDirty` sticks true after a Save whose refetch fails | Needs a double failure (save succeeds, refetch fails), self-heals on the next good read, and the Save button is still on screen. No trap. |
+| diff | Switching server with the Manual row open reports a stale draft | The report is correct there — Save really would send an address different from the newly stored one — and the row is on screen. |
+| diff / seam | `ServicesPanel`, `JobsPanel`, `ScheduleModal` and `ServiceModal` hold unguarded drafts too | All live inside `ModalShell`'s scrim with a `canClose`/back guard (rule 80), so the section rail is not reachable while one is open. Not counterexamples to the panel count; **Security and Backup are**, and that one survived. |
+| diff | An in-flight Plex sign-in is destroyed silently by a section switch | Real, and a bigger loss than a half-typed address — but pre-existing on `dev`, not a typed draft, and claimed by no comment this branch adds. Out of scope here; worth its own issue if anyone wants it. |
+| seam | A call site passes an inline arrow, re-running the effects every render | The three `Settings` sites pass `useState` setters; `SetupWizard` and two test sites render bare (`undefined`, stable); the remaining test sites forward one `vi.fn()` captured before `render()`. |
+| seam | `exactOptionalPropertyTypes` rejects a bare render | The prop type spells `| undefined` and the destructure carries `= {}`. `run build` exits 0 on the whole tree. |
+| seam | A `dirtyPanels` key is not a real `Panel` id | All three are in the union, and tsc passes under `noUncheckedIndexedAccess` (the `?? false` handles the undefined). |
+| seam | `leavingLabel` / `pendingLabel` can render empty | `PANELS` covers all nine ids and `panel` is only ever set from `PANELS`/`initialPanel`. Same refutation as `57c11c5`. |
+| seam | The notice copy reads badly for one of the three labels | "You have unsaved General / Plex / Notifications settings. Switching to X discards them." All three are plain, short, no em dash, no internal vocabulary (rule 21). |
+| seam | The unmount-cleanup path is untested | True, and no test can distinguish it: `leavingDirty` is keyed on the panel currently MOUNTED, so a stale flag never blocks a switch and a remount re-reports within one effect flush. Defensive only — rule 118's "a test that cannot discriminate must never read as a proof." |
+| seam | Dropping the `notifications` key from `dirtyPanels` would go unnoticed | Two `SettingsNav` tests fail on `switchNotice()!` being null. |
+| seam | `SetupWizard`'s bare `<PlexPanel />` loses a draft with no confirm | The wizard has no section switch; "Skip to the app" is the masthead-class exit `STATUS.md` already scopes out in writing. |
+| seam | `PolicyEditor`'s twin confirm carries a cross-reference the branch made stale | It does not; both `PolicyEditor` sites name only their own draft. |
+| seam | A stale `#128` reference survives somewhere | The only repo hit is the ledger row in `unproven.md`, which records where the candidate was settled and is correct as history. |
+| seam | Another `docs/STATUS.md` line is now stale | Grepping the whole file for draft / unsaved / Plex / Notifications / switch returns only line 111, which the branch edits. |
+| seam | `NotificationsPanel` traps the operator on a malformed webhook, since Save is disabled while `typed` is true | The box is on screen and clearing it is one gesture. The report is deliberate, argued in the comment, and pinned by a test: a mis-pasted secret is still a secret to re-copy. |
+| seam | `plexDirty` sticks true after `PlexPanel` unmounts and blocks navigation from another panel | `leavingDirty` reads only the mounted panel's key, so a stale per-panel flag is unreachable. |
+| seam | `JobsPanel`'s `onGoToPlex` can be blocked by the guard | Called with `panel === "jobs"`, which is not a `dirtyPanels` key. |
+| seam | The `webUrl` re-seed effect clobbers a live draft when a refetch returns a changed `web_url` | Pre-existing and documented at the state declaration; the certificate toggle sends `savedWebUrl`, so the one invalidation an operator can reach cannot change the value. |
+
+**One refuted candidate cost a test iteration anyway, and that is the thing to carry forward.**
+"A one-frame false dirty on the first data-bearing render" is real and unobservable in the app —
+`webUrl` is still `""` while the saved value has arrived, and the seeding effect ends it in the
+same flush. It was refuted at `57c11c5` and again here, correctly both times. Then the new test
+for "opening the manual row reports nothing" cleared its spy after `waitFor(lastCalledWith(false))`
+and caught that flash immediately afterwards, because the **loading state's own** `false` satisfied
+the wait one turn early. So an unobservable transient is still observable to a spy, and a settle
+condition that names a value rather than a rendered state will match the wrong occurrence of it.
+Settle on the thing that ENDS the transient — here, the box holding its saved value — not on the
+signal you are about to measure. Rule 137's "wait for the control, not for the page," one level in:
+wait for the state, not for a value the earlier state also produces.
