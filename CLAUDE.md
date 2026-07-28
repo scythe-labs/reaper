@@ -219,9 +219,14 @@ failed read. To see console output locally, run
 the standing answer: a test that has something to tell you must fail, not warn.
 
 **Asking whether CI is green** is a different question from reading a log, and a much cheaper
-one: `$B/commits/<sha>/status` returns a combined `state` plus one entry per job (`check`,
-`frontend`, `docker`). It is the merge gate above. A read-only `curl` with tea's token is the
-sanctioned way to get it — but anything that *changes* a PR goes through `tea`.
+one: `$B/commits/<sha>/status` returns a combined `state` plus one entry per job. It is the
+merge gate above. A read-only `curl` with tea's token is the sanctioned way to get it — but
+anything that *changes* a PR goes through `tea`. **Which jobs appear depends on what the
+commit touched.** CI runs in two lanes: `ci.yml` (`check`, `frontend`, `docker`) ignores
+exactly the paths `docs.yml` (`hygiene`, the repo-hygiene test alone) claims — `docs/**`,
+`**.md`, `.claude/**` — so a docs-only commit reports `hygiene` and nothing else, and a
+missing `docker` there is a skipped lane, not a stalled run. The two path lists are
+complementary by construction; edit one and you must edit the other.
 
 **Reading a CI log.** CI is Gitea Actions, so `gh` does not reach it and `tea` has no log
 subcommand. Fetch with tea's token (macOS: `~/Library/Application Support/tea/config.yml`,
