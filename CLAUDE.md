@@ -168,6 +168,18 @@ is a false statement about the work.
   fact). A PR closing an issue inherits that issue's two; `Reviewed/` is issue triage and stays
   off a PR. Reviewers filter the queue the same way the backlog is filtered, and an unlabeled
   PR is missing from it.
+- **Landing a branch into `dev` is CI-gated, and the style is `rebase`.** Ask the API whether
+  the branch head is green before merging (below) — a fresh PR sits `pending` for minutes, so
+  poll rather than assume — then `tea pr merge --style rebase <n>`, which keeps the commit
+  message you wrote. `merge` (the default) and `squash` both compose a new message out of the
+  PR title and body, throwing that text away; `squash` is right for `dev` → `main` below, where
+  the granular history is deliberately collapsed, and wrong here. Three things that cost a
+  round trip each: a **draft will not merge** and there is no ready-for-review flag, so strip
+  the `WIP:` prefix with `tea pr edit <n> --title "…"`; `tea` has no `--delete-branch`, so
+  `git push origin --delete <branch>` after; and **a rebase-merge lands a sha CI never tested**,
+  since the branch is replayed onto whatever `dev` is now. Landing several PRs back to back
+  therefore ends with the gates re-run on the merged `dev`, not with three green per-branch
+  runs — same reason the re-check above exists, one step later in the sequence.
 - **`main` is release-only.** Never push to `main` directly. To promote `dev`, open a pull
   request from `dev` → `main` and **squash-merge** it, so `main`'s history is a clean
   sequence of squashed releases while the granular history lives on `dev`. With the `tea`
@@ -205,6 +217,11 @@ warnings once piled up behind a green suite, every one of them a component quiet
 failed read. To see console output locally, run
 `npx vitest run <file> --disableConsoleIntercept`; otherwise read the CI job log. Rule 135 is
 the standing answer: a test that has something to tell you must fail, not warn.
+
+**Asking whether CI is green** is a different question from reading a log, and a much cheaper
+one: `$B/commits/<sha>/status` returns a combined `state` plus one entry per job (`check`,
+`frontend`, `docker`). It is the merge gate above. A read-only `curl` with tea's token is the
+sanctioned way to get it — but anything that *changes* a PR goes through `tea`.
 
 **Reading a CI log.** CI is Gitea Actions, so `gh` does not reach it and `tea` has no log
 subcommand. Fetch with tea's token (macOS: `~/Library/Application Support/tea/config.yml`,
