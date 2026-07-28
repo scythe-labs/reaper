@@ -84,12 +84,13 @@ independent verifier killed. Re-raising one costs a full verify cycle and return
 Each entry records the commit it was refuted at — if the cited code has changed since, the
 refutation is stale and the candidate is live again.
 
-**Read `references/unproven.md` too.** It holds the other outcome: candidates that survived a
-read but whose trigger nobody proved, so they were neither fixed nor filed. Each says what
-evidence would settle it. If this pass can supply that evidence cheaply, do — confirming or
-killing one of these is worth more than a fresh tier-4 finding, and the entry then leaves the
-file. Same staleness rule: the commit it was raised at is recorded, and a changed citation means
-re-derive.
+**Then list the open questions: `tea issue list -L "Status/Need More Info"`.** Those are the
+other outcome — candidates a previous pass raised and could not prove, so they were filed as
+questions rather than as defects. Each body carries a *What would settle it* section naming the
+evidence it wants. If this pass can supply that evidence cheaply, do: settling one is worth more
+than a fresh tier-4 finding, and it costs one label edit either way. Same staleness rule as
+`refuted.md` — each is pinned to the commit it was raised at, so a changed citation means
+re-derive rather than trust it.
 
 **Do not restate the numbered rules.** `.claude/rules/*.md` holds 133 blockers, distilled from
 six adversarial passes, and they load automatically when you read a file they govern — reading
@@ -155,9 +156,9 @@ Two things go in the working tree, not the report:
 Only when the argument said `fix`. Report first, then apply — never silently.
 
 Apply only findings whose verdict is CONFIRMED, and only where the fix is the one the finding
-names. A PLAUSIBLE finding is reported and left alone: its trigger was never proven, so editing
-the deletion path on the strength of it trades a hypothetical bug for a real diff. Say which
-ones you skipped and why.
+names. A PLAUSIBLE finding is not edited on: its trigger was never proven, so touching the
+deletion path on the strength of it trades a hypothetical bug for a real diff. It is filed as a
+question instead, per *Opening issues*. Say which ones you skipped and why.
 
 Run the gates the change touches before you hand back — for backend edits at minimum
 `uv run ruff format .`, `uv run ruff check .`, `uv run mypy src/reaper`, and the test files
@@ -168,9 +169,10 @@ Commit each fix as its own story, with the test that pins it, per `CLAUDE.md`.
 
 ## Opening issues
 
-A confirmed finding that is not fixed in the same session goes to the tracker, so a session
-that dies does not take the work with it. Gitea, via `tea` — the remote is not GitHub, so `gh`
-and any `--comment` flow do not reach it.
+Every finding this run does not fix goes to the tracker, so a session that dies does not take
+the work with it — confirmed ones as defects, unproven ones as questions, and nothing to a
+reference file. Gitea, via `tea` — the remote is not GitHub, so `gh` and any `--comment` flow do
+not reach it.
 
 **One issue per fix, not per finding.** This is `CLAUDE.md`'s commit rule pointed at the
 tracker: one commit tells one story, so one issue describes one commit. If two findings would
@@ -182,17 +184,44 @@ be closed by the same edit, they are one issue.
 | tier 3–4 | grouped by shared root cause, or by shared file and theme; the body lists each as a checklist item |
 | twins under rule 72 (the same defect in sibling functions) | always **one** issue, because the rule requires them fixed together |
 
-**Only CONFIRMED findings.** An issue asserts a defect exists; do not assert what a verifier
-declined to. A PLAUSIBLE or unverified one is appended to `references/unproven.md` instead,
-under the commit it was raised at, with the evidence that would settle it — **not** left in
-`.claude/review-findings/`, which is gitignored interim scratch and does not survive the
-worktree it was written in. An unproven candidate outlives the run that raised it, so it is
-filed where the next run reads.
+**An unproven candidate is filed too, as a question rather than as a defect.** It does not go
+in a reference file and it does not stay in `.claude/review-findings/`, which is gitignored
+interim scratch that dies with the worktree. The labels carry the distinction, so nothing has to
+be read to see it: an issue asserts a defect exists, so one whose trigger a verifier declined to
+demonstrate takes `Status/Need More Info` and **no `Reviewed/` label at all**.
 
-**Cap at 8 issues per run.** Past that, the remaining confirmed findings go into a single
-tracking issue that lists them all, so nothing is lost and the tracker is not flooded. Say in
-the run summary how many were rolled up — a cap that hides what it dropped reads as "that was
-everything."
+| Verdict | Third label | The tracker reads it as |
+| --- | --- | --- |
+| CONFIRMED | `Reviewed/Confirmed` | a defect exists — fix it |
+| PLAUSIBLE, or never verified | `Status/Need More Info` | a trigger nobody has shown — prove it or kill it |
+
+An unproven body carries one extra section, above the fingerprint line:
+
+```
+**What would settle it.** The test to write, the call site to grep, the journey to drive.
+```
+
+Write it for someone who has never seen the finding, because they are the only one who will read
+it. "Needs verification" settles nothing and leaves the issue open forever.
+
+It leaves that state in one command, which is the whole reason it is an issue and not prose:
+
+- **Proven.** `tea issue edit <n> --add-labels "Reviewed/Confirmed"`, then a *second* call with
+  `--remove-labels "Status/Need More Info"` — `--add-labels` takes precedence over
+  `--remove-labels` in one invocation, so a combined command silently keeps the old label.
+  Nothing is re-filed; the issue keeps its number, its body, and its history.
+- **Refuted, or stale because the cited code moved.** `tea issue edit <n> --add-labels
+  "Reviewed/Invalid"`, then `tea issue close <n>`, then append the reasoning to
+  `references/refuted.md` naming the issue number. Leave `Status/Need More Info` on it as the
+  record of how it arrived; the list above filters open issues, so a closed one drops out on its
+  own. That file, not the closed issue, is what stops the next pass re-raising it — a pass reads
+  `refuted.md` before it looks at anything and never reads closed issues.
+
+**Cap at 8 confirmed issues per run, and 4 unproven ones** — lower because an unproven issue
+asserts less and still costs someone a judgment call to close. Past either cap the remainder goes
+into a single tracking issue that lists them all, labeled like the ones it carries, so nothing is
+lost and the tracker is not flooded. Say in the run summary how many were rolled up — a cap that
+hides what it dropped reads as "that was everything."
 
 **Check for duplicates first** (`tea issue list --state all`). Re-running a review must not
 re-file what is already open. Each body carries a stable fingerprint line to match on:
@@ -203,38 +232,48 @@ finding: <path>:<symbol> — <short-slug>
 
 Match on that, never on the line number, which drifts with every edit above it.
 
+**A fingerprint that hits an open `Status/Need More Info` issue is not a duplicate to skip — it
+is the question this run just answered.** Upgrade it or close it with the two commands above.
+Filing a fresh issue for a candidate an earlier pass already asked about leaves the question
+sitting open beside its own answer, and the next pass has to settle it twice.
+
 Create with the reviewed commit pinned, so a finding read against a stale tree is detectable,
 and **labeled**, so it is reachable by the views the tracker is actually read through:
 
 ```
 tea issue create --title "<outcome, in plain language>" \
   --description "<body>" --referenced-version "$(git rev-parse --short HEAD)" \
-  --labels "Kind/Bug,Priority/Critical,Reviewed/Confirmed"
+  --labels "Kind/Bug,Priority/Critical,Reviewed/Confirmed"     # unproven: "…,Status/Need More Info"
 ```
 
 **Three labels, one from each axis, on every issue filed.** An unlabeled issue is missing from
 every "what is critical" and "what is a bug" filter, which is where the backlog gets triaged
 from — so it is findable only by someone already scrolling past it, which is the same failure
 as not filing it. `tea labels` lists what exists; never invent one, and if nothing fits, say so
-in the run summary rather than filing bare.
+in the run summary rather than filing bare. A label name with spaces survives the comma split,
+so `Status/Need More Info` needs no escaping beyond the quotes already there.
 
 | Axis | Pick |
 | --- | --- |
 | `Kind/` | `Bug` for a defect; `Enhancement` for a rough edge that works as built; `Security` where the loss is confidentiality, auth, or a secret; `Testing` for a gap in the suite; `Documentation` for a doc-only correction |
 | `Priority/` | `Critical` — a file can be lost, or a protection silently stops covering. `High` — a wrong decision the operator can still catch on the panel. `Medium` — a surface that misleads without costing a file. `Low` — cosmetic |
-| `Reviewed/` | `Confirmed`, always: only CONFIRMED findings become issues at all, so anything filed from here has earned it |
+| the verdict | `Reviewed/Confirmed` where the trigger was demonstrated, `Status/Need More Info` where it was not. Exactly one, never both, and never neither |
 
 **Priority ranks the operator's loss, never the size of the fix.** A protection that quietly
 stops protecting is `Critical` even when the patch is three lines, because the prime directive
 is what it breaks. Judging it by effort is how a one-line fail-open ends up under a font bug.
+
+**On an unproven issue, priority ranks that same loss as if the trigger is real** — the doubt is
+already carried by `Status/Need More Info`, and discounting the priority for it too prices the
+uncertainty twice, which is how a possible fail-open lands at `Low` and is never looked at again.
 
 The title says what the operator loses, not where the code is wrong: *"A play made after
 approval no longer rescues the file"* beats *"unreadable history body coerced to empty list."*
 Rule 21 governs the title; the body is for engineers and may use the internal vocabulary.
 
 **Keep the body short — it is read to decide what to do, not to relive the review.** Five
-short sections, in this order and no others. If a section needs more than three sentences, the
-finding is really two issues.
+short sections, in this order and no others, or six on an unproven one. If a section needs more
+than three sentences, the finding is really two issues.
 
 ```
 **What breaks.** One or two sentences: the trigger, and what the operator loses.
@@ -245,24 +284,31 @@ finding is really two issues.
 
 **Fix.** What to change, concretely. One or two sentences.
 
+**What would settle it.** Unproven issues only. The evidence that would prove or kill it.
+
 finding: <path>:<symbol> — <short-slug>
 ```
+
+On an unproven issue, *What breaks* says what would break **if** the trigger fires, and *Fix* is
+the repair that becomes right once it does. Neither may state as fact what this pass could not
+show.
 
 No transcript of the verification, no quoted diffs, no reasoning chain — those live in
 `.claude/review-findings/`, and the issue can say "verifier notes in the run artifact" if
 anyone needs them. An issue nobody finishes reading is an issue nobody acts on.
 
 **File them, then show what you filed — do not ask first.** The standing authorization is the
-`CLAUDE.md` golden rule: a confirmed defect leaves the session fixed or filed, and a round trip
-for permission is how the second option quietly becomes neither. Report the list with issue
-numbers in the run summary, grouped the way you filed it, so a grouping the operator would have
-made differently is still visible and still cheap to change — an issue is edited or closed in
-one command, where a lost finding is gone.
+`CLAUDE.md` golden rule: a defect leaves the session fixed or filed, and a round trip for
+permission is how the second option quietly becomes neither. Report the list with issue numbers
+in the run summary, split into confirmed and unproven and grouped the way you filed it, so a
+grouping the operator would have made differently is still visible and still cheap to change —
+an issue is edited or closed in one command, where a lost finding is gone.
 
-Two things still hold the gate. **Only CONFIRMED findings**, because an issue asserts a defect
-exists. And **the duplicate check runs before every create**, because re-running a review must
-not re-file what is already open; that check, not an approval prompt, is what keeps the tracker
-from flooding.
+Two things still hold the gate. **The verdict is in the labels on every issue**, never only in
+the prose, because an issue with neither `Reviewed/Confirmed` nor `Status/Need More Info` is a
+claim nobody can weigh and nobody can filter for. And **the duplicate check runs before every
+create**, because re-running a review must not re-file what is already open; that check, not an
+approval prompt, is what keeps the tracker from flooding.
 
 ## Do not
 

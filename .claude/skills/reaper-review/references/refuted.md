@@ -11,6 +11,12 @@ Append here whenever a verifier kills a candidate. An entry that is later found 
 — the defect was real after all — moves to the bottom section, so the record shows the miss
 instead of hiding it.
 
+**Only a demonstrated refutation belongs here.** A candidate nobody could prove *or* kill is
+filed as an issue labeled `Status/Need More Info` — see `SKILL.md`'s *Opening issues*. Older
+sections below send that case to `unproven.md`, which was the route at the time and is retired;
+that file is now a closed record. If the candidate arrived as one of those issues, close it and
+add `Reviewed/Invalid`, and name its number in the entry you append here.
+
 ## Refuted at `d3c3839` (2026-07-24, the fifth review pass)
 
 Carried forward from `docs/history/CODE_REVIEW.md`, which is frozen. 45 candidates were raised

@@ -242,7 +242,7 @@ frontend/public/vendor/
 # Review findings, written by each agent as it finishes so a run that dies
 # partway -- a lost session, an exhausted quota -- still leaves its verified
 # work on disk. Interim artifacts: a pass worth keeping goes to docs/history/,
-# and a candidate verification could not settle goes to the review skill's
-# references/unproven.md. Nothing whose lifespan outlives the run stays here --
+# and a candidate verification could not settle is filed as an issue labeled
+# Status/Need More Info. Nothing whose lifespan outlives the run stays here --
 # these files do not survive removal of the worktree they were written in.
 .claude/review-findings/

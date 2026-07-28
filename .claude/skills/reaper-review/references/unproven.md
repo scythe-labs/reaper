@@ -1,42 +1,34 @@
-# Candidates that verification settled neither way
+# Retired: candidates that verification settled neither way
 
-Review candidates that **survived a first read but whose trigger was never proven**. They are
-not findings — nothing was edited on their strength, and nothing was filed, because an issue
-asserts a defect exists and a verifier declined to. They are not refuted either: no one showed
-the trigger cannot occur. Read this before a review, alongside `refuted.md`.
+**Nothing is added to this file, and no pass needs to read it.** An unproven candidate — one
+that survived a first read but whose trigger nobody proved — is filed as an issue labeled
+`Status/Need More Info`, carrying no `Reviewed/` label and a *What would settle it* section
+naming the evidence it wants. `SKILL.md`'s *Opening issues* section holds the mechanics, and
+`tea issue list -L "Status/Need More Info"` is the list this file used to be.
 
-The sibling file is the other half of the same record. `refuted.md` stops the next pass wasting
-a verify cycle on a dead candidate; this file stops it *re-deriving from scratch* a live one,
-and tells it what evidence would settle the question.
+Nothing was stranded by the switch: Open was already empty at `03b707d`, the pass that settled
+the last eight entries.
 
-**An entry is bound to a commit, not to the repo forever** — same rule as `refuted.md`. Each
-records where the code stood when it was written. If the cited lines have changed since,
-re-derive rather than trusting either answer.
+## Why the tracker instead
 
-**Every entry leaves this file one of three ways**, and leaving is the point:
+The file existed because an issue asserts a defect exists and a verifier had declined to, so a
+live-but-unproven candidate had nowhere to go. A label answers that better than a file does. The
+question sits in the same views the backlog is triaged through instead of somewhere a reviewer
+has to remember to open; proving it later is one label edit rather than a re-file, so it keeps
+its number and its history; and killing it is a close as `Reviewed/Invalid`, which is visible,
+rather than a deletion that is not. The one property the file had that the tracker lacks —
+being read before every pass — was never the point here, and belongs to its sibling.
 
-- **Confirmed** — the trigger was demonstrated. It becomes a fix or a tracker issue.
-- **Refuted** — a verifier killed it. Move it to `refuted.md` under the commit it died at.
-- **Stale** — the cited code changed and the reasoning no longer applies.
+**`refuted.md` is unaffected and still binds.** Every refuted candidate appends there, including
+one killed after being filed as a question, and a pass reads it before it looks at anything. A
+closed issue is not read by anyone, so the file is still the only thing stopping the next pass
+re-raising a dead candidate.
 
-**A settled candidate is no longer unproven, so it does not stay here as prose.** It is deleted
-from Open and recorded as one ledger row below; the reasoning that settled it lives in the
-commit that closed it, which is the durable copy. An entry that sits in Open across many passes
-untouched is itself the finding — either the trigger is worth proving or the candidate is worth
-killing. Empty is the intended resting state, not a gap. Do not let this file become an inbox.
+## The record
 
-Verifier transcripts, reasoning chains, and per-agent run notes stay in the gitignored
-`.claude/review-findings/`, which is interim by design. Only the candidate itself belongs here,
-because only the candidate outlives the run.
-
-## Open
-
-Empty, as of `03b707d`. The eight entries that stood here were settled in one pass: six
-confirmed and filed, two refuted.
-
-## Settled
-
-Newest first. "Settled" is the commit that closed it; read that commit for the reasoning.
+What this file held when it was retired. "Settled" is the commit that closed each candidate; read
+that commit for the reasoning. Kept because `refuted.md` cites these rows, and because the
+bindings underneath them are a standing lesson about pinning a candidate to a hash.
 
 | Candidate | Raised | Settled | Outcome |
 | --- | --- | --- | --- |
@@ -69,10 +61,11 @@ one case where the "read that commit" instruction above points at an issue inste
 
 `8ff0a3e` and `394cc3a` no longer resolve: both were rewritten by a rebase before the hash was
 recorded. The rows are kept for the record, but those two bindings cannot be checked — when
-recording a row, take the hash after any rebase, not before. **`57c11c5` and `adbc92b` are a
-third variant worth naming**, because they look fine and are not: both still resolve as objects,
-so `git show` works, but neither is an ancestor of `dev` any more, so `git log` never reaches
-them and a diff against them silently compares across a fork. Every citation raised at those two
-was therefore re-derived against `03b707d` rather than trusted, and all of them held. A hash that
+recording a hash, take it after any rebase, not before. **`57c11c5` and `adbc92b` are a third
+variant worth naming**, because they look fine and are not: both still resolve as objects, so
+`git show` works, but neither is an ancestor of `dev` any more, so `git log` never reaches them
+and a diff against them silently compares across a fork. Every citation raised at those two was
+therefore re-derived against `03b707d` rather than trusted, and all of them held. A hash that
 resolves is not the same as a hash that is on your branch; check with `git merge-base
---is-ancestor`, not with `git show`.
+--is-ancestor`, not with `git show`. This outlives the file: an issue pinned with
+`--referenced-version` carries exactly the same binding, and fails in exactly the same way.
