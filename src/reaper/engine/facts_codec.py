@@ -24,7 +24,7 @@ import dataclasses
 import re
 from typing import Any
 
-from reaper.engine.gates import Facts, GateId, GateResult
+from reaper.engine.gates import Facts, GateId, GateResult, thaw_defers_to_owner
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.ratings import Rating, RatingSource
 
@@ -131,7 +131,13 @@ def _result_from_dict(d: dict[str, Any]) -> GateResult:
         # one that was refused, so it reads as "Reaper did not establish this" -- the claim
         # that asserts less. That answer reaches the operator's chip (``api.routes._chip``),
         # not any reap decision: no blocked gate holds a hand reap (``engine.verdict``).
-        defers_to_owner=d.get("defers_to_owner") is True,
+        #
+        # Through the shared reader, which is where that rule is now written down, even though
+        # this consumer is two-state by construction: ``GateResult.defers_to_owner`` is a plain
+        # ``bool``, so "cannot tell" and "refused" collapse here on purpose. Routing it anyway
+        # means a change to what counts as a legible flag lands on all three readers at once
+        # rather than on the two somebody remembered (#112).
+        defers_to_owner=thaw_defers_to_owner(d.get("defers_to_owner")) is True,
     )
 
 

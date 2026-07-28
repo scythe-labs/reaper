@@ -302,9 +302,11 @@ function keepRuleConflict(item: CandidateDetail): GateOutcome | undefined {
  *    sections separate them -- the score breakdown, the keep leanings, the cleared protections
  *    -- which is a large part of why the contradiction went unseen: nobody had both on screen
  *    at once. Shares its wording with the card's chip, so the queue and the panel agree.
- *  - absent -- a row frozen before the flag shipped, which can distinguish neither shape and
- *    so names neither. Vague and true beats specific and a coin flip; the next scan resolves
- *    it into one of the two above. */
+ *  - absent -- nothing legible in the row distinguishes the two shapes, so it names neither.
+ *    Two rows land here: one frozen before the flag shipped, and one carrying a value that is
+ *    not a bool at all, which the server reads to `null` rather than coercing or refusing
+ *    (`engine.gates.thaw_defers_to_owner`, #112). Vague and true beats specific and a coin
+ *    flip; the next scan resolves either into one of the two above. */
 function conflictNote(defersToOwner: boolean | null | undefined): string {
   if (defersToOwner === true) {
     return "This was watched more than a season your keep rule protects, so Reaper left the call to you. Spare it to keep it, or Reap it to remove it.";

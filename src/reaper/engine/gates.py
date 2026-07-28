@@ -164,6 +164,30 @@ class GateResult:
         return self.outcome == PROTECT
 
 
+def thaw_defers_to_owner(value: object) -> bool | None:
+    """``defers_to_owner`` as it comes off a stored explanation: three states, no coercion.
+
+    The one derivation, because it had two and they disagreed (rule 104). ``api.routes._chip``
+    read the raw dict with ``is True`` / ``is False``, so anything else fell to its
+    vague-but-true chip; ``api.schemas.GateOutcomeOut`` read the same byte through Pydantic's
+    lax bool coercion, which takes ``1`` and ``"true"`` as True, ``0`` as False, and REFUSES
+    ``2``, ``"banana"``, ``[]`` and ``{}``. A refusal there is not a smaller failure than a
+    disagreement: it fails the whole ``Explanation``, so ``_explanation_out`` falls to its
+    degraded body and the operator gets a panel with no signals, no protections and no
+    threshold -- while the chip beside it, the reap-override read, and every other extractor
+    go on reading that same row perfectly well, and a hand Reap on it still condemns.
+
+    So: exactly ``True`` or exactly ``False`` is the flag; anything else is ``None``, which is
+    the state the field already has a meaning for -- "nothing here can tell a comparison Reaper
+    made from one it refused". A row frozen before the flag shipped reaches that answer by
+    carrying no key; a row carrying a value nobody can read reaches it by carrying nothing
+    legible, which is the same thing to say to an operator. Rule 96: the fallback on an
+    unreadable field asserts LESS, never more, and it must not cost the operator the evidence
+    that is still readable around it.
+    """
+    return value if value is True or value is False else None
+
+
 class Gate(Protocol):
     """Any protection.
 

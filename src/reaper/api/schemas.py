@@ -15,7 +15,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 from reaper.engine.fields import FieldType, Lane, Op
-from reaper.engine.gates import POLICY_AUTHORABLE_GATES, GateId
+from reaper.engine.gates import POLICY_AUTHORABLE_GATES, GateId, thaw_defers_to_owner
 from reaper.engine.policy import CustomCondemnSpec, GradedKeepSpec, RatingRuleSpec
 from reaper.engine.signals import SignalId, SignalState
 
@@ -71,10 +71,13 @@ class GateOutcomeOut(BaseModel):
     the flag existed carries no key, and nothing in it can tell the shapes apart -- the
     wording that used to stand in for the flag is exactly what failed. ``None`` is that row,
     and a plain ``bool`` here would silently assert one shape about every legacy
-    explanation. ``services.snapshot._explain`` writes the key on every
-    ``protections_unknown`` entry, never omitting it when ``False``, so present-and-``False``
-    stays distinguishable from absent ON DISK -- and on the wire the absent key arrives as
-    ``null``, since nothing here or on the route sets ``exclude_none``.
+    explanation. ``None`` is also a row carrying a value that is not a bool at all: the
+    validator below reads it there rather than coercing it (which contradicts the chip) or
+    refusing it (which blanks the whole panel), because a value nobody can read tells the
+    shapes apart exactly as well as no value does. ``services.snapshot._explain`` writes the
+    key on every ``protections_unknown`` entry, never omitting it when ``False``, so
+    present-and-``False`` stays distinguishable from absent ON DISK -- and on the wire the
+    absent key arrives as ``null``, since nothing here or on the route sets ``exclude_none``.
 
     The same model types ``protections_fired`` and ``protections_checked``, where the key is
     never written and every entry therefore reads ``None``. That is honest for a gate with no
@@ -87,6 +90,20 @@ class GateOutcomeOut(BaseModel):
     already reads it off the stored row, and until this field existed the panel that opens
     beside that chip could not, so it went on running the retired wording test and asserted a
     comparison its own reason block denied (#86)."""
+
+    @field_validator("defers_to_owner", mode="before")
+    @classmethod
+    def _thaw_defers_to_owner(cls, value: object) -> bool | None:
+        """Read the stored byte the way ``_chip`` reads it, which is the point (rule 104).
+
+        ``mode="before"`` because the whole job is to run INSTEAD of Pydantic's bool coercion,
+        not after it. Left to Pydantic, ``1``/``"true"`` became a chip-contradicting ``True``
+        and ``2``/``"banana"``/``[]`` raised -- and a raise here does not degrade this one
+        field, it fails the enclosing ``Explanation`` and blanks the operator's whole why
+        panel while every other reader of the same row carries on. ``thaw_defers_to_owner``
+        holds the reasoning and is the only place this rule is written down (#112).
+        """
+        return thaw_defers_to_owner(value)
 
 
 class MatchOut(BaseModel):

@@ -496,6 +496,53 @@ class TestChip:
         assert chip.text == "Needs a look · left for you to decide"
         assert "watched more than" not in chip.text
 
+    @pytest.mark.parametrize("junk", ['"true"', '"false"', '"0"', "1", "0", "[]", "{}", "null"])
+    def test_the_panel_reads_the_junk_the_chip_reads_and_keeps_rendering(self, junk: str) -> None:
+        """The same sweep as the chip's, against the panel, which had it too and disagreed (#112).
+
+        Two readers of one stored byte, and two coercion rules (rule 104). The chip tests it
+        with ``is True`` / ``is False``, so everything above falls to its vague chip. The panel
+        read the same byte through Pydantic's LAX bool coercion, where ``1`` and ``"true"``
+        become ``True``, ``"0"`` and ``0`` become ``False``, and ``[]``/``{}`` are refused
+        outright -- and a refusal is the worst of the three, because it fails the enclosing
+        ``Explanation`` rather than the one field: ``_explanation_out`` then serves its degraded
+        body, and the operator gets a panel with no signals, no protections and no threshold,
+        beside a chip that read the row perfectly well and a hand Reap that still condemns.
+
+        So this asserts BOTH halves on one row: nothing is degraded, and the flag reads
+        ``None`` -- the state the field already means "nothing here can tell a comparison
+        Reaper made from one it refused" -- exactly where the chip declines to claim one.
+        The three real writer shapes are swept in
+        ``test_the_panel_is_served_the_flag_its_chip_reads`` below; this is everything else a
+        row can carry.
+        """
+        detail = json.dumps(_conflict_detail(kept_watchers=1))
+        entry = json.loads(
+            f'{{"gate": "season_progression", "detail": {detail}, "defers_to_owner": {junk}}}'
+        )
+        exp = _exp(82, unknown=[entry])
+        row = Candidate(
+            media_key="sonarr:1:2:3",
+            explanation_json=json.dumps(exp),
+            score=82,
+            coverage_bp=10_000,
+        )
+
+        panel = _explanation_out(row)
+
+        # The whole explanation survives one unreadable byte, threshold included -- the panel
+        # prints "your threshold is N" beside the score, and the degraded body has no N.
+        assert not panel.unreadable
+        assert panel.body.threshold == 70
+        unknown = panel.body.protections_unknown
+        assert [o.gate for o in unknown] == ["season_progression"]
+        assert unknown[0].defers_to_owner is None
+
+        # And the chip beside it says the same thing about the same row.
+        chip = _chip(exp, "abstain", 82)
+        assert chip is not None
+        assert chip.text == "Needs a look · left for you to decide"
+
     def test_the_writer_and_the_chip_are_connected_by_a_real_frozen_row(self) -> None:
         """The producer -> consumer link for ``defers_to_owner``, end to end through the
         REAL writer (``snapshot._explain``) rather than a hand-built dict.

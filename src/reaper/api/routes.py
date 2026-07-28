@@ -72,7 +72,7 @@ from reaper.db.models import Policy as PolicyModel
 from reaper.engine import facts_codec, identity
 from reaper.engine.dormancy import history_reach_days
 from reaper.engine.fields import Lane, MediaType, vocabulary
-from reaper.engine.gates import PROTECT, GateId, GateResult
+from reaper.engine.gates import PROTECT, GateId, GateResult, thaw_defers_to_owner
 from reaper.engine.observation import Known
 from reaper.engine.policy import (
     ConditionSpec,
@@ -951,7 +951,7 @@ def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | Non
                 # ``condemned.reap_override_verdict`` read the absent key as a hold, so the
                 # card offered a conflict to settle and then refused the reap by citing that
                 # same conflict back at the operator.
-                defers = entry.get("defers_to_owner")
+                defers = thaw_defers_to_owner(entry.get("defers_to_owner"))
                 if defers is True:
                     return ChipOut(
                         tone="look",
