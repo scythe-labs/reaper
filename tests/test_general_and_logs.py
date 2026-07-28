@@ -459,12 +459,13 @@ class TestTheApiKeyLane:
         """The logs are a running transcript of the library, and the download concatenates
         every rotating file, so one GET is the whole history (S-3).
 
-        Not, any longer, because a key is told it reads "your library" and viewing is not
-        the library: a key reads /api/fairness/people, which is one person's whole viewing
-        breakdown, so that argument never held and both descriptions of the fence have
-        stopped making it. Issue #117 is whether the fairness reads should move behind the
-        browser. What this pins is narrower and still good on its own: the log FILE stays
-        off a header credential.
+        The privacy half of that reason holds now, and did not when this test was written:
+        S-3 argued a key is told it reads "your library", meaning the catalog and not
+        everyone's viewing, while ``/api/fairness/people/{identity}`` answered a bare key
+        with one person's whole viewing breakdown. #117 closed that by moving the fairness
+        reads behind the browser, so both descriptions of the fence can make the argument
+        again. What this pins is narrower and stood on its own either way: the log FILE
+        stays off a header credential.
         """
         key = self._issue(client)
         bare = _bare(client)
@@ -735,7 +736,11 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
 
     def test_the_session_scheme_is_declared(self, client: TestClient) -> None:
         """A fenced operation narrows to this scheme, so a missing declaration would
-        leave 40 operations pointing at a credential the document never defines."""
+        leave 42 operations pointing at a credential the document never defines.
+
+        Counted, not remembered: #117 moved the two fairness reads behind the browser,
+        which took the number from 40 to 42.
+        """
         schema = client.get("/api/openapi.json").json()
         schemes = schema["components"]["securitySchemes"]
         assert schemes["Session"]["in"] == "cookie"
