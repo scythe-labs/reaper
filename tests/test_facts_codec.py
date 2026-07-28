@@ -9,12 +9,18 @@ tests assert the identity ``from_dict(to_dict(x)) == x`` across every arm and ev
 
 from __future__ import annotations
 
+import dataclasses
 import json
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from reaper.engine.facts_codec import _OBS_FIELDS, facts_from_dict, facts_to_dict
+from reaper.engine.facts_codec import (
+    _OBS_FIELDS,
+    _result_to_dict,
+    facts_from_dict,
+    facts_to_dict,
+)
 from reaper.engine.gates import ABSTAIN, PROTECT, Facts, GateId, GateResult
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.ratings import Rating, RatingSource
@@ -81,12 +87,40 @@ class TestFactsRoundTrip:
 
     def test_the_season_guard_result_round_trips(self) -> None:
         facts = _bare_facts()
+        # ``defers_to_owner=True`` is deliberately NOT the default (rule 141): both fixtures
+        # once left it at ``False``, so the codec dropping the field compared equal on both
+        # sides of the round trip and this test could not see the loss.
         results = (
             GateResult(GateId.SEASON_PROGRESSION, PROTECT, detail="kept newest"),
-            GateResult(GateId.SEASON_PROGRESSION, ABSTAIN, blocked=True, detail="conflict"),
+            GateResult(
+                GateId.SEASON_PROGRESSION,
+                ABSTAIN,
+                blocked=True,
+                detail="conflict",
+                defers_to_owner=True,
+            ),
         )
         _, extra = facts_from_dict(facts_to_dict(facts, extra_results=results))
         assert extra == results
+
+    def test_the_codec_carries_every_gate_result_field(self) -> None:
+        """Rule 103's drift guard over a hand-written serializer. ``_result_to_dict`` names
+        ``GateResult``'s fields one at a time, so a field added to the dataclass and not
+        added there is dropped in silence -- which is how ``defers_to_owner`` came to be
+        frozen away, making the simulator replay disagree with the scan about whether a
+        hand reap is honored. Equality above cannot catch the next one on its own, because
+        a field both fixtures leave at its default compares equal either way."""
+        frozen = _result_to_dict(
+            GateResult(
+                GateId.SEASON_PROGRESSION,
+                ABSTAIN,
+                detail="d",
+                blocked=True,
+                defers_to_owner=True,
+            )
+        )
+        dropped = {f.name for f in dataclasses.fields(GateResult)} - set(frozen)
+        assert dropped == set(), f"GateResult fields the codec does not freeze: {sorted(dropped)}"
 
 
 def _bare_facts() -> Facts:

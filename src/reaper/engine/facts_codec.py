@@ -105,12 +105,32 @@ def _rating_from_dict(d: dict[str, Any]) -> Rating:
 
 
 def _result_to_dict(r: GateResult) -> dict[str, Any]:
-    return {"gate": r.gate.value, "outcome": r.outcome, "detail": r.detail, "blocked": r.blocked}
+    # Names every ``GateResult`` field one by one, so a field added to the dataclass and not
+    # added here is silently dropped. ``defers_to_owner`` was exactly that: the season guard
+    # is the only producer that sets it AND the only result frozen through here, so the
+    # simulator replay read every keep-rule conflict as a plumbing failure while the scan
+    # read it as the owner's call to make. Rule 103's drift guard is the field-coverage test
+    # in ``tests/test_facts_codec.py``; keep this list under it.
+    return {
+        "gate": r.gate.value,
+        "outcome": r.outcome,
+        "detail": r.detail,
+        "blocked": r.blocked,
+        "defers_to_owner": r.defers_to_owner,
+    }
 
 
 def _result_from_dict(d: dict[str, Any]) -> GateResult:
     return GateResult(
-        gate=GateId(d["gate"]), outcome=d["outcome"], detail=d["detail"], blocked=d["blocked"]
+        gate=GateId(d["gate"]),
+        outcome=d["outcome"],
+        detail=d["detail"],
+        blocked=d["blocked"],
+        # The thaw, stated rather than left to a ``KeyError`` (rule 104): a row frozen before
+        # the flag existed carries nothing that distinguishes a comparison that was made from
+        # one that was refused, so it does not defer and the hand reap is held. The same
+        # answer ``services.condemned`` gives on the stored-explanation path.
+        defers_to_owner=d.get("defers_to_owner") is True,
     )
 
 
