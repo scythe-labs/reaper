@@ -7061,11 +7061,6 @@ button.danger:hover:not(:disabled) {
 .set-row.set-row-cluster .set-control {
   justify-self: end;
 }
-.set-row.dimmed .set-label,
-.set-row.dimmed .help {
-  opacity: 0.55;
-}
-
 /* The accent-color row stacks its parts (control, presets, preview) instead of the
    two-column label/control grid, so it flows top to bottom like the mock. */
 .set-row.accent-row {
