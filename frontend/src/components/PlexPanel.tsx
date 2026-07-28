@@ -32,7 +32,22 @@ function connectionLabel(c: PlexResourceConnection): string {
   return `${kind} · ${host}${secure}`;
 }
 
-export function PlexPanel() {
+/** The address the Manual address row would save, or "" when it has no host to send. One
+ *  declaration, so the Save that composes it and the dirty check that reports this draft up to
+ *  `Settings` can never disagree about what the row is holding. */
+function manualUri(host: string, port: string, ssl: boolean): string {
+  const trimmed = host.trim();
+  if (!trimmed) return "";
+  return `${ssl ? "https" : "http"}://${trimmed}:${port.trim() || "32400"}`;
+}
+
+export function PlexPanel({
+  /** Called whenever this panel gains or loses an unsaved draft, so the section rail can hold a
+   *  switch that would discard one. Pass a STABLE function: it is an effect dependency. */
+  onDirtyChange,
+}: {
+  onDirtyChange?: ((dirty: boolean) => void) | undefined;
+} = {}) {
   const queryClient = useQueryClient();
   const plex = useQuery({ queryKey: ["plex"], queryFn: api.plexStatus });
   const data = plex.data;
@@ -235,10 +250,9 @@ export function PlexPanel() {
   };
 
   const saveManual = () => {
-    const host = manualHost.trim();
-    if (!host) return;
-    const scheme = manualSsl ? "https" : "http";
-    setConnection.mutate(`${scheme}://${host}:${manualPort.trim() || "32400"}`);
+    const uri = manualUri(manualHost, manualPort, manualSsl);
+    if (!uri) return;
+    setConnection.mutate(uri);
   };
 
   // --- libraries ---------------------------------------------------------------
@@ -300,9 +314,34 @@ export function PlexPanel() {
     return `Last updated ${since(last.at)} · ${movies} and ${seasons} on the shelves · next update after the next scan${wrote}`;
   })();
 
+  // What this panel would LOSE, reported up to `Settings` so leaving the section can stop and ask
+  // first. Declared above the early returns below because the effect carrying it is a hook, and
+  // because rule 146 asks what the parent is told in each of those states as well as in the form.
+  //
+  // Each draft is tested against the exact condition that RENDERS the row holding it, because the
+  // report makes two claims at once -- there is something to lose, AND the operator can still get
+  // to it. A guard that keeps the first claim after the second has gone false is a trap: it
+  // demands a discard for a box that is no longer on screen, and the only exit it leaves is the
+  // destructive button.
+  const webUrlDirty = webUrl.trim() !== savedWebUrl;
+  // The same test that renders this row's Save (below), so the bar and the button agree.
+  //
+  // The manual row is behind `linked && manualOpen`, so both belong in its claim: unlinking
+  // leaves `manualOpen` set while the row is gone. An empty host is not a draft to lose -- Save
+  // is disabled without one -- and neither is an address that already matches the stored one,
+  // which is what Save would send.
+  const manualDraft = manualUri(manualHost, manualPort, manualSsl);
+  const manualDirty = linked && manualOpen && manualDraft !== "" && manualDraft !== savedUri;
+  const hasDrafts = webUrlDirty || manualDirty;
+  useEffect(() => {
+    onDirtyChange?.(hasDrafts);
+  }, [hasDrafts, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+
   // Until the status has actually been read, nothing here may claim a state: an unread
   // query looks exactly like "not linked", and that would invite a needless re-link
-  // through the whole Plex sign-in over a momentary hiccup.
+  // through the whole Plex sign-in over a momentary hiccup. Nothing is dirty here either:
+  // `data` is undefined, so the web-address box and its saved value are both "".
   if (plex.isPending) {
     return (
       <div className="panel">
@@ -311,7 +350,14 @@ export function PlexPanel() {
       </div>
     );
   }
-  if (plex.isError || !data) {
+  // Only when there is nothing to render, the same test the General panel settled on (rule 72).
+  // This used to fire on `plex.isError` too, which meant a refetch that failed AFTER a good load
+  // traded the whole form for this paragraph while React Query still held the last good row --
+  // taking the web-address box and its Save with it while the typed value stayed in state, still
+  // reported unsaved to `Settings`, which then asked to discard an edit the operator could no
+  // longer see or put back. Saving the certificate switch is enough to reach it, because that
+  // invalidates this very query. So a failed refetch keeps the form on the last good values.
+  if (!data) {
     return (
       <div className="panel">
         <h2>Plex</h2>
@@ -592,8 +638,10 @@ export function PlexPanel() {
                 collecting them costs a shared draft model this change does not need. What DID
                 have to land on them is the reflow behind it (rule 72), and it has: the box
                 grows into the track and gives the width back from the right, so its left edge
-                and its text hold still as this button appears. Whoever gives Plex a save bar
-                takes both rows together. */}
+                and its text hold still as this button appears. The section-switch confirm has
+                landed on them too, through `onDirtyChange` above -- a panel need not have a save
+                bar to be asked about before it is unmounted. Whoever gives Plex a save bar takes
+                both rows together. */}
             <div className="set-control">
               <input
                 type="url"

@@ -69,7 +69,11 @@ async function usableConnectionSelect(): Promise<HTMLSelectElement> {
   return connectionSelect();
 }
 
-function renderPanel(connections: PlexResourceConnection[] = [discovered(LOCAL)]) {
+function renderPanel(
+  connections: PlexResourceConnection[] = [discovered(LOCAL)],
+  /** Stable across renders, which the prop requires: pass one `vi.fn()`, never an inline arrow. */
+  onDirtyChange?: (dirty: boolean) => void,
+) {
   apiMock.plexResources.mockResolvedValue({
     source: "plex.tv",
     servers: [
@@ -84,7 +88,7 @@ function renderPanel(connections: PlexResourceConnection[] = [discovered(LOCAL)]
   const queryClient = testQueryClient();
   return render(
     <QueryClientProvider client={queryClient}>
-      <PlexPanel />
+      <PlexPanel onDirtyChange={onDirtyChange} />
     </QueryClientProvider>,
   );
 }
@@ -255,6 +259,57 @@ describe("the signed-in account label", () => {
     });
 
     expect(await screen.findByText("reaper-owner")).toBeInTheDocument();
+  });
+});
+
+describe("what leaving this panel would lose", () => {
+  // The panel reports its unsaved drafts up to the settings shell, so switching section can stop
+  // and ask instead of unmounting them silently.
+  //
+  // Rule 146: that report makes two claims at once -- there is something to lose, AND the
+  // operator can still get to it. A state that keeps the first while dropping the second turns
+  // the guard into a trap whose only exit is the destructive button. A refetch that fails after a
+  // good load is exactly that state, and it is one click away: the certificate switch saves on
+  // the spot and invalidates this read. React Query keeps the last good row through a failed
+  // refetch, so trading the form for the "couldn't load" paragraph there would take the box and
+  // its Save off screen while the typed address stayed in state, still reported unsaved.
+  it("keeps the web-address box when a refetch fails, so its draft stays reachable", async () => {
+    const user = userEvent.setup();
+    const dirty = vi.fn();
+    renderPanel([discovered(LOCAL)], dirty);
+
+    const box = await screen.findByPlaceholderText("https://app.plex.tv");
+    await user.clear(box);
+    await user.type(box, "https://plex.example.org");
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
+
+    const toggle = await screen.findByRole("switch", { name: "Check the server's certificate" });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    apiMock.plexStatus.mockRejectedValue(new Error("server unreachable"));
+    await user.click(toggle);
+
+    await waitFor(() => expect(apiMock.plexStatus.mock.calls.length).toBeGreaterThan(1));
+    // Still the form, on the last good values, with the draft still in it and still saveable.
+    expect(screen.queryByText(/Couldn't load these settings/)).toBeNull();
+    expect(screen.getByPlaceholderText("https://app.plex.tv")).toHaveValue(
+      "https://plex.example.org",
+    );
+    expect(dirty).toHaveBeenLastCalledWith(true);
+  });
+
+  it("reports nothing to lose once the address is put back", async () => {
+    const user = userEvent.setup();
+    const dirty = vi.fn();
+    renderPanel([discovered(LOCAL)], dirty);
+
+    const box = await screen.findByPlaceholderText("https://app.plex.tv");
+    await user.type(box, "/extra");
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
+
+    await user.clear(box);
+    await user.type(box, "https://app.plex.tv");
+
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
   });
 });
 

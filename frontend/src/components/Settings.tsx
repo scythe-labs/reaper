@@ -1885,7 +1885,13 @@ function isDiscordWebhook(raw: string): boolean {
  *  is a write-only secret: the URL is sent once, encrypted on arrival, and never comes back,
  *  so the field is always blank and we report only *whether* a webhook is connected. Same
  *  pattern as an instance API key. */
-function NotificationsPanel() {
+function NotificationsPanel({
+  /** Called whenever the webhook box gains or loses a draft, so the section rail can hold a
+   *  switch that would discard one. Pass a STABLE function: it is an effect dependency. */
+  onDirtyChange,
+}: {
+  onDirtyChange?: ((dirty: boolean) => void) | undefined;
+} = {}) {
   const queryClient = useQueryClient();
   const { data, isPending, isError } = useQuery({
     queryKey: ["notifications"],
@@ -1931,6 +1937,21 @@ function NotificationsPanel() {
   const badFormat = typed && !validNew;
   // Test either the freshly typed URL (must be valid) or, when the box is empty, the stored one.
   const canTest = (validNew || (!typed && connected)) && !testWebhook.isPending;
+
+  // What this panel would LOSE, reported up to `Settings` so leaving the section can stop and ask
+  // first. A pasted webhook is the costliest draft in Settings to drop: it is a secret, it is
+  // never shown again once stored, and re-typing it means going back to Discord for it.
+  //
+  // Rule 146 asks two things of this signal, and here they are the same fact. There is something
+  // to lose exactly when the box holds text, and the box is reachable in EVERY state this panel
+  // renders: it has no early return, and the loading and failed-check branches above swap only
+  // the one status line over it, never the box, its help, or its Save. `typed` rather than
+  // `validNew`, because a half-pasted URL that Save refuses is still a draft that leaving throws
+  // away -- reporting only the saveable form would drop the malformed one silently.
+  useEffect(() => {
+    onDirtyChange?.(typed);
+  }, [typed, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   return (
     <div className="panel">
@@ -2203,25 +2224,38 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
   // General's save bar can hold six unsaved fields at once, and switching section unmounts the
   // panel holding them. So the switch waits for a yes, the same two-step confirm the policy
   // editor's Movies/TV switch uses and in the same place: directly under the control that was
-  // clicked, so that control does not move under the pointer. General is the only panel WIRED to
-  // report a draft, which is not the same as the only one holding one: Plex keeps the web
-  // address and the manual host/port behind inline Saves, and Notifications keeps the webhook
-  // URL, and both still unmount silently. Deferred in writing rather than assumed safe (rule
-  // 72), tracked as issue #128.
+  // clicked, so that control does not move under the pointer.
+  //
+  // Three panels report, because three panels hold a typed draft: General's save bar, Plex's web
+  // address and manual connection rows, and the Discord webhook URL -- which is a secret the
+  // operator has to go back to Discord to re-copy. The guard first landed on General alone, so
+  // the other two still unmounted silently while the app had just trained the operator to expect
+  // to be asked (rule 72). Each panel reports through its own `onDirtyChange`; the three are
+  // `useState` setters and so are stable, which that prop requires. A panel with no draft to
+  // lose is absent from this record and reads undefined, which switches straight through.
   const [generalDirty, setGeneralDirty] = useState(false);
+  const [plexDirty, setPlexDirty] = useState(false);
+  const [webhookDirty, setWebhookDirty] = useState(false);
   const [pendingSwitch, setPendingSwitch] = useState<Panel | null>(null);
+
+  const dirtyPanels: Partial<Record<Panel, boolean>> = {
+    general: generalDirty,
+    plex: plexDirty,
+    notifications: webhookDirty,
+  };
+  const leavingDirty = dirtyPanels[panel] ?? false;
 
   // The notice exists only because there are edits to lose, so it goes when they do -- by
   // Discard, or by a Save that stores them. Keyed on the draft rather than on the Discard
   // handler so the save path is covered too, which is the bug `PolicyEditor` fixed in its own
   // copy of this: it kept warning about changes that no longer existed.
   useEffect(() => {
-    if (!generalDirty) setPendingSwitch(null);
-  }, [generalDirty]);
+    if (!leavingDirty) setPendingSwitch(null);
+  }, [leavingDirty]);
 
   const switchPanel = (next: Panel) => {
     if (next === panel) return;
-    if (panel === "general" && generalDirty) {
+    if (leavingDirty) {
       setPendingSwitch(next);
       return;
     }
@@ -2229,6 +2263,8 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
     setPanel(next);
   };
   const pendingLabel = PANELS.find((p) => p.id === pendingSwitch)?.label ?? "";
+  // The section being LEFT, so one string serves all three panels that can raise this.
+  const leavingLabel = PANELS.find((p) => p.id === panel)?.label ?? "";
   // Nine labels stop fitting one line well above this, but the app already has exactly one
   // definition of a narrow screen and a second would be worse than swapping a little early:
   // below this width the section rail is a bottom bar, so a compact settings header is the
@@ -2273,7 +2309,7 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
           bar below names WHICH fields are unsaved, so this does not repeat them. */}
       {pendingSwitch !== null && (
         <div className="notice notice-warn">
-          You have unsaved General settings. Switching to {pendingLabel} discards them.{" "}
+          You have unsaved {leavingLabel} settings. Switching to {pendingLabel} discards them.{" "}
           <button
             type="button"
             className="danger"
@@ -2292,9 +2328,9 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
       <div className="settings-body">
         {panel === "general" && <GeneralPanel onDirtyChange={setGeneralDirty} />}
         {panel === "services" && <ServicesPanel />}
-        {panel === "plex" && <PlexPanel />}
+        {panel === "plex" && <PlexPanel onDirtyChange={setPlexDirty} />}
         {panel === "jobs" && <JobsPanel onGoToPlex={() => switchPanel("plex")} />}
-        {panel === "notifications" && <NotificationsPanel />}
+        {panel === "notifications" && <NotificationsPanel onDirtyChange={setWebhookDirty} />}
         {panel === "security" && <SecurityPanel />}
         {panel === "backup" && <BackupPanel />}
         {panel === "logs" && <LogsPanel />}

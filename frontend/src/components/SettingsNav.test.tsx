@@ -13,7 +13,33 @@ import { testQueryClient } from "../test/queryClient";
 import { Settings } from "./Settings";
 
 const { apiMock } = vi.hoisted(() => ({
-  apiMock: { about: vi.fn(), safety: vi.fn(), general: vi.fn(), saveGeneral: vi.fn() },
+  apiMock: {
+    about: vi.fn(),
+    safety: vi.fn(),
+    general: vi.fn(),
+    saveGeneral: vi.fn(),
+    // Plex and Notifications hold drafts of their own, so the switch guard is exercised on
+    // those panels too and both trees mount here. Rule 135: a module mock answers everything
+    // the tree under test reads, including the reads no test in the file names.
+    plexStatus: vi.fn(),
+    plexResources: vi.fn(),
+    plexLibraries: vi.fn(),
+    syncPlexLibraries: vi.fn(),
+    setPlexLibraries: vi.fn(),
+    leavingSoonSettings: vi.fn(),
+    setLeavingSoonSettings: vi.fn(),
+    syncLeavingSoon: vi.fn(),
+    setPlexWebUrl: vi.fn(),
+    plexSetConnection: vi.fn(),
+    plexSwitchServer: vi.fn(),
+    plexUnlink: vi.fn(),
+    plexLinkStart: vi.fn(),
+    plexLinkPoll: vi.fn(),
+    notifications: vi.fn(),
+    setWebhook: vi.fn(),
+    testWebhook: vi.fn(),
+    clearWebhook: vi.fn(),
+  },
 }));
 
 vi.mock("../api", async (importOriginal) => ({
@@ -32,6 +58,9 @@ const PANELS = [
   "Logs",
   "About",
 ];
+
+/** The stored Plex web address, and so the value the box has to DIVERGE from to be a draft. */
+const SAVED_WEB_URL = "https://app.plex.tv";
 
 /** Report `matches` for every query asked, the way a phone would for the narrow one. */
 function stubMatchMedia(matches: boolean) {
@@ -59,6 +88,22 @@ beforeEach(() => {
   apiMock.safety.mockResolvedValue({ armed: false, has_password: true });
   apiMock.general.mockResolvedValue(DEFAULT_GENERAL);
   apiMock.saveGeneral.mockResolvedValue(DEFAULT_GENERAL);
+  apiMock.plexStatus.mockResolvedValue({
+    linked: true,
+    name: "Example server",
+    connection_uri: "https://plex.example.net:32400",
+    last_ok_at: null,
+    verify_tls: true,
+    web_url: SAVED_WEB_URL,
+  });
+  apiMock.plexResources.mockResolvedValue({ source: "plex.tv", servers: [] });
+  apiMock.plexLibraries.mockResolvedValue([]);
+  apiMock.leavingSoonSettings.mockResolvedValue({
+    enabled: false,
+    allow_unarmed: false,
+    last: null,
+  });
+  apiMock.notifications.mockResolvedValue({ has_webhook: false });
 });
 
 // Rule 133: the stub is process-global, so it never outlives its own test.
@@ -66,7 +111,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function renderSettings(initialPanel: "about" | "general" = "about") {
+function renderSettings(initialPanel: "about" | "general" | "plex" | "notifications" = "about") {
   // Seeded, not just mocked: the General panel renders its fields from this read, and a mocked
   // answer lands a microtask later -- after a synchronous assertion, which would then be about
   // the "Loading…" panel rather than the one an operator types into (rule 136).
@@ -219,5 +264,116 @@ describe("leaving General with something unsaved", () => {
 
     await waitFor(() => expect(warning()).toBeNull());
     expect(heading()).toBe("General");
+  });
+});
+
+describe("leaving Plex or Notifications with something unsaved", () => {
+  // The guard first landed on General alone, and these two kept typed drafts behind their own
+  // inline Saves -- so the app asked on one panel and threw the draft away without a word on the
+  // next two (rule 72). Driven through the real shell rather than against the panels' props,
+  // because what broke was the wiring between them, which a prop-level test cannot see.
+  //
+  // Scoped to the notice that names a switch: the Plex panel renders `.notice-warn` of its own
+  // (the certificate one), so a bare `.notice-warn` lookup would pass on the wrong element.
+  const switchNotice = () =>
+    [...document.querySelectorAll(".notice-warn")].find((n) =>
+      n.textContent?.includes("Switching to"),
+    ) ?? null;
+  const heading = () => screen.getByRole("heading", { level: 2 }).textContent;
+
+  it("holds the switch on a half-typed Discord webhook", async () => {
+    stubMatchMedia(false);
+    const person = renderSettings("notifications");
+    const box = await screen.findByLabelText("Discord webhook URL");
+    await waitFor(() => expect(box).toBeEnabled());
+    await person.type(box, "https://discord.com/api/webhooks/1/secret");
+
+    await person.click(screen.getByRole("button", { name: "Security" }));
+
+    expect(switchNotice()!.textContent).toContain(
+      "You have unsaved Notifications settings. Switching to Security discards them.",
+    );
+    // Nothing moved, and the secret is still in the box to be saved.
+    expect(heading()).toBe("Notifications");
+    expect(box).toHaveValue("https://discord.com/api/webhooks/1/secret");
+  });
+
+  it("holds the switch on a webhook too malformed to save", async () => {
+    // The report is "there is something to lose", not "there is something Save would accept".
+    // Reporting only the valid form would drop a mis-pasted secret silently, which is the one
+    // draft in Settings the operator cannot recover from anywhere but Discord.
+    stubMatchMedia(false);
+    const person = renderSettings("notifications");
+    const box = await screen.findByLabelText("Discord webhook URL");
+    await waitFor(() => expect(box).toBeEnabled());
+    await person.type(box, "discord.com/api/webhoo");
+
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await person.click(screen.getByRole("button", { name: "Security" }));
+
+    expect(switchNotice()).not.toBeNull();
+    expect(heading()).toBe("Notifications");
+  });
+
+  it("switches straight through when the webhook box is empty", async () => {
+    stubMatchMedia(false);
+    const person = renderSettings("notifications");
+    await screen.findByLabelText("Discord webhook URL");
+
+    await person.click(screen.getByRole("button", { name: "Security" }));
+
+    expect(switchNotice()).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Security" })).toBeInTheDocument();
+  });
+
+  it("holds the switch on an edited Plex web address", async () => {
+    stubMatchMedia(false);
+    const person = renderSettings("plex");
+    // No accessible label on this row (a `.set-label` span, not a `<label>`), so it is reached
+    // the way an operator sees it. Rule 137: the panel early-returns "Loading…" until the status
+    // read lands, so wait for the box to be usable rather than for the page.
+    const box = await screen.findByPlaceholderText(SAVED_WEB_URL);
+    await waitFor(() => expect(box).toBeEnabled());
+    await person.clear(box);
+    await person.type(box, "https://plex.example.net");
+
+    await person.click(screen.getByRole("button", { name: "Security" }));
+
+    expect(switchNotice()!.textContent).toContain(
+      "You have unsaved Plex settings. Switching to Security discards them.",
+    );
+    expect(heading()).toBe("Plex");
+    expect(box).toHaveValue("https://plex.example.net");
+  });
+
+  it("leaves Plex only when Discard and switch is pressed, and saves nothing on the way", async () => {
+    stubMatchMedia(false);
+    const person = renderSettings("plex");
+    const box = await screen.findByPlaceholderText(SAVED_WEB_URL);
+    await waitFor(() => expect(box).toBeEnabled());
+    await person.clear(box);
+    await person.type(box, "https://plex.example.net");
+
+    await person.click(screen.getByRole("button", { name: "Security" }));
+    await person.click(screen.getByRole("button", { name: "Discard and switch" }));
+
+    expect(await screen.findByRole("heading", { name: "Security" })).toBeInTheDocument();
+    expect(switchNotice()).toBeNull();
+    expect(apiMock.setPlexWebUrl).not.toHaveBeenCalled();
+  });
+
+  it("switches straight through when the Plex web address still matches the stored one", async () => {
+    stubMatchMedia(false);
+    const person = renderSettings("plex");
+    const box = await screen.findByPlaceholderText(SAVED_WEB_URL);
+    await waitFor(() => expect(box).toBeEnabled());
+    // Typed and put back: the box diverged and returned, so there is nothing left to lose.
+    await person.clear(box);
+    await person.type(box, SAVED_WEB_URL);
+
+    await person.click(screen.getByRole("button", { name: "Security" }));
+
+    expect(switchNotice()).toBeNull();
+    expect(await screen.findByRole("heading", { name: "Security" })).toBeInTheDocument();
   });
 });
