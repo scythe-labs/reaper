@@ -294,6 +294,30 @@ describe("the default spare length", () => {
     expect(dayBox()).toHaveValue(30);
     expect(apiMock.saveGeneral).not.toHaveBeenCalled();
   });
+
+  it("puts the number back on Discard even when Forever is what is stored", async () => {
+    // The test above runs against a stored 30, so it never reaches the branch that skips the
+    // number. `STORED` is Forever, where the box exists only after a press of Days -- and there
+    // Discard left the discarded figure sitting in the hidden box, for the next press to
+    // re-stage. Nothing is written either way, so what is lost is Discard meaning "all of it".
+    const person = renderPanel();
+    await screen.findByLabelText("Application name");
+
+    await person.click(days());
+    const box = screen.getByLabelText("Default spare length in days");
+    await person.clear(box);
+    await person.type(box, "365");
+    await waitFor(() => expect(bar()!.textContent).toContain("Default spare length"));
+
+    await person.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(bar()).toBeNull());
+    expect(dayBox()).toBeNull();
+
+    // Pressing Days again opens on the seed, not on the number that was just discarded.
+    await person.click(days());
+    expect(dayBox()).toHaveValue(30);
+    expect(apiMock.saveGeneral).not.toHaveBeenCalled();
+  });
 });
 
 describe("what the panel reports to the section rail", () => {

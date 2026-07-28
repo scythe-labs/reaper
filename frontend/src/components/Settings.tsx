@@ -132,6 +132,11 @@ function allTimeZones(): string[] {
   return _zoneCache;
 }
 
+// What the day box starts at while the stored default is Forever, so pressing Days opens on a
+// sensible length instead of an empty box. One declaration, because the seed and Discard have to
+// agree: Discard putting back a different number is how a discarded draft came back (issue #90).
+const SPARE_DAYS_SEED = 30;
+
 export function GeneralPanel({
   /** Called whenever the save bar gains or loses a draft, so the section rail can hold a
    *  switch that would discard one. Pass a STABLE function: it is an effect dependency. */
@@ -153,7 +158,7 @@ export function GeneralPanel({
   // The number seeds to a sensible 30 while the stored default is Forever, so switching to a
   // length starts somewhere reasonable.
   const [spareForever, setSpareForever] = useState(false);
-  const [spareDays, setSpareDays] = useState(30);
+  const [spareDays, setSpareDays] = useState(SPARE_DAYS_SEED);
   const [theme, setTheme] = useState<ThemeChoice>(readTheme);
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -351,7 +356,11 @@ export function GeneralPanel({
     setAccent(data.accent_color);
     setProxies(data.trusted_proxies.join(", "));
     setSpareForever(data.default_spare_days === 0);
-    if (data.default_spare_days > 0) setSpareDays(data.default_spare_days);
+    // BOTH halves, unlike the mount seed and the save response above, which leave the number
+    // alone under a stored Forever so the last length is remembered. Discard is a full undo, so
+    // it goes back to the stored length or to the same number the box seeds at. Skipping it left
+    // the discarded figure in the hidden box, and the next press of Days re-staged it.
+    setSpareDays(data.default_spare_days > 0 ? data.default_spare_days : SPARE_DAYS_SEED);
   };
 
   return (
