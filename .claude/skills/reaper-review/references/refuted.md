@@ -442,3 +442,58 @@ does not have a "but it would have come out the same way" branch.
 `git checkout -- <path>` while the same file also held the fix under test, which silently reverted
 the fix and produced a red suite that looked like the finding being wrong. Copy the file aside and
 copy it back; `git checkout` cannot tell your edit from your mutation.
+
+## Refuted at `8ff0a3e` (2026-07-27, reviewing the mid-binge reach fix, PR #97)
+
+Two lanes fired by path (`safety` on `services/season_pruning.py` + `engine/policy.py`, `diff`
+on `services/season_scan.py`, `PolicyEditor.tsx`, `docs/STATUS.md` and the tests). No `seam`:
+the frontend change was help copy, touching no route, schema, prop or query key.
+
+**The convergence signal fired again**, on `routes._kept_season_phrase` — both lanes
+independently drove the same missing chip branch. **And the lanes contradicted each other on
+the tier-1 finding**, which is the entry worth keeping: `safety` reported that the blanket hold
+released a hand reap, `diff` refuted the same claim as "a blocked-abstain conflict is strictly
+weaker than the PROTECT that replaces it." That reasoning inverts, and driving it settled it in
+one run — for a **hand reap**, a blocked entry is *stronger* than a PROTECT, because
+`decide_verdict`'s reap branch reads `blocked_holds_reap or safety_protected` and
+`STRUCTURAL_GATES` carries neither this gate nor any season guard. Fixed in `8ff0a3e`.
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| safety | `plan_series_prune`'s `progress_established: bool = True` is a fail-open default reached by an unguarded caller | `season_scan.py:1133`'s offline first pass omits it, but that plan is never read for a deletion decision: `_SeriesWork.plan` has no reader after construction, and `fully_protected` only skips `_episodes_for`, which fills `season_final_episode` — skipping it drops the guard to whole-season protection, which keeps *more*. Optimism there is the safe direction. |
+| safety | The in-code justification for that default is false for a configurable policy | Narrow but honest — it says "a default-configured operator". `MIN_DORMANCY` ships at 1095 (`policy.py:1255`), dormancy is clamped to the reach, so condemning requires reach ≥ 1095 > 180. An operator lowering the floor breaks the claim, but no production caller omits the argument. |
+| safety | `reach_days` is optimistic when Tautulli is degraded, unreachable, or the mirror is empty | Every arm fails closed: `mirror.earliest is None` → `horizon = utcnow()` → reach 0 → not establishable, *and* the scan degrades (`snapshot.py:526-534`); a stale ingest degrades at `:547`; a future horizon gives a negative reach. `horizon` and `reach_days` come from one `ScanContext` construction and cannot disagree. |
+| safety | The progress data is windowed to the popularity window, so the mirror reach is the wrong bound | The `pairs` and `progress` queries feeding `progress_by_user` / `last_watched_by_user` (`season_scan.py:797-823`) carry no `since` predicate. The mirror horizon is the only span bound, so `reach_days` is the correct comparison. |
+| safety | `hold_days <= 0` makes `active_progress` and `progress_is_establishable` incoherent | They compose: `active_progress` returns every *visible* viewer, the predicate returns False, the planner holds everything. The consequence — `in_progress_hold_days = 0` disables TV season pruning outright — is the keep direction and is now stated in both the policy docstring and the editor help. |
+| safety | The new reason breaks `season_pruning._because`'s closed-vocabulary parse | `_because` is only called from `_detect_conflicts`, which loops over `prunable`, which the blanket hold makes empty. **Note it becomes reachable if a future fix leaves these seasons prunable** — the `8ff0a3e` fix did not, it flags the protection instead. |
+| safety | A season slips through another path when un-establishable | The new branch is last but after every early return, so it catches specials with `keep_specials` off and everything else; a `has_content == False` season produces no `SeasonJudgment` at all (`season_scan.py:1595`). |
+| safety | The `in_progress_hold_days` 0 → 180 default move weakens a caller relying on 0 = hold forever | The only non-test caller of `gather` is `snapshot.scan` (`snapshot.py:665`), which passes the policy value explicitly; `_judge_series`'s only caller is `gather`, which always forwards it. No production path takes either default. |
+| safety / diff | The policy simulator serves a stale preview when `in_progress_hold_days` is edited | `_EVIDENCE_REPLAYABLE_FIELDS` (`policy.py:708`) is an allow-list and omits it, so an edit moves `evidence_hash`, the replay tier is skipped, and simulate falls to tier 3 and returns the reason rather than a number. |
+| safety | The blanket PROTECT distorts a count, a cap, or an auto-approval decision | `SeriesPrunePlan.auto_approvable` has zero consumers in `src/`, and with `prunable` empty there is nothing to auto-approve. `_chip`, `_primary_reason` and `_has_blocked_protections` are order- and presence-based, never count-based. |
+| safety | An operator turning the `season_progression` gate off drops the new PROTECT | The guard rides in `extra_results`, merged ahead of `evaluate_all(gates, facts)` at `snapshot.py:1174`, and never goes through `build_gates`; the policy's gate list cannot remove it. |
+| diff | The comment's claim that `services.snapshot.scan` is the only production caller of `gather` | True. `snapshot.py:646` is the sole production call, passing `in_progress_hold_days=tv_policy.in_progress_hold_days` at `:665`. On `_judge_series` it is imprecise (its only caller is `gather`) but the substance holds, so not a rule 7/24 defect. |
+| diff | The default move silently changed `active_progress`'s expiry in existing gather tests | No. Every `TestGatherEndToEnd` case runs `_FakeTautulli(shows=[], children={})` with no Plex, so `seasons_in_plex` is empty and `progress` is `{}` regardless of `hold_days`. |
+| diff | The other three `reach_days=0` gather tests also went vacuous | No — and there are four such calls, not three. `test_a_fully_protected_show_logs_the_keep_reasons` asserts on the first offline pass, which never sees the reach; the other two build no plan and produce no judgments. Only `test_a_fully_protected_short_show_is_surfaced_as_kept` was vacuous, fixed in `aafb5db`. |
+| diff | `test_a_shallow_mirror_holds_every_season_of_a_prunable_show` is not mutation-proof | It is. Removing the `progress_established=` kwarg fails it, and so does hardcoding `hold_days=180` — the 190/200 straddle its docstring claims. |
+| diff | `test_a_viewer_the_mirror_can_see_keeps_the_sharper_reason` pins ordering a naive implementation would also pass | No. Moving the `progress_unestablished` branch above the `seq_protected` branch fails it on exactly that assertion. |
+| diff | `progress_established=False` can widen deletion or lose a conflict hold | **This refutation was WRONG on its second half** and is recorded here as the counterexample, not as a refutation — see the tier-1 finding above. The first half stands: the branch is last in `_protection_reason`, so it can only add protections. |
+| diff | A hand reap on a season held for this reason is silently refused | Correct that `season_progression` is absent from `STRUCTURAL_GATES` — but the conclusion drawn from it ("unchanged, and the season was condemnable before the fix anyway") is what the tier-1 finding disproves for the conflict sub-case. |
+| diff | `WhyPanel.isKeepRuleConflict` or `_chip`'s `season_progression` branch misclassify the new string | Both read `protections_unknown`; a held season is in `protections_fired`. `_primary_reason` returns the raw detail verbatim. (Re-derive after `8ff0a3e`, which now puts the blocked hold in **both** lists.) |
+| diff | `docs/STATUS.md`'s rewritten row is inaccurate or claims something unwired | Accurate as written. #94 confirmed still open, #95 closed by the commit, the symbols named correctly, nothing unwired (rule 25). |
+| diff | `_SeriesWork.plan` carries the un-reach-aware first-pass plan into the judgment | The field has zero readers; only `fully_protected` is consumed, and that gates a read whose loss only keeps more. |
+
+**The lesson worth keeping, and it is a new shape.** `refuted.md` already records "a lane's
+counterargument being locally sound and globally wrong." This run adds the sharper version:
+**two lanes reported the same code and reached opposite verdicts, and the one that had *driven*
+it was right.** The `diff` lane's refutation was a clean piece of reasoning about relative
+strength — blocked-abstain vs PROTECT — that simply had the direction backwards, and no amount
+of re-reading would have caught it, because both readings are plausible from the source. The
+tiebreak was ten lines of script through `condemned.reap_override_verdict_decoded`. When two
+lanes disagree, do not adjudicate on argument quality; run the thing.
+
+**Procedural, confirming the note above it.** All mutation probes this run were restored by
+copying a pristine file back, never `git checkout` — and it mattered, because the same two files
+held the fixes under test the whole time. Also: two lanes sharing one worktree ran `uv run`
+concurrently and re-synced the venv underneath each other, producing a `ModuleNotFoundError` at
+a clean HEAD and one spurious red suite. Call `.venv/bin/python -m pytest` directly when lanes
+share a tree.

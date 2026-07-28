@@ -30,35 +30,77 @@ because only the candidate outlives the run.
 
 ## Open
 
-### Scales' per-person figures come from the same mirror, and nothing says how far it reaches
+### The greppable per-show record contradicts every season the reach then holds
 
-Raised at `d9bd6db` (2026-07-27), while sweeping rule 140's readers for issue #83.
+Raised at `8ff0a3e` (2026-07-27), reviewing PR #97.
 
-`services/fairness.WatchEvidence` carries its own `plays_by_user` and `distinct_watchers`,
-computed from plays it queries directly rather than read off `Facts` — which is why it is
-correctly *outside* #83's sweep: it reads no bounded fact, and it gates nothing, having been
-rebuilt to sit on the last scan instead of re-judging (rule 38 killed the parallel verdict
-path that once consumed it).
+`season_scan.gather`'s first, offline `plan_series_prune` pass (`season_scan.py:1133`) omits
+`progress_established`, so it takes the permissive default while the evidence pass at `:1573`
+applies the real reach check. Where the mirror does not span the hold — every show on a fresh
+Tautulli under the shipped 180-day hold — the two disagree, and the one that logs is the one
+that is wrong.
 
-But it draws on the same watch mirror, so its counts carry the same truncation: on a Tautulli
-installed six months ago, "who watches what" is a lower bound per person, and the people it
-under-counts are whoever stopped watching before the horizon. Attribution is where that is
-least visible and most consequential — a share-of-library number is exactly the kind of figure
-an operator reads as complete.
+Driven with `--log-cli-level=DEBUG` against the PR's own new test: the 400-day and 190-day arms
+emit *byte-identical* `season_scan.series_decision` lines, both `outcome=candidate
+prunable=[2, 3]`, while the shallow arm's judgments are all held. `_log_series_decision`'s
+docstring calls itself the record that answers "why is this season kept" without re-running the
+scan (rule 7/24), and for this hold it answers the opposite.
 
-**Not a confirmed defect, and deliberately not filed as one.** Unlike the three readers in
-#83, nothing here withdraws a protection or adds condemn pressure; the question is whether any
-Scales copy *claims* a completeness the mirror cannot support. That was not checked.
+**Why it is here and not an issue.** The divergence is real and was demonstrated; what was not
+demonstrated is that it costs an operator anything, because the log is a DEBUG line and the
+authoritative judgment is surfaced correctly in the UI. It is also a *widening* of a gap that
+already existed — the first pass has never had watch evidence, so `seq_protected` was always
+empty there — rather than something the PR introduced.
 
-**What would settle it:** read the Scales strings and the route that feeds them
-(`services/fairness.py`, its API route, and the SPA surface rendering it) and decide one
-thing — does any of it state or imply an all-time or whole-library reading? If yes, it is a
-rule 21/rule 7-24 honesty fix (name the span, as `ServerPopularityGate` now does) and becomes
-an issue. If every figure is already phrased as "in the history Reaper holds" or equivalent,
-this is refuted and moves to `refuted.md`. Rule 78 is the neighboring constraint: attribution
-already has to honor the request's *scope*, and this asks the same question of its *span*.
+**What would settle it:** decide whether `season_scan.series_decision` is load-bearing for
+operator support (is it what anyone is actually told to grep?). If yes it is a tier-3 audit
+finding and the fix is one line — compute `progress_is_establishable` once in `gather` and pass
+it at both call sites, which is safe in both directions, since a first pass that marks
+everything `fully_protected` only skips the `episodes()` read that feeds precision no held
+season can use. If the line is developer-facing only, this is a comment fix on
+`_log_series_decision`'s docstring, and the claim should be narrowed rather than the code
+changed.
+
+### The `in_progress_hold_days` help text carries the 0 case's new meaning in four trailing words
+
+Raised at `8ff0a3e` (2026-07-27), reviewing PR #97.
+
+`0` changed meaning in that commit: it was "a viewer's place never expires" and is now "no TV
+season on the server is ever removable", because an unbounded claim no finite mirror supports
+makes the guard un-establishable and holds everything. `PolicyEditor.tsx:1526` carries the
+inversion as `"0 holds forever, so it always does."` — the first clause is byte-compatible with
+the meaning an operator already holds, and the consequence is four words with two anaphors
+(`it` = Reaper, `does` = "keeps every season", one sentence back). The control offers
+`min={0}`.
+
+**Why it is here and not an issue.** Nothing in it is false, and rule 25 is satisfied — the
+mechanism is wired. This is the "read at a glance, never twice" bar in `CLAUDE.md`, on a
+paragraph that grew from two sentences to four, and whether it clears that bar is a judgment
+the operator should make about their own surface rather than one a review should assert. No
+test asserts the string (repo-wide grep), so a copy edit stands alone.
+
+**What would settle it:** the operator reading the row and saying whether `"0 holds forever, so
+it always does"` lands. If it does not, give `0` its own sentence naming the outcome instead of
+the anaphor (`"0 never lets go, so Reaper keeps every season."`) and cut the now-least-
+consequential sentence. Related and separately noted: `"Set this longer than your watch history
+goes back"` asks for a comparison against a number that appears only on the Scales page
+(`Fairness.tsx:277`), which is not linked from here — that half is subsumed by the Scales
+horizon issue filed from this run.
 
 ## Settled earlier
+
+**The Scales per-person figures entry, raised at `d9bd6db`, was settled at `8ff0a3e`
+(2026-07-27) — confirmed, and filed.** It asked one question: does any Scales copy claim a
+completeness the mirror cannot support? It does. `services/fairness.py:901-913` and `:939-943`
+query `watch_event` with **no time predicate at all**, so every per-person figure is truncated
+at the mirror's horizon — and the backend already knows it, deriving `horizon_at` at `:1042`
+and rendering "Watch history reaches back to {date}, so older plays are invisible here" on the
+board (`Fairness.tsx:275-280`). `PersonDetailOut` never carries it, so the person drawer, the
+surface making the flattest claim, is the one that cannot name it: `ScalesPanel.tsx:132` prints
+`"not watched"` and `:296-297` a red `They watched {n}%  of what they asked for`. The entry's
+own named contrast, `ServerPopularityGate`, refuses the negative outright past the reach
+(`gates.py:558`). The staleness check ran first and came back clean — zero commits since
+`d9bd6db` touched `fairness.py`, the route, or the panel.
 
 **Empty is the intended resting state of the Open section above, not a gap** — an entry sitting
 there across many passes is itself the finding. The four entries raised at `394cc3a` and
