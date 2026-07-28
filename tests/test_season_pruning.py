@@ -10,11 +10,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from reaper.clients.sonarr_stats import SeasonStats
 from reaper.services.season_pruning import (
     _because,
     active_progress,
     plan_series_prune,
+    progress_is_establishable,
     sequential_protections,
 )
 
@@ -589,6 +592,114 @@ class TestInProgressExpiry:
             season_final_episode={3: 10},
         )
         assert 3 in plan.prunable
+
+
+class TestTheMirrorMustSpanTheHold:
+    """progress_is_establishable: the guard's claim is only as good as the mirror under it.
+
+    ``in_progress_hold_days`` is not a bound on the watch mirror, it is the span the guard
+    claims to cover, so a mirror shallower than it leaves viewers the guard cannot see --
+    and a viewer with no rows is indistinguishable from no viewer at all (rules 93 and 140).
+    """
+
+    @pytest.mark.parametrize(
+        ("reach_days", "hold_days", "establishable"),
+        [
+            (400, 180, True),  # the mirror covers the whole hold window
+            (180, 180, True),  # exactly spanning is spanning
+            (179, 180, False),  # one day short is short
+            (90, 180, False),  # the shallow mirror from the issue
+            (0, 30, False),  # an empty mirror establishes nothing
+            (400, 0, False),  # a hold that never expires...
+            (10_000, 0, False),  # ...which no reach covers, however deep
+        ],
+    )
+    def test_the_span_the_guard_claims_is_checked_against_the_reach(
+        self, reach_days: int, hold_days: int, establishable: bool
+    ) -> None:
+        assert (
+            progress_is_establishable(reach_days=reach_days, hold_days=hold_days) is establishable
+        )
+
+    def test_a_viewer_the_mirror_cannot_see_still_holds_the_next_season(self) -> None:
+        """The reproduction from the issue: one viewer finished Season 3 120 days ago, under
+        the shipped 180-day hold. The two runs are identical but for how far the mirror
+        reaches -- and at 90 days it holds none of that viewer's plays, so they contribute no
+        rows and the guard is asked a question the history cannot answer."""
+        common = {
+            "series_title": "Show",
+            "seasons": [_season(n) for n in range(1, 7)],
+            "keep_last": 2,
+            "keep_first_season": False,
+            "season_final_episode": {3: 10},
+        }
+
+        # 400 days: the play is inside the mirror, and the guard names the season they are up
+        # to -- Season 3 is finished, so the hold advances to Season 4.
+        deep = plan_series_prune(
+            **common,  # type: ignore[arg-type]
+            progress_by_user=active_progress(
+                {"alice": {3: 10}}, {"alice": _days_ago(120)}, now=NOW, hold_days=180
+            ),
+            progress_established=progress_is_establishable(reach_days=400, hold_days=180),
+        )
+        assert deep.prunable == [1, 2, 3]
+        assert _reasons(deep)[4] == "a viewer is part-way through the show"
+
+        # 90 days: that same play predates the horizon, so the viewer is simply absent.
+        shallow = plan_series_prune(
+            **common,  # type: ignore[arg-type]
+            progress_by_user={},
+            progress_established=progress_is_establishable(reach_days=90, hold_days=180),
+        )
+        assert shallow.prunable == []
+        assert (
+            _reasons(shallow)[4]
+            == "your watch history is too short to tell who is part-way through"
+        )
+
+    def test_an_unbounded_hold_is_never_establishable(self) -> None:
+        """0 holds a viewer's place forever, and a viewer whose every play predates the
+        horizon is invisible at any reach -- with no expiry to make that harmless."""
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=[_season(n) for n in range(1, 7)],
+            keep_last=2,
+            keep_first_season=False,
+            progress_by_user={},
+            progress_established=progress_is_establishable(reach_days=10_000, hold_days=0),
+        )
+        assert plan.prunable == []
+
+    def test_a_viewer_the_mirror_can_see_keeps_the_sharper_reason(self) -> None:
+        """The reach check is last, so a season we can actually name a viewer for says so.
+        The rest of the show gets the honest "we could not tell" instead."""
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=[_season(n) for n in range(1, 7)],
+            keep_last=2,
+            keep_first_season=False,
+            progress_by_user={"alice": {3: 10}},
+            season_final_episode={3: 10},
+            progress_established=False,
+        )
+        reasons = _reasons(plan)
+        assert reasons[4] == "a viewer is part-way through the show"
+        assert reasons[1] == "your watch history is too short to tell who is part-way through"
+
+    def test_the_guards_off_switch_also_silences_the_reach_check(self) -> None:
+        """An operator who turned the guard off is making no claim for a shallow mirror to
+        fall short of, so the seasons stay prunable."""
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=[_season(n) for n in range(1, 7)],
+            keep_last=2,
+            keep_first_season=False,
+            keep_in_progress=False,
+            progress_established=False,
+        )
+        # Season 4 too: with the guard off, nothing holds the season a viewer would be up to.
+        assert plan.prunable == [1, 2, 3, 4]
 
 
 class TestInProgressToggle:

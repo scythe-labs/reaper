@@ -430,7 +430,13 @@ class PolicyBody(Frozen):
     Past this many days without watching, the show counts as abandoned by that viewer and
     their half-finished season no longer protects anything. ``0`` holds forever. A viewer
     whose last-watched time cannot be read keeps their hold (fail closed). Only meaningful
-    while ``keep_in_progress`` is on; movies ignore it."""
+    while ``keep_in_progress`` is on; movies ignore it.
+
+    This is a span the guard *claims to cover*, not a bound on the watch mirror, so setting
+    it past how far the mirror reaches (``0`` included, which no finite mirror can cover)
+    makes the claim unsupportable: ``services.season_pruning.progress_is_establishable``
+    then holds every season on disk rather than letting an unseeable viewer read as an
+    absent one."""
 
     keep_specials: bool = True
     """Season pruning: never remove specials (Season 0). On by default. When off, specials

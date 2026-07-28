@@ -27,7 +27,10 @@ bug a shipping competitor actually has, and each one resolves toward *keeping* a
   viewer's hold expires once their whole-show activity is older than the policy's
   ``in_progress_hold_days`` (see :func:`active_progress`) -- an abandoned half-watched
   season must not pin a show forever. A viewer whose last-watched time cannot be read
-  keeps their hold.
+  keeps their hold. The guard can only see the viewers the watch mirror reaches, so where
+  the mirror is shallower than that hold -- or the hold is unbounded -- the viewer set is
+  *un-establishable* rather than empty and every season on disk is held instead
+  (:func:`progress_is_establishable`).
 
 * **Never touch a season that is mid-run or short of episodes.** Maintainerr #949: a
   mid-season break longer than the timeout leaves the back half permanently undownloaded.
@@ -259,6 +262,36 @@ def sequential_protections(
     return protected
 
 
+def progress_is_establishable(*, reach_days: int, hold_days: int) -> bool:
+    """Whether the watch mirror reaches back far enough to answer "who is part-way through".
+
+    The guard holds a viewer whose last play of the show falls inside ``hold_days``. It can
+    only see plays the mirror holds, and the mirror begins at its horizon, ``reach_days``
+    back, so the answer is sound exactly when the mirror spans the whole hold window. Past
+    ``reach_days`` an invisible viewer and an expired one are the same viewer and losing
+    them costs nothing; *inside* it they are not, and the viewer simply has no rows.
+
+    That gap is what this predicate exists to name. :func:`active_progress` reads no rows as
+    "nobody is part-way through" -- a genuine ``Absent`` -- when the truth is "the mirror
+    cannot see far enough to know", which is ``Unknown`` (rule 93). It is careful in the
+    right way and cannot help: it keeps a viewer whose last-watched time is *unreadable*,
+    but this viewer is not unreadable, they are missing, and there is nobody to keep. So the
+    caller must ask this separately, and :func:`plan_series_prune` holds every season on
+    disk when the answer is False.
+
+    ``hold_days <= 0`` means the hold never expires, and no finite mirror supports an
+    unbounded claim: a viewer whose every play predates the horizon is invisible at any
+    reach, and with no expiry to make that harmless, the set is never establishable.
+
+    ``in_progress_hold_days`` is not a bound on the mirror, it is the span the guard claims
+    to cover, so a mirror shallower than it is exactly the unsupported claim rule 140 exists
+    for. Pure: the reach is an argument, never measured here.
+    """
+    if hold_days <= 0:
+        return False
+    return reach_days >= hold_days
+
+
 def active_progress(
     progress_by_user: Mapping[str, Mapping[int, int | None]],
     last_watched_by_user: Mapping[str, datetime | None],
@@ -274,6 +307,11 @@ def active_progress(
     the hold never expires (every viewer passes), and a viewer with no readable
     last-watched time keeps their hold -- "we could not look" is not "they quit".
     Pure: the clock is an argument, never read here.
+
+    A viewer the mirror never saw is a third case, and this function cannot reach it: they
+    contribute no rows, so there is nobody here to keep and an empty result is
+    indistinguishable from "nobody is part-way through". That one is answered separately by
+    :func:`progress_is_establishable`, whose answer ``plan_series_prune`` takes.
     """
     if hold_days <= 0:
         return dict(progress_by_user)
@@ -300,6 +338,12 @@ def plan_series_prune(
     season_final_episode: Mapping[int, int | None] | None = None,
     season_lookahead: int = SEQUENTIAL_LOOKAHEAD,
     keep_in_progress: bool = True,
+    # Whether the watch mirror reaches far enough back for the mid-binge guard to have an
+    # answer at all (``progress_is_establishable``). False holds every season on disk: the
+    # viewer set is un-establishable, not empty. Defaults True because that is what a
+    # default-configured operator has -- nothing is condemnable at all until the mirror
+    # spans min_dormancy (1095 days), well past the 180-day default hold.
+    progress_established: bool = True,
     keep_specials: bool = True,
     protect_incomplete: bool = True,
     flag_keep_conflicts: bool = True,
@@ -349,6 +393,12 @@ def plan_series_prune(
         if keep_in_progress
         else set()
     )
+    # The mirror-reach half of the same guard, and the same off-switch: an operator who
+    # turned the guard off is making no claim for the mirror to fall short of. Where the
+    # claim IS made and the mirror cannot support it, the seasons above are still held for
+    # the viewers we CAN see -- they are real -- and everything else is held too, because a
+    # viewer whose plays all predate the horizon leaves no trace to name a season with.
+    progress_unestablished = keep_in_progress and not progress_established
     total_ranked = len(ranks)
 
     real_numbers = [s.season_number for s in on_disk if s.season_number != SPECIALS_SEASON]
@@ -371,6 +421,7 @@ def plan_series_prune(
             first_real=first_real,
             airing=airing,
             seq_protected=seq_protected,
+            progress_unestablished=progress_unestablished,
         )
         if reason is None:
             prunable.append(n)
@@ -404,6 +455,7 @@ def _protection_reason(
     first_real: int | None,
     airing: set[int],
     seq_protected: set[int],
+    progress_unestablished: bool = False,
 ) -> str | None:
     """Why this season is kept, or ``None`` if it may be pruned.
 
@@ -449,6 +501,11 @@ def _protection_reason(
         return f"within the last {keep_last} seasons (rank {rank})"
     if n in seq_protected:
         return "a viewer is part-way through the show"
+    # Last, so a season we can actually name a viewer for gets that sharper reason instead.
+    # This one is the honest sentence for the rest: the mid-binge guard was asked a question
+    # the watch history cannot answer, and "we could not tell" holds the season.
+    if progress_unestablished:
+        return "your watch history is too short to tell who is part-way through"
     return None
 
 

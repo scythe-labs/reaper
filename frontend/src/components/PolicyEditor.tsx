@@ -1520,8 +1520,10 @@ export function PolicyEditor({
                     </div>
                     <p className="help rule-help">
                       If someone has not watched any of the show in this many days, Reaper treats
-                      the show as abandoned by them and lets go of their place. Set to 0 to hold it
-                      forever. When Reaper can't tell when they last watched, it keeps holding.
+                      the show as abandoned by them and lets go of their place. When Reaper can't
+                      tell when they last watched, it keeps holding. Set this longer than your watch
+                      history goes back and Reaper can't tell who is partway through at all, so it
+                      keeps every season. 0 holds forever, so it always does.
                     </p>
                     <div className="rule-control">
                       <span>also keep</span>

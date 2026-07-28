@@ -1720,6 +1720,62 @@ class TestGatherEndToEnd:
         assert {p["season"] for p in d["protected"]} == {1, 2}
         assert all(p["reason"] for p in d["protected"])
 
+    async def test_a_shallow_mirror_holds_every_season_of_a_prunable_show(
+        self, cache_engine: AsyncEngine
+    ) -> None:
+        """The reach reaches the mid-binge guard, not only the watcher counts (rule 140).
+
+        The same show under the same policy twice, differing only in how far back the watch
+        mirror goes. Past the hold, the middle seasons are candidates. Short of it, a viewer
+        whose plays all predate the horizon leaves no rows, so "nobody is part-way through"
+        is a claim the history cannot support and every season is held instead.
+
+        The reaches straddle the *stated* 200-day hold, not the 180-day default, so a call
+        site that hardcoded the default (or dropped the reach altogether) fails here (rule
+        141): at reach 190 the default would still read as establishable.
+        """
+        series = [
+            {
+                "id": 11,
+                "title": "Five Seasons",
+                "status": "ended",
+                "ended": True,
+                "seasons": [_season_payload(n) for n in range(1, 6)],
+            }
+        ]
+
+        async def _run(reach_days: int) -> list[season_scan.SeasonJudgment]:
+            _reasons, degrade = _degrade_sink()
+            return await season_scan.gather(
+                cache_engine,
+                sonarrs=[_source(_FakeSonarr(series))],
+                tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
+                horizon=utcnow() - timedelta(days=reach_days),
+                reach_days=reach_days,
+                active_rating_keys=set(),
+                activity_degraded=False,
+                keep_last_seasons=2,
+                keep_first_season=True,
+                window_days=365,
+                in_progress_hold_days=200,
+                whitelisted=set(),
+                degrade=degrade,
+            )
+
+        deep = await _run(400)
+        assert [j.media_key for j in deep if j.guard_result.outcome is not PROTECT] == [
+            "sonarr:1:11:2",
+            "sonarr:1:11:3",
+        ]
+
+        shallow = await _run(190)
+        assert all(j.guard_result.outcome is PROTECT for j in shallow)
+        assert {
+            j.guard_result.detail
+            for j in shallow
+            if j.media_key in {"sonarr:1:11:2", "sonarr:1:11:3"}
+        } == {"your watch history is too short to tell who is part-way through"}
+
     async def test_a_show_without_files_logs_no_content(self, cache_engine: AsyncEngine) -> None:
         """A show Sonarr has no downloaded episodes for is dropped as no_content, and its
         decision line says so with the zero file counts, so it is not mistaken for a bug."""

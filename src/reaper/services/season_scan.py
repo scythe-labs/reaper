@@ -90,6 +90,7 @@ from reaper.services.season_pruning import (
     SeriesPrunePlan,
     active_progress,
     plan_series_prune,
+    progress_is_establishable,
 )
 
 log = structlog.get_logger(__name__)
@@ -1035,7 +1036,11 @@ async def gather(
     keep_last_scope: str = "all",
     season_lookahead: int = 0,
     keep_in_progress: bool = True,
-    in_progress_hold_days: int = 0,
+    # Mirrors ``TvPolicy.in_progress_hold_days``'s own default, which is what the only
+    # production caller passes (``services.snapshot.scan``). It read 0 here, a value no
+    # shipped policy has, and 0 means the hold never expires -- so every caller that omitted
+    # it was exercising an unbounded claim the mirror cannot support (rule 141).
+    in_progress_hold_days: int = 180,
     keep_specials: bool = True,
     protect_incomplete_seasons: bool = True,
     flag_keep_conflicts: bool = True,
@@ -1469,7 +1474,11 @@ def _judge_series(
     keep_last_scope: str = "all",
     season_lookahead: int = 0,
     keep_in_progress: bool = True,
-    in_progress_hold_days: int = 0,
+    # Mirrors ``TvPolicy.in_progress_hold_days``'s own default, which is what the only
+    # production caller passes (``services.snapshot.scan``). It read 0 here, a value no
+    # shipped policy has, and 0 means the hold never expires -- so every caller that omitted
+    # it was exercising an unbounded claim the mirror cannot support (rule 141).
+    in_progress_hold_days: int = 180,
     keep_specials: bool = True,
     protect_incomplete_seasons: bool = True,
     flag_keep_conflicts: bool = True,
@@ -1525,6 +1534,8 @@ def _judge_series(
     # Expire abandoned viewers before the guard sees them: a place in the show is held
     # only while its viewer stayed active within the policy's hold window. The helper
     # keeps every viewer whose last-watched time cannot be read, and 0 disables expiry.
+    # What it CANNOT do is keep a viewer the mirror never saw, which is why the reach is
+    # asked separately below rather than left for this filter to imply.
     progress = active_progress(
         _progress_by_user(stats, key_to_number),
         _last_watched_by_user(stats, key_to_number),
@@ -1555,6 +1566,13 @@ def _judge_series(
         season_final_episode=item.season_final_episode,
         season_lookahead=season_lookahead,
         keep_in_progress=keep_in_progress,
+        # The same reach that qualifies the watcher counts on `Facts.history_reach_days`,
+        # read here by the one other consumer whose claim it bounds (rule 140). A hold the
+        # mirror does not span makes the viewer set un-establishable, and the planner holds
+        # the seasons rather than reading "no rows" as "nobody is part-way through".
+        progress_established=progress_is_establishable(
+            reach_days=reach_days, hold_days=in_progress_hold_days
+        ),
         keep_specials=keep_specials,
         protect_incomplete=protect_incomplete_seasons,
         flag_keep_conflicts=flag_keep_conflicts,
