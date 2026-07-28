@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The General panel has one save affordance (rule 43): a bar that names every unsaved field and
-// sends them together. What still has to hold is that the controls saving on the spot -- the
-// reverse-proxy Switch, the expand-seasons select and the spare-length Segmented -- never throw
-// away text being typed elsewhere.
+// sends them together. Two things have to hold. The controls that still save on the spot -- the
+// reverse-proxy Switch and the expand-seasons select -- never throw away text being typed
+// elsewhere. And the spare length, which is the one field edited by two controls at once, stages
+// BOTH of them in the bar: it was a third on-the-spot writer, and pressing Forever committed the
+// number the bar had just called unsaved (issue #90).
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -32,11 +34,11 @@ const STORED: GeneralSettings = {
   trusted_proxies: [],
 };
 
-// The same row with the two fields that gate themselves switched ON. `STORED` leaves
-// `default_spare_days` at 0 and the proxy switch off, which is exactly the state in which
-// `spareDirty` and the proxy entry can never be reached -- so against `STORED` alone the bar is
-// only ever pinned over two plain strings, and the number and array shapes never travel through
-// it at all. Deleting either gate used to leave the whole suite green.
+// The same row with the two self-gating fields switched ON. `STORED` leaves the proxy switch
+// off, which is exactly the state in which the proxy entry can never be reached -- so against
+// `STORED` alone the array shape never travels through the bar. It also stores Forever, which
+// hides the day box, so the number is only typeable from here. Deleting the proxy gate used to
+// leave the whole suite green.
 const STORED_BOTH_ON: GeneralSettings = {
   ...STORED,
   default_spare_days: 30,
@@ -150,10 +152,10 @@ describe("the save bar", () => {
   });
 
   it("carries the number and the list shapes, not just the strings", async () => {
-    // The two fields that gate themselves on stored state: `default_spare_days` is only a draft
-    // while a length is already in force, and the proxy list only while the switch is on. Both
-    // gates are unreachable against the default fixture, so this is the only test that sends a
-    // number or an array through the bar -- and the only one that fails if either gate goes.
+    // The two shapes that are not plain strings. The day box only exists while the draft is a
+    // length, and the proxy list only joins the bar while the switch is on -- a gate unreachable
+    // against the default fixture, so this is the only test that sends an array through the bar
+    // and the only one that fails if that gate goes.
     apiMock.general.mockResolvedValue(STORED_BOTH_ON);
     const person = renderPanel();
     const days = await screen.findByLabelText("Default spare length in days");
@@ -192,6 +194,90 @@ describe("the save bar", () => {
     await waitFor(() => expect(bar()!.textContent).toContain("That web address isn't valid."));
     // Still unsaved, and still named: nothing was written, and the bar keeps offering it.
     expect(bar()!.textContent).toContain("Application name");
+  });
+});
+
+describe("the default spare length", () => {
+  // One stored field, two controls. Forever IS zero in that field, so the mode press and the
+  // typed number are halves of one draft and both belong in the bar.
+  const forever = () => screen.getByRole("button", { name: "Forever" });
+  const days = () => screen.getByRole("button", { name: "Days" });
+  const dayBox = () => screen.queryByLabelText("Default spare length in days");
+
+  it("stages a Forever press instead of writing it, and keeps the Discard", async () => {
+    // Issue #90, in the order it was driven. From a stored 365 the operator types 7; the bar
+    // names the field and offers Discard. Pressing Forever used to write 0 on the spot, which
+    // dropped the field out of `pending` and unmounted the bar -- taking that Discard with it
+    // while the box kept the 7. The next press then sent the 7 nobody had saved.
+    apiMock.general.mockResolvedValue({ ...STORED_BOTH_ON, default_spare_days: 365 });
+    const person = renderPanel();
+    const box = await screen.findByLabelText("Default spare length in days");
+
+    await person.clear(box);
+    await person.type(box, "7");
+    await waitFor(() => expect(bar()!.textContent).toContain("Default spare length"));
+
+    await person.click(forever());
+
+    expect(apiMock.saveGeneral).not.toHaveBeenCalled();
+    // Still one unsaved field, still undoable, and the box is gone because Forever has no
+    // length to show -- not because the field left the bar.
+    expect(bar()!.textContent).toContain("Default spare length");
+    expect(screen.getByRole("button", { name: "Discard" })).toBeInTheDocument();
+    expect(dayBox()).toBeNull();
+
+    // Coming back is just as free: the press that used to commit the 7 sends nothing.
+    await person.click(days());
+    expect(apiMock.saveGeneral).not.toHaveBeenCalled();
+    expect(dayBox()).toHaveValue(7);
+  });
+
+  it("sends Forever as a length of zero, once Save is pressed", async () => {
+    apiMock.general.mockResolvedValue(STORED_BOTH_ON);
+    apiMock.saveGeneral.mockImplementation((body: Partial<GeneralSettings>) =>
+      Promise.resolve({ ...STORED_BOTH_ON, ...body }),
+    );
+    const person = renderPanel();
+    await screen.findByLabelText("Default spare length in days");
+
+    await person.click(forever());
+    await waitFor(() => expect(bar()!.textContent).toContain("Default spare length"));
+    await person.click(saveChanges());
+
+    await waitFor(() => expect(apiMock.saveGeneral).toHaveBeenCalledTimes(1));
+    expect(apiMock.saveGeneral.mock.calls[0]![0]).toEqual({ default_spare_days: 0 });
+    // Re-seeded from the response, so the mode settles on what is really stored (rule 39).
+    await waitFor(() => expect(bar()).toBeNull());
+    expect(dayBox()).toBeNull();
+  });
+
+  it("stages a first length from Forever, and shows the number being agreed to", async () => {
+    // From a stored Forever there is no box, so the press that reveals one is also the press
+    // that stages it. It used to store 30 before the operator had seen that number at all.
+    const person = renderPanel();
+    await screen.findByLabelText("Application name");
+    expect(dayBox()).toBeNull();
+
+    await person.click(days());
+
+    expect(apiMock.saveGeneral).not.toHaveBeenCalled();
+    expect(dayBox()).toHaveValue(30);
+    await waitFor(() => expect(bar()!.textContent).toContain("Default spare length"));
+  });
+
+  it("puts the mode back on Discard, not just the number", async () => {
+    apiMock.general.mockResolvedValue(STORED_BOTH_ON);
+    const person = renderPanel();
+    const box = await screen.findByLabelText("Default spare length in days");
+
+    await person.clear(box);
+    await person.type(box, "7");
+    await person.click(forever());
+    await person.click(screen.getByRole("button", { name: "Discard" }));
+
+    await waitFor(() => expect(bar()).toBeNull());
+    expect(dayBox()).toHaveValue(30);
+    expect(apiMock.saveGeneral).not.toHaveBeenCalled();
   });
 });
 

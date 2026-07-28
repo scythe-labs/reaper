@@ -141,10 +141,12 @@ export function GeneralPanel() {
   const [tz, setTz] = useState("");
   const [proxies, setProxies] = useState("");
   const [accent, setAccent] = useState(DEFAULT_ACCENT);
-  // The days a plain Spare keeps an item, while the operator is editing it. The stored value
-  // (0 = forever) is the source of truth for which mode is on; this is the box's live number,
-  // seeded to a sensible 30 when the stored default is Forever so switching to a length starts
-  // somewhere reasonable.
+  // The default spare length, as a draft in two halves: which mode is chosen, and the box's
+  // live number. They are held apart because Forever stores 0 and the typed number has to
+  // survive a trip through it; `spareValue` below folds them back into the one stored field.
+  // The number seeds to a sensible 30 while the stored default is Forever, so switching to a
+  // length starts somewhere reasonable.
+  const [spareForever, setSpareForever] = useState(false);
   const [spareDays, setSpareDays] = useState(30);
   const [theme, setTheme] = useState<ThemeChoice>(readTheme);
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
@@ -163,6 +165,7 @@ export function GeneralPanel() {
     setTz(general.data.timezone);
     setProxies(general.data.trusted_proxies.join(", "));
     setAccent(general.data.accent_color);
+    setSpareForever(general.data.default_spare_days === 0);
     if (general.data.default_spare_days > 0) setSpareDays(general.data.default_spare_days);
   }, [general.data]);
 
@@ -171,8 +174,8 @@ export function GeneralPanel() {
     onSuccess: (data, sent) => {
       // Re-seed from the canonical stored values (rule 39) -- but only the fields this Save
       // actually sent. The save bar sends every dirty field at once, so it no longer takes one
-      // row's Save to reach here; the controls that still save on the spot do. A Switch or a
-      // select (the reverse-proxy toggle, the expand-seasons mode) writes immediately, and
+      // row's Save to reach here; the two controls that still save on the spot do. A Switch or
+      // a select (the reverse-proxy toggle, the expand-seasons mode) writes immediately, and
       // re-seeding every field on its response would wipe whatever text was half-typed at the
       // time, with nothing on screen to say why (B-18).
       //
@@ -184,6 +187,10 @@ export function GeneralPanel() {
       if ("timezone" in sent) setTz(data.timezone);
       if ("trusted_proxies" in sent) setProxies(data.trusted_proxies.join(", "));
       if ("accent_color" in sent) setAccent(data.accent_color);
+      if ("default_spare_days" in sent) {
+        setSpareForever(data.default_spare_days === 0);
+        if (data.default_spare_days > 0) setSpareDays(data.default_spare_days);
+      }
     },
   });
 
@@ -270,17 +277,23 @@ export function GeneralPanel() {
     .map((p) => p.trim())
     .filter(Boolean);
   const proxiesDirty = proxyList.join(", ") !== data.trusted_proxies.join(", ");
-  // Only while a length is in force: Forever hides the box, so its draft cannot be dirty.
-  const spareDirty = data.default_spare_days > 0 && spareDays !== data.default_spare_days;
+  // The two halves of the draft fold back into the one stored number before anything compares
+  // them, because Forever IS 0 in that field. Pressing Forever therefore reads as a change to
+  // the same field the box edits, and one Discard puts both back. It used to write 0 on the
+  // press while the bar, gated on the stored value, unmounted and took its Discard with it --
+  // so the number the bar had just called unsaved went in on the next press, without a Save.
+  const spareValue = spareForever ? 0 : spareDays;
+  const spareDirty = spareValue !== data.default_spare_days;
 
   // One save for the panel (rule 43). Each of these rows used to carry its own Save, rendered
   // inside the right-aligned control box, so the first keystroke made the button appear and
   // shoved the field being typed in 71px to the left -- then back again on undo. The bar names
   // what is unsaved and sends all of it in one request. The controls that take effect the
-  // moment they change are not drafts and do not join it: three of them call `save.mutate`
-  // themselves -- the reverse-proxy `Switch`, the expand-seasons `<select>` and the
-  // spare-length `Segmented` -- and the theme `<select>` calls `applyTheme`, which writes this
-  // browser's own localStorage and never reaches the server, so it has no draft to hold.
+  // moment they change are not drafts and do not join it: two of them call `save.mutate`
+  // themselves -- the reverse-proxy `Switch` and the expand-seasons `<select>` -- and the theme
+  // `<select>` calls `applyTheme`, which writes this browser's own localStorage and never
+  // reaches the server, so it has no draft to hold. The spare-length `Segmented` was a third
+  // until it started staging `default_spare_days` here instead (see `spareValue` above).
   const pending: { label: string; patch: Parameters<typeof api.saveGeneral>[0] }[] = [];
   if (nameDirty)
     pending.push({ label: "Application name", patch: { application_name: name.trim() } });
@@ -289,7 +302,7 @@ export function GeneralPanel() {
   if (accentDirty)
     pending.push({ label: "Accent color", patch: { accent_color: accent.trim().toLowerCase() } });
   if (spareDirty)
-    pending.push({ label: "Default spare length", patch: { default_spare_days: spareDays } });
+    pending.push({ label: "Default spare length", patch: { default_spare_days: spareValue } });
   // Only while the switch is on. Turning it off disables the box, and a bar naming a field the
   // operator cannot reach to fix is worse than one that waits for them to turn it back on.
   if (proxiesDirty && data.proxy_trust_enabled)
@@ -304,6 +317,7 @@ export function GeneralPanel() {
     setTz(data.timezone);
     setAccent(data.accent_color);
     setProxies(data.trusted_proxies.join(", "));
+    setSpareForever(data.default_spare_days === 0);
     if (data.default_spare_days > 0) setSpareDays(data.default_spare_days);
   };
 
@@ -494,20 +508,21 @@ export function GeneralPanel() {
               length for any single title from its Spare menu.
             </p>
             <div className="set-control">
+              {/* Both halves read and write the DRAFT, never the stored value. A press stages
+                  the mode in the save bar beside the number, so the bar names one field, one
+                  Discard puts both back, and neither is written until Save. */}
               <Segmented
-                value={data.default_spare_days > 0 ? "days" : "forever"}
+                value={spareForever ? "forever" : "days"}
                 options={[
                   ["days", "Days"],
                   ["forever", "Forever"],
                 ]}
                 label="Default spare length"
-                onChange={(mode) =>
-                  save.mutate({ default_spare_days: mode === "forever" ? 0 : spareDays })
-                }
+                onChange={(mode) => setSpareForever(mode === "forever")}
               />
-              {/* Only while a length is in force -- Forever hides the box, matching how a
+              {/* Only while the draft is a length -- Forever hides the box, matching how a
                   group's sub-controls disappear when its toggle is off. */}
-              {data.default_spare_days > 0 && (
+              {!spareForever && (
                 <FixedQuantity
                   value={spareDays}
                   suffix="days"
