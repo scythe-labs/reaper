@@ -70,9 +70,11 @@ class TestEveryOperationIsFiled:
         two. A router-level tag plus a route-level one is how that happens: FastAPI
         concatenates them rather than letting the route override its router."""
         doubled = {
-            f"{m} {p}": op["tags"] for m, p, op in _operations(schema) if len(op["tags"]) > 1
+            f"{m} {p}": op.get("tags", ())
+            for m, p, op in _operations(schema)
+            if len(op.get("tags", ())) > 1
         }
-        assert doubled == {}
+        assert doubled == {}, f"filed in two sidebar sections at once: {doubled}"
 
     def test_every_tag_used_is_declared(self, schema: dict[str, Any]) -> None:
         undeclared = _tags_used(schema) - set(api_tags.ALL)
@@ -102,11 +104,13 @@ class TestEveryOperationIsFiled:
 
 class TestTheSectionListItself:
     def test_a_section_is_declared_once(self) -> None:
-        assert len(api_tags.ALL) == len(set(api_tags.ALL))
-
-    def test_every_section_sits_under_exactly_one_heading(self) -> None:
-        placed = [name for group in api_tags.openapi_tag_groups() for name in group["tags"]]  # type: ignore[union-attr]
-        assert sorted(placed) == sorted(api_tags.ALL)
+        """Also the only thing standing between a section and two headings. Naming it
+        twice in ``GROUPS`` is how that happens, and every other guard here is blind to
+        it: ``ALL`` is derived from ``GROUPS``, so a doubled entry doubles on both sides
+        of any served-versus-declared comparison and they still match (rule 118 -- the
+        test this replaced asserted exactly that, and could not fail)."""
+        doubled = sorted({name for name in api_tags.ALL if api_tags.ALL.count(name) > 1})
+        assert doubled == [], f"declared more than once, so it gets two headings: {doubled}"
 
     def test_the_served_schema_carries_the_sections_in_order(self, schema: dict[str, Any]) -> None:
         assert [t["name"] for t in schema["tags"]] == list(api_tags.ALL)
@@ -114,6 +118,7 @@ class TestTheSectionListItself:
     def test_the_served_schema_carries_the_headings(self, schema: dict[str, Any]) -> None:
         """``x-tagGroups`` is what Scalar nests the sidebar by. It is attached outside
         ``get_openapi``, so it is the part most easily lost in a refactor."""
+        assert "x-tagGroups" in schema, "the reference lost its sidebar headings"
         groups = schema["x-tagGroups"]
         assert [g["name"] for g in groups] == ["Start here", "Your library", "Settings"]
         assert [name for g in groups for name in g["tags"]] == list(api_tags.ALL)
@@ -121,7 +126,8 @@ class TestTheSectionListItself:
     def test_every_section_says_what_is_in_it(self, schema: dict[str, Any]) -> None:
         """The description is the line under the section name; a section without one
         reads as a bare word."""
-        assert all(t["description"].strip() for t in schema["tags"])
+        bare = [t["name"] for t in schema["tags"] if not t.get("description", "").strip()]
+        assert bare == [], f"renders as a bare word, with no line under it: {bare}"
 
     def test_section_copy_carries_no_em_dashes(self, schema: dict[str, Any]) -> None:
         """Rule 21. These strings are operator-facing: they render in the reference."""

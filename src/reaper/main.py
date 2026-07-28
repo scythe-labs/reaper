@@ -337,13 +337,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def openapi_with_api_key() -> dict[str, Any]:
         """The stock schema plus the ``X-Api-Key`` security scheme, so the reference
         UI offers an auth box whose try-it-out requests actually authenticate -- and
-        the section list that keeps 87 operations from rendering as one flat scroll.
+        the section list that keeps the whole API from rendering as one flat scroll.
 
         ``tags`` names and orders the sections; ``x-tagGroups`` is the vendor extension
         Scalar reads to nest them under three headings. Both come from
-        ``api.tags.GROUPS``, the one place a section is declared. A route carrying a tag
-        that is not in this list would still render, in a section with no description and
-        outside every heading, which ``tests/test_openapi_tags.py`` refuses.
+        ``api.tags.GROUPS``, the one place a section is declared.
+
+        A route carrying a tag that is not in that list **vanishes from the reference
+        entirely** -- once ``x-tagGroups`` is present Scalar builds the sidebar from the
+        group members alone, so an ungrouped tag emits no navigation entry and its
+        operations are reachable only by someone who already knows the path. Measured
+        against the shipped bundle by retagging one route: 86 of 87 operations
+        navigable, the retagged one absent, and no stray heading.
+        ``tests/test_openapi_tags.py`` refuses it for that reason, not for tidiness.
         """
         if app.openapi_schema is None:
             schema = get_openapi(

@@ -1,10 +1,17 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 """The sections the API reference is organized into.
 
-Untagged, the 87 operations render as one unbroken list at ``/api/docs``: nothing to
+Untagged, every operation renders as one unbroken list at ``/api/docs``: nothing to
 scan, nothing to collapse, and no way to find the four routes that do the thing you
-came for. OpenAPI's answer is a tag per operation, so this module holds the tag names
-and every router picks one.
+came for. OpenAPI's answer is a tag per operation, so this module holds the tag names.
+
+**A router declares the tag, or its routes do -- never both.** Most routers here carry
+``tags=`` on the ``APIRouter`` itself, which files every route in the file. The two
+serving more than one section (``api/routes.py``, ``api/settings.py``) leave the router
+bare and tag each route. Mixing them does not override: FastAPI *concatenates* a
+route-level tag with its router's, so the operation lands in two sidebar sections at
+once, which ``tests/test_openapi_tags.py`` refuses. A router whose routes split across
+sections needs a second router, as ``api/runs.py`` does for the pace settings.
 
 The names are the app's own: ``Review``, ``Policy``, ``Reap``, ``Scales``, and the
 Settings tabs. Someone reading the reference is someone who has used the UI, so a
