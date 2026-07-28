@@ -56,6 +56,57 @@ goes back"` asks for a comparison against a number that appears only on the Scal
 (`Fairness.tsx:277`), which is not linked from here — that half is subsumed by the Scales
 horizon issue filed from this run.
 
+### `openapi_with_api_key` is never wired as `app.openapi`, so one stock call poisons the cache
+
+Raised at `2c3752a` (2026-07-28), reviewing PR #102.
+
+`main.py:336-369` defines `openapi_with_api_key` and the `/api/openapi.json` route at `:371-374`
+is its only caller. `app.openapi` remains `FastAPI.openapi`. Both write the same
+`app.openapi_schema`, and `openapi_with_api_key` short-circuits on `if app.openapi_schema is
+None` — so whichever runs first wins for the life of the process. Driven: calling `app.openapi()`
+once before the first request, then GETting `/api/openapi.json`, serves `root tags: False |
+x-tagGroups: False | ApiKey: False`. The reference degrades to flat sections with no
+descriptions, no headings, and an auth box that does not authenticate.
+
+**Why it is here and not an issue.** No caller exists. `openapi_url`, `docs_url` and `redoc_url`
+are all `None` (`main.py:292-298`), so FastAPI registers no route that calls it, and a repo-wide
+grep finds no `app.openapi()` in `src/`, `tests/`, `frontend/`, CI or `scripts/`. Two lanes
+reached it independently and split: `seam` called it PLAUSIBLE on the demonstrated mechanism,
+`diff` refuted it as having no live trigger. Both are right about what they checked. The shape is
+pre-existing — the `ApiKey` scheme has had the same exposure since `/api/docs` landed — and this
+PR only enlarges what a future caller would silently discard.
+
+**What would settle it:** a caller appearing, or the one-line fix landing on its own merits.
+`app.openapi = openapi_with_api_key  # type: ignore[method-assign]` after the definition makes
+every producer of the schema go through the same function and costs nothing. That is cheap enough
+that the honest question is not "is this a defect" but "why is the function not simply wired the
+way FastAPI expects" — which is a question for whoever wrote it, not a finding.
+
+### The Scans section promises frozen evidence that is filed under Review
+
+Raised at `2c3752a` (2026-07-28), reviewing PR #102.
+
+`api/tags.py:57` describes Scans as "Start a scan, watch it run, and read the evidence it froze."
+The section holds three operations: `POST /api/scan/start`, `GET /api/scan/status`, and `GET
+/api/snapshots/latest`. The last is a totals row — `item_count`, `condemned`, `protected`,
+`abstained`, `reclaimable_bytes`, `degraded`, `policy_hash`, `horizon_at`. The frozen *per-item*
+evidence, which is what "the evidence it froze" most naturally names in this codebase, is `GET
+/api/candidates/{candidate_id}` and is filed under Review.
+
+**Why it is here and not an issue.** Nothing in it is false and rule 25 is satisfied — the
+mechanism is wired and a snapshot's totals genuinely are frozen scan output. Whether a totals row
+answers "read the evidence it froze" is a copy judgment about the operator's own surface, of the
+same kind as the `in_progress_hold_days` entry above it, and the `diff` lane raised it at
+PLAUSIBLE for exactly that reason. The three other re-filings this review found were all settled
+by opening the app beside the reference; this one is not, because both readings survive that
+test.
+
+**What would settle it:** the operator reading the Scans section and saying whether they would
+expect a per-title why-panel behind it. If they would, the fix is a reword rather than a re-file
+— the section is right, the sentence over-promises — and "Start a scan, watch it run, and see
+what the last one found." is the candidate. No test asserts the string beyond the em-dash and
+non-empty guards, so a copy edit stands alone.
+
 ## Settled earlier
 
 **The greppable per-show record entry, raised at `8ff0a3e`, was settled at `89c197d`

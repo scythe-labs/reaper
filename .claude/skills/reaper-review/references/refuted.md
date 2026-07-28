@@ -557,3 +557,70 @@ testable assertion; write the test or delete the sentence.
 copying a pristine file back. No spurious red suite this run, against two in the previous two.
 The `safety` lane went further and worked from `git show HEAD:` copies in a scratch directory
 while other lanes mutated `src/`, which is the right move when lanes share a tree.
+
+## Refuted at `2c3752a` (2026-07-28, reviewing the API-reference tagging, PR #102)
+
+Three lanes fired by path (`safety` on `api/runs.py`, `seam` on every `api/*.py` plus the
+schema hook, `diff` on `api/tags.py`, `main.py` and the new test). The commit gives every
+operation an OpenAPI tag so `/api/docs` stops rendering as one flat scroll. **Nothing landed
+above tier 4 in any lane**, which is the correct outcome for a change that adds no route, no
+gate and no mutation path — worth recording, because a review of a documentation surface that
+returns tier-1 findings is usually a review that went looking for them.
+
+**The convergence signal fired at full strength again: all three lanes independently found the
+same misfiling** — `runs.py`'s router-level tag sweeping the two `/api/profile` routes, which
+carry the run caps, into `Reap` when the operator edits them on the Policy page. Three
+derivations, one mechanism, one fix. Two further pairs converged on the hardcoded "87
+operations" and on the false "every router picks one". Fixed in `81f60d3`, `52567f9`.
+
+**The most valuable single artifact of this run was a rendering, not a reading.** The lead
+candidate going in was that the vendored Scalar bundle might not read `x-tagGroups` at all,
+which would have made the PR's headline claim unwired (rule 25). The `seam` lane settled it by
+running the shipped `@scalar/workspace-store`'s own `createNavigation` over the real served
+schema rather than reasoning about the bundle: `Start here (2) / Your library (5) / Settings
+(9)`, all 87 operations nested. The same harness then turned a *different* candidate from
+plausible to demonstrated — retagging one route to an undeclared name does not degrade its
+section, it deletes the operation from the sidebar outright.
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| seam | Scalar does not read `x-tagGroups`, so the sidebar renders 16 flat sections and the PR's three-heading claim is unwired | Refuted by rendering. `createNavigation` on the served schema returns the three headings nested over all 87 operations. The bundle *does* contain an `x-tagGroups` stripper (`k9t` via `A9t`), and our document is `openapi: 3.1.0` so it would qualify — but the loader calls `oen(AT(f), "3.1")` and `oen` returns before `A9t` when the target is `"3.1"`. Never reached. |
+| safety | A router-level `tags=` changes what a route on that router *does* — matching, dependencies, response model, or the auth guard | `route.tags` is written at `fastapi/routing.py:1022`/`1427` and read only at `fastapi/openapi/utils.py:240-241`. `tests/test_api.py` + `tests/test_guarded_transport.py`: 128 passed, exit 0. |
+| safety | The middleware's path-based API-key fences are affected | `middleware.py` is not in the diff and `_api_key_allowed` keys purely on method plus path. Nine paths driven with a live key returned dev's answers. |
+| diff | Adding `tags=` shifts `operationId`s and desynchronizes the hand-written `frontend/src/api.ts` | `fastapi/utils.py:95` `generate_unique_id` derives from `route.name`, `path_format` and method only. |
+| diff | `/api/health` is newly advertised by the schema | It never carried `include_in_schema=False`; it was already published under `"default"`. The diff moves it from `"default"` to `"Setup"`, which is the best fit of the sixteen. |
+| seam | An operation is reachable but absent from the schema, or in the schema but unreachable | 86 declared across the fourteen router modules plus `/api/health` = 87, all present. The only exclusions are `/api/openapi.json` and `/api/docs`, both deliberate; the SPA is served by `app.frontend`, not an `APIRoute`, so it never enters. |
+| rule 68 | The vendored Scalar bundle is a generated asset with no generator and no drift test | `frontend/public/vendor/scalar.js` is gitignored (`.gitignore:231`) and produced by the committed `frontend/scripts/copy-scalar.mjs` from `predev`/`prebuild`. Rebuilt every run, nothing to drift from, and untouched here. |
+| rule 64 | Something in `frontend/src/` reads the schema or the tag list | Nothing does. The only link is `Settings.tsx:628`'s `href="/api/docs"`, whose help copy this change does not falsify. |
+| diff | `docs/STATUS.md` should have been updated in the same commit | No line there is now wrong: STATUS.md has never carried a line about the API reference, and the commit that introduced `/api/docs` (`63d8e65`) touched `docs/PLAN.md` instead. Both the `seam` and `diff` lanes checked independently. |
+| diff | `ALL` can drift from `GROUPS` | It is a comprehension over `GROUPS` evaluated at import. There is no second declaration. |
+| diff | Typing problems in `tags.py` | None. `get_openapi(tags=...)` takes `list[dict[str, Any]]`; `list[dict[str, object]]` is the correct LUB for `openapi_tag_groups()`. mypy exits 0. |
+| diff | Rule 37: the new test fixture builds its own `Settings` and app, so it is non-hermetic | `_hermetic` (`tests/conftest.py:127`) is autouse and unconditional — it clears `Settings.model_config["env_file"]`, stubs `load_raw_env` and `catch_up_on_startup`, and resets the four throttle singletons. |
+| diff | Rule 133: eight app boots leave process-global state behind | `create_app` calls the process-global `configure_logging`, but ~20 existing modules boot it the same way and the conftest scopes `_restore_logging` to tests calling those functions in their own body. `app.openapi_schema` is per-app-instance. Not introduced here. |
+| diff | Rule 25: a section description names an unwired mechanism | All checked and wired: Policy's "try a change before you save it" → `/api/policy/validate` + `/simulate`; Reap's "read back what was removed" → `GET /api/runs/{run_id}`; Backup's "put one back" → the three restore routes; Logs' "set how much detail it keeps" → `PUT /api/logs/level`; Notifications' heads-up → `services/leaving_soon.py:562-586`. |
+| diff | Rule 21: "Seerr" is internal vocabulary in the Services description | The app's own operator-facing word — `ServiceModal.tsx:53` labels the service "Seerr" and `ReviewQueue.tsx:467`'s tooltip says "through Seerr". |
+| diff | Rule 21: the section descriptions are too long | Policy was the only two-sentence entry and both halves are short. Within "a sentence over two". |
+| safety | `REVIEW`'s "the titles you keep or spare" hides `POST /api/override {decision:"reap"}`, which forces a title onto the delete list | `decision` is a required `Literal["spare","reap"]`, so misreading the blurb cannot produce an accidental force-reap, and the route's own description renders directly beneath it. |
+| safety | `REAP`'s blurb omits `POST /api/runs/{id}/stop`, the intervention lever | The operation and its full docstring render inside the section the operator is already reading. |
+| diff | Reordering `GROUPS` should fail the order test | It should not, and does not: `ALL` derives from `GROUPS`, so the test pins "served equals declared", which is the right contract. Serving a reversed array *does* fail it. |
+
+**The lesson worth keeping, and it is the `ef0278d` layout lesson pointed at a different kind of
+surface: on a change whose whole output is prose, the prose is the code.** Every finding this
+run above the test-hygiene tier was a sentence — a section blurb promising a control its page
+does not have, a docstring naming the wrong failure mode, a count that was right once. The
+tagging itself was correct in 84 of 87 places on the first try, and no reading of the decorators
+would have found the three that were wrong, because a decorator cannot be wrong about *where an
+operator looks*. That question is answered only by opening the app beside the reference.
+
+**And a second, sharper than it sounds: the docstring that named the guard was wrong about why
+the guard exists.** `main.py` justified `tests/test_openapi_tags.py` as protection against
+untidiness, when the real consequence is an endpoint that disappears from the only reference the
+operator has. A test whose stated reason understates its own job is one a future author deletes
+in good faith. Check what a guard actually prevents before writing down why it is there.
+
+**Procedural, confirming the two prior runs.** All three lanes ran concurrently in one worktree
+and called `.venv/bin/python -m pytest` directly rather than `uv run`; no spurious red suite. One
+lane did hit a real-looking failure (`GET /api/logs` tagged `['Logs','Review']`) that was another
+lane's live probe rather than the branch, and correctly said so instead of reporting it — a shared
+tree makes a red suite ambiguous, so a lane that sees one should re-check against `git stash`-free
+pristine copies before believing it.
