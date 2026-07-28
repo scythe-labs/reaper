@@ -191,10 +191,12 @@ def guard_result(vector: dict[str, Any]) -> GateResult | None:
     ``defers_to_owner``. The refused shapes -- a kept season nobody could read, and a
     comparison the watch mirror is too short to settle -- have no vector here, because
     nothing in the policy sweep varies them. They reach the same verdict as this one (no
-    block holds a hand reap) and differ in the chip the operator is shown, and they are
-    pinned directly, in ``tests/test_season_scan.py``, ``tests/test_review_chips.py`` and
-    ``tests/test_override_truth.py`` (rule 132: this helper must not read as coverage of an
-    arm it does not build).
+    block holds a hand reap) and differ in the chip the operator is shown. Both are pinned
+    directly in ``tests/test_season_scan.py`` and ``tests/test_review_chips.py``.
+    ``tests/test_override_truth.py`` covers the stored-row path and carries only the
+    unreadable-kept shape, not the shortfall one -- and cannot tell them apart anyway, since
+    both encode as ``defers_to_owner: False`` once frozen (rule 132: this helper must not
+    read as coverage of an arm it does not build, nor credit a file with a shape it lacks).
     """
     guard = vector.get("guard")
     if not guard:

@@ -33,13 +33,14 @@ from reaper.engine import identity
 from reaper.engine.gates import ABSTAIN, PROTECT, Evaluation, GateId, GateResult, evaluate_all
 from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
-from reaper.engine.signals import SignalConfig
+from reaper.engine.signals import Score, SignalConfig
 from reaper.engine.signals import score as score_signals
 from reaper.ratings import Rating, RatingSource
 from reaper.services import history_sync, lists, requested_by, season_scan
+from reaper.services.condemned import reap_override_verdict_decoded
 from reaper.services.scan_runner import build_gates
 from reaper.services.season_pruning import plan_series_prune
-from reaper.services.snapshot import _verdict
+from reaper.services.snapshot import _explain, _verdict
 
 GB = 1024**3
 
@@ -304,14 +305,34 @@ class TestSeasonsFromRows:
 def _hand_reap(result: GateResult) -> str:
     """What a hand reap does to a season carrying this one guard result.
 
-    Through the scan's own adapter onto the single decision function
-    (``snapshot._verdict``), never a transcription of the argument it passes: the whole
-    point of these assertions is that the guard's typed fields reach the real decision, and
-    a test that re-stated the decision would agree with itself (rules 3/22, 119). Scored 0
-    against a threshold of 100, so nothing but the override can produce a condemn.
+    Through the path the queue's Reap button actually takes: the guard result is FROZEN by
+    the real writer (``snapshot._explain``) and re-read by
+    ``condemned.reap_override_verdict_decoded``, which is what every read-side consumer
+    calls (``snapshot.effective_fate`` routes a hand reap through it rather than deciding
+    live). Scored 0 against a threshold of 100, so nothing but the override can condemn.
+
+    **This answer is CONSTANT for this gate, and that is the point rather than a gap
+    (rule 118).** ``season_progression`` is in neither ``STRUCTURAL_GATES`` nor any
+    remaining hold, so every shape the guard can emit -- all 16 combinations of outcome x
+    blocked x defers_to_owner x detail -- condemns under a hand reap. Measured. So the
+    callers below do NOT lean on this line to tell their shapes apart; each asserts the
+    typed ``defers_to_owner`` and the detail, which do vary. What this line pins is the
+    guarantee itself: **no season-guard shape may ever refuse the operator's own hand
+    again**, which is exactly what the reversal bought and exactly what a future change
+    re-adding a hold would break.
+
+    It goes through the freeze rather than ``snapshot._verdict(..., override="reap")`` for
+    two reasons. That call is a dead path -- its only caller, ``judge_facts``, passes
+    ``override=None`` unconditionally, and ``effective_fate`` routes every hand reap through
+    ``condemned`` off the frozen explanation instead -- so asserting on it proved nothing
+    about production. And going through ``_explain`` makes these assertions cover the
+    writer: a field the writer stops emitting changes the answer here.
     """
     policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 100})
-    return _verdict(Evaluation(results=[result]), 0, 10_000, policy, override="reap")
+    frozen = json.loads(
+        _explain(Evaluation(results=[result]), Score(value=0.0, coverage=1.0, results=[]), policy)
+    )
+    return reap_override_verdict_decoded(frozen, score=0)
 
 
 class TestGuardResult:

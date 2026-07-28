@@ -35,18 +35,23 @@ from reaper.db.base import Base
 from reaper.db.models import Candidate, Snapshot
 from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.gates import (
+    ABSTAIN,
     PROTECT,
+    Evaluation,
     Facts,
     GateConfig,
     GateId,
+    GateResult,
     MinDormancyGate,
     ServerPopularityGate,
 )
 from reaper.engine.observation import Absent, Known
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY
+from reaper.engine.signals import Score
 from reaper.main import create_app
 from reaper.services.condemned import reap_override_verdict_decoded
 from reaper.services.season_pruning import PruneConflict
-from reaper.services.snapshot import HAND_SPARE_DETAIL
+from reaper.services.snapshot import HAND_SPARE_DETAIL, _explain
 
 from ._auth import login
 
@@ -447,6 +452,67 @@ class TestChip:
             assert chip.why == "a check on it couldn't be settled"
             # ...and the invitation the chip extends is one the engine honors.
             assert reap_override_verdict_decoded(legacy, score=82) == "condemn"
+
+    @pytest.mark.parametrize("junk", ['"true"', '"false"', '"0"', "1", "0", "[]", "{}", "null"])
+    def test_only_a_real_json_true_claims_the_comparison_was_made(self, junk: str) -> None:
+        """``_chip`` reads ``defers_to_owner`` with ``is True``, and that strictness is the
+        whole guard on the one chip that ASSERTS something about the evidence.
+
+        A stored row is written by whatever version was running, so this key can come back
+        as a string, a number, or a container. Only a real JSON ``true`` means "Reaper made
+        the comparison and the rule lost it"; everything else means the row cannot tell,
+        and must fall to the vague-but-true chip rather than telling the operator a
+        comparison happened. `"false"`, `"0"` and `0` are the sharp ones -- all three are
+        *truthy* as strings or falsy as numbers in ways a loose test gets backwards.
+
+        This sweep used to live on the reap decision, which read the same key the same way.
+        That reader stopped reading it when a blocked gate stopped holding a hand reap, so
+        the sweep became constant-true there and was moved here, to the consumer that
+        actually inherited the strictness (rule 132: the citation must be a live one).
+        """
+        detail = json.dumps(_conflict_detail(kept_watchers=1))
+        entry = json.loads(
+            f'{{"gate": "season_progression", "detail": {detail}, "defers_to_owner": {junk}}}'
+        )
+
+        chip = _chip(_exp(82, unknown=[entry]), "abstain", 82)
+
+        assert chip is not None
+        assert chip.text == "Needs a look · left for you to decide"
+        assert "watched more than" not in chip.text
+
+    def test_the_writer_and_the_chip_are_connected_by_a_real_frozen_row(self) -> None:
+        """The producer -> consumer link for ``defers_to_owner``, end to end through the
+        REAL writer (``snapshot._explain``) rather than a hand-built dict.
+
+        ``_chip`` is the field's only reader now, and every other chip test builds its
+        explanation by hand -- so ``_explain`` could stop writing the key entirely and
+        nothing would fail, while every season-conflict chip silently degraded to the
+        legacy "names neither shape" wording above. That is rule 142's supply chain one
+        link short, and rule 132's "the fixture is the claim". This is the link.
+        """
+        made = GateResult(
+            GateId.SEASON_PROGRESSION,
+            ABSTAIN,
+            detail=_conflict_detail(kept_watchers=1),
+            blocked=True,
+            defers_to_owner=True,
+        )
+        refused = replace(made, defers_to_owner=False)
+
+        for result, expected in ((made, "watched more than"), (refused, "couldn't check")):
+            frozen = json.loads(
+                _explain(
+                    Evaluation(results=[result]),
+                    Score(value=82.0, coverage=1.0, results=[]),
+                    DEFAULT_MOVIE_POLICY,
+                )
+            )
+
+            chip = _chip(frozen, "abstain", 82)
+
+            assert chip is not None, expected
+            assert expected in chip.text, chip.text
 
     def test_the_chip_and_the_reap_decision_never_disagree(self) -> None:
         """Rule 92 held end to end: no chip may promise a reap the engine will refuse.

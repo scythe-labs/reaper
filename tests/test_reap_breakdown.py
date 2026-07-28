@@ -395,7 +395,7 @@ async def test_a_hand_reap_past_a_protection_nobody_could_check_is_in_the_net(
             {
                 "signals": [],
                 "protections_fired": [],
-                "protections_unknown": [{"gate": "keep_list", "detail": "could not check"}],
+                "protections_unknown": [{"gate": "whitelisted", "detail": "could not check"}],
             }
         ),
     )
