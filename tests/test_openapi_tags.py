@@ -133,3 +133,32 @@ class TestTheSectionListItself:
         """Rule 21. These strings are operator-facing: they render in the reference."""
         copy = json.dumps(schema["tags"])
         assert "—" not in copy
+
+
+class TestOneProducerOfTheSchema:
+    def test_a_stock_openapi_call_cannot_poison_the_served_document(self, tmp_path: Path) -> None:
+        """``FastAPI.openapi`` and ``main.openapi_with_api_key`` both cache into
+        ``app.openapi_schema`` and both short-circuit on it, so whichever runs first wins
+        for the life of the process -- and the stock one builds no ``tags``, no
+        ``x-tagGroups`` and no ``ApiKey`` scheme. ``main`` assigns ``app.openapi`` to the
+        enriched function so there is no second producer to lose the race to.
+
+        No caller of the stock entry point exists today, which is what makes this a pin
+        rather than a regression test: it fails the moment someone drops the assignment,
+        instead of the reference silently degrading to a flat scroll under an auth box
+        that does not authenticate. Driven the way the trap would spring -- build the
+        schema before the first request, then read what the reference page is served."""
+        settings = Settings(data_dir=tmp_path, secret_key="k")  # type: ignore[call-arg]
+        engine = sa_create_engine(settings.sync_database_url)
+        Base.metadata.create_all(engine)
+        engine.dispose()
+        app = create_app(settings)
+        app.openapi()
+        with TestClient(app) as client:
+            login(client, settings)
+            response = client.get("/api/openapi.json")
+            assert response.status_code == 200
+            served = response.json()
+        assert [t["name"] for t in served.get("tags", ())] == list(api_tags.ALL)
+        assert "x-tagGroups" in served
+        assert "ApiKey" in served.get("components", {}).get("securitySchemes", {})

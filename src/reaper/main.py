@@ -375,6 +375,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.openapi_schema = schema
         return app.openapi_schema
 
+    # The one producer of the schema, so there is no second way to build it. Both this and
+    # the stock ``FastAPI.openapi`` cache into ``app.openapi_schema`` and short-circuit on
+    # it, so whichever runs first wins for the life of the process: one stock call before
+    # the first request would serve the reference a document with no ``tags``, no
+    # ``x-tagGroups`` and no ``ApiKey`` scheme -- a flat scroll under an auth box that does
+    # not authenticate -- and nothing would raise. No such caller exists today (``docs_url``,
+    # ``redoc_url`` and ``openapi_url`` are all ``None`` above, so FastAPI registers no route
+    # that calls it), which is exactly why the trap is worth closing here rather than in
+    # whichever change first adds one.
+    app.openapi = openapi_with_api_key  # type: ignore[method-assign]
+
     @app.get("/api/openapi.json", include_in_schema=False)
     async def openapi_json() -> JSONResponse:
         # Inside /api, so the AuthGuard fronts it: a session cookie or a valid API key.
