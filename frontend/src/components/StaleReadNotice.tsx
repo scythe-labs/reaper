@@ -14,18 +14,28 @@
  *  and the failed read handled explicitly, so this is what the failed one says.
  *
  *  One component for every panel, so the wording cannot drift (rule 144). `GeneralPanel`,
- *  `PlexPanel`, `SecurityPanel` and `BackupPanel` keep their surface through a failed refetch; a
- *  fifth panel that starts doing so takes this line with it, rather than writing its own. Security
- *  is the one with a clock behind it: `useSafety` refetches every 15 seconds, so its form met this
- *  state without the operator doing anything at all. Backup is the one where the never-loaded
- *  sentence was actively harmful rather than merely wrong: it says to reload, and a reload does
- *  not run the restore card's unmount cleanup, so the staged archive is orphaned by an operator
- *  doing what the page told them. */
-export function StaleReadNotice() {
+ *  `PlexPanel`, `SecurityPanel`, `BackupPanel`, `AboutPanel` and `JobsPanel` keep their surface
+ *  through a failed refetch; a seventh panel that starts doing so takes this line with it, rather
+ *  than writing its own. Security is the one with a clock behind it: `useSafety` refetches every
+ *  15 seconds, so its form met this state without the operator doing anything at all. Backup is
+ *  the one where the never-loaded sentence was actively harmful rather than merely wrong: it says
+ *  to reload, and a reload does not run the restore card's unmount cleanup, so the staged archive
+ *  is orphaned by an operator doing what the page told them.
+ *
+ *  The last two arrived for a different reason and it is worth keeping straight. The first four
+ *  keep their surface to protect a DRAFT (rule 146); About and Jobs hold none, and keep theirs
+ *  because the last good row is still the best answer available and the never-loaded sentence is
+ *  simply false above a page that is right there. Jobs is the one that reads worst stale: its rows
+ *  carry next-run times and a running flag, so silence presents a schedule as current that the
+ *  panel knows it could not confirm.
+ *
+ *  `what` names the thing on the page, because this line sits over more than settings now.
+ *  A noun slot rather than a second sentence somewhere else: the claim is written once here, and
+ *  a caller can only vary what it is about, never what it says. */
+export function StaleReadNotice({ what = "these settings" }: { what?: string }) {
   return (
     <p className="notice notice-warn">
-      Couldn't check these settings just now, so what's below may be out of date. Reload to try
-      again.
+      Couldn't check {what} just now, so what's below may be out of date. Reload to try again.
     </p>
   );
 }

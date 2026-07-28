@@ -1421,9 +1421,14 @@ function AboutPanel() {
       <h2>About</h2>
       <p className="blurb">What's running, and where its data lives.</p>
       {isPending && <p className="muted">Loading…</p>}
-      {isError && (
+      {/* Two cases, not one. React Query keeps the last good row through a failed refetch and
+          raises isError beside it, so an undivided `isError` printed "couldn't load this page"
+          directly above the fully drawn page (rule 17/36). Window focus reaches this read, so
+          it took nothing but switching back to the tab. */}
+      {isError && !data && (
         <p className="notice notice-error">Couldn't load this page. Reload to try again.</p>
       )}
+      {isError && data && <StaleReadNotice what="these details" />}
       {data && (
         <div className="set-rows">
           <dl className="about-kv">
@@ -1961,9 +1966,16 @@ function JobsPanel({ onGoToPlex }: { onGoToPlex: () => void }) {
       </div>
 
       {schedule.isPending && <p className="muted">Loading the upkeep jobs…</p>}
-      {schedule.isError && (
+      {/* The rows above render from the last good row either way (`schedule.data?.jobs ?? []`),
+          so a failed refetch already keeps them on screen -- only the sentence under them was
+          wrong, and it read worst here: every row carries a next-run time and a running flag,
+          and this query polls itself every 1.5s while anything runs, so it reaches the failed
+          state with the operator doing nothing at all. The never-loaded line stays for the read
+          that really never landed, which is the only case it is true in. */}
+      {schedule.isError && !schedule.data && (
         <p className="notice notice-error">Couldn't load the upkeep jobs. Reload to try again.</p>
       )}
+      {schedule.isError && schedule.data && <StaleReadNotice what="these jobs" />}
 
       {editing && (
         <ScheduleModal
