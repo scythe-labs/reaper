@@ -1485,10 +1485,11 @@ def _explain(
             ],
             # ``defers_to_owner`` is written on every entry, never omitted when False, so
             # a row frozen by THIS version is distinguishable from one frozen before the
-            # flag existed (rule 104's explicit thaw). ``api.routes._chip`` reads that
-            # difference to pick the operator's chip: present-and-True names the comparison
-            # Reaper made, present-and-False says it could not make one, and absent names
-            # neither, falling to the vague-but-true chip.
+            # flag existed (rule 104's explicit thaw). The card's chip (``api.routes._chip``)
+            # and the why panel's verdict note both read that difference, the panel through
+            # ``api.schemas.GateOutcomeOut``: present-and-True names the comparison Reaper
+            # made, present-and-False says it could not make one, and absent names neither,
+            # falling to the vague-but-true wording.
             #
             # It decides nothing about a hand reap. It used to -- and the write is worth
             # keeping for the chip alone, because a legacy row genuinely cannot tell the two

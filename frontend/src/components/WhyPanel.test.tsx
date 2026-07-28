@@ -10,7 +10,7 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { api, type CandidateDetail, type SignalContribution } from "../api";
+import { api, type CandidateDetail, type GateOutcome, type SignalContribution } from "../api";
 import { DEFAULT_GENERAL, DEFAULT_PROFILE, seedSettings } from "../test/apiFixtures";
 import { testQueryClient } from "../test/queryClient";
 import { WhyPanel, allocateShares } from "./WhyPanel";
@@ -690,18 +690,35 @@ describe("the verdict headline", () => {
     "history only goes back 12 months. Season 3 is kept because it is one of the newest " +
     "seasons your rule keeps. Left for you to decide instead of removing it.";
 
-  const conflictDetail = (message: string) =>
+  // The message and the flag come from the same conflict, exactly as the producer emits them
+  // (`season_scan.guard_result`): a settleable conflict carries `defers_to_owner: true`, a
+  // refused one `false`. Passing them independently would let a test pin a pairing the backend
+  // cannot produce.
+  //
+  // Omitting the flag OMITS THE KEY, rather than setting it to `undefined`. That is the third
+  // real shape -- a row frozen before the field shipped -- and the server sends no key at all
+  // for it, so a fixture carrying the key with an undefined value would be a payload nothing
+  // produces (rule 119). `exactOptionalPropertyTypes` rejects the other spelling anyway.
+  const conflictDetail = (message: string, defersToOwner?: boolean, others: GateOutcome[] = []) =>
     detail(WORKED_ROWS, {
       verdict: "abstain",
       explanation: {
         ...detail(WORKED_ROWS).explanation,
-        protections_unknown: [fired("season_progression", message)],
+        protections_unknown: [
+          ...others,
+          {
+            gate: "season_progression",
+            detail: message,
+            ...(defersToOwner === undefined ? {} : { defers_to_owner: defersToOwner }),
+          },
+        ],
       },
     });
 
   it("tells a keep-rule conflict what it is and how to resolve it", () => {
-    show(conflictDetail(SETTLEABLE_CONFLICT));
+    show(conflictDetail(SETTLEABLE_CONFLICT, true));
     expect(screen.getByText("Needs a look")).toBeInTheDocument();
+    expect(screen.getByText(/This was watched more than a season your keep rule/i)).toBeVisible();
     expect(screen.getByText(/Spare it to keep it, or Reap it to remove it/i)).toBeInTheDocument();
   });
 
@@ -710,23 +727,45 @@ describe("the verdict headline", () => {
     // reap any more, so this promise is kept for every conflict shape. Pinned here because
     // it is the half that used to be a safety divergence, and a future change that makes a
     // block hold the reap again must fail a test rather than quietly re-break the panel.
-    show(conflictDetail(REFUSED_CONFLICT));
+    show(conflictDetail(REFUSED_CONFLICT, false));
     expect(screen.getByText(/Spare it to keep it, or Reap it to remove it/i)).toBeInTheDocument();
   });
 
-  it("KNOWN WRONG (#86): asserts a comparison the reason block below it denies", () => {
-    // What is still broken, and it is now purely copy. `isKeepRuleConflict` runs the retired
-    // wording test, so a conflict the mirror could not settle reads as a made comparison and
-    // the headline asserts one -- while `LeftForYou` prints the producer's "Reaper cannot
-    // tell whether ..." two blocks below. Both on one screen, about a season that may have
-    // no recorded plays at all.
-    //
-    // Deliberately pinned as the WRONG behavior so fixing #86 fails here and forces this
-    // rewritten into the assertion it should be. The fix is `defers_to_owner` reaching
-    // `GateOutcomeOut` and `api.ts` (rule 142's supply chain), not another prefix test.
-    show(conflictDetail(REFUSED_CONFLICT));
-    expect(screen.getByText(/This was watched more than/i)).toBeInTheDocument();
+  it("never asserts a comparison its own reason block denies (#86)", () => {
+    // The copy half of #86, and what the retired wording test could not do: `REFUSED_CONFLICT`
+    // is a non-"could not check" season_progression row, so any wording rule at all read it as
+    // a made comparison and the headline asserted one -- while `LeftForYou` printed the
+    // producer's "Reaper cannot tell whether ..." two blocks below, about a season that may
+    // have no recorded plays at all. Only the typed flag separates them.
+    show(conflictDetail(REFUSED_CONFLICT, false));
+    expect(screen.getByText("Needs a look")).toBeInTheDocument();
+    expect(screen.getByText(/Reaper couldn't check who watched these seasons/i)).toBeVisible();
+    expect(screen.queryByText(/This was watched more than/i)).not.toBeInTheDocument();
+    // The reason block still carries the producer's own account of it.
     expect(screen.getByText(/Reaper cannot tell whether Season 1/i)).toBeInTheDocument();
+  });
+
+  it("claims neither shape for a row frozen before the flag shipped", () => {
+    // Nothing in such a row can tell a made comparison from a refused one, so the panel says
+    // neither (rule 142's three-state). Reading an absent flag as `false` would be a guess in
+    // the other direction; reading it as `true` is the bug this issue is.
+    show(conflictDetail(SETTLEABLE_CONFLICT));
+    expect(screen.getByText("Needs a look")).toBeInTheDocument();
+    expect(screen.getByText(/Reaper couldn't settle this one on its own/i)).toBeVisible();
+    expect(screen.queryByText(/This was watched more than/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/couldn't check who watched these seasons/i)).not.toBeInTheDocument();
+  });
+
+  it("reads the conflict's own flag, not whatever else could not be checked", () => {
+    // A season on a short mirror routinely blocks several gates at once, so the conflict is
+    // rarely alone in the list. The old predicate scanned it with `.some()` and could be
+    // satisfied by any entry; the note must come from the season row itself.
+    show(
+      conflictDetail(SETTLEABLE_CONFLICT, true, [
+        fired("server_popularity", "could not check who watched it: Plex has not matched this"),
+      ]),
+    );
+    expect(screen.getByText(/This was watched more than a season your keep rule/i)).toBeVisible();
   });
 
   it("keeps the plain 'Limbo' note for an ordinary abstain", () => {

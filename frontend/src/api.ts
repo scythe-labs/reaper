@@ -247,6 +247,13 @@ export interface SignalContribution {
 export interface GateOutcome {
   gate: string;
   detail: string;
+  /** Whether the comparison behind a hold is one Reaper actually made. Only the season
+   *  keep-rule guard sets it, where a conflict can also mean "a count nobody could read"
+   *  or "a watch history too short to stand behind the counts" -- shapes that must never
+   *  be described as a comparison. Optional AND nullable, deliberately: a row scanned
+   *  before the flag shipped carries neither answer and must assert neither (rule 142),
+   *  so `undefined` and `null` both read as "names neither shape", never as `false`. */
+  defers_to_owner?: boolean | null;
 }
 
 /** How the item was tied to its Plex library entry. The panel stays quiet on "matched" and

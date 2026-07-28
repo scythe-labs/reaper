@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from reaper.api.routes import (
     _chip,
     _decode_explanation,
+    _explanation_out,
     _kept_phrase,
     _primary_reason,
     _season_number,
@@ -82,6 +83,20 @@ def _conflict_detail(*, kept_watchers: int | None = 0, shortfall: str | None = N
 
 #: The counted shape: a comparison really was made, so the chip may state it.
 CONFLICT_SENTENCE = _conflict_detail(kept_watchers=0)
+
+
+def _drop_defers_key(explanation_json: str) -> str:
+    """A frozen explanation aged back one generation: every ``defers_to_owner`` key removed.
+
+    The pre-flag row is the state no writer can produce any more, and hand-building one would
+    be a second copy of the writer's shape (rule 119) -- which is exactly how a test comes to
+    pin a row the producer never emitted. Derived from a real frozen row instead, so it drifts
+    with it.
+    """
+    exp = json.loads(explanation_json)
+    for entry in exp["protections_unknown"]:
+        entry.pop("defers_to_owner", None)
+    return json.dumps(exp)
 
 
 def _never_played_facts(days_dormant: int) -> Facts:
@@ -485,11 +500,12 @@ class TestChip:
         """The producer -> consumer link for ``defers_to_owner``, end to end through the
         REAL writer (``snapshot._explain``) rather than a hand-built dict.
 
-        ``_chip`` is the field's only reader now, and every other chip test builds its
-        explanation by hand -- so ``_explain`` could stop writing the key entirely and
-        nothing would fail, while every season-conflict chip silently degraded to the
-        legacy "names neither shape" wording above. That is rule 142's supply chain one
-        link short, and rule 132's "the fixture is the claim". This is the link.
+        Every other chip test builds its explanation by hand -- so ``_explain`` could stop
+        writing the key entirely and nothing would fail, while every season-conflict chip
+        silently degraded to the legacy "names neither shape" wording above. That is rule
+        142's supply chain one link short, and rule 132's "the fixture is the claim". This
+        is the link. The panel is the field's other reader and has its own link, in
+        ``test_the_panel_is_served_the_flag_its_chip_reads`` below.
         """
         made = GateResult(
             GateId.SEASON_PROGRESSION,
@@ -513,6 +529,64 @@ class TestChip:
 
             assert chip is not None, expected
             assert expected in chip.text, chip.text
+
+    def test_the_panel_is_served_the_flag_its_chip_reads(self) -> None:
+        """The why panel's half of ``defers_to_owner``'s supply chain, end to end (#86).
+
+        The chip and the panel it opens read the same stored row, but they read it across
+        different boundaries: the chip off the raw dict, the panel through
+        ``api.schemas.Explanation``, which drops any key it does not declare. It did not
+        declare this one, so for the panel the flag did not exist and its predicate went on
+        running the retired wording test -- promising a comparison the reason block below it
+        denied. Rule 142: shipping the field to a consumer across a serialization boundary is
+        part of the fix, not a follow-up.
+
+        All three generations, because the third is the one a ``bool`` field would erase: a
+        row frozen before the flag carries no key and must arrive as ``None``, not ``False``.
+        """
+        made = GateResult(
+            GateId.SEASON_PROGRESSION,
+            ABSTAIN,
+            detail=_conflict_detail(kept_watchers=1),
+            blocked=True,
+            defers_to_owner=True,
+        )
+        frozen = {
+            True: _explain(
+                Evaluation(results=[made]),
+                Score(value=82.0, coverage=1.0, results=[]),
+                DEFAULT_MOVIE_POLICY,
+            ),
+            False: _explain(
+                Evaluation(results=[replace(made, defers_to_owner=False)]),
+                Score(value=82.0, coverage=1.0, results=[]),
+                DEFAULT_MOVIE_POLICY,
+            ),
+            # No writer emits this any more; it is what is already on disk. Built by dropping
+            # the key from a real frozen row, so it cannot drift from the shape above.
+            None: _drop_defers_key(
+                _explain(
+                    Evaluation(results=[made]),
+                    Score(value=82.0, coverage=1.0, results=[]),
+                    DEFAULT_MOVIE_POLICY,
+                )
+            ),
+        }
+
+        for expected, explanation_json in frozen.items():
+            row = Candidate(
+                media_key="sonarr:1:2:3",
+                explanation_json=explanation_json,
+                score=82,
+                coverage_bp=10_000,
+            )
+
+            panel = _explanation_out(row)
+
+            assert not panel.unreadable, expected
+            unknown = panel.body.protections_unknown
+            assert [o.gate for o in unknown] == ["season_progression"], expected
+            assert unknown[0].defers_to_owner is expected
 
     def test_the_chip_and_the_reap_decision_never_disagree(self) -> None:
         """Rule 92 held end to end: no chip may promise a reap the engine will refuse.

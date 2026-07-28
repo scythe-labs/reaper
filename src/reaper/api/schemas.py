@@ -43,6 +43,27 @@ class GateOutcomeOut(BaseModel):
     gate: str
     detail: str
 
+    defers_to_owner: bool | None = None
+    """Whether the comparison behind this hold is one Reaper actually made.
+
+    Set only by the season keep-rule guard (``services.season_scan.guard_result``), where a
+    conflict arrives in three shapes and only one of them is a comparison: the other two are
+    a kept season's watcher count that could not be read, and a watch mirror too short to
+    stand behind the counts it reports. All three send the item to the operator; only the
+    first may be described to them as "watched more than a season your rule keeps".
+
+    **Three-state, and the third state is the whole point (rule 142).** A row frozen before
+    the flag existed carries no key, and nothing in it can tell the shapes apart -- the
+    wording that used to stand in for the flag is exactly what failed. ``None`` is that row,
+    and a plain ``bool`` here would silently assert one shape about every legacy
+    explanation. ``services.snapshot._explain`` writes the key on every entry, never
+    omitting it when ``False``, so present-and-``False`` stays distinguishable from absent.
+
+    Declared here because a wire schema must name every key the UI reads: ``api.routes._chip``
+    already reads it off the stored row, and until this field existed the panel that opens
+    beside that chip could not, so it went on running the retired wording test and asserted a
+    comparison its own reason block denied (#86)."""
+
 
 class MatchOut(BaseModel):
     """How (or whether) the item was bound to its Plex row. ``status`` is what the UI

@@ -432,8 +432,10 @@ def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
 
     **That distinction no longer decides a hand reap, and the flag is no longer an
     interlock.** A blocked gate does not hold a reap at all now -- see ``engine.verdict``
-    -- so all three shapes are overrulable by hand, and the flag survives only to pick the
-    operator's chip in ``api.routes._chip``. Keeping the last two un-overrulable is exactly
+    -- so all three shapes are overrulable by hand, and the flag survives to pick what the
+    operator is TOLD: the card's chip (``api.routes._chip``) and, across the wire through
+    ``api.schemas.GateOutcomeOut``, the why panel's verdict note. Keeping the last two
+    un-overrulable is exactly
     what made a short watch mirror refuse every TV reap on the server, which is the
     opposite of what "evidence too thin" should cost someone who can see the library
     themselves. Read off typed fields, never the wording (rule 142).

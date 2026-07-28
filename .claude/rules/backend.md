@@ -491,10 +491,15 @@ message it never matched — so for a year the panel promised "Reap it to remove
 the engine then refused. Rule 72 obliges the sweep; this says what the sweep owes a twin it
 cannot reach.
 
-*(That particular divergence closed from the other end: a blocked gate no longer holds a hand
-reap, so the panel's promise is kept. The predicate is still the retired wording test and still
-mis-describes which shape it matched, which is why the example stays — the lesson is about the
-sweep, and it does not depend on which side eventually moved.)*
+*(Both halves of that divergence are now closed, from opposite ends, and the gap between them is
+the lesson. The reap half closed from the engine: a blocked gate no longer holds a hand reap, so
+the panel's promise is kept whatever it says. The **copy** half needed the supply chain and
+nothing else — the refused conflict is itself a non-"could not check" `season_progression` row,
+so no wording test of any kind could separate it from the comparison, and the panel went on
+asserting arithmetic against a number nobody took until `GateOutcomeOut` → `api.ts` carried the
+flag to it (#86). Note which one took a year: the safety half was fixed by someone changing their
+mind about the engine, while the reader nobody could reach stayed broken until the field was
+shipped to it. That is the cost this rule is pricing.)*
 
 **143. A protection that widens what it holds must be checked against every consumer that
 iterates the set it just emptied.** Rule 140 sweeps readers of a *value* you re-qualified; rule

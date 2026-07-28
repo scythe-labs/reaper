@@ -262,37 +262,55 @@ function KeptNotice({ match }: { match: Match | undefined }) {
   );
 }
 
-/** Is this abstain the keep-rule conflict -- a season the rule would prune but that was
- *  watched more than one it keeps, deliberately left for the owner?
+/** The keep-rule conflict this abstain is, if it is one -- a season the rule would prune but
+ *  that the guard handed to the owner instead.
  *
- *  **#86's REAP HALF IS NOW FIXED, and not from this side.** A blocked gate no longer holds a
- *  hand reap anywhere in the engine -- only a *fired* structural stop (streaming now,
- *  unmanaged) does, see `engine/verdict.py` -- so "Reap it to remove it" is a promise the
- *  backend keeps for every shape this returns true for, including the two it used to refuse.
- *  The predicate being a wording test stopped being a *safety* divergence at that moment.
+ *  **Read the gate, never the sentence (rule 142).** This was a wording test until #86:
+ *  `!detail.startsWith("could not check")`, which passed for all three conflict shapes and so
+ *  told the caller nothing about which one it had. The producer has recorded the answer as a
+ *  typed flag since `defers_to_owner` shipped, and `api.routes._chip` has read it since; the
+ *  panel could not, because `GateOutcomeOut` did not serve it. Now it does, and the flag rides
+ *  on the outcome for `verdictLook` to branch on.
  *
- *  WHAT IS STILL WRONG is the other half, and it is now the whole of it: the caller
- *  (`verdictLook`) opens "This was watched more than a season your keep rule protects", which
- *  is false for two of the three conflict shapes. A conflict raised because the watch mirror
- *  could not settle it (`PruneConflict.shortfall`, #94) prints "Reaper cannot tell whether
- *  Season N ..." in `LeftForYou` two blocks below -- so the panel asserts a comparison and its
- *  own reason block denies it, on one screen, and the season may have no recorded plays at
- *  all. Same for the shape whose kept count could not be read.
- *
- *  That is a copy defect rather than a safety one, so it stays with #86 and its mockup rather
- *  than riding along here. The fix is unchanged and is still the supply chain, not another
- *  wording test (rule 142): `GateResult.defers_to_owner` -> `api.schemas.GateOutcomeOut` ->
- *  `api.ts` (rule 64), three-state, since a stored row predating the field distinguishes
- *  neither shape. The flag still exists and is still set for exactly this purpose; it just no
- *  longer decides the reap.
+ *  A `season_progression` row reaches `protections_unknown` two ways, and only the conflict
+ *  arm can get here: the other is a season the guard PROTECTS but could not answer
+ *  (`ProtectedSeason.unestablishable`), and a fired protection makes the verdict `protect`
+ *  with a non-empty `protections_fired`, which the Sanctuary branch above returns on first.
+ *  Should a hand-edited row ever slip one through, it carries `defers_to_owner: false` and
+ *  reads as "couldn't check who watched these seasons", which is true of it too -- the
+ *  failure mode is a vaguer sentence, not a false one.
  *
  *  Reachability, so nobody re-derives it: the shortfall arm fires wherever the watch history
  *  is shallower than the library is old, which makes this the DEFAULT rendering for TV on such
  *  a server, not an edge case. */
-function isKeepRuleConflict(item: CandidateDetail): boolean {
-  return item.explanation.protections_unknown.some(
-    (o) => o.gate === "season_progression" && !o.detail.startsWith("could not check"),
-  );
+function keepRuleConflict(item: CandidateDetail): GateOutcome | undefined {
+  return item.explanation.protections_unknown.find((o) => o.gate === "season_progression");
+}
+
+/** What the panel may say about a conflict, given what Reaper could actually establish.
+ *
+ *  Every arm ends in the same offer, because the engine keeps it in every arm: no blocked gate
+ *  holds a hand reap (`engine/verdict.py`), so "Reap it to remove it" is honored whichever
+ *  shape this is. What varies is the clause before it, which is a claim about evidence.
+ *
+ *  - `true` -- Reaper compared the two seasons and the pruned one won. The one shape that may
+ *    be described as a comparison.
+ *  - `false` -- it could not: either the kept season's count was never readable, or the watch
+ *    mirror does not reach back far enough to stand behind the counts. Asserting the
+ *    comparison here states arithmetic against a number nobody took, ~40px above `LeftForYou`
+ *    printing the producer's own "Reaper cannot tell whether Season N ..." denial of it (#86).
+ *    Shares its wording with the card's chip, so the queue and the panel it opens agree.
+ *  - absent -- a row frozen before the flag shipped, which can distinguish neither shape and
+ *    so names neither. Vague and true beats specific and a coin flip; the next scan resolves
+ *    it into one of the two above. */
+function conflictNote(defersToOwner: boolean | null | undefined): string {
+  if (defersToOwner === true) {
+    return "This was watched more than a season your keep rule protects, so Reaper left the call to you. Spare it to keep it, or Reap it to remove it.";
+  }
+  if (defersToOwner === false) {
+    return "Reaper couldn't check who watched these seasons, so it left the call to you. Spare it to keep it, or Reap it to remove it.";
+  }
+  return "Reaper couldn't settle this one on its own, so it left the call to you. Spare it to keep it, or Reap it to remove it.";
 }
 
 /** Why a hand reap is still held -- and it is now a SHORT list, which is the whole reason
@@ -408,14 +426,15 @@ function verdictLook(item: CandidateDetail): { klass: string; label: string; not
   if (verdict === "condemn") {
     return { klass: "verdict-condemn", label: "Condemned", note: null };
   }
-  if (isKeepRuleConflict(item)) {
+  const conflict = keepRuleConflict(item);
+  if (conflict) {
     // "Needs a look", not "Left for you to decide": the latter is the heading of the section
     // just below that lists the same block, so the headline would say it twice. Matches the
-    // conflict chip's own words.
+    // conflict chip's own words, in all three shapes.
     return {
       klass: "verdict-abstain",
       label: "Needs a look",
-      note: "This was watched more than a season your keep rule protects, so Reaper left the call to you. Spare it to keep it, or Reap it to remove it.",
+      note: conflictNote(conflict.defers_to_owner),
     };
   }
   return {
