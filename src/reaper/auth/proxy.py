@@ -22,9 +22,17 @@ server is configured to abstain.** uvicorn ships ``proxy_headers=True`` with
 application code runs. Where Reaper's peer really is loopback -- host networking, a
 same-host proxy published to ``127.0.0.1:8420``, another container sharing the netns,
 a dev server -- :func:`peer_address` below would then be reading a value the caller
-wrote, and would faithfully report the spoof. Reaper's ``CMD`` therefore passes
-``--no-proxy-headers`` (``Dockerfile``, ``scripts/dev-local.sh``, and the ``README``
-dev line), which ``tests/test_repo_hygiene.py`` pins so it cannot quietly go missing.
+wrote, and would faithfully report the spoof. Every launch of the app therefore passes
+``--no-proxy-headers``, which
+``tests/test_repo_hygiene.py::test_every_uvicorn_launch_disables_proxy_headers`` pins so it
+cannot quietly go missing.
+
+**That test is the authority here, and this sentence deliberately does not list the launches
+itself.** An earlier draft named three of them; there were five, and the one it left out --
+``.claude/launch.json``, the launch an interactive session is told to use -- was the only one
+still missing the flag. A reader auditing this claim checked the named files, found them
+clean, and stopped. So the citation is the test, which matches the *invocation* wherever it
+is written rather than a roster somebody has to keep current.
 """
 
 from __future__ import annotations

@@ -222,17 +222,51 @@ def test_dynamic_favicon_link_is_declared_last() -> None:
 # Every real invocation of the app carries ``--factory``, because ``create_app`` IS a factory
 # and uvicorn cannot boot it otherwise. That is what separates an invocation from a mention:
 # dev-local.sh's ``pkill -f "uvicorn reaper.main:create_app"`` names the same string and is not
-# a launch. Matching on the pair keeps this drift-proof -- a new invocation anywhere in the
-# tree is covered the moment it is written, with no list here to remember to update.
-_UVICORN_LAUNCH = re.compile(r"uvicorn\s+reaper\.main:create_app\b")
+# a launch. Matching on the pair means there is no list of files here to remember to update.
+#
+# The separator class is load-bearing, and cost a launch to learn. ``\s+`` alone reads a shell
+# command line and nothing else: an argv ARRAY spells the two tokens ``"uvicorn",
+# "reaper.main:create_app"``, where what sits between them is a quote and a comma. So
+# ``.claude/launch.json`` -- the launch CLAUDE.md tells interactive sessions to use, and the one
+# that was still missing ``--no-proxy-headers`` -- was invisible to this test while the comment
+# here claimed every invocation in the tree was covered. Accepting quotes and commas is what
+# makes that claim true rather than reassuring. It cannot swallow the ``pkill`` line, which
+# carries no ``--factory``.
+_UVICORN_LAUNCH = re.compile(r"uvicorn[\"',\s]+reaper\.main:create_app\b")
+
+#: The shipped ``CMD``, ``scripts/dev-local.sh``, ``README.md``, ``.claude/launch.json`` and
+#: ``.claude/skills/verify/SKILL.md``. Pinned because "every launch carries the flag" is only
+#: worth as much as the walk that finds them: the flag assertion below cannot distinguish a
+#: launch that complies from one this matcher no longer sees, and both read as green (rule 145).
+_EXPECTED_LAUNCHES = 5
 
 
 def _uvicorn_launches() -> list[tuple[Path, int, str]]:
-    """Every line in a tracked text file that boots the app under uvicorn."""
+    """Every line in one of THIS checkout's own text files that boots the app under uvicorn.
+
+    Scoped to this checkout on purpose. ``.claude/worktrees/`` is gitignored
+    (``.gitignore``) and holds agent worktrees, which are entire repo copies sitting inside
+    the repo root -- and ``rglob`` honors no ignore file, so walking into them judges other
+    branches' launches as if they were ours. A worktree's ``.git`` is a *file*, so the skip
+    entry below does not stop the descent either. Left in, ``uv run pytest`` in the main
+    checkout fails the moment any worktree cut before this fix is still on disk, naming files
+    the branch under test cannot reach. A gate nobody can turn green from their own branch is
+    a gate that gets deleted.
+
+    The skip is matched on the REPO-RELATIVE path, which is the part that is easy to get
+    backwards: ``skip`` is tested against ``path.parts``, so putting ``"worktrees"`` in it
+    would match the ABSOLUTE path and skip every file in the tree whenever the suite runs
+    from inside a worktree -- which is where these sessions run it. The relative form also
+    stops an ancestor directory outside the repo that happens to be named ``dist`` from
+    silently emptying the walk.
+    """
     found: list[tuple[Path, int, str]] = []
     skip = {".git", "node_modules", ".venv", "dist", "__pycache__", ".ruff_cache", ".mypy_cache"}
     for path in REPO.rglob("*"):
-        if not path.is_file() or path.resolve() == SELF or any(p in skip for p in path.parts):
+        if not path.is_file() or path.resolve() == SELF:
+            continue
+        relative = path.relative_to(REPO)
+        if any(p in skip for p in relative.parts) or relative.parts[:2] == (".claude", "worktrees"):
             continue
         try:
             text = path.read_text(encoding="utf-8")
@@ -261,7 +295,14 @@ def test_every_uvicorn_launch_disables_proxy_headers() -> None:
     script are twins (rule 72) and a third launch would inherit the same defect silently.
     """
     launches = _uvicorn_launches()
-    assert launches, "expected to find the app's uvicorn invocations; the matcher has drifted"
+    assert len(launches) == _EXPECTED_LAUNCHES, (
+        f"expected {_EXPECTED_LAUNCHES} uvicorn launches, found {len(launches)}:\n"
+        + "\n".join(f"  {p.relative_to(REPO)}:{n}" for p, n, _ in launches)
+        + "\n\nIf you ADDED a launch, give it --no-proxy-headers and bump the number. If you\n"
+        "did not, one dropped out of coverage -- most likely reworded or wrapped onto a\n"
+        "second line, since the match is per-line. A count is the only thing that can see\n"
+        "that: the assertion below passes happily on a launch it can no longer find."
+    )
     missing = [
         f"{path.relative_to(REPO)}:{lineno} -> {line}"
         for path, lineno, line in launches

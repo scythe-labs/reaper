@@ -9,7 +9,7 @@ paths:
 # Test blockers
 
 Blockers, not suggestions. **Rule numbers are permanent** — cite them in test docstrings the
-way the existing suite does (`rule 88`, `rule 118`). Holds 37, 118–119, 132–133, 135–137, 141.
+way the existing suite does (`rule 88`, `rule 118`). Holds 37, 118–119, 132–133, 135–137, 141, 145.
 
 **37. Tests that boot the app are hermetic.** Use the shared autouse `_hermetic` fixture in
 `tests/conftest.py`, which stubs env seeding and startup network. Never let a test read the
@@ -160,3 +160,24 @@ it pins *that an argument was passed*, not *which*. Read it with `.get` and asse
 so the failure names the span that was actually used. This is rule 118's "a test that cannot
 discriminate must never be left reading as a proof," applied to defaulted arguments rather than
 to interlock arms.
+
+**145. A guard that SCANS the tree is proven against the population it claims to cover, not
+only against a mutation of one member it already found.** Rule 118's mutation test asks "does
+the assertion fire?" — break the thing, watch it go red. That is necessary and it is blind in
+one direction: it can only ever mutate a member the *matcher* already collected, so a member
+the matcher never saw is missing from both the guard and the proof, and the two failures hide
+each other perfectly. The `--no-proxy-headers` guard is the case. It was mutation-tested, went
+red on cue, and covered four of the five launches in the tree, because its regex wanted
+whitespace between `uvicorn` and `reaper.main:create_app` while an argv array spells that gap
+`", "` — so `.claude/launch.json`, the launch `CLAUDE.md` tells interactive sessions to use,
+was at once the one member it could not see and the only one still missing the flag. Its
+comment meanwhile promised that "a new invocation anywhere in the tree is covered the moment it
+is written." So **count what the scan collects and reconcile that number against the members
+you believe exist**, by hand, once — then **pin the count**, because the flag-shaped assertion
+cannot tell a member that complies from a member that dropped out of the walk, and reads green
+for both. A scanner also walks what no ignore file stops: `rglob` descends into gitignored
+agent worktrees, which are whole repo copies inside the repo root, so scope the walk to the
+checkout under test and match skips on the REPO-relative path, never on `path.parts` of the
+absolute one — the absolute form matches the worktree the suite is *running in* and silently
+empties the walk. Until that reconciliation is written down, a comment claiming tree-wide
+coverage is a guess wearing a test's clothes.
