@@ -719,6 +719,32 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
                 f"a key reaches this, so it must not be fenced: {reachable}"
             )
 
+    def test_a_signed_in_write_needs_the_header_the_session_scheme_names(
+        self, client: TestClient
+    ) -> None:
+        """Rule 119: the scheme's copy is checked against the guard, not against itself.
+
+        The panel sends three headers, accept and content-type and cookie, so a try-it-out
+        write arrives holding the real session and no ``X-Reaper-CSRF`` and the guard
+        refuses it before any handler. The description used to promise the button worked
+        while signed in, which was true of reads and of nothing else, on a document where
+        40 operations offer the session as their only credential. If this stops being a
+        refusal, the sentence naming the header is the line to delete.
+        """
+        panel = _bare(client)
+        panel.cookies.update(client.cookies)
+
+        # The half the promise was true of: the cookie alone reads.
+        assert panel.get("/api/candidates").status_code == 200
+        # The same credential, one unsafe method, no header.
+        refused = panel.post("/api/whitelist", json={})
+        assert refused.status_code == 403
+        assert "CSRF" in refused.json()["detail"]
+
+        schema = client.get("/api/openapi.json").json()
+        session_scheme = schema["components"]["securitySchemes"]["Session"]
+        assert "X-Reaper-CSRF: 1" in session_scheme["description"]
+
     def test_the_open_route_that_refuses_a_key_is_marked_like_any_other(
         self, client: TestClient
     ) -> None:

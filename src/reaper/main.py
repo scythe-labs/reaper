@@ -403,15 +403,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         security requirement is a quiet signal and a 403 nobody predicted is a loud one.
 
         **The order of the two schemes is load-bearing, not cosmetic.** Scalar preselects
-        the FIRST one an operation accepts and sends its placeholder value, so with
-        ``ApiKey`` first every try-it-out went out carrying ``X-Api-Key:
-        YOUR_SECRET_TOKEN`` -- and the guard judges a presented key on the key alone,
-        never falling back to the cookie, so the reference answered its own requests
-        "That API key is not valid." With ``Session`` first the preselected credential is
-        a cookie, which no page script can set, so the browser's real session goes
-        instead and try-it-out works signed in, as the page promises. Measured against the
-        shipped bundle: reading the last snapshot answered 401 under one order and
-        authenticated under the other, and the key stays selectable in the same dropdown.
+        the FIRST one an operation accepts and sends it, so with ``ApiKey`` first every
+        try-it-out went out carrying an ``X-Api-Key`` header holding the unfilled scheme's
+        placeholder, which is the empty string -- and the guard judges a presented key on
+        the key alone, never falling back to the cookie, so the reference answered its own
+        requests "That API key is not valid." With ``Session`` first the preselected
+        credential is a cookie, which no page script can set (``Cookie`` is a forbidden
+        fetch header, so the browser drops it), and the real session rides along instead.
+        Measured against the shipped bundle: reading the last snapshot answered 401 under
+        one order and authenticated under the other, and the key stays selectable in the
+        same dropdown.
+
+        **That fixes reads, and reads are all it fixes.** The guard wants a third thing
+        this document cannot supply: ``X-Reaper-CSRF: 1`` on every unsafe method that is
+        not on the key lane. Running the vendored ``@scalar/workspace-store``'s own request
+        builder over the served schema, the panel sends exactly ``accept``,
+        ``content-type`` and ``cookie``, and replaying those headers refuses every write
+        with the CSRF message. So the ``Session`` description says the button reads rather
+        than promising a write it cannot make, and names the header, which is the only
+        mention of it anywhere in the document.
 
         ``tags`` names and orders the sections; ``x-tagGroups`` is the vendor extension
         Scalar reads to nest them under three headings. Both come from
@@ -448,11 +458,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "type": "apiKey",
                 "in": "cookie",
                 "name": DOCUMENTED_SESSION_COOKIE,
+                # Names the CSRF header because this is the only place the document
+                # mentions it, and a script author needs it before their first write
+                # rather than after the 403 it causes.
                 "description": (
                     "The sign-in cookie your browser already holds. Nothing to paste: it "
-                    "rides along on its own, which is why the try-it-out button works "
-                    "here while you are signed in. An HTTPS install names the same cookie "
-                    f"__Host-{DOCUMENTED_SESSION_COOKIE}."
+                    "rides along on its own, so the try-it-out button reads as you while "
+                    "you are signed in. A write also needs the header X-Reaper-CSRF: 1, "
+                    "which this page does not send. An HTTPS install names the same "
+                    f"cookie __Host-{DOCUMENTED_SESSION_COOKIE}."
                 ),
             }
             # Either credential, unless an operation below narrows it. Session leads for
