@@ -71,8 +71,8 @@ api_key_throttle = Throttle(threshold=5, base_delay=2.0, max_delay=300.0, decay=
 
 #: Reads an API key must never see. Every other read is open to the key (it is for
 #: scripts), so this stays a tiny denylist -- but "open to scripts" is not the same as
-#: "safe to hand out", and the two things here are the ones that carry more than they
-#: appear to:
+#: "safe to hand out", and the things here are the ones that carry more than they appear
+#: to:
 #:
 #: * The key itself, and the backup download -- they hand back a stored secret in the
 #:   clear. The backup is the crown jewels: the whole database plus the master key that
@@ -81,27 +81,44 @@ api_key_throttle = Throttle(threshold=5, base_delay=2.0, max_delay=300.0, decay=
 #:   library -- titles, the people who watched them, root folders -- and the download
 #:   concatenates every rotating file, so one GET is the whole history. Denied for the
 #:   same reason the backup is (S-3).
+#: * The fairness reads, which are one person's whole viewing breakdown.
 #:
-#: **The privacy half of that reason does not hold on its own, and the copy no longer
-#: claims it does.** S-3 argued the logs were different because a key was told it could
-#: "read your library", meaning the catalog and not everyone's viewing. But a key reads
-#: ``/api/fairness/people/{identity}``, which is one person's whole viewing breakdown, so
-#: the denylist was never what kept viewing history off a header credential -- it kept the
-#: *log file* off one, which is a narrower and still-good reason. Both descriptions of
-#: this fence now say a key reads who watched what, rather than resting on a distinction
-#: the routes do not draw. Whether the fairness reads belong behind the browser is issue
-#: #117, and is a change to what a key can DO, not to what it is told.
+#: **That last entry is what makes the privacy half of S-3's reason true.** S-3 argued the
+#: logs were different because a key was told it could "read your library", meaning the
+#: catalog and not everyone's viewing -- and that half did not hold at all while
+#: ``/api/fairness/people/{identity}`` answered a bare key. It holds now because the routes
+#: moved behind the browser (#117), not because the copy stopped claiming it. A key is for
+#: scripts that scan, plan, and edit the policy; who watched what is an input to none of
+#: those, and the operator handing a key to a third-party dashboard is not the person whose
+#: viewing it would disclose.
 #:
 #: ``PUT /api/logs/level`` is a write, so the allowlist below already refuses it.
 #:
-#: Each entry pairs the paths with the phrase ``api_key_scope_description`` names them by,
-#: for the reason given on the write list below.
+#: Matched as SUBTREES (``_denies_read``), never as exact paths, so a route added under one
+#: of these is denied by being born there rather than by someone remembering to list it --
+#: the same deny-by-default the writes get from being an allowlist. Each entry pairs its
+#: paths with the phrase ``api_key_scope_description`` names them by, for the reason given
+#: on the write list below.
 _API_KEY_READS_DENIED: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("the key itself", ("/api/settings/general/api-key",)),
     ("the backup download", ("/api/settings/backup/download",)),
     ("the logs", ("/api/logs", "/api/logs/download")),
+    ("who watched what", ("/api/fairness", "/api/fairness/people/{identity}")),
 )
 _API_KEY_READ_DENY = frozenset(path for _, paths in _API_KEY_READS_DENIED for path in paths)
+
+
+def _denies_read(path: str) -> bool:
+    """Does this read path fall under a denied entry, its subtree included?
+
+    The subtree test is also what lets one entry cover a templated path and the concrete
+    path it serves: ``/api/fairness`` covers ``/api/fairness/people/{identity}`` as the
+    schema spells it and ``/api/fairness/people/<someone>`` as a request does, so
+    ``api_key_refused`` reads the same on either -- which is what the reference annotates
+    from.
+    """
+    return any(path == denied or path.startswith(f"{denied}/") for denied in _API_KEY_READ_DENY)
+
 
 #: The only writes an API key may drive: scanning, planning, and editing the policy and
 #: reap profile. Everything else that changes state stays behind the signed-in browser --
@@ -214,7 +231,7 @@ def _api_key_allowed(method: str, path: str) -> bool:
     write and the proxy-trust write were both reachable simply by not being listed).
     """
     if method in _SAFE_METHODS:
-        return path not in _API_KEY_READ_DENY
+        return not _denies_read(path)
     if path in _API_KEY_WRITE_ALLOW:
         return True
     # Planning a specific run: its dry run, but never its execute.

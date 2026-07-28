@@ -541,14 +541,19 @@ export function GeneralPanel() {
                   write allowlist, so a key holder could turn the run limits off (S-2);
                 - it said a key "reads your library", which is most of what a key reads and
                   not the part that decides the question. A key also reads every settings
-                  page and one person's whole viewing breakdown (/api/fairness/people).
+                  page, and it read one person's whole viewing breakdown until #117 moved
+                  /api/fairness behind the browser.
 
-                So the read clause now overstates rather than understates: on the screen
-                where a key is handed out, "more than you think" is the direction that fails
-                safe. It still closes with "nothing else" rather than a list of exclusions,
-                for the reason api_key_scope_description exists: the fence is far tighter
-                than any short list of what it refuses, and naming four of them read as a
-                promise that the rest were allowed.
+                So the read clause overstates rather than understates: on the screen where a
+                key is handed out, "more than you think" is the direction that fails safe.
+                Note which way that cuts on the viewing clause. It is now a REFUSAL, so it
+                moved to the closing list, where the safe direction reverses: naming a
+                refusal the fence does not make is the rounding that gets someone hurt, and
+                this one is only true while /api/fairness stays denied. The list still ends
+                with "any other setting" rather than enumerating the rest, for the reason
+                api_key_scope_description exists: the fence is far tighter than any short
+                list of what it refuses, and naming four of them read as a promise that the
+                rest were allowed.
 
                 This paragraph is hand-written and its twin in the API reference is
                 generated, so nothing here fails when the fence moves. The guard is on the
@@ -556,9 +561,9 @@ export function GeneralPanel() {
                 phrase for phrase and names this file in every failure message. */}
             <p className="help">
               Send it as the X-Api-Key header so scripts and other apps can use Reaper without
-              signing in. A key reads nearly everything, your settings and who watched what
-              included, and can start scans, build plans, and change your policy, run limits, and
-              grace. Nothing else: it cannot turn deletion on, run a reap, read your logs, or change
+              signing in. A key reads nearly everything, your settings included, and can start
+              scans, build plans, and change your policy, run limits, and grace. Nothing else: it
+              cannot turn deletion on, run a reap, read your logs, see who watched what, or change
               any other setting.
             </p>
             <div className="set-control">

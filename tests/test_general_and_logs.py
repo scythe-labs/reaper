@@ -497,8 +497,36 @@ class TestTheApiKeyLane:
         assert denied.status_code == 403
         assert denied.json()["detail"] == (
             "This needs the web app, signed in. An API key reads everything except the key "
-            "itself, the backup download, the logs, and who you are signed in as."
+            "itself, the backup download, the logs, who watched what, and who you are signed in as."
         )
+
+    def test_a_key_cannot_read_one_persons_viewing(self, client: TestClient) -> None:
+        """#117, driven the way it was found: with a live key and no cookie, against both
+        fairness routes. Both answered 200, so an operator handing a key to a third-party
+        dashboard handed over who watched what.
+
+        The per-person route is the one that needs the subtree match. It is templated in
+        the schema and concrete in a request, and an exact-path denylist matches neither
+        spelling against the other -- so a denylist holding only ``/api/fairness`` would
+        pass the first assertion here and fail the second, which is precisely the shape of
+        the original bug.
+        """
+        key = self._issue(client)
+        bare = _bare(client)
+        headers = {"X-Api-Key": key}
+
+        assert bare.get("/api/fairness", headers=headers).status_code == 403
+        person = bare.get("/api/fairness/people/someone", headers=headers)
+        assert person.status_code == 403
+        assert "who watched what" in person.json()["detail"]
+
+        # The browser still reaches it: this fenced a credential, it did not retire a page.
+        # 400 is the handler's own "Scales needs a Seerr and a Tautulli" on a fixture that
+        # configures neither, which is the proof -- the guard passed the cookie through and
+        # something behind it answered, where the key never got that far.
+        signed_in = client.get("/api/fairness")
+        assert signed_in.status_code == 400, signed_in.text
+        assert "who watched what" not in signed_in.json()["detail"]
 
     def test_the_refusal_never_denies_a_write_the_fence_allows(self, client: TestClient) -> None:
         """The regression, driven from both ends in one test.
@@ -537,6 +565,14 @@ class TestTheApiKeyLane:
         assert _api_key_allowed("GET", "/api/settings/backup/download") is False
         assert _api_key_allowed("GET", "/api/logs") is False
         assert _api_key_allowed("GET", "/api/logs/download") is False
+        # Denied by subtree, so both spellings of the per-person route answer the same:
+        # the schema's template, and the concrete path a request actually carries.
+        assert _api_key_allowed("GET", "/api/fairness") is False
+        assert _api_key_allowed("GET", "/api/fairness/people/{identity}") is False
+        assert _api_key_allowed("GET", "/api/fairness/people/someone") is False
+        # The subtree stops at a path boundary: a sibling starting with the same letters
+        # is a different route and stays open.
+        assert _api_key_allowed("GET", "/api/fairness-summary") is True
         # Writes are closed except the automation allowlist: scan, plan, policy.
         assert _api_key_allowed("POST", "/api/scan/start") is True
         assert _api_key_allowed("POST", "/api/policy") is True
@@ -642,7 +678,7 @@ class TestTheAuthBoxDescribesTheFence:
 
     def test_the_sentence_leads_with_what_the_key_can_do(self) -> None:
         """Rule 119: written from the fence's own contract, not read back off the
-        generator. A key reads all but four things and writes four.
+        generator. A key reads all but five things and writes four.
 
         Rule 103, and the second job this test does: it is also the drift guard for the
         sentence's HAND-WRITTEN twin, the API key help in Settings, General. That paragraph
@@ -656,8 +692,8 @@ class TestTheAuthBoxDescribesTheFence:
         )
         description = api_key_scope_description()
         assert (
-            "reads everything except the key itself, the backup download, the logs, and "
-            "who you are signed in as" in description
+            "reads everything except the key itself, the backup download, the logs, "
+            "who watched what, and who you are signed in as" in description
         ), twin
         assert (
             "writes only these: start a scan, plan a run and dry run it, edit the policy, "
