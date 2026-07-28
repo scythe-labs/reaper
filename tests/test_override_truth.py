@@ -112,8 +112,7 @@ CONFLICT_COMPARISON_REFUSED = json.dumps(
                 "detail": (
                     "40 people watched Season 1. Reaper could not check who watched "
                     "Season 4, which it is keeping because it is one of the newest "
-                    "seasons your rule keeps. Left for you to decide instead of "
-                    "removing it."
+                    "seasons your rule keeps. Kept for now."
                 ),
                 "defers_to_owner": False,
             }

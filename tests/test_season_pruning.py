@@ -606,21 +606,68 @@ class TestATruncatedMirrorCannotClearTheConflict:
         # season, not per show: a season backfilled into an old show arrived recently.
         assert all(c.pruned_season != 2 for c in unsupported.conflicts)
 
-    def test_an_answered_zero_still_clears_against_a_truncated_kept_season(self) -> None:
+    def test_an_answered_count_still_clears_against_a_truncated_kept_season(self) -> None:
         """The other direction, and it must NOT hold: more history can only ever raise the
-        kept count, and 0 cannot out-rank a number that only grows. An outcome the bound
-        already earns needs no reach at all (``fields._survives_more_history``), so the
-        detector does not degenerate into holding every season of every old show."""
+        kept count, so a pruned count already below it stays below it. An outcome the bound
+        already earns needs no reach at all (``fields._survives_more_history``).
+
+        The pruned count is 1 rather than 0 deliberately (rule 118). A 0 takes the
+        ``pruned_watchers == 0`` skip *before* the kept loop is entered, so the earlier
+        version of this test proved nothing about the arm it named: ``for kept in
+        kept_seasons`` never executed, and the empty list came from the skip. Now the pair
+        reaches the loop and the empty list comes from the ``else: continue`` this is about
+        -- which is what makes the blanket-hold mutation fail here (see the sibling test).
+        """
         plan = plan_series_prune(
             series_title="Show",
             seasons=[_season(n) for n in range(1, 5)],
             keep_last=2,  # keeps 3, 4
             keep_first_season=False,
-            watchers_by_season={1: 0, 2: 0, 3: 1, 4: 1},
+            watchers_by_season={1: 1, 2: 0, 3: 3, 4: 3},
             shortfall_by_season={3: SHORT, 4: SHORT},  # the KEPT seasons are the truncated ones
         )
         assert plan.conflicts == []
         assert plan.auto_approvable is True
+
+    def test_a_short_mirror_holds_every_prunable_season_of_an_old_show(self) -> None:
+        """The blanket effect, pinned because it is large and was once denied in writing.
+
+        Where the mirror does not reach back to when ANY prunable season arrived, every one
+        of them conflicts against every kept season regardless of the counts: each count is
+        a lower bound and more history can always lift it above the others. Nothing is
+        auto-approvable and, because every conflict carries ``shortfall``,
+        ``season_scan.guard_result`` refuses the hand reap on all of them too.
+
+        This is the prime directive's answer, not a defect -- but the docstring of
+        ``_detect_conflicts`` once claimed the detector did *not* degenerate this way, and
+        the mutation that makes the degeneration total (``elif pruned_shortfall is not None
+        or kept_shortfall is not None``) passed the entire 2626-test suite. Rule 118: the
+        behavior a reader is most likely to try to "simplify" needs a test that fails.
+        """
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=[_season(n) for n in range(1, 6)],
+            keep_last=2,  # keeps 4, 5
+            keep_first_season=False,
+            # Nobody read as watching anything, and not one count the mirror can support.
+            watchers_by_season=dict.fromkeys(range(1, 6), 0),
+            shortfall_by_season=dict.fromkeys(range(1, 6), SHORT),
+        )
+        assert plan.prunable == [1, 2, 3]
+        # Every prunable season, against every kept season. Not a subset.
+        assert [(c.pruned_season, c.kept_season) for c in plan.conflicts] == [
+            (1, 4),
+            (1, 5),
+            (2, 4),
+            (2, 5),
+            (3, 4),
+            (3, 5),
+        ]
+        assert plan.auto_approvable is False
+        # All refused, so none of them releases a hand reap either.
+        assert all(c.shortfall == SHORT for c in plan.conflicts)
+        # And no message asserts a count off a mirror that cannot support one.
+        assert not any("0 people watched" in c.message for c in plan.conflicts)
 
     def test_a_truncated_count_that_already_out_ranks_an_answered_one_still_compares(
         self,
@@ -679,12 +726,69 @@ class TestATruncatedMirrorCannotClearTheConflict:
         message = plan.conflicts[0].message
         assert message == (
             "Reaper cannot tell whether Season 1 is watched more than Season 3, which it is "
-            "keeping: your watch history only goes back 12 months. Left for you to decide "
-            "instead of removing it."
+            "keeping because it is one of the newest seasons your rule keeps. Kept for now, "
+            "since your watch history only goes back 12 months."
         )
         # Rule 21: no em dashes in operator copy. Escaped rather than written literally, so
         # the assertion does not itself smuggle the character ruff bans (RUF001).
         assert "\u2014" not in message and "\u2013" not in message
+
+    def test_a_refused_conflict_does_not_invite_a_reap_the_engine_will_decline(self) -> None:
+        """Both refused shapes hold the hand reap (``season_scan.guard_result`` sets
+        ``defers_to_owner=False`` for each), so neither may close with the deferral phrase.
+        An operator who acts on "Left for you to decide" gets the reap refused and a generic
+        "a protection couldn't be checked" in place of the sentence they acted on.
+
+        Only the made comparison keeps the phrase, because only it is theirs to overrule.
+        """
+        common = {
+            "series_title": "Show",
+            "seasons": [_season(n) for n in (1, 2, 3)],
+            "keep_last": 1,
+            "keep_first_season": False,
+        }
+        unsupported = plan_series_prune(
+            **common,  # type: ignore[arg-type]
+            watchers_by_season={1: 0, 2: 0, 3: 1},
+            shortfall_by_season={1: SHORT, 2: SHORT, 3: SHORT},
+        )
+        unreadable = plan_series_prune(
+            **common,  # type: ignore[arg-type]
+            watchers_by_season={1: 4, 2: 0, 3: None},
+        )
+        settleable = plan_series_prune(
+            **common,  # type: ignore[arg-type]
+            watchers_by_season={1: 9, 2: 0, 3: 1},
+        )
+        for plan in (unsupported, unreadable):
+            message = plan.conflicts[0].message
+            assert "Left for you to decide" not in message
+            assert message.endswith("Kept for now.") or "Kept for now, since " in message
+        # The one shape a hand reap may overrule still says so.
+        assert "Left for you to decide instead of removing it." in settleable.conflicts[0].message
+
+    def test_an_unreadable_kept_count_never_prints_a_bound_as_a_measurement(self) -> None:
+        """The pruned season's own shortfall rides on the conflict even when what could not
+        be read is the KEPT count, because the message is chosen off it.
+
+        Without it this arm printed "0 people watched Season 1" for a count the same call
+        had just ruled unsupportable, one line from a chip saying Reaper could not check who
+        watched these seasons. The hold does not move (both shapes refuse); the sentence
+        does. Found independently by all three review lanes.
+        """
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=[_season(n) for n in (1, 2, 3)],
+            keep_last=1,  # keeps 3, which Plex has not resolved
+            keep_first_season=False,
+            watchers_by_season={1: 0, 2: 0, 3: None},
+            shortfall_by_season={1: SHORT, 2: SHORT},
+        )
+        conflict = next(c for c in plan.conflicts if c.pruned_season == 1)
+        assert conflict.kept_watchers is None  # the kept count really is the unreadable one
+        assert conflict.shortfall == SHORT  # ...and the pruned bound still reached the message
+        assert "0 people watched" not in conflict.message
+        assert "Reaper cannot tell whether Season 1" in conflict.message
 
     def test_the_off_switch_silences_the_reach_arm_too(self) -> None:
         """``flag_keep_conflicts`` off means the operator asked Reaper to follow the keep

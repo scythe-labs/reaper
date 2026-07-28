@@ -162,19 +162,35 @@ class PruneConflict:
 
     @property
     def message(self) -> str:
+        """The sentence the operator reads, and it must promise only what the engine allows.
+
+        Only the LAST shape below is one a hand reap may overrule, so only it closes with
+        "Left for you to decide". The two refused shapes end "Kept for now" instead: they
+        set ``defers_to_owner=False`` through ``season_scan.guard_result``, so an operator
+        who takes up that invitation gets the reap refused and a generic "a protection
+        couldn't be checked" in place of the sentence they acted on. One phrase carrying
+        both meanings is rule 92's shape pointed at operator copy.
+
+        Neither refused shape states a watcher count it cannot stand behind. The shortfall
+        arm is checked first for exactly that reason: where the pruned count is a lower
+        bound it is never printed, whichever OTHER thing also went wrong with the pair.
+        """
         viewers = "person" if self.pruned_watchers == 1 else "people"
         if self.shortfall is not None:
+            # Deliberately ahead of the ``kept_watchers is None`` arm. A pruned count the
+            # mirror cannot support reaches here with the kept count ALSO unreadable, and
+            # that arm would print the bound as a measurement -- the one sentence this
+            # whole reach fix exists to stop (rules 93, 140).
             return (
                 f"Reaper cannot tell whether Season {self.pruned_season} is watched more "
-                f"than Season {self.kept_season}, which it is keeping: {self.shortfall}. "
-                "Left for you to decide instead of removing it."
+                f"than Season {self.kept_season}, which it is keeping because "
+                f"{_because(self.kept_reason)}. Kept for now, since {self.shortfall}."
             )
         if self.kept_watchers is None:
             return (
                 f"{self.pruned_watchers} {viewers} watched Season {self.pruned_season}. "
                 f"Reaper could not check who watched Season {self.kept_season}, which it "
-                f"is keeping because {_because(self.kept_reason)}. Left for you to decide "
-                "instead of removing it."
+                f"is keeping because {_because(self.kept_reason)}. Kept for now."
             )
         return (
             f"{self.pruned_watchers} {viewers} watched Season {self.pruned_season}, more "
@@ -639,10 +655,21 @@ def _detect_conflicts(
 
     Either outcome the bound already earns still stands on its own, exactly as
     ``fields._survives_more_history`` reads the operator's own rules; only the ones more
-    history could overturn become conflicts, carrying ``shortfall``. That keeps this from
-    degenerating into "hold every season of every show older than the mirror": a prunable
-    season nobody watched still clears against a kept season, and a truncated count that
-    already out-ranks an answered one still conflicts for the reason it always did.
+    history could overturn become conflicts, carrying ``shortfall``.
+
+    **What that costs, stated plainly, because the reach is wide.** Two things do still
+    clear on their own: a season the mirror covers for its whole life is compared on its
+    real count, and a truncated count that ALREADY out-ranks an answered one still conflicts
+    for the reason it always did. But a season the mirror does *not* cover conflicts against
+    every kept season, whatever either count says -- its count is a lower bound, and more
+    history can always lift a lower bound above anything. So wherever the watch history is
+    shallower than the library is old, every prunable season of every affected show is held
+    *and* refuses a hand reap, and TV pruning is inert until the mirror catches up. That is
+    the prime directive's answer, since the alternative is deciding on two numbers Reaper
+    knows are wrong -- but it is a blanket effect, not a narrow one, and an earlier draft of
+    this docstring claimed the opposite (rule 7/24). ``docs/STATUS.md`` records it, and
+    ``test_a_short_mirror_holds_every_prunable_season_of_an_old_show`` pins it, because the
+    mutation that turns this into a true blanket hold otherwise passes the whole suite.
 
     ``shortfall_by_season`` empty means the caller stated no bound, and every count is taken
     at face value -- the pre-evidence pass in ``season_scan``, which passes no counts either
@@ -677,6 +704,14 @@ def _detect_conflicts(
                         kept_season=kept.season_number,
                         pruned_watchers=pruned_watchers,
                         kept_watchers=None,
+                        # The pruned season's own bound rides along even though the kept
+                        # count is what could not be read. Both refuse the comparison and
+                        # both hold, so the flag does not move -- but the MESSAGE does:
+                        # without this, a pruned count the mirror cannot support is printed
+                        # as "0 people watched Season N" beside a chip saying Reaper could
+                        # not check, and the card denies itself. The skip above deliberately
+                        # lets a truncated 0 reach this loop, so this arm is where it lands.
+                        shortfall=pruned_shortfall,
                         kept_reason=kept.reason,
                     )
                 )
