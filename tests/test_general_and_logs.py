@@ -39,10 +39,12 @@ from reaper import logbuffer
 from reaper.api.middleware import (
     _API_KEY_READS_DENIED,
     _API_KEY_WRITES,
+    _SIGNED_IN_ONLY_READS,
     _api_key_allowed,
     api_key_refused,
     api_key_scope_description,
     api_key_throttle,
+    no_credential_needed,
 )
 from reaper.auth.cookie import DOCUMENTED_SESSION_COOKIE
 from reaper.auth.proxy import client_ip, parse_proxy_networks
@@ -488,7 +490,7 @@ class TestTheApiKeyLane:
         assert denied.status_code == 403
         assert denied.json()["detail"] == (
             "This needs the web app, signed in. An API key reads everything except the key "
-            "itself, the backup download, and the logs."
+            "itself, the backup download, the logs, and who you are signed in as."
         )
 
     def test_the_refusal_never_denies_a_write_the_fence_allows(self, client: TestClient) -> None:
@@ -584,9 +586,17 @@ class TestTheAuthBoxDescribesTheFence:
     def test_every_write_the_fence_allows_is_named_in_the_sentence(
         self, client: TestClient
     ) -> None:
-        """The one that catches the drift. Opening a route to the key without giving it a
-        phrase leaves the box promising less than the key can do, which is how an
-        automation authority ships undocumented."""
+        """Rule 118, named for what it actually discriminates: a second shape-matched
+        branch added to ``_api_key_allowed`` with no phrase behind it.
+
+        It does NOT catch a path added to ``_API_KEY_WRITES`` without a phrase -- that
+        drift is structurally impossible, because ``_API_KEY_WRITE_ALLOW`` is a
+        comprehension over the very tuple that carries the phrases, so ``unnamed == []``
+        is a theorem for any path-shaped entry. The derivation is the guard there. What is
+        still hand-written is the dry run's ``startswith``/``endswith`` test, which is
+        admitted by shape and named by a phrase nothing ties to it; a third such branch
+        would ship an undocumented automation authority, and this is what says so.
+        """
         schema = client.get("/api/openapi.json").json()
         allowed = [(m, p) for m, p in self._writes(schema) if _api_key_allowed(m, p)]
         assert allowed, "the fence opened no writes at all, so this proves nothing"
@@ -608,8 +618,10 @@ class TestTheAuthBoxDescribesTheFence:
         operator can no longer do, and nothing else would notice."""
         schema = client.get("/api/openapi.json").json()
         served = set(schema["paths"])
-        declared = {path for _, paths in _API_KEY_WRITES for path in paths} | {
-            path for _, paths in _API_KEY_READS_DENIED for path in paths
+        declared = {
+            path
+            for _, paths in (*_API_KEY_WRITES, *_API_KEY_READS_DENIED, *_SIGNED_IN_ONLY_READS)
+            for path in paths
         }
         missing = sorted(declared - served)
         assert missing == [], f"named in the auth box, but no such route: {missing}"
@@ -623,10 +635,11 @@ class TestTheAuthBoxDescribesTheFence:
 
     def test_the_sentence_leads_with_what_the_key_can_do(self) -> None:
         """Rule 119: written from the fence's own contract, not read back off the
-        generator. A key reads all but three things and writes four."""
+        generator. A key reads all but four things and writes four."""
         description = api_key_scope_description()
-        assert "reads everything except the key itself, the backup download, and the logs" in (
-            description
+        assert (
+            "reads everything except the key itself, the backup download, the logs, and "
+            "who you are signed in as" in description
         )
         assert (
             "writes only these: start a scan, plan a run and dry run it, edit the policy, "
@@ -652,7 +665,7 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
 
     def test_the_session_scheme_is_declared(self, client: TestClient) -> None:
         """A fenced operation narrows to this scheme, so a missing declaration would
-        leave 39 operations pointing at a credential the document never defines."""
+        leave 40 operations pointing at a credential the document never defines."""
         schema = client.get("/api/openapi.json").json()
         schemes = schema["components"]["securitySchemes"]
         assert schemes["Session"]["in"] == "cookie"
@@ -706,20 +719,68 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
                 f"a key reaches this, so it must not be fenced: {reachable}"
             )
 
+    def test_the_open_route_that_refuses_a_key_is_marked_like_any_other(
+        self, client: TestClient
+    ) -> None:
+        """Rule 119: driven with a real key, not read back off the predicate that marks it.
+
+        ``/api/auth/me`` is open to the guard, so the key lane never judges it, and then
+        the handler answers 401 because the cookie resolves to nobody. Marking the whole
+        open set "either credential" published this one as key-reachable: a document
+        written to stop the reference offering a key on routes that refuse it, offering a
+        key on a route that refuses it.
+        """
+        key = client.post("/api/settings/general/api-key").json()["key"]
+        bare = _bare(client)
+        assert bare.get("/api/auth/me", headers={"X-Api-Key": key}).status_code == 401
+
+        marked = {
+            (m, p)
+            for m, p, op in self._operations(client)
+            if op.get("security") == [{"Session": []}]
+        }
+        assert ("GET", "/api/auth/me") in marked
+
+    def test_a_route_that_needs_no_credential_says_so(self, client: TestClient) -> None:
+        """The third answer, also driven. The health probe and the sign-in endpoints have
+        to answer before anyone is signed in, and inheriting the document default
+        published a credential requirement on all seven: the page a script author needs
+        first read as one they could not call without already being past it.
+        """
+        bare = _bare(client)
+        assert bare.get("/api/health").status_code == 200
+        assert bare.get("/api/auth/context").status_code == 200
+
+        anonymous = {(m, p) for m, p, op in self._operations(client) if op.get("security") == []}
+        for open_route in (
+            ("GET", "/api/health"),
+            ("GET", "/api/auth/context"),
+            ("POST", "/api/auth/local"),
+            ("POST", "/api/auth/recover"),
+        ):
+            assert open_route in anonymous, f"asks for no credential, but claims one: {open_route}"
+        # The exception, from the other side: it is open, and it is NOT credential-free.
+        assert ("GET", "/api/auth/me") not in anonymous
+
     def test_no_operation_is_left_unclassified(self, client: TestClient) -> None:
-        """The annotation pass has to reach every operation. This agrees the served
-        schema with ``api_key_refused``, so it catches an operation the walk skipped (a
+        """The annotation pass has to reach every operation, and each has to get exactly
+        one of the three answers. This agrees the served schema with ``api_key_refused``
+        and ``no_credential_needed``, so it catches an operation the walk skipped (a
         method spelling it does not know, a cached schema built before the pass, a stock
         ``FastAPI.openapi`` winning the race) -- NOT a wrong answer from the fence itself,
         which is what ``test_the_allowlist_matches_by_method_and_shape`` pins from a
         table. Rule 118: it is named for what it discriminates.
         """
+        operations = self._operations(client)
         wrong = [
             f"{m} {p}"
-            for m, p, op in self._operations(client)
+            for m, p, op in operations
             if (op.get("security") == [{"Session": []}]) != api_key_refused(m, p)
+            or (op.get("security") == []) != no_credential_needed(p)
         ]
         assert wrong == [], f"marked against what the guard does: {wrong}"
+        # And all three answers are actually in use, or the agreement above is vacuous.
+        assert {len(op.get("security", [{}, {}])) for _, _, op in operations} == {0, 1, 2}
 
     def test_a_fenced_operation_says_so_in_words(self, client: TestClient) -> None:
         """The security requirement is the machine-readable half. This is the half a

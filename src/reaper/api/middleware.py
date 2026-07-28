@@ -116,6 +116,20 @@ _API_KEY_WRITES: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 _API_KEY_WRITE_ALLOW = frozenset(path for _, paths in _API_KEY_WRITES for path in paths)
 
+#: Open to this guard, and refused by the handler anyway. ``/api/auth/me`` answers "who is
+#: signed in", a question a header credential does not have: the path is under
+#: ``_OPEN_PREFIX``, so the key lane never judges it, and then ``api/auth.py``'s handler
+#: answers 401 because the cookie resolves to nobody.
+#:
+#: The fence is not what turns the key away here, but the key IS turned away, and the
+#: caller cannot tell the two apart from the response. So this is declared in the same
+#: shape as the lists above -- paths beside the phrase the auth box names them by -- and
+#: read by ``api_key_refused``, which is the question the reference has to answer.
+_SIGNED_IN_ONLY_READS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("who you are signed in as", ("/api/auth/me",)),
+)
+_SIGNED_IN_ONLY = frozenset(path for _, paths in _SIGNED_IN_ONLY_READS for path in paths)
+
 
 def _listed(phrases: tuple[str, ...]) -> str:
     """``a, b, and c`` -- the phrases as one readable clause."""
@@ -125,7 +139,13 @@ def _listed(phrases: tuple[str, ...]) -> str:
 
 
 def _read_exclusions() -> str:
-    return _listed(tuple(phrase for phrase, _ in _API_KEY_READS_DENIED))
+    """Every read a key does not get, denied by this fence or by the handler itself.
+
+    Both belong in one clause because the caller meets one wall, not two: a script author
+    told the key "reads everything except" three things still hits a 401 on the fourth.
+    """
+    denied = (*_API_KEY_READS_DENIED, *_SIGNED_IN_ONLY_READS)
+    return _listed(tuple(phrase for phrase, _ in denied))
 
 
 def _write_permissions() -> str:
@@ -199,19 +219,45 @@ def _is_open(path: str) -> bool:
 def api_key_refused(method: str, path: str) -> bool:
     """Will this route turn away a caller holding nothing but an API key?
 
-    The one question a script author has per route, answered off the same two predicates
-    ``__call__`` runs, so the reference cannot mark a fence the guard does not enforce.
-    An open path answers False: the guard asks for no credential there, so the key is not
-    what stands between the caller and an answer. (It is *ignored* rather than accepted,
-    and a route may still refuse for its own reasons -- ``/api/auth/me`` is signed-in-only
-    inside the handler. That is route logic, not this fence, and this function does not
-    claim otherwise.)
+    The one question a script author has per route, and the reference's per-operation
+    marking is this answer, so the document cannot offer a credential the request will not
+    accept.
+
+    **Two ways to be turned away, and both count**, because the caller cannot tell them
+    apart from the response. This fence refuses it (``_api_key_allowed``, the interesting
+    case), or the path is open to the guard and the handler refuses an anonymous caller on
+    its own (``_SIGNED_IN_ONLY_READS``). This function used to answer only the first and
+    say so, which read as rigor: the second is route logic, not a fence. But the reference
+    consumed the answer as "does a key reach this", so ``GET /api/auth/me`` was published
+    as key-reachable and answers 401 -- one route where the marking claimed the opposite
+    of what it measured, in a document written to end exactly that.
+
+    Every other open path answers False. The guard asks for no credential there, so the
+    key is neither accepted nor what stands between the caller and an answer;
+    ``no_credential_needed`` is how the reference says THAT, rather than leaving it to
+    inherit a requirement it does not have.
 
     Takes the templated path (``/api/runs/{run_id}/dry-run``) as readily as a concrete
     one, which is what lets the schema be annotated: every allowlist entry is a static
     path, and the dry run's prefix-and-suffix test reads the same on either spelling.
     """
+    if path in _SIGNED_IN_ONLY:
+        return True
     return not _is_open(path) and not _api_key_allowed(method, path)
+
+
+def no_credential_needed(path: str) -> bool:
+    """Does this route ask an anonymous caller for nothing at all?
+
+    True for the health probe and the sign-in endpoints, which have to work before anyone
+    is signed in, minus the ones that refuse anonymously anyway (``_SIGNED_IN_ONLY_READS``
+    is subtracted, or this would contradict ``api_key_refused`` on the same path).
+
+    A CSRF header is still required on the unsafe ones. That is not a credential and this
+    does not claim otherwise -- ``main``'s ``Session`` scheme description is where the
+    header is named.
+    """
+    return _is_open(path) and path not in _SIGNED_IN_ONLY
 
 
 def parse_proxy_networks(entries: list[str]) -> tuple[IPv4Network | IPv6Network, ...]:

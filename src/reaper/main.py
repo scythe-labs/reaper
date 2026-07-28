@@ -26,7 +26,12 @@ from reaper.api.breakdown import router as breakdown_router
 from reaper.api.fairness import router as fairness_router
 from reaper.api.leaving_soon import router as leaving_soon_router
 from reaper.api.logs import router as logs_router
-from reaper.api.middleware import AuthGuard, api_key_refused, api_key_scope_description
+from reaper.api.middleware import (
+    AuthGuard,
+    api_key_refused,
+    api_key_scope_description,
+    no_credential_needed,
+)
 from reaper.api.plex_trash import router as plex_trash_router
 from reaper.api.poster import close_artwork_client
 from reaper.api.poster import router as poster_router
@@ -280,7 +285,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log.info("reaper.stopped")
 
 
-#: Said on every operation an API key cannot reach. Short because it repeats about sixty
+#: Said on every operation an API key cannot reach. Short because it repeats about forty
 #: times, and first in the description because it is the sentence that stops a script
 #: being written against a route that will refuse it.
 _SESSION_ONLY_NOTE = "**Signed in only.** An API key cannot make this call."
@@ -291,31 +296,42 @@ _HTTP_METHODS = frozenset({"get", "put", "post", "delete", "options", "head", "p
 
 
 def _mark_credentials(schema: dict[str, Any]) -> None:
-    """Narrow every operation an API key cannot reach to the browser session.
+    """Give every operation the credential that actually reaches it.
 
-    Two answers, and the marked one is strictly narrower than the document-wide default,
-    so an operation can only ever be marked as needing *more* than the auth box offers.
-    A route the key does reach is left inheriting either credential.
+    Three answers, and rule 7/24 governs all of them: each is a predicate in
+    ``api/middleware.py``, evaluated for that exact method and path, never a list kept
+    beside the fence.
 
-    Both halves of the mark matter. ``security`` is the machine-readable half a generated
-    client and the try-it-out panel read; the sentence is the half a person reads, and it
-    goes first in the description because a security requirement is quiet and the 403 it
-    predicts is not.
+    * **Refused a key** (``api_key_refused``) narrows to ``Session``, which is strictly
+      narrower than the document-wide default, so this can only ever ask for *more* than
+      the auth box offers. Both halves of that mark matter: ``security`` is the
+      machine-readable half a generated client and the try-it-out panel read, and the
+      sentence is the half a person reads. It goes first in the description because a
+      security requirement is quiet and the 403 it predicts is not.
+    * **Asks for nothing** (``no_credential_needed``) gets ``security: []``: the health
+      probe and the sign-in endpoints, which have to answer before anyone is signed in.
+    * **Everything else** is left inheriting either credential, because either works.
 
-    Rule 7/24: what each operation claims is ``api_key_refused``'s answer for that exact
-    method and path, never a hand-kept list beside it. The open routes are deliberately
-    left alone -- the guard asks them for no credential, but several refuse anonymously
-    for their own reasons, so ``security: []`` would trade one wrong claim for another.
+    The middle answer was once the whole open set, left inheriting on the argument that
+    ``security: []`` would trade one wrong claim for another, since several open routes
+    refuse anonymously for their own reasons. That was true of exactly one of them, and
+    leaving all eight alone published a credential requirement on the seven that have
+    none and offered the key on the one that refuses it. The exception is now declared
+    where the guard is (``_SIGNED_IN_ONLY_READS``) and read by both predicates, so the
+    document states what was measured on all three.
     """
     for path, operations in schema.get("paths", {}).items():
         for method, operation in operations.items():
-            if method.lower() not in _HTTP_METHODS or not api_key_refused(method.upper(), path):
+            if method.lower() not in _HTTP_METHODS:
                 continue
-            operation["security"] = [{"Session": []}]
-            existing = operation.get("description", "").strip()
-            operation["description"] = (
-                f"{_SESSION_ONLY_NOTE}\n\n{existing}" if existing else _SESSION_ONLY_NOTE
-            )
+            if api_key_refused(method.upper(), path):
+                operation["security"] = [{"Session": []}]
+                existing = operation.get("description", "").strip()
+                operation["description"] = (
+                    f"{_SESSION_ONLY_NOTE}\n\n{existing}" if existing else _SESSION_ONLY_NOTE
+                )
+            elif no_credential_needed(path):
+                operation["security"] = []
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
