@@ -48,12 +48,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-from ipaddress import IPv4Network, IPv6Network, ip_address, ip_network
 
 from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocketClose
 
+from reaper.auth.proxy import client_ip
 from reaper.auth.ratelimit import Throttle
 from reaper.auth.sessions import resolve_session_from_cookies
 
@@ -267,58 +267,6 @@ def no_credential_needed(path: str) -> bool:
     header is named.
     """
     return _is_open(path) and path not in _SIGNED_IN_ONLY
-
-
-def parse_proxy_networks(entries: list[str]) -> tuple[IPv4Network | IPv6Network, ...]:
-    """Parse stored trusted-proxy entries into networks, dropping anything malformed.
-
-    A single address becomes its /32 (or /128) network. Dropping rather than raising is
-    the fail-closed direction here: an unparseable entry trusts NOBODY extra.
-    """
-    networks: list[IPv4Network | IPv6Network] = []
-    for entry in entries:
-        cleaned = entry.strip()
-        if not cleaned:
-            continue
-        try:
-            networks.append(ip_network(cleaned, strict=False))
-        except ValueError:
-            continue
-    return tuple(networks)
-
-
-def client_ip(request: Request) -> str:
-    """The address rate limits key on.
-
-    The direct peer address, unless the operator turned on reverse-proxy trust in
-    Settings -> General AND the peer is one of the proxies they listed -- only then is
-    ``X-Forwarded-For`` consulted, walking from its rightmost hop and returning the
-    first address that is not a trusted proxy. Anyone else's forwarded header is
-    attacker-controlled noise and is ignored, so a stranger cannot rotate spoofed
-    addresses to dodge the per-IP lockout. Any parse trouble falls back to the peer.
-    """
-    client = request.client
-    peer = client.host if client is not None else "unknown"
-    proxies: tuple[IPv4Network | IPv6Network, ...] = getattr(
-        request.app.state, "trusted_proxies", ()
-    )
-    if not proxies:
-        return peer
-    try:
-        peer_ip = ip_address(peer)
-    except ValueError:
-        return peer
-    if not any(peer_ip in net for net in proxies):
-        return peer
-    hops = [h.strip() for h in request.headers.get("x-forwarded-for", "").split(",") if h.strip()]
-    for hop in reversed(hops):
-        try:
-            hop_ip = ip_address(hop)
-        except ValueError:
-            return peer
-        if not any(hop_ip in net for net in proxies):
-            return str(hop_ip)
-    return peer
 
 
 async def _refuse_scope(scope: Scope, receive: Receive, send: Send) -> None:
