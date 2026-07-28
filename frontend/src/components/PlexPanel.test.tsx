@@ -155,7 +155,14 @@ describe("every control on this panel", () => {
   // `getByRole("option").closest("select")` for exactly that reason -- a shape that never asks
   // for a name. The table below is every input and select this fixture renders, reconciled
   // against the source by hand; the count is what makes an eleventh control name itself rather
-  // than opt out.
+  // than opt out -- IN THE BRANCHES THIS FIXTURE MOUNTS. That qualifier is the honest limit of
+  // the guard and is load-bearing: a control added to a branch the walk never renders is missing
+  // from the table and from the count alike, and the two absences hide each other perfectly
+  // (rule 145's own blind spot). Measured rather than assumed -- a bare `<input>` dropped into
+  // the `resources.isError` arm leaves this file green. The branches NOT walked here are
+  // `resources.isError`, `linkedServerMissing`, the unlinked `ServerPickList`, and the pending
+  // and `!data` arms; none renders a control today, which is what makes the count correct now,
+  // and none is watched by this test if that changes.
   it("answers to the label the operator can see", async () => {
     const user = userEvent.setup();
     const { container } = renderPanel();
