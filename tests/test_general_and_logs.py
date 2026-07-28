@@ -635,17 +635,28 @@ class TestTheAuthBoxDescribesTheFence:
 
     def test_the_sentence_leads_with_what_the_key_can_do(self) -> None:
         """Rule 119: written from the fence's own contract, not read back off the
-        generator. A key reads all but four things and writes four."""
+        generator. A key reads all but four things and writes four.
+
+        Rule 103, and the second job this test does: it is also the drift guard for the
+        sentence's HAND-WRITTEN twin, the API key help in Settings, General. That paragraph
+        is the surface an operator actually decides on, no test in either tree asserts it,
+        and nothing else fails when the fence moves under it. So every assertion here
+        carries the pointer rather than leaving it to a comment nobody runs.
+        """
+        twin = (
+            "the fence moved, so the hand-written twin in "
+            "frontend/src/components/Settings.tsx has to move with it"
+        )
         description = api_key_scope_description()
         assert (
             "reads everything except the key itself, the backup download, the logs, and "
             "who you are signed in as" in description
-        )
+        ), twin
         assert (
             "writes only these: start a scan, plan a run and dry run it, edit the policy, "
             "and change the run limits and grace" in description
-        )
-        assert "Every other write is refused" in description
+        ), twin
+        assert "Every other write is refused" in description, twin
 
 
 class TestEveryOperationSaysWhichCredentialReachesIt:

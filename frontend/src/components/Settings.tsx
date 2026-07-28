@@ -534,19 +534,32 @@ export function GeneralPanel() {
             {/* This sentence is the whole basis on which an operator decides to hand a key
                 to a third-party dashboard, so it names what the fence in api/middleware.py
                 (_API_KEY_READS_DENIED / _API_KEY_WRITES) actually allows, not a rounder
-                claim. It used to say a key "cannot change any setting", while /api/profile
-                sat in the write allowlist: a key holder could turn run limits off (S-2).
-                Changing either list means changing this line in the same commit.
+                claim. Two roundings have already been wrong here, both in the safe-sounding
+                direction:
 
-                It closes with "nothing else" rather than a list of exclusions, for the
-                reason api_key_scope_description exists: the fence is far tighter than any
-                short list of what it refuses, and naming four of them read as a promise
-                that the rest were allowed. */}
+                - it said a key "cannot change any setting" while /api/profile sat in the
+                  write allowlist, so a key holder could turn the run limits off (S-2);
+                - it said a key "reads your library", which is most of what a key reads and
+                  not the part that decides the question. A key also reads every settings
+                  page and one person's whole viewing breakdown (/api/fairness/people).
+
+                So the read clause now overstates rather than understates: on the screen
+                where a key is handed out, "more than you think" is the direction that fails
+                safe. It still closes with "nothing else" rather than a list of exclusions,
+                for the reason api_key_scope_description exists: the fence is far tighter
+                than any short list of what it refuses, and naming four of them read as a
+                promise that the rest were allowed.
+
+                This paragraph is hand-written and its twin in the API reference is
+                generated, so nothing here fails when the fence moves. The guard is on the
+                other side: test_the_sentence_leads_with_what_the_key_can_do pins the twin
+                phrase for phrase and names this file in every failure message. */}
             <p className="help">
               Send it as the X-Api-Key header so scripts and other apps can use Reaper without
-              signing in. A key reads your library, and can start scans, build plans, and change
-              your policy, run limits, and grace. Nothing else: it cannot turn deletion on, run a
-              reap, read your logs, or change any other setting.
+              signing in. A key reads nearly everything, your settings and who watched what
+              included, and can start scans, build plans, and change your policy, run limits, and
+              grace. Nothing else: it cannot turn deletion on, run a reap, read your logs, or change
+              any other setting.
             </p>
             <div className="set-control">
               {data.api_key_set ? (
