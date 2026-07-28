@@ -749,6 +749,12 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
             ("POST", "/api/settings/notifications/test"),
             ("POST", "/api/runs/{run_id}/execute"),
             ("PUT", "/api/settings/safety"),
+            # Same evidence, from #117: these two answered a live key 200 until the fence
+            # took them, and the reference offered the key on them throughout. The reads
+            # are the case the marking is easiest to get wrong, because every other read
+            # in the document really is key-reachable.
+            ("GET", "/api/fairness"),
+            ("GET", "/api/fairness/people/{identity}"),
         ):
             assert refused in marked, (
                 f"a key is refused here and the reference does not say so: {refused}"
