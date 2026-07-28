@@ -656,7 +656,8 @@ export function GeneralPanel() {
               )}
             </div>
           </div>
-          <div className="set-row">
+          {/* A link, not a box, so it releases the control track (`.set-row-plain`). */}
+          <div className="set-row set-row-plain">
             <span className="set-label">API reference</span>
             {/* Says "as you", not "with your key", because the page preselects your SESSION:
                 35 of the 47 writes do not offer the key at all, and the button reaches them
@@ -683,7 +684,9 @@ export function GeneralPanel() {
       <div className="set-group">
         <h3>Reverse proxy</h3>
         <div className="set-rows">
-          <div className="set-row">
+          {/* A Switch, not a box, so it releases the control track (`.set-row-plain`). The row
+              below it holds the addresses box and keeps the track. */}
+          <div className="set-row set-row-plain">
             <span className="set-label">Behind a reverse proxy</span>
             <p className="help">
               Turn this on if Nginx, Traefik, Caddy or similar sits in front of Reaper. Reaper will

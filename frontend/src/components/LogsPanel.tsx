@@ -246,7 +246,8 @@ export function LogsPanel() {
               </select>
             </div>
           </div>
-          <div className="set-row">
+          {/* A button, not a box, so it releases the control track (`.set-row-plain`). */}
+          <div className="set-row set-row-plain">
             <span className="set-label">Log files</span>
             <p className="help">
               Save the whole log to your computer, handy for a bug report.

@@ -7061,6 +7061,22 @@ button.danger:hover:not(:disabled) {
 .set-row.set-row-cluster .set-control {
   justify-self: end;
 }
+/* A row whose control is not a BOX -- a Switch, a button, a link -- lets the fixed track go.
+   Rule 40 exists to line up every text, number and select box on one edge, and that is the whole
+   job the track does; a 40px Switch and a 68px link buy nothing measurable from it, while the
+   label and its help paragraph pay the difference in wrapped lines. Measured on the General
+   panel: 178.5px of height saved at 641px and 59.5px at 768px, and NOTHING at 900px and above,
+   where the row has room for both. The cost was worst where the screen is smallest, which is
+   backwards. Releasing it moves the control's right edge 0.00px at every width, because
+   `.set-control` is already `justify-content: flex-end` inside a stretched box, so nothing that
+   was lined up stops being lined up. Every box row stays on the shared track: this class is an
+   opt-out named per row, never the default. */
+.set-row.set-row-plain {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.set-row.set-row-plain .set-control {
+  justify-self: end;
+}
 /* The accent-color row stacks its parts (control, presets, preview) instead of the
    two-column label/control grid, so it flows top to bottom like the mock. */
 .set-row.accent-row {
@@ -7260,11 +7276,13 @@ button.danger:hover:not(:disabled) {
   }
 }
 @media (max-width: 640px) {
-  /* The cluster row is named alongside the base one in every rule here. A media query adds no
-     specificity, so `.set-row` (0,1,0) alone would lose to `.set-row.set-row-cluster` (0,2,0)
-     above and that row alone would keep a two-column grid on a phone. */
+  /* Every two-column VARIANT is named alongside the base one in every rule here. A media query
+     adds no specificity, so `.set-row` (0,1,0) alone would lose to `.set-row.set-row-cluster`
+     (0,2,0) above and that row alone would keep a two-column grid on a phone. `.set-row-plain`
+     is the same shape and joins for the same reason; a new variant does too. */
   .set-row,
-  .set-row.set-row-cluster {
+  .set-row.set-row-cluster,
+  .set-row.set-row-plain {
     /* `minmax(0, 1fr)`, never a bare `1fr`, which means `minmax(auto, 1fr)`: that `auto` floor
        is the content's MIN-content, and a <select>'s min-content is its widest option, which no
        `min-width: 0` on the select itself can lower. Plex's connection picker holds a full
@@ -7275,8 +7293,11 @@ button.danger:hover:not(:disabled) {
        that commit (rule 72). */
     grid-template-columns: minmax(0, 1fr);
   }
+  /* `.set-row.set-row-plain .set-control` is (0,3,0), so the `justify-self: end` it sets above
+     outranks this block's `stretch` unless it is named here too. */
   .set-row .set-control,
-  .set-row.set-row-cluster .set-control {
+  .set-row.set-row-cluster .set-control,
+  .set-row.set-row-plain .set-control {
     grid-column: 1;
     grid-row: 3;
     /* `stretch` so the row's box can fill the width, and the contents start on the left

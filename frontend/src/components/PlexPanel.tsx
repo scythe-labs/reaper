@@ -332,7 +332,9 @@ export function PlexPanel() {
         <h3>Connection</h3>
         <div className="set-rows">
           {linked && data ? (
-            <div className="set-row">
+            /* One Unlink button, not a box, so it releases the control track
+               (`.set-row-plain`). */
+            <div className="set-row set-row-plain">
               {/* Lead with the person signed in, not the server name (that lives one row down
                   in the Server picker). The account name is live from plex.tv, which always
                   resolves after the fast, local-only status query above, so show a neutral
@@ -552,7 +554,8 @@ export function PlexPanel() {
             </div>
           )}
 
-          <div className="set-row">
+          {/* A Switch, not a box, so it releases the control track (`.set-row-plain`). */}
+          <div className="set-row set-row-plain">
             <span className="set-label">Check the server's certificate</span>
             <p className="help">
               Turn this off only for a server you run yourself, like one with a self-signed
@@ -693,7 +696,9 @@ export function PlexPanel() {
             </p>
           ) : (
             <div className="set-rows">
-              <div className="set-row">
+              {/* Both rows here carry a Switch and nothing else, so they release the control
+                  track (`.set-row-plain`). */}
+              <div className="set-row set-row-plain">
                 <span className="set-label">Show "Leaving Soon" in Plex</span>
                 <p className="help">
                   Reaper keeps a Leaving Soon collection in each library you turned on above, and
@@ -710,7 +715,7 @@ export function PlexPanel() {
                   />
                 </div>
               </div>
-              <div className="set-row">
+              <div className="set-row set-row-plain">
                 <span className="set-label">Update while read-only</span>
                 <p className="help">
                   Until deletion is on, Reaper writes nothing to Plex, including this shelf. Turn
