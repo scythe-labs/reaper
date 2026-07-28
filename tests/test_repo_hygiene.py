@@ -219,6 +219,60 @@ def test_dynamic_favicon_link_is_declared_last() -> None:
     )
 
 
+# Every real invocation of the app carries ``--factory``, because ``create_app`` IS a factory
+# and uvicorn cannot boot it otherwise. That is what separates an invocation from a mention:
+# dev-local.sh's ``pkill -f "uvicorn reaper.main:create_app"`` names the same string and is not
+# a launch. Matching on the pair keeps this drift-proof -- a new invocation anywhere in the
+# tree is covered the moment it is written, with no list here to remember to update.
+_UVICORN_LAUNCH = re.compile(r"uvicorn\s+reaper\.main:create_app\b")
+
+
+def _uvicorn_launches() -> list[tuple[Path, int, str]]:
+    """Every line in a tracked text file that boots the app under uvicorn."""
+    found: list[tuple[Path, int, str]] = []
+    skip = {".git", "node_modules", ".venv", "dist", "__pycache__", ".ruff_cache", ".mypy_cache"}
+    for path in REPO.rglob("*"):
+        if not path.is_file() or path.resolve() == SELF or any(p in skip for p in path.parts):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        for lineno, line in enumerate(text.splitlines(), 1):
+            if _UVICORN_LAUNCH.search(line) and "--factory" in line:
+                found.append((path, lineno, line.strip()))
+    return found
+
+
+def test_every_uvicorn_launch_disables_proxy_headers() -> None:
+    """Rule 101: peer trust is decided by ``reaper.auth.proxy``, so the server must abstain.
+
+    uvicorn defaults to ``proxy_headers=True`` with ``forwarded_allow_ips="127.0.0.1"``, and
+    its ``ProxyHeadersMiddleware`` rewrites ``scope["client"]`` and ``scope["scheme"]`` from
+    ``X-Forwarded-For``/``-Proto`` before any application code exists. On an install whose
+    caller really is loopback -- host networking, a same-host proxy published to
+    ``127.0.0.1:8420``, another container sharing the netns, a dev server -- a caller could
+    then rotate a fake address past the per-IP sign-in lockout, and hand itself a
+    ``Secure``/``__Host-`` cookie its own browser drops on a plain-HTTP install. Both with
+    reverse-proxy trust switched OFF, from a default the operator never set.
+
+    So this is not style: dropping the flag from any launch re-opens it there. The check is on
+    the invocation rather than on one named file, because the shipped ``CMD`` and the dev
+    script are twins (rule 72) and a third launch would inherit the same defect silently.
+    """
+    launches = _uvicorn_launches()
+    assert launches, "expected to find the app's uvicorn invocations; the matcher has drifted"
+    missing = [
+        f"{path.relative_to(REPO)}:{lineno} -> {line}"
+        for path, lineno, line in launches
+        if "--no-proxy-headers" not in line
+    ]
+    assert not missing, (
+        "every uvicorn launch must pass --no-proxy-headers, or the forwarded headers it\n"
+        "rewrites decide peer trust one layer above reaper.auth.proxy:\n" + "\n".join(missing)
+    )
+
+
 # The Alembic baseline is frozen: testers run Reaper on real data, and every schema change
 # is a new revision chained onto the head. Editing the baseline makes an existing database
 # un-upgradable. If this hash must change, that is a conversation, not a commit.

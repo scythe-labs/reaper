@@ -144,7 +144,15 @@ class TestForwardedHeadersNeedATrustedPeer:
     cookie: over plain HTTP the browser then DROPS it, so the sign-in silently does
     nothing (S-7)."""
 
-    def _request(self, *, proxies: tuple[object, ...], peer: str, proto: str) -> bool:
+    def _request(
+        self,
+        *,
+        proxies: tuple[object, ...],
+        peer: str,
+        proto: str | None,
+        scheme: str = "http",
+    ) -> bool:
+        """``proto=None`` sends no ``X-Forwarded-Proto`` at all; ``scheme`` is the ASGI one."""
         from starlette.requests import Request
 
         from reaper.auth.cookie import is_secure_request
@@ -157,8 +165,8 @@ class TestForwardedHeadersNeedATrustedPeer:
             "type": "http",
             "method": "GET",
             "path": "/",
-            "scheme": "http",
-            "headers": [(b"x-forwarded-proto", proto.encode())],
+            "scheme": scheme,
+            "headers": [] if proto is None else [(b"x-forwarded-proto", proto.encode())],
             "client": (peer, 1234),
             "server": ("testserver", 80),
             "query_string": b"",
@@ -180,6 +188,113 @@ class TestForwardedHeadersNeedATrustedPeer:
     def test_a_listed_proxy_reporting_http_stays_insecure(self) -> None:
         proxies = parse_proxy_networks(["172.16.0.0/12"])
         assert not self._request(proxies=proxies, peer="172.16.0.5", proto="http")
+
+    def test_an_untrusted_https_claim_cannot_launder_through_the_scheme(self) -> None:
+        """The ASGI scheme is not evidence when the caller also claimed it (#125).
+
+        ``is_secure_request`` used to return True the instant ``request.url.scheme`` was
+        ``https``, before asking about trust at all. An upstream ``ProxyHeadersMiddleware``
+        derives that scheme from this very header, so the short-circuit turned the caller's
+        own unauthenticated claim into Reaper's answer -- which is the ``https`` scheme this
+        case sends alongside the header that produced it.
+        """
+        assert not self._request(proxies=(), peer="127.0.0.1", proto="https", scheme="https")
+
+    def test_direct_tls_with_no_forwarded_header_is_still_secure(self) -> None:
+        """The narrowness that keeps the case above from costing anyone their Secure flag.
+
+        Only a *claim* is refused, never the transport. An install terminating TLS in the app
+        sends no ``X-Forwarded-Proto``, so nothing can have rewritten the scheme and it is
+        believed -- and that is the one place a bare scheme is still evidence.
+        """
+        assert self._request(proxies=(), peer="203.0.113.7", proto=None, scheme="https")
+
+    def test_a_listed_proxy_reporting_http_outranks_an_https_leg(self) -> None:
+        """The question is about the BROWSER's leg, not the proxy's leg to Reaper.
+
+        A proxy that speaks HTTPS to Reaper while serving the browser over plain HTTP used to
+        get a ``Secure``/``__Host-`` cookie out of the short-circuit -- one the browser then
+        drops, which is a sign-in that silently does nothing.
+        """
+        proxies = parse_proxy_networks(["172.16.0.0/12"])
+        assert not self._request(proxies=proxies, peer="172.16.0.5", proto="http", scheme="https")
+
+    def test_a_listed_proxy_that_claims_nothing_falls_back_to_the_scheme(self) -> None:
+        proxies = parse_proxy_networks(["172.16.0.0/12"])
+        assert self._request(proxies=proxies, peer="172.16.0.5", proto=None, scheme="https")
+        assert not self._request(proxies=proxies, peer="172.16.0.5", proto=None, scheme="http")
+
+
+class TestTheServerDoesNotDecidePeerTrust:
+    """What ``--no-proxy-headers`` buys, demonstrated against the real middleware (#125).
+
+    ``tests/test_repo_hygiene.py`` pins the flag onto every launch; this says why it is worth
+    pinning, by running the layer the flag removes and showing what reaches
+    :func:`reaper.auth.proxy.client_ip` underneath it. Reverse-proxy trust is OFF here and no
+    proxy is listed, which is the default install.
+
+    It is also a canary on the dependency: if uvicorn ever stops trusting loopback by default,
+    the first assertion fails and this whole apparatus can be revisited.
+    """
+
+    SPOOF = "198.51.100.77"
+
+    def _rate_limit_key(self, *, peer: str, middleware: bool) -> str:
+        """What ``client_ip`` keys the sign-in lockout on, with and without uvicorn's layer."""
+        import anyio
+        from starlette.requests import Request
+        from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+        from reaper.auth.proxy import client_ip
+
+        seen: list[str] = []
+
+        class _App:
+            class state:  # noqa: N801 -- mimics Starlette's app.state
+                trusted_proxies = ()
+
+        async def endpoint(scope: dict, receive: object, send: object) -> None:
+            seen.append(client_ip(Request(scope)))  # type: ignore[arg-type]
+
+        async def _noop(*_args: object) -> None:
+            return None
+
+        # trusted_hosts is uvicorn's own default, resolved from forwarded_allow_ips=None.
+        target: object = (
+            ProxyHeadersMiddleware(endpoint, trusted_hosts="127.0.0.1")  # type: ignore[arg-type]
+            if middleware
+            else endpoint
+        )
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "scheme": "http",
+            "headers": [(b"x-forwarded-for", self.SPOOF.encode())],
+            "client": (peer, 51234),
+            "server": ("testserver", 8420),
+            "query_string": b"",
+            "app": _App(),
+        }
+        anyio.run(lambda: target(scope, _noop, _noop))  # type: ignore[operator]
+        return seen[0]
+
+    def test_the_middleware_lets_a_loopback_caller_write_its_own_rate_limit_key(self) -> None:
+        """The defect: five bad passwords from one machine can be five different callers."""
+        assert self._rate_limit_key(peer="127.0.0.1", middleware=True) == self.SPOOF
+
+    def test_the_same_spoof_from_off_box_is_already_ignored(self) -> None:
+        """The middleware only rewrites for a peer IT trusts, which bounds the blast radius.
+
+        Under the shipped bridge-network compose the in-container peer is the gateway rather
+        than loopback, so the default deployment was never remotely reachable this way. That
+        bounds it; it does not restore the guarantee, which is the point of the fix.
+        """
+        assert self._rate_limit_key(peer="172.18.0.1", middleware=True) == "172.18.0.1"
+
+    def test_without_the_middleware_the_real_peer_is_what_gets_locked_out(self) -> None:
+        """What every launch now asks for with ``--no-proxy-headers``."""
+        assert self._rate_limit_key(peer="127.0.0.1", middleware=False) == "127.0.0.1"
 
 
 class TestPlexSignInIsRateLimited:

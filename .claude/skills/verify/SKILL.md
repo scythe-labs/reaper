@@ -29,7 +29,7 @@ uv run alembic current   # must equal `uv run alembic heads`
 Start both servers (background), wait for readiness in their logs:
 
 ```
-REAPER_SERVE_SPA=false uv run uvicorn reaper.main:create_app --factory --port 8420   # "Application startup complete"
+REAPER_SERVE_SPA=false uv run uvicorn reaper.main:create_app --factory --no-proxy-headers --port 8420   # "Application startup complete"
 npm --prefix frontend run dev                                                        # "ready in" / localhost:5173
 ```
 

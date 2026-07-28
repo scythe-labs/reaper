@@ -165,8 +165,11 @@ else
 fi
 
 log "starting API (uvicorn --reload) on :$API_PORT"
+# --no-proxy-headers matches the shipped CMD, and matters most here: a dev API is reached
+# over loopback, which is exactly the peer uvicorn trusts by default, so without it every
+# forwarded header a request carries is believed and dev stops behaving like production.
 REAPER_DATA_DIR="$DATA_DIR" REAPER_SERVE_SPA=false \
-  nohup uv run uvicorn reaper.main:create_app --factory --reload --port "$API_PORT" \
+  nohup uv run uvicorn reaper.main:create_app --factory --no-proxy-headers --reload --port "$API_PORT" \
   > "$API_LOG" 2>&1 &
 
 log "starting frontend (Vite HMR) on :$WEB_PORT"

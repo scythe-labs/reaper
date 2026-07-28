@@ -259,7 +259,7 @@ uv pip install -e ".[dev]"
 cp .env.example .env.local      # no key needed; one is generated on first boot
 
 alembic upgrade head
-uvicorn reaper.main:create_app --factory --reload --port 8420
+uvicorn reaper.main:create_app --factory --no-proxy-headers --reload --port 8420
 ```
 
 ```bash

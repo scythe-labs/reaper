@@ -44,8 +44,18 @@ _MAX_AGE = int(SESSION_TTL.total_seconds())
 DOCUMENTED_SESSION_COOKIE = _PLAIN_NAME
 
 
+def _forwarded_proto(request: Request) -> str:
+    """The browser leg's scheme as ``X-Forwarded-Proto`` claims it, or ``""`` if unclaimed.
+
+    The leftmost hop is the one nearest the browser, lowercased for comparison. Says
+    nothing about whether the claim may be believed -- that is
+    :func:`reaper.auth.proxy.peer_is_trusted_proxy`, and every caller asks it first.
+    """
+    return request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+
+
 def is_secure_request(request: Request) -> bool:
-    """Is this connection HTTPS -- directly, or via a terminating proxy?
+    """Is the BROWSER's leg HTTPS -- directly, or via a terminating proxy?
 
     Behind a reverse proxy the app speaks plain HTTP, and only
     ``X-Forwarded-Proto`` records that the browser's leg was encrypted. Honor it,
@@ -60,17 +70,29 @@ def is_secure_request(request: Request) -> bool:
     avoid. It reaches only the sender's own response, but a header deciding an auth
     cookie's flags should not be attacker-writable at all.
 
+    **A trusted proxy's claim outranks the transport scheme, in both directions.** This
+    used to return ``True`` the moment ``request.url.scheme`` was ``https``, before asking
+    anything about trust, and that was wrong twice over. It answered about the wrong leg:
+    a proxy that speaks HTTPS to Reaper while serving the browser over plain HTTP got a
+    ``Secure``/``__Host-`` cookie the browser drops. And the scheme is not always the
+    transport's -- an upstream ``ProxyHeadersMiddleware`` derives it from this same
+    header, so short-circuiting on it laundered the unauthenticated claim into a trusted
+    answer. Reaper's own image runs uvicorn ``--no-proxy-headers`` so no such layer exists
+    (see the ``CMD`` in ``Dockerfile``); this does not depend on that being remembered.
+    An untrusted peer claiming ``https`` therefore gets ``False`` outright -- a claim
+    Reaper may not believe can never be the reason it calls a connection secure.
+
     An operator running HTTPS behind a proxy they have NOT listed gets ``False`` here,
     and so gets a plain, non-``Secure`` cookie. That is a real hardening downgrade, and
     it is why the proxy-trust setting says so in the UI: the honest fix is to list the
     proxy, not to believe an unauthenticated header.
     """
-    if request.url.scheme == "https":
-        return True
-    if not peer_is_trusted_proxy(request):
+    forwarded = _forwarded_proto(request)
+    if peer_is_trusted_proxy(request):
+        return forwarded == "https" if forwarded else request.url.scheme == "https"
+    if forwarded == "https":
         return False
-    forwarded = request.headers.get("x-forwarded-proto", "")
-    return forwarded.split(",")[0].strip().lower() == "https"
+    return request.url.scheme == "https"
 
 
 def read_session_tokens(cookies: Mapping[str, str]) -> tuple[str, ...]:

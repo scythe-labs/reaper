@@ -91,4 +91,15 @@ COPY docker-entrypoint.sh /usr/local/bin/
 ENTRYPOINT ["docker-entrypoint.sh"]
 # REAPER_HOST/REAPER_PORT are honored here (they also shape the recovery link the app
 # prints), so .env.example tells the truth about what they do.
-CMD ["sh", "-c", "exec uvicorn reaper.main:create_app --factory --host \"${REAPER_HOST:-0.0.0.0}\" --port \"${REAPER_PORT:-8420}\""]
+#
+# --no-proxy-headers is load-bearing, not tidying (rule 101). uvicorn defaults to
+# proxy_headers=True with forwarded_allow_ips=127.0.0.1, so on any install where Reaper
+# sees its caller as 127.0.0.1 -- host networking, a same-host proxy published to
+# 127.0.0.1:8420, another container sharing the netns -- it rewrites scope["client"] and
+# scope["scheme"] from X-Forwarded-For/-Proto BEFORE the app exists. That makes the trust
+# decision one layer upstream, from a default the operator never set: a caller could then
+# rotate a fake address past the per-IP sign-in lockout, and name its own cookie's Secure
+# flag. Turning it off leaves reaper.auth.proxy as the only place peer trust is decided,
+# which is what its docstring promises and what the trusted-proxies setting is for.
+# tests/test_repo_hygiene.py fails if this flag goes missing here or in scripts/dev-local.sh.
+CMD ["sh", "-c", "exec uvicorn reaper.main:create_app --factory --no-proxy-headers --host \"${REAPER_HOST:-0.0.0.0}\" --port \"${REAPER_PORT:-8420}\""]

@@ -14,6 +14,17 @@ of the proxies they listed, ignored from anyone else. This lived in
 ``X-Forwarded-Proto`` was taken from any peer at all (S-7); it is here so both
 consumers -- the rate-limit key and the cookie flags -- read one decision rather than
 two lookalike ones.
+
+**That "one place" claim rests on the server not having decided it already, so the
+server is configured to abstain.** uvicorn ships ``proxy_headers=True`` with
+``forwarded_allow_ips="127.0.0.1"``, and its ``ProxyHeadersMiddleware`` rewrites
+``scope["client"]`` and ``scope["scheme"]`` from these same headers before any
+application code runs. Where Reaper's peer really is loopback -- host networking, a
+same-host proxy published to ``127.0.0.1:8420``, another container sharing the netns,
+a dev server -- :func:`peer_address` below would then be reading a value the caller
+wrote, and would faithfully report the spoof. Reaper's ``CMD`` therefore passes
+``--no-proxy-headers`` (``Dockerfile``, ``scripts/dev-local.sh``, and the ``README``
+dev line), which ``tests/test_repo_hygiene.py`` pins so it cannot quietly go missing.
 """
 
 from __future__ import annotations
