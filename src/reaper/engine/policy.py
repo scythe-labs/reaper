@@ -42,8 +42,10 @@ from typing import Annotated, Any, ClassVar, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from reaper.clock import humanize_window
 from reaper.engine.fields import BY_KEY, Condition, Lane, Op
-from reaper.engine.gates import GateId, RatingRule
+from reaper.engine.gates import GateId, RatingRule, history_shortfall
+from reaper.engine.observation import Known
 from reaper.engine.signals import MAX_SCORE, CustomSignalConfig, KeepConfig, SignalId
 from reaper.ratings import RatingSource, is_percentage_source, source_label
 
@@ -959,6 +961,7 @@ def inspect(
     settings: ProfileSettings,
     *,
     requests_app_configured: bool = True,
+    history_reach_days: float | None = None,
 ) -> list[PolicyWarning]:
     """The dangerous-config detector.
 
@@ -977,6 +980,11 @@ def inspect(
     "assume they do, and stay quiet". A caller that cannot tell should not guess,
     because the only warning it gates says a setting is doing nothing -- and telling
     someone to connect a service they already have is worse than saying nothing.
+
+    ``history_reach_days`` is the second such fact: how far back the watch mirror goes
+    (``services.history_sync.days_since_horizon``). Same posture and same reason --
+    ``None`` means "could not tell, stay quiet", because a caller that guessed short
+    would tell an operator their window is useless when it is fine.
     """
     warnings: list[PolicyWarning] = []
 
@@ -1049,6 +1057,45 @@ def inspect(
                 ),
             )
         )
+
+    # The same window in the other direction, and the reason this detector needed a second
+    # world-fact at all. ``gates.ServerPopularityGate.evaluate`` fails closed when the mirror
+    # is shorter than the window it is being asked about: a count over three months cannot
+    # answer "who watched this in the last year", so the gate blocks and
+    # ``verdict.decide_verdict`` abstains. That is right, and it is LIBRARY-WIDE -- the reach
+    # is a property of the operator's data, not of any one title -- so a scan under this
+    # config condemns nothing at all, and goes on condemning nothing for as long as the
+    # shortfall lasts.
+    #
+    # Every other block clears on the next scan (an unreachable Seerr, an unread session
+    # list, a missing id), which is why no surface was ever obliged to name a remedy for one.
+    # This one clears when history accrues or when the operator shortens a window nobody
+    # pointed them at, so the editor is where it has to be said.
+    #
+    # ``warn``, not ``danger``: the outcome is that Reaper deletes nothing, which is the
+    # keep direction. Every ``danger`` here marks a config that removes MORE.
+    #
+    # The cause clause comes from ``gates.history_shortfall`` rather than being restated,
+    # because the why-panel prints that same sentence off the same helper for the same
+    # operator (rule 144), and it already decides when the gap is too small to name a number.
+    if popularity is not None and history_reach_days is not None:
+        short = history_shortfall(
+            Known(value=history_reach_days, source="tautulli"), float(popularity.window_days)
+        )
+        if short is not None:
+            window_text = humanize_window(popularity.window_days)
+            warnings.append(
+                PolicyWarning(
+                    field=f"gates.{GateId.SERVER_POPULARITY.value}.window_days",
+                    severity="warn",
+                    message=(
+                        f"Nothing will be flagged for removal while {short}. Reaper can't say "
+                        f"who watched a title in the last {window_text} from a shorter history, "
+                        "so it leaves every title for you to decide. Lower this window to match, "
+                        "or wait for your history to build up."
+                    ),
+                )
+            )
 
     disabled = {g.gate for g in body.gates if not g.enabled}
     # Each of these states the consequence THIS switch has, verified against the code that

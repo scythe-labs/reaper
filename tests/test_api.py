@@ -11,7 +11,9 @@ themselves live in ``test_reap_loop`` against fakes.
 from __future__ import annotations
 
 import json
+import sqlite3
 from collections.abc import Iterator
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -42,6 +44,7 @@ from reaper.engine.policy import (
     combine_hashes,
 )
 from reaper.main import create_app
+from reaper.services.history_sync import SCHEMA
 
 from ._auth import login
 
@@ -1571,6 +1574,80 @@ class TestRequestedOnlyScopeNeedsSeerr:
         assert len(flagged) == 1
         assert flagged[0]["severity"] == "warn"
         assert "Seerr" in flagged[0]["message"]
+
+
+class TestAPopularityWindowLongerThanTheWatchHistory:
+    """The other end of the same window, and the wiring that carries it.
+
+    The engine's half is pinned in ``test_policy``. What this pins is that a route
+    actually READS the mirror and hands the reach to ``inspect`` -- the warning is dead
+    the moment a ``_policy_out`` call site forgets to pass it, and every assertion in
+    ``test_policy`` would stay green through that.
+    """
+
+    def _seed_mirror(self, tmp_path: Path, days_back: int) -> None:
+        """One play ``days_back`` ago, which is exactly how far the mirror then reaches."""
+        with sqlite3.connect(tmp_path / "cache.db") as conn:
+            conn.executescript(SCHEMA)
+            conn.execute(
+                "INSERT INTO watch_event (rating_key, user_id, watched_at, watched_status, "
+                "percent_complete, media_type) VALUES (1, 1, ?, 1.0, 100, 'movie')",
+                (int((utcnow() - timedelta(days=days_back)).timestamp()),),
+            )
+
+    def _window_warnings(self, client: TestClient) -> list[dict[str, str]]:
+        # _policy()'s server_popularity gate takes the default 365-day window.
+        body = client.post("/api/policy/validate", json=_policy()).json()
+        return [w for w in body["warnings"] if w["field"] == "gates.server_popularity.window_days"]
+
+    def test_a_mirror_shorter_than_the_window_is_flagged(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        self._seed_mirror(tmp_path, days_back=90)
+
+        flagged = self._window_warnings(client)
+
+        assert len(flagged) == 1
+        assert flagged[0]["severity"] == "warn"
+        assert "Nothing will be flagged for removal" in flagged[0]["message"]
+
+    def test_a_mirror_that_covers_the_window_is_quiet(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        self._seed_mirror(tmp_path, days_back=800)
+
+        assert self._window_warnings(client) == []
+
+    def test_an_empty_mirror_says_nothing(self, client: TestClient) -> None:
+        """A first run has no history at all, so there is no reach to compare and nothing
+        the operator could act on yet. Silence, not a warning about a window that may well
+        be right by the time they have any history."""
+        assert self._window_warnings(client) == []
+
+    def test_saving_a_policy_answers_with_the_same_warning(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """All three policy routes share ``_policy_out``, and each passes the reach
+        separately, so each needs its own proof. This is the one whose call site is easiest
+        to miss: ``save_policy`` returns through two different ``_policy_out`` calls."""
+        self._seed_mirror(tmp_path, days_back=90)
+
+        body = client.post("/api/policy", json=_policy(condemn_at=71)).json()
+
+        assert [
+            w for w in body["warnings"] if w["field"] == "gates.server_popularity.window_days"
+        ] != []
+
+    def test_reading_the_policy_back_answers_with_it_too(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        self._seed_mirror(tmp_path, days_back=90)
+
+        body = client.get("/api/policy").json()
+
+        assert [
+            w for w in body["warnings"] if w["field"] == "gates.server_popularity.window_days"
+        ] != []
 
 
 class TestPolicyValidation:

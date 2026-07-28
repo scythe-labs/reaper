@@ -11,6 +11,7 @@ from __future__ import annotations
 import itertools
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 
 import pytest
 from hypothesis import given, settings
@@ -19,7 +20,14 @@ from pydantic import ValidationError
 
 from reaper.api.schemas import GateSettingIn
 from reaper.engine import policy as policy_module
-from reaper.engine.gates import POLICY_AUTHORABLE_GATES, Facts, GateId
+from reaper.engine.gates import (
+    POLICY_AUTHORABLE_GATES,
+    Facts,
+    GateConfig,
+    GateId,
+    ServerPopularityGate,
+    history_shortfall,
+)
 from reaper.engine.observation import Absent, Known
 from reaper.engine.policy import (
     DEFAULT_MOVIE_POLICY,
@@ -28,6 +36,7 @@ from reaper.engine.policy import (
     SCORER_VERSION,
     GateSetting,
     PolicyBody,
+    PolicyWarning,
     ProfileSettings,
     RatingRuleSpec,
     SignalSetting,
@@ -628,6 +637,107 @@ class TestTheDangerousConfigDetector:
     def test_the_shipped_default_raises_no_warnings(self) -> None:
         """A user who changes nothing should see a clean policy."""
         assert inspect(DEFAULT_MOVIE_POLICY, ProfileSettings()) == []
+
+
+class TestAPopularityWindowLongerThanTheWatchHistory:
+    """The window in the direction nothing warned about, and the reason it needed one.
+
+    ``gates.ServerPopularityGate.evaluate`` fails closed when the mirror is shorter than
+    the window it is asked about: a count over three months cannot answer "who watched
+    this in the last year", so the gate blocks and ``verdict.decide_verdict`` abstains.
+    The reach is a property of the operator's DATA, not of any one title, so this empties
+    the reap list library-wide and keeps it empty for as long as the shortfall lasts.
+
+    Every other block clears on the next scan, which is why nothing was ever obliged to
+    name a remedy for one. This one clears when history accrues or when the operator
+    shortens a window nobody pointed them at.
+    """
+
+    #: Longer than any reach used here, so a test that does not say otherwise is
+    #: exercising the shortfall rather than some other warning.
+    WINDOW = 365
+
+    def _pop(self, **overrides: object) -> PolicyBody:
+        base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
+        return _policy(gates=(GateSetting(**{**base, **overrides}),))  # type: ignore[arg-type]
+
+    def _window_warnings(self, body: PolicyBody, reach: float | None) -> list[PolicyWarning]:
+        return [
+            w
+            for w in inspect(body, ProfileSettings(), history_reach_days=reach)
+            if w.field == f"gates.{GateId.SERVER_POPULARITY.value}.window_days"
+        ]
+
+    def test_it_is_flagged_when_the_window_outruns_the_history(self) -> None:
+        flagged = self._window_warnings(self._pop(), reach=90.0)
+
+        assert len(flagged) == 1
+        assert flagged[0].severity == "warn"
+        assert "Nothing will be flagged for removal" in flagged[0].message
+
+    def test_it_is_silent_when_the_history_covers_the_window(self) -> None:
+        """The gate answers the question it is asked, so there is nothing to report."""
+        assert self._window_warnings(self._pop(), reach=float(self.WINDOW)) == []
+        assert self._window_warnings(self._pop(), reach=800.0) == []
+
+    def test_a_caller_that_cannot_tell_stays_quiet(self) -> None:
+        """Same posture as ``requests_app_configured``: a caller that cannot read the
+        mirror must not guess, because guessing short tells an operator their window is
+        useless when it is fine. The warning gates nothing destructive, so silence costs
+        only advice."""
+        assert self._window_warnings(self._pop(), reach=None) == []
+
+    def test_it_is_silent_while_the_protection_is_off(self) -> None:
+        """A disabled gate reads no watcher count, so nothing blocks and nothing is lost.
+        The editor also hides the window control with the gate
+        (``PolicyEditor.tsx``, pinned by ``PolicyEditor.test.tsx``), so warning here would
+        name a control that is not on the page."""
+        assert self._window_warnings(self._pop(enabled=False), reach=90.0) == []
+
+    def test_the_cause_clause_is_the_one_the_why_panel_prints(self) -> None:
+        """Rule 144: this sentence has a sibling. ``ServerPopularityGate.evaluate`` puts
+        the same shortfall in front of the same operator on every blocked row, off the
+        same ``gates.history_shortfall`` helper. Restating it here in different words
+        would let the editor and the why panel describe one mirror two ways.
+
+        If this fails, the two copies have drifted: fix them together, in
+        ``engine/policy.py:inspect`` and ``engine/gates.py:ServerPopularityGate.evaluate``.
+        """
+        reach = 90.0
+        expected = history_shortfall(Known(value=reach, source="tautulli"), float(self.WINDOW))
+        assert expected is not None  # the fixture is a genuine shortfall
+
+        message = self._window_warnings(self._pop(), reach=reach)[0].message
+        blocked = ServerPopularityGate(
+            GateConfig(gate=GateId.SERVER_POPULARITY, threshold=2, window_days=self.WINDOW)
+        ).evaluate(
+            replace(
+                _evidence(days=900, watchers=0, rank=1, rating=70, size_gb=1),
+                history_reach_days=Known(value=reach, source="t"),
+            )
+        )
+
+        assert blocked.blocked is True  # the state the warning is describing
+        assert expected in message
+        assert expected in blocked.detail
+
+    def test_a_window_shorter_than_the_history_keeps_its_own_warning(self) -> None:
+        """The opposite end of the same field, which had no test at all. A very short
+        window is legal and reads as watched-by-nobody across the library, so it warns
+        whatever the mirror reaches."""
+        flagged = self._window_warnings(self._pop(window_days=7), reach=800.0)
+
+        assert len(flagged) == 1
+        assert "very short" in flagged[0].message
+
+    def test_both_ends_cannot_fire_at_once(self) -> None:
+        """A 7-day window under a 3-day mirror is short AND outrun. Two warnings on one
+        control is noise, but they are different faults with different remedies, so this
+        pins what the operator actually sees rather than asserting one of them away."""
+        flagged = self._window_warnings(self._pop(window_days=7), reach=3.0)
+
+        assert [w.severity for w in flagged] == ["warn", "warn"]
+        assert len(flagged) == 2
 
 
 class TestRequestedOnlyScopeWithoutSeerr:

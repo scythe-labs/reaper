@@ -30,6 +30,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import ValidationError
 from sqlalchemy import and_, asc, desc, func, or_, select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import load_only
 
@@ -97,6 +98,7 @@ from reaper.services.condemned import (
 )
 from reaper.services.deep_links import build_links
 from reaper.services.display_meta import parse_ratings_json
+from reaper.services.history_sync import horizon
 from reaper.services.planner import MediaRef, PlanError
 from reaper.services.profiles import active_policy, active_policy_row, active_profile_settings
 from reaper.services.snapshot import HAND_SPARE_DETAIL, effective_fate, judge_facts
@@ -1415,12 +1417,41 @@ async def _requests_app_configured(session: AsyncSession) -> bool:
     return row is not None
 
 
+async def _history_reach_days(request: Request) -> float | None:
+    """How far back the watch mirror goes, for ``policy.inspect``, or ``None`` if unknown.
+
+    The second world-fact a policy cannot see about itself. It lets ``inspect`` say that a
+    popularity window longer than the mirror blocks ``gates.ServerPopularityGate``
+    library-wide, so the scan condemns nothing until the window comes down or history
+    accrues.
+
+    Derived through ``dormancy.history_reach_days`` off ``history_sync.horizon``, which is
+    exactly how ``services.snapshot.ScanContext`` derives the reach the gate then reads
+    (rule 104). The editor must not answer this question a second way, or it could advise
+    against a window the scan is perfectly happy with.
+
+    Reading it must never cost the operator their policy editor, so a mirror that will not
+    answer resolves to ``None`` -- "could not tell", which ``inspect`` treats as silence.
+    That is the safe direction here and only here: the warning gates nothing destructive, so
+    the worst a miss can do is withhold advice, while a guess would tell an operator their
+    window is useless when it is fine. A scan reading the same horizon degrades instead
+    (``services.snapshot``, rule 28); this is not the scan pipeline.
+    """
+    try:
+        earliest = await horizon(request.app.state.cache_engine)
+    except (SQLAlchemyError, OSError, AttributeError):
+        log.warning("policy.history_reach_unreadable", exc_info=True)
+        return None
+    return None if earliest is None else float(history_reach_days(earliest, now=utcnow()))
+
+
 def _policy_out(
     body: PolicyBody,
     name: str,
     *,
     requests_app_configured: bool,
     settings: ProfileSettings,
+    history_reach_days: float | None = None,
     needs_save: bool = False,
     fell_back: bool = False,
     rating_rules_restored: bool = False,
@@ -1483,7 +1514,12 @@ def _policy_out(
             # editor could never show a warning about any of them. A settings warning
             # therefore appears once the change is saved rather than as it is typed --
             # the savebar writes policy and profile together, so that is one click away.
-            for w in inspect(body, settings, requests_app_configured=requests_app_configured)
+            for w in inspect(
+                body,
+                settings,
+                requests_app_configured=requests_app_configured,
+                history_reach_days=history_reach_days,
+            )
         ],
     )
 
@@ -1531,6 +1567,7 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
         name,
         requests_app_configured=has_requests_app,
         settings=settings,
+        history_reach_days=await _history_reach_days(request),
         needs_save=needs_save,
         fell_back=fell_back,
         rating_rules_restored=rating_rules_restored,
@@ -1553,6 +1590,7 @@ async def save_policy(request: Request, payload: PolicyIn) -> PolicyOut:
     """
     body = _to_body(payload)
     policy_hash = body.policy_hash()
+    reach_days = await _history_reach_days(request)
 
     async with _sessions(request)() as session:
         active = await active_policy_row(session, body.media_type)
@@ -1565,7 +1603,11 @@ async def save_policy(request: Request, payload: PolicyIn) -> PolicyOut:
             # so the success response matches what the next GET /api/policy will show --
             # otherwise a name-only edit looks like it stuck when it silently did not.
             return _policy_out(
-                body, active.name, requests_app_configured=has_requests_app, settings=settings
+                body,
+                active.name,
+                requests_app_configured=has_requests_app,
+                settings=settings,
+                history_reach_days=reach_days,
             )
 
         session.add(
@@ -1580,7 +1622,11 @@ async def save_policy(request: Request, payload: PolicyIn) -> PolicyOut:
         await session.commit()
 
     return _policy_out(
-        body, payload.name, requests_app_configured=has_requests_app, settings=settings
+        body,
+        payload.name,
+        requests_app_configured=has_requests_app,
+        settings=settings,
+        history_reach_days=reach_days,
     )
 
 
@@ -1614,6 +1660,7 @@ async def validate_policy(request: Request, payload: PolicyValidateIn) -> Policy
         payload.name,
         requests_app_configured=has_requests_app,
         settings=settings,
+        history_reach_days=await _history_reach_days(request),
     )
 
 
