@@ -219,6 +219,44 @@ def test_dynamic_favicon_link_is_declared_last() -> None:
     )
 
 
+def test_dev_proxy_target_follows_the_api_port() -> None:
+    """``REAPER_PORT`` moves the dev API, so it has to move the proxy sitting in front of it.
+
+    ``scripts/dev-local.sh`` advertises ``REAPER_PORT`` as the way to run a SECOND instance --
+    a parallel agent session, a PR test-drive -- and passes it to uvicorn. While
+    ``frontend/vite.config.ts`` hardcoded its ``/api`` target, the API came up correctly on the
+    new port and every call through Vite answered 502, so the UI was a dead shell that read as a
+    crashed backend. ``REAPER_WEB_PORT`` did work, which is what made the pair read as supported
+    with only half of it wired.
+
+    Both halves are pinned here because either alone is silently useless: a config reading a
+    variable nothing exports, and a script exporting a variable nothing reads, each look correct
+    on their own line. Rule 144 -- this is one fact stated in two files, so neither may move
+    without the other.
+    """
+    config = (REPO / "frontend" / "vite.config.ts").read_text(encoding="utf-8")
+    assert "process.env.REAPER_PORT" in config, (
+        "frontend/vite.config.ts must take its /api proxy target from REAPER_PORT, "
+        "which scripts/dev-local.sh passes to uvicorn and to this process"
+    )
+    assert re.search(r"target:\s*`http://127\.0\.0\.1:\$\{", config), (
+        "the /api proxy target must interpolate the port rather than hardcode one; "
+        "a literal here defeats REAPER_PORT in scripts/dev-local.sh"
+    )
+
+    script = (REPO / "scripts" / "dev-local.sh").read_text(encoding="utf-8")
+    lines = script.splitlines()
+    launches = [i for i, line in enumerate(lines) if "npm --prefix frontend run dev" in line]
+    assert launches, "expected scripts/dev-local.sh to launch the Vite dev server"
+    for i in launches:
+        window = "\n".join(lines[max(0, i - 3) : i + 1])
+        assert "REAPER_PORT=" in window, (
+            f"scripts/dev-local.sh:{i + 1} starts Vite without passing REAPER_PORT, so "
+            "frontend/vite.config.ts cannot point the /api proxy at the API this script "
+            "just started on that port"
+        )
+
+
 # Every real invocation of the app carries ``--factory``, because ``create_app`` IS a factory
 # and uvicorn cannot boot it otherwise. That is what separates an invocation from a mention:
 # dev-local.sh's ``pkill -f "uvicorn reaper.main:create_app"`` names the same string and is not

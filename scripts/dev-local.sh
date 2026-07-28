@@ -30,7 +30,7 @@
 # Env overrides:
 #   REAPER_DATA_DIR       data dir to serve (default: <main checkout>/data if it has a
 #                         reaper.db, else <this tree>/data)
-#   REAPER_PORT           API port    (default 8420)
+#   REAPER_PORT           API port    (default 8420); Vite's /api proxy target follows it
 #   REAPER_WEB_PORT       Vite port   (default 5173)
 #   REAPER_DEV_NO_MIGRATE 1 to skip `alembic upgrade head` (booting on a DB behind the
 #                         branch head usually fails, because the models expect the new
@@ -173,7 +173,12 @@ REAPER_DATA_DIR="$DATA_DIR" REAPER_SERVE_SPA=false \
   > "$API_LOG" 2>&1 &
 
 log "starting frontend (Vite HMR) on :$WEB_PORT"
-nohup npm --prefix frontend run dev -- --port "$WEB_PORT" --strictPort \
+# REAPER_PORT reaches Vite too, because its /api proxy target has to follow the API it was
+# just told to start (frontend/vite.config.ts reads it). Passing only --port moved the UI
+# without moving what it talks to: on any non-default REAPER_PORT every /api call answered
+# 502 and the UI looked like a crashed backend. Both halves move together or neither does.
+REAPER_PORT="$API_PORT" \
+  nohup npm --prefix frontend run dev -- --port "$WEB_PORT" --strictPort \
   > "$WEB_LOG" 2>&1 &
 
 wait_ready "http://127.0.0.1:$API_PORT/api/health" "API"
