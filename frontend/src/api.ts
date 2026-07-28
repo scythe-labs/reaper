@@ -48,8 +48,8 @@ export interface GroupSeasonMark {
   verdict: Verdict;
   override: Override | null;
   /** For a "reap" override: whether the engine honors it (true paints the square solid
-   *  red) or can't yet, for a safety stop or an unchecked protection (false paints it dashed
-   *  red with a scythe, "kept for now"). Null when there is no reap override. */
+   *  red) or can't yet, for a safety stop or a row Reaper can't identify (false paints it
+   *  dashed red with a scythe, "kept for now"). Null when there is no reap override. */
   override_effective: boolean | null;
   /** The season's size on disk, so the card can state whole-show totals without a
    *  second fetch. Null when nothing would report one, which is not zero. */

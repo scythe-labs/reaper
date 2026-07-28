@@ -535,7 +535,7 @@ describe("the verdict headline", () => {
     expect(screen.queryByText("Sanctuary")).not.toBeInTheDocument();
   });
 
-  it("names an unmanaged hold and a could-not-check hold distinctly", () => {
+  it("names an unmanaged hold and an unidentifiable row distinctly", () => {
     show(
       detail(WORKED_ROWS, {
         override: "reap",
@@ -548,17 +548,65 @@ describe("the verdict headline", () => {
     );
     expect(screen.getByText(/no app manages the file/i)).toBeInTheDocument();
 
+    // Was a blocked `rating_floor`, which the engine no longer holds anything for -- so the
+    // fixture pinned a held-reap state the backend cannot produce, and green-lit the wrong
+    // sentence (rule 132: the fixture is the claim). The hold this row really has is the
+    // Plex match.
     show(
       detail(WORKED_ROWS, {
         override: "reap",
         override_effective: false,
         explanation: {
           ...detail(WORKED_ROWS).explanation,
-          protections_unknown: [fired("rating_floor", "could not check the IMDb rating")],
+          match: { status: "unmatched", detail: null, rating_key: null },
         },
       }),
     );
-    expect(screen.getByText(/a protection couldn't be checked/i)).toBeInTheDocument();
+    expect(screen.getByText(/couldn't find it in your Plex/i)).toBeInTheDocument();
+  });
+
+  it("blames the Plex match, not a blocked check, when both are present on a held reap", () => {
+    // The ordering bug, pinned. An item Plex could not match has no rating key, so every
+    // Plex-dependent gate blocks: `protections_unknown` is never empty for exactly the rows
+    // the match is holding. `heldReapNote` used to test the blocked list first, so it was
+    // wrong every single time it fired -- and it sent the operator after their watch-history
+    // depth when the fix is a re-match. The card chip beside it has always said "couldn't be
+    // found in Plex", so the panel contradicted the chip on one screen.
+    show(
+      detail(WORKED_ROWS, {
+        override: "reap",
+        override_effective: false,
+        explanation: {
+          ...detail(WORKED_ROWS).explanation,
+          match: { status: "unmatched", detail: null, rating_key: null },
+          protections_unknown: [
+            fired("server_popularity", "could not check who watched it"),
+            fired("min_dormancy", "could not check when it was last played"),
+          ],
+        },
+      }),
+    );
+    expect(screen.getByText(/couldn't find it in your Plex/i)).toBeInTheDocument();
+    expect(screen.queryByText(/a protection couldn't be checked/i)).not.toBeInTheDocument();
+  });
+
+  it("names an ambiguous match as its own thing, since the remedy differs", () => {
+    show(
+      detail(WORKED_ROWS, {
+        override: "reap",
+        override_effective: false,
+        explanation: {
+          ...detail(WORKED_ROWS).explanation,
+          match: { status: "ambiguous", detail: null, rating_key: null },
+          protections_unknown: [fired("server_popularity", "could not check who watched it")],
+        },
+      }),
+    );
+    // `KeptNotice` says "more than one thing in your Plex" too, which is right -- both
+    // surfaces should speak. Assert the held-reap sentence specifically, by its own clause.
+    expect(
+      screen.getByText(/You asked to remove this, but it looks like more than one/i),
+    ).toBeInTheDocument();
   });
 
   it("labels a hand spare as the owner's keep, not a Sanctuary", () => {

@@ -326,7 +326,8 @@ async def held_reaps(
     session: AsyncSession, snapshot_id: int, decisions: dict[str, str]
 ) -> list[Candidate]:
     """The hand reaps the engine will NOT honor yet: a reap override on a row the scan did not
-    condemn, whose reap is refused (blocked evidence, a structural gate). These are HELD, not
+    condemn, whose reap is refused (a fired structural gate, or a row Reaper cannot identify;
+    evidence it merely could not check no longer refuses one). These are HELD, not
     in the reap set -- the complement of what :func:`effective_condemned` admits from the same
     overridden rows, surfaced so the breakdown can report the operator's marks that are on
     hold rather than dropping them silently (PR-2). Reuses ``reap_is_effective``, never a

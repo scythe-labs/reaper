@@ -1180,11 +1180,32 @@ class TestTheSimulator:
         assert result["protected"] == 0
         assert result["no_longer_condemned"] == 1  # the stored 91 still drops at 95
 
-    def test_a_hand_reap_on_a_blocked_row_is_still_refused(self, client: TestClient) -> None:
-        """The "Unmatched" fixture's protections could not be checked. A hand reap does
-        not beat "we could not look": the engine keeps refusing, so the simulator must
-        not count it as a deletion either. At a draft of 91 the stored condemn still
-        counts, and it must stay the only one."""
+    def test_a_hand_reap_on_an_unmatched_row_is_still_refused(self, client: TestClient) -> None:
+        """The "Unmatched" fixture is a row Reaper could not tie to a Plex entry. A hand
+        reap does not beat "we do not know WHICH FILE this is": the engine keeps refusing,
+        so the simulator must not count it as a deletion either. At a draft of 91 the stored
+        condemn still counts, and it must stay the only one.
+
+        Named for the match, because the match is the whole hold. The fixture also carries
+        three blocked gates -- an unmatched item has no rating key, so every Plex-dependent
+        gate blocks -- and this test used to be named for THOSE, which stopped refusing
+        anything when a blocked gate stopped holding a hand reap. Emptying
+        `protections_unknown` leaves it green, so under the old name it pinned nothing it
+        claimed to.
+
+        **What this test cannot discriminate, said plainly (rule 118).** It passes whether or
+        not a blocked gate holds a reap, because its row is held by the match either way. The
+        opposite direction -- a row Reaper CAN identify whose protections merely could not be
+        checked is the operator's to remove -- needs a fixture with blocked gates and a clean
+        match, which this shared snapshot does not have and which cannot be added without
+        moving the counts every sibling here asserts. It is covered instead where it can be
+        driven directly, with mutation proofs -- in `test_override_truth.py`
+        (`test_an_unchecked_protection_no_longer_holds_the_reap`, four gates), in
+        `test_verdict_agreement.py`
+        (`test_a_reap_override_condemns_past_any_gate_that_could_not_be_checked`), and in
+        `test_engine_invariants.py`
+        (`test_the_block_stops_every_automatic_path_but_not_the_owners_own_hand`).
+        """
         response = client.post(
             "/api/override", json={"media_key": "radarr:1:12", "decision": "reap"}
         )
@@ -1192,7 +1213,7 @@ class TestTheSimulator:
 
         result = self._simulate(client, 91)
 
-        assert result["condemned"] == 1  # only the stored condemn; the blocked row stays out
+        assert result["condemned"] == 1  # only the stored condemn; the unmatched row stays out
 
     def test_the_exact_threshold_boundary_condemns_at_and_above(self, client: TestClient) -> None:
         """condemn_at is "at or above". The stored 91 must count as condemned at a

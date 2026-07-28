@@ -31,9 +31,10 @@ export function CondemnedChip() {
  *  to sit after "Reap requested · kept for now:".
  *
  *  A reap is refused in two different lanes, and their chips read nothing alike -- a
- *  protection that fired ("Kept · playing right now") and a check that could not run
- *  ("Some checks couldn't run") -- so the server words the clause for both beside the
- *  chip text itself (`_chip` in `api/routes.py`). This used to slice the "Kept · " prefix
+ *  structural protection that fired ("Kept · playing right now") and a row Reaper cannot
+ *  identify ("it couldn't be found in Plex") -- so the server words the clause for both
+ *  beside the chip text itself (`_chip` in `api/routes.py`). A check that merely could not
+ *  RUN is no longer one of the lanes: it stopped refusing a reap (`engine/verdict.py`). This used to slice the "Kept · " prefix
  *  off and look the rest up in a map of the backend's exact prose: rewording one chip
  *  server-side dropped every held-reap explanation to the generic fallback below, with
  *  the tests still green because they transcribed the same strings (H-1). Null is a real
@@ -71,8 +72,8 @@ const OVERRIDE_CLASSES: Record<
  *  moment it is saved, and the views that show it (the queue and its counts, the show
  *  panel, the why panel, the grace countdown) refresh together through
  *  `useOverrideMutations`' refresh(). The engine still refuses a reap it must not honor
- *  (someone is watching right now, the file isn't managed, or a protection could not be
- *  checked); that reads dashed red (held, not a done removal) and says why, via `chipWhy`
+ *  (someone is watching right now, the file isn't managed, or Reaper can't tell which file
+ *  this is); that reads dashed red (held, not a done removal) and says why, via `chipWhy`
  *  above. Amber is reserved for "left for you to decide" and never marks a held reap. */
 export function OverrideChip({
   override,

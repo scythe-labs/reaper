@@ -70,7 +70,8 @@ class ReapBreakdown:
     hand_reaped_bytes: int
     hand_reaped_unknown: int
     hand_reaped_held: int
-    """Hand reaps the engine refuses to honor yet (blocked evidence, a structural gate), so
+    """Hand reaps the engine refuses to honor yet (a fired structural gate, or a row it
+    cannot identify -- NOT merely evidence it could not check, which no longer holds), so
     they are NOT in ``will_reap``. Reported so an operator who marked N items and sees fewer
     reaped is told the rest are held, never silently dropped (PR-2)."""
     will_reap: int

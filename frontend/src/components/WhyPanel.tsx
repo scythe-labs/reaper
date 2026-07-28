@@ -295,18 +295,23 @@ function isKeepRuleConflict(item: CandidateDetail): boolean {
   );
 }
 
-/** Why a hand reap is still held -- the one thing the engine will not delete past, and it is
- *  now a much shorter list than these branches imply. Only a FIRED structural stop refuses a
- *  reap: something playing right now, or a file no app manages. A protection that merely
- *  could not be CHECKED no longer holds one (`engine/verdict.py`), so the "couldn't be
- *  checked" branch below is reachable from the stored-row path's two non-gate holds -- a bad
- *  Plex match, or an explanation that could not be parsed -- rather than from an ordinary
- *  blocked gate. The "no app manages it" branch is for a snapshot stored before that gate was
- *  retired (`engine/gates.py`); no new scan can produce one.
+/** Why a hand reap is still held -- and it is now a SHORT list, which is the whole reason
+ *  the branch order below matters. Exactly three things refuse a reap: a FIRED structural
+ *  stop (playing right now, or a file no app manages), and a row Reaper cannot identify (a
+ *  bad Plex match, or a stored explanation it could not read). A protection that merely could
+ *  not be CHECKED refuses nothing (`engine/verdict.py`).
  *
- *  Kept as separate branches deliberately: they are what the operator is TOLD, and each still
- *  names a real reason a reap did not go through. Collapsing them would trade an accurate
- *  sentence for a shorter one. */
+ *  **The blocked-protections branch used to come first and was wrong every time it fired.**
+ *  An item Plex could not match has no rating key, so every Plex-dependent gate blocks --
+ *  `protections_unknown` is never empty for exactly the rows the match is holding. Testing it
+ *  first therefore shadowed the real cause in 100% of cases, and sent the operator after
+ *  their watch-history depth when what they needed was a re-match. It also contradicted the
+ *  card chip beside it, which gets this right (`api.routes._chip` tests the match first).
+ *
+ *  So the match is tested BEFORE the blocked list, and the blocked branch is gone: it can no
+ *  longer be the cause of a hold, so there is no shape left for it to describe truthfully.
+ *  The order here is load-bearing, not cosmetic -- these branches are mutually reachable and
+ *  the first true one wins. */
 function heldReapNote(item: CandidateDetail): string {
   const fired = new Set(item.explanation.protections_fired.map((o) => o.gate));
   if (fired.has("streaming_now")) {
@@ -319,8 +324,12 @@ function heldReapNote(item: CandidateDetail): string {
   if (fired.has("unmanaged")) {
     return "You asked to remove this, but no app manages the file, so there's no safe way to remove it.";
   }
-  if (item.explanation.protections_unknown.length > 0) {
-    return "You asked to remove this, but a protection couldn't be checked, so Reaper is keeping it to be safe.";
+  const status = item.explanation.match?.status;
+  if (status === "ambiguous") {
+    return "You asked to remove this, but it looks like more than one thing in your Plex, so Reaper can't tell which file to remove.";
+  }
+  if (status === "unmatched") {
+    return "You asked to remove this, but Reaper couldn't find it in your Plex, so it can't tell which file to remove.";
   }
   return "You asked to remove this, but Reaper can't confirm it's safe to remove yet, so it's kept for now.";
 }

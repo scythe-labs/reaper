@@ -98,19 +98,23 @@ def decide_verdict(
 
     ``blocked_holds_reap`` -- whether anything about this item must hold a hand reap
     *besides* a structural stop. **A gate that could not be checked is no longer one of
-    those things**, so both production reap callers pass a value that ignores gate blocks
-    entirely: ``snapshot._verdict`` passes ``False``, and
-    ``condemned.reap_override_verdict_decoded`` passes only its two non-gate holds -- a bad
-    Plex match (the row may not be the file the owner is looking at, so this is identity,
-    not judgment) and an explanation this code could not parse (they cannot consent to
-    reasons the panel never rendered). Neither is a protection; both are "we do not know
-    WHAT this is", which is a different question from "we could not check whether it is
-    wanted".
+    those things.** ``condemned.reap_override_verdict_decoded`` passes only its two
+    non-gate holds -- a bad Plex match (the row may not be the file the owner is looking
+    at, so this is identity, not judgment) and an explanation this code could not parse
+    (they cannot consent to reasons the panel never rendered). Neither is a protection;
+    both are "we do not know WHAT this is", which is a different question from "we could
+    not check whether it is wanted". ``snapshot._verdict`` passes ``False``, though it
+    never takes the reap branch in production -- its only caller, ``judge_facts``, passes
+    ``override=None`` unconditionally, and a hand reap is applied afterwards by
+    ``effective_fate`` off the frozen explanation.
 
-    The parameter still defaults to ``blocked`` rather than to ``False``. That default is
-    now reached by nobody on the reap branch, and it is kept deliberately fail-closed so a
-    future caller that forgets to think about it inherits the cautious answer rather than
-    the permissive one -- the same reasoning that keeps ``UNMANAGED`` in
+    The parameter still defaults to ``blocked`` rather than to ``False``, and exactly one
+    reap caller reaches that default: ``condemned.reap_override_verdict_decoded``'s early
+    return for an explanation that is not a JSON object, which passes no value here at all.
+    It resolves to hold, which is what that row wants anyway (it also passes
+    ``safety_protected=True``), so the default is load-bearing there rather than vestigial.
+    It stays fail-closed so a future caller that forgets to think about it inherits the
+    cautious answer -- the same reasoning that keeps ``UNMANAGED`` in
     :data:`STRUCTURAL_GATES`.
 
     ``override`` is the owner's hand decision: ``"reap"`` forces condemn past every

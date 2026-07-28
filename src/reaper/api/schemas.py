@@ -180,8 +180,9 @@ class GroupSeasonMarkOut(BaseModel):
     override: str | None = None
     override_effective: bool | None = None
     """For a ``"reap"`` override: whether the engine honors it (True paints the square
-    solid red), or refuses it for a safety stop or an unchecked protection (False keeps
-    the square in its scan color). None when there is no reap override."""
+    solid red), or refuses it for a safety stop, or for a row Reaper cannot identify -- a
+    bad Plex match, or an explanation it could not read (False keeps the square in its scan
+    color). None when there is no reap override."""
     size_bytes: int | None = None
     """The season's size on disk, so the card can state whole-show totals without a
     second fetch. None when nothing would report one, which is not zero: the strip still
@@ -270,8 +271,9 @@ class CandidateOut(BaseModel):
     Always ``None`` for a movie."""
     override_effective: bool | None = None
     """For a ``"reap"`` override: whether the engine honors it (it joins the counts, the
-    grace countdown and the next plan), or refuses it for a safety stop or an unchecked
-    protection. None when there is no reap override. The UI shows red only on True."""
+    grace countdown and the next plan), or refuses it for a safety stop, or for a row Reaper
+    cannot identify -- a bad Plex match, or an explanation it could not read. None when there
+    is no reap override. The UI shows red only on True."""
     spare_expires_at: str | None = None
     """When the spare *in effect* on this item stops keeping it, ISO-8601. ``None`` means the
     spare is forever -- read it only when ``override`` is ``"spare"``, where ``None`` is "kept

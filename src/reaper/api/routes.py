@@ -16,6 +16,7 @@ Two routes carry most of the product:
 from __future__ import annotations
 
 import asyncio
+import enum
 import json
 import re
 from collections import Counter
@@ -67,7 +68,7 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.models import Candidate, FirstFlagged, Instance, InstanceKind, PlexServer, Snapshot
 from reaper.db.models import Policy as PolicyModel
-from reaper.engine import facts_codec
+from reaper.engine import facts_codec, identity
 from reaper.engine.dormancy import history_reach_days
 from reaper.engine.fields import Lane, MediaType, vocabulary
 from reaper.engine.gates import PROTECT, GateId, GateResult
@@ -1611,6 +1612,56 @@ async def validate_policy(request: Request, payload: PolicyValidateIn) -> Policy
 _SIM_YIELD_EVERY = 500
 
 
+def _replayed_match(row: Candidate) -> dict[str, Any]:
+    """The Plex match kwargs ``judge_facts`` needs, read back off the row's frozen
+    explanation so a replay rebuilds the same match block the scan stored.
+
+    Identity is evidence, not policy: a policy edit cannot change which Plex row an item was
+    bound to, so the replay must carry the stored answer rather than re-deriving it or (as it
+    did) leaving it blank. A blank match block reads as "nothing wrong with the match", which
+    is the permissive direction on the one interlock that still holds a hand reap for a row
+    Reaper cannot identify (rule 1: omitted is not the same as an explicit empty).
+
+    Never raises off a stored row (rule 96). An unreadable or unrecognized value degrades to
+    ``UNMATCHED``, the conservative answer: it holds the reap, matching what
+    ``condemned.match_state`` does with the same row, where anything it cannot parse becomes
+    ``MATCH_UNREADABLE`` and holds. A row frozen before the match block existed carries no
+    key at all and is left alone -- ``None`` there is genuinely absent, and those rows were
+    judged without it.
+    """
+    try:
+        stored = json.loads(row.explanation_json or "{}")
+        match = stored.get("match") if isinstance(stored, dict) else None
+    except (ValueError, TypeError):
+        match = None
+    if match is None:
+        return {}
+    if not isinstance(match, dict):
+        # Present but unreadable -- the shape `condemned.MATCH_UNREADABLE` exists for. Assert
+        # the conservative status rather than dropping to "no match block recorded".
+        return {"match_status": identity.MatchStatus.UNMATCHED}
+
+    def _enum[T: enum.StrEnum](kind: type[T], value: object) -> T | None:
+        try:
+            return kind(str(value)) if value is not None else None
+        except ValueError:
+            return None
+
+    status = _enum(identity.MatchStatus, match.get("status"))
+    if status is None and match.get("status") is not None:
+        status = identity.MatchStatus.UNMATCHED
+    merged = match.get("merged_rating_keys")
+    return {
+        "match_status": status,
+        "matched_by": _enum(identity.MatchedBy, match.get("by")),
+        "match_detail": match.get("detail") if isinstance(match.get("detail"), str) else None,
+        "plex_rating_key": rk if isinstance(rk := match.get("rating_key"), int) else None,
+        "merged_rating_keys": tuple(k for k in merged if isinstance(k, int))
+        if isinstance(merged, list)
+        else (),
+    }
+
+
 async def _replay_simulation(
     rows: list[Candidate],
     policy: PolicyBody,
@@ -1710,6 +1761,20 @@ async def _replay_simulation(
             keeps=keeps,
             window_days=window,
             extra_results=merged_extra,
+            # The Plex match is REPLAYED, not re-derived: it is identity evidence the scan
+            # gathered, and this path re-decides policy over frozen evidence. Omitting it
+            # built an explanation whose match block read "no status recorded", which
+            # ``condemned.match_state`` reads as "no bad match" -- so a hand-reaped row that
+            # production holds because Reaper cannot tell WHICH file it is was previewed
+            # here as a deletion, and its bytes counted toward reclaimable.
+            #
+            # That divergence is new. While a blocked gate still held a hand reap the two
+            # sides agreed by accident: an unmatched item has no rating key, so every
+            # Plex-dependent gate blocked and the reap was held on both paths for a reason
+            # that had nothing to do with the match. Once the block stopped holding, the
+            # match became the whole interlock on the stored path and the only one this
+            # path was not carrying (rule 3/22).
+            **_replayed_match(row),
         )
         score_value = judged.score
         verdict = effective_fate(judged, override)

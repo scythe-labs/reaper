@@ -128,8 +128,9 @@ def _result_from_dict(d: dict[str, Any]) -> GateResult:
         blocked=d["blocked"],
         # The thaw, stated rather than left to a ``KeyError`` (rule 104): a row frozen before
         # the flag existed carries nothing that distinguishes a comparison that was made from
-        # one that was refused, so it does not defer and the hand reap is held. The same
-        # answer ``services.condemned`` gives on the stored-explanation path.
+        # one that was refused, so it reads as "Reaper did not establish this" -- the claim
+        # that asserts less. That answer reaches the operator's chip (``api.routes._chip``),
+        # not any reap decision: no blocked gate holds a hand reap (``engine.verdict``).
         defers_to_owner=d.get("defers_to_owner") is True,
     )
 

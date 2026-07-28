@@ -96,10 +96,16 @@ class ProtectedSeason:
 
     A typed flag, never the wording (rule 142). It is what lets
     :func:`services.season_scan.guard_result` mark the result ``blocked``: an unanswerable
-    check is ``Unknown``, not a definite keep (rule 93), and a block is what holds a hand
-    reap fail-closed. Emitting it as a plain PROTECT read as a definite value and left the
-    season hand-reapable -- weaker, against a hand reap, than the keep-rule conflict it
-    displaced, because ``verdict.STRUCTURAL_GATES`` does not carry this gate."""
+    check is ``Unknown``, not a definite keep (rule 93), so the panel shows it amber
+    ("couldn't check") rather than green ("checked and passed"), and the operator can see
+    which of the two they are looking at.
+
+    **That is now the whole reason, and it is the durable one.** The flag was originally
+    added for a second reason that has lapsed: a block used to hold a hand reap where a
+    plain PROTECT on this gate did not, which made ``blocked`` the strictly stronger
+    encoding. No blocked gate holds a hand reap any more (``engine.verdict``), so both
+    encodings are equally overrulable and the choice is purely about what the operator is
+    told. Do not read this flag as buying a reap refusal; it does not."""
 
 
 def _because(kept_reason: str) -> str:
