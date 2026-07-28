@@ -17,9 +17,10 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from reaper.api import tags as api_tags
 from reaper.db.models import AppUser, Instance, InstanceKind, PlexServer, Snapshot
 
-router = APIRouter(prefix="/api/setup")
+router = APIRouter(prefix="/api/setup", tags=[api_tags.SETUP])
 
 
 def _factory(request: Request) -> async_sessionmaker[AsyncSession]:

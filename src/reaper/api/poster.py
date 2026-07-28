@@ -24,6 +24,7 @@ import structlog
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from sqlalchemy import select
 
+from reaper.api import tags as api_tags
 from reaper.clients.tautulli import TautulliClient
 from reaper.config import RuntimeSafety
 from reaper.crypto import SecretBox
@@ -31,7 +32,7 @@ from reaper.db.models import Instance, InstanceKind
 
 log = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", tags=[api_tags.REVIEW])
 
 #: What makes one artwork client different from another: the instance it talks to and
 #: every parameter of that connection. Rotating the key, editing the URL, turning the

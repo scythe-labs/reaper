@@ -21,9 +21,10 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from reaper import logbuffer
+from reaper.api import tags as api_tags
 from reaper.services import app_settings
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", tags=[api_tags.LOGS])
 
 #: Read the on-disk log files in modest chunks rather than loading up to three 20 MiB
 #: files into memory at once.

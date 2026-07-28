@@ -27,6 +27,7 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from reaper.api import tags as api_tags
 from reaper.api.scan import launch_scan
 from reaper.api.schemas import (
     ActionStepOut,
@@ -63,7 +64,7 @@ from reaper.services.scan_runner import build_reap_gateway
 
 log = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", tags=[api_tags.REAP])
 
 
 def _sessions(request: Request) -> async_sessionmaker[AsyncSession]:

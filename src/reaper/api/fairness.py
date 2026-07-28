@@ -23,6 +23,7 @@ from contextlib import AsyncExitStack
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 
+from reaper.api import tags as api_tags
 from reaper.api.schemas import (
     FairnessReportOut,
     PersonDetailOut,
@@ -40,7 +41,7 @@ from reaper.crypto import SecretBox
 from reaper.db.models import Instance, InstanceKind
 from reaper.services import fairness
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", tags=[api_tags.SCALES])
 
 
 def _request_cache(request: Request) -> fairness.RequestCache:

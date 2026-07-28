@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from reaper.api import tags as api_tags
 from reaper.auth.admins import count_local_admins
 from reaper.auth.cookie import (
     clear_session_cookie,
@@ -65,7 +66,7 @@ from reaper.services.plex_link import PlexLinkRetryableError, PlexServerChoiceNe
 
 log = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/api/auth")
+router = APIRouter(prefix="/api/auth", tags=[api_tags.SIGN_IN])
 
 
 def _factory(request: Request) -> async_sessionmaker[AsyncSession]:

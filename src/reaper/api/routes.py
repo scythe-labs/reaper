@@ -35,6 +35,7 @@ from sqlalchemy.orm import load_only
 if TYPE_CHECKING:
     from sqlalchemy import ColumnElement
 
+from reaper.api import tags as api_tags
 from reaper.api.schemas import (
     AboutOut,
     CandidateDetail,
@@ -120,7 +121,7 @@ async def _latest_snapshot(session: AsyncSession) -> Snapshot | None:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/snapshots/latest")
+@router.get("/snapshots/latest", tags=[api_tags.SCANS])
 async def latest_snapshot(request: Request) -> SnapshotOut:
     async with _sessions(request)() as session:
         snapshot = await _latest_snapshot(session)
@@ -173,7 +174,7 @@ async def _snapshot_out(session: AsyncSession, snapshot: Snapshot) -> SnapshotOu
     )
 
 
-@router.get("/snapshot/season-shape")
+@router.get("/snapshot/season-shape", tags=[api_tags.REVIEW])
 async def season_shape(request: Request) -> SeasonShapeOut:
     """The distribution of content-season counts across shows, for the keep-last advisory.
 
@@ -203,7 +204,7 @@ async def season_shape(request: Request) -> SeasonShapeOut:
     return SeasonShapeOut(total_shows=len(rows), season_counts=counts)
 
 
-@router.get("/candidates")
+@router.get("/candidates", tags=[api_tags.REVIEW])
 async def list_candidates(
     request: Request,
     response: Response,
@@ -1182,7 +1183,7 @@ def _genres(genres_json: str | None) -> list[str]:
     return [str(g) for g in raw if g]
 
 
-@router.get("/candidates/{candidate_id}")
+@router.get("/candidates/{candidate_id}", tags=[api_tags.REVIEW])
 async def candidate_detail(request: Request, candidate_id: int) -> CandidateDetail:
     """The why-panel.
 
@@ -1217,7 +1218,7 @@ async def candidate_detail(request: Request, candidate_id: int) -> CandidateDeta
         )
 
 
-@router.get("/groups/{group_key}")
+@router.get("/groups/{group_key}", tags=[api_tags.REVIEW])
 async def group_detail(request: Request, group_key: str) -> GroupOut:
     """One show, whole: every season row in the latest snapshot, across all lanes.
 
@@ -1478,7 +1479,7 @@ def _candidate_media_type(policy_media_type: str) -> str:
     return "season" if policy_media_type == "tv" else "movie"
 
 
-@router.get("/policy")
+@router.get("/policy", tags=[api_tags.POLICY])
 async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
     """Load the active policy for a media type, so the editor opens on what is in force.
 
@@ -1522,7 +1523,7 @@ async def get_policy(request: Request, media_type: str = "movie") -> PolicyOut:
     )
 
 
-@router.post("/policy")
+@router.post("/policy", tags=[api_tags.POLICY])
 async def save_policy(request: Request, payload: PolicyIn) -> PolicyOut:
     """Save a policy. **Append-only: this never updates a row.**
 
@@ -1569,7 +1570,7 @@ async def save_policy(request: Request, payload: PolicyIn) -> PolicyOut:
     )
 
 
-@router.post("/policy/validate")
+@router.post("/policy/validate", tags=[api_tags.POLICY])
 async def validate_policy(request: Request, payload: PolicyValidateIn) -> PolicyOut:
     """Validate, hash, and inspect.
 
@@ -1756,7 +1757,7 @@ async def _replay_simulation(
     )
 
 
-@router.post("/policy/simulate")
+@router.post("/policy/simulate", tags=[api_tags.POLICY])
 async def simulate(request: Request, payload: PolicyIn) -> SimulationOut:
     """Re-decide the last snapshot under a candidate policy. **Zero API calls.**
 
@@ -2054,7 +2055,7 @@ def _has_blocked_protections(explanation_json: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/vocabulary")
+@router.get("/vocabulary", tags=[api_tags.POLICY])
 async def get_vocabulary(lane: Lane, media_type: MediaType | None = None) -> VocabularyOut:
     """The fields available in one lane, for one policy's media type.
 
@@ -2089,7 +2090,7 @@ _VALUE_COLUMNS = {
 }
 
 
-@router.get("/vocabulary/values")
+@router.get("/vocabulary/values", tags=[api_tags.POLICY])
 async def vocabulary_values(request: Request, field: str) -> FieldValuesOut:
     """Distinct values the latest scan actually saw for one field, most common first.
 
@@ -2148,7 +2149,7 @@ def _db_bytes(base: Path) -> int:
     return backup.db_size_on_disk(base)
 
 
-@router.get("/about")
+@router.get("/about", tags=[api_tags.ABOUT])
 async def about(request: Request) -> AboutOut:
     """What's running and where its data lives. Read-only facts for the About page."""
     settings: Settings = request.app.state.settings

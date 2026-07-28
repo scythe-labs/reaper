@@ -10,10 +10,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
+from reaper.api import tags as api_tags
 from reaper.api.schemas import ReapBreakdownOut, SignalCountOut
 from reaper.services import breakdown
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", tags=[api_tags.REAP])
 
 
 @router.get("/reap/breakdown")

@@ -19,6 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from reaper import __version__, logbuffer
+from reaper.api import tags as api_tags
 from reaper.api.auth import router as auth_router
 from reaper.api.backup import router as backup_router
 from reaper.api.breakdown import router as breakdown_router
@@ -325,7 +326,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         )
 
-    @app.get("/api/health")
+    @app.get("/api/health", tags=[api_tags.SETUP])
     async def health() -> HealthResponse:
         # An UNAUTHENTICATED liveness probe (the container HEALTHCHECK hits it), so it
         # tells an anonymous caller nothing: no armed state, no safety note, no exact
@@ -334,14 +335,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     def openapi_with_api_key() -> dict[str, Any]:
         """The stock schema plus the ``X-Api-Key`` security scheme, so the reference
-        UI offers an auth box whose try-it-out requests actually authenticate."""
+        UI offers an auth box whose try-it-out requests actually authenticate -- and
+        the section list that keeps 87 operations from rendering as one flat scroll.
+
+        ``tags`` names and orders the sections; ``x-tagGroups`` is the vendor extension
+        Scalar reads to nest them under three headings. Both come from
+        ``api.tags.GROUPS``, the one place a section is declared. A route carrying a tag
+        that is not in this list would still render, in a section with no description and
+        outside every heading, which ``tests/test_openapi_tags.py`` refuses.
+        """
         if app.openapi_schema is None:
             schema = get_openapi(
                 title=app.title,
                 version=app.version,
                 description=app.description,
                 routes=app.routes,
+                tags=api_tags.openapi_tags(),
             )
+            schema["x-tagGroups"] = api_tags.openapi_tag_groups()
             components = schema.setdefault("components", {})
             components.setdefault("securitySchemes", {})["ApiKey"] = {
                 "type": "apiKey",

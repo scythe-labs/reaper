@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from reaper.api import tags as api_tags
 from reaper.api.schemas import OverrideIn, SpareIn, WhitelistEntryOut
 from reaper.clock import utcnow
 from reaper.db.models import Candidate, FirstFlagged, Snapshot, WhitelistEntry
@@ -28,7 +29,7 @@ from reaper.services.condemned import reap_is_effective
 from reaper.services.profiles import active_profile_settings
 from reaper.services.snapshot import record_first_flagged_bulk
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", tags=[api_tags.REVIEW])
 
 
 def _sessions(request: Request) -> async_sessionmaker[AsyncSession]:

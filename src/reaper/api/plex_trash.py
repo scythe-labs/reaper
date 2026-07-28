@@ -19,6 +19,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 
+from reaper.api import tags as api_tags
 from reaper.api.schemas import PlexTrashOut
 from reaper.clients.plex import PlexClient, PlexError
 from reaper.db.models import PlexServer
@@ -26,7 +27,7 @@ from reaper.services import app_settings
 
 log = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", tags=[api_tags.REAP])
 
 
 @router.get("/reap/plex-trash")

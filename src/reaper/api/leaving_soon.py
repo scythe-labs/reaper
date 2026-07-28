@@ -16,13 +16,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
+from reaper.api import tags as api_tags
 from reaper.api.schemas import LeavingSoonOut
 from reaper.clients.plex import PlexError
 from reaper.config import Settings
 from reaper.crypto import SecretBox
 from reaper.services import leaving_soon
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", tags=[api_tags.JOBS])
 
 
 @router.post("/leaving-soon/sync")

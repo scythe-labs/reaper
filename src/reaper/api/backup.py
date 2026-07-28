@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.background import BackgroundTask
 
+from reaper.api import tags as api_tags
 from reaper.api.auth import _client_ip, _throttled, _verify_admin_password
 from reaper.auth.ratelimit import password_throttle
 from reaper.buildinfo import build_version
@@ -41,7 +42,7 @@ from reaper.services import admin_password, app_settings, backup, restore
 
 log = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/api/settings/backup")
+router = APIRouter(prefix="/api/settings/backup", tags=[api_tags.BACKUP])
 
 #: An upload larger than this is refused before it is written to disk. The archive is
 #: gzip-compressed, so it is far smaller than the database inside; this ceiling is

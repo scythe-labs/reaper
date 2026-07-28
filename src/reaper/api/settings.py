@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from reaper.api import tags as api_tags
 from reaper.api.auth import _busy_hashing, _client_ip, _throttled, _verify_admin_password
 from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.ratelimit import argon2_gate, password_throttle
@@ -443,13 +444,13 @@ def _sample_embed() -> Embed:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/instances")
+@router.get("/instances", tags=[api_tags.SERVICES])
 async def list_instances(request: Request) -> list[InstanceOut]:
     async with _factory(request)() as session:
         return [InstanceOut.of(v) for v in await instances.list_instances(session)]
 
 
-@router.post("/instances")
+@router.post("/instances", tags=[api_tags.SERVICES])
 async def create_instance(request: Request, payload: InstanceCreateIn) -> InstanceOut:
     _validate_external_url(payload.external_url)
     async with _factory(request)() as session:
@@ -475,7 +476,7 @@ async def create_instance(request: Request, payload: InstanceCreateIn) -> Instan
         return InstanceOut.of(view)
 
 
-@router.put("/instances/{instance_id}")
+@router.put("/instances/{instance_id}", tags=[api_tags.SERVICES])
 async def update_instance(
     request: Request, instance_id: int, payload: InstanceUpdateIn
 ) -> InstanceOut:
@@ -505,7 +506,7 @@ async def update_instance(
         return InstanceOut.of(view)
 
 
-@router.delete("/instances/{instance_id}")
+@router.delete("/instances/{instance_id}", tags=[api_tags.SERVICES])
 async def delete_instance(request: Request, instance_id: int) -> dict[str, bool]:
     async with _factory(request)() as session:
         removed = await instances.delete_instance(session, instance_id)
@@ -513,7 +514,7 @@ async def delete_instance(request: Request, instance_id: int) -> dict[str, bool]
     return {"removed": removed}
 
 
-@router.post("/instances/test")
+@router.post("/instances/test", tags=[api_tags.SERVICES])
 async def test_new_instance(request: Request, payload: InstanceTestIn) -> TestOut:
     """Test a URL and key before saving, so a typo is caught on the add form."""
     result = await instances.test_connection(
@@ -522,7 +523,7 @@ async def test_new_instance(request: Request, payload: InstanceTestIn) -> TestOu
     return TestOut(ok=result.ok, detail=result.detail, version=result.version)
 
 
-@router.post("/instances/{instance_id}/test")
+@router.post("/instances/{instance_id}/test", tags=[api_tags.SERVICES])
 async def test_saved_instance(request: Request, instance_id: int) -> TestOut:
     """Test a stored instance and record the outcome on it."""
     async with _factory(request)() as session:
@@ -534,7 +535,7 @@ async def test_saved_instance(request: Request, instance_id: int) -> TestOut:
     return TestOut(ok=result.ok, detail=result.detail, version=result.version)
 
 
-@router.get("/instances/{instance_id}/root-folders")
+@router.get("/instances/{instance_id}/root-folders", tags=[api_tags.SERVICES])
 async def instance_root_folders(request: Request, instance_id: int) -> list[RootFolderOut]:
     """This instance's root folders, each with a suggested Plex library to prefill the map.
 
@@ -581,7 +582,7 @@ async def instance_root_folders(request: Request, instance_id: int) -> list[Root
     return [RootFolderOut(path=f.path, suggested_library=f.suggested_library) for f in folders]
 
 
-@router.get("/instances/{instance_id}/seerr-services")
+@router.get("/instances/{instance_id}/seerr-services", tags=[api_tags.SERVICES])
 async def instance_seerr_services(request: Request, instance_id: int) -> list[SeerrServiceOut]:
     """This Seerr portal's Sonarr/Radarr services, each with a suggested Reaper instance.
 
@@ -631,13 +632,13 @@ async def _plex_status(session: AsyncSession) -> PlexStatusOut:
     )
 
 
-@router.get("/plex")
+@router.get("/plex", tags=[api_tags.PLEX])
 async def plex_status(request: Request) -> PlexStatusOut:
     async with _factory(request)() as session:
         return await _plex_status(session)
 
 
-@router.put("/plex")
+@router.put("/plex", tags=[api_tags.PLEX])
 async def update_plex_settings(request: Request, payload: PlexUpdateIn) -> PlexStatusOut:
     """Save the Plex settings: the "open in Plex" web address (empty resets to the
     hosted default) and, once a server is linked, the certificate check."""
@@ -659,7 +660,7 @@ async def update_plex_settings(request: Request, payload: PlexUpdateIn) -> PlexS
     return status
 
 
-@router.post("/plex/link/start")
+@router.post("/plex/link/start", tags=[api_tags.PLEX])
 async def plex_link_start(request: Request) -> PlexLinkStartOut:
     async with _factory(request)() as session:
         safety = await app_settings.runtime_safety(session, _settings(request))
@@ -667,7 +668,7 @@ async def plex_link_start(request: Request) -> PlexLinkStartOut:
     return PlexLinkStartOut(pin_id=start.pin_id, auth_url=start.auth_url)
 
 
-@router.post("/plex/link/poll")
+@router.post("/plex/link/poll", tags=[api_tags.PLEX])
 async def plex_link_poll(request: Request, payload: PlexLinkPollIn) -> PlexLinkPollOut:
     async with _factory(request)() as session:
         safety = await app_settings.runtime_safety(session, _settings(request))
@@ -708,7 +709,7 @@ async def plex_link_poll(request: Request, payload: PlexLinkPollIn) -> PlexLinkP
         return PlexLinkPollOut(status="ok", server=await _plex_status(session))
 
 
-@router.delete("/plex")
+@router.delete("/plex", tags=[api_tags.PLEX])
 async def plex_unlink(request: Request) -> dict[str, bool]:
     """Forget the linked Plex server. Deletes nothing in Plex -- it just drops the stored
     connection and token, so Leaving Soon and the collection whitelist go quiet until a
@@ -730,7 +731,7 @@ async def _linked_server(session: AsyncSession) -> PlexServer:
     return server
 
 
-@router.get("/plex/resources")
+@router.get("/plex/resources", tags=[api_tags.PLEX])
 async def plex_resources(request: Request) -> PlexResourcesOut:
     """The servers this Plex account owns and every address each can be reached at,
     for the server and connection pickers.
@@ -799,7 +800,7 @@ async def plex_resources(request: Request) -> PlexResourcesOut:
     )
 
 
-@router.put("/plex/server")
+@router.put("/plex/server", tags=[api_tags.PLEX])
 async def plex_switch_server(request: Request, payload: PlexServerSwitchIn) -> PlexStatusOut:
     """Point Reaper at a different server the same account owns.
 
@@ -830,7 +831,7 @@ async def plex_switch_server(request: Request, payload: PlexServerSwitchIn) -> P
     return status
 
 
-@router.put("/plex/connection")
+@router.put("/plex/connection", tags=[api_tags.PLEX])
 async def plex_set_connection(request: Request, payload: PlexConnectionIn) -> PlexStatusOut:
     """Save how Reaper reaches the linked server: a discovered address or a manual one.
 
@@ -911,7 +912,7 @@ def _libraries_out(stored: list[dict[str, Any]]) -> list[PlexLibraryOut]:
     ]
 
 
-@router.get("/plex/libraries")
+@router.get("/plex/libraries", tags=[api_tags.PLEX])
 async def plex_libraries(request: Request) -> list[PlexLibraryOut]:
     """The video libraries as last synced, each with its enabled flag. Empty until the
     first sync."""
@@ -919,7 +920,7 @@ async def plex_libraries(request: Request) -> list[PlexLibraryOut]:
         return _libraries_out(await app_settings.get_plex_libraries(session))
 
 
-@router.post("/plex/libraries/sync")
+@router.post("/plex/libraries/sync", tags=[api_tags.PLEX])
 async def sync_plex_libraries(request: Request) -> list[PlexLibraryOut]:
     """Refresh the library list from the server.
 
@@ -966,7 +967,7 @@ async def sync_plex_libraries(request: Request) -> list[PlexLibraryOut]:
     return result
 
 
-@router.put("/plex/libraries")
+@router.put("/plex/libraries", tags=[api_tags.PLEX])
 async def set_plex_libraries(request: Request, payload: PlexLibrariesIn) -> list[PlexLibraryOut]:
     """Turn libraries on or off. The keys name the enabled set; everything else stored
     turns off. Unknown keys are ignored rather than invented.
@@ -1021,13 +1022,13 @@ async def _leaving_soon_out(session: AsyncSession, settings: Settings) -> Leavin
     )
 
 
-@router.get("/leaving-soon")
+@router.get("/leaving-soon", tags=[api_tags.JOBS])
 async def get_leaving_soon_settings(request: Request) -> LeavingSoonSettingsOut:
     async with _factory(request)() as session:
         return await _leaving_soon_out(session, _settings(request))
 
 
-@router.put("/leaving-soon")
+@router.put("/leaving-soon", tags=[api_tags.JOBS])
 async def set_leaving_soon_settings(
     request: Request, payload: LeavingSoonSettingsIn
 ) -> LeavingSoonSettingsOut:
@@ -1065,7 +1066,7 @@ async def set_leaving_soon_settings(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/schedule")
+@router.get("/schedule", tags=[api_tags.JOBS])
 async def get_schedule(request: Request) -> ScheduleOut:
     """Every schedulable job, in display order: the automatic scan and the upkeep jobs.
 
@@ -1105,7 +1106,7 @@ async def get_schedule(request: Request) -> ScheduleOut:
     return ScheduleOut(jobs=jobs)
 
 
-@router.put("/jobs/{job_id}/schedule")
+@router.put("/jobs/{job_id}/schedule", tags=[api_tags.JOBS])
 async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn) -> ScheduleOut:
     """Set (or turn off) one job's schedule. The scan and every upkeep job are read-only, so
     changing when they run -- or turning one off -- is always safe and never gated.
@@ -1162,7 +1163,7 @@ async def set_job_schedule(request: Request, job_id: str, payload: JobScheduleIn
     return await get_schedule(request)
 
 
-@router.post("/jobs/{job_id}/run")
+@router.post("/jobs/{job_id}/run", tags=[api_tags.JOBS])
 async def run_job(request: Request, job_id: str) -> dict[str, str]:
     """Run an upkeep job now, whether or not it is on a schedule.
 
@@ -1199,14 +1200,14 @@ async def _safety_out(session: AsyncSession, safety: RuntimeSafety) -> SafetyOut
     )
 
 
-@router.get("/safety")
+@router.get("/safety", tags=[api_tags.SECURITY])
 async def get_safety(request: Request) -> SafetyOut:
     async with _factory(request)() as session:
         safety = await app_settings.runtime_safety(session, _settings(request))
         return await _safety_out(session, safety)
 
 
-@router.put("/safety")
+@router.put("/safety", tags=[api_tags.SECURITY])
 async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
     """Turn deletion on or off.
 
@@ -1243,7 +1244,7 @@ async def set_safety(request: Request, payload: SafetyIn) -> SafetyOut:
     return result
 
 
-@router.post("/admin-password")
+@router.post("/admin-password", tags=[api_tags.SECURITY])
 async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict[str, bool]:
     """Set (or change) the admin password.
 
@@ -1291,7 +1292,7 @@ async def set_admin_password(request: Request, payload: AdminPasswordIn) -> dict
 # ---------------------------------------------------------------------------
 
 
-@router.get("/notifications")
+@router.get("/notifications", tags=[api_tags.NOTIFICATIONS])
 async def get_notifications(request: Request) -> NotificationsOut:
     """Whether a Discord webhook is configured. The URL is write-only -- like an API key,
     only its presence is ever reported, never the value."""
@@ -1300,7 +1301,7 @@ async def get_notifications(request: Request) -> NotificationsOut:
     return NotificationsOut(has_webhook=has)
 
 
-@router.put("/notifications")
+@router.put("/notifications", tags=[api_tags.NOTIFICATIONS])
 async def set_notifications(request: Request, payload: NotificationsIn) -> NotificationsOut:
     """Store (or replace) the Discord webhook. The URL is validated to a Discord https host
     and encrypted at rest; it is never read back to the browser."""
@@ -1312,7 +1313,7 @@ async def set_notifications(request: Request, payload: NotificationsIn) -> Notif
     return NotificationsOut(has_webhook=True)
 
 
-@router.delete("/notifications")
+@router.delete("/notifications", tags=[api_tags.NOTIFICATIONS])
 async def clear_notifications(request: Request) -> NotificationsOut:
     """Forget the webhook -- Leaving Soon warnings go silent until one is set again."""
     async with _factory(request)() as session:
@@ -1322,7 +1323,7 @@ async def clear_notifications(request: Request) -> NotificationsOut:
     return NotificationsOut(has_webhook=False)
 
 
-@router.post("/notifications/test")
+@router.post("/notifications/test", tags=[api_tags.NOTIFICATIONS])
 async def test_notifications(request: Request, payload: NotificationsTestIn) -> TestOut:
     """Post a sample embed so an operator can confirm the channel before trusting it.
 
@@ -1459,13 +1460,13 @@ async def _apply_timezone_to_scheduler(request: Request, name: str) -> None:
     )
 
 
-@router.get("/general")
+@router.get("/general", tags=[api_tags.GENERAL])
 async def get_general(request: Request) -> GeneralSettingsOut:
     async with _factory(request)() as session:
         return await _general_out(session, _settings(request))
 
 
-@router.put("/general")
+@router.put("/general", tags=[api_tags.GENERAL])
 async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSettingsOut:
     """Save the General settings. Partial: only the fields sent change.
 
@@ -1540,7 +1541,7 @@ async def put_general(request: Request, payload: GeneralSettingsIn) -> GeneralSe
     return result
 
 
-@router.get("/general/api-key")
+@router.get("/general/api-key", tags=[api_tags.GENERAL])
 async def reveal_api_key(request: Request) -> ApiKeyOut:
     """The stored key, for the Show button. Session-only: the middleware fences this
     route away from API-key auth, so a key cannot read or manage itself."""
@@ -1551,7 +1552,7 @@ async def reveal_api_key(request: Request) -> ApiKeyOut:
     return ApiKeyOut(key=key)
 
 
-@router.post("/general/api-key")
+@router.post("/general/api-key", tags=[api_tags.GENERAL])
 async def generate_api_key(request: Request) -> ApiKeyOut:
     """Generate the key, replacing any previous one. The old key stops working the
     moment this returns, so rotating revokes the previous key. It does not CLOSE the
@@ -1566,7 +1567,7 @@ async def generate_api_key(request: Request) -> ApiKeyOut:
     return ApiKeyOut(key=key)
 
 
-@router.delete("/general/api-key")
+@router.delete("/general/api-key", tags=[api_tags.GENERAL])
 async def remove_api_key(request: Request) -> dict[str, bool]:
     """Close the header-credential lane: delete the key, and stop honoring it now.
 

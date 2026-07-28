@@ -22,6 +22,7 @@ import structlog
 from fastapi import APIRouter, FastAPI, Request
 from pydantic import BaseModel
 
+from reaper.api import tags as api_tags
 from reaper.clients.base import IntegrationError
 from reaper.config import Settings
 from reaper.crypto import SecretBox
@@ -30,7 +31,7 @@ from reaper.services.snapshot import Progress
 
 log = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", tags=[api_tags.SCANS])
 
 
 #: Each phase's slice of the 0-100 bar, in order. The scan reports progress as (done, total)
