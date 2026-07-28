@@ -543,6 +543,69 @@ class TestChip:
         assert chip is not None
         assert chip.text == "Needs a look · left for you to decide"
 
+    @pytest.mark.parametrize("junk", ["70.5", '"abc"', "true", "[]", '{"a": 1}'])
+    def test_an_illegible_threshold_costs_its_own_clause_and_nothing_else(self, junk: str) -> None:
+        """``threshold`` is ``defers_to_owner``'s twin, and rule 72 binds the fix to both.
+
+        Same shape exactly: one stored byte, three readers, two coercion rules (rule 104).
+        ``_chip`` and ``_primary_reason`` each tested it with ``isinstance(value, int)`` and
+        coped with anything else; ``Explanation.threshold`` read it through pydantic's lax
+        ``int | None``, which REFUSES ``70.5`` and ``"abc"`` -- and the refusal fails the
+        enclosing model rather than the one field, so the operator lost every signal, every
+        protection and the match block too, beside a chip that read the same row fine.
+
+        ``true`` is in the sweep because Python calls a ``bool`` an ``int``: it used to reach
+        the panel as a threshold of 1, which is not a score, it is a row nobody can read.
+        """
+        exp = json.loads(
+            f'{{"threshold": {junk}, "score": 82, "coverage": 1.0, "signals": [], '
+            '"protections_fired": [], "protections_checked": [], '
+            '"protections_unknown": []}'
+        )
+        row = Candidate(
+            media_key="sonarr:1:2:3",
+            explanation_json=json.dumps(exp),
+            score=82,
+            coverage_bp=10_000,
+        )
+
+        panel = _explanation_out(row)
+
+        # The panel survives, and pays for the unreadable byte with exactly the one clause it
+        # cannot honestly print -- never an invented figure, and never the whole body.
+        assert not panel.unreadable
+        assert panel.body.threshold is None
+        assert panel.body.score == 82
+
+        # And the chip beside it declines the same comparison rather than inventing one.
+        chip = _chip(exp, "abstain", 82)
+        assert chip is not None
+        assert chip.text == "Below your threshold"
+
+    @pytest.mark.parametrize("junk", ['"matched"', "5", "[]"])
+    def test_a_match_block_of_the_wrong_shape_reads_as_absent(self, junk: str) -> None:
+        """The other twin on the same model, and the same trade (rule 72).
+
+        ``routes._match_status`` reads the stored match off the raw dict and copes with any
+        shape. Refusing it at the wire boundary took every other block on the panel with it.
+        ``None`` is a shape the panel already renders: it is what a row scanned before the
+        match block existed carries.
+        """
+        exp = _exp(82, unknown=[])
+        exp["match"] = json.loads(junk)
+        row = Candidate(
+            media_key="sonarr:1:2:3",
+            explanation_json=json.dumps(exp),
+            score=82,
+            coverage_bp=10_000,
+        )
+
+        panel = _explanation_out(row)
+
+        assert not panel.unreadable
+        assert panel.body.match is None
+        assert panel.body.threshold == 70
+
     def test_the_writer_and_the_chip_are_connected_by_a_real_frozen_row(self) -> None:
         """The producer -> consumer link for ``defers_to_owner``, end to end through the
         REAL writer (``snapshot._explain``) rather than a hand-built dict.

@@ -44,10 +44,11 @@ class GateOutcomeOut(BaseModel):
 
     ``defers_to_owner`` has three states and folding the third into ``false`` asserts
     something nobody established: ``true`` means Reaper made the comparison behind this
-    hold, ``false`` means it could not make it, and ``null`` means this row was frozen
-    before the flag existed and cannot tell those two apart. Read it off
-    ``protections_unknown``; entries in the other two lists never carry it, so every one
-    of them reads ``null`` for a reason that is not the third state.
+    hold, ``false`` means it could not make it, and ``null`` means nothing legible in the
+    row tells those two apart -- either a row frozen before the flag existed, or one
+    carrying a value that is not a bool (``engine.gates.thaw_defers_to_owner``). Read it
+    off ``protections_unknown``; entries in the other two lists never carry it, so every
+    one of them reads ``null`` for a reason that is not the third state.
 
     Said here rather than on the field because a class docstring is the only one of the
     two that reaches the published document: Pydantic harvests attribute docstrings only
@@ -130,6 +131,27 @@ class KeepContributionOut(BaseModel):
     evaluated: bool
 
 
+def thaw_threshold(value: object) -> int | None:
+    """Read the stored score-to-beat, or nothing where the row carries no legible one.
+
+    One derivation for all three readers of this byte (rule 104), which is the same shape #112
+    gave ``defers_to_owner`` and the twin rule 72 binds to it. ``routes._chip`` and
+    ``routes._primary_reason`` each tested it with ``isinstance(value, int)`` and coped with
+    anything else, while ``Explanation.threshold`` read it through pydantic's lax ``int | None``
+    -- a different rule, which REFUSES ``70.5`` and ``"abc"``. A refusal does not degrade this
+    one field: it fails the enclosing ``Explanation``, drops ``_explanation_out`` to its degraded
+    body, and hands the operator a panel with no signals, no protections and no threshold, beside
+    a chip that read the same row perfectly well.
+
+    A ``bool`` is not accepted even though Python calls it an ``int``: a threshold of ``True`` is
+    not a score of 1, it is a row nobody can read. All three readers go through here, so that
+    judgment is made once rather than three times.
+    """
+    if isinstance(value, bool):
+        return None
+    return value if isinstance(value, int) else None
+
+
 class Explanation(BaseModel):
     """The why-panel.
 
@@ -168,6 +190,34 @@ class Explanation(BaseModel):
     """Protections that COULD NOT BE CHECKED. Rendered amber, not green. "We could not
     look" is not "we looked and it was fine", and displaying them alike is the entire
     Deleterr failure class."""
+
+    @field_validator("threshold", mode="before")
+    @classmethod
+    def _thaw_threshold(cls, value: object) -> int | None:
+        """Read an illegible score-to-beat as absent rather than failing the whole panel.
+
+        ``mode="before"`` for the same reason ``GateOutcomeOut`` uses it: the job is to run
+        INSTEAD of pydantic's coercion, not after it. ``None`` costs the operator nothing here --
+        it is a state the panel already renders, by omitting its "your threshold is N" clause
+        rather than printing an invented figure (see the field docstring above).
+        """
+        return thaw_threshold(value)
+
+    @field_validator("match", mode="before")
+    @classmethod
+    def _thaw_match(cls, value: object) -> object:
+        """Read a match block that is not a mapping as absent, for the same reason (rule 72).
+
+        ``routes._match_status`` reads the stored match off the raw dict and copes with any
+        shape; refusing it here blanks every other block on the panel with it. ``None`` is a
+        shape the panel already handles, being what a row scanned before the match block existed
+        carries.
+
+        Scoped deliberately to the block's own shape: a mapping whose INNER fields are illegible
+        still raises, and is left to do so rather than silently emptying a match the panel could
+        have partly rendered. Rule 7/24 -- this guards the outer shape only, and says so.
+        """
+        return value if value is None or isinstance(value, dict) else None
 
 
 class LinksOut(BaseModel):

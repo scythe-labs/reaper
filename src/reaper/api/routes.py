@@ -63,6 +63,7 @@ from reaper.api.schemas import (
     SimulationOut,
     SnapshotOut,
     VocabularyOut,
+    thaw_threshold,
 )
 from reaper.buildinfo import build_version
 from reaper.clock import utcnow
@@ -728,8 +729,8 @@ def _primary_reason(exp: dict[str, Any] | None, verdict: str, score: int) -> str
     # made here too the panel printed the chip "Too little of it could be checked" directly
     # above "Scored below your threshold." Rule 61 forced this same correction on this line
     # once already, for the unreadable-match case; the coverage arm was left behind.
-    threshold = exp.get("threshold")
-    if isinstance(threshold, int) and score >= threshold:
+    threshold = thaw_threshold(exp.get("threshold"))
+    if threshold is not None and score >= threshold:
         return "Kept to be safe: too little of it could be checked."
     return "Scored below your threshold."
 
@@ -943,10 +944,13 @@ def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | Non
                 # ``KeptNotice``. The chip has one line and must pick; the panel has room for
                 # both.
                 #
-                # A row frozen before the flag carries no key, and nothing in it can tell a
-                # made comparison from a refused one -- the wording that used to stand in
-                # for the flag is exactly what failed. So it names neither shape and falls
-                # to the vague-but-true chip below. Recovering it from the wording was tried
+                # Two rows reach here saying nothing: one frozen before the flag, which carries
+                # no key, and one carrying a value that is not a bool, which carries no legible
+                # answer -- `thaw_defers_to_owner` reads both to ``None`` and holds the rule.
+                # Nothing in either can tell a made comparison from a refused one, the wording
+                # that used to stand in for the flag being exactly what failed. So neither names
+                # a shape and both fall to the vague-but-true chip below. Recovering it from
+                # the wording was tried
                 # and is wrong: it read "more than watched Season" as a deferral while
                 # ``condemned.reap_override_verdict`` read the absent key as a hold, so the
                 # card offered a conflict to settle and then refused the reap by citing that
@@ -976,8 +980,8 @@ def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | Non
             why="some checks couldn't run",
         )
 
-    threshold = exp.get("threshold")
-    if isinstance(threshold, int):
+    threshold = thaw_threshold(exp.get("threshold"))
+    if threshold is not None:
         if score >= threshold:
             # decide_verdict's order: past the blocked cases, an abstain at or above
             # the threshold can only be the coverage floor.
