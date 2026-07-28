@@ -1522,8 +1522,8 @@ export function PolicyEditor({
                       If someone has not watched any of the show in this many days, Reaper treats
                       the show as abandoned by them and lets go of their place. When Reaper can't
                       tell when they last watched, it keeps holding. Set this longer than your watch
-                      history goes back and Reaper can't tell who is partway through at all, so it
-                      keeps every season. 0 holds forever, so it always does.
+                      history goes back, or to 0, and Reaper keeps every season: it can't tell who
+                      is partway through.
                     </p>
                     <div className="rule-control">
                       <span>also keep</span>

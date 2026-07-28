@@ -61,7 +61,7 @@ GROUPS: Final[tuple[tuple[str, tuple[tuple[str, str], ...]], ...]] = (
     (
         "Your library",
         (
-            (SCANS, "Start a scan, watch it run, and read the evidence it froze."),
+            (SCANS, "Start a scan, watch it run, and see what the last one found."),
             (
                 REVIEW,
                 "What Reaper wants to delete and why, plus the titles you keep or spare.",
