@@ -27,6 +27,8 @@ from reaper.api.fairness import router as fairness_router
 from reaper.api.leaving_soon import router as leaving_soon_router
 from reaper.api.logs import router as logs_router
 from reaper.api.middleware import (
+    CSRF_HEADER,
+    CSRF_VALUE,
     AuthGuard,
     api_key_refused,
     api_key_scope_description,
@@ -472,12 +474,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # it causes. What changed is that the button no longer needs telling --
                 # the reference page sets it (``api_docs``), so the sentence describes
                 # the header as something a script sends rather than something missing.
+                #
+                # Header and value interpolated from the guard's own constants, so the
+                # sentence a script author copies cannot outlive what _csrf_ok accepts.
                 "description": (
                     "The sign-in cookie your browser already holds. Nothing to paste: it "
                     "rides along on its own, so the try-it-out button reads and writes as "
                     "you while you are signed in. Your own scripts need one more thing: "
-                    "the header X-Reaper-CSRF: 1 on every write. An HTTPS install names "
-                    f"the same cookie __Host-{DOCUMENTED_SESSION_COOKIE}."
+                    f"the header {CSRF_HEADER}: {CSRF_VALUE} on every write. An HTTPS "
+                    f"install names the same cookie __Host-{DOCUMENTED_SESSION_COOKIE}."
                 ),
             }
             # Either credential, unless an operation below narrows it. Session leads for
@@ -526,7 +531,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "      // The one thing the cookie cannot carry on its own. Set on the builder\n"
             "      // before the Request is frozen, so nothing has to rebuild a body.\n"
             "      onBeforeRequest: function (event) {\n"
-            "        event.requestBuilder.headers.set('X-Reaper-CSRF', '1');\n"
+            f"        event.requestBuilder.headers.set('{CSRF_HEADER}', '{CSRF_VALUE}');\n"
             "      },\n"
             "    });\n"
             "  </script>\n"

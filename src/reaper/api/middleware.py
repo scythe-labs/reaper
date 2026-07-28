@@ -301,10 +301,23 @@ async def _refuse_scope(scope: Scope, receive: Receive, send: Send) -> None:
         )
 
 
+#: The header a write must carry, and the ONE value this guard accepts.
+#:
+#: Declared rather than spelled inline because four other places state it, and a value is
+#: easier to get wrong than a name: both copies in ``main.py`` -- the reference page's
+#: ``onBeforeRequest`` hook and the ``Session`` scheme sentence -- are generated from these
+#: two constants, so they cannot drift. The fifth is across a language boundary and cannot
+#: be: ``frontend/src/api.ts``'s ``CSRF_HEADER``, pinned by ``frontend/src/api.test.ts``.
+#: That is the one a change here has to be carried to by hand, which is why the test
+#: guarding the page names it in its failure message (rule 144).
+CSRF_HEADER = "X-Reaper-CSRF"
+CSRF_VALUE = "1"
+
+
 def _csrf_ok(request: Request) -> bool:
     # The load-bearing check: a header no cross-origin form or simple request can
     # set. Our frontend sends it on every request (see frontend/src/api.ts).
-    if request.headers.get("x-reaper-csrf") != "1":
+    if request.headers.get(CSRF_HEADER) != CSRF_VALUE:
         return False
     # Belt and suspenders, and proxy-safe: Sec-Fetch-Site is set by the browser
     # from the actual context and survives a dev proxy (unlike an Origin/Host

@@ -40,6 +40,8 @@ from reaper.api.middleware import (
     _API_KEY_READS_DENIED,
     _API_KEY_WRITES,
     _SIGNED_IN_ONLY_READS,
+    CSRF_HEADER,
+    CSRF_VALUE,
     _api_key_allowed,
     api_key_refused,
     api_key_scope_description,
@@ -801,6 +803,10 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
         assert refused.status_code == 403
         assert "CSRF" in refused.json()["detail"]
 
+        schema = client.get("/api/openapi.json").json()
+        session_scheme = schema["components"]["securitySchemes"]["Session"]
+        assert "X-Reaper-CSRF: 1" in session_scheme["description"]
+
     def test_the_reference_page_sends_the_csrf_header_it_names(self, client: TestClient) -> None:
         """#120: the only thing standing behind "reads and writes as you".
 
@@ -809,24 +815,35 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
         back to promising a write that answers 403, with every gate still green -- the
         drift rule 144 is about, in the copy that was never generated. Driving the button
         needs a browser, so what is pinned here is narrower and still load-bearing: the
-        page carries the hook, and it spells the header the same way its own auth box
-        does.
+        page carries the hook, and it sends the header its own auth box names with the
+        VALUE the guard accepts.
+
+        Pinning the name alone was not enough, which is worth stating because it looked
+        like it was. ``_csrf_ok`` requires exactly ``"1"``; a hook setting any other value
+        leaves this file green while every try-it-out write 403s again -- the same silent
+        outcome as deleting the hook, reached through a one-character edit. So the value is
+        read out of the page and compared to what the guard demands, rather than assumed.
         """
         page = client.get("/api/docs").text
         described = client.get("/api/openapi.json").json()["components"]["securitySchemes"][
             "Session"
         ]["description"]
 
-        assert "X-Reaper-CSRF: 1" in described
         assert "onBeforeRequest" in page, (
             "the reference page dropped the hook, so try-it-out writes 403 again while "
             "the Session scheme in main.openapi_with_api_key still promises they work"
         )
-        assert "X-Reaper-CSRF" in page, "the page must send the header its own auth box names"
-
-        schema = client.get("/api/openapi.json").json()
-        session_scheme = schema["components"]["securitySchemes"]["Session"]
-        assert "X-Reaper-CSRF: 1" in session_scheme["description"]
+        # The exact call the hook makes, value included, built from the guard's own
+        # constants rather than restated here (rule 119).
+        assert f"headers.set('{CSRF_HEADER}', '{CSRF_VALUE}')" in page, (
+            f"the reference page must send {CSRF_HEADER} with the value _csrf_ok accepts "
+            f"({CSRF_VALUE!r}); any other value 403s every try-it-out write while the "
+            "Session scheme in main.openapi_with_api_key still promises they work. If you "
+            "changed the constants in api/middleware.py, the SPA's own copy cannot follow "
+            "them and must be edited by hand: frontend/src/api.ts's CSRF_HEADER, pinned by "
+            "frontend/src/api.test.ts"
+        )
+        assert f"{CSRF_HEADER}: {CSRF_VALUE}" in described
 
     def test_the_open_route_that_refuses_a_key_is_marked_like_any_other(
         self, client: TestClient
