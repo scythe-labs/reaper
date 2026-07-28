@@ -1027,11 +1027,23 @@ def _log_series_decision(
     The single record to grep by title when a show is not in the queue. ``outcome`` is
     ``candidate`` (has a prunable season, so it is judged), ``no_content`` (no season holds
     files, nothing to reap) or ``fully_protected`` (every on-disk season is kept by a guard).
-    When a prune plan ran, every prunable and protected season is named with its reason, so
-    "why is this season kept" is answerable without re-running the scan. Plex binding happens
-    after this offline decision, so match status is logged separately (``scan.plex_matched`` /
-    ``scan.plex_unmatched``); an unmatched show still becomes a candidate and is never dropped
-    here.
+    Plex binding happens after this offline decision, so match status is logged separately
+    (``scan.plex_matched`` / ``scan.plex_unmatched``); an unmatched show still becomes a
+    candidate and is never dropped here.
+
+    **This is the OFFLINE pass, and ``prunable`` here is not the final answer.** The claim
+    that used to sit here -- that every prunable and protected season is named with its
+    reason, so "why is this season kept" is answerable without re-running the scan -- is
+    false for every guard that needs watch evidence, because none of it exists yet at this
+    call site. ``plan_series_prune`` runs again in ``_judge_series`` with the mirror's reach,
+    the mid-binge hold (``progress_established``) and the keep-rule conflict's per-season
+    shortfalls, and a season listed ``prunable`` here is routinely held there. On a mirror
+    shallower than the library that is not an edge case but the normal outcome. So this line
+    answers "what did Sonarr say, and did the show reach the evidence pass", and nothing
+    about a season's fate; the authoritative record is the stored explanation behind the
+    panel. Narrowed rather than fixed because the line is developer-facing only -- a repo-wide
+    grep finds ``season_scan.series_decision`` named in no operator doc, UI string or support
+    text (rules 7/24, 132).
     """
     log.debug(
         "season_scan.series_decision",

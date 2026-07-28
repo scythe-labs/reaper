@@ -136,11 +136,15 @@ class GateResult:
     should decide" flag, NOT a source Reaper could not read.
 
     Today exactly one producer sets it -- ``season_scan.guard_result``'s keep-rule
-    conflict, where every comparison behind the block came back with a number and the rule
-    lost it. That means *every* ``season_pruning.PruneConflict`` naming the season has a
-    readable ``kept_watchers``, not merely the first: one season carries one conflict per
-    kept season, so a single refusal holds the whole block. A hand reap overrules the rest,
-    because the reap IS the decision the flag asked for (``verdict.block_holds_reap``).
+    conflict, where every comparison behind the block was one Reaper could actually make
+    and the rule lost it. Two things must hold of *every* ``season_pruning.PruneConflict``
+    naming the season, not merely the first, because one season carries one conflict per
+    kept season and a single refusal holds the whole block: a readable ``kept_watchers``,
+    and a ``shortfall`` of ``None``. The second is not implied by the first -- a count read
+    off a mirror that does not reach back to when the season arrived is a number all the
+    same, and settles nothing (#94) -- so a criterion stated as "came back with a number"
+    releases the reap on a comparison the detector is holding. A hand reap overrules only
+    what survives both (``verdict.block_holds_reap``).
 
     **The default is the whole point.** It is ``False``, so a blocked result holds a hand
     reap unless its producer explicitly says otherwise, and a new gate, a new blocked

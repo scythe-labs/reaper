@@ -628,23 +628,47 @@ describe("the verdict headline", () => {
     expect(screen.queryByText(/nothing can change that/i)).not.toBeInTheDocument();
   });
 
+  // Verbatim from `services.season_pruning.PruneConflict.message`. The fixture here used to
+  // be an invented sentence ("5 people watched this, more than a season your keep rule
+  // protects") that the producer has never emitted, so the predicate under test could not be
+  // discriminated by it: any wording rule at all passed. Copy real messages, or pin nothing
+  // (rule 119).
+  const SETTLEABLE_CONFLICT =
+    "9 people watched Season 1, more than watched Season 3, which Reaper is keeping " +
+    "because it is one of the newest seasons your rule keeps. Left for you to decide " +
+    "instead of removing it.";
+  const REFUSED_CONFLICT =
+    "Reaper cannot tell whether Season 1 is watched more than Season 3, which it is " +
+    "keeping because it is one of the newest seasons your rule keeps. Kept for now, " +
+    "since your watch history only goes back 12 months.";
+
+  const conflictDetail = (message: string) =>
+    detail(WORKED_ROWS, {
+      verdict: "abstain",
+      explanation: {
+        ...detail(WORKED_ROWS).explanation,
+        protections_unknown: [fired("season_progression", message)],
+      },
+    });
+
   it("tells a keep-rule conflict what it is and how to resolve it", () => {
-    show(
-      detail(WORKED_ROWS, {
-        verdict: "abstain",
-        explanation: {
-          ...detail(WORKED_ROWS).explanation,
-          protections_unknown: [
-            fired(
-              "season_progression",
-              "5 people watched this, more than a season your keep rule protects",
-            ),
-          ],
-        },
-      }),
-    );
+    show(conflictDetail(SETTLEABLE_CONFLICT));
     expect(screen.getByText("Needs a look")).toBeInTheDocument();
     expect(screen.getByText(/Spare it to keep it, or Reap it to remove it/i)).toBeInTheDocument();
+  });
+
+  it("KNOWN WRONG (#86): promises a reap the engine refuses on a conflict it could not settle", () => {
+    // Pinned as-is so the gap is visible in the suite rather than only in a comment, and so
+    // fixing #86 FAILS here and forces this test to be rewritten as the assertion it should
+    // be. `isKeepRuleConflict` still tests the retired wording, so this refused shape reads
+    // as settleable: the headline asserts the comparison, and the reason block below denies
+    // it in the same breath. The real fix is `defers_to_owner` reaching `GateOutcomeOut` and
+    // `api.ts` (rule 142's supply chain), not another prefix test here.
+    show(conflictDetail(REFUSED_CONFLICT));
+    expect(screen.getByText(/Spare it to keep it, or Reap it to remove it/i)).toBeInTheDocument();
+    expect(screen.getByText(/This was watched more than/i)).toBeInTheDocument();
+    // ...directly contradicting the producer's own sentence, rendered on the same screen.
+    expect(screen.getByText(/Reaper cannot tell whether Season 1/i)).toBeInTheDocument();
   });
 
   it("keeps the plain 'Limbo' note for an ordinary abstain", () => {

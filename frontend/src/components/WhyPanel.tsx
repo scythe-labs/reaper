@@ -281,7 +281,22 @@ function KeptNotice({ match }: { match: Match | undefined }) {
  *  "Reaper cannot tell whether Season N ...", which starts with neither prefix and so also
  *  reads as settleable here while `block_holds_reap` holds it. Recorded rather than fixed
  *  because the fix is the same one supply chain above, not another wording test (rule 142) --
- *  and worth knowing that widening the backend's hold widens this gap by construction. */
+ *  and worth knowing that widening the backend's hold widens this gap by construction.
+ *
+ *  TWO things go wrong downstream of this shape, and only the first was written down. The
+ *  caller (`verdictLook`) promises "Reap it to remove it", which the engine refuses -- and it
+ *  ALSO opens "This was watched more than a season your keep rule protects", which for this
+ *  shape is the verbatim negation of the sentence `LeftForYou` prints two blocks below
+ *  ("Reaper cannot tell whether ..."). The season may have no recorded plays at all. So the
+ *  panel asserts a comparison, and its own reason block denies it, on one screen.
+ *
+ *  Reachability changed with it, which is why this is worth re-reading rather than filing
+ *  under "known". Before #94 the gap needed a season Plex had never resolved -- rare. The
+ *  shortfall arm fires wherever the watch history is shallower than the library is old, so on
+ *  those servers it is the DEFAULT rendering for TV, not an edge case. The copy is left alone
+ *  here deliberately: making the headline true of all three shapes is a wording change to an
+ *  operator-facing surface, which belongs with #86's real fix and its mockup, not smuggled in
+ *  beside a backend commit. */
 function isKeepRuleConflict(item: CandidateDetail): boolean {
   return item.explanation.protections_unknown.some(
     (o) => o.gate === "season_progression" && !o.detail.startsWith("could not check"),
