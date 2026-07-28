@@ -991,7 +991,13 @@ export function ServicesPanel() {
 
 // --- Backup ------------------------------------------------------------------
 
-function BackupPanel() {
+function BackupPanel({
+  /** Called whenever the restore card is holding a staged backup, so the section rail can hold a
+   *  switch that would drop it. Pass a STABLE function: it is an effect dependency. */
+  onDirtyChange,
+}: {
+  onDirtyChange?: ((dirty: boolean) => void) | undefined;
+} = {}) {
   const qc = useQueryClient();
   const { data, isPending, isError } = useQuery({
     queryKey: ["backup-info"],
@@ -1057,7 +1063,12 @@ function BackupPanel() {
             </p>
           </section>
 
-          <RestoreCard armed={data.restore_armed} />
+          {/* Rule 146's second claim, for this panel: the card is what holds the staged backup and
+              it renders only inside this `data` branch, so the report and the surface arrive and
+              leave together. This panel has no early return to re-read -- a failed refetch adds a
+              line above without taking the card away, and React Query keeps `data` on the last
+              good row, so there is no state where the card is gone and the report survives it. */}
+          <RestoreCard armed={data.restore_armed} onDirtyChange={onDirtyChange} />
         </>
       )}
     </div>
@@ -1070,7 +1081,15 @@ function BackupPanel() {
 // Three states: idle (choose a file), chosen (a validated summary + password), and armed (a
 // restore is staged and waiting for a restart). `armed` is server state (the READY marker), so
 // it survives a reload and shows even if this browser never did the confirm.
-function RestoreCard({ armed }: { armed: boolean }) {
+function RestoreCard({
+  armed,
+  /** Called whenever a staged backup is waiting on this card, so the section rail can hold a
+   *  switch that would drop it. Pass a STABLE function: it is an effect dependency. */
+  onDirtyChange,
+}: {
+  armed: boolean;
+  onDirtyChange?: ((dirty: boolean) => void) | undefined;
+}) {
   const qc = useQueryClient();
   const inputRef = useRef<HTMLInputElement>(null);
   const [summary, setSummary] = useState<RestoreSummary | null>(null);
@@ -1153,6 +1172,44 @@ function RestoreCard({ armed }: { armed: boolean }) {
       setBusy(false);
     }
   };
+
+  // What this card would LOSE, reported up through `BackupPanel` to `Settings` so leaving the
+  // section can stop and ask first. It is the costliest draft in Settings by some way: the archive
+  // is already uploaded and staged on the SERVER, and the admin password was typed against that
+  // exact file.
+  //
+  // Rule 146: declared above the `armed` early return, and false inside it. An armed restore is
+  // server state that survives a reload, this browser, and this card -- there is nothing here to
+  // lose, and the card in that branch offers its own Cancel. Reporting a draft there would demand
+  // a discard for a decision already stored. The password is not read separately because it
+  // cannot outlive the summary: every path that drops one drops the other (`choose`, `reset`, and
+  // the failed confirm), which is S-5's fix and is what keeps this signal to one fact.
+  const staged = !armed && summary !== null;
+  useEffect(() => {
+    onDirtyChange?.(staged);
+  }, [staged, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+
+  // A prepare that is never confirmed leaves the archive staged on the server, and nothing else
+  // ever clears it: an un-armed stage has no surface anywhere in the app, so it would sit there
+  // until the next prepare replaced it. Leaving takes it with us.
+  //
+  // Deliberately its own effect with `[]` deps, unlike the report above, because this one SENDS
+  // something: hung off `onDirtyChange` it would re-run whenever that prop changed identity and
+  // cancel a staged restore while the card was still on screen. It reads `stagedRef` for the same
+  // reason -- the guard has to be the value at unmount, not at mount. And it is `staged`, not
+  // `summary`, because cancel discards a staged OR ARMED restore (`api/backup.py:restore_cancel`),
+  // so an unguarded call on the way out would quietly disarm the restore the operator just
+  // confirmed. Best effort: if it fails the archive stays staged, which is exactly where it stood
+  // before this existed, and there is no longer a card to say so on.
+  const stagedRef = useRef(false);
+  stagedRef.current = staged;
+  useEffect(
+    () => () => {
+      if (stagedRef.current) void api.restoreCancel().catch(() => {});
+    },
+    [],
+  );
 
   if (armed) {
     return (
@@ -2064,7 +2121,15 @@ function NotificationsPanel({
 // rule all state one number.
 const MIN_ADMIN_PASSWORD = 12;
 
-function AdminPasswordForm({ needed }: { needed: boolean }) {
+function AdminPasswordForm({
+  needed,
+  /** Called whenever this form gains or loses typed text, so the section rail can hold a switch
+   *  that would discard it. Pass a STABLE function: it is an effect dependency. */
+  onDirtyChange,
+}: {
+  needed: boolean;
+  onDirtyChange?: ((dirty: boolean) => void) | undefined;
+}) {
   const queryClient = useQueryClient();
   const [current, setCurrent] = useState("");
   const [pw, setPw] = useState("");
@@ -2108,6 +2173,22 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
       `The password wasn't changed: ${save.error.message}`
     )
   ) : null;
+
+  // What this form would LOSE, reported up through `SecurityPanel` to `Settings` so leaving the
+  // section can stop and ask first. Any of the three boxes counts: a password too short to save,
+  // or one whose confirm does not match yet, is still text the operator typed and still gone on
+  // unmount -- reporting only the saveable form (`valid`) would drop exactly the half-finished
+  // ones silently.
+  //
+  // Rule 146 asks two things of this signal, and this component answers both trivially: it has no
+  // early return, so every state it renders is one where all three boxes are on screen. What the
+  // second claim does bind is the panel above, whose own early returns unmount this form -- see
+  // `SecurityPanel`.
+  const typed = current.length > 0 || pw.length > 0 || confirm.length > 0;
+  useEffect(() => {
+    onDirtyChange?.(typed);
+  }, [typed, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   // Typing clears the "saved" note and any stale failure, so neither lingers over a form the
   // operator is now re-editing.
@@ -2190,7 +2271,13 @@ function AdminPasswordForm({ needed }: { needed: boolean }) {
   );
 }
 
-export function SecurityPanel() {
+export function SecurityPanel({
+  /** Called whenever the password form gains or loses typed text, so the section rail can hold a
+   *  switch that would discard it. Pass a STABLE function: it is an effect dependency. */
+  onDirtyChange,
+}: {
+  onDirtyChange?: ((dirty: boolean) => void) | undefined;
+} = {}) {
   const { data, isLoading, isError } = useSafety();
 
   if (isLoading) {
@@ -2201,7 +2288,15 @@ export function SecurityPanel() {
       </div>
     );
   }
-  if (isError || !data) {
+  // Rule 146: the draft this panel reports upward lives in `AdminPasswordForm` below, so an early
+  // return here does not merely hide the form -- it unmounts it, and three typed password boxes go
+  // with it. That is not a rare state: `useSafety` refetches every 15 seconds and on window focus,
+  // so ONE failed poll while someone is choosing a password used to replace the form mid-typing
+  // with a "couldn't load" paragraph and say nothing about what it took. React Query keeps the
+  // last good row through a failed refetch, so the form stays on it and this branch is now only
+  // for a load that never landed one -- the same shape `GeneralPanel` and `PlexPanel` already use
+  // (rule 72), with the same one line saying the read failed.
+  if (!data) {
     return (
       <div className="panel">
         <h2>Security</h2>
@@ -2218,7 +2313,9 @@ export function SecurityPanel() {
         and it's also how you sign in without Plex.
       </p>
 
-      <AdminPasswordForm needed={!data.has_password} />
+      {isError && <StaleReadNotice />}
+
+      <AdminPasswordForm needed={!data.has_password} onDirtyChange={onDirtyChange} />
     </div>
   );
 }
@@ -2232,30 +2329,32 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
   // editor's Movies/TV switch uses and in the same place: directly under the control that was
   // clicked, so that control does not move under the pointer.
   //
-  // Three panels report: General's save bar, Plex's web address and manual connection rows, and
-  // the Discord webhook URL -- which is a secret the operator has to go back to Discord to
-  // re-copy. The guard first landed on General alone, so the other two still unmounted silently
-  // while the app had just trained the operator to expect to be asked (rule 72). Each reports
-  // through its own `onDirtyChange`; the three are `useState` setters and so are stable, which
-  // that prop requires. A panel absent from this record reads undefined and switches straight
-  // through.
+  // Five panels report, which is the whole population: General's save bar; Plex's web address and
+  // manual connection rows; the Discord webhook URL, a secret the operator has to go back to
+  // Discord to re-copy; Security's three admin-password boxes; and Backup's staged restore, which
+  // is the only one whose loss also strands something on the SERVER. The guard first landed on
+  // General alone and then on three, so the rest went on unmounting silently while the app had
+  // already trained the operator to expect to be asked (rule 72). Each reports through its own
+  // `onDirtyChange`; the five are `useState` setters and so are stable, which that prop requires.
+  // A panel absent from this record reads undefined and switches straight through.
   //
-  // Three is not the whole population, and saying so is the point of writing it down (rule 72
-  // wants a deferral in writing, not an implied one). Two panels still hold a typed draft and
-  // still unmount without asking: Security's admin-password form (`AdminPasswordForm`, three
-  // password boxes), and Backup's restore card (`RestoreCard`, a staged archive plus the admin
-  // password typed against it, where the loss also strands the upload server-side). Both need
-  // the draft lifted out of a CHILD component rather than computed in the panel, which is why
-  // they are not folded in here; tracked as issue #135.
+  // The last two took a hop the first three did not: their drafts live in CHILD components
+  // (`AdminPasswordForm`, `RestoreCard`), so the signal is declared there and passed up through
+  // the panel. That hop is what rule 146 is about -- a child that unmounts on its parent's early
+  // return takes the draft with it, so `SecurityPanel`'s failed-read branch had to change too.
   const [generalDirty, setGeneralDirty] = useState(false);
   const [plexDirty, setPlexDirty] = useState(false);
   const [webhookDirty, setWebhookDirty] = useState(false);
+  const [securityDirty, setSecurityDirty] = useState(false);
+  const [backupDirty, setBackupDirty] = useState(false);
   const [pendingSwitch, setPendingSwitch] = useState<Panel | null>(null);
 
   const dirtyPanels: Partial<Record<Panel, boolean>> = {
     general: generalDirty,
     plex: plexDirty,
     notifications: webhookDirty,
+    security: securityDirty,
+    backup: backupDirty,
   };
   const leavingDirty = dirtyPanels[panel] ?? false;
 
@@ -2277,7 +2376,7 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
     setPanel(next);
   };
   const pendingLabel = PANELS.find((p) => p.id === pendingSwitch)?.label ?? "";
-  // The section being LEFT, so one string serves all three panels that can raise this.
+  // The section being LEFT, so one string serves every panel that raises the shared sentence.
   const leavingLabel = PANELS.find((p) => p.id === panel)?.label ?? "";
   // Nine labels stop fitting one line well above this, but the app already has exactly one
   // definition of a narrow screen and a second would be worse than swapping a little early:
@@ -2321,12 +2420,17 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
       {/* Directly under the rail that was clicked, so the rail does not move: the same slot and
           the same two buttons the policy editor's own switch confirm uses (rule 18).
           On General the save bar below names WHICH fields are unsaved, so this does not repeat
-          them. Plex and Notifications have no bar and this line is all they get: their inline
-          Save buttons are the only other cue, and on Notifications the box is a password field
-          showing dots. Naming the field here is what those two actually want. */}
+          them. The other four have no bar and this line is all they get: an inline Save button is
+          the only other cue, and on Notifications and Security the box is a password field showing
+          dots. Naming the field here is what those actually want.
+          Backup gets its own sentence because the shared one would be false there: what is waiting
+          is an uploaded file, not a setting, and switching does not merely forget it -- the card
+          cancels the staged upload on its way out. */}
       {pendingSwitch !== null && (
         <div className="notice notice-warn">
-          You have unsaved {leavingLabel} settings. Switching to {pendingLabel} discards them.{" "}
+          {panel === "backup"
+            ? `The backup file you chose isn't restored yet. Switching to ${pendingLabel} drops it.`
+            : `You have unsaved ${leavingLabel} settings. Switching to ${pendingLabel} discards them.`}{" "}
           <button
             type="button"
             className="danger"
@@ -2348,8 +2452,8 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
         {panel === "plex" && <PlexPanel onDirtyChange={setPlexDirty} />}
         {panel === "jobs" && <JobsPanel onGoToPlex={() => switchPanel("plex")} />}
         {panel === "notifications" && <NotificationsPanel onDirtyChange={setWebhookDirty} />}
-        {panel === "security" && <SecurityPanel />}
-        {panel === "backup" && <BackupPanel />}
+        {panel === "security" && <SecurityPanel onDirtyChange={setSecurityDirty} />}
+        {panel === "backup" && <BackupPanel onDirtyChange={setBackupDirty} />}
         {panel === "logs" && <LogsPanel />}
         {panel === "about" && <AboutPanel />}
       </div>

@@ -5,7 +5,7 @@
 // the query stubbed, which is what these do. Only one of the two is ever rendered, so each test
 // also asserts the absence of the other -- a CSS-hidden twin would leave both in the tree.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_GENERAL, seedSettings } from "../test/apiFixtures";
@@ -39,6 +39,13 @@ const { apiMock } = vi.hoisted(() => ({
     setWebhook: vi.fn(),
     testWebhook: vi.fn(),
     clearWebhook: vi.fn(),
+    // Security and Backup hold drafts inside a child component, so both trees mount here too.
+    setAdminPassword: vi.fn(),
+    backupInfo: vi.fn(),
+    restorePrepare: vi.fn(),
+    restoreConfirm: vi.fn(),
+    restoreCancel: vi.fn(),
+    downloadBackup: vi.fn(),
   },
 }));
 
@@ -104,6 +111,24 @@ beforeEach(() => {
     last: null,
   });
   apiMock.notifications.mockResolvedValue({ has_webhook: false });
+  apiMock.setAdminPassword.mockResolvedValue({ ok: true });
+  apiMock.backupInfo.mockResolvedValue({
+    reaper_db_bytes: 1024,
+    last_backup_at: null,
+    key_in_backup: true,
+    app_version: "test",
+    restore_armed: false,
+  });
+  apiMock.restorePrepare.mockResolvedValue({
+    app_version: null,
+    created_at: null,
+    revision: null,
+    verdict: "current",
+    key_in_backup: true,
+    reaper_db_bytes: 1024,
+    token: "staged-token",
+  });
+  apiMock.restoreCancel.mockResolvedValue({ ok: true });
 });
 
 // Rule 133: the stub is process-global, so it never outlives its own test.
@@ -111,7 +136,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function renderSettings(initialPanel: "about" | "general" | "plex" | "notifications" = "about") {
+function renderSettings(
+  initialPanel: "about" | "general" | "plex" | "notifications" | "security" | "backup" = "about",
+) {
   // Seeded, not just mocked: the General panel renders its fields from this read, and a mocked
   // answer lands a microtask later -- after a synchronous assertion, which would then be about
   // the "Loading…" panel rather than the one an operator types into (rule 136).
@@ -378,5 +405,131 @@ describe("leaving Plex or Notifications with something unsaved", () => {
 
     expect(switchNotice()).toBeNull();
     expect(await screen.findByRole("heading", { name: "Security" })).toBeInTheDocument();
+  });
+});
+
+describe("leaving Security or Backup with something unsaved", () => {
+  // The last two panels the guard did not reach, and the two that needed a hop the other three
+  // did not: their drafts live in a CHILD component (`AdminPasswordForm`, `RestoreCard`), so the
+  // signal is declared there and reported up through the panel. Driven through the real shell,
+  // because what was broken is the wiring between them.
+  const switchNotice = () =>
+    [...document.querySelectorAll(".notice-warn")].find((n) =>
+      n.textContent?.includes("Switching to"),
+    ) ?? null;
+  const heading = () => screen.getByRole("heading", { level: 2 }).textContent;
+
+  /** Stage a backup file. The real input is `hidden` (a styled dropzone drives it), so this fires
+   *  the change the file picker would, and waits for the password box the summary brings with it. */
+  async function stageABackup() {
+    const input = await waitFor(() => {
+      const el = document.querySelector('input[type="file"]');
+      if (!el) throw new Error("the backup panel has not loaded yet");
+      return el;
+    });
+    fireEvent.change(input, { target: { files: [new File(["x"], "a.reaper")] } });
+    return screen.findByLabelText(/admin password/i);
+  }
+
+  it("holds the switch on a typed admin password", async () => {
+    stubMatchMedia(false);
+    const person = renderSettings("security");
+    const next = await screen.findByLabelText(/^new password$/i);
+    await person.type(next, "a-long-enough-password");
+
+    await person.click(screen.getByRole("button", { name: "About" }));
+
+    expect(switchNotice()!.textContent).toContain(
+      "You have unsaved Security settings. Switching to About discards them.",
+    );
+    expect(heading()).toBe("Security");
+    expect(next).toHaveValue("a-long-enough-password");
+  });
+
+  it("holds it for a password too short to save, and lets it go once the box is empty", async () => {
+    // Both halves in one, because they are the same signal read twice: the report is "there is
+    // something to lose", never "there is something Save would accept".
+    stubMatchMedia(false);
+    const person = renderSettings("security");
+    const next = await screen.findByLabelText(/^new password$/i);
+    await person.type(next, "short");
+
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await person.click(screen.getByRole("button", { name: "About" }));
+    expect(switchNotice()).not.toBeNull();
+    expect(heading()).toBe("Security");
+
+    await person.click(screen.getByRole("button", { name: "Keep editing" }));
+    await person.clear(next);
+    await person.click(screen.getByRole("button", { name: "About" }));
+
+    expect(switchNotice()).toBeNull();
+    expect(await screen.findByRole("heading", { name: "About" })).toBeInTheDocument();
+  });
+
+  it("says what leaving Backup costs in Backup's own terms", async () => {
+    // The shared sentence would be false here twice over: what is waiting is an uploaded file
+    // rather than a setting, and leaving does not merely forget it -- the card cancels the staged
+    // upload on its way out, which is the next test.
+    stubMatchMedia(false);
+    const person = renderSettings("backup");
+    await stageABackup();
+
+    await person.click(screen.getByRole("button", { name: "About" }));
+
+    expect(switchNotice()!.textContent).toContain(
+      "The backup file you chose isn't restored yet. Switching to About drops it.",
+    );
+    expect(heading()).toBe("Backup & Restore");
+  });
+
+  it("cancels the staged upload when Discard and switch is pressed", async () => {
+    // Losing the file from the screen is only half of it: the archive is already on the SERVER,
+    // and an un-armed stage has no surface anywhere in the app to clear it from later.
+    stubMatchMedia(false);
+    const person = renderSettings("backup");
+    await stageABackup();
+
+    await person.click(screen.getByRole("button", { name: "About" }));
+    await person.click(screen.getByRole("button", { name: "Discard and switch" }));
+
+    expect(await screen.findByRole("heading", { name: "About" })).toBeInTheDocument();
+    await waitFor(() => expect(apiMock.restoreCancel).toHaveBeenCalledTimes(1));
+    expect(apiMock.restoreConfirm).not.toHaveBeenCalled();
+  });
+
+  it("switches straight through from Backup with nothing staged, and cancels nothing", async () => {
+    stubMatchMedia(false);
+    const person = renderSettings("backup");
+    await waitFor(() => expect(document.querySelector(".dropzone")).not.toBeNull());
+
+    await person.click(screen.getByRole("button", { name: "About" }));
+
+    expect(switchNotice()).toBeNull();
+    expect(await screen.findByRole("heading", { name: "About" })).toBeInTheDocument();
+    expect(apiMock.restoreCancel).not.toHaveBeenCalled();
+  });
+
+  it("switches straight through past an ARMED restore, and leaves it armed", async () => {
+    // Rule 146: an armed restore is server state that outlives this card, this browser and this
+    // section, so there is nothing here to lose and the guard must not fire. The card in that
+    // branch carries its own Cancel; holding the switch would demand a discard for a decision
+    // already stored, and sending the cancel would undo it.
+    apiMock.backupInfo.mockResolvedValue({
+      reaper_db_bytes: 1024,
+      last_backup_at: null,
+      key_in_backup: true,
+      app_version: "test",
+      restore_armed: true,
+    });
+    stubMatchMedia(false);
+    const person = renderSettings("backup");
+    expect(await screen.findByText(/A restore is ready/)).toBeInTheDocument();
+
+    await person.click(screen.getByRole("button", { name: "About" }));
+
+    expect(switchNotice()).toBeNull();
+    expect(await screen.findByRole("heading", { name: "About" })).toBeInTheDocument();
+    expect(apiMock.restoreCancel).not.toHaveBeenCalled();
   });
 });

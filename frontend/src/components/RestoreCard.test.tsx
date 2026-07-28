@@ -3,7 +3,7 @@
 // The card is local to Settings.tsx, so these drive it the way an operator reaches it: the
 // Backup panel, a staged file, then the password box that appears with the summary.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { testQueryClient } from "../test/queryClient";
@@ -14,6 +14,9 @@ const { apiMock } = vi.hoisted(() => ({
     backupInfo: vi.fn(),
     restorePrepare: vi.fn(),
     restoreConfirm: vi.fn(),
+    // Sent by the card's own unmount, not by anything an operator clicks, so nothing in this file
+    // names it and it was still missing when the card started sending it (rule 135).
+    restoreCancel: vi.fn(),
     downloadBackup: vi.fn(),
   },
 }));
@@ -35,12 +38,12 @@ const SUMMARY = {
 
 function renderBackupPanel() {
   const queryClient = testQueryClient();
-  render(
+  const { unmount } = render(
     <QueryClientProvider client={queryClient}>
       <Settings initialPanel="backup" />
     </QueryClientProvider>,
   );
-  return userEvent.setup();
+  return { person: userEvent.setup(), unmount, queryClient };
 }
 
 /** Stage a backup file. The real input is `hidden` (a styled dropzone drives it), so this
@@ -65,6 +68,7 @@ beforeEach(() => {
     restore_armed: false,
   });
   apiMock.restorePrepare.mockResolvedValue(SUMMARY);
+  apiMock.restoreCancel.mockResolvedValue({ ok: true });
 });
 
 describe("the admin password on the restore card", () => {
@@ -72,7 +76,7 @@ describe("the admin password on the restore card", () => {
     // S-5. A wrong password is the likeliest reason to land here, and leaving it in the box
     // to be retried is how it stays in state; the field clears the way a sign-in form does.
     apiMock.restoreConfirm.mockRejectedValue(new Error("That password didn't match."));
-    const person = renderBackupPanel();
+    const { person } = renderBackupPanel();
     const password = await stage("a.reaper");
     await person.type(password, "a-password");
 
@@ -85,11 +89,64 @@ describe("the admin password on the restore card", () => {
   it("does not carry over to the next file staged", async () => {
     // The password belongs to the summary it was typed against: staging another backup drops
     // the summary, which unmounts the box, and used to refill it against a different file.
-    const person = renderBackupPanel();
+    const { person } = renderBackupPanel();
     await person.type(await stage("a.reaper"), "a-password");
 
     await stage("b.reaper");
 
     expect(await screen.findByLabelText(/admin password/i)).toHaveValue("");
+  });
+});
+
+describe("a staged backup nobody confirmed", () => {
+  // `prepare` uploads and stages the archive on the SERVER. An un-armed stage has no surface
+  // anywhere in the app -- the card only offers a Cancel once a restore is armed -- so a card
+  // that goes away without saying anything used to leave that archive sitting there until the
+  // next prepare replaced it.
+  it("is canceled when the card goes, so nothing is left on the server", async () => {
+    const { person, unmount } = renderBackupPanel();
+    await person.type(await stage("a.reaper"), "a-password");
+
+    unmount();
+
+    expect(apiMock.restoreCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends no cancel when nothing was staged", async () => {
+    const { unmount } = renderBackupPanel();
+    await waitFor(() => expect(document.querySelector(".dropzone")).not.toBeNull());
+
+    unmount();
+
+    expect(apiMock.restoreCancel).not.toHaveBeenCalled();
+  });
+
+  it("leaves an ARMED restore alone, because cancel discards that one too", async () => {
+    // The destructive direction, and the reason the cleanup is guarded on `staged` rather than on
+    // the summary alone: `/restore/cancel` discards a staged OR ARMED restore, so a cleanup that
+    // only asked "is a summary in state?" would quietly undo a restore already confirmed with the
+    // admin password, and the operator would find out on the restart that changed nothing.
+    //
+    // The state that discriminates has to hold BOTH at once, which needs the arming to come from
+    // outside this card: staged here, armed elsewhere -- a second tab, or the same operator's
+    // phone -- and picked up by the refetch this panel does on focus and after a download. Rule
+    // 118: an armed card with no local summary cannot tell the guarded cleanup from the unguarded
+    // one, and passes for both.
+    const { unmount, person, queryClient } = renderBackupPanel();
+    await person.type(await stage("a.reaper"), "a-password");
+
+    apiMock.backupInfo.mockResolvedValue({
+      reaper_db_bytes: 1024,
+      last_backup_at: null,
+      key_in_backup: true,
+      app_version: "test",
+      restore_armed: true,
+    });
+    await act(() => queryClient.invalidateQueries({ queryKey: ["backup-info"] }));
+    expect(await screen.findByText(/A restore is ready/)).toBeInTheDocument();
+
+    unmount();
+
+    expect(apiMock.restoreCancel).not.toHaveBeenCalled();
   });
 });

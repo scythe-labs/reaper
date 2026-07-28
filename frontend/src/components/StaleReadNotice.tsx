@@ -13,9 +13,11 @@
  *  the panel then presents state it knows is stale as current. Rule 17/36 wants both the pending
  *  and the failed read handled explicitly, so this is what the failed one says.
  *
- *  One component for both panels, so the wording cannot drift (rule 144). `GeneralPanel` and
- *  `PlexPanel` are the two that keep their form through a failed refetch; a third panel that
- *  starts doing so takes this line with it, rather than writing its own. */
+ *  One component for every panel, so the wording cannot drift (rule 144). `GeneralPanel`,
+ *  `PlexPanel` and `SecurityPanel` keep their form through a failed refetch; a fourth panel that
+ *  starts doing so takes this line with it, rather than writing its own. Security is the one with
+ *  a clock behind it: `useSafety` refetches every 15 seconds, so its form met this state without
+ *  the operator doing anything at all. */
 export function StaleReadNotice() {
   return (
     <p className="notice notice-warn">
