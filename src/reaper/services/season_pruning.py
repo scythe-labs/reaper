@@ -72,10 +72,28 @@ SEQUENTIAL_LOOKAHEAD = 0
 SPECIALS_SEASON = 0
 
 
+#: The one reason that is not a protection Reaper *checked*, but one it could not check:
+#: the mirror does not span the hold, so "who is part-way through" has no answer. Named once
+#: here so the producer (:func:`_protection_reason`) and the flag the caller reads off it
+#: cannot drift apart -- rule 142's lesson, kept inside one module.
+PROGRESS_UNESTABLISHABLE_REASON = "your watch history is too short to tell who is part-way through"
+
+
 @dataclass(frozen=True)
 class ProtectedSeason:
     season_number: int
     reason: str
+
+    unestablishable: bool = False
+    """Whether this season is held because the guard could not be *answered*, rather than
+    because a protection fired.
+
+    A typed flag, never the wording (rule 142). It is what lets
+    :func:`services.season_scan.guard_result` mark the result ``blocked``: an unanswerable
+    check is ``Unknown``, not a definite keep (rule 93), and a block is what holds a hand
+    reap fail-closed. Emitting it as a plain PROTECT read as a definite value and left the
+    season hand-reapable -- weaker, against a hand reap, than the keep-rule conflict it
+    displaced, because ``verdict.STRUCTURAL_GATES`` does not carry this gate."""
 
 
 def _because(kept_reason: str) -> str:
@@ -426,7 +444,16 @@ def plan_series_prune(
         if reason is None:
             prunable.append(n)
         else:
-            protected.append(ProtectedSeason(season_number=n, reason=reason))
+            protected.append(
+                ProtectedSeason(
+                    season_number=n,
+                    reason=reason,
+                    # Compared against the constant the producer returned, in this one
+                    # module -- not a prefix test across a serialization boundary, which is
+                    # the shape rule 142 forbids. What crosses to `guard_result` is the flag.
+                    unestablishable=reason == PROGRESS_UNESTABLISHABLE_REASON,
+                )
+            )
 
     # The policy can silence the conflict detector; an empty list is exactly "no conflict
     # found", so auto_approvable and every downstream consumer behave as if none fired.
@@ -505,7 +532,7 @@ def _protection_reason(
     # This one is the honest sentence for the rest: the mid-binge guard was asked a question
     # the watch history cannot answer, and "we could not tell" holds the season.
     if progress_unestablished:
-        return "your watch history is too short to tell who is part-way through"
+        return PROGRESS_UNESTABLISHABLE_REASON
     return None
 
 

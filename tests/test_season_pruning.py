@@ -701,6 +701,30 @@ class TestTheMirrorMustSpanTheHold:
         # Season 4 too: with the guard off, nothing holds the season a viewer would be up to.
         assert plan.prunable == [1, 2, 3, 4]
 
+    def test_an_unanswerable_hold_is_marked_unestablishable_and_a_real_one_is_not(self) -> None:
+        """The hold carries a typed flag, because the two kinds of keep are not the same.
+
+        A season kept because a protection *fired* is a definite keep. A season kept because
+        the guard could not be ANSWERED is Unknown (rule 93), and only the second may hold a
+        hand reap -- `season_scan.guard_result` reads this flag to mark the result blocked.
+        Pinned on a plan carrying both, so a fix that flags every protected season fails.
+        """
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=[_season(n) for n in range(1, 7)],
+            keep_last=2,
+            keep_first_season=False,
+            progress_by_user={"alice": {3: 10}},
+            season_final_episode={3: 10},
+            progress_established=False,
+        )
+        flags = {p.season_number: p.unestablishable for p in plan.protected}
+        # Season 4 is held by a viewer we can actually see: a definite keep, not an unknown.
+        assert flags[4] is False
+        # Seasons 1 and 2 are the blanket hold, and 5/6 are the keep-last floor.
+        assert flags[1] is True
+        assert flags[2] is True
+
 
 class TestInProgressToggle:
     def test_switching_the_guard_off_removes_its_protection(self) -> None:

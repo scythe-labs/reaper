@@ -1780,6 +1780,21 @@ class TestGatherEndToEnd:
             if j.media_key in {"sonarr:1:11:2", "sonarr:1:11:3"}
         } == {"your watch history is too short to tell who is part-way through"}
 
+        # ...and BLOCKED, not merely protecting. A plain PROTECT on this gate does not hold
+        # a hand reap (`verdict.STRUCTURAL_GATES` carries neither), while the keep-rule
+        # conflict this blanket hold displaces did -- so without the block, closing #95
+        # would have made a season a hand reap was refused on into one it deletes.
+        blocked = {j.media_key for j in shallow if j.guard_result.blocked}
+        assert blocked == {"sonarr:1:11:2", "sonarr:1:11:3"}
+        assert not any(j.guard_result.defers_to_owner for j in shallow)
+        # Narrow on purpose: seasons 1, 4 and 5 are held by protections that genuinely
+        # FIRED (earliest season, keep-last), and a definite keep must stay definite. A fix
+        # that blocked every kept season would fail here.
+        assert all(j.guard_result.outcome is PROTECT for j in shallow)
+        # Nothing in the deep arm is blocked: with the mirror spanning the hold there is
+        # no unanswered question to hold anything on.
+        assert not any(j.guard_result.blocked for j in deep)
+
     async def test_a_show_without_files_logs_no_content(self, cache_engine: AsyncEngine) -> None:
         """A show Sonarr has no downloaded episodes for is dropped as no_content, and its
         decision line says so with the zero file counts, so it is not mistaken for a bug."""

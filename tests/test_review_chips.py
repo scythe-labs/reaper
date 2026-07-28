@@ -223,6 +223,15 @@ class TestKeptChipWording:
                 "a viewer is part-way through the show",
                 "someone is partway through",
             ),
+            # Not a keep rule at all: the mirror is too short to answer who is mid-binge.
+            # The generic phrase would name a control the operator can edit and that will
+            # not move it, sending them to lower keep-last while the real lever is the
+            # depth of their watch history (or the hold set against it).
+            (
+                "season_progression",
+                "your watch history is too short to tell who is part-way through",
+                "your watch history is too short to tell",
+            ),
             ("season_progression", "some future wording", "your season rule keeps it"),
             ("custom", "your rule: genre is Documentary", "by your rule"),
             ("brand_new_gate", "whatever it says", "a protection applies"),

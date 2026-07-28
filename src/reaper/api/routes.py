@@ -784,6 +784,11 @@ def _kept_season_phrase(detail: str) -> str:
         return "your keep rule keeps all its seasons"
     if detail.startswith("a viewer is part-way"):
         return "someone is partway through"
+    if detail.startswith("your watch history is too short"):
+        # NOT a keep rule, so it must not fall to the generic phrase below: the lever is the
+        # depth of the watch history (or the hold set against it), and naming a season rule
+        # sends the operator to edit a control that will not move it.
+        return "your watch history is too short to tell"
     return "your season rule keeps it"
 
 

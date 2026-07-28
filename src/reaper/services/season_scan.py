@@ -430,7 +430,26 @@ def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
     """
     for protected in plan.protected:
         if protected.season_number == season_number:
-            return GateResult(GateId.SEASON_PROGRESSION, GATE_PROTECT, detail=protected.reason)
+            return GateResult(
+                GateId.SEASON_PROGRESSION,
+                GATE_PROTECT,
+                detail=protected.reason,
+                # A season held because the guard could not be ANSWERED is blocked as well
+                # as protecting: `Evaluation.could_not_be_checked` selects on `blocked`
+                # independently of the outcome, so the result rides in
+                # `protections_unknown` too and `verdict.block_holds_reap` holds a hand reap
+                # on it (`defers_to_owner` stays False -- there is no comparison for the
+                # operator to settle, only a mirror too short to make one).
+                #
+                # Without this it was a plain PROTECT, and a PROTECT on this gate does NOT
+                # hold a hand reap: `condemned.reap_override_verdict_decoded` reads
+                # `safety_protected` off `verdict.STRUCTURAL_GATES`, which carries only
+                # STREAMING_NOW and UNMANAGED. So the blanket hold -- by emptying
+                # `prunable`, which is what `_detect_conflicts` iterates -- silently
+                # retired the keep-rule conflict that used to hold exactly these seasons,
+                # and a season a hand reap was refused on became one a hand reap deletes.
+                blocked=protected.unestablishable,
+            )
 
     # EVERY conflict naming this season, not just the first. ``_detect_conflicts`` raises
     # one per (pruned, kept) pair, so a single pruned season routinely carries both shapes
@@ -1567,9 +1586,14 @@ def _judge_series(
         season_lookahead=season_lookahead,
         keep_in_progress=keep_in_progress,
         # The same reach that qualifies the watcher counts on `Facts.history_reach_days`,
-        # read here by the one other consumer whose claim it bounds (rule 140). A hold the
-        # mirror does not span makes the viewer set un-establishable, and the planner holds
-        # the seasons rather than reading "no rows" as "nobody is part-way through".
+        # read here by the mid-binge half of this roll-up (rule 140). A hold the mirror does
+        # not span makes the viewer set un-establishable, and the planner holds the seasons
+        # rather than reading "no rows" as "nobody is part-way through".
+        #
+        # NOT the last unswept reader: `watchers_by_season` above is built from the same
+        # mirror and passed to the same call unqualified, so the keep-conflict detector
+        # still compares two truncated counts. That is open issue #94, and `docs/STATUS.md`
+        # says so -- claiming the sweep finished here is how the next reader stops looking.
         progress_established=progress_is_establishable(
             reach_days=reach_days, hold_days=in_progress_hold_days
         ),
