@@ -487,8 +487,14 @@ a `False` default silently asserts one shape about every legacy row, and `bool |
 lets it assert neither. `GateResult.defers_to_owner` is the case: it replaced
 `detail.startswith("could not check")` on the deletion path, `GateOutcomeOut` was never taught to
 serve it, and `WhyPanel.isKeepRuleConflict` was left running the retired test against the one
-message it never matched — still promising "Reap it to remove it" on a season the engine now
-holds. Rule 72 obliges the sweep; this says what the sweep owes a twin it cannot reach.
+message it never matched — so for a year the panel promised "Reap it to remove it" on a season
+the engine then refused. Rule 72 obliges the sweep; this says what the sweep owes a twin it
+cannot reach.
+
+*(That particular divergence closed from the other end: a blocked gate no longer holds a hand
+reap, so the panel's promise is kept. The predicate is still the retired wording test and still
+mis-describes which shape it matched, which is why the example stays — the lesson is about the
+sweep, and it does not depend on which side eventually moved.)*
 
 **143. A protection that widens what it holds must be checked against every consumer that
 iterates the set it just emptied.** Rule 140 sweeps readers of a *value* you re-qualified; rule
@@ -497,12 +503,24 @@ membership you changed** — and it is the one that looks safest, because moving
 `prunable` to `protected` is unambiguously the keep direction and reads as strictly safer at the
 diff. It is not, when a second protection is defined *over* the set you drained:
 `_detect_conflicts` iterates `prunable`, so holding every season also stopped raising the
-keep-rule conflict, and the conflict was the only thing making those seasons refuse a hand reap.
-Net effect of a change that added protection: a season a hand reap was refused on became one a
-hand reap deletes. Grep every iteration of the set (`for … in plan.prunable`, every comprehension
-and membership test over it) before closing, and ask what stops firing when it is empty. **The
-corollary is about encoding**: a hold standing in for "we could not answer this" is `blocked`,
-never a bare PROTECT — rule 93's Known/Absent/Unknown distinction applies to gate results exactly
-as it does to facts, and the two are not interchangeable, because `decide_verdict`'s reap branch
-reads `blocked_holds_reap or safety_protected` and `STRUCTURAL_GATES` carries almost nothing. A
-PROTECT is a *definite* keep the operator is entitled to overrule; a block is one they are not.
+keep-rule conflict, and at the time the conflict was the only thing making those seasons refuse a
+hand reap. Net effect of a change that added protection: a season a hand reap was refused on
+became one a hand reap deletes. Grep every iteration of the set (`for … in plan.prunable`, every
+comprehension and membership test over it) before closing, and ask what stops firing when it is
+empty.
+
+**The corollary is about encoding, and its instruction stands while its original reason no longer
+does.** A hold standing in for "we could not answer this" is `blocked`, never a bare PROTECT:
+rule 93's Known/Absent/Unknown distinction applies to gate results exactly as it does to facts,
+and conflating them tells the operator a check passed when it never ran. That is reason enough
+and it is the durable one.
+
+What changed is the *stakes*. This rule was written when a block held a hand reap and a
+non-structural PROTECT did not, which made `blocked` the strictly stronger encoding and made
+choosing wrong a fail-open bug. A blocked gate no longer holds a hand reap at all — only a
+**fired** gate in `STRUCTURAL_GATES` does — so for the reap branch the two encodings are now
+equivalent, and the choice between them is about what the operator is *told* and what the
+automatic paths do, not about what they may overrule. **Do not read the old rationale as still
+live**: an agent that encodes a hold as `blocked` expecting it to refuse a hand reap has the
+model wrong, and the numbered example above is history, not current behavior. `engine/verdict.py`
+carries the reasoning for the reversal.

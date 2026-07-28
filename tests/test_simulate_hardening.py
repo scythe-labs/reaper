@@ -457,13 +457,23 @@ def test_the_fixture_gates_and_signals_are_the_wire_shapes() -> None:
 # ---------------------------------------------------------------------------
 
 
+#: The replay draft's gates: the shared list plus ``streaming_now``, which the other tier
+#: does not need and this one cannot do without. The replay decides a hand reap off the
+#: explanation it BUILDS from the frozen facts, so a gate the draft does not enable is a
+#: protection the replay cannot see -- and ``streaming_now`` is the only kind of stop a hand
+#: reap still cannot pass, which makes it the only way this tier can exercise a refused reap
+#: at all. Kept off the shared ``GATES`` deliberately: that list is the stored-scores
+#: fixture's hash input, and widening it there would move numbers in tests about something
+#: else entirely.
+REPLAY_GATES: list[dict[str, Any]] = [*GATES, {"gate": "streaming_now"}]
+
 #: The draft the replay fixture is built for: the wire payload, the domain body it becomes,
 #: and the evidence hash that body would gather under. Built through the route's own
 #: ``_to_body`` so the fixture cannot drift from what the request produces.
 REPLAY_PAYLOAD = PolicyIn(
     condemn_at=70,
     coverage_floor_bp=0,
-    gates=[GateSettingIn.model_validate(g) for g in GATES],
+    gates=[GateSettingIn.model_validate(g) for g in REPLAY_GATES],
     signals=[SignalSettingIn.model_validate(s) for s in SIGNALS],
 )
 REPLAY_BODY = _to_body(REPLAY_PAYLOAD)
@@ -524,7 +534,7 @@ def replay_client(tmp_path: Path) -> Iterator[TestClient]:
                 REPLAY_BODY.evidence_hash(), DEFAULT_TV_POLICY.evidence_hash()
             ),
             horizon_at=now,
-            item_count=len(rows) + 1,
+            item_count=len(rows) + 2,
             degraded=False,
         )
         session.add(snapshot)
@@ -547,7 +557,8 @@ def replay_client(tmp_path: Path) -> Iterator[TestClient]:
             )
         # Nothing about this one could be observed, so every protection is blocked -- and the
         # owner has hand-reaped it anyway. An empty body is what a row scored before a field
-        # shipped thaws to: every fact Unknown.
+        # shipped thaws to: every fact Unknown. The engine honors that reap: a check that
+        # could not run is a question the owner may answer.
         session.add(
             Candidate(
                 snapshot_id=snapshot.id,
@@ -563,14 +574,41 @@ def replay_client(tmp_path: Path) -> Iterator[TestClient]:
                 created_at=now,
             )
         )
+        # ...and one whose reap the engine still refuses, so the class can fail in both
+        # directions. Somebody is playing it: a structural stop, not a judgment about whether
+        # it is wanted, and the one thing a hand reap has never been able to pass.
         session.add(
-            WhitelistEntry(
-                media_key="radarr:1:3",
-                title="Example Movie 3",
-                decision="reap",
+            Candidate(
+                snapshot_id=snapshot.id,
+                media_key="radarr:1:4",
+                title="Example Movie 4",
+                media_type="movie",
+                size_bytes=SIZE,
+                verdict="protect",
+                score=95,
+                coverage_bp=10_000,
+                explanation_json=_healthy(
+                    protections_fired=[
+                        {"gate": "streaming_now", "detail": "being watched right now"}
+                    ]
+                ),
+                facts_json=json.dumps(
+                    facts_codec.facts_to_dict(
+                        _facts(is_streaming_now=Known(value=True, source="t"))
+                    )
+                ),
                 created_at=now,
             )
         )
+        for key, title in (("radarr:1:3", "Example Movie 3"), ("radarr:1:4", "Example Movie 4")):
+            session.add(
+                WhitelistEntry(
+                    media_key=key,
+                    title=title,
+                    decision="reap",
+                    created_at=now,
+                )
+            )
         session.commit()
     engine.dispose()
 
@@ -595,28 +633,42 @@ class TestTheFrozenFactsReplay:
         return body
 
     def test_it_replays_rather_than_refusing(self, replay_client: TestClient) -> None:
-        assert sum(int(n) for n in self._replay(replay_client)["histogram"]) == 3
+        assert sum(int(n) for n in self._replay(replay_client)["histogram"]) == 4
 
-    def test_the_dormant_row_is_condemned_and_the_kept_one_is_named(
+    def test_the_dormant_row_is_condemned_and_the_kept_ones_are_named(
         self, replay_client: TestClient
     ) -> None:
+        """Two removals: the dormant row on score, and the hand reap the engine now honors.
+        Two keeps, each named by the gate that earned it -- the tally comes off the live
+        replay's protectors, so a keep that stops firing under the draft stops being counted.
+        """
         result = self._replay(replay_client)
-        assert result["condemned"] == 1
-        assert result["reclaimable_bytes"] == SIZE
-        assert result["protected_by"] == [{"gate": "whitelisted", "count": 1}]
+        assert result["condemned"] == 2
+        assert result["reclaimable_bytes"] == 2 * SIZE
+        assert result["protected_by"] == [
+            {"gate": "streaming_now", "count": 1},
+            {"gate": "whitelisted", "count": 1},
+        ]
 
     def test_a_hand_reap_the_engine_cannot_honor_is_not_previewed_as_a_deletion(
         self, replay_client: TestClient
     ) -> None:
         """The reap-held case, and the one the refactor turns on.
 
-        Every protection on that row is blocked, so the engine refuses the reap and the file
-        is kept. Counting it as a deletion would promise the owner a removal the planner
-        holds back, at the exact moment they are choosing a threshold.
+        Counting a refused reap as a deletion would promise the owner a removal the planner
+        holds back, at the exact moment they are choosing a threshold. The row that carries
+        it is now the one being played right now: a structural stop, the only kind a hand
+        reap has never passed. It used to be a row whose every protection was merely
+        *blocked*, which stopped refusing anything -- so left as it was, this test would have
+        gone on passing while covering nothing, which is the failure rule 118 is about.
+
+        The blocked row is still in the fixture and is asserted here too, from the other
+        side: the simulator must not hold back a reap the planner will honor either. Both
+        errors mislead an operator choosing a threshold, and only one of them is cautious.
         """
         result = self._replay(replay_client)
-        assert result["condemned"] == 1  # the dormant row, never the held reap
-        assert result["protected"] == 2  # the keep-list row AND the held reap
+        assert result["condemned"] == 2  # the dormant row and the honored hand reap
+        assert result["protected"] == 2  # the keep-list row AND the refused hand reap
         assert result["abstained"] == 0
 
 

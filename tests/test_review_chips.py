@@ -430,9 +430,11 @@ class TestChip:
         Recovering it from the wording was tried and is exactly the bug: the chip read
         "more than watched Season" as a deferral while ``reap_override_verdict`` read the
         absent key as a hold, so the card offered the operator a conflict to settle and then
-        refused the reap by quoting that same conflict back at them. The agreement is
-        asserted below, on the real functions, because it is a claim ``_chip``'s own comment
-        makes."""
+        refused the reap by quoting that same conflict back at them. The reap side of that
+        pair has since stopped holding on any block at all, which closes the contradiction
+        from the other end -- the chip's "left for you to decide" is now true of every shape.
+        The chip must still not claim a comparison it has no evidence was made, which is what
+        this pins, and the pair is swept in full below."""
         for kept_watchers in (1, None):
             detail = _conflict_detail(kept_watchers=kept_watchers)
             legacy = _exp(82, unknown=[{"gate": "season_progression", "detail": detail}])
@@ -443,17 +445,22 @@ class TestChip:
             assert chip.tone == "look"
             assert chip.text == "Needs a look · left for you to decide"
             assert chip.why == "a check on it couldn't be settled"
-            # The claim: the chip and the deletion decision read the same key the same way.
-            assert reap_override_verdict_decoded(legacy, score=82) == "protect"
+            # ...and the invitation the chip extends is one the engine honors.
+            assert reap_override_verdict_decoded(legacy, score=82) == "condemn"
 
     def test_the_chip_and_the_reap_decision_never_disagree(self) -> None:
-        """Rule 92 held end to end: one typed key, two readers, no wording between them.
+        """Rule 92 held end to end: no chip may promise a reap the engine will refuse.
 
-        The chip may only promise a reap the engine will honor. Both conflict shapes and
-        all three row generations, against the real ``reap_override_verdict`` -- a chip
-        naming the settleable conflict must pair with ``condemn``, and anything else with
-        ``protect``."""
-        settleable = "Needs a look · watched more than a season your rule keeps"
+        Both conflict shapes and all three row generations, against the real
+        ``reap_override_verdict``. Every chip here opens with "Needs a look", which invites a
+        decision, so every one of them must pair with ``condemn`` -- and it does now, because
+        a block stopped holding a hand reap. The flag still picks WHICH sentence they read,
+        and that is asserted in the tests above; what it may not do is pick a sentence the
+        deletion path contradicts.
+
+        The rows the reap still refuses are swept beside them, or this would only be able to
+        fail in one direction: a bad Plex match and an unreadable protections list keep the
+        file, and neither wears a chip that invites the operator to remove it."""
         for kept_watchers in (1, None):
             detail = _conflict_detail(kept_watchers=kept_watchers)
             for flag in ({"defers_to_owner": True}, {"defers_to_owner": False}, {}):
@@ -463,8 +470,23 @@ class TestChip:
                 verdict = reap_override_verdict_decoded(exp, score=82)
 
                 assert chip is not None
-                expected = "condemn" if chip.text == settleable else "protect"
-                assert verdict == expected, f"{chip.text!r} vs {verdict!r} for {flag}"
+                assert chip.text.startswith("Needs a look"), f"{chip.text!r} for {flag}"
+                assert verdict == "condemn", f"{chip.text!r} vs {verdict!r} for {flag}"
+
+        # The other direction. A row the reap refuses must not be wearing an invitation.
+        held = {
+            "an unmatched row": _exp(82, match_status="unmatched"),
+            "an ambiguous row": _exp(82, match_status="ambiguous"),
+            "an unreadable protections list": {
+                **_exp(82),
+                "protections_unknown": ["a string where an object belongs"],
+            },
+        }
+        for label, exp in held.items():
+            chip = _chip(exp, "abstain", 82)
+
+            assert reap_override_verdict_decoded(exp, score=82) == "protect", label
+            assert chip is None or not chip.text.startswith("Needs a look"), label
 
     def test_any_future_deliberate_flag_still_wants_eyes(self) -> None:
         """A blocked detail that is a sentence of its own (not "could not check") is a

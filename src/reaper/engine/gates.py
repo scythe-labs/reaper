@@ -135,24 +135,28 @@ class GateResult:
     """Only meaningful on a ``blocked`` result: this block is a deliberate "the owner
     should decide" flag, NOT a source Reaper could not read.
 
-    Today exactly one producer sets it -- ``season_scan.guard_result``'s keep-rule
-    conflict, where every comparison behind the block was one Reaper could actually make
-    and the rule lost it. Two things must hold of *every* ``season_pruning.PruneConflict``
-    naming the season, not merely the first, because one season carries one conflict per
-    kept season and a single refusal holds the whole block: a readable ``kept_watchers``,
-    and a ``shortfall`` of ``None``. The second is not implied by the first -- a count read
-    off a mirror that does not reach back to when the season arrived is a number all the
-    same, and settles nothing (#94) -- so a criterion stated as "came back with a number"
-    releases the reap on a comparison the detector is holding. A hand reap overrules only
-    what survives both (``verdict.block_holds_reap``).
+    **This no longer decides anything about a hand reap, and that is a deliberate
+    reversal.** It used to be half the interlock: a blocked gate held a reap unless its
+    gate was in ``verdict.DEFERRABLE_BLOCK_GATES`` and this flag was set. A blocked gate
+    now never holds a hand reap at all -- only a *fired* structural stop does -- so the
+    flag's reap job is gone along with that constant. ``engine.verdict``'s module
+    docstring carries why.
 
-    **The default is the whole point.** It is ``False``, so a blocked result holds a hand
-    reap unless its producer explicitly says otherwise, and a new gate, a new blocked
-    branch, or a producer that simply forgets fails closed. The flag this replaced was
-    inferred from the detail text (``detail.startswith("could not check")``), which put
-    the fail-closed direction behind a wording the producer was free to change -- and the
-    one message the arm existed for opens with the watcher count instead, so it never
-    matched and a hand reap removed a season whose comparison could not be made.
+    What it still does is tell two SHAPES of block apart for the operator's copy, which
+    was always the more honest use of it. ``season_scan.guard_result`` sets it when every
+    ``season_pruning.PruneConflict`` naming the season was a comparison Reaper could
+    actually make: a readable ``kept_watchers`` AND a ``shortfall`` of ``None``. The
+    second is not implied by the first -- a count read off a mirror that does not reach
+    back to when the season arrived is a number all the same, and settles nothing (#94).
+    ``api.routes._chip`` reads it to choose between "this was watched more than a season
+    your rule keeps" and "couldn't check who watched these seasons", which are genuinely
+    different things to tell someone deciding what to delete.
+
+    The ``False`` default still matters for that: a producer that forgets says "Reaper did
+    not establish this", which is the claim that asserts less. Typed rather than inferred
+    from the detail text (rule 142) -- the wording test it replaced,
+    ``detail.startswith("could not check")``, never matched the one message it existed
+    for, because that message opens with the watcher count.
     """
 
     @property
@@ -576,12 +580,14 @@ class ServerPopularityGate:
                 self.id,
                 ABSTAIN,
                 blocked=True,
-                # What holds a hand reap here is the gate id, NOT this wording:
-                # ``server_popularity`` is absent from ``verdict.DEFERRABLE_BLOCK_GATES``,
-                # so ``verdict.block_holds_reap`` holds the reap on any detail at all.
+                # This block holds nothing against a hand reap any more -- no blocked gate
+                # does (see ``engine.verdict``) -- and on a mirror shorter than the
+                # popularity window it is the block an operator meets most often, so
+                # keeping it un-overrulable was what made a shallow Tautulli refuse
+                # reaps library-wide. It still forces ABSTAIN, which is its real job.
                 #
-                # The "could not check ..." prefix is still load-bearing, for the two
-                # surfaces that do read it: ``api.routes._chip`` sends a detail starting
+                # The "could not check ..." prefix IS still load-bearing, for the two
+                # surfaces that read it: ``api.routes._chip`` sends a detail starting
                 # with it to "Some checks couldn't run" instead of "left for you to
                 # decide", and ``WhyPanel`` splits it into check and cause. Reword it and a
                 # plumbing failure starts reading to the operator as their own decision.

@@ -638,9 +638,9 @@ describe("the verdict headline", () => {
     "because it is one of the newest seasons your rule keeps. Left for you to decide " +
     "instead of removing it.";
   const REFUSED_CONFLICT =
-    "Reaper cannot tell whether Season 1 is watched more than Season 3, which it is " +
-    "keeping because it is one of the newest seasons your rule keeps. Kept for now, " +
-    "since your watch history only goes back 12 months.";
+    "Reaper cannot tell whether Season 1 is watched more than Season 3, since your watch " +
+    "history only goes back 12 months. Season 3 is kept because it is one of the newest " +
+    "seasons your rule keeps. Left for you to decide instead of removing it.";
 
   const conflictDetail = (message: string) =>
     detail(WORKED_ROWS, {
@@ -657,17 +657,27 @@ describe("the verdict headline", () => {
     expect(screen.getByText(/Spare it to keep it, or Reap it to remove it/i)).toBeInTheDocument();
   });
 
-  it("KNOWN WRONG (#86): promises a reap the engine refuses on a conflict it could not settle", () => {
-    // Pinned as-is so the gap is visible in the suite rather than only in a comment, and so
-    // fixing #86 FAILS here and forces this test to be rewritten as the assertion it should
-    // be. `isKeepRuleConflict` still tests the retired wording, so this refused shape reads
-    // as settleable: the headline asserts the comparison, and the reason block below denies
-    // it in the same breath. The real fix is `defers_to_owner` reaching `GateOutcomeOut` and
-    // `api.ts` (rule 142's supply chain), not another prefix test here.
+  it("offers a reap on a conflict Reaper could not settle, and the engine now honors it", () => {
+    // The reap half of #86 is fixed, from the backend side: no blocked gate holds a hand
+    // reap any more, so this promise is kept for every conflict shape. Pinned here because
+    // it is the half that used to be a safety divergence, and a future change that makes a
+    // block hold the reap again must fail a test rather than quietly re-break the panel.
     show(conflictDetail(REFUSED_CONFLICT));
     expect(screen.getByText(/Spare it to keep it, or Reap it to remove it/i)).toBeInTheDocument();
+  });
+
+  it("KNOWN WRONG (#86): asserts a comparison the reason block below it denies", () => {
+    // What is still broken, and it is now purely copy. `isKeepRuleConflict` runs the retired
+    // wording test, so a conflict the mirror could not settle reads as a made comparison and
+    // the headline asserts one -- while `LeftForYou` prints the producer's "Reaper cannot
+    // tell whether ..." two blocks below. Both on one screen, about a season that may have
+    // no recorded plays at all.
+    //
+    // Deliberately pinned as the WRONG behavior so fixing #86 fails here and forces this
+    // rewritten into the assertion it should be. The fix is `defers_to_owner` reaching
+    // `GateOutcomeOut` and `api.ts` (rule 142's supply chain), not another prefix test.
+    show(conflictDetail(REFUSED_CONFLICT));
     expect(screen.getByText(/This was watched more than/i)).toBeInTheDocument();
-    // ...directly contradicting the producer's own sentence, rendered on the same screen.
     expect(screen.getByText(/Reaper cannot tell whether Season 1/i)).toBeInTheDocument();
   });
 

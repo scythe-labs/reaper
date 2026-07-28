@@ -32,7 +32,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from reaper.db.models import Candidate
-from reaper.engine.verdict import STRUCTURAL_GATES, block_holds_reap, decide_verdict
+from reaper.engine.verdict import STRUCTURAL_GATES, decide_verdict
 from reaper.services import whitelist
 
 #: A stored ``match`` block that is present but is not an object. Distinct from a match
@@ -86,13 +86,17 @@ def reap_override_verdict(explanation_json: str, *, score: int) -> str:
     now, or a file no *arr manages); the score, coverage and thresholds are never read on
     it, so the zeros below are inert plumbing, pinned by a test, not hidden policy.
 
-    A block that could not be *checked* holds the reap (fail-closed); a block that is a
-    deliberate "the owner should decide" flag does not, since the reap IS that decision.
-    Today that flag is the keep-rule conflict, and only the half of it whose comparisons all
-    came back with a number -- the same conflict raised because a kept season could not be
-    read is a plumbing failure and holds (:func:`reaper.engine.verdict.block_holds_reap`).
-    A malformed or unreadable explanation reads as blocked: not being able to see why an
-    item was kept is not permission to remove it.
+    A block -- a protection that could not be *checked* -- does NOT hold the reap. The owner
+    is looking at the panel that names which check came back empty, and answering it is the
+    decision the reap expresses; see ``engine.verdict`` for why that reversed. Only a *fired*
+    structural stop refuses them (streaming now, or a file no *arr manages).
+
+    Two non-gate holds remain, and neither is a protection. A **bad Plex match** means the
+    file behind this row may not be the one the owner is looking at, so the reap could remove
+    something they never saw. A **malformed or unreadable explanation** means the panel could
+    not render the reasons at all, so there was nothing to consent to. Both are "we do not
+    know what this row IS", which is a different question from "we could not check whether it
+    is wanted".
     """
     try:
         exp = json.loads(explanation_json)
@@ -160,26 +164,20 @@ def reap_override_verdict_decoded(explanation: object, *, score: int) -> str:
         # Truthful but inert, like the zeros below: the reap branch reads only
         # ``blocked_holds_reap`` and ``safety_protected``, so nothing here is the interlock.
         blocked=bool(unknown) or bad_match or unreadable,
-        # THIS is the interlock. A block holds the reap unless it is a deliberate "you
-        # decide" deferral (the keep-rule conflict); a bad Plex match always holds, and so
-        # does anything in either list this code could not read. Read off the same primitive
-        # the scan uses, so a stored explanation and a live evaluation agree.
-        blocked_holds_reap=bad_match
-        or unreadable
-        or any(
-            block_holds_reap(
-                str(e.get("gate") or ""),
-                # ``is True`` is the thaw, not a style tic. A row frozen before the flag
-                # shipped carries no key at all, and there is nothing in it that can tell
-                # a made comparison from a refused one -- the wording that used to stand
-                # in for the flag is exactly what failed. So absent reads as "does not
-                # defer" and the reap is held, the keep direction (rule 104). Self-clearing
-                # without needing a rewrite: a later scan stores its own rows, and every
-                # reap path keys on a snapshot id, so pre-flag rows go unreachable.
-                defers_to_owner=e.get("defers_to_owner") is True,
-            )
-            for e in unknown
-        ),
+        # THIS is the interlock, and it is now exactly two things, NEITHER of them a
+        # protection. A gate that could not be checked does not hold a hand reap: the owner
+        # is reading the panel that names the failed check and is entitled to answer it.
+        #
+        # What still holds is "we do not know what this row IS", which is a different
+        # question. A bad Plex match means the file behind this row may not be the one the
+        # owner is looking at, so a reap here could remove something they never saw --
+        # identity, not judgment. An entry this code could not parse means the panel could
+        # not render the reasons at all, so there was nothing to consent to.
+        #
+        # ``unknown`` is deliberately no longer consulted: it is the list of blocked gates,
+        # and that is precisely what stopped holding. It still drives ABSTAIN through
+        # ``blocked`` above, so nothing automatic touches the item either way.
+        blocked_holds_reap=bad_match or unreadable,
         score=score,
         coverage_bp=0,
         condemn_at=0,

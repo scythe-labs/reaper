@@ -23,9 +23,11 @@ from reaper.engine.gates import (
     ABSTAIN,
     PROTECT,
     CuratedListGate,
+    Evaluation,
     Facts,
     GateConfig,
     GateId,
+    GateResult,
     RatingFloorGate,
     RatingRule,
     ServerPopularityGate,
@@ -34,6 +36,7 @@ from reaper.engine.gates import (
     evaluate_all,
 )
 from reaper.engine.observation import Absent, Known, Observation, Unknown
+from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import (
     MAX_SCORE,
     CustomSignalConfig,
@@ -46,14 +49,9 @@ from reaper.engine.signals import (
     evaluate_signal,
     score,
 )
-from reaper.engine.verdict import (
-    DEFERRABLE_BLOCK_GATES,
-    STRUCTURAL_GATES,
-    block_holds_reap,
-    decide_verdict,
-    reap_held_by_blocks,
-)
+from reaper.engine.verdict import STRUCTURAL_GATES
 from reaper.ratings import Rating, RatingSource
+from reaper.services.snapshot import _verdict
 
 _IMDB_BAR = RatingRule(source=RatingSource.IMDB, floor=75, min_votes=1000)
 
@@ -133,31 +131,58 @@ class TestAGateCannotDelete:
             assert result.outcome in (PROTECT, ABSTAIN)
 
 
-class TestOnlyOneGateMayEverDeferToTheOwner:
-    """The membership half of ``block_holds_reap``'s two conditions.
+class TestOnlyTwoGatesMayEverRefuseAHandReap:
+    """The membership guard on the ONE set that still holds a hand reap (rule 103).
 
-    A blocked gate releases a hand reap only when its gate is in
-    ``DEFERRABLE_BLOCK_GATES`` **and** its producer set ``defers_to_owner``. The flag half
-    is pinned by ``test_a_hand_reap_cannot_overrule_the_block`` below, which fails if the
-    gate-id check is dropped. Nothing pinned this half: growing the frozenset failed no
-    test, so a gate could join the list and a producer that sets the flag on a plumbing
-    failure would open a fail-open path in silence (rule 103).
+    This class used to guard the opposite list. A blocked gate released a hand reap only
+    when its gate was in ``verdict.DEFERRABLE_BLOCK_GATES`` *and* its producer set
+    ``defers_to_owner``, and nothing pinned the membership half: growing the frozenset
+    failed no test, so a gate could join it in silence. That list is gone -- no block holds
+    a hand reap now -- and the same drift risk moved, whole, onto ``STRUCTURAL_GATES``,
+    which is what a reap cannot pass. Both directions of a change to it are dangerous, and
+    only one of them looks it: dropping a member RELEASES a file, and adding one takes away
+    an overrule the owner is entitled to and hides the fact behind a "safety" set.
     """
 
-    def test_the_deferral_list_is_exactly_the_season_keep_rule_conflict(self) -> None:
-        """Adding a gate here must be a deliberate edit that fails this test first, because
-        the reviewer then has to answer the one question membership does not: does that
-        gate's producer set ``defers_to_owner`` ONLY where a real decision was put to the
-        owner, and never where a source could not be read? ``season_scan.guard_result`` is
-        the one producer that has answered it."""
-        assert frozenset({GateId.SEASON_PROGRESSION}) == DEFERRABLE_BLOCK_GATES
+    def test_the_structural_list_is_exactly_the_two_stops_that_are_not_judgments(self) -> None:
+        """Editing this set must be a deliberate change that fails this test first, because
+        the reviewer then has to answer the question membership does not: is the gate a fact
+        about whether the file can be REMOVED at all, or a judgment about whether it is
+        WANTED? Only the first belongs here. Deleting mid-stream breaks a session someone is
+        watching, and a file no *arr manages has no path to delete through -- so overruling
+        either cannot give the owner what they asked for. Everything else (dormancy, rating,
+        popularity, a curated list, the keep list, the season keep-rule conflict) is a
+        cautious judgment, and a judgment is the owner's to overrule."""
+        assert frozenset({GateId.STREAMING_NOW, GateId.UNMANAGED}) == STRUCTURAL_GATES
 
-    def test_no_structural_gate_can_ever_be_deferrable(self) -> None:
-        """The two sets must stay disjoint. A structural gate is the hard stop a hand reap
-        must never pass -- something playing right now, or a file no app manages -- so a
-        gate in both sets would let the owner reap past the one protection that exists
-        because they cannot."""
-        assert DEFERRABLE_BLOCK_GATES.isdisjoint(STRUCTURAL_GATES)
+    def test_only_a_fired_structural_gate_refuses_and_a_blocked_one_does_not(self) -> None:
+        """The set is consulted for a gate that FIRED, and that distinction is the whole
+        reason it is safe for a blocked one to pass.
+
+        A fired ``streaming_now`` is "somebody is playing this"; a blocked one is "we could
+        not read who is playing", frozen well before anything is sent. The live veto at send
+        time (``executor._being_watched_now``) re-polls Plex per item and spares on any read
+        failure, so it both supersedes the frozen guess and fails closed where the scan could
+        only guess. Asserted through the production caller, never a transcription of what it
+        passes (rule 119).
+
+        The two gates are named here rather than read out of ``STRUCTURAL_GATES``, which
+        looks like the tidier spelling and is the one that cannot fail: emptying the set
+        empties the loop, and a vacuous sweep reads as a proof while asserting nothing
+        (rule 118). Written out, shrinking the set fails this test as well as the membership
+        one above."""
+        policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
+        for gate in (GateId.STREAMING_NOW, GateId.UNMANAGED):
+            fired = Evaluation(results=[GateResult(gate, PROTECT, detail="the stop fired")])
+            unreadable = Evaluation(
+                results=[GateResult(gate, ABSTAIN, detail="could not check it", blocked=True)]
+            )
+
+            assert _verdict(fired, 100, 10_000, policy, override="reap") == "protect", gate
+            assert _verdict(unreadable, 100, 10_000, policy, override="reap") == "condemn", gate
+            # ...and with nobody deciding by hand, the block still keeps it off every
+            # automatic path. That is the job a block kept.
+            assert _verdict(unreadable, 100, 10_000, policy) == "abstain", gate
 
 
 class TestUnknownNeverCondemns:
@@ -444,34 +469,34 @@ class TestThePopularityWindowCannotOutrunTheHistory:
         assert result.blocked is True
         assert "Only 2 people" not in result.detail
 
-    def test_a_hand_reap_cannot_overrule_the_block(self) -> None:
-        """The owner's reap button does not release a file on evidence Reaper could not
-        read. What holds it is the gate *id*: ``server_popularity`` is not one of
-        ``verdict.DEFERRABLE_BLOCK_GATES``, the "you decide this" flags a reap is meant to
-        settle. Nothing on the result plays any part, which is asserted below rather than
-        assumed -- an earlier version of this test read as though the wording were the
-        interlock, and so could not fail when the wording changed."""
-        assert GateId.SERVER_POPULARITY not in DEFERRABLE_BLOCK_GATES
+    def test_the_block_stops_every_automatic_path_but_not_the_owners_own_hand(self) -> None:
+        """What the block is for, and what it is not for -- the two asserted together,
+        because the reach fix is only worth anything if the first survives the second.
+
+        This test used to assert the reap was refused, and the refusal was carried by the
+        gate *id*: ``server_popularity`` was absent from a list of gates a reap could settle.
+        That list is gone. A block now means one thing -- Reaper could not answer a question
+        -- and it answers it the same way for every automatic path: no scan condemns on it,
+        no plan carries it, nothing is removed unattended. What it no longer does is refuse
+        the one party better placed to answer than the scan was: an owner reading the panel
+        that says, in the gate's own words, that their history does not go back far enough.
+        Refusing them was the worse trade for safety, since a reap that always bounces is a
+        file deleted outside Reaper with no journal and no interlocks.
+
+        Nothing on the result plays any part in either answer, which is asserted rather than
+        assumed: an earlier version read as though the wording were the interlock, and so
+        could not fail when the wording changed."""
+        assert GateId.SERVER_POPULARITY not in STRUCTURAL_GATES
 
         result = self.gate.evaluate(_popularity_facts(0, Known(value=90.0, source="t")))
+        evaluation = Evaluation(results=[result])
+        policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
 
-        assert block_holds_reap(result.gate.value, defers_to_owner=result.defers_to_owner) is True
-        # Even a producer that wrongly claimed the deferral cannot open the path on a gate
-        # the deferral list does not name. The two conditions are independent on purpose.
-        assert block_holds_reap(result.gate.value, defers_to_owner=True) is True
-        assert (
-            decide_verdict(
-                protected=False,
-                blocked=True,
-                blocked_holds_reap=reap_held_by_blocks([result]),
-                score=100,
-                coverage_bp=10_000,
-                condemn_at=1,
-                coverage_floor_bp=0,
-                override="reap",
-            )
-            == "protect"
-        )
+        assert result.blocked is True
+        # Un-overridden, at a score that would otherwise condemn twice over.
+        assert _verdict(evaluation, 100, 10_000, policy) == "abstain"
+        # And the owner may still settle it by hand.
+        assert _verdict(evaluation, 100, 10_000, policy, override="reap") == "condemn"
 
     def test_enough_watchers_still_protect_on_a_short_history(self) -> None:
         """The lower bound only ever *understates*. Three people seen inside the covered

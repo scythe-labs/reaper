@@ -635,8 +635,10 @@ class TestATruncatedMirrorCannotClearTheConflict:
         Where the mirror does not reach back to when ANY prunable season arrived, every one
         of them conflicts against every kept season regardless of the counts: each count is
         a lower bound and more history can always lift it above the others. Nothing is
-        auto-approvable and, because every conflict carries ``shortfall``,
-        ``season_scan.guard_result`` refuses the hand reap on all of them too.
+        auto-approvable, so TV pruning is inert on such a show until the mirror catches up
+        or a human decides -- and because every conflict carries ``shortfall``,
+        ``season_scan.guard_result`` marks all of them as comparisons it did not make, which
+        is what the operator's chip says on the card.
 
         This is the prime directive's answer, not a defect -- but the docstring of
         ``_detect_conflicts`` once claimed the detector did *not* degenerate this way, and
@@ -664,7 +666,7 @@ class TestATruncatedMirrorCannotClearTheConflict:
             (3, 5),
         ]
         assert plan.auto_approvable is False
-        # All refused, so none of them releases a hand reap either.
+        # All of them carry the reason, so none of them is reported as a comparison made.
         assert all(c.shortfall == SHORT for c in plan.conflicts)
         # And no message asserts a count off a mirror that cannot support one.
         assert not any("0 people watched" in c.message for c in plan.conflicts)
@@ -725,21 +727,30 @@ class TestATruncatedMirrorCannotClearTheConflict:
         )
         message = plan.conflicts[0].message
         assert message == (
-            "Reaper cannot tell whether Season 1 is watched more than Season 3, which it is "
-            "keeping because it is one of the newest seasons your rule keeps. Kept for now, "
-            "since your watch history only goes back 12 months."
+            "Reaper cannot tell whether Season 1 is watched more than Season 3, since your "
+            "watch history only goes back 12 months. Season 3 is kept because it is one of "
+            "the newest seasons your rule keeps. Left for you to decide instead of removing "
+            "it."
         )
         # Rule 21: no em dashes in operator copy. Escaped rather than written literally, so
         # the assertion does not itself smuggle the character ruff bans (RUF001).
         assert "\u2014" not in message and "\u2013" not in message
 
-    def test_a_refused_conflict_does_not_invite_a_reap_the_engine_will_decline(self) -> None:
-        """Both refused shapes hold the hand reap (``season_scan.guard_result`` sets
-        ``defers_to_owner=False`` for each), so neither may close with the deferral phrase.
-        An operator who acts on "Left for you to decide" gets the reap refused and a generic
-        "a protection couldn't be checked" in place of the sentence they acted on.
+    def test_every_conflict_shape_invites_the_decision_the_engine_now_honors(self) -> None:
+        """The closing phrase and the reap must agree, in whichever direction they point.
 
-        Only the made comparison keeps the phrase, because only it is theirs to overrule.
+        This was briefly split. While a blocked gate still held a hand reap, the two refused
+        shapes ended "Kept for now" instead, because inviting a decision the engine would
+        refuse is rule 92's failure pointed at operator copy: an operator who acts on "Left
+        for you to decide" got the reap declined and a generic "a protection couldn't be
+        checked" in place of the sentence they acted on. ``engine.verdict`` no longer works
+        that way, so all three shapes are the operator's to settle and the split would now be
+        the misleading half. Swept over all three rather than asserted on one, because the
+        failure mode is one shape drifting away from the others.
+
+        What does NOT depend on the reversal, and is asserted beside it: no refused shape
+        states a watcher count it cannot stand behind. That was the other half of the same
+        fix and it survives the reap changing hands.
         """
         common = {
             "series_title": "Show",
@@ -760,12 +771,17 @@ class TestATruncatedMirrorCannotClearTheConflict:
             **common,  # type: ignore[arg-type]
             watchers_by_season={1: 9, 2: 0, 3: 1},
         )
-        for plan in (unsupported, unreadable):
+        for plan in (unsupported, unreadable, settleable):
             message = plan.conflicts[0].message
-            assert "Left for you to decide" not in message
-            assert message.endswith("Kept for now.") or "Kept for now, since " in message
-        # The one shape a hand reap may overrule still says so.
-        assert "Left for you to decide instead of removing it." in settleable.conflicts[0].message
+            assert message.endswith("Left for you to decide instead of removing it.")
+            assert "Kept for now" not in message
+        # The two Reaper could not settle still assert no arithmetic. The unsupported one
+        # cannot stand behind its own count; the unreadable one cannot stand behind the
+        # kept season's.
+        assert "0 people watched" not in unsupported.conflicts[0].message
+        assert "more than watched" not in unreadable.conflicts[0].message
+        # ...while the comparison that WAS made still states it.
+        assert "more than watched Season 3" in settleable.conflicts[0].message
 
     def test_an_unreadable_kept_count_never_prints_a_bound_as_a_measurement(self) -> None:
         """The pruned season's own shortfall rides on the conflict even when what could not

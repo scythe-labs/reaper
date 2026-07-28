@@ -18,12 +18,16 @@ make **everything** decide on the stored integer.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from reaper.engine.gates import ABSTAIN, PROTECT, Evaluation, GateId, GateResult
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
+from reaper.engine.signals import Score
 from reaper.engine.verdict import decide_verdict
-from reaper.services.snapshot import _verdict
+from reaper.services.condemned import reap_override_verdict_decoded
+from reaper.services.snapshot import _explain, _verdict
 
 CLEAN = Evaluation(
     results=[GateResult(GateId.RATING_FLOOR, ABSTAIN, detail="checked: not well-rated enough")]
@@ -147,9 +151,21 @@ class TestRowsTheSimulatorMustNotReDecide:
 
 
 class TestAReapOverrideForcesCondemnButNeverPastSafety:
-    """A manual ``reap`` is the owner looking at the item and overruling the score. It must
-    beat the *cautious* protections -- but never a hard safety gate, and never a protection
-    that could not be checked. Getting this wrong deletes a file someone is watching."""
+    """A manual ``reap`` is the owner looking at the item and overruling the score.
+
+    It beats every *cautious* protection -- fired or merely unverifiable -- and stops only
+    at a structural gate that FIRED (:data:`verdict.STRUCTURAL_GATES`: streaming right now,
+    or a file no *arr manages). Getting the structural half wrong deletes a file someone is
+    watching.
+
+    The unverifiable half reversed deliberately, and these tests carry the new answer rather
+    than the old one. A blocked gate means Reaper could not answer a question; the owner
+    standing at the panel that names the failed check can answer it. What replaced the
+    scan-time hold is a live read at send time -- ``executor._being_watched_now`` re-polls
+    Plex per item and spares on ANY failure to read, pinned by
+    ``test_reap_loop.py::TestStreamingVeto::test_plex_unreadable_fails_closed`` -- plus
+    ``executor._watched_since_approval`` and the transport guard beneath both.
+    """
 
     def test_a_reap_override_condemns_an_item_that_scored_far_too_low(self) -> None:
         """Score 0 against a threshold of 100 -- nothing would condemn this on its own. The
@@ -176,8 +192,19 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
 
         assert _verdict(unmanaged, 100, 10_000, policy, override="reap") == "protect"
 
-    def test_a_reap_override_yields_when_a_protection_could_not_be_checked(self) -> None:
-        """If we could not confirm nobody is streaming it, we do not force-delete it."""
+    def test_a_reap_override_passes_a_streaming_check_that_could_not_run(self) -> None:
+        """The reversal, on the gate where it reads worst -- and the reason it is still safe.
+
+        A *blocked* streaming gate is "we could not read who is playing", frozen minutes or
+        hours before anything is sent. It no longer holds the reap, because the check that
+        decides this now happens at send time: ``executor._being_watched_now`` re-polls Plex
+        for this very item and returns "watched" on any read failure, so the live veto both
+        supersedes the scan-time guess and fails closed where the scan could only guess. A
+        *fired* streaming gate is a different claim and still holds it (above).
+
+        With no override the block still does its whole job one line down: ABSTAIN, so no
+        automatic path touches the item. Both are asserted, because the value of this change
+        is exactly that a human may say otherwise while nothing else may."""
         blocked = Evaluation(
             results=[
                 GateResult(
@@ -187,7 +214,137 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         )
         policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
 
-        assert _verdict(blocked, 100, 10_000, policy, override="reap") == "protect"
+        assert _verdict(blocked, 100, 10_000, policy) == "abstain"
+        assert _verdict(blocked, 100, 10_000, policy, override="reap") == "condemn"
+
+    @pytest.mark.parametrize(
+        "gate",
+        [
+            GateId.SERVER_POPULARITY,
+            GateId.CUSTOM,
+            GateId.MIN_DORMANCY,
+            GateId.SEASON_PROGRESSION,
+        ],
+        ids=lambda g: str(g.value),
+    )
+    def test_a_reap_override_condemns_past_any_gate_that_could_not_be_checked(
+        self, gate: GateId
+    ) -> None:
+        """Swept across four distinct gates, not one, because the old rule was expressed as
+        a gate-id membership test and a single case cannot tell "no gate holds" from "this
+        gate is on the permitted list". ``min_dormancy`` is in the sweep deliberately: it is
+        the gate ``engine.gates`` calls the most important one, so if any block were still to
+        hold, that is the block a reader would expect it to be.
+
+        The paired ABSTAIN is what keeps this from reading as a blanket loosening. A block
+        still keeps the item out of every automatic path; all that changed is that the owner
+        may answer it."""
+        blocked = Evaluation(
+            results=[GateResult(gate, ABSTAIN, detail="could not check it", blocked=True)]
+        )
+        policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
+
+        assert _verdict(blocked, 100, 10_000, policy) == "abstain"
+        assert _verdict(blocked, 100, 10_000, policy, override="reap") == "condemn"
+
+    #: One row per shape a reap can meet, with the answer written out by hand from
+    #: ``engine.verdict``'s docstring rather than derived from either implementation
+    #: (rule 119). Used by the agreement sweep below.
+    _REAP_SHAPES: tuple[tuple[str, list[GateResult], str], ...] = (
+        ("nothing fired, nothing blocked", [], "condemn"),
+        (
+            "a cautious protection fired",
+            [GateResult(GateId.RATING_FLOOR, PROTECT, detail="IMDb 8.2 -- above your floor")],
+            "condemn",
+        ),
+        (
+            "something is playing right now",
+            [GateResult(GateId.STREAMING_NOW, PROTECT, detail="being watched right now")],
+            "protect",
+        ),
+        (
+            "no *arr manages the file",
+            [GateResult(GateId.UNMANAGED, PROTECT, detail="no *arr manages this file")],
+            "protect",
+        ),
+        (
+            "a popularity check that could not run",
+            [GateResult(GateId.SERVER_POPULARITY, ABSTAIN, detail="could not check", blocked=True)],
+            "condemn",
+        ),
+        (
+            "a streaming check that could not run",
+            [GateResult(GateId.STREAMING_NOW, ABSTAIN, detail="could not check", blocked=True)],
+            "condemn",
+        ),
+        (
+            "a season conflict the guard settled",
+            [
+                GateResult(
+                    GateId.SEASON_PROGRESSION,
+                    ABSTAIN,
+                    detail="watched more than a season your rule keeps",
+                    blocked=True,
+                    defers_to_owner=True,
+                )
+            ],
+            "condemn",
+        ),
+        (
+            "a season conflict the guard refused to settle",
+            [
+                GateResult(
+                    GateId.SEASON_PROGRESSION,
+                    ABSTAIN,
+                    detail="could not check who watched Season 4",
+                    blocked=True,
+                    defers_to_owner=False,
+                )
+            ],
+            "condemn",
+        ),
+        (
+            "a structural stop beside a check that could not run",
+            [
+                GateResult(GateId.STREAMING_NOW, PROTECT, detail="being watched right now"),
+                GateResult(
+                    GateId.SERVER_POPULARITY, ABSTAIN, detail="could not check", blocked=True
+                ),
+            ],
+            "protect",
+        ),
+    )
+
+    @pytest.mark.parametrize(("label", "results", "expected"), _REAP_SHAPES, ids=lambda x: x)
+    def test_the_scan_and_the_stored_row_reap_the_same_item_the_same_way(
+        self, label: str, results: list[GateResult], expected: str
+    ) -> None:
+        """Rule 3/22 for the reap branch: TWO production callers, one answer per shape.
+
+        ``snapshot._verdict`` decides with the live evaluation in hand and passes
+        ``blocked_holds_reap=False``; ``condemned.reap_override_verdict_decoded`` re-decides
+        the same item hours later off nothing but the frozen explanation, and passes
+        ``bad_match or unreadable``. Those two arguments are written independently, so they
+        are exactly the kind of pair that drifts -- and the drift is invisible, because each
+        caller serves a different surface: the scan sets the row's verdict, the stored path
+        answers the queue's Reap button, the plan and the executor's per-item re-read.
+
+        The frozen explanation is produced by the real writer (``snapshot._explain``) from
+        the same ``Evaluation``, never hand-typed, so a field the writer stops emitting
+        fails here instead of silently changing what the read side can see. The expected
+        answer is written out in ``_REAP_SHAPES`` from the decision's spec, so a shape both
+        callers get wrong together still fails."""
+        evaluation = Evaluation(results=results)
+        policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 100})
+        stored = json.loads(
+            _explain(evaluation, Score(value=42.0, coverage=1.0, results=[]), policy)
+        )
+
+        scan = _verdict(evaluation, 42, 10_000, policy, override="reap")
+        stored_row = reap_override_verdict_decoded(stored, score=42)
+
+        assert scan == expected, label
+        assert stored_row == expected, label
 
     def test_a_reap_override_beats_a_soft_protection_like_a_rating_floor(self) -> None:
         """A rating floor is a *cautious* keep, not a safety guarantee -- the owner may
@@ -216,15 +373,55 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
         assert _verdict(conflict, 90, 10_000, policy) == "abstain"
         assert _verdict(conflict, 90, 10_000, policy, override="reap") == "condemn"
 
-    def test_a_reap_override_still_yields_when_the_season_guard_could_not_run(self) -> None:
-        """Belt-and-suspenders: a deferrable gate whose block is a real plumbing failure
-        still holds the reap. The gate id alone never opens a fail-open path, so a failure
-        on the season guard is treated like any unchecked protection.
+    def test_the_wording_of_a_season_block_decides_nothing_either_way(self) -> None:
+        """The three season-guard block shapes reach ONE verdict, and no sentence moves it.
 
-        Note what carries it: the result simply does not claim ``defers_to_owner``, which
-        is the default. That is the fix for the arm that shipped broken -- it used to be
-        inferred from the detail starting "could not check", and the one real message it
-        had to catch opens with the watcher count instead."""
+        This used to be the fail-closed half: a conflict whose comparison was refused held
+        the reap while the settleable one released it, and the arm meant to tell them apart
+        tested ``detail.startswith("could not check")`` -- which the one message it existed
+        for never matched, because that message opens with the watcher count. The split is
+        gone, so the wording trap cannot come back through this door; what remains asserted
+        is that it decides nothing.
+
+        ``defers_to_owner`` is still set and still varied here, because it still picks the
+        operator's chip (``api.routes._chip``, pinned in ``test_review_chips.py``). It must
+        not pick the verdict. Each shape also abstains with no override -- the item still
+        goes to a human first."""
+        details = {
+            # The settleable comparison: made, and the keep rule lost it.
+            True: (
+                "40 people watched Season 1, more than watched Season 4, which Reaper is "
+                "keeping because it is one of the newest seasons your rule keeps. Left for "
+                "you to decide instead of removing it."
+            ),
+            # The refused one, in the wording the guard really emits: the count comes first,
+            # so a prefix test never saw the refusal.
+            False: (
+                "40 people watched Season 1. Reaper could not check who watched Season 4, "
+                "which it is keeping because it is one of the newest seasons your rule "
+                "keeps. Left for you to decide instead of removing it."
+            ),
+        }
+        policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
+
+        for defers, detail in details.items():
+            conflict = Evaluation(
+                results=[
+                    GateResult(
+                        GateId.SEASON_PROGRESSION,
+                        ABSTAIN,
+                        detail=detail,
+                        blocked=True,
+                        defers_to_owner=defers,
+                    )
+                ]
+            )
+
+            assert _verdict(conflict, 100, 10_000, policy) == "abstain", defers
+            assert _verdict(conflict, 100, 10_000, policy, override="reap") == "condemn", defers
+
+        # And a plumbing failure on the same gate, whose detail DOES carry the retired
+        # prefix, lands in the same place. The prefix is not a hold and never was one.
         plumbing = Evaluation(
             results=[
                 GateResult(
@@ -235,29 +432,6 @@ class TestAReapOverrideForcesCondemnButNeverPastSafety:
                 )
             ]
         )
-        policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
 
-        assert _verdict(plumbing, 100, 10_000, policy, override="reap") == "protect"
-
-    def test_a_conflict_whose_comparison_was_refused_holds_the_reap(self) -> None:
-        """The same fail-closed arm in the wording the season guard really emits, which is
-        what made this reachable: the message names the count first and only then says the
-        comparison could not be made, so ``startswith("could not check")`` never saw it and
-        a hand reap removed the season. Nothing about the wording decides it now."""
-        refused = Evaluation(
-            results=[
-                GateResult(
-                    GateId.SEASON_PROGRESSION,
-                    ABSTAIN,
-                    detail=(
-                        "40 people watched Season 1. Reaper could not check who watched "
-                        "Season 4, which it is keeping because it is one of the newest "
-                        "seasons your rule keeps. Kept for now."
-                    ),
-                    blocked=True,
-                )
-            ]
-        )
-        policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 1})
-
-        assert _verdict(refused, 100, 10_000, policy, override="reap") == "protect"
+        assert _verdict(plumbing, 100, 10_000, policy) == "abstain"
+        assert _verdict(plumbing, 100, 10_000, policy, override="reap") == "condemn"

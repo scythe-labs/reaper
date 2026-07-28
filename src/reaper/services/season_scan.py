@@ -419,18 +419,24 @@ def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
     was one Reaper could actually make. ``_detect_conflicts`` raises a conflict in three
     shapes:
 
-    * the kept season's count was read and the rule lost it -- the deliberate "you decide"
-      flag, and the only one a hand reap is entitled to overrule;
+    * the kept season's count was read and the rule lost it -- a comparison Reaper made;
     * that count could NOT be read (``kept_watchers is None`` -- on disk, but never resolved
-      in Plex), a plumbing failure held fail-closed like any other;
+      in Plex), a plumbing failure;
     * the watch mirror does not reach back to when one of the two seasons arrived
       (``shortfall``), so the count it reports for that season is a lower bound and more
       history could overturn the outcome either way.
 
     All three are blocked and all three send the item to a human. The last two are
     ``Unknown``, not a decision (rule 93): there is no comparison for the operator to
-    settle, only evidence too thin to make one, so they hold the hand reap as well
-    (``verdict.block_holds_reap``). Read off typed fields, never the wording (rule 142).
+    *settle*, only evidence too thin to make one.
+
+    **That distinction no longer decides a hand reap, and the flag is no longer an
+    interlock.** A blocked gate does not hold a reap at all now -- see ``engine.verdict``
+    -- so all three shapes are overrulable by hand, and the flag survives only to pick the
+    operator's chip in ``api.routes._chip``. Keeping the last two un-overrulable is exactly
+    what made a short watch mirror refuse every TV reap on the server, which is the
+    opposite of what "evidence too thin" should cost someone who can see the library
+    themselves. Read off typed fields, never the wording (rule 142).
     """
     for protected in plan.protected:
         if protected.season_number == season_number:
@@ -440,18 +446,16 @@ def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
                 detail=protected.reason,
                 # A season held because the guard could not be ANSWERED is blocked as well
                 # as protecting: `Evaluation.could_not_be_checked` selects on `blocked`
-                # independently of the outcome, so the result rides in
-                # `protections_unknown` too and `verdict.block_holds_reap` holds a hand reap
-                # on it (`defers_to_owner` stays False -- there is no comparison for the
-                # operator to settle, only a mirror too short to make one).
+                # independently of the outcome, so the result rides in `protections_unknown`
+                # and the panel shows it amber, "could not check", rather than green
+                # "checked and passed" (rule 93). That is what `blocked` buys here.
                 #
-                # Without this it was a plain PROTECT, and a PROTECT on this gate does NOT
-                # hold a hand reap: `condemned.reap_override_verdict_decoded` reads
-                # `safety_protected` off `verdict.STRUCTURAL_GATES`, which carries only
-                # STREAMING_NOW and UNMANAGED. So the blanket hold -- by emptying
-                # `prunable`, which is what `_detect_conflicts` iterates -- silently
-                # retired the keep-rule conflict that used to hold exactly these seasons,
-                # and a season a hand reap was refused on became one a hand reap deletes.
+                # It no longer buys anything against a hand reap -- no blocked gate does
+                # (`engine.verdict`) -- so the rule 143 argument this line was originally
+                # added for has lapsed: PROTECT and blocked are now equally overrulable, and
+                # only a FIRED structural gate refuses. The flag stays because the
+                # Known/Absent/Unknown distinction is true and the operator is entitled to
+                # see which one this is, which was always the better reason.
                 blocked=protected.unestablishable,
             )
 
@@ -464,18 +468,17 @@ def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
     matching = [c for c in plan.conflicts if c.pruned_season == season_number]
     if matching:
         # A refused comparison wins, and it decides the message as well as the flag.
-        # Reading only the first conflict let a readable one mask an unread one: the flag
-        # said "compared", the hand reap removed the season, and the operator saw only the
-        # conflict that HAD been compared, so nothing ever told them one had not. That is
-        # #84's own class reached a second way. Reporting the refused conflict keeps the
-        # sentence and the decision the same fact (rule 92) and puts the season nobody
-        # could read in front of the operator.
+        # Reading only the first conflict let a readable one mask an unread one, so the
+        # operator saw only the comparison that HAD been made and nothing ever told them
+        # one had not. That is now a reporting bug rather than a reap bug -- the reap is
+        # theirs either way -- but it is the same bug: the sentence and the flag must come
+        # from the same conflict (rule 92), and the season nobody could read is the one
+        # worth putting in front of them.
         #
         # Both non-comparisons count as refused, and for the same reason: a count nobody
         # could take and a count taken over a mirror that cannot support it are equally
-        # unable to settle "is this watched more than the season you keep". Reading only
-        # `kept_watchers is None` here would have released the reap on the truncated one
-        # while `_detect_conflicts` was holding it (#94).
+        # unable to settle "is this watched more than the season you keep", so neither may
+        # be reported as a comparison Reaper made.
         refused = next(
             (c for c in matching if c.kept_watchers is None or c.shortfall is not None), None
         )

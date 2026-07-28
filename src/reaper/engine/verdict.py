@@ -12,18 +12,37 @@ tuning.
 The decision, in order:
 
 1. A hand ``reap`` override condemns -- the owner looked and decided -- but never past a
-   hard safety stop (something streaming right now; an unmanaged file too, though that
-   gate is retired and only a stored explanation can still carry one, see
-   :data:`STRUCTURAL_GATES`) or a protection that could not be *checked*; those still
-   protect. A block that is a deliberate "the
-   owner should decide" flag (the keep-rule conflict) is the one exception a reap does
-   overrule -- the reap IS the decision it asked for (see :func:`block_holds_reap`).
-2. A protection that fired protects.
-3. A protection that could not be checked, or a keep-rule conflict flagged for a human,
+   hard safety stop: something streaming right now, or an unmanaged file (that gate is
+   retired, so only a stored explanation can still carry one). See
+   :data:`STRUCTURAL_GATES`, and note those two are stops of a different KIND from every
+   other protection here. They are not cautious judgments about whether a file is wanted;
+   they are facts about whether it can be removed at all. Deleting mid-stream breaks a
+   playing session, and a file no *arr manages has no path to delete through, so
+   overruling either does not get the owner what they asked for.
+2. A protection that could not be *checked* does NOT hold a hand reap. That is a
+   deliberate choice and it reverses an earlier one. A block means Reaper could not
+   answer a question; the owner standing at the panel, reading exactly which check came
+   back empty, can answer it, and refusing them is Reaper overruling the better-informed
+   party. The alternative is worse for safety, not better: an operator whose shallow
+   watch history makes every reap bounce deletes the file outside Reaper instead, with no
+   journal, no interlocks and no record.
+
+   What still protects them is the layer that cannot be argued with, and it is a live read
+   rather than a frozen guess: ``services.executor._being_watched_now`` re-polls Plex per
+   item at send time and spares on ANY failure to read, and
+   ``services.executor._watched_since_approval`` refuses an item played since the operator
+   approved it. Underneath both, the transport guard refuses any mutation unless the host
+   is armed and the intent was journalled first. A scan-time block was never the last line
+   of defense and was the wrong place to hang this.
+3. A protection that fired protects.
+4. A protection that could not be checked, or a keep-rule conflict flagged for a human,
    abstains: not being able to look -- or looking and finding the rule fights the
-   evidence -- is not the same as looking and finding nothing.
-4. Coverage below the floor abstains: too little evidence to condemn on.
-5. At or above the threshold condemns; below it, abstain.
+   evidence -- is not the same as looking and finding nothing. Abstain is where a block
+   still does its whole job. It keeps the file out of every automatic path, so nothing is
+   removed on evidence Reaper could not gather; what changed is only that a HUMAN may now
+   say otherwise.
+5. Coverage below the floor abstains: too little evidence to condemn on.
+6. At or above the threshold condemns; below it, abstain.
 
 It decides on the STORED, ROUNDED integers (score, and coverage in basis points), never
 on underlying floats, so a surface that has only the stored row reaches the same verdict
@@ -32,88 +51,29 @@ as the scan that had everything in hand.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from reaper.engine.gates import GateId
 
-from reaper.engine.gates import GateId, GateResult
-
-#: The protections a manual "reap" override may NOT overrule -- a file that is streaming
-#: right now must not be deleted, and an unmanaged file has no path to delete through.
-#: Everything else (dormancy, rating, popularity, a curated list, the keep list) is a
-#: *cautious* judgment the owner is entitled to overrule by hand.
+#: The ONLY protections a manual "reap" override may not overrule, and the reason they are
+#: the only two: neither is a judgment about whether the file is WANTED. Deleting a file
+#: that is streaming right now breaks a session someone is watching, and an unmanaged file
+#: has no path to delete through -- so overruling either cannot give the owner what they
+#: asked for. Everything else (dormancy, rating, popularity, a curated list, the keep list,
+#: the season keep-rule conflict) is a *cautious judgment*, and the owner is entitled to
+#: overrule a judgment by hand whether the protection FIRED or merely could not be CHECKED.
+#: The module docstring carries why "could not be checked" stopped holding.
 #:
 #: ``UNMANAGED`` is here for STORED EXPLANATIONS only: its gate was retired (see
 #: ``engine.gates``) because it could never fire, so no new scan can produce a fired
 #: ``unmanaged`` result. Keeping the id listed costs nothing and means that if one ever is
 #: read back off disk, it still holds a hand reap rather than becoming overrulable -- the
 #: keep direction. Removing it would be the only change here that could release a file.
-STRUCTURAL_GATES = frozenset({GateId.STREAMING_NOW, GateId.UNMANAGED})
-
-#: Gates whose *blocked* result MAY be a deliberate "the owner should decide" flag rather
-#: than a source Reaper could not read. Today: the season keep-rule conflict
-#: (``season_scan.guard_result``) -- a season the keep rule would prune, but that was
-#: watched MORE than a season the rule keeps, so Reaper refuses to auto-approve and leaves
-#: the call to a human. Like any block it forces ABSTAIN (needs a look) when the owner has
-#: not decided, but a hand *reap* overrules it: the reap IS the decision the flag asked
-#: for. This is the opposite of a protection that could not be checked (a plumbing
-#: failure), which still holds a reap, fail-closed.
 #:
-#: Membership is necessary and NOT sufficient. A gate listed here still emits *blocked*
-#: results for real plumbing failures -- the keep-rule conflict does exactly that when the
-#: kept season's watcher count could not be read at all -- so the second condition is the
-#: per-result ``GateResult.defers_to_owner`` flag, which its producer must set explicitly
-#: (see :func:`block_holds_reap`). Two independent conditions, and BOTH fail closed: the
-#: gate id alone can never open a fail-open path, and neither can a producer that forgets.
-DEFERRABLE_BLOCK_GATES = frozenset({GateId.SEASON_PROGRESSION})
-_DEFERRABLE_GATE_VALUES = frozenset(g.value for g in DEFERRABLE_BLOCK_GATES)
-
-
-def block_holds_reap(gate_value: str, *, defers_to_owner: bool) -> bool:
-    """Whether one *blocked* gate result must still hold a hand reap.
-
-    A block holds a reap by default: not being able to confirm a protection is not
-    permission to remove the file (fail-closed). The one exception needs BOTH halves --
-    a gate in :data:`DEFERRABLE_BLOCK_GATES` *and* a result whose producer set
-    ``defers_to_owner``, meaning it is a deliberate "you decide this" flag. A hand reap IS
-    that decision, so that one combination does not hold.
-
-    ``defers_to_owner`` used to be inferred here from the detail text -- a
-    ``could not check ...`` prefix was read as the plumbing failure that keeps a
-    deferrable gate fail-closed. It never fired. The one message that arm exists for is
-    the keep-rule conflict whose kept season could not be read, and it opens with the
-    watcher count ("N people watched Season X. Reaper could not check who watched Season
-    Y..."), so the prefix never matched and a hand reap removed a season whose comparison
-    Reaper had explicitly refused to make. The wording could not simply be reordered
-    either: ``api.routes._chip`` positively matches inside that same string to pick the
-    operator's chip, so one string was carrying two consumers wanting opposite things from
-    it (rule 92). The flag is typed, so *this* decision no longer reads the sentence at all.
-
-    That is the whole span of the claim, and it is worth stating narrowly: the message is
-    still parsed elsewhere. ``api.routes._chip`` gates on the ``could not check`` prefix to
-    route the chip, and ``WhyPanel`` splits the same prefix into its check and cause halves
-    (``gates.py`` records that the prefix stays load-bearing for exactly those surfaces).
-    Rewording ``PruneConflict.message`` is safe for the reap decision and still needs those
-    two read first.
-
-    Takes primitives (a gate's string value and that flag) so the one classifier serves
-    both the GateResult path (scan, simulator replay) and the stored-explanation path
-    (``services.condemned.reap_override_verdict``) without a second transcription.
-    """
-    return not (gate_value in _DEFERRABLE_GATE_VALUES and defers_to_owner)
-
-
-def reap_held_by_blocks(results: Iterable[GateResult]) -> bool:
-    """True if any *blocked* result among ``results`` must hold a hand reap (fail-closed).
-
-    The GateResult-level companion to :func:`block_holds_reap`, so ``snapshot._verdict`` and
-    the simulator replay classify blocks the same way. A snapshot with no blocked result, or
-    only deferrable ones (the keep-rule conflict the owner is being asked to settle),
-    returns ``False`` -- a hand reap is honored. A single un-checkable protection returns
-    ``True`` and the reap is held.
-    """
-    return any(
-        r.blocked and block_holds_reap(r.gate.value, defers_to_owner=r.defers_to_owner)
-        for r in results
-    )
+#: Consulted for a gate that FIRED. A *blocked* structural gate -- "could not tell whether
+#: it is streaming" -- does not hold the reap, and does not need to:
+#: ``services.executor._being_watched_now`` re-polls Plex for every item at send time and
+#: returns "watched" on any read failure, so the live check both supersedes the scan-time
+#: one and fails closed where the scan could only guess.
+STRUCTURAL_GATES = frozenset({GateId.STREAMING_NOW, GateId.UNMANAGED})
 
 
 def decide_verdict(
@@ -134,14 +94,28 @@ def decide_verdict(
     OR a keep-rule conflict flagged the item for a human; either forces ABSTAIN when the
     owner has not decided. ``safety_protected`` -- a structural gate
     (:data:`STRUCTURAL_GATES`) fired; consulted only for a ``reap`` override, which beats
-    the cautious protections but never a safety stop. ``blocked_holds_reap`` -- of the
-    blocking, whether it must still hold a hand reap; defaults to ``blocked`` (every block
-    holds, the fail-closed default). A caller that can tell a "you decide" deferral (the
-    keep-rule conflict) from a "could not check" plumbing failure passes the narrower value
-    (see :func:`reap_held_by_blocks`), so a hand reap overrules the deferral it was asked to
-    settle but never a block Reaper could not confirm. ``override`` is the owner's hand
-    decision: ``"reap"`` forces condemn past cautious protections and a deferral; a
-    ``"spare"`` is expressed upstream as an injected PROTECT result and needs no case here.
+    every cautious protection but never a structural stop.
+
+    ``blocked_holds_reap`` -- whether anything about this item must hold a hand reap
+    *besides* a structural stop. **A gate that could not be checked is no longer one of
+    those things**, so both production reap callers pass a value that ignores gate blocks
+    entirely: ``snapshot._verdict`` passes ``False``, and
+    ``condemned.reap_override_verdict_decoded`` passes only its two non-gate holds -- a bad
+    Plex match (the row may not be the file the owner is looking at, so this is identity,
+    not judgment) and an explanation this code could not parse (they cannot consent to
+    reasons the panel never rendered). Neither is a protection; both are "we do not know
+    WHAT this is", which is a different question from "we could not check whether it is
+    wanted".
+
+    The parameter still defaults to ``blocked`` rather than to ``False``. That default is
+    now reached by nobody on the reap branch, and it is kept deliberately fail-closed so a
+    future caller that forgets to think about it inherits the cautious answer rather than
+    the permissive one -- the same reasoning that keeps ``UNMANAGED`` in
+    :data:`STRUCTURAL_GATES`.
+
+    ``override`` is the owner's hand decision: ``"reap"`` forces condemn past every
+    cautious protection, fired or unverifiable alike; a ``"spare"`` is expressed upstream
+    as an injected PROTECT result and needs no case here.
     """
     if blocked_holds_reap is None:
         blocked_holds_reap = blocked

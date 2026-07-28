@@ -30,12 +30,11 @@ from reaper.clock import utcnow
 from reaper.config import Settings
 from reaper.db.session import create_cache_engine
 from reaper.engine import identity
-from reaper.engine.gates import ABSTAIN, PROTECT, Evaluation, GateId, evaluate_all
+from reaper.engine.gates import ABSTAIN, PROTECT, Evaluation, GateId, GateResult, evaluate_all
 from reaper.engine.observation import Absent, Known, Unknown
 from reaper.engine.policy import DEFAULT_MOVIE_POLICY
 from reaper.engine.signals import SignalConfig
 from reaper.engine.signals import score as score_signals
-from reaper.engine.verdict import block_holds_reap
 from reaper.ratings import Rating, RatingSource
 from reaper.services import history_sync, lists, requested_by, season_scan
 from reaper.services.scan_runner import build_gates
@@ -302,6 +301,19 @@ class TestSeasonsFromRows:
 # ---------------------------------------------------------------------------
 
 
+def _hand_reap(result: GateResult) -> str:
+    """What a hand reap does to a season carrying this one guard result.
+
+    Through the scan's own adapter onto the single decision function
+    (``snapshot._verdict``), never a transcription of the argument it passes: the whole
+    point of these assertions is that the guard's typed fields reach the real decision, and
+    a test that re-stated the decision would agree with itself (rules 3/22, 119). Scored 0
+    against a threshold of 100, so nothing but the override can produce a condemn.
+    """
+    policy = DEFAULT_MOVIE_POLICY.model_copy(update={"condemn_at": 100})
+    return _verdict(Evaluation(results=[result]), 0, 10_000, policy, override="reap")
+
+
 class TestGuardResult:
     def test_a_protected_season_becomes_a_protecting_gate(self) -> None:
         plan = plan_series_prune(series_title="S", seasons=[_season(1), _season(2)], keep_last=1)
@@ -338,9 +350,12 @@ class TestGuardResult:
 
     def test_a_conflict_that_made_the_comparison_defers_to_the_owner(self) -> None:
         """Season 1 was watched 40 times against Season 4's once: the comparison WAS made
-        and the keep rule lost it. That is the deliberate "you decide" flag, so a hand reap
-        is the decision it asked for and the block does not hold it
-        (``verdict.block_holds_reap``)."""
+        and the keep rule lost it. That is the deliberate "you decide" flag, and a hand reap
+        is the decision it asked for.
+
+        The flag no longer decides the reap -- no block does -- but it still picks the chip
+        the operator reads (``api.routes._chip``), which is why it is still produced and
+        still asserted here. It is the one shape whose chip names the comparison."""
         plan = plan_series_prune(
             series_title="S",
             seasons=[_season(n) for n in range(1, 5)],
@@ -352,16 +367,20 @@ class TestGuardResult:
 
         assert result.blocked is True
         assert result.defers_to_owner is True
-        assert block_holds_reap(result.gate.value, defers_to_owner=result.defers_to_owner) is False
+        assert _hand_reap(result) == "condemn"
 
-    def test_a_conflict_whose_comparison_failed_holds_the_hand_reap(self) -> None:
+    def test_a_conflict_whose_comparison_failed_is_flagged_as_refused(self) -> None:
         """The other arm, and the one that shipped broken: Season 4 is kept by the rule but
         is on disk without ever being resolved in Plex, so nobody could read who watched it
-        (``kept_watchers=None``). ``_detect_conflicts`` holds the season rather than letting
-        an unread number clear a protection -- and then the Reap button released it anyway,
-        because the arm meant to catch this tested ``detail.startswith("could not check")``
-        while the message opens with the watcher count. It is a plumbing failure, so it
-        holds the reap; the wording is now free to change without moving that."""
+        (``kept_watchers=None``). ``_detect_conflicts`` still raises the conflict rather than
+        letting an unread number clear a protection, and the season still goes to a human.
+
+        What this arm used to carry was the hold on the hand reap, and the arm meant to
+        catch it tested ``detail.startswith("could not check")`` while the message opens with
+        the watcher count -- so the Reap button released the season anyway. The hold is gone
+        by decision, not by accident, so what is pinned now is the wording trap itself: the
+        message does not carry the retired prefix, the typed flag says which shape this is,
+        and neither one moves the verdict."""
         plan = plan_series_prune(
             series_title="S",
             seasons=[_season(n) for n in range(1, 5)],
@@ -373,11 +392,8 @@ class TestGuardResult:
 
         assert result.blocked is True
         assert result.defers_to_owner is False
-        assert block_holds_reap(result.gate.value, defers_to_owner=result.defers_to_owner) is True
-        # The wording is what used to decide this, so pin that it no longer can: the
-        # message does not carry the prefix the old arm looked for, and the reap is held
-        # regardless.
         assert not result.detail.startswith("could not check")
+        assert _hand_reap(result) == "condemn"
 
     def test_a_readable_conflict_does_not_mask_a_refused_one_on_the_same_season(self) -> None:
         """One pruned season carries a conflict per kept season, so both shapes at once --
@@ -386,9 +402,12 @@ class TestGuardResult:
         ``_detect_conflicts`` calls the commonest: Season 5 is on disk but not yet resolved
         in Plex, so it is kept AND unreadable while Seasons 1 and 4 read fine.
 
-        The flag answers for EVERY comparison behind the block, so one refusal holds it,
-        and the message follows the decision: the operator is shown the season nobody
-        could read rather than the one that happened to sort first."""
+        The flag answers for EVERY comparison behind the block, so one refusal decides it,
+        and the message follows the flag: the operator is shown the season nobody could read
+        rather than the one that happened to sort first. What the flag decides is now the
+        chip rather than the reap, and the precedence matters more for that, not less -- a
+        first-match read would tell them Reaper made a comparison it refused to make, on the
+        card they are deciding from."""
         plan = plan_series_prune(
             series_title="S",
             seasons=[_season(n) for n in range(1, 6)],
@@ -405,21 +424,23 @@ class TestGuardResult:
 
         assert result.blocked is True
         assert result.defers_to_owner is False
-        assert block_holds_reap(result.gate.value, defers_to_owner=result.defers_to_owner) is True
         # The message names the season that could not be read, not the ones that could.
         assert "could not check who watched Season 5" in result.detail
 
-    def test_a_conflict_the_mirror_could_not_settle_holds_the_hand_reap(self) -> None:
+    def test_a_conflict_the_mirror_could_not_settle_is_flagged_as_refused(self) -> None:
         """The third shape. Season 1 was watched before Tautulli was installed, so its count
         is a lower bound rather than an answer and no comparison against it can be made.
 
         That is ``Unknown``, not a decision (rule 93), so it belongs with the unreadable arm
-        and not with the deliberate "you decide" one: there is nothing for the operator to
-        settle, only a mirror too short to settle it -- the same reading the mid-binge hold
-        takes when the reach cannot establish who is part-way through. Reading only
-        ``kept_watchers is None`` here would have released the reap on it while
-        ``_detect_conflicts`` was holding it.
-        """
+        and not with the deliberate "you decide" one: Reaper made no comparison here, only a
+        mirror too short to make one -- the same reading the mid-binge hold takes when the
+        reach cannot establish who is part-way through. Reading only ``kept_watchers is
+        None`` would have grouped it with the settled shape and told the operator, on the
+        card, that a comparison had been made.
+
+        The flag no longer changes the verdict: the item still goes to a human, and the human
+        may still say remove it. It changes what they are told, which is the whole reason the
+        two Unknown shapes are kept apart from the settled one."""
         plan = plan_series_prune(
             series_title="S",
             seasons=[_season(n) for n in range(1, 5)],
@@ -432,8 +453,8 @@ class TestGuardResult:
 
         assert result.blocked is True
         assert result.defers_to_owner is False
-        assert block_holds_reap(result.gate.value, defers_to_owner=result.defers_to_owner) is True
         assert "cannot tell whether Season 1 is watched more than" in result.detail
+        assert _hand_reap(result) == "condemn"
 
     def test_a_settleable_conflict_is_not_masked_by_one_the_mirror_refused(self) -> None:
         """Same precedence the unreadable arm gets, for the same reason: one pruned season

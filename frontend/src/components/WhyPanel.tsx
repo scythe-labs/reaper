@@ -265,53 +265,48 @@ function KeptNotice({ match }: { match: Match | undefined }) {
 /** Is this abstain the keep-rule conflict -- a season the rule would prune but that was
  *  watched more than one it keeps, deliberately left for the owner?
  *
- *  KNOWN WRONG, tracked as #86, and stated here rather than implied because the consequence
- *  is operator-facing: the caller promises "Reap it to remove it" on what this returns true
- *  for. It used to mirror the backend, and no longer does. `engine.verdict.block_holds_reap`
- *  and `api.routes._chip` both stopped testing the wording, because the prefix test below is
- *  the one that shipped broken -- a conflict whose kept season could not be read at all opens
- *  with the watcher count, so it does NOT start with "could not check" and reads here as a
- *  settleable conflict while the backend holds the reap. The typed answer is
- *  `GateResult.defers_to_owner`, and `GateOutcome` does not carry it: fixing this needs the
- *  field added to `api.schemas.GateOutcomeOut` and to `api.ts` first (rule 64), and a
- *  three-state one, since a stored row predating the flag can tell neither shape.
+ *  **#86's REAP HALF IS NOW FIXED, and not from this side.** A blocked gate no longer holds a
+ *  hand reap anywhere in the engine -- only a *fired* structural stop (streaming now,
+ *  unmanaged) does, see `engine/verdict.py` -- so "Reap it to remove it" is a promise the
+ *  backend keeps for every shape this returns true for, including the two it used to refuse.
+ *  The predicate being a wording test stopped being a *safety* divergence at that moment.
  *
- *  A THIRD message now lands on the same wrong side, so #86 covers one more shape than it
- *  did: a conflict the watch mirror could not settle (`PruneConflict.shortfall`, #94) opens
- *  "Reaper cannot tell whether Season N ...", which starts with neither prefix and so also
- *  reads as settleable here while `block_holds_reap` holds it. Recorded rather than fixed
- *  because the fix is the same one supply chain above, not another wording test (rule 142) --
- *  and worth knowing that widening the backend's hold widens this gap by construction.
+ *  WHAT IS STILL WRONG is the other half, and it is now the whole of it: the caller
+ *  (`verdictLook`) opens "This was watched more than a season your keep rule protects", which
+ *  is false for two of the three conflict shapes. A conflict raised because the watch mirror
+ *  could not settle it (`PruneConflict.shortfall`, #94) prints "Reaper cannot tell whether
+ *  Season N ..." in `LeftForYou` two blocks below -- so the panel asserts a comparison and its
+ *  own reason block denies it, on one screen, and the season may have no recorded plays at
+ *  all. Same for the shape whose kept count could not be read.
  *
- *  TWO things go wrong downstream of this shape, and only the first was written down. The
- *  caller (`verdictLook`) promises "Reap it to remove it", which the engine refuses -- and it
- *  ALSO opens "This was watched more than a season your keep rule protects", which for this
- *  shape is the verbatim negation of the sentence `LeftForYou` prints two blocks below
- *  ("Reaper cannot tell whether ..."). The season may have no recorded plays at all. So the
- *  panel asserts a comparison, and its own reason block denies it, on one screen.
+ *  That is a copy defect rather than a safety one, so it stays with #86 and its mockup rather
+ *  than riding along here. The fix is unchanged and is still the supply chain, not another
+ *  wording test (rule 142): `GateResult.defers_to_owner` -> `api.schemas.GateOutcomeOut` ->
+ *  `api.ts` (rule 64), three-state, since a stored row predating the field distinguishes
+ *  neither shape. The flag still exists and is still set for exactly this purpose; it just no
+ *  longer decides the reap.
  *
- *  Reachability changed with it, which is why this is worth re-reading rather than filing
- *  under "known". Before #94 the gap needed a season Plex had never resolved -- rare. The
- *  shortfall arm fires wherever the watch history is shallower than the library is old, so on
- *  those servers it is the DEFAULT rendering for TV, not an edge case. The copy is left alone
- *  here deliberately: making the headline true of all three shapes is a wording change to an
- *  operator-facing surface, which belongs with #86's real fix and its mockup, not smuggled in
- *  beside a backend commit. */
+ *  Reachability, so nobody re-derives it: the shortfall arm fires wherever the watch history
+ *  is shallower than the library is old, which makes this the DEFAULT rendering for TV on such
+ *  a server, not an edge case. */
 function isKeepRuleConflict(item: CandidateDetail): boolean {
   return item.explanation.protections_unknown.some(
     (o) => o.gate === "season_progression" && !o.detail.startsWith("could not check"),
   );
 }
 
-/** Why a hand reap is still held -- the one thing the engine will not delete past. The
- *  keep-rule conflict is only CONDITIONALLY reap-overridable, so a held reap can be: something
- *  playing right now, a protection that genuinely could not be checked, or that conflict with
- *  its comparison refused or its flag missing (`engine.verdict.block_holds_reap`). The last of
- *  those lands on the "couldn't be checked" branch below, which is true of it -- a kept
- *  season's history really could not be read -- so the branches are right and only this
- *  sentence's premise had to change. The "no app manages it"
- *  branch below is a fourth only for a snapshot stored before that gate was retired
- *  (`engine/gates.py`); no new scan can produce one. */
+/** Why a hand reap is still held -- the one thing the engine will not delete past, and it is
+ *  now a much shorter list than these branches imply. Only a FIRED structural stop refuses a
+ *  reap: something playing right now, or a file no app manages. A protection that merely
+ *  could not be CHECKED no longer holds one (`engine/verdict.py`), so the "couldn't be
+ *  checked" branch below is reachable from the stored-row path's two non-gate holds -- a bad
+ *  Plex match, or an explanation that could not be parsed -- rather than from an ordinary
+ *  blocked gate. The "no app manages it" branch is for a snapshot stored before that gate was
+ *  retired (`engine/gates.py`); no new scan can produce one.
+ *
+ *  Kept as separate branches deliberately: they are what the operator is TOLD, and each still
+ *  names a real reason a reap did not go through. Collapsing them would trade an accurate
+ *  sentence for a shorter one. */
 function heldReapNote(item: CandidateDetail): string {
   const fired = new Set(item.explanation.protections_fired.map((o) => o.gate));
   if (fired.has("streaming_now")) {

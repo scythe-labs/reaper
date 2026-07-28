@@ -921,11 +921,11 @@ def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | Non
                 # half the time once the reach arm landed.
                 #
                 # The producer now says which shape this is, so read the flag rather than
-                # the sentence (rule 92). It is the SAME flag ``verdict.block_holds_reap``
-                # decides the reap on, read the SAME way (``is True``), so the chip and the
-                # decision cannot disagree -- and they did, back when both read the wording:
-                # the reap-honoring half matched a prefix the message never had while the
-                # chip matched inside it.
+                # the sentence (rule 92). This chip is now the flag's ONLY consumer: it used
+                # to also decide whether a hand reap was honored, and no longer does, because
+                # no blocked gate holds a hand reap (see ``engine.verdict``). Nothing about
+                # the chip changes with that -- "did Reaper actually make this comparison" is
+                # worth telling the operator whether or not it gates anything.
                 #
                 # A row frozen before the flag carries no key, and nothing in it can tell a
                 # made comparison from a refused one -- the wording that used to stand in

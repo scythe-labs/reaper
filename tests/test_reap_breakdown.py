@@ -53,11 +53,23 @@ def _explain(adds: list[str], *, keeps: list[str] | None = None) -> str:
     return json.dumps({"signals": signals, "protections_fired": [], "protections_unknown": []})
 
 
-def _blocked_explain() -> str:
-    """A frozen explanation the reap-override path reads as BLOCKED (a protection it could not
-    check), so a hand reap on it is refused, never honored."""
+def _refused_explain(*, match: object = None) -> str:
+    """A frozen explanation whose hand reap ``condemned.reap_override_verdict`` refuses.
+
+    Two shapes are left that do (``engine.verdict``): a *fired* structural gate, and a row
+    whose identity is in doubt. A protection that merely could not be CHECKED is no longer
+    one of them, which is why this helper stopped building one -- a fixture that still did
+    would report zero held reaps and the assertions below would pass on an empty set.
+    """
     return json.dumps(
-        {"signals": [], "protections_fired": [], "protections_unknown": [{"gate": "keep_list"}]}
+        {
+            "signals": [],
+            "protections_fired": (
+                [] if match else [{"gate": "streaming_now", "detail": "playing right now"}]
+            ),
+            "protections_unknown": [],
+            **({"match": match} if match else {}),
+        }
     )
 
 
@@ -338,8 +350,40 @@ async def test_a_hand_reap_joins_the_net(session: AsyncSession) -> None:
 
 
 async def test_a_refused_hand_reap_is_reported_as_held(session: AsyncSession) -> None:
-    """A hand reap on a row the engine can't confirm safe (a blocked protection) is HELD: not
-    in the net, but counted so the operator's mark is not silently dropped (PR-2)."""
+    """A hand reap the engine refuses is HELD: not in the net, but counted so the operator's
+    mark is not silently dropped (PR-2).
+
+    Both surviving refusals are seeded, because they refuse for unrelated reasons and the
+    breakdown must count either: a structural stop (something playing right now) and a row
+    whose Plex match Reaper could not read, so it does not know what the row even is.
+    """
+    snap = await _snapshot(session)
+    await _add(session, snapshot_id=snap, media_key="radarr:1:1")  # condemned by policy
+    for key, explanation in (
+        ("radarr:1:9", _refused_explain()),
+        ("radarr:1:10", _refused_explain(match={"status": "unmatched"})),
+    ):
+        await _add(
+            session, snapshot_id=snap, media_key=key, verdict="abstain", explanation=explanation
+        )
+        await whitelist.set_override(session, media_key=key, title="x", decision="reap", note=None)
+
+    report = await breakdown.reap_breakdown(session)
+
+    assert report.hand_reaped == 0  # the refused reaps are not honored, so not in the net
+    assert report.hand_reaped_held == 2  # but they are reported, not dropped
+    assert report.will_reap == 1  # only the policy-condemned row
+
+
+async def test_a_hand_reap_past_a_protection_nobody_could_check_is_in_the_net(
+    session: AsyncSession,
+) -> None:
+    """The counterpart, and the reason the fixture above stopped using a blocked protection.
+
+    A protection that could not be CHECKED no longer refuses a hand reap, so a row carrying
+    one is a net reap like any other. Counting it as held would understate what the operator
+    is about to remove, on the page whose whole job is that number.
+    """
     snap = await _snapshot(session)
     await _add(session, snapshot_id=snap, media_key="radarr:1:1")  # condemned by policy
     await _add(
@@ -347,7 +391,13 @@ async def test_a_refused_hand_reap_is_reported_as_held(session: AsyncSession) ->
         snapshot_id=snap,
         media_key="radarr:1:9",
         verdict="abstain",
-        explanation=_blocked_explain(),
+        explanation=json.dumps(
+            {
+                "signals": [],
+                "protections_fired": [],
+                "protections_unknown": [{"gate": "keep_list", "detail": "could not check"}],
+            }
+        ),
     )
     await whitelist.set_override(
         session, media_key="radarr:1:9", title="x", decision="reap", note=None
@@ -355,9 +405,9 @@ async def test_a_refused_hand_reap_is_reported_as_held(session: AsyncSession) ->
 
     report = await breakdown.reap_breakdown(session)
 
-    assert report.hand_reaped == 0  # the refused reap is not honored, so not in the net
-    assert report.hand_reaped_held == 1  # but it is reported, not dropped
-    assert report.will_reap == 1  # only the policy-condemned row
+    assert report.hand_reaped == 1
+    assert report.hand_reaped_held == 0
+    assert report.will_reap == 2
 
 
 async def test_by_reason_participation_overlaps(session: AsyncSession) -> None:

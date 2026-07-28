@@ -155,25 +155,31 @@ class PruneConflict:
     own words (``engine.gates.lifetime_shortfall``, the same sentence every other reader of
     a truncated count prints).
 
-    Typed, not inferred from the wording (rule 142): ``season_scan.guard_result`` reads it to
-    decide whether a hand reap may overrule the block, exactly as it reads
-    ``kept_watchers is None``. Both mean "we could not establish this", and neither is a
-    call the operator is entitled to settle."""
+    Typed, not inferred from the wording (rule 142): ``season_scan.guard_result`` reads it
+    exactly as it reads ``kept_watchers is None``, and both mean "we could not establish
+    this". It used to decide whether a hand reap could overrule the block; it no longer
+    does, because no blocked gate holds a hand reap (see ``engine.verdict``). What it
+    decides now is which sentence the operator is shown and which chip sits beside it --
+    still worth typing, because "Reaper could not tell" and "the rule lost the comparison"
+    are different things to tell someone choosing what to delete."""
 
     @property
     def message(self) -> str:
-        """The sentence the operator reads, and it must promise only what the engine allows.
+        """The sentence the operator reads. All three shapes end the same way, and that is
+        now the honest ending: a hand reap overrules every one of them.
 
-        Only the LAST shape below is one a hand reap may overrule, so only it closes with
-        "Left for you to decide". The two refused shapes end "Kept for now" instead: they
-        set ``defers_to_owner=False`` through ``season_scan.guard_result``, so an operator
-        who takes up that invitation gets the reap refused and a generic "a protection
-        couldn't be checked" in place of the sentence they acted on. One phrase carrying
-        both meanings is rule 92's shape pointed at operator copy.
+        This closing phrase was briefly split. Two of the three shapes are conflicts Reaper
+        could not settle, and while a blocked gate still held a hand reap they ended "Kept
+        for now" instead, because inviting a decision the engine would refuse is rule 92's
+        failure pointed at operator copy. ``verdict`` no longer works that way: only a
+        structural stop (streaming now, unmanaged) holds a reap, so the invitation is real
+        for all three and the split would now be the misleading half. See
+        ``engine.verdict``'s module docstring.
 
-        Neither refused shape states a watcher count it cannot stand behind. The shortfall
-        arm is checked first for exactly that reason: where the pruned count is a lower
-        bound it is never printed, whichever OTHER thing also went wrong with the pair.
+        What survives the reversal, because it never depended on it: no shape states a
+        watcher count it cannot stand behind. The shortfall arm is checked FIRST for that
+        reason -- where the pruned count is a lower bound it is never printed, whichever
+        other thing also went wrong with the pair.
         """
         viewers = "person" if self.pruned_watchers == 1 else "people"
         if self.shortfall is not None:
@@ -183,14 +189,16 @@ class PruneConflict:
             # whole reach fix exists to stop (rules 93, 140).
             return (
                 f"Reaper cannot tell whether Season {self.pruned_season} is watched more "
-                f"than Season {self.kept_season}, which it is keeping because "
-                f"{_because(self.kept_reason)}. Kept for now, since {self.shortfall}."
+                f"than Season {self.kept_season}, since {self.shortfall}. Season "
+                f"{self.kept_season} is kept because {_because(self.kept_reason)}. "
+                "Left for you to decide instead of removing it."
             )
         if self.kept_watchers is None:
             return (
                 f"{self.pruned_watchers} {viewers} watched Season {self.pruned_season}. "
                 f"Reaper could not check who watched Season {self.kept_season}, which it "
-                f"is keeping because {_because(self.kept_reason)}. Kept for now."
+                f"is keeping because {_because(self.kept_reason)}. Left for you to decide "
+                "instead of removing it."
             )
         return (
             f"{self.pruned_watchers} {viewers} watched Season {self.pruned_season}, more "

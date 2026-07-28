@@ -8,8 +8,10 @@ minus hand-spares plus hand-reaps the engine honors -- and grace, the planner, t
 confirmation counts and the executor all read it. Pinned here:
 
 * ``reap_override_verdict`` plumbs a frozen row into ``decide_verdict`` and nothing
-  else: cautious protections lose, structural stops and unchecked protections win, and
-  an unreadable explanation reads as blocked (kept);
+  else: every protection loses to the owner -- fired or merely unchecked alike -- and the
+  only two things that still refuse are the ones that are not protections at all, a bad
+  Plex match and an explanation this code cannot parse. Both are "we do not know what this
+  row IS", which is a different question from "we could not check whether it is wanted";
 * the effective set adds and removes the right rows, including show-level decisions and
   a season spared back out of a reaped show;
 * grace and the planner see a hand-reap immediately, and the plan refuses a refused one;
@@ -74,7 +76,8 @@ BLOCKED = json.dumps(
 # the rule keeps, and hands the call to a human. It rides in `protections_unknown` (blocked,
 # so the scan abstains and asks for a look), and `defers_to_owner` marks it as a decision
 # for the owner rather than a source Reaper could not read. A hand reap IS that decision,
-# so it condemns.
+# so it condemns. The flag no longer decides that -- no block holds a hand reap -- but it
+# still picks the operator's chip (`api.routes._chip`), so the shapes below keep varying it.
 KEEP_RULE_CONFLICT = json.dumps(
     {
         "protections_unknown": [
@@ -86,8 +89,9 @@ KEEP_RULE_CONFLICT = json.dumps(
         ]
     }
 )
-# Belt-and-suspenders: even a deferrable gate holds the reap when its block is a genuine
-# plumbing failure, so the gate id alone can never open a fail-open path.
+# The same gate blocked by a genuine plumbing failure rather than a decision put to the
+# owner. It used to be the fail-closed half of a two-condition test; now it lands where every
+# other block lands, and it is kept because it is the shape a reader most expects to differ.
 CONFLICT_BUT_PLUMBING = json.dumps(
     {
         "protections_unknown": [
@@ -99,11 +103,14 @@ CONFLICT_BUT_PLUMBING = json.dumps(
         ]
     }
 )
-# The shape that shipped broken, in the wording the season guard really emits: the kept
-# season is on disk but was never resolved in Plex, so the comparison could not be made at
-# all (`season_pruning.PruneConflict` with `kept_watchers=None`). Note where the phrase
-# sits -- the message opens with the watcher count, so the old
-# `detail.startswith("could not check")` arm never matched it and the reap went through.
+# The shape that shipped broken: the kept season is on disk but was never resolved in Plex,
+# so the comparison could not be made at all (`season_pruning.PruneConflict` with
+# `kept_watchers=None`). Note where the phrase sits -- the message opens with the watcher
+# count, so the old `detail.startswith("could not check")` arm never matched it. The sentence
+# is the one the producer emitted at the time, kept verbatim rather than refreshed: these are
+# STORED rows, an operator's database is full of ones written by older versions, and a fixture
+# that tracks the current copy would stop covering them. It is here because the wording trap
+# must go on deciding nothing, whichever way the decision itself points.
 CONFLICT_COMPARISON_REFUSED = json.dumps(
     {
         "protections_unknown": [
@@ -120,7 +127,8 @@ CONFLICT_COMPARISON_REFUSED = json.dumps(
     }
 )
 # A row frozen before the flag shipped: same conflict, no `defers_to_owner` key at all.
-# Nothing in it can tell a made comparison from a refused one, so it holds (rule 104).
+# Nothing in it can tell a made comparison from a refused one -- which no longer changes the
+# reap, and still changes the chip the operator is shown (rule 104's thaw, in `_chip`).
 LEGACY_CONFLICT_NO_FLAG = json.dumps(
     {
         "protections_unknown": [
@@ -143,59 +151,92 @@ class TestReapOverrideVerdict:
         assert reap_override_verdict(STRUCTURAL, score=99) == "protect"
         assert reap_override_verdict(UNMANAGED, score=99) == "protect"
 
-    def test_an_unchecked_protection_still_wins(self) -> None:
-        assert reap_override_verdict(BLOCKED, score=99) == "protect"
+    @pytest.mark.parametrize(
+        "gate", ["curated_list", "server_popularity", "min_dormancy", "custom"]
+    )
+    def test_an_unchecked_protection_no_longer_holds_the_reap(self, gate: str) -> None:
+        """The reversal, on the stored-row path, across four distinct gates.
+
+        The old rule was a gate-id membership test, so one case cannot tell "no gate holds"
+        from "this gate happens to be on the permitted list"; the sweep can. ``blocked`` is
+        still computed and still true for each of these rows -- the scan abstained on them
+        and nothing automatic will touch them -- but it is no longer what
+        ``reap_override_verdict`` hands to ``blocked_holds_reap``. The owner is reading a
+        panel that names the check that came back empty, and is entitled to answer it.
+
+        What did NOT move is asserted in the same class, deliberately adjacent: a structural
+        stop, a bad Plex match, an unreadable protections list and an unreadable document all
+        still keep the file."""
+        stored = json.dumps(
+            {"protections_unknown": [{"gate": gate, "detail": "could not check the list"}]}
+        )
+
+        assert reap_override_verdict(stored, score=99) == "condemn"
 
     def test_a_keep_rule_conflict_loses_to_the_owner(self) -> None:
-        """The season keep-rule conflict is a deliberate "you decide" flag, not a
-        protection Reaper could not check. A hand reap is exactly the decision it asked
-        for, so it condemns -- unlike an unchecked protection, which still holds."""
+        """The season keep-rule conflict is a deliberate "you decide" flag. A hand reap is
+        exactly the decision it asked for, so it condemns."""
         assert reap_override_verdict(KEEP_RULE_CONFLICT, score=90) == "condemn"
 
-    def test_a_deferrable_gate_that_actually_failed_still_wins(self) -> None:
-        """A block that is a real plumbing failure holds the reap even on a deferrable
-        gate: the gate id alone never opens a fail-open path (belt-and-suspenders)."""
-        assert reap_override_verdict(CONFLICT_BUT_PLUMBING, score=90) == "protect"
+    def test_the_stored_deferral_flag_no_longer_moves_the_reap(self) -> None:
+        """Every value ``defers_to_owner`` can carry on disk reaches the same verdict.
 
-    def test_a_conflict_whose_comparison_was_refused_holds_the_reap(self) -> None:
-        """The bug this pins: a hand reap removed a season whose keep-rule comparison
-        Reaper had explicitly declined to make. The suspenders were a
-        ``detail.startswith("could not check")`` test, and the one message the arm existed
-        for opens with the watcher count instead, so it never matched. Now the producer
-        says so in a typed field and the wording decides nothing."""
-        assert reap_override_verdict(CONFLICT_COMPARISON_REFUSED, score=90) == "protect"
+        This was the strictest interlock on the path: the flag was thawed with ``is True``,
+        because that was the one value that let a hand reap through a block, and relaxing it
+        to a truthy test would have let stored junk -- the string ``"false"`` among it --
+        release a file while saying the opposite. The reap does not read the flag at all
+        now, so the sweep asserts the property that replaced it: no value of a stored key can
+        change what a hand reap does. It fails the moment any reader of this key re-appears
+        on the decision path.
 
-    def test_a_row_frozen_before_the_flag_holds_the_reap(self) -> None:
-        """The thaw, and it points at keeping (rule 104). A stored row that predates
-        ``defers_to_owner`` carries nothing that can tell a made comparison from a refused
-        one -- the wording that used to stand in for it is exactly what failed -- so it
-        holds. Self-clearing without a rewrite: a later scan stores its own rows and every
-        reap path keys on a snapshot id, so pre-flag rows go unreachable."""
-        assert reap_override_verdict(LEGACY_CONFLICT_NO_FLAG, score=90) == "protect"
-
-    def test_only_a_real_json_true_releases_the_reap(self) -> None:
-        """``defers_to_owner`` is thawed with ``is True``, and that strictness is the whole
-        interlock on this path: it is the one value that lets a hand reap through a block.
-        Relaxed to a truthy test, any stored junk releases the file -- including the string
-        ``"false"``, which reads as deliberate deferral while saying the opposite. Only the
-        JSON boolean counts; everything else holds (rule 1: unreadable is not absent)."""
-        for junk in ('"true"', '"false"', '"0"', "1", "[]", "{}", "null"):
+        The ``is True`` strictness itself is still live one surface over -- ``routes._chip``
+        reads the same key the same way to pick the operator's chip, pinned in
+        ``test_review_chips.py`` -- which is why the key is still written and still varied
+        here rather than dropped."""
+        for stored_flag in ("true", "false", '"true"', '"false"', '"0"', "1", "[]", "{}", "null"):
             stored = json.dumps(
                 {
                     "protections_unknown": [
                         {"gate": "season_progression", "detail": "d", "defers_to_owner": None}
                     ]
                 }
-            ).replace("null", junk)
-            assert reap_override_verdict(stored, score=90) == "protect", junk
+            ).replace("null", stored_flag)
+            assert reap_override_verdict(stored, score=90) == "condemn", stored_flag
+        # ...including the row frozen before the key existed at all, which carries none.
+        assert reap_override_verdict(CONFLICT_BUT_PLUMBING, score=90) == "condemn"
+        assert reap_override_verdict(CONFLICT_COMPARISON_REFUSED, score=90) == "condemn"
+        assert reap_override_verdict(LEGACY_CONFLICT_NO_FLAG, score=90) == "condemn"
+
+    def test_the_wording_of_a_blocked_reason_decides_nothing(self) -> None:
+        """The trap that shipped broken, pinned from the other side.
+
+        A hand reap once removed a season whose keep-rule comparison Reaper had explicitly
+        declined to make, because the arm meant to catch it tested
+        ``detail.startswith("could not check")`` and the one message it existed for opens
+        with the watcher count. Both wordings are swept here, and they must land in the same
+        place -- whichever place that is. A future reader who reintroduces a hold and hangs
+        it off the sentence fails this test rather than shipping the same defect a third
+        time (rule 92)."""
+        prefixed = reap_override_verdict(CONFLICT_BUT_PLUMBING, score=90)
+        count_first = reap_override_verdict(CONFLICT_COMPARISON_REFUSED, score=90)
+
+        assert prefixed == count_first == "condemn"
 
     def test_a_protections_list_that_cannot_be_read_holds_the_reap(self) -> None:
-        """The fail-open this closes: the readers below use ``.get``, so both lists were
-        filtered to objects first -- and a list of three strings filtered down to an empty
-        one, so ``blocked`` went False and the reap condemned a file whose kept-reasons
-        nobody could read. Evidence we cannot see must never become evidence that nothing
-        was wrong (rule 96). ``routes._has_blocked_protections`` reads the same block with
-        this posture already; the destructive reader was the permissive one."""
+        """The other of the two holds left on this path, and the fail-open it closes.
+
+        The readers use ``.get``, so both lists were filtered to objects first -- and a list
+        of three strings filtered down to an empty one, so ``blocked`` went False and the
+        reap condemned a file whose kept-reasons nobody could read. Evidence we cannot see
+        must never become evidence that nothing was wrong (rule 96).
+        ``routes._has_blocked_protections`` reads the same block with this posture already;
+        the destructive reader was the permissive one.
+
+        It survived the reversal for the same reason a bad match did, and the distinction is
+        worth stating because these rows LOOK like the released ones. An unreadable entry is
+        not a check that came back empty: the panel could not render the reasons at all, so
+        there was nothing for the owner to consent to. A block they can read is theirs to
+        answer; one that never reached them is not."""
         for stored in (
             '{"protections_unknown": ["season_progression could not be checked"]}',
             '{"protections_unknown": [null]}',
@@ -224,6 +265,32 @@ class TestReapOverrideVerdict:
         assert reap_override_verdict('{"protections_unknown": null}', score=90) == "condemn"
         assert reap_override_verdict("{}", score=90) == "condemn"
 
+    @pytest.mark.parametrize(
+        "match",
+        [{"status": "unmatched"}, {"status": "ambiguous"}, "a string where a block belongs"],
+        ids=["unmatched", "ambiguous", "unreadable"],
+    )
+    def test_a_bad_plex_match_still_refuses_the_reap(self, match: object) -> None:
+        """One of the two holds left on this path, and the reason it is not a protection.
+
+        A bad match says the file behind this row may not be the one the owner is looking
+        at, so a reap here could remove something they never saw. That is identity, not
+        judgment, and there is nothing for them to overrule -- which is exactly why it
+        survived a change that released every judgment. All three states are swept: the two
+        Plex reports, and the ``MATCH_UNREADABLE`` one Plex never reports, reached by a match
+        block that is present but is not an object (rule 96).
+
+        Each row also carries a blocked protection, so the sweep cannot pass on a hold that
+        the gate block is quietly still supplying."""
+        stored = json.dumps(
+            {
+                "match": match,
+                "protections_unknown": [{"gate": "curated_list", "detail": "could not check"}],
+            }
+        )
+
+        assert reap_override_verdict(stored, score=99) == "protect"
+
     def test_a_match_problem_reads_as_blocked(self) -> None:
         assert reap_override_verdict(UNMATCHED, score=99) == "protect"
 
@@ -237,13 +304,19 @@ class TestReapOverrideVerdict:
     def test_the_score_is_inert_on_the_reap_branch(self) -> None:
         """decide_verdict's reap branch never reads the score or the thresholds; the
         zeros this module passes are plumbing, not policy. If this ever fails, the
-        engine's decision order changed and services.condemned must be revisited."""
+        engine's decision order changed and services.condemned must be revisited.
+
+        Swept over both answers, so a score that started deciding one of them shows up
+        whichever direction it pushed."""
         for score in (0, 50, 100):
             assert reap_override_verdict(CAUTIOUS, score=score) == "condemn"
             assert reap_override_verdict(KEEP_RULE_CONFLICT, score=score) == "condemn"
+            assert reap_override_verdict(BLOCKED, score=score) == "condemn"
+            assert reap_override_verdict(CONFLICT_BUT_PLUMBING, score=score) == "condemn"
+            assert reap_override_verdict(CONFLICT_COMPARISON_REFUSED, score=score) == "condemn"
             assert reap_override_verdict(STRUCTURAL, score=score) == "protect"
-            assert reap_override_verdict(CONFLICT_BUT_PLUMBING, score=score) == "protect"
-            assert reap_override_verdict(CONFLICT_COMPARISON_REFUSED, score=score) == "protect"
+            assert reap_override_verdict(UNMANAGED, score=score) == "protect"
+            assert reap_override_verdict(UNMATCHED, score=score) == "protect"
 
 
 # --- fixtures over a real database ------------------------------------------
