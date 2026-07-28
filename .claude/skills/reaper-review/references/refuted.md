@@ -879,3 +879,50 @@ can only ever break a member the matcher already collected, so it proves the ass
 and is silent about the population. **Count what a scanner collects and reconcile the number
 against the members you believe exist**; that reconciliation, not the red run, is what found
 `.claude/launch.json`. Now rule 145.
+
+## Refuted at `57c11c5` (2026-07-28, reviewing the settings-panel branch, PR #127)
+
+Two lanes fired by path (`seam` because `GeneralPanel` gained an `onDirtyChange` prop, `diff` on
+`Settings.tsx`, `index.css`, `PlexPanel.tsx`, `LogsPanel.tsx`); no `safety` lane, since nothing
+under `engine/`, `services/`, either transport guard, the execute route or the arming UI is
+touched.
+
+**Two entries under `ef0278d` were stale and are now settled the other way.** Both were refuted
+on the reasoning "the mode control writes immediately", which this branch made false by staging
+the spare mode as a draft. `discardDrafts` skipping `setSpareDays` under a stored Forever was
+re-derived, demonstrated, and fixed on this branch; the `spareDirty` gate is moot because the
+gate itself is gone. This is the staleness rule earning its keep: read the commit an entry is
+bound to before trusting it.
+
+| Lane | Candidate | Why it died |
+| --- | --- | --- |
+| diff | Hoisting the dirty checks and two effects above the early returns breaks hook order | Every hook in `GeneralPanel` is unconditional and precedes both returns; `eslint` with the two react-hooks rules as errors exits 0. |
+| diff | The effects report a draft during `isPending` | `data` is `undefined`, every `*Dirty` is `!!data && …`, `pending` is empty, so `onDirtyChange(false)`. |
+| diff | The `[general.data]` seeding effect re-fires when `onSuccess` calls `setQueryData`, clobbering the B-18 guards | `seeded.current` makes it once-per-mount; every later identity change early-returns. The new spare fields obey B-18 through the same `"… in sent"` guards as the other five. |
+| diff | `switchPanel`'s `if (next === panel) return` leaves a stale `pendingSwitch` when the operator re-clicks the section they are on | Real, but an exact copy of the twin: `PolicyEditor` has the identical early return before its dirty check. Not introduced here, and fixing one without the other is what rule 72 forbids. |
+| diff | Saving from the bar while `pendingSwitch` is set drops the switch the operator asked for | Intentional and identical to the twin, which carries the reasoning in writing: the notice clears, the operator stays put and clicks again. |
+| diff | `generalDirty` can stick true after `GeneralPanel` unmounts, blocking navigation from another panel | The unmount cleanup always reports `false`, and `onDirtyChange` is a stable `useState` setter, so that effect never re-runs mid-life. `switchPanel` also only defers while `panel === "general"`. |
+| diff | `JobsPanel`'s `onGoToPlex` can now be blocked by a General draft | It is called with `panel === "jobs"`, so the guard is false and it switches straight through. |
+| diff | The save bar flashes on the first data-bearing render because the seeded day number differs from stored | It does, but pre-existing on `dev`: `name`/`tz` start `""` and produce the same one-frame `pending`. Self-corrects in the same effect flush. |
+| diff | `.set-row.dimmed` still had a consumer | Nothing renders it. The live rule is `.set-row.dim`; the remaining `dimmed` hits are `.jobrow.dimmed` and prose. |
+| diff | `.set-row-plain` loses on specificity to `.set-row.set-row-cluster` or to the 640px block | No row carries both classes. The 640px block names all three variants at equal weight and sits later in the file, so source order carries it. |
+| diff | The `auto` control track can squeeze the label column to zero, the failure `.set-row-cluster`'s floor prevents | All seven plain rows hold a small control (four Switches, two buttons, one link), none with a direct-child `input`/`select`, so the flex rule never applies inside an `auto` track. |
+| diff | Rule 72: other non-box `.set-row`s were missed | Two in `PlexPanel` (the server pick list, the not-linked state). Consistency gap, not a defect: both are transient and both hold wide content an unfloored `auto` track would collapse the label against. The spare-length row keeps the track correctly, since switching the class with the mode would make the row's geometry jump on a press. |
+| diff | The new operator copy breaches rule 21 | Plain, short, no em dashes, and word for word the `PolicyEditor` twin the comment claims it reuses. |
+| seam | The `default_spare_days` round trip can now produce a value the route refuses | UI emits only `0` or `1..3650`; the field is `ge=0, le=3650`, so 0 is inside the range. `GeneralSettingsOut` carries the field under the name `onSuccess` re-seeds from, and the server round trip is already pinned. |
+| seam | Some `GeneralPanel` call site passes an inline arrow, re-running the effects every render | Exactly two call sites: `Settings` passes the stable `useState` setter, the test renders it bare. `exactOptionalPropertyTypes` is satisfied because the prop type spells `\| undefined`. |
+| seam | `GeneralPanel` is mounted somewhere else that now gets an unreported dirty state | Repo-wide grep: only those two, plus frozen history prose. |
+| seam | Query keys drift — the queue's copy of general settings can disagree after a save | One key with five subscribers; React Query dedupes. The save path still writes it unconditionally and both API-key mutations still invalidate it. The queue's default spare lagging the draft until Save is the intended contract, identical to every text field in the bar. |
+| seam | Rule 144: a sibling copy still says the spare-length Segmented saves on the spot | Every sibling was updated in step (two comments, the panel comment, the test docstring, `STATUS.md`). Counts check out, and `.set-row-plain` really is on seven rows. |
+| seam | The two-step confirm is a parallel implementation rather than a reuse (rule 18) | Matches the `PolicyEditor` twin sentence for sentence and button for button, including the effect that clears the notice when the draft goes. |
+| seam | The narrow-screen `<select>` desyncs when a switch is refused | It is controlled on `panel`, which does not change; React's controlled-state restore snaps it back, and a test pins it. |
+| seam | `pendingLabel` can render empty | `PANELS` covers all nine ids, and the one non-`PANELS` caller cannot reach the guard. |
+
+**What this pass is worth remembering for.** Every finding that survived was about the same
+seam — the new dirty SIGNAL against the drafts it claims to describe — and the two that were
+real failed in *opposite* directions: one reported a draft it no longer rendered any way to
+reach, the other stayed silent about one it was still holding. A single boolean lifted out of a
+component is not one claim but two, "there is something to lose" and "you can get to it", and
+checking only the direction the author had in mind leaves the other live. Neither was visible
+from the diff; both came from asking what the panel renders in each of its own early-return
+states while that boolean keeps being computed above them.

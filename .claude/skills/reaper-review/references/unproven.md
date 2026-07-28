@@ -62,12 +62,57 @@ a string assertion — the cheapest shape is a headless page load that drives on
 the header on the wire, which is the one thing the current test's docstring already says it cannot
 do.
 
+### The spare-length Segmented stays live during a save that is writing its own field
+
+Raised at `57c11c5` (2026-07-28, reviewing PR #127) by the `seam` lane, ranked low.
+
+`Segmented` (`components/Segmented.tsx`) takes no `disabled` prop at all, so the spare-length mode
+control is the one thing in that row still pressable while a save is in flight. Every neighbor
+carries `disabled={save.isPending}`: the day box, the expand-seasons select, the reverse-proxy
+switch. The candidate: from a stored 365 with the box set to 7, press **Save changes** and then
+**Forever** before the response lands, and `onSuccess`'s `setSpareForever(data.default_spare_days
+=== 0)` silently reverts the press.
+
+**Why it is unproven rather than confirmed:** the race was reasoned, not driven. The window is one
+network round trip and the outcome is a mode press being dropped, not a value being written, so it
+fails toward doing nothing.
+
+**Why it is not simply the class refuted at `ef0278d`:** that entry covered *text inputs* losing
+keystrokes to an in-flight re-seed and was accepted as pre-existing. This shape is new to PR #127 —
+before it, the press fired its own mutation instead of racing one.
+
+**What would settle it:** a test resolving `saveGeneral` from a deferred promise with the Forever
+click in the gap, asserting the mode after the response lands. If confirmed, the fix is a
+`disabled` prop on `Segmented`, which both settings panels and the policy editor use, so rule 72
+binds it to every consumer at once.
+
+### Neither section-switch confirm announces itself to a screen reader
+
+Raised at `57c11c5` (2026-07-28, reviewing PR #127) by the `seam` lane, ranked low.
+
+`Settings`' new pending-switch notice renders as `.notice.notice-warn` with no `role="alert"` and
+no `aria-live`, and focus stays on the rail button that appears to have done nothing; pressing it
+again just re-sets the same `pendingSwitch`. The `PolicyEditor` twin has the identical gap and
+predates this PR, and the repo has only four `aria-live` uses, all loading spinners.
+
+**Why it is unproven rather than confirmed:** nobody drove it with a screen reader, and the notice
+does render in the document immediately after the control, which some readers will reach on the
+next navigation step anyway.
+
+**What would settle it:** drive both confirms with VoiceOver and record whether the notice is
+announced without a manual re-read. If confirmed, it is one fix across both (rule 72), not a
+regression in this PR.
+
 ## Settled
 
 Newest first. "Settled" is the commit that closed it; read that commit for the reasoning.
 
 | Candidate | Raised | Settled | Outcome |
 | --- | --- | --- | --- |
+| A refetch failure leaves the panel reporting a draft it no longer renders | `57c11c5` | `ab7a9fc` | **Confirmed** — driven with a scratch test, fixed on the branch |
+| A proxy list parked behind its switch is a draft the confirm cannot see | `57c11c5` | `ab7a9fc` | **Confirmed** — fixed on the branch |
+| Discard leaves the day number staged when the stored default is Forever | `57c11c5` | `4f17180` | **Confirmed** — the `ef0278d` refutation was stale; fixed on the branch |
+| The switch confirm covers General while Plex and Notifications also hold drafts | `57c11c5` | `4f17180` | **Confirmed** — filed as issue #128, deferred in writing per rule 72 |
 | The Scans section promises frozen evidence that is filed under Review | `2c3752a` | `9f3f7c8` | **Confirmed** by the operator — reworded, not filed |
 | The `in_progress_hold_days` help carries the 0 case in four trailing words | `8ff0a3e` | `9f3f7c8` | **Confirmed** by the operator — reworded, not filed |
 | `openapi_with_api_key` is never wired as `app.openapi` | `2c3752a` | `e290130` | **Fixed** — no live trigger, but the one-line wiring was cheaper than the verdict |
