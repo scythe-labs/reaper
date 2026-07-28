@@ -1098,6 +1098,14 @@ function RestoreCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [preparing, setPreparing] = useState(false);
+
+  // The two sends that outlive a render, held so the unmount cleanup below can wait on them
+  // instead of deciding against state that has not settled yet. A prepare stages its archive on
+  // the SERVER when it resolves, which can be after this card is gone; a confirm carries the
+  // admin password and arms the swap.
+  const prepareRef = useRef<Promise<RestoreSummary> | null>(null);
+  const confirmRef = useRef<Promise<unknown> | null>(null);
 
   const refreshInfo = () => qc.invalidateQueries({ queryKey: ["backup-info"] });
 
@@ -1118,13 +1126,18 @@ function RestoreCard({
     setPassword("");
     setFileName(file.name);
     setBusy(true);
+    setPreparing(true);
+    const prepared = api.restorePrepare(file);
+    prepareRef.current = prepared;
     try {
-      setSummary(await api.restorePrepare(file));
+      setSummary(await prepared);
     } catch (err) {
       setFileName(null);
       setError(err instanceof Error ? err.message : "That file couldn't be read.");
     } finally {
+      setPreparing(false);
       setBusy(false);
+      if (prepareRef.current === prepared) prepareRef.current = null;
     }
   };
 
@@ -1146,8 +1159,10 @@ function RestoreCard({
     if (!summary) return;
     setError(null);
     setBusy(true);
+    const confirming = api.restoreConfirm(password, summary.token);
+    confirmRef.current = confirming;
     try {
-      await api.restoreConfirm(password, summary.token);
+      await confirming;
       // The confirm armed the swap; refetch so `armed` flips on and this card shows the
       // restart prompt. Drop the staged summary from local state either way.
       reset();
@@ -1157,6 +1172,7 @@ function RestoreCard({
       setError(err instanceof Error ? err.message : "The restore couldn't be confirmed.");
     } finally {
       setBusy(false);
+      if (confirmRef.current === confirming) confirmRef.current = null;
     }
   };
 
@@ -1184,7 +1200,13 @@ function RestoreCard({
   // a discard for a decision already stored. The password is not read separately because it
   // cannot outlive the summary: every path that drops one drops the other (`choose`, `reset`, and
   // the failed confirm), which is S-5's fix and is what keeps this signal to one fact.
-  const staged = !armed && summary !== null;
+  //
+  // `preparing` is the other half of the same fact, and reading `summary` alone missed it: the
+  // upload is already on its way to the server while the card still shows "Checking <file>", so a
+  // switch during that window left with no confirm at all and landed a staged archive nobody
+  // could see. Rule 146 asks what the parent is told while this component renders "loading" --
+  // this is that answer.
+  const staged = !armed && (summary !== null || preparing);
   useEffect(() => {
     onDirtyChange?.(staged);
   }, [staged, onDirtyChange]);
@@ -1197,16 +1219,44 @@ function RestoreCard({
   // Deliberately its own effect with `[]` deps, unlike the report above, because this one SENDS
   // something: hung off `onDirtyChange` it would re-run whenever that prop changed identity and
   // cancel a staged restore while the card was still on screen. It reads `stagedRef` for the same
-  // reason -- the guard has to be the value at unmount, not at mount. And it is `staged`, not
-  // `summary`, because cancel discards a staged OR ARMED restore (`api/backup.py:restore_cancel`),
-  // so an unguarded call on the way out would quietly disarm the restore the operator just
-  // confirmed. Best effort: if it fails the archive stays staged, which is exactly where it stood
-  // before this existed, and there is no longer a card to say so on.
+  // reason -- the guard has to be the value at unmount, not at mount.
+  //
+  // `restore_cancel` discards a staged OR ARMED restore (`api/backup.py:restore_cancel`), so the
+  // three ways this can send a cancel it should not are each held off explicitly:
+  //
+  //   - An upload still in flight has no summary yet and stages its archive AFTER this runs, so
+  //     the decision waits on the prepare rather than reading state that has not arrived. A
+  //     prepare that REJECTED staged nothing, and a cancel then would be reclaiming someone
+  //     else's stage rather than ours.
+  //   - A confirm still in flight was already authorized with the admin password, so its outcome
+  //     is a decision, not a draft. We wait for it and leave whatever it armed.
+  //   - `armed` is a React Query cache nothing refreshes from another client: the query sets no
+  //     `refetchInterval`, and `main.tsx` turns `refetchOnWindowFocus` off app-wide, so a restore
+  //     armed from a second tab still reads false here. Asking the cache would disarm exactly the
+  //     restore the guard exists to protect, so the SERVER is asked instead, immediately before
+  //     the send.
+  //
+  // Best effort throughout: if any leg fails the archive stays staged, which is exactly where it
+  // stood before this existed, and there is no longer a card to say so on.
   const stagedRef = useRef(false);
   stagedRef.current = staged;
   useEffect(
     () => () => {
-      if (stagedRef.current) void api.restoreCancel().catch(() => {});
+      const reclaimStagedArchive = async () => {
+        if (prepareRef.current) {
+          try {
+            await prepareRef.current;
+          } catch {
+            return;
+          }
+        } else if (!stagedRef.current && !confirmRef.current) {
+          return;
+        }
+        await confirmRef.current?.catch(() => {});
+        if ((await api.backupInfo()).restore_armed) return;
+        await api.restoreCancel();
+      };
+      void reclaimStagedArchive().catch(() => {});
     },
     [],
   );

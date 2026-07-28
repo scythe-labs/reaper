@@ -483,6 +483,30 @@ describe("leaving Security or Backup with something unsaved", () => {
     expect(heading()).toBe("Backup & Restore");
   });
 
+  it("holds the switch while the upload is still going", async () => {
+    // The window between dropping the file and the summary arriving, which reading the summary
+    // alone reported as nothing to lose. It is the costliest exit of the lot: the archive is
+    // already on its way, so it lands after the card is gone, and an un-armed stage has no surface
+    // anywhere in the app to reach it from.
+    stubMatchMedia(false);
+    // Left pending for the whole test, so the moment being asserted is the one the operator is
+    // actually in: the file is uploading and no summary exists yet. Resolving it afterwards would
+    // settle state after the last act() and is what rule 136 fails the run over.
+    apiMock.restorePrepare.mockReturnValue(new Promise(() => {}));
+    const person = renderSettings("backup");
+    const input = await waitFor(() => {
+      const el = document.querySelector('input[type="file"]');
+      if (!el) throw new Error("the backup panel has not loaded yet");
+      return el;
+    });
+    fireEvent.change(input, { target: { files: [new File(["x"], "a.reaper")] } });
+
+    await person.click(screen.getByRole("button", { name: "About" }));
+
+    expect(switchNotice()).not.toBeNull();
+    expect(heading()).toBe("Backup & Restore");
+  });
+
   it("cancels the staged upload when Discard and switch is pressed", async () => {
     // Losing the file from the screen is only half of it: the archive is already on the SERVER,
     // and an un-armed stage has no surface anywhere in the app to clear it from later.
