@@ -10,13 +10,13 @@ refreshes Plex. Python 3.13 / FastAPI backend + React 19 / Vite frontend, one co
 
 ## Where the engineering rules live
 
-143 numbered blockers, distilled and adversarially verified across six review passes. **The
+144 numbered blockers, distilled and adversarially verified across seven review passes. **The
 numbers are permanent** — tests and source comments cite them by number (`rule 28` in
 `snapshot.py`, `rule 88` in `tests/test_lists_matching.py`), so never renumber and never reuse
 a number for a different rule. A comment may only cite a rule that exists: 37 comments once
 cited rules 70–87 while the list ended at 69, making every one of them unverifiable.
 `tests/test_repo_hygiene.py` now fails on a citation with no rule behind it. New rules append
-to the scoped file that governs them and continue from 144.
+to the scoped file that governs them and continue from 145.
 
 They live in `.claude/rules/`, scoped by `paths` frontmatter so each set loads when you read a
 file it governs — and since a file must be read before it can be edited, the rules for a file
@@ -28,7 +28,7 @@ are always in context before you change it:
 | `.claude/rules/frontend.md` | `frontend/src/**/*.{ts,tsx,css}` and `frontend/index.html` (rule 69 governs it) — UI grammar, the review queue, the two-level spare, gating surfaces | 17–20, 36, 39–51, 53–54, 60–62, 66–67, 69, 79–80, 85–86, 120–123, 138–139 |
 | `.claude/rules/tests.md` | `tests/**/*.py`, `frontend/src/**/*.test.ts{,x}`, `frontend/src/test/**` — test discipline | 37, 118–119, 132–133, 135–137, 141 |
 
-Ten rules bind every file and stay here, under *Rules that apply everywhere*. Where two rules
+Eleven rules bind every file and stay here, under *Rules that apply everywhere*. Where two rules
 overlap, the more specific one governs. Read the governing file before working in a tree you
 haven't touched this session.
 
@@ -139,6 +139,25 @@ and only pipe a command whose success you are not currently deciding on. `| head
 still: it SIGPIPEs the writer, so the command dies partway and reports that as its own result.
 This binds every verification in this file, and reporting a gate as green on a pipe's exit code
 is a false statement about the work.
+
+**144. Generating one copy of an operator-facing claim raises the risk on every copy you did
+not generate.** Rule 72 sweeps twins of a *function*; rule 103 guards a *list* that mirrors a
+declaration. This is the same obligation for a *sentence*. One fact about what the app does is
+normally stated in several places — a help paragraph, an API description, the error body that
+fires when the thing is enforced — each written by someone reading a different one. Deriving one
+of them from the code does not make the rest safe; it makes them **more** dangerous, because the
+derived copy is now demonstrably correct and vouches for a consistency that does not exist. The
+API key fence is the case: its auth box was generated from the allowlist, and all three
+ungenerated siblings were then wrong in the same safe-sounding direction — the 403 body a key
+receives denied that a key can turn the run caps off, in the response immediately before the
+request that does; the panel that hands out the key said it "reads your library" while a key
+also reads every settings page and one person's viewing history; and the scheme added beside it
+promised a try-it-out button that cannot send a write at all. So grep for the sibling copies of
+any sentence you are about to generate, and either generate them from the same declaration or
+**point the generated one's test at them by name**: a failure message saying which other file to
+change costs one line, where a comment asking future authors to remember costs nothing and does
+nothing. Which direction the stale copy is wrong in is not luck — a rounded claim is written to
+sound reassuring, so it fails toward telling the operator the app is safer than it is.
 
 ## Branch & merge workflow
 
