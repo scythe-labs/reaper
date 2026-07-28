@@ -142,8 +142,27 @@ is a false statement about the work.
 
 ## Branch & merge workflow
 
-- **`dev` is the default branch, and all work lands there.** Push to `dev`, or to a feature
-  branch off `dev` that merges back into `dev`.
+- **`dev` is the default branch, and all work lands there.** Every unit of work gets its own
+  branch that merges back into `dev`.
+- **Cut that branch from the latest upstream `dev`, and confirm what "latest" is rather than
+  assuming.** Ask the remote first — `git fetch origin`, then branch explicitly off the remote
+  ref, never off whatever the working copy happens to be sitting on:
+
+  ```
+  git fetch origin
+  git checkout -b <branch> origin/dev     # not `dev`, not the current HEAD
+  ```
+
+  A local `dev` is a cache of the answer, not the answer, and nothing in a session refreshes it
+  on its own. **A worktree makes this sharper**: a session opens on the branch that worktree was
+  created for, which is routinely an old feature branch, so branching from HEAD there carries
+  someone else's commits into the new branch and the diff reads as yours. Verify with
+  `git log --oneline origin/dev..HEAD` before you start — empty means you are current, and
+  anything else means you are about to build on a stale base. Getting this right by luck is the
+  normal outcome, which is why it is checked rather than assumed.
+- **Re-check before you open the PR, because `dev` moves while you work.** `git fetch origin &&
+  git rebase origin/dev` immediately before pushing, then re-run the gates: a branch that was
+  current when it was cut can still merge into a tree its tests were never run against.
 - **A pull request carries its `Kind/` and `Priority/` labels, same vocabulary as an issue**
   (`tea pr create -L "Kind/Bug,Priority/Critical"`, or `tea pr edit <n> --add-labels` after the
   fact). A PR closing an issue inherits that issue's two; `Reviewed/` is issue triage and stays
