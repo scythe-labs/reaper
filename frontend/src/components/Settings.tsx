@@ -41,6 +41,7 @@ import { FixedQuantity } from "./QuantityInput";
 import { ScanRow } from "./ScanBar";
 import { Segmented } from "./Segmented";
 import { KINDS, kindLabel, ServiceModal, TestBadge } from "./ServiceModal";
+import { StaleReadNotice } from "./StaleReadNotice";
 import { Switch } from "./Switch";
 
 // The Plex panel moved to its own file; SetupWizard imports it from here, so the name
@@ -373,6 +374,11 @@ export function GeneralPanel({
     <div className="panel">
       <h2>General</h2>
       <p className="muted">How this Reaper presents itself, and how other tools may talk to it.</p>
+
+      {/* Same obligation as the twin in `PlexPanel` (rule 72): the `!data` branch above keeps the
+          form through a failed refetch so the drafts in it stay reachable, which leaves this line
+          the only thing saying the values below may be stale. */}
+      {general.isError && <StaleReadNotice />}
 
       <div className="set-group">
         <h3>Application</h3>

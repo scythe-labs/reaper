@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type PlexLinkPoll, type PlexResourceConnection } from "../api";
 import { count, since } from "../format";
 import { ServerPickList, usePlexPinPoll } from "./PlexPin";
+import { StaleReadNotice } from "./StaleReadNotice";
 import { Switch } from "./Switch";
 
 const MANUAL_CONNECTION = "__manual__";
@@ -406,6 +407,11 @@ export function PlexPanel({
         Linking Plex lets Reaper warn your library with a "Leaving Soon" shelf and read your "Never
         Reap" collection. It's optional. Scanning works without it.
       </p>
+
+      {/* The failed refetch the `!data` branch above deliberately no longer swallows the form
+          for. Keeping the form is right; keeping it SILENTLY is not, because everything below
+          then reads as current when it is known to be stale (rule 17/36). */}
+      {plex.isError && <StaleReadNotice />}
 
       <div className="set-group">
         <h3>Connection</h3>

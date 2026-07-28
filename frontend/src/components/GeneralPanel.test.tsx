@@ -368,6 +368,12 @@ describe("what the panel reports to the section rail", () => {
     expect(bar()!.textContent).toContain("Application name");
     expect(screen.getByRole("button", { name: "Discard" })).toBeInTheDocument();
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+
+    // And it says the read failed. Keeping the form is what keeps the draft reachable; keeping
+    // it with nothing said presents values the panel knows are stale as current (rule 17/36).
+    // Same line as `PlexPanel`, from one component, so the two cannot drift (rules 72 and 144).
+    const stale = await screen.findByText(/Couldn't check these settings just now/);
+    expect(stale).toHaveClass("notice-warn");
   });
 
   it("still says so when the read that fails is the first one", async () => {

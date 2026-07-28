@@ -295,6 +295,13 @@ describe("what leaving this panel would lose", () => {
       "https://plex.example.org",
     );
     expect(dirty).toHaveBeenLastCalledWith(true);
+
+    // And it SAYS the read failed. Keeping the form is what makes the draft reachable; keeping
+    // it with nothing said is the other half of the same mistake, because the link state, the
+    // server, the libraries and the certificate switch below are then presented as current when
+    // they are known to be stale (rule 17/36).
+    const stale = await screen.findByText(/Couldn't check these settings just now/);
+    expect(stale).toHaveClass("notice-warn");
   });
 
   it("stops reporting a draft once the address is saved back to the default", async () => {
