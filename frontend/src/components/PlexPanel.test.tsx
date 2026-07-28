@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The Plex settings panel. These pin the three things an operator can get stuck on:
-// reopening the manual-address editor for an address they typed earlier, getting out of
-// a sign-in whose plex.tv tab never opened, and seeing a failed sign-in as a failure.
+// The Plex settings panel. These pin the things an operator can get stuck on: reopening the
+// manual-address editor for an address they typed earlier, getting out of a sign-in whose
+// plex.tv tab never opened, seeing a failed sign-in as a failure, and -- for anyone driving
+// this panel by ear -- being able to tell one box on it from another.
 import { QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -138,6 +139,49 @@ describe("the connection picker", () => {
 
     await user.selectOptions(await usableConnectionSelect(), "__manual__");
     expect(await screen.findByText("Manual address")).toBeInTheDocument();
+  });
+});
+
+describe("every control on this panel", () => {
+  // Rule 18: a `.set-row`'s label is a `<span className="set-label">`, which names nothing. The
+  // rows whose control is a Switch escape that because Switch takes `ariaLabel` and every one of
+  // them passes it; the rows carrying a box had no accessible name at all, so a screen reader
+  // announced the server picker, the connection picker and the web address as three bare fields
+  // with no way to tell them apart -- and the connection picker is what points Reaper at the
+  // server it manages.
+  //
+  // Rule 145: this walks a population, so it counts. "Every control I collected has a name" reads
+  // green when the walk collects nothing, and the pickers were reached here through
+  // `getByRole("option").closest("select")` for exactly that reason -- a shape that never asks
+  // for a name. The table below is every input and select this fixture renders, reconciled
+  // against the source by hand; the count is what makes an eleventh control name itself rather
+  // than opt out.
+  it("answers to the label the operator can see", async () => {
+    const user = userEvent.setup();
+    const { container } = renderPanel();
+
+    // The manual editor is closed at rest and its two boxes belong to the population, so open it.
+    await user.selectOptions(await usableConnectionSelect(), "__manual__");
+    // The last section to arrive, so waiting on it settles the libraries above it too.
+    await screen.findByRole("switch", { name: "Update while read-only" });
+
+    const controls: [name: string, tag: string][] = [
+      ["Server", "select"],
+      ["Connection", "select"],
+      ["Manual address host or IP", "input"],
+      ["Manual address port", "input"],
+      ["Use SSL", "input"],
+      ["Check the server's certificate", "input"],
+      ["Plex web address", "input"],
+      ["Let Reaper touch Movies", "input"],
+      ['Show "Leaving Soon" in Plex', "input"],
+      ["Update while read-only", "input"],
+    ];
+    for (const [name, tag] of controls) {
+      expect(screen.getByLabelText(name).tagName.toLowerCase()).toBe(tag);
+    }
+
+    expect(container.querySelectorAll("input, select")).toHaveLength(controls.length);
   });
 });
 

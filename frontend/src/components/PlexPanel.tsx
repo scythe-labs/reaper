@@ -529,6 +529,7 @@ export function PlexPanel({
                     )}
                     <select
                       value={currentServer?.machine_identifier ?? ""}
+                      aria-label="Server"
                       disabled={switchServer.isPending || linkedServerMissing}
                       onChange={(e) => {
                         const next = e.target.value;
@@ -575,6 +576,7 @@ export function PlexPanel({
               <div className="set-control">
                 <select
                   value={connectionValue}
+                  aria-label="Connection"
                   // Without the linked server there is nothing to list but the saved address,
                   // and every choice here would point at another server's addresses (B-10).
                   disabled={setConnection.isPending || resources.isPending || linkedServerMissing}
@@ -608,10 +610,15 @@ export function PlexPanel({
               <span className="set-label">Manual address</span>
               <p className="help">Hostname or IP, port, and whether to use SSL.</p>
               <div className="set-control">
+                {/* Two boxes under one `.set-label`, named the way the accent row names its
+                    pair: the row's label, then which half this is. A placeholder is a name of
+                    last resort, so without these the host box announced itself as the example
+                    address in it. */}
                 <input
                   type="text"
                   className="input-host"
                   value={manualHost}
+                  aria-label="Manual address host or IP"
                   onChange={(e) => setManualHost(e.target.value)}
                   placeholder="plex.example.net"
                   autoComplete="off"
@@ -620,6 +627,7 @@ export function PlexPanel({
                   type="text"
                   className="input-port"
                   value={manualPort}
+                  aria-label="Manual address port"
                   onChange={(e) => setManualPort(e.target.value.replace(/\D/g, ""))}
                   placeholder="32400"
                   inputMode="numeric"
@@ -685,6 +693,7 @@ export function PlexPanel({
               <input
                 type="url"
                 value={webUrl}
+                aria-label="Plex web address"
                 onChange={(e) => {
                   setWebUrl(e.target.value);
                   setWebUrlError(null);
