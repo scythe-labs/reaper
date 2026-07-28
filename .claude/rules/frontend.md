@@ -13,7 +13,7 @@ paths:
 Blockers, not suggestions. **Rule numbers are permanent** (tests cite them); where two
 overlap, the more specific governs. Rules binding every file are in the root `CLAUDE.md`;
 the backend's are in `.claude/rules/backend.md`. Holds 17–20, 36, 39–51, 53–54, 60–62,
-66–67, 69, 79–80, 85–86, 120–123, 138–139.
+66–67, 69, 79–80, 85–86, 120–123, 138–139, 146.
 
 ## React correctness
 
@@ -294,3 +294,23 @@ a spent spare draws no resting mark: the mark is a decision in force, and that o
 and said nothing when clearing dropped the file onto the reap list. Warning only on the safe side
 is backwards for a codebase whose every ambiguity resolves toward keeping the file: a new branch
 ships its consequence clause, and the destructive one ships it first.
+
+## State lifted out of a component
+
+**146. A dirty/blocked signal a component reports UPWARD is two claims, and both are checked
+in every state the component can render.** Lifting "this panel is holding something" into a
+parent so the parent can guard on it asserts *there is something to lose* AND *you can still
+get to it*. They are separate facts, they are computed in different places, and one PR broke
+them in opposite directions at once. A panel that reported the bar's contents went quiet about
+a proxy list its own bar drops on purpose, so the field walked out with no confirm; the same
+panel, on a failed refetch, went on reporting a draft while every early return above the render
+had replaced the form with one error paragraph, so the guard demanded a discard for edits with
+no box, no bar and no Discard on screen. Neither was visible from the diff, because the signal
+and the surface read correct on their own lines. So **a hook that reports state upward is
+declared above every early return, and every early return is then re-read as a state the report
+still fires in** — say what the parent is told while the component renders "loading", while it
+renders its failure branch, and after it unmounts. Where the reported set and the acting surface
+are deliberately different (a bar must not name a control the operator cannot reach), compute
+them apart and say why in the same breath, rather than deriving one from the other and leaving a
+comment claiming they cannot disagree. A guard whose signal outlives the surface that satisfies
+it is not a guard, it is a trap: the only exit it leaves is the destructive button.

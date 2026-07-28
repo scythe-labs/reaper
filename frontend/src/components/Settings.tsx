@@ -319,6 +319,12 @@ export function GeneralPanel({
   // a field the operator cannot reach to fix -- yet the text is still sitting in the disabled
   // box, still unsaved, and still gone on unmount. Reading the bar alone let exactly that one
   // walk out silently, on the panel that had just promised to ask.
+  //
+  // Rule 146: this reports two things at once, that there is something to lose and that the
+  // operator can still reach it, so both are read against every early return below -- the
+  // report fires while this renders "Loading…" (nothing is dirty yet, `data` is undefined) and
+  // it must not outlive the form, which is why the failure branch below now keeps the form
+  // whenever there is a row to render.
   const hasDrafts = pending.length > 0 || (proxiesDirty && !data?.proxy_trust_enabled);
   useEffect(() => {
     onDirtyChange?.(hasDrafts);
