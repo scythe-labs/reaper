@@ -553,11 +553,15 @@ describe("the gate that counts recent watchers", () => {
     expect(screen.getByText(/How far back .recently. reaches/)).toBeInTheDocument();
   });
 
-  it("shows the server's warning about that window on the page", async () => {
+  it("shows the server's warning beside the protections it is about", async () => {
     // The whole point of the warning is that an operator whose reap list is empty has
     // somewhere to read why, so "the server emits it" is not the claim worth pinning --
-    // "it reaches the page" is. Nothing else in this file rendered a validation warning,
-    // so the anchor that routes gates.* to the protections list was uncovered.
+    // "it reaches the page, beside the control it tells them to change" is.
+    //
+    // Both halves are needed, and the second is the one that costs an assertion. An
+    // unanchored warning still renders, in the catch-all stack at the foot of the page, so
+    // a bare findByText passes with the `gates.` anchor renamed to anything at all -- which
+    // is what it did until this test asserted a POSITION (rule 118).
     renderEditor(
       {
         body: {
@@ -580,12 +584,21 @@ describe("the gate that counts recent watchers", () => {
           field: "gates.server_popularity.window_days",
           severity: "warn",
           message:
-            "Nothing will be flagged for removal while your watch history only goes back 3 months.",
+            "Nothing will be flagged for removal. Reaper can't say who watched a title in the " +
+            "last year from a shorter history, and your watch history only goes back 3 months. " +
+            "Lower this window to match your history, or wait for it to build up.",
         },
       ],
     );
 
-    expect(await screen.findByText(/Nothing will be flagged for removal/)).toBeInTheDocument();
+    const warning = await screen.findByText(/Nothing will be flagged for removal/);
+
+    expect(warning).toBeInTheDocument();
+    // WarnBlock renders a fragment, so the anchored warning is the protections list's own
+    // next sibling. The unanchored stack sits far below it, past the rating card.
+    const gateList = screen.getByText(/How far back .recently. reaches/).closest("ul.rule-list");
+    expect(gateList).not.toBeNull();
+    expect(gateList?.nextElementSibling).toBe(warning);
   });
 
   it("hides the window with the gate, like every other sub-control", async () => {
