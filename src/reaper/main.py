@@ -26,7 +26,7 @@ from reaper.api.breakdown import router as breakdown_router
 from reaper.api.fairness import router as fairness_router
 from reaper.api.leaving_soon import router as leaving_soon_router
 from reaper.api.logs import router as logs_router
-from reaper.api.middleware import AuthGuard
+from reaper.api.middleware import AuthGuard, api_key_scope_description
 from reaper.api.plex_trash import router as plex_trash_router
 from reaper.api.poster import close_artwork_client
 from reaper.api.poster import router as poster_router
@@ -365,11 +365,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "type": "apiKey",
                 "in": "header",
                 "name": "X-Api-Key",
-                "description": (
-                    "The instance API key from Settings, General. Reads and writes as "
-                    "the operator, but can never turn deletion on, execute a reap, or "
-                    "change sign-in settings."
-                ),
+                # Built from the fence in api/middleware.py, never written beside it: the
+                # box that offers the key on all 87 operations has to say which ones it
+                # will actually get through.
+                "description": api_key_scope_description(),
             }
             schema["security"] = [{"ApiKey": []}]
             app.openapi_schema = schema

@@ -533,15 +533,20 @@ export function GeneralPanel() {
             <span className="set-label">API key</span>
             {/* This sentence is the whole basis on which an operator decides to hand a key
                 to a third-party dashboard, so it names what the fence in api/middleware.py
-                (_API_KEY_READ_DENY / _API_KEY_WRITE_ALLOW) actually allows, not a rounder
+                (_API_KEY_READS_DENIED / _API_KEY_WRITES) actually allows, not a rounder
                 claim. It used to say a key "cannot change any setting", while /api/profile
                 sat in the write allowlist: a key holder could turn run limits off (S-2).
-                Changing either list means changing this line in the same commit. */}
+                Changing either list means changing this line in the same commit.
+
+                It closes with "nothing else" rather than a list of exclusions, for the
+                reason api_key_scope_description exists: the fence is far tighter than any
+                short list of what it refuses, and naming four of them read as a promise
+                that the rest were allowed. */}
             <p className="help">
               Send it as the X-Api-Key header so scripts and other apps can use Reaper without
               signing in. A key reads your library, and can start scans, build plans, and change
-              your policy, run limits, and grace. It cannot turn deletion on, run a reap, read your
-              logs, or change your connections or password.
+              your policy, run limits, and grace. Nothing else: it cannot turn deletion on, run a
+              reap, read your logs, or change any other setting.
             </p>
             <div className="set-control">
               {data.api_key_set ? (

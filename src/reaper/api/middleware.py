@@ -84,14 +84,15 @@ api_key_throttle = Throttle(threshold=5, base_delay=2.0, max_delay=300.0, decay=
 #:   viewing. Denied for the same reason the backup is (S-3).
 #:
 #: ``PUT /api/logs/level`` is a write, so the allowlist below already refuses it.
-_API_KEY_READ_DENY = frozenset(
-    {
-        "/api/settings/general/api-key",
-        "/api/settings/backup/download",
-        "/api/logs",
-        "/api/logs/download",
-    }
+#:
+#: Each entry pairs the paths with the phrase ``api_key_scope_description`` names them by,
+#: for the reason given on the write list below.
+_API_KEY_READS_DENIED: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("the key itself", ("/api/settings/general/api-key",)),
+    ("the backup download", ("/api/settings/backup/download",)),
+    ("the logs", ("/api/logs", "/api/logs/download")),
 )
+_API_KEY_READ_DENY = frozenset(path for _, paths in _API_KEY_READS_DENIED for path in paths)
 
 #: The only writes an API key may drive: scanning, planning, and editing the policy and
 #: reap profile. Everything else that changes state stays behind the signed-in browser --
@@ -99,16 +100,46 @@ _API_KEY_READ_DENY = frozenset(
 #: changing sign-in or the key itself), but ALL setting/credential changes. A config write
 #: can hand a stored token to an operator-supplied address or loosen the proxy trust the
 #: login lockout keys on, so those must not ride a header-only credential.
-_API_KEY_WRITE_ALLOW = frozenset(
-    {
-        "/api/scan/start",
-        "/api/runs",
-        "/api/policy",
-        "/api/policy/validate",
-        "/api/policy/simulate",
-        "/api/profile",
-    }
+#:
+#: The paths and the words the operator reads are ONE declaration, because they drifted:
+#: the reference's auth box described the fence by what it excludes, named three
+#: exclusions, and a key holder scripting against it met a 403 on a dozen more. A list of
+#: exclusions falls behind every time this fence tightens; a list of permissions cannot,
+#: since a route only becomes reachable by being added here, phrase and all (rule 103).
+_API_KEY_WRITES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("start a scan", ("/api/scan/start",)),
+    # The dry run is matched by shape rather than by name, so it has no path to list here;
+    # it rides this phrase instead, and ``_api_key_allowed`` is where it is admitted.
+    ("plan a run and dry run it", ("/api/runs",)),
+    ("edit the policy", ("/api/policy", "/api/policy/validate", "/api/policy/simulate")),
+    ("change the run limits and grace", ("/api/profile",)),
 )
+_API_KEY_WRITE_ALLOW = frozenset(path for _, paths in _API_KEY_WRITES for path in paths)
+
+
+def _listed(phrases: tuple[str, ...]) -> str:
+    """``a, b, and c`` -- the phrases as one readable clause."""
+    if len(phrases) < 3:
+        return " and ".join(phrases)
+    return f"{', '.join(phrases[:-1])}, and {phrases[-1]}"
+
+
+def api_key_scope_description() -> str:
+    """What an API key can do, in the operator's words, built from the fence itself.
+
+    The API reference renders this in its auth box (``main.openapi_with_api_key``), where
+    it is the whole basis on which someone decides what to point a script at. Generated
+    rather than written so it cannot outlive the fence it describes: every phrase comes
+    from ``_API_KEY_WRITES``/``_API_KEY_READS_DENIED``, the same declarations
+    ``_api_key_allowed`` enforces.
+    """
+    reads = _listed(tuple(phrase for phrase, _ in _API_KEY_READS_DENIED))
+    writes = _listed(tuple(phrase for phrase, _ in _API_KEY_WRITES))
+    return (
+        f"The instance API key from Settings, General. It reads everything except {reads}. "
+        f"It writes only these: {writes}. Every other write is refused, including changing "
+        "a setting, turning deletion on, and running a reap."
+    )
 
 
 def _api_key_allowed(method: str, path: str) -> bool:

@@ -8,8 +8,10 @@ The rules pinned here:
   lesson applied forward: nothing outside ``/api`` is authenticated, so nothing
   sensitive may live outside ``/api``);
 * the API key authenticates without a cookie and without the CSRF header (no cookie,
-  no CSRF risk), backs off per address on bad guesses, and is FENCED off the three
-  irreversible authorities: the deletion switch, execute, and sign-in/key management;
+  no CSRF risk), backs off per address on bad guesses, and writes ONLY the automation
+  allowlist -- scanning, planning, the policy, the run limits -- so the deletion switch,
+  execute, sign-in and every other setting stay behind the browser, and the reference's
+  auth box says so in those terms;
 * reverse-proxy trust is off by default, applies immediately on save, and
   ``client_ip`` only honors a forwarded chain when the peer itself is a listed proxy;
 * the log ring is redacted before storage, polls incrementally by sequence number, and
@@ -33,7 +35,13 @@ from sqlalchemy.orm import Session as SyncSession
 from starlette.requests import Request
 
 from reaper import logbuffer
-from reaper.api.middleware import _api_key_allowed, api_key_throttle
+from reaper.api.middleware import (
+    _API_KEY_READS_DENIED,
+    _API_KEY_WRITES,
+    _api_key_allowed,
+    api_key_scope_description,
+    api_key_throttle,
+)
 from reaper.auth.proxy import client_ip, parse_proxy_networks
 from reaper.config import Settings, parse_trusted_proxies
 from reaper.db.base import Base
@@ -495,6 +503,77 @@ class TestTheDocsLockdown:
         scheme = schema["components"]["securitySchemes"]["ApiKey"]
         assert scheme["in"] == "header"
         assert scheme["name"] == "X-Api-Key"
+
+
+class TestTheAuthBoxDescribesTheFence:
+    """The reference offers the key on every operation, so its auth box is the only place
+    a script author learns which ones it will get through. It used to say the key could do
+    anything but turn deletion on, execute, or change sign-in -- while the fence refused
+    every settings write, sparing a title, and every override. Rule 103: the sentence is
+    generated from the allowlist, and these fail if a route slips past the generator.
+    """
+
+    def _writes(self, schema: dict[str, object]) -> list[tuple[str, str]]:
+        paths: dict[str, dict[str, object]] = schema["paths"]  # type: ignore[assignment]
+        return [
+            (method.upper(), path)
+            for path, methods in sorted(paths.items())
+            for method in sorted(methods)
+            if method.upper() not in {"GET", "HEAD", "OPTIONS"}
+        ]
+
+    def test_every_write_the_fence_allows_is_named_in_the_sentence(
+        self, client: TestClient
+    ) -> None:
+        """The one that catches the drift. Opening a route to the key without giving it a
+        phrase leaves the box promising less than the key can do, which is how an
+        automation authority ships undocumented."""
+        schema = client.get("/api/openapi.json").json()
+        allowed = [(m, p) for m, p in self._writes(schema) if _api_key_allowed(m, p)]
+        assert allowed, "the fence opened no writes at all, so this proves nothing"
+
+        named = {path for _, paths in _API_KEY_WRITES for path in paths}
+        # The dry run is matched by shape, and rides the "plan a run and dry run it" phrase.
+        unnamed = [
+            f"{m} {p}"
+            for m, p in allowed
+            if p not in named and not (p.startswith("/api/runs/") and p.endswith("/dry-run"))
+        ]
+        assert unnamed == [], f"reachable with a key, but the auth box never says so: {unnamed}"
+        assert "dry run" in api_key_scope_description()
+
+    def test_every_path_the_sentence_is_built_from_is_a_real_route(
+        self, client: TestClient
+    ) -> None:
+        """The other direction: a retired route leaves a phrase describing something the
+        operator can no longer do, and nothing else would notice."""
+        schema = client.get("/api/openapi.json").json()
+        served = set(schema["paths"])
+        declared = {path for _, paths in _API_KEY_WRITES for path in paths} | {
+            path for _, paths in _API_KEY_READS_DENIED for path in paths
+        }
+        missing = sorted(declared - served)
+        assert missing == [], f"named in the auth box, but no such route: {missing}"
+
+    def test_the_served_box_carries_the_generated_sentence(self, client: TestClient) -> None:
+        schema = client.get("/api/openapi.json").json()
+        description = schema["components"]["securitySchemes"]["ApiKey"]["description"]
+        assert description == api_key_scope_description()
+        # Rule 21: this renders in the reference, so it is operator copy.
+        assert "—" not in description
+
+    def test_the_sentence_leads_with_what_the_key_can_do(self) -> None:
+        """Rule 119: written from the fence's own contract, not read back off the
+        generator. A key reads all but three things and writes four."""
+        description = api_key_scope_description()
+        assert "reads everything except the key itself, the backup download, and the logs" in (
+            description
+        )
+        assert (
+            "writes only these: start a scan, plan a run and dry run it, edit the policy, "
+            "and change the run limits and grace" in description
+        )
+        assert "Every other write is refused" in description
 
 
 def _request(
