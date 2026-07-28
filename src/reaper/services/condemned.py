@@ -87,16 +87,43 @@ def reap_override_verdict(explanation_json: str, *, score: int) -> str:
     it, so the zeros below are inert plumbing, pinned by a test, not hidden policy.
 
     A block that could not be *checked* holds the reap (fail-closed); a block that is a
-    deliberate "the owner should decide" flag -- the keep-rule conflict -- does not, since
-    the reap IS that decision (:func:`reaper.engine.verdict.block_holds_reap`). A malformed
-    or unreadable explanation reads as blocked: not being able to see why an item was kept
-    is not permission to remove it.
+    deliberate "the owner should decide" flag does not, since the reap IS that decision.
+    Today that flag is the keep-rule conflict, and only the half of it whose comparisons all
+    came back with a number -- the same conflict raised because a kept season could not be
+    read is a plumbing failure and holds (:func:`reaper.engine.verdict.block_holds_reap`).
+    A malformed or unreadable explanation reads as blocked: not being able to see why an
+    item was kept is not permission to remove it.
     """
     try:
         exp = json.loads(explanation_json)
     except (ValueError, TypeError):
         exp = None
     return reap_override_verdict_decoded(exp, score=score)
+
+
+def _protection_entries(value: object) -> tuple[list[dict[Any, Any]], bool]:
+    """One stored protections list, as ``(readable object entries, anything unreadable)``.
+
+    Three cases, kept apart on purpose (rule 1). ``None`` is genuinely absent -- the scan
+    looked and stored nothing -- and stays permissive. A list is readable, and its object
+    entries come back for the ``.get`` readers below. Anything else is unreadable: a scalar
+    where a list belongs, or a list carrying an entry that is not an object.
+
+    Filtering the unreadable entries away *silently* is the bug this replaces. Three strings
+    in ``protections_unknown`` filtered down to an empty list, so ``blocked`` went ``False``
+    and a hand reap condemned a file whose kept-reasons nobody could read -- evidence we
+    cannot see turned into evidence that nothing was wrong. The list is judged before it is
+    filtered, and an unreadable entry holds the reap exactly as a bad Plex match does
+    (rule 96). ``api.routes._has_blocked_protections`` reads the same stored block with the
+    same posture and says so in its own docstring; these two must not disagree, because the
+    permissive one is the one on the destructive path.
+    """
+    if value is None:
+        return [], False
+    if not isinstance(value, list):
+        return [], True
+    entries = [e for e in value if isinstance(e, dict)]
+    return entries, len(entries) != len(value)
 
 
 def reap_override_verdict_decoded(explanation: object, *, score: int) -> str:
@@ -123,17 +150,22 @@ def reap_override_verdict_decoded(explanation: object, *, score: int) -> str:
         )
     exp = explanation
 
-    fired = [e for e in exp.get("protections_fired") or [] if isinstance(e, dict)]
-    unknown = [e for e in exp.get("protections_unknown") or [] if isinstance(e, dict)]
+    fired, fired_unreadable = _protection_entries(exp.get("protections_fired"))
+    unknown, unknown_unreadable = _protection_entries(exp.get("protections_unknown"))
+    unreadable = fired_unreadable or unknown_unreadable
     bad_match = match_state(exp) in BAD_MATCH_STATES
 
     return decide_verdict(
         protected=bool(fired),
-        blocked=bool(unknown) or bad_match,
-        # A block holds the reap unless it is a deliberate "you decide" deferral (the
-        # keep-rule conflict); a bad Plex match always holds. Read off the same primitive
+        # Truthful but inert, like the zeros below: the reap branch reads only
+        # ``blocked_holds_reap`` and ``safety_protected``, so nothing here is the interlock.
+        blocked=bool(unknown) or bad_match or unreadable,
+        # THIS is the interlock. A block holds the reap unless it is a deliberate "you
+        # decide" deferral (the keep-rule conflict); a bad Plex match always holds, and so
+        # does anything in either list this code could not read. Read off the same primitive
         # the scan uses, so a stored explanation and a live evaluation agree.
         blocked_holds_reap=bad_match
+        or unreadable
         or any(
             block_holds_reap(
                 str(e.get("gate") or ""),
@@ -141,8 +173,9 @@ def reap_override_verdict_decoded(explanation: object, *, score: int) -> str:
                 # shipped carries no key at all, and there is nothing in it that can tell
                 # a made comparison from a refused one -- the wording that used to stand
                 # in for the flag is exactly what failed. So absent reads as "does not
-                # defer" and the reap is held, the keep direction (rule 104). The window
-                # is one scan long: the next scan re-freezes every row with the key.
+                # defer" and the reap is held, the keep direction (rule 104). Self-clearing
+                # without needing a rewrite: a later scan stores its own rows, and every
+                # reap path keys on a snapshot id, so pre-flag rows go unreachable.
                 defers_to_owner=e.get("defers_to_owner") is True,
             )
             for e in unknown

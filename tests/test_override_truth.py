@@ -170,8 +170,60 @@ class TestReapOverrideVerdict:
         """The thaw, and it points at keeping (rule 104). A stored row that predates
         ``defers_to_owner`` carries nothing that can tell a made comparison from a refused
         one -- the wording that used to stand in for it is exactly what failed -- so it
-        holds. Self-clearing: the next scan re-freezes every row with the key."""
+        holds. Self-clearing without a rewrite: a later scan stores its own rows and every
+        reap path keys on a snapshot id, so pre-flag rows go unreachable."""
         assert reap_override_verdict(LEGACY_CONFLICT_NO_FLAG, score=90) == "protect"
+
+    def test_only_a_real_json_true_releases_the_reap(self) -> None:
+        """``defers_to_owner`` is thawed with ``is True``, and that strictness is the whole
+        interlock on this path: it is the one value that lets a hand reap through a block.
+        Relaxed to a truthy test, any stored junk releases the file -- including the string
+        ``"false"``, which reads as deliberate deferral while saying the opposite. Only the
+        JSON boolean counts; everything else holds (rule 1: unreadable is not absent)."""
+        for junk in ('"true"', '"false"', '"0"', "1", "[]", "{}", "null"):
+            stored = json.dumps(
+                {
+                    "protections_unknown": [
+                        {"gate": "season_progression", "detail": "d", "defers_to_owner": None}
+                    ]
+                }
+            ).replace("null", junk)
+            assert reap_override_verdict(stored, score=90) == "protect", junk
+
+    def test_a_protections_list_that_cannot_be_read_holds_the_reap(self) -> None:
+        """The fail-open this closes: the readers below use ``.get``, so both lists were
+        filtered to objects first -- and a list of three strings filtered down to an empty
+        one, so ``blocked`` went False and the reap condemned a file whose kept-reasons
+        nobody could read. Evidence we cannot see must never become evidence that nothing
+        was wrong (rule 96). ``routes._has_blocked_protections`` reads the same block with
+        this posture already; the destructive reader was the permissive one."""
+        for stored in (
+            '{"protections_unknown": ["season_progression could not be checked"]}',
+            '{"protections_unknown": [null]}',
+            '{"protections_unknown": [{"gate": "x", "detail": "d"}, "and a string"]}',
+            '{"protections_unknown": "could not check the season guard"}',
+            '{"protections_fired": ["whitelisted"]}',
+            '{"protections_fired": 1}',
+        ):
+            assert reap_override_verdict(stored, score=90) == "protect", stored
+
+    def test_a_scalar_protections_list_does_not_raise_out_of_the_reap(self) -> None:
+        """A scalar where a list belongs used to raise ``TypeError`` straight out of this
+        function. The ``except`` above covers ``json.loads`` only, so it escaped into the
+        review queue, the planner's step expansion, the confirmation-phrase count and the
+        executor's per-item spare re-read (rule 112's path) -- one malformed row taking down
+        every surface that counts what a reap will remove."""
+        assert reap_override_verdict('{"protections_unknown": 1}', score=90) == "protect"
+        assert reap_override_verdict('{"protections_fired": 2.5}', score=90) == "protect"
+
+    def test_a_genuinely_empty_protections_list_stays_permissive(self) -> None:
+        """The other side of the same rule, so the fix above cannot be over-read: absent and
+        empty are readable answers -- the scan looked and found nothing holding the item --
+        and they must still let a hand reap through, or every clean abstain stops being
+        reapable."""
+        assert reap_override_verdict('{"protections_unknown": []}', score=90) == "condemn"
+        assert reap_override_verdict('{"protections_unknown": null}', score=90) == "condemn"
+        assert reap_override_verdict("{}", score=90) == "condemn"
 
     def test_a_match_problem_reads_as_blocked(self) -> None:
         assert reap_override_verdict(UNMATCHED, score=99) == "protect"
