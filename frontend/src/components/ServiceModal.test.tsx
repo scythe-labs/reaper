@@ -178,6 +178,12 @@ describe("ServiceModal HD/4K library map", () => {
     const named = screen.getAllByRole("combobox").map((c) => c.getAttribute("aria-label"));
     expect(named).toEqual(["Plex library for /tv", "Plex library for /tv-4k"]);
     expect(screen.queryAllByRole("combobox", { name: "" })).toHaveLength(0);
+    // The spoken name is derived from the folder cell, and every helper in this file now
+    // reaches these selects through that name -- so nothing else here observes that the cell
+    // renders at all. Empty the column and each assertion above still passes, which is the
+    // same blindness #147 was hiding in, one layer over. Rule 118.
+    expect(screen.getByText("/tv")).toBeInTheDocument();
+    expect(screen.getByText("/tv-4k")).toBeInTheDocument();
   });
 });
 
@@ -240,10 +246,11 @@ function renderSeerrModal(
   );
 }
 
-/** The instance select for one service row, found by that row's service name. */
-function selectForService(name: string): HTMLSelectElement {
-  // By accessible name, for the reason given on selectForFolder above.
-  return screen.getByLabelText(`Connection for ${name}`) as HTMLSelectElement;
+/** The instance select for one service row, found by that row's service name and media kind. */
+function selectForService(name: string, media: "TV" | "Movies" = "TV"): HTMLSelectElement {
+  // By accessible name, for the reason given on selectForFolder above. The media kind is part
+  // of that name because it is part of the row's identity: two services can share a name.
+  return screen.getByLabelText(`Connection for ${name}, ${media}`) as HTMLSelectElement;
 }
 
 describe("ServiceModal multi-Seerr service map", () => {
@@ -297,7 +304,7 @@ describe("ServiceModal multi-Seerr service map", () => {
       { service_id: 0, kind: "radarr", name: "HD Movies", is_4k: false, suggested_instance_id: 7 },
     ]);
     await waitFor(() => expect(selectForService("HD TV").value).toBe("3"));
-    expect(selectForService("HD Movies").value).toBe("7"); // not "Not set", not "3"
+    expect(selectForService("HD Movies", "Movies").value).toBe("7"); // not "Not set", not "3"
     expect(screen.getAllByText("suggested")).toHaveLength(2);
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(apiMock.updateInstance).toHaveBeenCalled());
@@ -317,8 +324,28 @@ describe("ServiceModal multi-Seerr service map", () => {
     ]);
     await waitFor(() => expect(selectForService("Main TV").value).toBe("3"));
     const named = screen.getAllByRole("combobox").map((c) => c.getAttribute("aria-label"));
-    expect(named).toEqual(["Connection for Main TV", "Connection for Main TV 4K"]);
+    expect(named).toEqual(["Connection for Main TV, TV", "Connection for Main TV 4K, TV"]);
     expect(screen.queryAllByRole("combobox", { name: "" })).toHaveLength(0);
+    // As on the folder grid: both helpers reach these selects by their spoken name, so the
+    // visible cell they are derived from is otherwise unobserved. Rule 118.
+    expect(screen.getAllByText("Main TV")).toHaveLength(2);
+    expect(screen.getByText("4K")).toBeInTheDocument();
+  });
+
+  it("names a TV and a Movies service apart when the portal gives them one name", async () => {
+    // The row's identity is kind + id, so the name has to carry the kind too. Seerr numbers
+    // and names the two lists independently, so one portal can hold a TV and a Movies service
+    // both called "Media" -- with the name alone those two rows are announced identically and
+    // the operator maps their movie requests onto a TV connection.
+    renderSeerrModal(seerr(), [
+      { service_id: 0, kind: "sonarr", name: "Media", is_4k: false, suggested_instance_id: 3 },
+      { service_id: 0, kind: "radarr", name: "Media", is_4k: false, suggested_instance_id: 7 },
+    ]);
+    await waitFor(() => expect(selectForService("Media", "TV").value).toBe("3"));
+    expect(selectForService("Media", "Movies").value).toBe("7");
+    const named = screen.getAllByRole("combobox").map((c) => c.getAttribute("aria-label"));
+    expect(named).toEqual(["Connection for Media, TV", "Connection for Media, Movies"]);
+    expect(new Set(named).size).toBe(named.length);
   });
 
   it("shows a notice, not an empty list, when the services can't be read", async () => {

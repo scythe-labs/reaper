@@ -620,8 +620,15 @@ export function ServiceModal({
                           className={`pl-select${serviceMap[svcKey(s)] ? "" : " unset"}`}
                           // Same reason as the library picker above. The 4K tag is part of the
                           // visible name here, so it is part of the spoken one too -- a portal
-                          // can carry two services that differ only by it.
-                          aria-label={`Connection for ${s.name}${s.is_4k ? " 4K" : ""}`}
+                          // can carry two services that differ only by it. The row's identity
+                          // is `svcKey` (kind + id), and the name has to carry every part of it
+                          // that can differ: the two lists are numbered and named independently,
+                          // so one portal can hold a TV and a Movies service both called "Media"
+                          // and the tag alone would leave those two rows sharing a name. Said in
+                          // words rather than as the stored kind, per rule 21.
+                          aria-label={`Connection for ${s.name}${s.is_4k ? " 4K" : ""}, ${
+                            s.kind === "sonarr" ? "TV" : "Movies"
+                          }`}
                           value={String(serviceMap[svcKey(s)] ?? "")}
                           onChange={(e) => setServiceInstance(svcKey(s), e.target.value)}
                         >
