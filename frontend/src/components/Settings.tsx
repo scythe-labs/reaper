@@ -2197,8 +2197,11 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
   // General's save bar can hold six unsaved fields at once, and switching section unmounts the
   // panel holding them. So the switch waits for a yes, the same two-step confirm the policy
   // editor's Movies/TV switch uses and in the same place: directly under the control that was
-  // clicked, so that control does not move under the pointer. General is the only panel that
-  // reports a draft; the rest either save on the spot or confirm in their own modal.
+  // clicked, so that control does not move under the pointer. General is the only panel WIRED to
+  // report a draft, which is not the same as the only one holding one: Plex keeps the web
+  // address and the manual host/port behind inline Saves, and Notifications keeps the webhook
+  // URL, and both still unmount silently. Deferred in writing rather than assumed safe (rule
+  // 72), tracked as issue #128.
   const [generalDirty, setGeneralDirty] = useState(false);
   const [pendingSwitch, setPendingSwitch] = useState<Panel | null>(null);
 
