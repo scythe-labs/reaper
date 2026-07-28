@@ -88,6 +88,14 @@ describe("the save bar", () => {
   it("is absent until something is unsaved, and names what is", async () => {
     const person = renderPanel();
     const name = await screen.findByLabelText("Application name");
+    // Rule 137, one turn earlier than usual: the box is not disabled here, it is UNSEEDED. The
+    // form renders on the first data-bearing pass and the stored row is copied into local state
+    // by an effect after it, so for that one flush every field still holds its initial value,
+    // differs from `data`, and the bar is correctly on screen naming four of them. Finding the
+    // box is not the same as the box holding what the server sent, so wait for the seed rather
+    // than for the markup -- this asserted straight after the find and failed about one run in
+    // three under load, reading as a bar that appears with nothing typed.
+    await waitFor(() => expect(name).toHaveValue(STORED.application_name));
     expect(bar()).toBeNull();
 
     await person.clear(name);
