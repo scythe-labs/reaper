@@ -688,3 +688,87 @@ named shape and pre-existing. But a future pass must not reuse the "one response
 argument to kill it, because for the panel that argument is simply wrong. This is the third time
 this file has recorded a refutation resting on a true statement that did not support its
 conclusion.
+
+## Refuted at `9a3cb13` (2026-07-28, reviewing the API-key scheme fence, PR #108)
+
+Two lanes fired by path (`seam` on `api/middleware.py`, `diff` on `main.py`, `auth/cookie.py`,
+`Settings.tsx` and the new tests). A third, narrow pass was run on the credential fence itself,
+which **does not** fire by path — no gate, executor, planner, transport guard or arming file
+changed — because the diff rewrote `_API_KEY_WRITE_ALLOW`, the set standing between a
+header-only credential and `POST /api/runs/{run_id}/execute`. That pass is the one worth
+copying: **its output was a clean negative**, and the negative was the point.
+
+**Eight confirmed findings, all tier 4, seven fixed on the branch and one filed (#118).** A
+ninth question the seam lane's evidence raised became #117. That is the right ceiling for a
+change whose entire output is prose — but the ceiling held for a reason worth naming, because
+this surface is where a *claim about a credential boundary* is made, and two of the eight were
+the document asserting the opposite of what the guard does.
+
+**The fence lane's negative, and what it cost to get.** Runtime set-equality against
+`origin/dev`'s literal frozensets (equal, nothing dropped or duplicated); all 89 method/path
+pairs driven three ways — valid key, no credential, and `api_key_refused` on both the templated
+and the concrete spelling — with zero mismatches; deletion armed on a throwaway instance and
+`execute`, `stop` and the safety write re-driven, still 403, so the fence does not depend on
+host state; 15 path encodings against a real uvicorn (`%2F` splices, traversal, trailing slash,
+`%00`, query smuggling) all fenced or 404. **A pass that returns nothing has to show its work,
+or it is indistinguishable from a pass that did none.**
+
+**Convergence fired three times, in three pairs.** Both the `diff` and `seam` lanes independently
+derived the try-it-out CSRF defect, the `Settings.tsx` copy being false and unguarded, and the
+open routes naming a credential that does not reach them. Three mechanisms, three fixes. The
+`diff` lane alone found the one nobody else was looking at: the fence has a **third** description
+in the operator's words — the 403 body — and it was the only one this PR did not regenerate, and
+the only one that was false about a blast-radius bound (it denied that a key can turn the run
+caps off, in the response immediately before the request that does).
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| seam | Templated path vs concrete path diverge somewhere, so an operation is marked against a fence answer the guard does not give it | **The lane's lead candidate, and zero divergences in both directions.** 89 `APIRoute`s enumerated, `api_key_refused(method, template)` compared against the concrete spelling over 105 route/method/concrete combinations including adversarial substitutions (`run_id=dry-run`, `run_id=execute`, `run_id=9%2Fdry-run`, `media_key=a%2Fb`), then every route driven live with a key and compared against the schema mark: 0 disagreements. Structural reason: every list entry is a static path, the only shape test is conjunctive `startswith("/api/runs/") and endswith("/dry-run")`, and `{run_id}` is `[^/]+`. |
+| seam | The vendored Scalar bundle proxies try-it-out through `proxy.scalar.com`, so no cookie is ever sent and the ordering claim collapses on any non-localhost install | Refuted by reading the resolution chain *and* by measurement. `proxyUrl` is optional with **no** default (the `prefault('https://proxy.scalar.com')` nearby belongs to `externalUrls`); the chain resolves to `shouldUseProxy("", url) === false`. Harness confirms `isUsingProxy: false` on every operation with `window.location.origin` shimmed to a public host. Recorded because the code path exists and one config key would arm it. |
+| seam | Scalar does not preselect the first scheme, so the reorder is cosmetic | It does. `getSelectedSecurity` priority 4 is "first security requirement from the spec"; measured `preselected: ['Session']` on all six operations sampled. |
+| seam | The `Session` cookie placeholder is sent and overrides the browser's real session | Built (`cookie: reaper_session=` is in the payload) but `Cookie` is a forbidden fetch request header, so the browser drops it; no proxy means no `X-Scalar-Cookie` escape hatch either, and `credentials` unset gives `same-origin`. The PR's mechanism claim is correct. |
+| seam | No `servers` in the document, so `buildRequest` fails with `MISSING_REQUEST_SERVER_BASE` and try-it-out never sends at all | `getSelectedServer` does return `null`, but the reference embeds at `layout: "modal"`, so `allowMissingRequestServerBase` is true and the URL falls back to `window.location.origin`. |
+| fence | The derived `_API_KEY_READ_DENY` / `_API_KEY_WRITE_ALLOW` differ from the `origin/dev` literals | Both compare `==` to the old frozensets, extracted with `git show` and exec'd side by side. 4 read paths / 4 unique, 6 write paths / 6 unique. `_SAFE_METHODS`, `_OPEN_EXACT`, `_OPEN_PREFIX` unchanged. |
+| fence | The `/dry-run` shape test can be satisfied by a path that routes somewhere else | Under real uvicorn `scope["path"]` is percent-decoded (`raw_path=b'/api/runs/1%2Fexecute'` → `path='/api/runs/1/execute'`) and Starlette's router matches the same string, so guard and router cannot disagree. `/api/settings/safety%2F..%2F..%2Fruns%2F1%2Fdry-run` is fenced by the `startswith` half. No `:path` converter, no `Mount`, no `root_path` in `src/`. |
+| fence | Method blindness: `_api_key_allowed` keys the write allowlist on path alone | Refuted for the current table. The six allowlisted paths carry exactly six unsafe operations and nothing else — no DELETE, no PATCH — and each is within its phrase. `POST /api/runs` journals a plan and sends nothing (`CreateRunIn` carries only `media_keys`). Structural note kept: a `DELETE /api/policy` added later inherits the key with no edit to `_API_KEY_WRITES`, and the generated-sentence tests catch a new *path*, not a new *method* on an existing one. |
+| fence | A key-reachable read hands back a stored secret, so the auth box's read claim is dangerous | No secret leaks. Seeded a Discord webhook with a token in its path and an *arr instance with an API key, then read all nine settings routes with a key only: neither needle appears. `InstanceOut` carries `has_key: bool`, `NotificationsOut` `has_webhook: bool`, `PlexStatusOut` no token. The four `SecretBox.decrypt` sites use the token for outbound calls and none returns it. (What the read scope *does* expose — every settings page, and one person's viewing breakdown — is the confirmed finding, and #117.) |
+| fence | `POST /api/leaving-soon/sync` is fenced while `POST /api/scan/start` runs the same job | Real, pre-existing, and not a diff finding: `scan_runner` calls `leaving_soon.after_scan`, so "start a scan" fairly covers a scan's documented after-pass. `_API_KEY_WRITE_ALLOW` is byte-identical to `origin/dev`. |
+| diff | `_listed(())` returns `""`, so the sentence renders "reads everything except . " | Reachable only by emptying a declaration, which fails the literal-clause assertions. Arities verified: `0→''`, `1→'a'`, `2→'a and b'`, `3→'a, b, and c'`. Every non-zero form is correct and 2 is reachable and reads fine. |
+| diff | The `**Signed in only.**` note can double-apply to one description | It cannot. `openapi_with_api_key` guards on `app.openapi_schema is None`, `get_openapi` returns a fresh dict each call so route objects are never mutated, and nothing anywhere reassigns `openapi_schema = None`. Driven: two `app.openapi()` calls, note count = 1, same object returned. |
+| diff / seam | `DOCUMENTED_SESSION_COOKIE` breaks a generated client on an HTTPS install, where the real cookie is `__Host-`-prefixed | Real but inert. `read_session_tokens` reads **both** names on every request regardless of scheme, so a client sending the plain name with a `__Host-` value still authenticates; the description names the twin in prose; no generated client exists. The comment's own claim that nothing reads a cookie by this constant is verified. |
+| diff | "edit the policy" covers `/api/policy/validate` and `/api/policy/simulate`, which do not edit | Overstates nothing harmful: the key genuinely can `POST /api/policy`, and the two extra paths are read-shaped POSTs whose omission costs the reader an unadvertised capability, not a surprise 403. |
+| diff | `_HTTP_METHODS` is a hand-kept mirror of the OpenAPI fixed-field set with no drift guard (rule 103) | Its comment ("None are emitted today") is verified true — non-method keys in `paths` = `[]` — and the walk *skips* what it does not recognize, so a future `parameters` key fails closed (unannotated) rather than being read as a verb. |
+| diff | The docstrings' "87 operations" / "39 operations" are stale counts | Both were exact when written. (The comment saying the note repeats "about sixty times" was **not**, and is a confirmed finding: it was 39, and is 40 after the open-route fix.) |
+| diff / seam | Open routes inherit both schemes, so `POST /api/auth/local` is documented as requiring a credential you cannot have before logging in | **Refuted as stated, and confirmed as re-derived** — recorded because the difference is the lesson. The candidate as first written argued no net change from `origin/dev`, where the global `[{ApiKey: []}]` was equally wrong, and that is true. But "no worse than before" is not "correct", and the same measurement that supports it (7 operations answer 200 with no credential at all) is what makes `security: []` the right marking for them. Fixed in `b665471`. |
+| rule 64 | Something in `frontend/src/` reads the schema, a scheme name, or the fence | Nothing does, verified rather than assumed for the second pass running. Repo grep over `frontend/src` for `openapi`/`securitySchemes`/`X-Api-Key`: a comment in `api.ts` saying the types are hand-written, the help copy, and `href="/api/docs"`. No query key, no prop. |
+| diff | `docs/STATUS.md` should have been updated | No line there is now wrong: `grep "api/docs\|API reference\|Scalar" docs/STATUS.md` returns nothing. Same refutation as `2c3752a`; still holds. |
+| rule 21 | The generated auth-box sentence is plain but long (340 chars) | Declined. It is a reference auth box, not a scanned control; it replaces a three-clause sentence that was *wrong*; and its length is a function of the allowlist it is generated from. The `Session` description and the 53-character per-operation note are both short. |
+| rule 25 | The new copy names an unwired mechanism (try-it-out) | Try-it-out is wired and renders. That it does not *work* for writes is a separate confirmed finding, not a rule 25 violation. |
+
+**The lesson, and it sharpens the one `2c3752a` recorded rather than repeating it.** That pass
+concluded "on a change whose whole output is prose, the prose is the code." This pass says which
+prose: **the copy that was not generated is where the defect was, every time.** The generated auth
+box was correct. Its three ungenerated siblings — the 403 body a key actually receives, the panel
+that issues the key, and the `Session` scheme's promise about try-it-out — were all three wrong,
+in the same direction, and each read safer than the fence is. A change that introduces a generator
+for one instance of a duplicated claim makes the remaining copies *more* dangerous, not less,
+because the generated one now vouches for a consistency that does not exist. **Grep for the
+sibling copies of any sentence you are about to generate**, and if one cannot be generated, point
+its guard at it: the drift test now names `Settings.tsx` in its failure message, which costs one
+line and is the difference between a comment nobody runs and a gate that fails.
+
+**Second, on what a document is allowed to claim.** The rule the PR wrote for itself — never
+restate the fence, derive from it — was applied to two of the three predicates the guard runs and
+not the third. `api_key_refused` deliberately answered only "does the fence refuse this", said so
+in its docstring, and read as rigor. But the *consumer* asked "does a key reach this", and for
+`/api/auth/me` the two answers differ, so the reference published a credential on the one route
+that refuses it, inside a document written to end exactly that. **A predicate that answers a
+narrower question than its only caller asks is a wrong answer with a correct docstring.**
+
+**Procedural, confirming `2c3752a` for the third run.** The most valuable artifact was again a
+*rendering, not a reading*: running the vendored `@scalar/workspace-store`'s own
+`requestFactory`/`buildRequest` over the real served schema (harness copied into
+`frontend/node_modules/`, `window.location.origin` shimmed to a public host) killed the proxy
+candidate, confirmed the preselection claim the PR asserts, and produced the exact three-header
+payload that made the CSRF finding undeniable. All three lanes ran concurrently in one worktree
+and called `.venv/bin/python -m pytest` directly; no spurious red suite.
