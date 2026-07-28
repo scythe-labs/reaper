@@ -10,7 +10,7 @@ Blockers, not suggestions, distilled from six adversarial review passes. **Rule 
 permanent** (tests and comments cite them); where two overlap, the more specific governs.
 Rules binding every file are in the root `CLAUDE.md`; the SPA's are in
 `.claude/rules/frontend.md`. Holds 1–6, 8–14, 22–23, 26–35, 38, 52, 55–59, 63, 65, 70–71,
-73–78, 81–84, 87–117, 124–131, 140.
+73–78, 81–84, 87–117, 124–131, 140, 142–143.
 
 ## The safety / deletion path
 
@@ -489,3 +489,20 @@ lets it assert neither. `GateResult.defers_to_owner` is the case: it replaced
 serve it, and `WhyPanel.isKeepRuleConflict` was left running the retired test against the one
 message it never matched — still promising "Reap it to remove it" on a season the engine now
 holds. Rule 72 obliges the sweep; this says what the sweep owes a twin it cannot reach.
+
+**143. A protection that widens what it holds must be checked against every consumer that
+iterates the set it just emptied.** Rule 140 sweeps readers of a *value* you re-qualified; rule
+142 sweeps consumers of a *discriminator* you typed. This sweeps consumers of a **set whose
+membership you changed** — and it is the one that looks safest, because moving items from
+`prunable` to `protected` is unambiguously the keep direction and reads as strictly safer at the
+diff. It is not, when a second protection is defined *over* the set you drained:
+`_detect_conflicts` iterates `prunable`, so holding every season also stopped raising the
+keep-rule conflict, and the conflict was the only thing making those seasons refuse a hand reap.
+Net effect of a change that added protection: a season a hand reap was refused on became one a
+hand reap deletes. Grep every iteration of the set (`for … in plan.prunable`, every comprehension
+and membership test over it) before closing, and ask what stops firing when it is empty. **The
+corollary is about encoding**: a hold standing in for "we could not answer this" is `blocked`,
+never a bare PROTECT — rule 93's Known/Absent/Unknown distinction applies to gate results exactly
+as it does to facts, and the two are not interchangeable, because `decide_verdict`'s reap branch
+reads `blocked_holds_reap or safety_protected` and `STRUCTURAL_GATES` carries almost nothing. A
+PROTECT is a *definite* keep the operator is entitled to overrule; a block is one they are not.
