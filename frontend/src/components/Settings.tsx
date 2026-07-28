@@ -307,11 +307,14 @@ export function GeneralPanel({
   // it rather than silently dropping that one field from a bar that just named it.
   const accentBlocks = accentDirty && !accentValid;
 
-  // What the bar is holding, reported up to `Settings` so that leaving this section can stop and
-  // ask first. The bar IS the definition of a draft here (rule 43), so the two can never
-  // disagree about whether there is something to lose. The cleanup fires on unmount, because a
-  // panel that is gone is holding nothing.
-  const hasDrafts = pending.length > 0;
+  // What this panel would LOSE, reported up to `Settings` so that leaving the section can stop
+  // and ask first. Nearly always that is the bar (rule 43), but not quite, so the two are
+  // computed apart rather than one read off the other. A proxy list typed and then parked behind
+  // its own switch is dropped from `pending` on purpose just above, because the bar must not name
+  // a field the operator cannot reach to fix -- yet the text is still sitting in the disabled
+  // box, still unsaved, and still gone on unmount. Reading the bar alone let exactly that one
+  // walk out silently, on the panel that had just promised to ask.
+  const hasDrafts = pending.length > 0 || (proxiesDirty && !data?.proxy_trust_enabled);
   useEffect(() => {
     onDirtyChange?.(hasDrafts);
   }, [hasDrafts, onDirtyChange]);
@@ -320,7 +323,15 @@ export function GeneralPanel({
   if (general.isPending) {
     return <p className="muted">Loading…</p>;
   }
-  if (general.isError || !data) {
+  // Only when there is nothing to render. A refetch that fails AFTER a good load leaves `data` in
+  // place (React Query keeps the last good row and raises `isError` beside it), and trading the
+  // whole form for this paragraph there took the save bar and its Discard with it while the
+  // drafts stayed in state -- still reported unsaved to `Settings`, which then asked to discard
+  // edits the operator could no longer see, save, or put back. Pressing Generate API key on a
+  // server that blinks is enough to reach it, because that invalidates this very query. So a
+  // failed refetch keeps the form on the last good values; this is for a load that never
+  // landed one.
+  if (!data) {
     return (
       <p className="notice notice-error">Couldn't load these settings. Reload to try again.</p>
     );

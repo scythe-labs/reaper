@@ -66,6 +66,21 @@ function renderPanel() {
   return userEvent.setup();
 }
 
+// The same tree plus the draft signal `Settings` subscribes to, for the tests about what this
+// panel REPORTS rather than what it renders. The two can be wrong in opposite directions: a
+// panel saying it holds nothing loses the draft silently, and one saying it holds something it
+// no longer shows asks for a discard the operator cannot act on.
+function renderReporting() {
+  const onDirtyChange = vi.fn();
+  const queryClient = testQueryClient();
+  render(
+    <QueryClientProvider client={queryClient}>
+      <GeneralPanel onDirtyChange={onDirtyChange} />
+    </QueryClientProvider>,
+  );
+  return { person: userEvent.setup(), onDirtyChange, queryClient };
+}
+
 const saveChanges = () => screen.getByRole("button", { name: "Save changes" });
 const bar = () => document.querySelector(".savebar");
 
@@ -278,6 +293,65 @@ describe("the default spare length", () => {
     await waitFor(() => expect(bar()).toBeNull());
     expect(dayBox()).toHaveValue(30);
     expect(apiMock.saveGeneral).not.toHaveBeenCalled();
+  });
+});
+
+describe("what the panel reports to the section rail", () => {
+  it("counts a proxy list parked behind its own switch", async () => {
+    // The bar drops that field on purpose (it must not name a box the operator cannot reach to
+    // fix), but the text is still in the disabled box, still unsaved, and still gone on unmount.
+    // Reading the bar alone let exactly that one walk out with no confirm, on the panel that had
+    // just promised to ask.
+    apiMock.general.mockResolvedValue(STORED_BOTH_ON);
+    apiMock.saveGeneral.mockImplementation((body: Partial<GeneralSettings>) =>
+      Promise.resolve({ ...STORED_BOTH_ON, ...body }),
+    );
+    const { person, onDirtyChange } = renderReporting();
+    const box = await screen.findByLabelText("Trusted proxy addresses");
+
+    await person.clear(box);
+    await person.type(box, "10.9.0.0/16");
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
+
+    await person.click(screen.getByLabelText("Behind a reverse proxy"));
+    await waitFor(() => expect(apiMock.saveGeneral).toHaveBeenCalledTimes(1));
+
+    // The bar is right to go quiet. The panel is not right to say it holds nothing.
+    await waitFor(() => expect(bar()).toBeNull());
+    expect(box).toBeDisabled();
+    expect(box).toHaveValue("10.9.0.0/16");
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it("keeps the form when a refetch fails, so the draft it reports stays reachable", async () => {
+    const { person, onDirtyChange, queryClient } = renderReporting();
+    const name = await screen.findByLabelText("Application name");
+
+    await person.clear(name);
+    await person.type(name, "Second install");
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
+
+    // Generate API key and Remove key both invalidate this very query, so a server that blinks
+    // lands here with a draft on screen. React Query keeps the last good row and raises
+    // `isError` beside it, and the panel used to trade the whole form for one paragraph: no
+    // fields, no bar, no Discard, while still reporting something unsaved to lose.
+    apiMock.general.mockRejectedValue(new Error("boom"));
+    await queryClient.invalidateQueries({ queryKey: ["general-settings"] });
+    await waitFor(() => expect(apiMock.general).toHaveBeenCalledTimes(2));
+
+    expect(screen.queryByText(/Couldn't load these settings/)).toBeNull();
+    expect(screen.getByLabelText("Application name")).toHaveValue("Second install");
+    expect(bar()!.textContent).toContain("Application name");
+    expect(screen.getByRole("button", { name: "Discard" })).toBeInTheDocument();
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it("still says so when the read that fails is the first one", async () => {
+    apiMock.general.mockRejectedValue(new Error("boom"));
+    renderReporting();
+
+    expect(await screen.findByText(/Couldn't load these settings/)).toBeInTheDocument();
+    expect(bar()).toBeNull();
   });
 });
 
