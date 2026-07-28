@@ -1090,3 +1090,41 @@ index or snapshot on the warnings surface" rested in part on "no test asserts th
 Three tests now assert `len(flagged) == 1`. They are filtered per-field on the engine and API
 side rather than over the rendered surface, so the refutation's conclusion stands; its stated
 reason no longer does.
+
+## PRs #136, #138 and #141 — `f2f6c37`, `adbc92b`, `fbb360e` (2026-07-28)
+
+Three PRs reviewed together, five passes: `safety` and `seam` on #141, `diff` on each. The two
+headline suspicions — that #136's population claim was incomplete, and that #141's coercion change
+could reach a delete decision — were the biggest items here and **both died**, each to a driven
+test rather than a read. That is the pass working: what survived (the restore-cancel cluster) was
+somewhere nobody had flagged.
+
+| Lane | Candidate | Why it died |
+| --- | --- | --- |
+| diff | #136's control table misses a control, so the count guards nothing | Enumerated every `<input>`/`<select>`/`<textarea>` `PlexPanel` can render across ALL branches — the two pickers, manual host/port, four `Switch`es, the per-library `Switch`, the web address. `ServerPickList` (`PlexPin.tsx`) and `StaleReadNotice` render buttons and a paragraph only; the `resources.isError`, `linkedServerMissing`, `isPending`, `!data` and `linking` arms add none. The 10 rows are the complete set and the count is right. Only the comment's *claim* about future controls was wrong, and that was fixed. |
+| diff | #136's new assertions would pass with the fix removed (rule 135) | Deleted each of the five `aria-label` lines one at a time: 5 of 5 turned the suite red. |
+| diff | #136 breaks WCAG 2.5.3 label-in-name | Every accessible name contains its visible `.set-label`: "Server", "Connection", "Manual address"→"Manual address host or IP"/"…port", "Plex web address". |
+| diff | #136's `aria-label` collides with an existing name source | Neither select has `aria-labelledby`, `title`, or a wrapping `<label>`. The only wrapped control is the SSL `Switch`, unchanged. |
+| safety / seam / diff | #141's coercion change can alter a condemn/abstain/protect or a hand reap | `defers_to_owner` appears in **zero** lines of `verdict.py`, `executor.py`, `planner.py`, `condemned.py`. Repo sweep finds two writers (`season_scan.py`, `snapshot.py`), the codec pair, `routes._chip`, `GateOutcomeOut`, and `WhyPanel.conflictNote`. Display-only. |
+| safety | #141 changes what `routes._chip` does | Bit-identical. Driven over `True, False, 1, 0, "true", "false", "0", "", None, 2, -1, [], {}, [0], "True", 1.0, 0.0, "yes"`: `thaw(x) is True` ≡ `x is True` and `thaw(x) is False` ≡ `x is False` for every one. The routes change is provably inert — reverting it passes all 519, which is correct rather than a gap. |
+| safety / diff | #141 breaks the `facts_codec` round trip, so pre-change snapshots thaw differently or rehash | `_result_from_dict` is `thaw(...) is True`, identical to the old `d.get(...) is True` because `thaw` returns `True` only for `True`. The freeze side is untouched, so no stored bytes change. A `hashlib` sweep of `src/` finds nothing that hashes an explanation or a facts dict. |
+| safety | #141 removes a fail-closed hold: the pre-fix `ValidationError` was holding reaps | The pydantic failure never touched a decision. `override_effective` comes from `condemned.reap_override_verdict`, which parses via `json.loads`, as do `_has_blocked_protections` and `_fired_gates`. `explanation_unreadable` has one consumer, a notice; no control gates on it. |
+| diff | #141's derivation collapses the tri-state to a `bool` | Returns `bool | None`, total over 20 inputs; only `True`/`False` survive (`1 is True` is `False` in CPython). All three callers handle the third state. |
+| diff | #141's junk sweep is not exhaustive | All four lax-behavior equivalence classes are covered (refusal, lax-True, lax-False, null) and the derivation is total, so no omitted value behaves differently from a covered one. |
+| diff | #141's test passes both ways (rule 135) | Mutating `thaw` → `bool()` fails 17 tests; an identity passthrough in `schemas` alone fails 7, one per junk param. |
+| seam | #141's TS type cannot hold what the route now emits | `api.ts:261` is `boolean | null` optional; `conflictNote` branches all three. Wire bytes confirm `"defers_to_owner":null` for junk, and the published property is still `anyOf: [boolean, null]`. |
+| seam | #141 leaves a third surface rendering the same fact (rule 144) | Repo-wide grep for the three sentences hits only `WhyPanel.tsx` and `routes.py`; `StatusChip` prints server text verbatim. (The two stale *prose* copies are a separate finding, and were fixed.) |
+| diff / seam | #138's cleanup closure captures a stale `staged` | `stagedRef.current = staged` is reassigned every render, so unmount reads the last committed value. **Note the near miss:** the reachable defect is the *cached* `armed` inside that committed value being wrong, which is a different mechanism and did survive. Refuting the closure question does not refute the cache one. |
+| diff / seam | #138's `useSafety` poll failure still unmounts the admin-password form | The branch is `!data` only, and React Query keeps the last good row through a failed refetch, so the form never crosses an unmount boundary; the notice renders alongside it. Pinned by `SecurityPanel.test.tsx`. |
+| diff / seam | #138's dirty flag latches true after a successful save, blocking navigation forever | `AdminPasswordForm.onSuccess` clears all three boxes; `RestoreCard.restore()` calls `reset()` before refreshing. Neither latches. The too-eager direction is refuted too: `typed` is `current \|\| pw \|\| confirm`, so a too-short password still reports. |
+| diff / seam | #138 misses a sixth section that holds a draft | Of the nine in `PANELS`, the four non-reporters are services, jobs, logs, about. Services' and Jobs' drafts live inside `ModalShell`'s `.modal-scrim` (`position: fixed; inset: 0; z-index: 60`, above every nav), so the rail is unreachable while a draft exists; Logs holds view filters, About is read-only. Five is the population. |
+| diff / seam | #138's confirm prompts and then navigates anyway, or the narrow picker bypasses it | `switchPanel` returns before `setPanel` when `leavingDirty`, and `Settings.tsx:2392` routes the picker's `onChange` through the same `switchPanel`. |
+| seam | #141's `_entries`-tolerates / `Explanation`-refuses divergence on `detail` is an unswept twin | Real but not the same pattern, and `GateResult.detail` is typed `str`, so no live writer can produce it. (`threshold` is the twin that *did* survive, and it was fixed.) |
+
+**The lesson worth carrying is the near miss in row 13.** Two lanes looked at the same `!armed`
+guard and reached opposite verdicts, because "stale" has two meanings here and only one of them
+was refuted. The closure is not stale — the ref is reassigned every render, which is what the
+`seam` lane checked and correctly killed. The **cache** behind the value is, because nothing
+refreshes `["backup-info"]` from another client, so the correctly-read latest value is itself
+wrong. A refutation is scoped to the mechanism it actually tested, and a candidate phrased as
+"reads a stale X" needs the *route* by which X goes stale named before the refutation binds.

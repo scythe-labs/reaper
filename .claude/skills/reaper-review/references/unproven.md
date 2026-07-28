@@ -103,6 +103,54 @@ next navigation step anyway.
 announced without a manual re-read. If confirmed, it is one fix across both (rule 72), not a
 regression in this PR.
 
+**Still open at `adbc92b`** (reviewing PR #138, which rewrote `Settings.tsx` around this notice and
+added two more panels that raise it). The notice markup is unchanged — still no `role="alert"`, no
+`aria-live` — so the reasoning above binds to the new commit rather than going stale. Two more
+panels reaching it raises the odds an operator meets it, not the confidence that it is a defect;
+the evidence that would settle it is still a screen reader.
+
+### `dirtyPanels` claims a population in prose, and nothing reconciles it
+
+Raised at `adbc92b` (2026-07-28, reviewing PR #138) by the `diff` lane, ranked low.
+
+"Five panels report, which is the whole population" is a claim over the nine entries in `PANELS`
+(`Settings.tsx:62`), and no test holds the two together: `dirtyPanels` is a hand-written literal,
+a panel absent from it reads `undefined ?? false`, and adding a tenth section or a draft to one of
+the four exempt panels leaves it silently outside the guard with a green suite. That is the exact
+shape the guard already had at three, which is what #135 existed to fix.
+
+**Why it is unproven rather than confirmed:** the population is genuinely correct today, verified
+independently by two lanes — services and jobs hold their drafts inside `ModalShell`'s fixed
+full-viewport scrim, so the section rail is unreachable while one exists; logs holds view filters;
+about is read-only. So there is no trigger to demonstrate. The candidate is that the NEXT section
+is unguarded, which is a claim about a change nobody has made.
+
+**What would settle it:** it is cheaper to close than to prove. One test over `PANELS` asserting
+each id is either a key of `dirtyPanels` or on an explicitly-named exempt list, so a new section
+fails until someone classifies it (rule 145's reconciliation, pinned rather than asserted in
+prose). If that test is written, this entry leaves as **Confirmed-by-construction**; if someone
+argues the exempt list is itself the drift risk, it leaves as refuted.
+
+### The stale-read notice tells the operator to do the one thing that loses their draft
+
+Raised at `adbc92b` (2026-07-28, reviewing PR #138) by the `diff` lane, ranked low.
+
+`StaleReadNotice`'s call to action is "Reload to try again", and after #138 it sits directly above
+the three admin-password boxes that same PR exists to stop a failed poll from clearing. A reload
+gets no confirm anywhere in the app, so an operator who follows the instruction loses exactly the
+draft the change protects. Security is the panel where this is reachable without the operator
+doing anything, since `useSafety` polls every 15 seconds.
+
+**Why it is unproven rather than confirmed:** the trigger is an operator obeying copy, not a code
+path, and the line is pre-existing on General and Plex where it was accurate enough — neither holds
+a secret you cannot retype. Whether "a person would actually reload here" is a defect or a
+misjudged risk is what nobody established.
+
+**What would settle it:** decide the copy question rather than measure it. Either drop "Reload to
+try again" from the shared line (Security retries on its own clock, so the sentence is not even
+true there), or say what a reload costs. A rule 72 sweep of all four consumers either way, since
+one component serves them.
+
 ### The mid-binge hold is the same shape as the window shortfall, and nothing warns about it
 
 Raised at `f8592b3` (2026-07-28, reviewing PR #129) by the `diff` lane.
