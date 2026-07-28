@@ -678,12 +678,21 @@ def _detect_conflicts(
     every kept season, whatever either count says -- its count is a lower bound, and more
     history can always lift a lower bound above anything. So wherever the watch history is
     shallower than the library is old, every prunable season of every affected show is held
-    *and* refuses a hand reap, and TV pruning is inert until the mirror catches up. That is
+    by the SCAN, and automatic TV pruning is inert until the mirror catches up. That is
     the prime directive's answer, since the alternative is deciding on two numbers Reaper
     knows are wrong -- but it is a blanket effect, not a narrow one, and an earlier draft of
     this docstring claimed the opposite (rule 7/24). ``docs/STATUS.md`` records it, and
     ``test_a_short_mirror_holds_every_prunable_season_of_an_old_show`` pins it, because the
     mutation that turns this into a true blanket hold otherwise passes the whole suite.
+
+    **The hold is the scan's, and the operator still overrules it.** A hand reap on one of
+    these seasons condemns (``condemned.reap_override_verdict_decoded``): a conflict is a
+    question Reaper could not answer, not a protection that fired, and only a *fired*
+    ``verdict.STRUCTURAL_GATES`` member refuses a reap since the #96 reversal deleted
+    ``DEFERRABLE_BLOCK_GATES``. That is what makes a blanket hold bearable rather than a
+    dead feature, and it is the half of this paragraph that used to say the opposite: the
+    claim that these seasons refuse a hand reap predates the reversal and stopped being
+    true the day it landed (rule 7/24).
 
     ``shortfall_by_season`` empty means the caller stated no bound, and every count is taken
     at face value -- the pre-evidence pass in ``season_scan``, which passes no counts either

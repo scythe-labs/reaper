@@ -632,9 +632,13 @@ describe("select everything matching", () => {
 
 describe("a reap the engine refused", () => {
   it("reads as one sentence whichever lane kept the item", async () => {
-    // Two lanes refuse a hand reap: a safety stop that fired, and a protection that could
-    // not be checked. Their chips read nothing alike -- one leads "Kept · ", the other is
-    // capitalized and carries a middot -- and both have to land in the same sentence.
+    // Two lanes refuse a hand reap: a FIRED safety stop, and a row Reaper cannot identify
+    // (`StatusChip.chipWhy`). Their chips read nothing alike -- one leads "Kept · ", the
+    // other is a capitalized sentence of its own -- and both have to land in the same
+    // sentence. A protection that merely could not be CHECKED is not one of the lanes: it
+    // stopped refusing a reap in the #96 reversal, so an abstain row carrying its conflict
+    // chip is reaped, not held, and pinning it here would pin a pairing the server can no
+    // longer send (rule 119).
     //
     // The clause comes from the chip's own `why`, which the server words (H-1). These
     // fixtures deliberately give `text` and `why` different words, so a test that passed by
@@ -644,26 +648,32 @@ describe("a reap the engine refused", () => {
       override_effective: false,
       chip: { tone: "kept", text: "Kept · playing right now", why: "playing right now" },
     });
-    const unchecked = movie(2, {
+    const unidentifiable = movie(2, {
       override: "reap",
       override_effective: false,
       chip: {
-        tone: "look",
-        text: "Needs a look · left for you to decide",
-        why: "a check on it couldn't be settled",
+        tone: "quiet",
+        text: "Couldn't read its Plex match",
+        why: "Reaper couldn't read what it matched in Plex",
       },
     });
-    apiMock.candidates.mockResolvedValue(page([streaming, unchecked]));
+    apiMock.candidates.mockResolvedValue(page([streaming, unidentifiable]));
     renderQueue();
 
     expect(
       await screen.findByText("Reap requested · kept for now: playing right now"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Reap requested · kept for now: a check on it couldn't be settled"),
+      screen.getByText(
+        "Reap requested · kept for now: Reaper couldn't read what it matched in Plex",
+      ),
     ).toBeInTheDocument();
-    // The lane chip's own capitalized wording never lands mid-sentence.
-    expect(screen.queryByText(/kept for now: Needs a look/)).not.toBeInTheDocument();
+    // The chip's own display wording never lands mid-sentence: the clause is the server's
+    // `why`, never the chip text with its "Kept · " lead sliced off (H-1).
+    expect(screen.queryByText(/kept for now: Kept ·/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/kept for now: Couldn't read its Plex match/),
+    ).not.toBeInTheDocument();
   });
 });
 
