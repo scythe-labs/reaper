@@ -124,6 +124,14 @@ def _listed(phrases: tuple[str, ...]) -> str:
     return f"{', '.join(phrases[:-1])}, and {phrases[-1]}"
 
 
+def _read_exclusions() -> str:
+    return _listed(tuple(phrase for phrase, _ in _API_KEY_READS_DENIED))
+
+
+def _write_permissions() -> str:
+    return _listed(tuple(phrase for phrase, _ in _API_KEY_WRITES))
+
+
 def api_key_scope_description() -> str:
     """What an API key can do, in the operator's words, built from the fence itself.
 
@@ -133,12 +141,37 @@ def api_key_scope_description() -> str:
     from ``_API_KEY_WRITES``/``_API_KEY_READS_DENIED``, the same declarations
     ``_api_key_allowed`` enforces.
     """
-    reads = _listed(tuple(phrase for phrase, _ in _API_KEY_READS_DENIED))
-    writes = _listed(tuple(phrase for phrase, _ in _API_KEY_WRITES))
     return (
-        f"The instance API key from Settings, General. It reads everything except {reads}. "
-        f"It writes only these: {writes}. Every other write is refused, including changing "
-        "a setting, turning deletion on, and running a reap."
+        "The instance API key from Settings, General. It reads everything except "
+        f"{_read_exclusions()}. It writes only these: {_write_permissions()}. Every other "
+        "write is refused, including changing a setting, turning deletion on, and running "
+        "a reap."
+    )
+
+
+def api_key_refusal_detail(method: str) -> str:
+    """What the key holder is told at the moment the fence turns them away.
+
+    The third place this fence is described in the operator's words, and the only one they
+    read while it is stopping them, so it is generated from the same two declarations as
+    the auth box above rather than written beside them. It used to say "Changing any
+    setting, arming deletion, and running a reap stay behind your password" while
+    ``/api/profile`` sat in the write allowlist -- so the same response that refused one
+    write told the caller the run caps were out of reach, in the request right before the
+    one that turned them off (S-2). That is the drift ``api_key_scope_description``'s
+    comment describes, in the copy nobody thought to generate.
+
+    Says only the half that explains THIS refusal: a denied read hears which reads are
+    denied, a refused write hears which writes are allowed. The other half would be twice
+    the words for the question the caller did not ask.
+    """
+    if method in _SAFE_METHODS:
+        return (
+            "This needs the web app, signed in. An API key reads everything except "
+            f"{_read_exclusions()}."
+        )
+    return (
+        f"This needs the web app, signed in. An API key writes only these: {_write_permissions()}."
     )
 
 
@@ -366,13 +399,7 @@ class AuthGuard:
         api_key_throttle.record_success(throttle_key)
 
         if not _api_key_allowed(scope["method"], path):
-            await _reject(
-                send,
-                403,
-                "This needs the web app, signed in. An API key can read, scan, plan, and "
-                "edit the policy. Changing any setting, arming deletion, and running a "
-                "reap stay behind your password.",
-            )
+            await _reject(send, 403, api_key_refusal_detail(scope["method"]))
             return
 
         await self.app(scope, receive, send)

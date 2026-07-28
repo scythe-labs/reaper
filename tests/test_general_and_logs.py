@@ -464,6 +464,62 @@ class TestTheApiKeyLane:
         # Still readable in the browser, where the Logs tab lives.
         assert client.get("/api/logs").status_code == 200
 
+    def test_a_refused_write_hears_which_writes_a_key_can_make(self, client: TestClient) -> None:
+        """Rule 119: the expectation is the fence's contract, written out, not a read-back
+        of the generator. The refused caller is told what the key CAN write, because a list
+        of what it cannot is the one that falls behind the fence."""
+        key = self._issue(client)
+        bare = _bare(client)
+        refused = bare.put(
+            "/api/settings/safety", json={"enabled": True}, headers={"X-Api-Key": key}
+        )
+        assert refused.status_code == 403
+        assert refused.json()["detail"] == (
+            "This needs the web app, signed in. An API key writes only these: start a scan, "
+            "plan a run and dry run it, edit the policy, and change the run limits and grace."
+        )
+
+    def test_a_denied_read_hears_which_reads_are_denied(self, client: TestClient) -> None:
+        """The other half. A refused read is not helped by a list of writes, so it hears
+        the exclusion list that explains it."""
+        key = self._issue(client)
+        bare = _bare(client)
+        denied = bare.get("/api/logs", headers={"X-Api-Key": key})
+        assert denied.status_code == 403
+        assert denied.json()["detail"] == (
+            "This needs the web app, signed in. An API key reads everything except the key "
+            "itself, the backup download, and the logs."
+        )
+
+    def test_the_refusal_never_denies_a_write_the_fence_allows(self, client: TestClient) -> None:
+        """The regression, driven from both ends in one test.
+
+        The refusal used to say "Changing any setting, arming deletion, and running a reap
+        stay behind your password" while ``/api/profile`` sat in the write allowlist -- so
+        it told the caller the run caps were out of reach in the request right before the
+        one that turned them off (S-2). Neither half alone can catch that: the copy reads
+        true until you drive the write it denies.
+        """
+        key = self._issue(client)
+        bare = _bare(client)
+        headers = {"X-Api-Key": key}
+
+        detail = bare.put("/api/settings/safety", json={"enabled": True}, headers=headers).json()[
+            "detail"
+        ]
+
+        profile = bare.get("/api/profile", headers=headers)
+        assert profile.status_code == 200, profile.text
+        body = dict(profile.json())
+        body["caps_enabled"] = False
+        turned_off = bare.put("/api/profile", json=body, headers=headers)
+        assert turned_off.status_code == 200, turned_off.text
+        assert turned_off.json()["caps_enabled"] is False
+
+        # So the refusal may not say otherwise, and must name it as something the key does.
+        assert "change the run limits and grace" in detail
+        assert "stay behind your password" not in detail
+
     def test_the_allowlist_matches_by_method_and_shape(self) -> None:
         # Reads are open to the key, except the handful that hand back more than a catalog.
         assert _api_key_allowed("GET", "/api/candidates") is True
