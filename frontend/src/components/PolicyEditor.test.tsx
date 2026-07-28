@@ -8,7 +8,7 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { CustomCondemn, Policy, PolicyBody, ProfileSettings } from "../api";
+import type { CustomCondemn, Policy, PolicyBody, PolicyWarning, ProfileSettings } from "../api";
 import { DocsProvider } from "../docs/DocsContext";
 import { testQueryClient } from "../test/queryClient";
 import { PolicyEditor } from "./PolicyEditor";
@@ -110,6 +110,9 @@ function renderEditor(
   paceSettings: ProfileSettings | Error | "pending" = pace,
   /** Pass an Error to render the editors against a vocabulary fetch that failed. */
   vocabulary: Error | null = null,
+  /** What /policy/validate answers with. The GET's warnings are never rendered, so this
+   *  is the only way a warning reaches the page. */
+  validationWarnings: PolicyWarning[] = [],
 ) {
   apiMock.policy.mockResolvedValue({
     policy_hash: "hash",
@@ -144,7 +147,7 @@ function renderEditor(
     policy_hash: "hash",
     name: "default",
     body: policy.body,
-    warnings: [],
+    warnings: validationWarnings,
   });
   apiMock.simulate.mockResolvedValue({
     exact: true,
@@ -548,6 +551,41 @@ describe("the gate that counts recent watchers", () => {
     expect(window).toHaveValue(1);
     expect(screen.getByText(/counting plays from the last/)).toBeInTheDocument();
     expect(screen.getByText(/How far back .recently. reaches/)).toBeInTheDocument();
+  });
+
+  it("shows the server's warning about that window on the page", async () => {
+    // The whole point of the warning is that an operator whose reap list is empty has
+    // somewhere to read why, so "the server emits it" is not the claim worth pinning --
+    // "it reaches the page" is. Nothing else in this file rendered a validation warning,
+    // so the anchor that routes gates.* to the protections list was uncovered.
+    renderEditor(
+      {
+        body: {
+          ...body(),
+          gates: [
+            {
+              gate: "server_popularity",
+              enabled: true,
+              threshold: 3,
+              secondary: 0,
+              window_days: 365,
+            },
+          ],
+        },
+      },
+      pace,
+      null,
+      [
+        {
+          field: "gates.server_popularity.window_days",
+          severity: "warn",
+          message:
+            "Nothing will be flagged for removal while your watch history only goes back 3 months.",
+        },
+      ],
+    );
+
+    expect(await screen.findByText(/Nothing will be flagged for removal/)).toBeInTheDocument();
   });
 
   it("hides the window with the gate, like every other sub-control", async () => {
