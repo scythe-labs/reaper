@@ -44,6 +44,7 @@ from reaper.engine.gates import (
 )
 from reaper.engine.observation import Absent, Known
 from reaper.main import create_app
+from reaper.services.condemned import reap_override_verdict_decoded
 from reaper.services.season_pruning import PruneConflict
 from reaper.services.snapshot import HAND_SPARE_DETAIL
 
@@ -336,7 +337,16 @@ class TestChip:
         """The keep-rule conflict is a deliberate left-for-you flag, not a plumbing
         failure -- it wears the amber-outline tone."""
         chip = _chip(
-            _exp(82, unknown=[{"gate": "season_progression", "detail": CONFLICT_SENTENCE}]),
+            _exp(
+                82,
+                unknown=[
+                    {
+                        "gate": "season_progression",
+                        "detail": CONFLICT_SENTENCE,
+                        "defers_to_owner": True,
+                    }
+                ],
+            ),
             "abstain",
             82,
         )
@@ -357,7 +367,12 @@ class TestChip:
         assert "could not check who watched" in detail, "the producer stopped saying this"
 
         chip = _chip(
-            _exp(82, unknown=[{"gate": "season_progression", "detail": detail}]),
+            _exp(
+                82,
+                unknown=[
+                    {"gate": "season_progression", "detail": detail, "defers_to_owner": False}
+                ],
+            ),
             "abstain",
             82,
         )
@@ -366,6 +381,50 @@ class TestChip:
         assert chip.tone == "look"
         assert "watched more than" not in chip.text
         assert chip.text == "Needs a look · couldn't check who watched a season it's keeping"
+
+    def test_a_row_frozen_before_the_flag_names_neither_shape(self) -> None:
+        """A stored row that predates ``defers_to_owner`` carries nothing that can tell a
+        made comparison from a refused one, so the chip claims neither and says the
+        vague-but-true thing instead.
+
+        Recovering it from the wording was tried and is exactly the bug: the chip read
+        "more than watched Season" as a deferral while ``reap_override_verdict`` read the
+        absent key as a hold, so the card offered the operator a conflict to settle and then
+        refused the reap by quoting that same conflict back at them. The agreement is
+        asserted below, on the real functions, because it is a claim ``_chip``'s own comment
+        makes."""
+        for kept_watchers in (1, None):
+            detail = _conflict_detail(kept_watchers=kept_watchers)
+            legacy = _exp(82, unknown=[{"gate": "season_progression", "detail": detail}])
+
+            chip = _chip(legacy, "abstain", 82)
+
+            assert chip is not None
+            assert chip.tone == "look"
+            assert chip.text == "Needs a look · left for you to decide"
+            assert chip.why == "a check on it couldn't be settled"
+            # The claim: the chip and the deletion decision read the same key the same way.
+            assert reap_override_verdict_decoded(legacy, score=82) == "protect"
+
+    def test_the_chip_and_the_reap_decision_never_disagree(self) -> None:
+        """Rule 92 held end to end: one typed key, two readers, no wording between them.
+
+        The chip may only promise a reap the engine will honor. Both conflict shapes and
+        all three row generations, against the real ``reap_override_verdict`` -- a chip
+        naming the settleable conflict must pair with ``condemn``, and anything else with
+        ``protect``."""
+        settleable = "Needs a look · watched more than a season your rule keeps"
+        for kept_watchers in (1, None):
+            detail = _conflict_detail(kept_watchers=kept_watchers)
+            for flag in ({"defers_to_owner": True}, {"defers_to_owner": False}, {}):
+                exp = _exp(82, unknown=[{"gate": "season_progression", "detail": detail, **flag}])
+
+                chip = _chip(exp, "abstain", 82)
+                verdict = reap_override_verdict_decoded(exp, score=82)
+
+                assert chip is not None
+                expected = "condemn" if chip.text == settleable else "protect"
+                assert verdict == expected, f"{chip.text!r} vs {verdict!r} for {flag}"
 
     def test_any_future_deliberate_flag_still_wants_eyes(self) -> None:
         """A blocked detail that is a sentence of its own (not "could not check") is a
@@ -532,7 +591,16 @@ class TestChipWhy:
                 "it looks like two different things in Plex",
             ),
             (
-                _exp(82, unknown=[{"gate": "season_progression", "detail": CONFLICT_SENTENCE}]),
+                _exp(
+                    82,
+                    unknown=[
+                        {
+                            "gate": "season_progression",
+                            "detail": CONFLICT_SENTENCE,
+                            "defers_to_owner": True,
+                        }
+                    ],
+                ),
                 "abstain",
                 82,
                 "watched more than a season your rule keeps",
@@ -582,7 +650,16 @@ class TestChipWhy:
             (_exp(82, match_status="unmatched"), "abstain", 82),
             (_exp(50, match_status="ambiguous"), "abstain", 50),
             (
-                _exp(82, unknown=[{"gate": "season_progression", "detail": CONFLICT_SENTENCE}]),
+                _exp(
+                    82,
+                    unknown=[
+                        {
+                            "gate": "season_progression",
+                            "detail": CONFLICT_SENTENCE,
+                            "defers_to_owner": True,
+                        }
+                    ],
+                ),
                 "abstain",
                 82,
             ),
@@ -673,7 +750,13 @@ def client(tmp_path: Path) -> Iterator[TestClient]:
                     82,
                     _exp_json(
                         82,
-                        unknown=[{"gate": "season_progression", "detail": CONFLICT_SENTENCE}],
+                        unknown=[
+                            {
+                                "gate": "season_progression",
+                                "detail": CONFLICT_SENTENCE,
+                                "defers_to_owner": True,
+                            }
+                        ],
                     ),
                     year=2014,
                 ),

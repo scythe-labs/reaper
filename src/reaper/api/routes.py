@@ -909,21 +909,20 @@ def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | Non
                 #
                 # The producer now says which shape this is, so read the flag rather than
                 # the sentence (rule 92). It is the SAME flag ``verdict.block_holds_reap``
-                # decides the reap on, so the chip and the decision can no longer disagree
-                # -- and they did, back when both read the wording: the reap-honoring half
-                # matched a prefix the message never had while the chip matched inside it.
+                # decides the reap on, read the SAME way (``is True``), so the chip and the
+                # decision cannot disagree -- and they did, back when both read the wording:
+                # the reap-honoring half matched a prefix the message never had while the
+                # chip matched inside it.
+                #
+                # A row frozen before the flag carries no key, and nothing in it can tell a
+                # made comparison from a refused one -- the wording that used to stand in
+                # for the flag is exactly what failed. So it names neither shape and falls
+                # to the vague-but-true chip below. Recovering it from the wording was tried
+                # and is wrong: it read "more than watched Season" as a deferral while
+                # ``condemned.reap_override_verdict`` read the absent key as a hold, so the
+                # card offered a conflict to settle and then refused the reap by citing that
+                # same conflict back at the operator.
                 defers = entry.get("defers_to_owner")
-                if defers is None:
-                    # A row frozen before the flag shipped. Recover it from the wording,
-                    # and only by POSITIVE match on the two shapes that existed then, so an
-                    # unrecognized message degrades to the vague-but-true chip below rather
-                    # than to a confident wrong one. Nothing safety-bearing rides on this:
-                    # the reap decision reads the absent flag as "does not defer" and holds
-                    # the file either way (``condemned.reap_override_verdict``).
-                    if "more than watched Season" in detail:
-                        defers = True
-                    elif "could not check who watched" in detail:
-                        defers = False
                 if defers is True:
                     return ChipOut(
                         tone="look",
