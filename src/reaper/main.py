@@ -26,7 +26,7 @@ from reaper.api.breakdown import router as breakdown_router
 from reaper.api.fairness import router as fairness_router
 from reaper.api.leaving_soon import router as leaving_soon_router
 from reaper.api.logs import router as logs_router
-from reaper.api.middleware import AuthGuard, api_key_scope_description
+from reaper.api.middleware import AuthGuard, api_key_refused, api_key_scope_description
 from reaper.api.plex_trash import router as plex_trash_router
 from reaper.api.poster import close_artwork_client
 from reaper.api.poster import router as poster_router
@@ -38,6 +38,7 @@ from reaper.api.settings import router as settings_router
 from reaper.api.setup import router as setup_router
 from reaper.api.whitelist import router as whitelist_router
 from reaper.auth.admins import count_local_admins
+from reaper.auth.cookie import DOCUMENTED_SESSION_COOKIE
 from reaper.auth.proxy import parse_proxy_networks
 from reaper.auth.recovery import mint_recovery_token, recovery_base_url
 from reaper.buildinfo import build_version
@@ -279,6 +280,44 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log.info("reaper.stopped")
 
 
+#: Said on every operation an API key cannot reach. Short because it repeats about sixty
+#: times, and first in the description because it is the sentence that stops a script
+#: being written against a route that will refuse it.
+_SESSION_ONLY_NOTE = "**Signed in only.** An API key cannot make this call."
+
+#: What ``paths`` holds besides operations (``parameters``, ``summary``, a ``$ref``). None
+#: are emitted today, so this is the guard on a future one being read as a verb.
+_HTTP_METHODS = frozenset({"get", "put", "post", "delete", "options", "head", "patch", "trace"})
+
+
+def _mark_credentials(schema: dict[str, Any]) -> None:
+    """Narrow every operation an API key cannot reach to the browser session.
+
+    Two answers, and the marked one is strictly narrower than the document-wide default,
+    so an operation can only ever be marked as needing *more* than the auth box offers.
+    A route the key does reach is left inheriting either credential.
+
+    Both halves of the mark matter. ``security`` is the machine-readable half a generated
+    client and the try-it-out panel read; the sentence is the half a person reads, and it
+    goes first in the description because a security requirement is quiet and the 403 it
+    predicts is not.
+
+    Rule 7/24: what each operation claims is ``api_key_refused``'s answer for that exact
+    method and path, never a hand-kept list beside it. The open routes are deliberately
+    left alone -- the guard asks them for no credential, but several refuse anonymously
+    for their own reasons, so ``security: []`` would trade one wrong claim for another.
+    """
+    for path, operations in schema.get("paths", {}).items():
+        for method, operation in operations.items():
+            if method.lower() not in _HTTP_METHODS or not api_key_refused(method.upper(), path):
+                continue
+            operation["security"] = [{"Session": []}]
+            existing = operation.get("description", "").strip()
+            operation["description"] = (
+                f"{_SESSION_ONLY_NOTE}\n\n{existing}" if existing else _SESSION_ONLY_NOTE
+            )
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(
@@ -335,9 +374,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return HealthResponse(status="ok")
 
     def openapi_with_api_key() -> dict[str, Any]:
-        """The stock schema plus the ``X-Api-Key`` security scheme, so the reference
-        UI offers an auth box whose try-it-out requests actually authenticate -- and
-        the section list that keeps the whole API from rendering as one flat scroll.
+        """The stock schema plus the two security schemes, marked per operation, and the
+        section list that keeps the whole API from rendering as one flat scroll.
+
+        **Which credential reaches which route is part of the reference, not a footnote.**
+        The scheme alone was applied globally, so the auth box rendered over all 87
+        operations and try-it-out looked available on every one of them -- while the fence
+        in ``api/middleware.py`` refuses a key on most. Each operation therefore carries
+        the credential that actually reaches it, from ``api_key_refused``, the same two
+        predicates the guard itself runs: nothing here restates the fence, so nothing here
+        can fall behind it. A session-only operation also says so in words, because a
+        security requirement is a quiet signal and a 403 nobody predicted is a loud one.
+
+        **The order of the two schemes is load-bearing, not cosmetic.** Scalar preselects
+        the FIRST one an operation accepts and sends its placeholder value, so with
+        ``ApiKey`` first every try-it-out went out carrying ``X-Api-Key:
+        YOUR_SECRET_TOKEN`` -- and the guard judges a presented key on the key alone,
+        never falling back to the cookie, so the reference answered its own requests
+        "That API key is not valid." With ``Session`` first the preselected credential is
+        a cookie, which no page script can set, so the browser's real session goes
+        instead and try-it-out works signed in, as the page promises. Measured against the
+        shipped bundle: reading the last snapshot answered 401 under one order and
+        authenticated under the other, and the key stays selectable in the same dropdown.
 
         ``tags`` names and orders the sections; ``x-tagGroups`` is the vendor extension
         Scalar reads to nest them under three headings. Both come from
@@ -370,7 +428,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # will actually get through.
                 "description": api_key_scope_description(),
             }
-            schema["security"] = [{"ApiKey": []}]
+            components["securitySchemes"]["Session"] = {
+                "type": "apiKey",
+                "in": "cookie",
+                "name": DOCUMENTED_SESSION_COOKIE,
+                "description": (
+                    "The sign-in cookie your browser already holds. Nothing to paste: it "
+                    "rides along on its own, which is why the try-it-out button works "
+                    "here while you are signed in. An HTTPS install names the same cookie "
+                    f"__Host-{DOCUMENTED_SESSION_COOKIE}."
+                ),
+            }
+            # Either credential, unless an operation below narrows it. Session leads for
+            # the try-it-out reason in the docstring, not as a statement of preference.
+            schema["security"] = [{"Session": []}, {"ApiKey": []}]
+            _mark_credentials(schema)
             app.openapi_schema = schema
         return app.openapi_schema
 

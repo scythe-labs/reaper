@@ -36,6 +36,13 @@ _SECURE_NAME = "__Host-reaper_session"
 _PLAIN_NAME = "reaper_session"
 _MAX_AGE = int(SESSION_TTL.total_seconds())
 
+#: The name the API reference documents the browser session under. A schema's cookie
+#: field takes one string and this pair is two names, so the plain one stands for both
+#: and the scheme's description names the ``__Host-`` twin an HTTPS install gets instead.
+#: Documentation only: nothing reads a cookie by this constant, so it can never become a
+#: third spelling the resolver above does not know.
+DOCUMENTED_SESSION_COOKIE = _PLAIN_NAME
+
 
 def is_secure_request(request: Request) -> bool:
     """Is this connection HTTPS -- directly, or via a terminating proxy?

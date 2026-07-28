@@ -163,6 +163,24 @@ def _is_open(path: str) -> bool:
     return path in _OPEN_EXACT or path.startswith(_OPEN_PREFIX)
 
 
+def api_key_refused(method: str, path: str) -> bool:
+    """Will this route turn away a caller holding nothing but an API key?
+
+    The one question a script author has per route, answered off the same two predicates
+    ``__call__`` runs, so the reference cannot mark a fence the guard does not enforce.
+    An open path answers False: the guard asks for no credential there, so the key is not
+    what stands between the caller and an answer. (It is *ignored* rather than accepted,
+    and a route may still refuse for its own reasons -- ``/api/auth/me`` is signed-in-only
+    inside the handler. That is route logic, not this fence, and this function does not
+    claim otherwise.)
+
+    Takes the templated path (``/api/runs/{run_id}/dry-run``) as readily as a concrete
+    one, which is what lets the schema be annotated: every allowlist entry is a static
+    path, and the dry run's prefix-and-suffix test reads the same on either spelling.
+    """
+    return not _is_open(path) and not _api_key_allowed(method, path)
+
+
 def parse_proxy_networks(entries: list[str]) -> tuple[IPv4Network | IPv6Network, ...]:
     """Parse stored trusted-proxy entries into networks, dropping anything malformed.
 

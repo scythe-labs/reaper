@@ -25,6 +25,7 @@ import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -39,9 +40,11 @@ from reaper.api.middleware import (
     _API_KEY_READS_DENIED,
     _API_KEY_WRITES,
     _api_key_allowed,
+    api_key_refused,
     api_key_scope_description,
     api_key_throttle,
 )
+from reaper.auth.cookie import DOCUMENTED_SESSION_COOKIE
 from reaper.auth.proxy import client_ip, parse_proxy_networks
 from reaper.config import Settings, parse_trusted_proxies
 from reaper.db.base import Base
@@ -574,6 +577,115 @@ class TestTheAuthBoxDescribesTheFence:
             "and change the run limits and grace" in description
         )
         assert "Every other write is refused" in description
+
+
+class TestEveryOperationSaysWhichCredentialReachesIt:
+    """The auth box tells the truth once; these put it on the operation the reader is
+    looking at. A scheme applied document-wide renders a working auth box over all 87,
+    so try-it-out looked available on routes that answer 403 -- the reader had no way to
+    tell which without sending the request.
+    """
+
+    def _operations(self, client: TestClient) -> list[tuple[str, str, dict[str, Any]]]:
+        schema = client.get("/api/openapi.json").json()
+        return [
+            (method.upper(), path, operation)
+            for path, methods in sorted(schema["paths"].items())
+            for method, operation in sorted(methods.items())
+        ]
+
+    def test_the_session_scheme_is_declared(self, client: TestClient) -> None:
+        """A fenced operation narrows to this scheme, so a missing declaration would
+        leave 39 operations pointing at a credential the document never defines."""
+        schema = client.get("/api/openapi.json").json()
+        schemes = schema["components"]["securitySchemes"]
+        assert schemes["Session"]["in"] == "cookie"
+        assert schemes["Session"]["name"] == DOCUMENTED_SESSION_COOKIE
+        assert "—" not in schemes["Session"]["description"]  # rule 21
+        # Order, not just membership: Scalar preselects the first scheme and sends its
+        # placeholder, and a placeholder API key makes the guard answer its own reference
+        # "That API key is not valid." A cookie placeholder cannot be sent by a page
+        # script, so leading with Session is what leaves try-it-out working signed in.
+        assert schema["security"] == [{"Session": []}, {"ApiKey": []}]
+
+    def test_the_routes_a_live_key_was_refused_on_are_marked(self, client: TestClient) -> None:
+        """Rule 119: the expectation is the evidence from issue #104, driven with a real
+        key against a real install, not a re-reading of the allowlist. Each of these
+        answered 403 while the reference offered the key on it.
+        """
+        marked = {
+            (m, p)
+            for m, p, op in self._operations(client)
+            if op.get("security") == [{"Session": []}]
+        }
+        for refused in (
+            ("POST", "/api/whitelist"),
+            ("POST", "/api/override"),
+            ("DELETE", "/api/override/{media_key}"),
+            ("PUT", "/api/settings/plex"),
+            ("POST", "/api/settings/notifications/test"),
+            ("POST", "/api/runs/{run_id}/execute"),
+            ("PUT", "/api/settings/safety"),
+        ):
+            assert refused in marked, (
+                f"a key is refused here and the reference does not say so: {refused}"
+            )
+
+    def test_the_automation_lane_is_left_reachable(self, client: TestClient) -> None:
+        """The other half of the same claim: marking everything session-only would pass
+        the test above and make the key look useless. These inherit both credentials."""
+        marked = {
+            (m, p)
+            for m, p, op in self._operations(client)
+            if op.get("security") == [{"Session": []}]
+        }
+        for reachable in (
+            ("POST", "/api/scan/start"),
+            ("POST", "/api/runs"),
+            ("POST", "/api/runs/{run_id}/dry-run"),
+            ("PUT", "/api/profile"),
+            ("GET", "/api/candidates"),
+        ):
+            assert reachable not in marked, (
+                f"a key reaches this, so it must not be fenced: {reachable}"
+            )
+
+    def test_no_operation_is_left_unclassified(self, client: TestClient) -> None:
+        """The annotation pass has to reach every operation. This agrees the served
+        schema with ``api_key_refused``, so it catches an operation the walk skipped (a
+        method spelling it does not know, a cached schema built before the pass, a stock
+        ``FastAPI.openapi`` winning the race) -- NOT a wrong answer from the fence itself,
+        which is what ``test_the_allowlist_matches_by_method_and_shape`` pins from a
+        table. Rule 118: it is named for what it discriminates.
+        """
+        wrong = [
+            f"{m} {p}"
+            for m, p, op in self._operations(client)
+            if (op.get("security") == [{"Session": []}]) != api_key_refused(m, p)
+        ]
+        assert wrong == [], f"marked against what the guard does: {wrong}"
+
+    def test_a_fenced_operation_says_so_in_words(self, client: TestClient) -> None:
+        """The security requirement is the machine-readable half. This is the half a
+        person reads, and it leads the description rather than trailing it."""
+        silent = [
+            f"{m} {p}"
+            for m, p, op in self._operations(client)
+            if api_key_refused(m, p)
+            and not op.get("description", "").startswith("**Signed in only.**")
+        ]
+        assert silent == [], f"fenced, but the operation never says it: {silent}"
+
+    def test_the_note_does_not_displace_what_the_route_does(self, client: TestClient) -> None:
+        """Prepended, never substituted: a route's own description is the reason someone
+        is reading the entry at all."""
+        _, _, spare = next(
+            (m, p, op)
+            for m, p, op in self._operations(client)
+            if (m, p) == ("POST", "/api/whitelist")
+        )
+        assert "Spare an item" in spare["description"]
+        assert "—" not in spare["description"]  # rule 21
 
 
 def _request(
