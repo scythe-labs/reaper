@@ -152,6 +152,31 @@ measure input latency while dragging the window control, against the same run wi
 the fix is a dedicated `SELECT MIN(watched_at)` beside `horizon`, which `snapshot.py:519-521`
 already works around for the scan path for the same reason.
 
+### The gate-off shortfall remedy says "remove that rule" without naming which one
+
+Raised at `94f11fc` (2026-07-28, reviewing PR #137) by the `diff` lane, ranked low.
+
+The message `policy.inspect` emits with the popularity gate off ends "Wait for it to build up, or
+remove that rule." An operator holding several keep-outright rules has to work out which one
+counts watchers, and the window it is measured over — the 365-day fallback — has no control on
+the page to cross-reference, which is the whole reason this branch anchors on
+`protect_conditions` rather than the picker.
+
+**Why it is unproven rather than confirmed:** the preceding clause ("Your keep rule counts who
+watched a title in the last year") already identifies the rule by what it does, and only one
+field in the registry carries that span, so at most one rule can be the referent. The ambiguity
+was reasoned from a hypothetical multi-rule policy, never driven or put in front of an operator.
+
+**Why it is not simply a rule 21 miss:** naming the field would cost one clause and carries no
+drift risk — unlike the *gate's* label, which lives in `policyMeta.ts` and is deliberately not
+restated backend-side (rule 144), the *field's* label is backend-owned at `fields.py:328` ("People
+who watched it recently") and is the same string the editor renders from the vocabulary API. So
+the cheap fix is available; what is missing is evidence anyone needs it.
+
+**What would settle it:** put a policy with three keep-outright rules, one of them on
+`recent_watchers`, in front of someone who did not write the message, and ask which rule it means.
+If they hesitate, name the field. If not, the extra clause is length rule 21 also charges for.
+
 ## Settled
 
 Newest first. "Settled" is the commit that closed it; read that commit for the reasoning.

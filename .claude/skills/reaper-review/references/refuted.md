@@ -1042,3 +1042,51 @@ condition that names a value rather than a rendered state will match the wrong o
 Settle on the thing that ENDS the transient — here, the box holding its saved value — not on the
 signal you are about to measure. Rule 137's "wait for the control, not for the page," one level in:
 wait for the state, not for a value the earlier state also produces.
+
+## Refuted at `94f11fc` (2026-07-28, reviewing PR #137, the window-warning-bounds branch)
+
+Three lanes fired by path (`safety` on `engine/policy.py`, `diff` on the editor and the tests,
+`seam` because the branch adds a NEW VALUE to a cross-tree contract — `PolicyWarning.field` can
+now be the bare string `protect_conditions`, which the SPA's anchor array switches on. No
+`api/*.py` or `api.ts` line changed, so the path table did not fire `seam` on its own; the lane
+was run anyway because a producer emitting an unrecognized enum-ish value into a consumer that
+dispatches on it is exactly what `seam` exists to catch. It found two of the run's five
+confirmed defects, so the override was worth making.)
+
+**The two big ones were found by every lane independently, and the ranking split three ways.**
+The `lte` false absolute came back tier 2 (safety), tier 3 (diff) and tier 4 (seam) — the same
+mechanism, priced by how plausible each lane thought an `lte` keep rule was. Severity converged
+once it was driven end to end: the item does not merely stay unblocked, it CONDEMNS at 72 while
+the editor says the list is empty, and the message's own remedy deletes the protection. **Drive
+the trigger before pricing it**; two of the three lanes had reasoned the mechanism correctly and
+under-ranked it anyway.
+
+**Mutation testing found the run's third defect, and reading could not have.** Both the seam and
+diff lanes independently reverted the PR's own frontend fix and watched its new test stay green.
+The test asserted a DOM position that the catch-all stack occupies in the same state — a hole
+its own comment claimed it did not have. Reading the assertion cannot see this; only reverting
+the thing it pins can.
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| safety | `_reads_popularity_window` misses a `POPULARITY_WINDOW` field the registry carries | `recent_watchers` is the only `FieldSpec` in `REGISTRY` with that span (`fields.py:344`). Its unknown-key arm is unreachable — an unknown field fails `ConditionSpec._valid_protect_condition`, so the body never loads — but honest and fail-quiet. (The *other* `ReachSpan` member, `watchers_all_time`/`ITEM_LIFETIME`, is a real gap and is filed as #144. It is not a defect in this predicate.) |
+| safety | The `very_short` comment ("only an enabled gate can carry a window this short") is false on some arm | Accurate on every arm. `popularity_window_days()` returns the enabled row's window or 365, and `_no_duplicates` forbids a second `SERVER_POPULARITY` row, so `popularity is not None` implies `window_days == popularity.window_days`. A disabled-but-short row (`enabled=False, window_days=7`) yields 365; an empty or absent gates tuple yields 365. `window_days < 30` cannot hold with `popularity is None`. |
+| safety | The condemn lane can also empty the list, so excluding it overclaims | It cannot. `evaluate_custom` withholds pressure and keeps its weight in the denominator; nothing on that path sets `Evaluation.blocked`, and `decide_verdict` abstains only on `blocked` or coverage. The comment is right to exclude it. (The *lean* lane genuinely can — that half was confirmed, corrected in the comment, and filed as #144.) |
+| safety | `reach_clears_dormancy` no longer scopes correctly now that the branch fires with the gate off | Dormancy is clamped to `max(added_at, horizon)` so it can never exceed the reach; below the floor `MinDormancyGate` PROTECTs every item and PROTECT beats blocked. True whether the popularity gate is on or off. It also means the gate-off arm can only fire for operators who lowered or disabled the floor — with the shipped 1095 floor, `reach < 365` and `reach >= 1095` are disjoint. |
+| safety | `distinct_watchers` can be `Absent`, hitting `fields.evaluate`'s neither-matched-nor-blocked hole | Unreachable in production: `snapshot.py:271-278`, `season_scan.py:647` and `backtest.py:393` all write `Known` or `Unknown`, never `Absent`. |
+| seam | The new `field` value is rejected or reshaped somewhere on the wire | Plain `str` end to end — `policy.py:834`, `schemas.py:713`, `api.ts:463`. Nothing enumerates, validates or narrows it. |
+| seam | The `protect_conditions` warning renders zero times, or twice | Exactly once, proven by test. Only `anchors[6]` claims it; `startsWith("gates.")` does not match; only the `WarnBlock` at `:1626` filters it. Both producers — the new shortfall and the pre-existing media-type mismatch at `policy.py:1302` — render once each when present together. |
+| seam | Re-anchoring relocates the pre-existing `protect_conditions` danger warning somewhere less visible | It moves from the catch-all stack at `:1645` up to the keep-rules card at `:1626` — 26 lines, same page region, and beside the card its own copy ("Remove it here") already points at. A rule 42 improvement, not a regression. |
+| seam | The keep-rules card is collapsed or tab-hidden in the state the warning fires in | `KeepRulesEditor` (`:1612`) sits outside the `mediaType === "tv"` block that closes at `:1610`, so it is unconditional. The editor is one scrolling page with a `scrollIntoView` rail; nothing is collapsed. |
+| seam | Toggling the gate off leaves a stale warning until something else invalidates | `["validate", debounced, debouncedUnmeasured]` keys on the whole draft body, so the toggle re-keys and refetches; the scan-finished effect also invalidates `["validate"]`. |
+| diff | The rewritten branch loses a warning some input combination used to emit, or gains one beyond the fix | Ran `inspect` old-vs-new over **1344 combinations** (gate on/off × window {1,7,29,30,365,1000} × reach {None,3,29,90,364,365,2000} × dormancy {none,5,30,1095} × protect field {none, `recent_watchers`, `watchers_all_time`, `size_bytes`}). 62 differ, in exactly two classes: 8 merge the very-short and shortfall pair, 54 add the new `protect_conditions` warning. Nothing else moved. |
+| diff | The `very_short and short is None` arm misfires on the fallback window | `very_short` is unreachable when `popularity is None`, so it never fires on the 365-day fallback; `popularity is None and owner_protect_on_window is False` is silent on every input. |
+| diff | One of the ~30 lines of new comment prose cites something that is not there (rule 7/24) | Each opened and checked. `build_gates` does hand `popularity_window_days()` to `CustomProtectGate` regardless of the switch (`scan_runner.py:155-158`); `GateRow` does render the window under `gate.enabled` (`PolicyEditor.tsx:200`); the gate's label does live in `policyMeta.ts:27`; `hardFields` does filter on *enabled* gates only. Only the `graded_keeps` claim was false — confirmed, corrected, filed. |
+| diff | The new operator copy breaches rule 21, or reads badly at a boundary | No em dashes, no ids, no internal vocabulary. `f"A {window_days}-day watch window"` at 1 reads "A 1-day watch window is very short" — grammatical, and `ge=1` makes 0 unconstructable. `humanize_window(365)` → "year", and the window is named before the cause clause in both branches. |
+| diff | Dropping "A year is the usual setting" from the merged message loses the advice | The same advice sits on the page in `policyMeta.ts:32`'s window help, which renders only while the gate is on — exactly the condition `very_short` requires. |
+
+**Stale note.** This file's earlier entry "`policy.inspect()` dropping a warning breaks a count,
+index or snapshot on the warnings surface" rested in part on "no test asserts the list length".
+Three tests now assert `len(flagged) == 1`. They are filtered per-field on the engine and API
+side rather than over the rendered surface, so the refutation's conclusion stands; its stated
+reason no longer does.
