@@ -673,17 +673,20 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
             )
         )
 
-    def _owner_rule_only(self, **overrides: object) -> PolicyBody:
+    def _owner_rule_only(self, *, op: Op = Op.GTE, **overrides: object) -> PolicyBody:
         """The gate OFF, with the operator's own keep-outright rule on the same count.
 
         ``build_gates`` hands ``CustomProtectGate`` the window whether the gate is on or
         off, so this rule blocks on exactly the span the gate would have used -- here the
         365-day fallback, which no control on the page shows.
+
+        ``op`` because the operator decides whether the block is total: the field alone
+        does not settle it (``_blocks_on_popularity_window``).
         """
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
         return _policy(
             gates=(GateSetting(**{**base, "enabled": False, **overrides}),),  # type: ignore[arg-type]
-            protect_conditions=(ConditionSpec(field="recent_watchers", op=Op.GTE, value=1),),
+            protect_conditions=(ConditionSpec(field="recent_watchers", op=op, value=1),),
         )
 
     def _window_warnings(self, body: PolicyBody, reach: float | None) -> list[PolicyWarning]:
@@ -765,6 +768,46 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
             protect_conditions=(ConditionSpec(field="size_bytes", op=Op.GTE, value=1),),
         )
         assert self._rule_warnings(unbounded, reach=90.0) == []
+
+    def test_a_keep_rule_the_shortfall_does_not_block_outright_is_not_claimed(self) -> None:
+        """ "Nothing will be flagged" is a claim about EVERY item, and only ``gte`` earns it.
+
+        A truncated watcher count is a lower bound, so ``fields._survives_more_history``
+        blocks only the outcomes more history could overturn. Under ``gte`` those are the
+        unmatched ones, and the matched ones fire a PROTECT, so every item is kept or
+        blocked and nothing is condemned. Under ``lte`` it inverts: an item already OVER
+        the bar is an outcome no amount of history changes, so it comes back a plain
+        checked ABSTAIN and is scored and condemned like any other.
+
+        Driven rather than reasoned -- a ``recent_watchers lte 2`` rule against a 90-day
+        mirror and the 365-day fallback returns ABSTAIN unblocked for a 5-watcher item, so
+        the list is not empty. Saying it was would be false in the reassuring direction,
+        and the remedy that rides with it ("remove that rule") would strip the protection
+        off the items that ARE blocked.
+        """
+        assert self._rule_warnings(self._owner_rule_only(op=Op.LTE), reach=90.0) == []
+        # The discriminator: the same rule one operator over is claimed, so this is the op
+        # being read and not the branch having gone quiet.
+        assert self._rule_warnings(self._owner_rule_only(op=Op.GTE), reach=90.0) != []
+
+    def test_the_dormancy_floor_silences_the_owners_rule_too(self) -> None:
+        """The gate-off arm needs the same guard as the gate-on one, for the same reason.
+
+        Below the floor every item is kept on age alone (``MinDormancyGate`` PROTECTs and
+        PROTECT beats blocked), so the window decides nothing and neither does a keep rule
+        measured over it. Without this the warning would fire for every operator on the
+        shipped 1095-day floor holding under a year of history, telling them to remove a
+        keep rule that is changing no verdict -- the regression the gate-on twin above
+        exists to prevent, one branch over (rule 118).
+        """
+        floored = self._owner_rule_only()
+        floored = floored.model_copy(
+            update={
+                "gates": (*floored.gates, GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095))
+            }
+        )
+
+        assert self._rule_warnings(floored, reach=90.0) == []
 
     def test_the_dormancy_floor_silences_it_while_it_alone_empties_the_list(self) -> None:
         """The remedy has to be able to work, and under the floor it cannot.

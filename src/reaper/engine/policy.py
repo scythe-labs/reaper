@@ -956,15 +956,26 @@ def recover_rating_rules(raw: object) -> dict[str, Any] | None:
     return None
 
 
-def _reads_popularity_window(field_key: str) -> bool:
-    """Is a rule on this field measured against the policy's popularity window?
+def _blocks_on_popularity_window(cond: ConditionSpec) -> bool:
+    """Would a shortfall on the popularity window block this rule on EVERY item?
 
-    The registry owns the answer (``FieldSpec.reach_span``), so a field that gains or loses
-    that bound moves this with it rather than leaving a second list to drift (rule 103). An
-    unknown key is False: a rule that no longer validates cannot be blocking anything.
+    Two tests, and the second is the one that is easy to miss. The registry owns the span
+    (``FieldSpec.reach_span``), so a field that gains or loses that bound moves this with it
+    rather than leaving a second list to drift (rule 103). An unknown key is False: a rule
+    that no longer validates cannot be blocking anything.
+
+    But the span alone does not decide it -- ``fields._survives_more_history`` reads the
+    OPERATOR, because a truncated watcher count is a lower bound and only two of the four
+    outcomes can be overturned by history nobody has yet. Under ``gte`` every item is either
+    a fired PROTECT or a block, so nothing is condemned and the caller's "nothing will be
+    flagged" holds. Under ``lte`` it inverts: an item already OVER the bar has an outcome
+    more history cannot change, so it comes back a plain checked ABSTAIN and stays
+    condemnable. Claiming an empty list there would be false in the reassuring direction,
+    and the remedy the caller offers -- remove the rule -- would drop a live protection off
+    the items that ARE blocked (rules 7/24, 144).
     """
-    spec = BY_KEY.get(field_key)
-    return spec is not None and spec.reach_span is ReachSpan.POPULARITY_WINDOW
+    spec = BY_KEY.get(cond.field)
+    return spec is not None and spec.reach_span is ReachSpan.POPULARITY_WINDOW and cond.op is Op.GTE
 
 
 def inspect(
@@ -1084,16 +1095,24 @@ def inspect(
     # conflict and ``season_pruning.progress_is_establishable``. This is the member with a
     # control the operator can turn, so the editor is where it has to be said.
     #
-    # WHO blocks on this window, which is what makes "nothing will be flagged" true. Only
-    # the PROTECT lane empties the list outright: a blocked protect ABSTAINs every item
+    # WHO blocks on this window, which is what makes "nothing will be flagged" true. This
+    # detector claims it for the PROTECT lane only: a blocked protect ABSTAINs every item
     # (``verdict.decide_verdict``), library-wide, for as long as the shortfall lasts. Two
     # readers sit in that lane and the built-in gate is only one of them -- an operator's
     # own keep-outright rule on a popularity-window field is the other, and ``build_gates``
-    # hands it this same span whether the gate is on or off. The condemn and lean lanes read
-    # the same bound (``fields.reach_shortfall``) and are deliberately NOT claimed here: a
-    # withheld removal signal or a keep taking its full discount lowers scores without
-    # proving an empty list, and saying otherwise would be a consequence we cannot show
-    # (rule 7/24). ``graded_keeps`` that could empty it already have their own warning below.
+    # hands it this same span whether the gate is on or off. The condemn lane genuinely
+    # cannot empty the list: ``evaluate_custom`` withholds its pressure and keeps its weight
+    # in the denominator, which lowers scores without blocking anything.
+    #
+    # **The lean lane is a gap, not an exclusion, and this comment used to deny it.** A
+    # graded keep on the same field takes its FULL ``max_discount`` on a shortfall, for every
+    # item (``signals.evaluate_keep``), and ``score()`` floors at zero under a bounded base --
+    # so a keep worth more than ``MAX_SCORE - condemn_at`` empties the list just as provably
+    # as a blocked protect does, and nothing warns. The ``graded_keeps`` warning below is not
+    # that warning: it fires on ``total_keep >= condemn_at``, a much higher bar, and says
+    # nothing about the mirror. ``PolicyRuleEditors``' ``leanFields`` is not gate-filtered
+    # either, so the field is offered as a lean whichever way the switch is set. Tracked
+    # separately; do not read this branch as ruling that lane safe (rules 7/24, 140).
     #
     # ``warn``, not ``danger``: the outcome is that Reaper deletes nothing, which is the
     # keep direction. Every ``danger`` here marks a config that removes MORE.
@@ -1116,9 +1135,7 @@ def inspect(
     reach_clears_dormancy = dormancy_floor is None or (
         history_reach_days is not None and history_reach_days >= dormancy_floor.threshold
     )
-    owner_protect_on_window = any(
-        _reads_popularity_window(c.field) for c in body.protect_conditions
-    )
+    owner_protect_on_window = any(_blocks_on_popularity_window(c) for c in body.protect_conditions)
     short: str | None = None
     if (popularity is not None or owner_protect_on_window) and (
         history_reach_days is not None and reach_clears_dormancy
@@ -1135,8 +1152,11 @@ def inspect(
             # Except when the window is ALSO under the short-window floor, where "lower it"
             # is advice in the direction the other warning is pushing back on. Both faults
             # are real and their remedies genuinely oppose, so one message carries the pair
-            # rather than two stacking on one control and cancelling out: shortening cannot
-            # help here, and waiting is the only move that clears the block.
+            # rather than two stacking on one control and cancelling out. Note what is and
+            # is not claimed: shortening to the reach DOES clear the shortfall, it just
+            # buys the other fault to do it -- an even shorter window counts almost nothing
+            # as watched. Waiting is the only move that clears one without deepening the
+            # other, which is why it leads.
             remedy = (
                 "Wait for it to build up: a shorter window would leave almost nothing "
                 "counted as watched."
