@@ -239,16 +239,18 @@ describe("keeping the list in step with the latest scan", () => {
     // Settle the two states this control's EXISTENCE depends on, in order, before reaching
     // for it (#149). The nudge is not rendered with the list: `nudging` is set by an effect
     // that runs only once the candidates read has resolved and the snapshot mismatch has been
-    // observed, so the button is two commits behind the render -- and every React Query
-    // notification here is deliberately held back 200ms (rule 136). A single
+    // observed, so the button is two commits behind the render. A single
     // `findByRole("button", { name })` had to cover that whole chain on one 1000ms budget,
     // while re-computing accessible names across both cards and the open panel on every poll,
     // which is the most expensive query Testing Library has. It lost the race on a loaded CI
     // runner about one run in a few, on branches that do not touch this file at all, and the
     // dumped DOM showed exactly this: both cards rendered, no nudge yet.
     //
-    // Two cheap text waits instead, each with its own timeout, so a genuine regression in
-    // this chain fails naming the step that broke rather than the button at the end of it.
+    // Two cheap text waits instead, each with its own 1000ms budget, so a genuine regression
+    // in this chain fails naming the step that broke rather than the button at the end of it.
+    // Rule 137's margin sweep is how a step with no headroom is found: hold every React Query
+    // notification back 200ms and re-run. That is a diagnostic to apply and revert, not
+    // something the suite carries, so nothing here is running behind a delay.
     await screen.findByText("Example Movie 1");
     await screen.findByText("A newer scan just finished");
     await user.click(screen.getByRole("button", { name: "Show latest" }));
