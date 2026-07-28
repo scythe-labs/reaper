@@ -41,6 +41,27 @@ function manualUri(host: string, port: string, ssl: boolean): string {
   return `${ssl ? "https" : "http"}://${trimmed}:${port.trim() || "32400"}`;
 }
 
+/** The three manual fields as a stored address seeds them: one parse, used both to FILL the row
+ *  (`openManual`) and to say what "nothing typed" looks like (the dirty check below).
+ *
+ *  Both sides must go through this, because the stored string and the row's own composition of it
+ *  are not the same text and comparing them directly reports edits nobody made (rule 39). Two
+ *  ways that happens, each reachable by saving through this very box: `URL.hostname` lowercases,
+ *  so a host typed with capitals comes back changed; and `URL.port` is empty for a scheme-default
+ *  port, so the address has to be re-derived rather than guessed. Guessing 32400 for http was
+ *  wrong twice over: it reported a phantom draft, and it showed :32400 for a server on :80 as
+ *  though that were the current address. */
+function seedManual(uri: string): { host: string; port: string; ssl: boolean } {
+  try {
+    const parsed = new URL(uri);
+    const ssl = parsed.protocol === "https:";
+    return { host: parsed.hostname, port: parsed.port || (ssl ? "443" : "80"), ssl };
+  } catch {
+    // No stored address to seed from: a fresh row on Plex's own default port.
+    return { host: "", port: "32400", ssl: true };
+  }
+}
+
 export function PlexPanel({
   /** Called whenever this panel gains or loses an unsaved draft, so the section rail can hold a
    *  switch that would discard one. Pass a STABLE function: it is an effect dependency. */
@@ -81,7 +102,15 @@ export function PlexPanel({
 
   const saveWebUrl = useMutation({
     mutationFn: () => api.setPlexWebUrl(webUrl.trim()),
-    onSuccess: () => {
+    // Re-seed from the response rather than leaving it to the effect above (rule 39). Clearing
+    // the box is how the help says to go back to the hosted default, and it saves the empty
+    // string: the route stores that as "unset" and reports back the SAME default string it was
+    // already returning, so `savedWebUrl` never changes identity and that effect never re-fires.
+    // The box would sit empty against a default it now matches -- a Save button that never goes
+    // away, and, since this panel started reporting drafts upward, a section-switch confirm that
+    // no button on this panel can satisfy, for a value that is already stored.
+    onSuccess: (status) => {
+      setWebUrl(status.web_url);
       setWebUrlError(null);
       void queryClient.invalidateQueries({ queryKey: ["plex"] });
     },
@@ -235,16 +264,10 @@ export function PlexPanel({
 
   const openManual = () => {
     // Seed the manual fields from wherever Reaper is pointed right now.
-    try {
-      const parsed = new URL(savedUri);
-      setManualHost(parsed.hostname);
-      setManualPort(parsed.port || (parsed.protocol === "https:" ? "443" : "32400"));
-      setManualSsl(parsed.protocol === "https:");
-    } catch {
-      setManualHost("");
-      setManualPort("32400");
-      setManualSsl(true);
-    }
+    const seed = seedManual(savedUri);
+    setManualHost(seed.host);
+    setManualPort(seed.port);
+    setManualSsl(seed.ssl);
     setConnError(null);
     setManualOpen(true);
   };
@@ -328,11 +351,21 @@ export function PlexPanel({
   //
   // The manual row is behind `linked && manualOpen`, so both belong in its claim: unlinking
   // leaves `manualOpen` set while the row is gone. An empty host is not a draft to lose -- Save
-  // is disabled without one -- and neither is an address that already matches the stored one,
-  // which is what Save would send.
+  // is disabled without one -- and neither is an address that already matches the stored one.
+  // Both sides of that last test go through `seedManual` + `manualUri`, so "I only opened the
+  // row" is non-dirty by construction rather than by luck with the URI's spelling (rule 39).
   const manualDraft = manualUri(manualHost, manualPort, manualSsl);
-  const manualDirty = linked && manualOpen && manualDraft !== "" && manualDraft !== savedUri;
-  const hasDrafts = webUrlDirty || manualDirty;
+  const savedSeed = seedManual(savedUri);
+  const savedManual = manualUri(savedSeed.host, savedSeed.port, savedSeed.ssl);
+  const manualDirty = linked && manualOpen && manualDraft !== "" && manualDraft !== savedManual;
+  // The certificate switch writes on the spot ONLY once a server is linked -- its onChange below
+  // is `if (linked) saveVerify.mutate(next)`. Before that the choice lives here and rides along
+  // with the link poll through `verifyRef`, so leaving the section silently drops it and the next
+  // sign-in probes a self-signed server with checking back on, failing with nothing on screen to
+  // explain it. Its row renders unconditionally, so the reachability half of the claim holds
+  // wherever this form does. Once linked the switch is not a draft at all: it is already saved.
+  const certDirty = !linked && verifyCert !== savedVerify;
+  const hasDrafts = webUrlDirty || manualDirty || certDirty;
   useEffect(() => {
     onDirtyChange?.(hasDrafts);
   }, [hasDrafts, onDirtyChange]);

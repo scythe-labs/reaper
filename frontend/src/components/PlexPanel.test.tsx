@@ -297,6 +297,103 @@ describe("what leaving this panel would lose", () => {
     expect(dirty).toHaveBeenLastCalledWith(true);
   });
 
+  it("stops reporting a draft once the address is saved back to the default", async () => {
+    // Clearing the box is what the row's own help tells the operator to do to go back to the
+    // hosted default, and it saves the empty string. The route stores that as "unset" and
+    // answers with the SAME default string it was already returning, so `savedWebUrl` never
+    // changes identity and the re-seed effect never fires. The box then sat empty against a
+    // default it now matched: a Save button that never went away, and -- once this panel started
+    // reporting upward -- a section-switch confirm no button on this panel could satisfy, for a
+    // value that was already stored. Rule 39: re-seed from the server response after a save.
+    const user = userEvent.setup();
+    const dirty = vi.fn();
+    renderPanel([discovered(LOCAL)], dirty);
+
+    const box = await screen.findByPlaceholderText("https://app.plex.tv");
+    await user.clear(box);
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
+
+    await user.click(
+      within(box.parentElement as HTMLElement).getByRole("button", { name: "Save" }),
+    );
+
+    expect(apiMock.setPlexWebUrl).toHaveBeenCalledWith("");
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
+    expect(screen.getByPlaceholderText("https://app.plex.tv")).toHaveValue("https://app.plex.tv");
+  });
+
+  it("reports nothing when the manual address row is only opened", async () => {
+    // The row is filled by parsing the stored address, so the two are not the same text and
+    // comparing them directly called an untouched row an edit (rule 39). This address is one the
+    // operator can save through this very box: `URL.hostname` lowercases the host on the way in,
+    // so it comes back spelled differently than it went out. A stored scheme-default port does
+    // the same thing, since `URL.port` is empty for one.
+    const user = userEvent.setup();
+    const dirty = vi.fn();
+    apiMock.plexStatus.mockResolvedValue(
+      status({ connection_uri: "https://Plex.Example.net:32400" }),
+    );
+    renderPanel([], dirty);
+
+    // Settle the mount before watching anything, so what follows is only what OPENING the row
+    // reported. The first data-bearing render reports one frame of `true` on its own -- the
+    // web-address box is still "" while the saved value has arrived -- and the seeding effect
+    // ends it in the same flush. Wait for the box to hold the saved value, which IS that frame
+    // ending; waiting only for a `false` call is satisfied by the loading state's own report,
+    // one turn too early, and then clears the mock right before the flash lands.
+    const select = await usableConnectionSelect();
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText("https://app.plex.tv")).toHaveValue("https://app.plex.tv"),
+    );
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
+    dirty.mockClear();
+
+    await user.selectOptions(select, "__manual__");
+    expect(await screen.findByText("Manual address")).toBeInTheDocument();
+
+    // A confirm raised over a row nobody typed in is what teaches the operator to press the red
+    // button without reading it, and that is the button that destroys a real draft.
+    expect(dirty).not.toHaveBeenCalledWith(true);
+  });
+
+  it("reports the manual address row once its host is edited", async () => {
+    // The other half: deleting `manualDirty` from the report must fail something. Without this
+    // the manual row was named in three comments and pinned by no test.
+    const user = userEvent.setup();
+    const dirty = vi.fn();
+    renderPanel([], dirty);
+
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
+    await user.selectOptions(await usableConnectionSelect(), "__manual__");
+    const host = await screen.findByPlaceholderText("plex.example.net");
+    await user.clear(host);
+    await user.type(host, "plex.example.org");
+
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
+  });
+
+  it("reports the certificate choice made before a server is linked", async () => {
+    // The switch only writes once a server is linked (`if (linked)` on its onChange), so before
+    // that the choice is a draft: it lives in state and rides along with the link poll. Leaving
+    // the section dropped it silently, and the next sign-in then probed a self-signed server
+    // with checking back on and failed with nothing on screen explaining why.
+    const user = userEvent.setup();
+    const dirty = vi.fn();
+    apiMock.plexStatus.mockResolvedValue(
+      status({ linked: false, name: null, connection_uri: null }),
+    );
+    renderPanel([], dirty);
+
+    const toggle = await screen.findByRole("switch", { name: "Check the server's certificate" });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(false));
+
+    await user.click(toggle);
+
+    expect(apiMock.setPlexWebUrl).not.toHaveBeenCalled();
+    await waitFor(() => expect(dirty).toHaveBeenLastCalledWith(true));
+  });
+
   it("reports nothing to lose once the address is put back", async () => {
     const user = userEvent.setup();
     const dirty = vi.fn();
