@@ -926,3 +926,62 @@ component is not one claim but two, "there is something to lose" and "you can ge
 checking only the direction the author had in mind leaves the other live. Neither was visible
 from the diff; both came from asking what the panel renders in each of its own early-return
 states while that boolean keeps being computed above them.
+
+## Refuted at `f8592b3` (2026-07-28, reviewing the window-outruns-history branch, PR #129)
+
+Three lanes fired by path (`safety` on `engine/policy.py`, `seam` on `api/routes.py` and the
+editor, `diff` on the rest), run concurrently. The branch teaches `policy.inspect` a second
+world-fact, the watch mirror's reach, and warns when the popularity window outruns it.
+
+**Convergence fired once and divergence twice, and the divergences were the more useful.** All
+three lanes independently measured `horizon()`'s `COUNT(*)` on the debounced validate path and
+got the same numbers; two called it a defect and one declined it, which is a judgment about 20 ms
+rather than a dispute about fact, so it went to `unproven.md` rather than into a fix. The `seam`
+and `safety` lanes then split on whether the window control's static help contradicts the new
+dynamic warning — and the `diff` lane, looking at neither, found the sharper version both had
+walked past: the two *warnings* on that control give opposite remedies. Filed as #134.
+
+**The mutation results were worth more than any single reading.** 14 mutations, 2 survived green:
+a `_policy_out` call site stripped of its new argument, and the editor's `gates.` anchor renamed
+at both sites. Neither was visible to three careful readings of the tests that claimed to cover
+them. Both are now caught.
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| safety | `source="tautulli"` is fabricated provenance invented at the call site (rules 7/24, 93) | It is the exact spelling every production builder uses (`snapshot.py:398`, `season_scan.py:653`, `backtest.py:398`), `history_shortfall` reads only `isinstance(reach, Known)` and `.value`, and `inspect` has one call site. Nothing hashed, journalled, stored or displayed. |
+| safety | The editor's reach diverges from the scan's (rule 104 dual clock / dual rounding) | Same function, same DB, both `int`-floored: `routes._history_reach_days` is `history_reach_days(await horizon(cache_engine), now=utcnow())`, `ScanContext` is `history_reach_days(self.horizon, now=utcnow())` off the same `app.state.cache_engine`. Asserted equal across horizons 0/1/89/90/364/365/1094/1095 and four sub-day offsets. Drift only ever grows the reach, the more cautious direction. |
+| safety | `_REACH_NAMEABLE_MARGIN_DAYS` leaves a band where lowering the window as instructed does not clear the block | Brute-forced ~2M `(reach, window)` pairs for windows 1–2000: zero inversions between `humanize_days(reach)` and `humanize_window(window)` re-parsed to days. `reach >= needed` is silent, so lowering to the named number always clears, and `TIME_UNITS` uses month=30/year=365, exactly `humanize_days`' arithmetic. |
+| safety | `humanize_window` renders the window oddly at an edge | 365→"year", 366→"1 year, 1 day", 400→"1 year, 1 month", 30→"month", 1→"day"; `ge=1` makes 0 and non-integers unconstructable; a negative reach gives "less than a day". Identical to what `ServerPopularityGate.evaluate` already prints, which is the point of sharing the helper. |
+| safety | `threshold=0` makes the gate PROTECT everything while the editor blames the window | Unconstructable: `GateSetting._protective_floors` raises for `SERVER_POPULARITY` with `threshold < 1` while enabled. |
+| safety | The FEW_WATCHERS signal alone empties the list with the gate off, so `inspect` should warn there too | Measured: shipped defaults, gate off, reach 90 → signal unreadable, score 93→73, coverage 10000→8000 bp, still above the 5000 floor, verdict **condemn**. It shifts the line, it does not empty the list. (The *custom protect rule* path does, and that is #133.) |
+| safety | Cross-media-type drift makes the TV warning wrong, or one tab warns while the other does not | `snapshot.py:764` uses `movie_policy.popularity_window_days()`, `:657` the TV one; both shipped policies carry the identical 365/1095 pair, so a shortfall warns on both at once. |
+| seam | The warning never reaches the page without an edit — the lane's headline worry | Refuted, and the feature delivers. `debounced` is seeded from the mount-time draft by the 250 ms timer, so `["validate"]` becomes enabled ~250 ms after the policy GET resolves with no interaction. The PR's own test fires no events and passes. |
+| seam | A `gates.server_popularity.window_days` warning falls into the unanchored bottom stack | `anchors[1]` is `(f) => f.startsWith("gates.")`, so it is claimed and renders under the protections list. (That the *test* could not tell was the real finding, now fixed.) |
+| seam | `severity: "warn"` has no renderer, or falls through to a danger style | `WarnBlock` maps `danger` → `.notice-error` and everything else → `.notice-warn`; `PolicyWarning.severity` is `Literal["warn","danger"]`. The `str` widening in `api.ts` is the tree's standing convention, already refuted at `4e069b1`. |
+| seam | `request.app.state.cache_engine` is missing on some path and the `AttributeError` catch masks it (rule 7/24) | Set unconditionally in `main.lifespan` before any route serves, beside `session_factory`, which every policy route already dereferences — a client skipping lifespan fails there first. The catch is defensive breadth and names no safeguard function. |
+| seam | An empty mirror is the commonest empty-list cause and the editor stays silent about it | Covered louder elsewhere: `snapshot.py:526-530` degrades the whole scan ("no watch history at all: nothing can be judged"), reaching the UI as `SnapshotOut.degraded`, and no run may execute against it. The partial mirror is the case that does not degrade, which is what this branch addresses. |
+| diff | `history_sync.days_since_horizon` still has a caller somewhere | Re-verified at HEAD: the only occurrence in the tree is `refuted.md`'s own record of it. No route, schema, client method, prop or query key — rule 64's supply chain was empty. `utcnow` stays live at `history_sync.py:188`; `ruff check` on the file exits 0. |
+| diff | `test_an_empty_mirror_says_nothing` passes through an unnamed exception path | Driven: `cache.db` does not exist before the read, `ensure_schema` creates it, and `horizon()` returns `None` without raising. It passes for the reason its docstring gives. |
+| diff | The exact-boundary reach is flaky under flooring (rule 133) | `_seed_mirror` writes `int(ts)`, truncating to an earlier instant, and `history_reach_days` floors `(now - horizon).days`, so the reach is exactly `days_back`. Drove `days_back=365` against a 365-day window 50×: 0 warnings, 0 flips. |
+| diff | The `client` fixture's cache engine does not point at `tmp_path/cache.db`, so the quiet tests pass for the wrong reason | `Settings(data_dir=tmp_path)` → `create_cache_engine`, the same file `_seed_mirror` writes; confirmed by the positive control firing off the seeded row. |
+| diff | The rule-144 cause-clause test cannot catch drift in the reverse direction | True and correct: `expected` calls the real helper, so rewording `gates.history_shortfall` moves both copies together, which is what one derivation means. That reword is caught anyway, by four `test_engine_invariants.py` tests. |
+| diff | The `refuted.md` edit rewrites a record bound to `394cc3a` | The original judgment is preserved verbatim and the addition is appended and marked. The row's own deferral ("worth deleting on the next touch") is exactly what rule 72 says must be honored, so recording that it was is the intended use. |
+| diff | "`#85 closed`" in STATUS.md is wrong, since #85 is still open | Matches the tree's convention: `#86`/`#94`/`#95` were all written that way pre-merge. Both the commit and the PR carry "Closes #85". |
+
+**The generalizable lesson, and it is about where a feature's own scoping goes to die.** Issue
+#85 stated the bound correctly when it was filed — "note the default dormancy floor masks the
+reap path for most operators; **this bites the ones who lowered it**" — and the implementation
+lost that clause somewhere between the issue and the code, then shipped a warning that fired for
+everyone *except* the population the issue named. Nothing caught it, because every test was
+written against the implementation's understanding rather than the issue's: the engine tests
+built popularity-only policies with no dormancy floor at all, and the API tests used the shipped
+floor with a 90-day mirror and asserted the warning fires, which is the exact configuration where
+its advice is inert. **Re-read the issue's own text before believing a fix closes it** — it is the
+one document written before the implementation existed, so it is the only place a constraint the
+implementation forgot can still be found. Here it was one sentence, and it was the whole scope.
+
+**A second note, procedural, and it cost a re-do.** Reverting a mutation with
+`git checkout -- <file>` discards the *uncommitted fix* in that file along with the mutation.
+Copy the file aside first (`cp` to scratch, `cp` back), or commit before mutating. The tell was
+`grep -c` returning 0 for a symbol the edit had just introduced; without that check the pass
+would have run its remaining gates against a tree that had silently lost its own fix.

@@ -103,6 +103,55 @@ next navigation step anyway.
 announced without a manual re-read. If confirmed, it is one fix across both (rule 72), not a
 regression in this PR.
 
+### The mid-binge hold is the same shape as the window shortfall, and nothing warns about it
+
+Raised at `f8592b3` (2026-07-28, reviewing PR #129) by the `diff` lane.
+
+`in_progress_hold_days` (default 180, control at `PolicyEditor.tsx:1512`) produces the same
+library-wide "nothing gets flagged" from the same short mirror, with the same two remedies, and
+no surface names it. `season_pruning.progress_is_establishable(reach_days=90, hold_days=180)`
+returns `False`, which makes `plan_series_prune` hold every season on disk as a blocked PROTECT
+until history accrues. So a TV operator who takes #129's new warning at its word and lowers the
+popularity window to match their reach finds the popularity gate has stopped blocking and every
+season is still held. "Nothing will be flagged for removal" stays true after they did what they
+were told, and nothing says why. Rule 72: the warning `inspect` now emits has a twin one field
+down the same editor.
+
+**Why it is unproven rather than confirmed:** every component was confirmed in-process, but the
+composed outcome — the operator following the remedy and still seeing an empty list — was never
+driven through a full scan. The single-warning claim is also arguably right as scoped, since
+#129 deliberately speaks for the one member with a control the operator can turn, and this is a
+second such member rather than a defect in the first.
+
+**What would settle it:** a scan over a TV library with a 90-day mirror and the shipped
+`in_progress_hold_days`, before and after lowering the popularity window to 90, asserting the
+prunable set is empty in both. If it is, the fix is a second branch in `inspect` anchored to
+`in_progress_hold_days`, reusing `gates.history_shortfall` the way the window branch does.
+
+### `horizon()` puts a `COUNT(*)` on the debounced policy-validate path
+
+Raised at `f8592b3` (2026-07-28, reviewing PR #129) by all three lanes, which measured the same
+numbers and **split on whether it is a defect**.
+
+`routes._history_reach_days` calls `history_sync.horizon`, a thin wrapper over `_state`, whose
+one query is `SELECT COUNT(*), MIN(watched_at), MAX(watched_at)`. SQLite cannot take the MIN/MAX
+index shortcut with a `COUNT(*)` riding along, so it scans where a bare `SELECT MIN(watched_at)`
+searches. Measured on a 500k-row `watch_event`: `horizon()` 20.6 ms/call against 0.2 ms for the
+MIN alone, with the COUNT accounting for the whole difference; on 1M rows, `SCAN USING COVERING
+INDEX` at 47 ms against `SEARCH` at 0.017 ms. `/api/policy/validate` fires on a 250 ms debounce
+as the operator drags a slider, on the same event loop the simulator replay yields to.
+
+**Why it is unproven rather than confirmed:** the disagreement is about the verdict, not the
+measurement. Two lanes called 20 ms per keystroke a defect; the third noted the same call already
+serves two `fairness.py` request paths and that 20 ms warm (860 ms cold) is within what this page
+already spends, and declined it. Nobody demonstrated an operator-visible stutter.
+
+**What would settle it:** drive the editor against a seeded mirror at 100k / 500k / 1M rows and
+measure input latency while dragging the window control, against the same run with
+`_history_reach_days` stubbed to a constant. If the two are indistinguishable, refute it; if not,
+the fix is a dedicated `SELECT MIN(watched_at)` beside `horizon`, which `snapshot.py:519-521`
+already works around for the scan path for the same reason.
+
 ## Settled
 
 Newest first. "Settled" is the commit that closed it; read that commit for the reasoning.
