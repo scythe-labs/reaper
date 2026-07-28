@@ -644,13 +644,14 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
 
     ``gates.ServerPopularityGate.evaluate`` fails closed when the mirror is shorter than
     the window it is asked about: a count over three months cannot answer "who watched
-    this in the last year", so the gate blocks and ``verdict.decide_verdict`` abstains.
-    The reach is a property of the operator's DATA, not of any one title, so this empties
-    the reap list library-wide and keeps it empty for as long as the shortfall lasts.
+    this in the last year", so the gate blocks. The reach is a property of the operator's
+    DATA, not of any one title, so it blocks library-wide for as long as the shortfall
+    lasts.
 
-    Every other block clears on the next scan, which is why nothing was ever obliged to
-    name a remedy for one. This one clears when history accrues or when the operator
-    shortens a window nobody pointed them at.
+    Most blocks clear on the next scan, which is why nothing was ever obliged to name a
+    remedy for one. The ones that do not are all the same family, a mirror shallower than
+    the question, and the others are held on the season path. This is the member with a
+    control the operator can turn, so it is the one the editor speaks for.
     """
 
     #: Longer than any reach used here, so a test that does not say otherwise is
@@ -660,6 +661,15 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
     def _pop(self, **overrides: object) -> PolicyBody:
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
         return _policy(gates=(GateSetting(**{**base, **overrides}),))  # type: ignore[arg-type]
+
+    def _pop_with_dormancy_floor(self, threshold: int) -> PolicyBody:
+        """The same gate beside a dormancy floor, which decides whether the window matters."""
+        return _policy(
+            gates=(
+                GateSetting(gate=GateId.SERVER_POPULARITY, window_days=self.WINDOW, threshold=2),
+                GateSetting(gate=GateId.MIN_DORMANCY, threshold=threshold),
+            )
+        )
 
     def _window_warnings(self, body: PolicyBody, reach: float | None) -> list[PolicyWarning]:
         return [
@@ -688,11 +698,47 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         assert self._window_warnings(self._pop(), reach=None) == []
 
     def test_it_is_silent_while_the_protection_is_off(self) -> None:
-        """A disabled gate reads no watcher count, so nothing blocks and nothing is lost.
-        The editor also hides the window control with the gate
-        (``PolicyEditor.tsx``, pinned by ``PolicyEditor.test.tsx``), so warning here would
-        name a control that is not on the page."""
+        """The editor hides the window control with the gate (``PolicyEditor.tsx``, pinned
+        by ``PolicyEditor.test.tsx``), so warning here would name a control that is not on
+        the page.
+
+        That is the whole reason, and it is narrower than it looks. A disabled gate does
+        NOT mean no reader of a watcher count blocks: ``PolicyBody.popularity_window_days``
+        falls back to 365 with the gate off, and ``build_gates`` hands that span to
+        ``CustomProtectGate``, so an operator's own ``recent_watchers`` rule blocks
+        library-wide over a mirror shorter than a year with nothing on the page saying so.
+        Tracked separately; do not read this test as ruling that case safe.
+        """
         assert self._window_warnings(self._pop(enabled=False), reach=90.0) == []
+
+    def test_the_dormancy_floor_silences_it_while_it_alone_empties_the_list(self) -> None:
+        """The remedy has to be able to work, and under the floor it cannot.
+
+        ``MinDormancyGate`` PROTECTs anything younger than its threshold and
+        ``decide_verdict`` puts PROTECT ahead of blocked, while dormancy is clamped to the
+        mirror (``dormancy.reference_instant``). So below the floor every item is kept on
+        age alone and the popularity window decides nothing: telling the operator to lower
+        it would shorten a real keep protection for no effect.
+
+        On both shipped policies the two ranges are disjoint -- floor 1095, window 365 --
+        so this is every operator holding under a year of history, which is exactly the
+        install the warning was written for.
+        """
+        with_floor = self._pop_with_dormancy_floor(1095)
+
+        assert self._window_warnings(with_floor, reach=90.0) == []
+        assert self._window_warnings(with_floor, reach=float(self.WINDOW) - 1) == []
+        # Lower the floor beneath the reach and the window is the binding constraint again.
+        assert self._window_warnings(self._pop_with_dormancy_floor(30), reach=90.0) != []
+
+    def test_the_span_is_named_before_the_clause_that_points_at_it(self) -> None:
+        """``history_shortfall``'s in-margin arm is "your watch history does not go back
+        that far", which only reads if the span has already been said. Both other tests
+        here sit outside ``_REACH_NAMEABLE_MARGIN_DAYS`` and take the arm that names a
+        number, so this is the branch that would go out ungrammatical unnoticed."""
+        message = self._window_warnings(self._pop(), reach=float(self.WINDOW) - 15)[0].message
+
+        assert message.index("in the last year") < message.index("does not go back that far")
 
     def test_the_cause_clause_is_the_one_the_why_panel_prints(self) -> None:
         """Rule 144: this sentence has a sibling. ``ServerPopularityGate.evaluate`` puts

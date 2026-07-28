@@ -1063,16 +1063,16 @@ def inspect(
     # The same window in the other direction, and the reason this detector needed a second
     # world-fact at all. ``gates.ServerPopularityGate.evaluate`` fails closed when the mirror
     # is shorter than the window it is being asked about: a count over three months cannot
-    # answer "who watched this in the last year", so the gate blocks and
-    # ``verdict.decide_verdict`` abstains. That is right, and it is LIBRARY-WIDE -- the reach
-    # is a property of the operator's data, not of any one title -- so a scan under this
-    # config condemns nothing at all, and goes on condemning nothing for as long as the
-    # shortfall lasts.
+    # answer "who watched this in the last year", so the gate blocks. The reach is a property
+    # of the operator's DATA rather than of any one title, so it blocks library-wide, and it
+    # goes on blocking for as long as the shortfall lasts.
     #
-    # Every other block clears on the next scan (an unreachable Seerr, an unread session
-    # list, a missing id), which is why no surface was ever obliged to name a remedy for one.
-    # This one clears when history accrues or when the operator shortens a window nobody
-    # pointed them at, so the editor is where it has to be said.
+    # Most blocks clear on the next scan (an unreachable Seerr, an unread session list, a
+    # missing id), which is why no surface was ever obliged to name a remedy for one. The
+    # ones that do not are all the same family, a mirror shallower than the question, and the
+    # other members are held on the season path: ``season_scan``'s lifetime-shortfall
+    # conflict and ``season_pruning.progress_is_establishable``. This is the member with a
+    # control the operator can turn, so the editor is where it has to be said.
     #
     # ``warn``, not ``danger``: the outcome is that Reaper deletes nothing, which is the
     # keep direction. Every ``danger`` here marks a config that removes MORE.
@@ -1080,7 +1080,22 @@ def inspect(
     # The cause clause comes from ``gates.history_shortfall`` rather than being restated,
     # because the why-panel prints that same sentence off the same helper for the same
     # operator (rule 144), and it already decides when the gap is too small to name a number.
-    if popularity is not None and history_reach_days is not None:
+    #
+    # ONLY where the block is what is actually holding the list back, which is what
+    # ``reach_clears_dormancy`` tests. ``MinDormancyGate`` PROTECTs anything younger than its
+    # threshold, ``verdict.decide_verdict`` puts PROTECT ahead of blocked, and dormancy is
+    # clamped to the mirror (``dormancy.reference_instant`` measures from the horizon at the
+    # earliest). So while the reach is under the floor, every item is kept on age alone and
+    # the popularity window decides nothing. Without this test the warning fires on both
+    # shipped policies -- floor 1095, window 365 -- for every operator holding under a year
+    # of history, and the remedy it names cannot move a single verdict.
+    dormancy_floor = next(
+        (g for g in body.gates if g.gate is GateId.MIN_DORMANCY and g.enabled), None
+    )
+    reach_clears_dormancy = dormancy_floor is None or (
+        history_reach_days is not None and history_reach_days >= dormancy_floor.threshold
+    )
+    if popularity is not None and history_reach_days is not None and reach_clears_dormancy:
         short = history_shortfall(
             Known(value=history_reach_days, source="tautulli"), float(popularity.window_days)
         )
@@ -1090,11 +1105,13 @@ def inspect(
                 PolicyWarning(
                     field=f"gates.{GateId.SERVER_POPULARITY.value}.window_days",
                     severity="warn",
+                    # The window is named BEFORE the cause clause, because
+                    # ``history_shortfall``'s in-margin arm is "your watch history does not go
+                    # back that far" and "that far" needs the span to have been said already.
                     message=(
-                        f"Nothing will be flagged for removal while {short}. Reaper can't say "
-                        f"who watched a title in the last {window_text} from a shorter history, "
-                        "so it leaves every title for you to decide. Lower this window to match, "
-                        "or wait for your history to build up."
+                        "Nothing will be flagged for removal. Reaper can't say who watched a "
+                        f"title in the last {window_text} from a shorter history, and {short}. "
+                        "Lower this window to match your history, or wait for it to build up."
                     ),
                 )
             )

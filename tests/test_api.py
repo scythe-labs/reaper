@@ -1595,9 +1595,22 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
                 (int((utcnow() - timedelta(days=days_back)).timestamp()),),
             )
 
+    def _policy_body(self, **overrides: object) -> dict[str, object]:
+        """``DEFAULT_GATES`` with the dormancy floor lowered beneath the mirror seeded here.
+
+        ``inspect`` stays silent while the floor alone empties the list, because there the
+        popularity window decides nothing and lowering it is inert advice. So a fixture on
+        the shipped 1095-day floor would assert nothing about the wiring: it would read as
+        green with the reach never fetched at all (rule 141).
+        """
+        gates = [
+            {**g, "threshold": 30} if g["gate"] == "min_dormancy" else g for g in DEFAULT_GATES
+        ]
+        return _policy(gates=gates, **overrides)
+
     def _window_warnings(self, client: TestClient) -> list[dict[str, str]]:
-        # _policy()'s server_popularity gate takes the default 365-day window.
-        body = client.post("/api/policy/validate", json=_policy()).json()
+        # The server_popularity gate takes the default 365-day window.
+        body = client.post("/api/policy/validate", json=self._policy_body()).json()
         return [w for w in body["warnings"] if w["field"] == "gates.server_popularity.window_days"]
 
     def test_a_mirror_shorter_than_the_window_is_flagged(
@@ -1610,6 +1623,24 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         assert len(flagged) == 1
         assert flagged[0]["severity"] == "warn"
         assert "Nothing will be flagged for removal" in flagged[0]["message"]
+
+    def test_the_shipped_dormancy_floor_keeps_it_quiet(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """The same short mirror, against the gates Reaper actually ships.
+
+        ``min_dormancy`` holds every item at 1095 days and dormancy is clamped to the
+        mirror, so on a 90-day history nothing can be condemned whatever the popularity
+        window says. Warning here would send the operator to shorten a keep protection
+        that changes nothing, so the detector says nothing instead.
+        """
+        self._seed_mirror(tmp_path, days_back=90)
+
+        body = client.post("/api/policy/validate", json=_policy()).json()
+
+        assert [
+            w for w in body["warnings"] if w["field"] == "gates.server_popularity.window_days"
+        ] == []
 
     def test_a_mirror_that_covers_the_window_is_quiet(
         self, client: TestClient, tmp_path: Path
@@ -1628,11 +1659,28 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         self, client: TestClient, tmp_path: Path
     ) -> None:
         """All three policy routes share ``_policy_out``, and each passes the reach
-        separately, so each needs its own proof. This is the one whose call site is easiest
-        to miss: ``save_policy`` returns through two different ``_policy_out`` calls."""
+        separately, so each needs its own proof."""
         self._seed_mirror(tmp_path, days_back=90)
 
-        body = client.post("/api/policy", json=_policy(condemn_at=71)).json()
+        body = client.post("/api/policy", json=self._policy_body(condemn_at=71)).json()
+
+        assert [
+            w for w in body["warnings"] if w["field"] == "gates.server_popularity.window_days"
+        ] != []
+
+    def test_saving_a_policy_that_is_already_in_force_answers_with_it_too(
+        self, client: TestClient, tmp_path: Path
+    ) -> None:
+        """``save_policy`` returns through TWO ``_policy_out`` calls, and the second one is
+        easy to miss: a body content-identical to the policy in force writes nothing and
+        returns early. Deleting ``history_reach_days=`` from that call site left the whole
+        suite green, because the test above only ever reaches the normal return (rule 118).
+        """
+        self._seed_mirror(tmp_path, days_back=90)
+        payload = self._policy_body(condemn_at=71)
+        client.post("/api/policy", json=payload)
+
+        body = client.post("/api/policy", json=payload).json()
 
         assert [
             w for w in body["warnings"] if w["field"] == "gates.server_popularity.window_days"
@@ -1642,6 +1690,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         self, client: TestClient, tmp_path: Path
     ) -> None:
         self._seed_mirror(tmp_path, days_back=90)
+        client.post("/api/policy", json=self._policy_body(condemn_at=71))
 
         body = client.get("/api/policy").json()
 
