@@ -332,16 +332,34 @@ function conflictNote(defersToOwner: boolean | null | undefined): string {
  *  longer be the cause of a hold, so there is no shape left for it to describe truthfully.
  *  The order here is load-bearing, not cosmetic -- these branches are mutually reachable and
  *  the first true one wins. */
-function heldReapNote(item: CandidateDetail): string {
+/** The FIRED protection a hand reap cannot overrule, if one fired: `verdict.STRUCTURAL_GATES`,
+ *  which is something playing right now and the retired `unmanaged`. Neither is a judgment about
+ *  whether the file is wanted, which is the whole test -- deleting mid-stream breaks a session
+ *  someone is watching, and a file no *arr manages has no path to delete through.
+ *
+ *  Every OTHER protection is cautious rather than structural, and a hand reap condemns straight
+ *  past it (`docs/STATUS.md`, and the #96 reversal that deleted `DEFERRABLE_BLOCK_GATES`). So
+ *  this is the one test that separates "kept no matter what" from "kept unless you say
+ *  otherwise", and both sentences below turn on it: `heldReapNote` says why a reap is still
+ *  held, and the Sanctuary note says whether one would be. Deriving them apart is exactly how
+ *  the panel came to call a protection absolute beside a working Reap button (rule 104). */
+function structuralStop(item: CandidateDetail): "streaming_now" | "unmanaged" | undefined {
   const fired = new Set(item.explanation.protections_fired.map((o) => o.gate));
-  if (fired.has("streaming_now")) {
-    return "You asked to remove this, but someone is watching it right now, so it's kept for now.";
-  }
+  if (fired.has("streaming_now")) return "streaming_now";
   // Reads a STORED explanation, so it outlives the gate that wrote it. That gate is retired
   // (`engine/gates.py`) and no new scan can produce this, but a snapshot on disk is read back
   // by whatever version is running, and a wrong-but-specific sentence is worse than a right
   // one. Kept for the same reason `api/routes.py` keeps its phrase for `others_watching`.
-  if (fired.has("unmanaged")) {
+  if (fired.has("unmanaged")) return "unmanaged";
+  return undefined;
+}
+
+function heldReapNote(item: CandidateDetail): string {
+  const stop = structuralStop(item);
+  if (stop === "streaming_now") {
+    return "You asked to remove this, but someone is watching it right now, so it's kept for now.";
+  }
+  if (stop === "unmanaged") {
     return "You asked to remove this, but no app manages the file, so there's no safe way to remove it.";
   }
   const status = item.explanation.match?.status;
@@ -414,13 +432,23 @@ function verdictLook(item: CandidateDetail): { klass: string; label: string; not
   }
 
   if (verdict === "protect" && explanation.protections_fired.length > 0) {
+    // Which of the two it is turns on `structuralStop`, and the difference is the Reap button
+    // rendered a few inches below this sentence (`reapIsNoop` is false on a protect row, so the
+    // control is there). Telling the operator a protection is absolute while offering the one
+    // control that removes the file is a claim the panel itself disproves, and they may put
+    // titles on a keep list believing that list is inviolable.
     return {
       klass: "verdict-protect",
       label: "Sanctuary",
-      note: (
+      note: structuralStop(item) ? (
         <>
-          Something is protecting this, so <strong>the score doesn't matter</strong>: it's kept no
-          matter what, and nothing can change that.
+          Something is protecting this, so <strong>the score doesn't matter</strong>: it's kept, and
+          a Reap won't remove it.
+        </>
+      ) : (
+        <>
+          Something is protecting this, so <strong>the score doesn't matter</strong>: it's kept
+          unless you Reap it yourself.
         </>
       ),
     };

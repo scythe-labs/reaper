@@ -512,7 +512,7 @@ describe("the verdict headline", () => {
       screen.getByText(/it will be removed\. Nothing is holding it back/i),
     ).toBeInTheDocument();
     expect(screen.queryByText("Sanctuary")).not.toBeInTheDocument();
-    expect(screen.queryByText(/nothing can change that/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/the score doesn't matter/i)).not.toBeInTheDocument();
   });
 
   it("labels a held reap 'Kept for now' and names why, in dashed red", () => {
@@ -665,7 +665,40 @@ describe("the verdict headline", () => {
       }),
     );
     expect(screen.getByText("Sanctuary")).toBeInTheDocument();
-    expect(screen.getByText(/nothing can change that/i)).toBeInTheDocument();
+    expect(screen.getByText(/the score doesn't matter/i)).toBeInTheDocument();
+  });
+
+  // A Sanctuary is only as absolute as the gate holding it, and this panel renders a working
+  // Reap button below the sentence either way (`reapIsNoop` is false on a protect row). A hand
+  // reap condemns past every cautious protection and is refused only by a FIRED member of
+  // `verdict.STRUCTURAL_GATES` -- so "nothing can change that" was true of one of these two
+  // rows and false of the other, and the panel said it about both.
+  it("says a cautious protection can be overruled by hand", () => {
+    show(
+      detail(WORKED_ROWS, {
+        verdict: "protect",
+        explanation: {
+          ...detail(WORKED_ROWS).explanation,
+          protections_fired: [fired("min_dormancy")],
+        },
+      }),
+    );
+    expect(screen.getByText(/kept unless you Reap it yourself/i)).toBeInTheDocument();
+    expect(screen.queryByText(/a Reap won't remove it/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the absolute wording for a structural stop, which a hand reap cannot overrule", () => {
+    show(
+      detail(WORKED_ROWS, {
+        verdict: "protect",
+        explanation: {
+          ...detail(WORKED_ROWS).explanation,
+          protections_fired: [fired("streaming_now")],
+        },
+      }),
+    );
+    expect(screen.getByText(/a Reap won't remove it/i)).toBeInTheDocument();
+    expect(screen.queryByText(/unless you Reap it yourself/i)).not.toBeInTheDocument();
   });
 
   it("reads a stale protect-with-nothing-fired row as left-for-you, not protected", () => {
@@ -673,7 +706,7 @@ describe("the verdict headline", () => {
     // protection fired, so it must not claim Sanctuary. A rescan resolves it to abstain.
     show(detail(WORKED_ROWS, { verdict: "protect", override: null }));
     expect(screen.queryByText("Sanctuary")).not.toBeInTheDocument();
-    expect(screen.queryByText(/nothing can change that/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/the score doesn't matter/i)).not.toBeInTheDocument();
   });
 
   // Verbatim from `services.season_pruning.PruneConflict.message`. The fixture here used to
