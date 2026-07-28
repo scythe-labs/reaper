@@ -784,22 +784,45 @@ class TestEveryOperationSaysWhichCredentialReachesIt:
     ) -> None:
         """Rule 119: the scheme's copy is checked against the guard, not against itself.
 
-        The panel sends three headers, accept and content-type and cookie, so a try-it-out
-        write arrives holding the real session and no ``X-Reaper-CSRF`` and the guard
-        refuses it before any handler. The description used to promise the button worked
-        while signed in, which was true of reads and of nothing else, on a document where
-        40 operations offer the session as their only credential. If this stops being a
-        refusal, the sentence naming the header is the line to delete.
+        A bare cookie reads and does not write. That asymmetry is the whole reason the
+        Session description names the header, and it is what a script author writing their
+        own client meets on their first write. The reference page no longer meets it
+        (#120, the test below), which changes who needs telling and changes nothing about
+        the guard: if this stops being a refusal, the sentence naming the header is the
+        line to delete.
         """
         panel = _bare(client)
         panel.cookies.update(client.cookies)
 
-        # The half the promise was true of: the cookie alone reads.
+        # The half a bare cookie is enough for.
         assert panel.get("/api/candidates").status_code == 200
         # The same credential, one unsafe method, no header.
         refused = panel.post("/api/whitelist", json={})
         assert refused.status_code == 403
         assert "CSRF" in refused.json()["detail"]
+
+    def test_the_reference_page_sends_the_csrf_header_it_names(self, client: TestClient) -> None:
+        """#120: the only thing standing behind "reads and writes as you".
+
+        That clause is hand-written, and the hook that earns it lives in a JavaScript
+        string no other Python test reads. Delete the hook and the Session scheme goes
+        back to promising a write that answers 403, with every gate still green -- the
+        drift rule 144 is about, in the copy that was never generated. Driving the button
+        needs a browser, so what is pinned here is narrower and still load-bearing: the
+        page carries the hook, and it spells the header the same way its own auth box
+        does.
+        """
+        page = client.get("/api/docs").text
+        described = client.get("/api/openapi.json").json()["components"]["securitySchemes"][
+            "Session"
+        ]["description"]
+
+        assert "X-Reaper-CSRF: 1" in described
+        assert "onBeforeRequest" in page, (
+            "the reference page dropped the hook, so try-it-out writes 403 again while "
+            "the Session scheme in main.openapi_with_api_key still promises they work"
+        )
+        assert "X-Reaper-CSRF" in page, "the page must send the header its own auth box names"
 
         schema = client.get("/api/openapi.json").json()
         session_scheme = schema["components"]["securitySchemes"]["Session"]

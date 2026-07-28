@@ -414,14 +414,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         one order and authenticated under the other, and the key stays selectable in the
         same dropdown.
 
-        **That fixes reads, and reads are all it fixes.** The guard wants a third thing
-        this document cannot supply: ``X-Reaper-CSRF: 1`` on every unsafe method that is
-        not on the key lane. Running the vendored ``@scalar/workspace-store``'s own request
-        builder over the served schema, the panel sends exactly ``accept``,
-        ``content-type`` and ``cookie``, and replaying those headers refuses every write
-        with the CSRF message. So the ``Session`` description says the button reads rather
-        than promising a write it cannot make, and names the header, which is the only
-        mention of it anywhere in the document.
+        **The guard wants a third thing, and the page now supplies it.** Every unsafe
+        method off the key lane needs ``X-Reaper-CSRF: 1``, which a cookie cannot carry on
+        its own, so the panel's own three headers (``accept``, ``content-type``,
+        ``cookie``) met a 403 on all 47 writes. ``api_docs`` sets it from the reference's
+        ``onBeforeRequest`` hook, on the mutable builder before the ``Request`` is frozen
+        (a ``customFetch`` would work too, but has to rebuild the body to change a header).
+        Measured against the shipped bundle: ``POST /api/policy/validate`` from try-it-out
+        went 403 CSRF before and reaches the handler after, with ``x-reaper-csrf: 1`` on
+        the wire beside the cookie. The ``Session`` description now says the button writes,
+        and still names the header for the script author writing their own client.
+
+        Nothing about that widens what the page may do. The header is not a credential --
+        it proves same-origin, which this page is, being served by Reaper at
+        ``/api/docs`` behind the same session -- and the destructive route it now reaches
+        still needs the host armed and the content-bound phrase recomputed server-side, so
+        a stray Send cannot delete anything.
 
         ``tags`` names and orders the sections; ``x-tagGroups`` is the vendor extension
         Scalar reads to nest them under three headings. Both come from
@@ -458,15 +466,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "type": "apiKey",
                 "in": "cookie",
                 "name": DOCUMENTED_SESSION_COOKIE,
-                # Names the CSRF header because this is the only place the document
-                # mentions it, and a script author needs it before their first write
-                # rather than after the 403 it causes.
+                # Still names the CSRF header, for the reason it always did: this is the
+                # only place the document mentions it, and a script author writing their
+                # OWN client needs it before their first write rather than after the 403
+                # it causes. What changed is that the button no longer needs telling --
+                # the reference page sets it (``api_docs``), so the sentence describes
+                # the header as something a script sends rather than something missing.
                 "description": (
                     "The sign-in cookie your browser already holds. Nothing to paste: it "
-                    "rides along on its own, so the try-it-out button reads as you while "
-                    "you are signed in. A write also needs the header X-Reaper-CSRF: 1, "
-                    "which this page does not send. An HTTPS install names the same "
-                    f"cookie __Host-{DOCUMENTED_SESSION_COOKIE}."
+                    "rides along on its own, so the try-it-out button reads and writes as "
+                    "you while you are signed in. Your own scripts need one more thing: "
+                    "the header X-Reaper-CSRF: 1 on every write. An HTTPS install names "
+                    f"the same cookie __Host-{DOCUMENTED_SESSION_COOKIE}."
                 ),
             }
             # Either credential, unless an operation below narrows it. Session leads for
@@ -512,6 +523,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "    Scalar.createApiReference('#app', {\n"
             "      url: '/api/openapi.json',\n"
             "      hideClientButton: true,\n"
+            "      // The one thing the cookie cannot carry on its own. Set on the builder\n"
+            "      // before the Request is frozen, so nothing has to rebuild a body.\n"
+            "      onBeforeRequest: function (event) {\n"
+            "        event.requestBuilder.headers.set('X-Reaper-CSRF', '1');\n"
+            "      },\n"
             "    });\n"
             "  </script>\n"
             "</body>\n"
