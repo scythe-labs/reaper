@@ -2232,13 +2232,21 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
   // editor's Movies/TV switch uses and in the same place: directly under the control that was
   // clicked, so that control does not move under the pointer.
   //
-  // Three panels report, because three panels hold a typed draft: General's save bar, Plex's web
-  // address and manual connection rows, and the Discord webhook URL -- which is a secret the
-  // operator has to go back to Discord to re-copy. The guard first landed on General alone, so
-  // the other two still unmounted silently while the app had just trained the operator to expect
-  // to be asked (rule 72). Each panel reports through its own `onDirtyChange`; the three are
-  // `useState` setters and so are stable, which that prop requires. A panel with no draft to
-  // lose is absent from this record and reads undefined, which switches straight through.
+  // Three panels report: General's save bar, Plex's web address and manual connection rows, and
+  // the Discord webhook URL -- which is a secret the operator has to go back to Discord to
+  // re-copy. The guard first landed on General alone, so the other two still unmounted silently
+  // while the app had just trained the operator to expect to be asked (rule 72). Each reports
+  // through its own `onDirtyChange`; the three are `useState` setters and so are stable, which
+  // that prop requires. A panel absent from this record reads undefined and switches straight
+  // through.
+  //
+  // Three is not the whole population, and saying so is the point of writing it down (rule 72
+  // wants a deferral in writing, not an implied one). Two panels still hold a typed draft and
+  // still unmount without asking: Security's admin-password form (`AdminPasswordForm`, three
+  // password boxes), and Backup's restore card (`RestoreCard`, a staged archive plus the admin
+  // password typed against it, where the loss also strands the upload server-side). Both need
+  // the draft lifted out of a CHILD component rather than computed in the panel, which is why
+  // they are not folded in here; tracked as issue #135.
   const [generalDirty, setGeneralDirty] = useState(false);
   const [plexDirty, setPlexDirty] = useState(false);
   const [webhookDirty, setWebhookDirty] = useState(false);
@@ -2311,8 +2319,11 @@ export function Settings({ initialPanel }: { initialPanel?: Panel | undefined })
         </nav>
       )}
       {/* Directly under the rail that was clicked, so the rail does not move: the same slot and
-          the same two buttons the policy editor's own switch confirm uses (rule 18). The save
-          bar below names WHICH fields are unsaved, so this does not repeat them. */}
+          the same two buttons the policy editor's own switch confirm uses (rule 18).
+          On General the save bar below names WHICH fields are unsaved, so this does not repeat
+          them. Plex and Notifications have no bar and this line is all they get: their inline
+          Save buttons are the only other cue, and on Notifications the box is a password field
+          showing dots. Naming the field here is what those two actually want. */}
       {pendingSwitch !== null && (
         <div className="notice notice-warn">
           You have unsaved {leavingLabel} settings. Switching to {pendingLabel} discards them.{" "}

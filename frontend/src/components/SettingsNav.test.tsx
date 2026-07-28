@@ -273,8 +273,11 @@ describe("leaving Plex or Notifications with something unsaved", () => {
   // next two (rule 72). Driven through the real shell rather than against the panels' props,
   // because what broke was the wiring between them, which a prop-level test cannot see.
   //
-  // Scoped to the notice that names a switch: the Plex panel renders `.notice-warn` of its own
-  // (the certificate one), so a bare `.notice-warn` lookup would pass on the wrong element.
+  // Scoped to the notice that names a switch, because the Plex panel raises a `.notice-warn` of
+  // its own against this fixture: `plexResources` answers with an empty server list while the
+  // status says linked, so the linked server reads as missing. A bare `.notice-warn` lookup would
+  // pass on that one. Name the notice this fixture really renders, not a plausible one -- the
+  // certificate warning is absent here, since `plexStatus` returns `verify_tls: true`.
   const switchNotice = () =>
     [...document.querySelectorAll(".notice-warn")].find((n) =>
       n.textContent?.includes("Switching to"),
