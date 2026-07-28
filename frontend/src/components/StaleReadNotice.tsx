@@ -14,10 +14,13 @@
  *  and the failed read handled explicitly, so this is what the failed one says.
  *
  *  One component for every panel, so the wording cannot drift (rule 144). `GeneralPanel`,
- *  `PlexPanel` and `SecurityPanel` keep their form through a failed refetch; a fourth panel that
- *  starts doing so takes this line with it, rather than writing its own. Security is the one with
- *  a clock behind it: `useSafety` refetches every 15 seconds, so its form met this state without
- *  the operator doing anything at all. */
+ *  `PlexPanel`, `SecurityPanel` and `BackupPanel` keep their surface through a failed refetch; a
+ *  fifth panel that starts doing so takes this line with it, rather than writing its own. Security
+ *  is the one with a clock behind it: `useSafety` refetches every 15 seconds, so its form met this
+ *  state without the operator doing anything at all. Backup is the one where the never-loaded
+ *  sentence was actively harmful rather than merely wrong: it says to reload, and a reload does
+ *  not run the restore card's unmount cleanup, so the staged archive is orphaned by an operator
+ *  doing what the page told them. */
 export function StaleReadNotice() {
   return (
     <p className="notice notice-warn">

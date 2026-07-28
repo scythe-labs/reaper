@@ -1027,9 +1027,16 @@ function BackupPanel({
         Save everything Reaper knows to one file, and put it all back if you ever need to.
       </p>
       {isPending && <p className="muted">Loading…</p>}
-      {isError && (
+      {/* Backup became a draft-holding panel with #135, so it takes the same two-branch read the
+          other three carry: the never-loaded sentence only where nothing ever landed, and the
+          shared stale line beside a card that is still on screen. Saying "Couldn't load this page"
+          over a staged file and a typed password sends the operator to reload, and a reload does
+          not run the unmount cleanup -- so following this panel's own advice was the one exit that
+          orphaned the archive. */}
+      {isError && !data && (
         <p className="notice notice-error">Couldn't load this page. Reload to try again.</p>
       )}
+      {isError && data && <StaleReadNotice />}
       {data && (
         <>
           <section className="rules-card">

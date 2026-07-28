@@ -3,7 +3,7 @@
 // The card is local to Settings.tsx, so these drive it the way an operator reaches it: the
 // Backup panel, a staged file, then the password box that appears with the summary.
 import { QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { testQueryClient } from "../test/queryClient";
@@ -225,5 +225,37 @@ describe("a staged backup nobody confirmed", () => {
 
     await waitFor(() => expect(apiMock.restorePrepare).toHaveBeenCalledTimes(1));
     expect(apiMock.restoreCancel).not.toHaveBeenCalled();
+  });
+});
+
+describe("the backup panel's own read failing", () => {
+  it("keeps the staged card and says the read is stale, not that the page never loaded", async () => {
+    // `Download backup` invalidates this very query, so a server that blinks lands here with an
+    // archive staged and a password typed against it. The never-loaded sentence tells the operator
+    // to reload, and a reload does not run the card's unmount cleanup, so following the panel's own
+    // advice was the one exit that left the archive on the server with nothing able to reach it.
+    // Same line as the other three panels, from one component, so the wording cannot drift
+    // (rules 72 and 144).
+    const { person, queryClient } = renderBackupPanel();
+    await person.type(await stage("a.reaper"), "a-password");
+
+    apiMock.backupInfo.mockRejectedValue(new Error("boom"));
+    const asked = apiMock.backupInfo.mock.calls.length;
+    await act(() => queryClient.invalidateQueries({ queryKey: ["backup-info"] }));
+    await waitFor(() => expect(apiMock.backupInfo.mock.calls.length).toBeGreaterThan(asked));
+
+    expect(screen.queryByText(/Couldn't load this page/)).toBeNull();
+    expect(await screen.findByText(/Couldn't check these settings just now/)).toHaveClass(
+      "notice-warn",
+    );
+    expect(screen.getByLabelText(/admin password/i)).toHaveValue("a-password");
+  });
+
+  it("still says the page never loaded when the first read is the one that fails", async () => {
+    apiMock.backupInfo.mockRejectedValue(new Error("boom"));
+    renderBackupPanel();
+
+    expect(await screen.findByText(/Couldn't load this page/)).toBeInTheDocument();
+    expect(document.querySelector(".dropzone")).toBeNull();
   });
 });
