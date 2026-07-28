@@ -10,8 +10,7 @@
     docker login <registry>
 
   The :dev tag tracks the dev branch, which is where pre-release work lands. :latest
-  follows main once a release is cut, and every build is also tagged with its short
-  commit sha if you would rather pin one.
+  follows main once a release is cut.
 -->
 <Container version="2">
   <Name>Reaper</Name>

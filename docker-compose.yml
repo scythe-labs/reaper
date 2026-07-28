@@ -8,9 +8,9 @@
 
 services:
   reaper:
-    # CI publishes this on every push: :dev tracks the dev branch, :latest follows main,
-    # and every build is also tagged with its short commit sha if you want to pin one.
-    # Pre-release, use :dev.
+    # CI publishes this on every push: :dev tracks the dev branch, :latest follows main.
+    # Pre-release, use :dev. These two are the only tags to put in a compose file; why the
+    # others are not is in docs/LEARNINGS.md (#122).
     #
     # This registry refused an anonymous pull:
     #   docker login <registry>

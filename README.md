@@ -73,8 +73,7 @@ docker compose up -d                # serves on http://localhost:8420
 ```
 
 Use **`:dev`** for now: it tracks the `dev` branch, where the work lands. `:latest` follows
-`main` once a release is cut, and every build is also tagged with its short commit sha if
-you would rather pin one. To build from source instead, uncomment `build:` in
+`main` once a release is cut. To build from source instead, uncomment `build:` in
 [`docker-compose.yml`](docker-compose.yml) and run `docker compose up -d --build`.
 
 Migrations run on every start, before the app accepts a connection — a half-migrated

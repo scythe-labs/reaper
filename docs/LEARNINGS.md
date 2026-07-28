@@ -1599,6 +1599,35 @@ more; understating an age blocks less. **A lower bound is only safe on the side 
 comparison where more evidence can only tighten the answer** — check which side you are on
 before reusing the trick.
 
+## Only `:dev` outlives a week in the registry (2026-07-28)
+
+The install docs offered the short commit sha as a tag to pin ("if you would rather pin
+one"). The org-level container cleanup rule keeps versions matching `dev` — plus `latest`,
+always kept for container packages — and removes everything else older than **7 days**. A
+short-sha tag matches neither keep rule.
+
+Measured, with the obvious confound ruled out. CI run 1090 on 2026-07-17 shows `Push image:
+success` with its "Warn when publishing is not configured" step *skipped*, so the registry
+token was set and that build really was published. Paginating the packages API that same
+week returned **749 container versions, oldest `created_at` 2026-07-21** — nothing from
+07-15 through 07-20 survived. Published, then deleted: the rule working as configured.
+
+Inventory at the time: `dev`, 213 short-sha tags, 72 `pr-<n>` tags, 464 untagged digests,
+all inside the 7-day window. Neither `latest` nor `main` exists, because no release has been
+cut — which sharpens it rather than softening it: **`dev` is currently the only tag in the
+registry that outlives a week.**
+
+Two things worth keeping. First, the failure surfaces at the worst possible moment: a pinned
+short-sha keeps working until something *re-pulls* on a host with no layers cached, so a
+running container is fine and a recovery or a host migration meets `manifest-unknown`.
+Second, nothing was lost by removing the offer — identifying which build is running never
+depended on the tag surviving, because the About page reads `REAPER_GIT_SHA` off the running
+image.
+
+Resolved by dropping the pinning offer from the README, `docker-compose.yml` and the Unraid
+template rather than by widening the keep pattern, which would retain roughly one image per
+commit with no bound. Whoever reconsiders that is changing registry policy, not docs.
+
 ## Prior art
 
 - **Maintainerr** — no auth at all. Its `operator` field is overloaded (section-join vs
