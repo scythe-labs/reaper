@@ -36,6 +36,7 @@ window.scrollTo = () => {};
 // blessing. Nothing here warns: it fails, or it has nothing to say.
 let missingQueryFn: string[] = [];
 let outsideAct: string[] = [];
+let duplicateKeys: string[] = [];
 const forwardError = console.error.bind(console);
 console.error = (...args: unknown[]) => {
   if (typeof args[0] === "string") {
@@ -44,6 +45,13 @@ console.error = (...args: unknown[]) => {
     if (args[0].includes("was not wrapped in act(")) {
       outsideAct.push(String(args[1] ?? "a component"));
     }
+    // "Encountered two children with the same key, `%s`." React 19 still renders both, so
+    // nothing about the page looks wrong and only this line ever said so -- which is the
+    // shape rule 135 exists to delete. The reconciliation guarantee rule 19 asks for is
+    // what is actually lost, and it is lost silently.
+    if (args[0].includes("Encountered two children with the same key")) {
+      duplicateKeys.push(String(args[1] ?? "an unnamed key"));
+    }
   }
   forwardError(...args);
 };
@@ -51,8 +59,10 @@ console.error = (...args: unknown[]) => {
 afterEach(() => {
   const queries = missingQueryFn;
   const unacted = outsideAct;
+  const dupes = duplicateKeys;
   missingQueryFn = [];
   outsideAct = [];
+  duplicateKeys = [];
   if (queries.length > 0) {
     // The message opens with the query hash, e.g. `[["profile"]]: No queryFn ...`.
     const keys = [...new Set(queries.map((m) => m.slice(0, m.indexOf("]:") + 1)))];
@@ -69,6 +79,15 @@ afterEach(() => {
         `settled after its last act() returned, so the assertions above ran on a moment that ` +
         `had already passed. Await it inside act (\`await act(async () => ...)\`), or hold it ` +
         `in flight so the moment the test asserts is the one it means. See rule 136.`,
+    );
+  }
+  if (dupes.length > 0) {
+    const keys = [...new Set(dupes)];
+    throw new Error(
+      `Rendered siblings sharing a key: ${keys.join(", ")}. Both children still paint, so no ` +
+        `assertion here would have caught it, but React can no longer tell the two rows apart ` +
+        `across a re-render and may keep the wrong one's state. Key on something that differs ` +
+        `between siblings. See rule 19.`,
     );
   }
 });

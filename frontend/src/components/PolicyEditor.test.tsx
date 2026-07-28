@@ -681,3 +681,95 @@ describe("the gate that counts recent watchers", () => {
     expect(screen.queryByLabelText("How far back recent plays count")).not.toBeInTheDocument();
   });
 });
+
+// --- warning anchors ---------------------------------------------------------
+//
+// A warning is anchored beside the control that fixes it, and anything no anchor claims
+// falls to the bottom stack (rule 42). Claiming is therefore a promise to render: an anchor
+// pointing into a subtree that did not mount takes its warning off the page altogether,
+// because claiming is exactly what excludes it from the catch-all. These reconcile the
+// anchor list against the renderers by driving one warning per anchor through the page and
+// looking for each on screen -- the audit a hand-maintained count in a comment was supposed
+// to support, and got wrong at seven against eight (#146).
+describe("PolicyEditor warning anchors", () => {
+  /** One warning per anchor a MOVIE policy can produce. `keep_last_seasons` and
+   *  `keep_last_scope` are absent on purpose: the producer guards both on
+   *  `media_type == "tv"` and so does their renderer, so the pair agree and neither can
+   *  swallow the other. They are covered by the TV case below. */
+  const MOVIE_ANCHORS: PolicyWarning[] = [
+    { field: "condemn_at", severity: "warn", message: "anchor probe: condemn_at" },
+    {
+      field: "gates.server_popularity.window_days",
+      severity: "warn",
+      message: "anchor probe: a gate field",
+    },
+    // Its renderer lives inside the rating card's own `gate.enabled` branch -- and so does
+    // its producer (`policy.inspect` emits nothing here unless the gate is on), so the pair
+    // agree and the fixture below turns the gate on to reach the only state it exists in.
+    { field: "keep_rating_rules", severity: "warn", message: "anchor probe: keep_rating_rules" },
+    { field: "signals", severity: "warn", message: "anchor probe: signals" },
+    { field: "custom_condemn", severity: "warn", message: "anchor probe: custom_condemn" },
+    { field: "graded_keeps", severity: "warn", message: "anchor probe: graded_keeps" },
+    { field: "protect_conditions", severity: "warn", message: "anchor probe: protect_conditions" },
+    {
+      field: "max_unmeasured_per_run",
+      severity: "warn",
+      message: "anchor probe: max_unmeasured_per_run",
+    },
+    // Claimed by no anchor, so it proves the catch-all is reached in the same render rather
+    // than the whole stack having gone quiet -- without it, a page rendering nothing at all
+    // would fail these for a reason the message would not name.
+    { field: "some_field_no_anchor_claims", severity: "warn", message: "anchor probe: catch-all" },
+  ];
+
+  it("puts every anchored warning on the page exactly once", async () => {
+    const withRatingGate: PolicyBody = {
+      ...body(),
+      gates: [
+        { gate: "rating_floor", enabled: true, threshold: 70, secondary: 1000, window_days: 365 },
+      ],
+    };
+    renderEditor({ body: withRatingGate }, pace, null, MOVIE_ANCHORS);
+
+    for (const w of MOVIE_ANCHORS) {
+      expect(await screen.findByText(w.message)).toBeInTheDocument();
+    }
+    // Exactly once each: an anchor that both claims a field AND lets it reach the catch-all
+    // would render it twice, which is the other way this can be wrong.
+    for (const w of MOVIE_ANCHORS) {
+      expect(screen.getAllByText(w.message)).toHaveLength(1);
+    }
+  });
+
+  it("keeps the unknown-size warning when the profile read fails", async () => {
+    // #145. This is the one warning about a setting that lets deletions past the GB caps,
+    // and its only renderer sits inside the `pace === null` branch. While the anchor claimed
+    // it unconditionally, a failed profile read excluded it from the catch-all and rendered
+    // it nowhere, so it vanished silently rather than falling to the bottom.
+    const unknownSize = MOVIE_ANCHORS.find((w) => w.field === "max_unmeasured_per_run")!;
+    renderEditor({ body: body() }, new Error("boom"), null, [unknownSize]);
+
+    // The control really is off the page in this state...
+    expect(await screen.findByText(/Couldn't load these settings/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Items with an unknown size")).not.toBeInTheDocument();
+    // ...and the warning is on it anyway, in the catch-all stack. Awaited, not read
+    // synchronously: the pace error paragraph above lands on the profile rejection, while
+    // this arrives with the separate validate response (rule 137).
+    expect(await screen.findByText(unknownSize.message)).toBeInTheDocument();
+  });
+
+  it("renders both of two warnings that are byte-identical", async () => {
+    // #146. Two protect conditions on the same movie-only field produce the same sentence,
+    // because `ConditionSpec` carries nothing an operator named. Keyed on field+message they
+    // collided, and React logged "two children with the same key" -- both still painted under
+    // React 19, but the reconciliation guarantee is what rule 19 is about.
+    const twin: PolicyWarning = {
+      field: "protect_conditions",
+      severity: "danger",
+      message: "anchor probe: one sentence, two rules behind it",
+    };
+    renderEditor({ body: body() }, pace, null, [twin, twin]);
+
+    expect(await screen.findAllByText(twin.message)).toHaveLength(2);
+  });
+});

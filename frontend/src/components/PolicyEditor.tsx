@@ -142,9 +142,15 @@ function WarnBlock({ warnings }: { warnings: PolicyWarning[] }) {
   if (warnings.length === 0) return null;
   return (
     <>
-      {warnings.map((w) => (
+      {warnings.map((w, i) => (
         <p
-          key={`${w.field}:${w.message}`}
+          // Field and message do not separate these. Two protect conditions on the same
+          // movie-only field in a TV policy produce byte-identical warnings, because the
+          // producer has no name to put in them -- `ConditionSpec` carries a field, an
+          // operator and a value, and nothing an operator titled. The position within this
+          // already-filtered list is the only thing left that differs, and it is stable
+          // across a render since the list is derived, never reordered (rule 19).
+          key={`${w.field}:${w.message}:${i}`}
           className={`notice notice-inline ${w.severity === "danger" ? "notice-error" : "notice-warn"}`}
         >
           {w.message}
@@ -351,8 +357,11 @@ function RatingFloorRow({
   rules: RatingRule[];
   match: "any" | "all";
   mediaType: "movie" | "tv";
-  /** Server-side policy warnings anchored to the rating rules (field keep_rating_rules). */
-  warnings: { message: string; severity: string }[];
+  /** Server-side policy warnings anchored to the rating rules (field keep_rating_rules).
+   *  `PolicyWarning`, not a structural subset of it: the looser type is what let this card
+   *  render its own copy of `WarnBlock`'s markup, since the value it held could not be handed
+   *  to the shared component. */
+  warnings: PolicyWarning[];
   onGate: (g: GateSetting) => void;
   onRules: (r: RatingRule[]) => void;
   onMatch: (m: "any" | "all") => void;
@@ -427,15 +436,11 @@ function RatingFloorRow({
               />
             )}
           </div>
+          {/* Through the shared component, not a second copy of its markup (rule 18). This
+              one keyed on the bare message, so it carried the duplicate-key defect in a
+              worse form than the original and would not have been swept with it. */}
           {warnings.length > 0 ? (
-            warnings.map((w) => (
-              <p
-                key={w.message}
-                className={`notice notice-inline ${w.severity === "danger" ? "notice-error" : "notice-warn"}`}
-              >
-                {w.message}
-              </p>
-            ))
+            <WarnBlock warnings={warnings} />
           ) : (
             <p className="help">{summary}</p>
           )}
@@ -767,8 +772,21 @@ export function PolicyEditor({
   // Warnings render beside the control they describe (each anchor below claims its
   // fields); anything no anchor claims still shows in the bottom stack, so a new
   // warning field can never be silently dropped.
+  //
+  // An anchor may only claim a field while the control it anchors to is actually MOUNTED,
+  // which is the half this used to get wrong. Claiming excludes the field from the bottom
+  // stack, so an anchor pointing into a conditional subtree drops its warning off the page
+  // entirely on the branch where that subtree does not render -- not to the catch-all, which
+  // is what the sentence above promises (rules 42, 7/24). `max_unmeasured_per_run` was doing
+  // exactly that: its only renderer sits under the `pace === null` guard below, so a failed
+  // profile read swallowed the one warning about a setting that lets deletions past the size
+  // caps. Any anchor added under a guard carries that guard here too.
   const allWarnings = useMemo(() => validation?.warnings ?? [], [validation]);
-  // Stable, so the seven WarnBlocks below are not handed a new filter on every render.
+  // Stable, so the WarnBlocks below are not handed a new filter on every render. Deliberately
+  // no count: a hand-maintained number here went stale at seven against eight renderers, and
+  // the reader it misled is the one auditing whether every anchor HAS a renderer. That
+  // reconciliation is pinned by a test that feeds one warning per anchor through the editor
+  // and looks for each on screen, which cannot rot the way a comment does.
   const warningsFor = useCallback(
     (pred: (field: string) => boolean) => allWarnings.filter((w) => pred(w.field)),
     [allWarnings],
@@ -781,7 +799,7 @@ export function PolicyEditor({
     (f) => f === "signals",
     (f) => f === "custom_condemn",
     (f) => f === "graded_keeps" || f === "protect_conditions",
-    (f) => f === "max_unmeasured_per_run",
+    ...(pace === null ? [] : [(f: string) => f === "max_unmeasured_per_run"]),
   ];
   const unanchoredWarnings = allWarnings.filter((w) => !anchors.some((p) => p(w.field)));
 

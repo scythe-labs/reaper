@@ -107,6 +107,14 @@ warnings accumulated behind a green suite, visible only in a log nobody reads. A
 needs to tell you must fail it. To read console output locally at all, run
 `npx vitest run <file> --disableConsoleIntercept`.
 
+`setup.ts` fails on three of these now, the third being **two siblings rendered with the same
+key**. It is the one where nothing on the page looks wrong: React 19 paints both children, so
+every assertion a test could make about them passes, and the only thing that ever said so was a
+console line. What is lost is the reconciliation guarantee rule 19 asks for — across a re-render
+React can no longer tell the two rows apart, and may keep the wrong one's state — which is
+exactly the class of defect no DOM assertion reaches. A test written to prove a key fix therefore
+could not discriminate before this gate existed, and would have read as a proof (rule 118).
+
 **137. A test acts on a control only once the control can be acted on, because user-event
 reports "disabled" as success.** `selectOptions`, `upload` and `click` each return having
 dispatched nothing when the target is disabled — a bare `return` at the top of
