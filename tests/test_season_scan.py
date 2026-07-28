@@ -1623,8 +1623,12 @@ class TestGatherEndToEnd:
             cache_engine,
             sonarrs=[_source(_FakeSonarr(series))],
             tautulli=_FakeTautulli(shows=[], children={}),  # type: ignore[arg-type]
-            horizon=utcnow(),
-            reach_days=0,
+            # Deep enough to span the default hold, so the two keep floors this test is
+            # about are what hold these seasons. At reach 0 the mid-binge guard is
+            # un-establishable and holds EVERY season on its own, which made the assertion
+            # below pass with both floors deleted (rule 141).
+            horizon=utcnow() - timedelta(days=4000),
+            reach_days=4000,
             active_rating_keys=set(),
             activity_degraded=False,
             keep_last_seasons=2,
