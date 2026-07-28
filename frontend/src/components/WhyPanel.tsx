@@ -274,7 +274,14 @@ function KeptNotice({ match }: { match: Match | undefined }) {
  *  settleable conflict while the backend holds the reap. The typed answer is
  *  `GateResult.defers_to_owner`, and `GateOutcome` does not carry it: fixing this needs the
  *  field added to `api.schemas.GateOutcomeOut` and to `api.ts` first (rule 64), and a
- *  three-state one, since a stored row predating the flag can tell neither shape. */
+ *  three-state one, since a stored row predating the flag can tell neither shape.
+ *
+ *  A THIRD message now lands on the same wrong side, so #86 covers one more shape than it
+ *  did: a conflict the watch mirror could not settle (`PruneConflict.shortfall`, #94) opens
+ *  "Reaper cannot tell whether Season N ...", which starts with neither prefix and so also
+ *  reads as settleable here while `block_holds_reap` holds it. Recorded rather than fixed
+ *  because the fix is the same one supply chain above, not another wording test (rule 142) --
+ *  and worth knowing that widening the backend's hold widens this gap by construction. */
 function isKeepRuleConflict(item: CandidateDetail): boolean {
   return item.explanation.protections_unknown.some(
     (o) => o.gate === "season_progression" && !o.detail.startsWith("could not check"),

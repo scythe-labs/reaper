@@ -39,6 +39,18 @@ from reaper.services.snapshot import Progress, RadarrSource, _release_age_days, 
 NOW = utcnow().replace(microsecond=0)
 LONG_AGO = NOW - timedelta(days=2000)
 
+#: When the fixture's show and its seasons landed in Plex.
+#:
+#: Inside the ~2000-day mirror ``_seed_play`` anchors, so an all-time watcher count taken
+#: over that mirror is an answer for these seasons rather than a lower bound. It has to be:
+#: the keep-rule conflict detector holds every prunable season whose count the reach cannot
+#: support (``season_pruning._detect_conflicts``), and the placeholder epoch this replaced
+#: dated the seasons to 1970 -- fifty years outside a mirror the same fixture makes 2000 days
+#: deep -- so every season here was correctly un-establishable and these pipeline tests were
+#: measuring that hold instead of the pipeline. Still well past the 1095-day dormancy floor,
+#: so the seasons condemn on score exactly as before.
+SEASONS_ADDED = NOW - timedelta(days=1500)
+
 
 # ---------------------------------------------------------------------------
 # Fakes -- just the surface the scan touches, all stateless and concurrency-safe.
@@ -370,12 +382,14 @@ def _series_payloads() -> list[dict[str, Any]]:
 
 
 def _show_spine() -> list[dict[str, Any]]:
-    return [{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": "1000000"}]
+    added = str(int(SEASONS_ADDED.timestamp()))
+    return [{"rating_key": 900, "title": "Long Show", "year": 2005, "added_at": added}]
 
 
 def _show_children() -> dict[int, list[dict[str, Any]]]:
+    added = str(int(SEASONS_ADDED.timestamp()))
     return {
-        900: [{"media_index": n, "rating_key": 900 + n, "added_at": "1000000"} for n in range(1, 6)]
+        900: [{"media_index": n, "rating_key": 900 + n, "added_at": added} for n in range(1, 6)]
     }
 
 
@@ -439,7 +453,9 @@ class TestScanPipelineEndToEnd:
 
         # Seasons rode the same judge: the keep-last/keep-first guards protected
         # seasons 1, 4 and 5; the prunable middle seasons were scored (and, dormant
-        # for ~2000 days with nobody watching, condemned).
+        # since they arrived 1500 days ago with nobody watching, condemned). That the
+        # mirror covers those 1500 days is load-bearing, not incidental -- see
+        # ``SEASONS_ADDED``.
         assert rows["sonarr:1:42:1"].verdict == "protect"
         assert rows["sonarr:1:42:4"].verdict == "protect"
         assert rows["sonarr:1:42:5"].verdict == "protect"
@@ -690,6 +706,66 @@ class TestAStoredSizeSaysWhereItCameFrom:
         assert rows["sonarr:1:42:2"].size_bytes is None
         assert rows["sonarr:1:42:3"].size_source == SizeSource.SONARR
         assert rows["sonarr:1:42:3"].size_bytes == 1_000_000_000
+
+    async def test_seasons_older_than_the_watch_mirror_are_held_not_condemned(
+        self, session: AsyncSession, cache_engine: AsyncEngine
+    ) -> None:
+        """The keep-rule conflict detector really is handed the mirror's reach by the scan.
+
+        The same show as the full-pipeline test above, moved so it arrived 500 days before
+        the mirror starts. Every play its seasons ever had is behind the horizon, so their
+        all-time counts read 0 and can out-rank nothing: the detector cannot establish that
+        a prunable season is watched no more than one the rule keeps, and holds it.
+
+        Driven end to end rather than against ``plan_series_prune``, because the argument has
+        a default and a unit test cannot tell a correctly-passed bound from an omitted one
+        (rule 141). Seasons 2 and 3 condemn in that test on evidence identical but for the
+        arrival date, so this fails if ``_judge_series`` stops passing ``shortfall_by_season``.
+        """
+        await _seed_play(cache_engine, row_id=1, rating_key=99)
+        await _seed_imdb(cache_engine, {"tt0000042": (5.0, 5000)})
+
+        before_the_mirror = str(int((LONG_AGO - timedelta(days=500)).timestamp()))
+        children = {
+            900: [
+                {"media_index": n, "rating_key": 900 + n, "added_at": before_the_mirror}
+                for n in range(1, 6)
+            ]
+        }
+
+        snapshot = await scan(
+            cache_engine,
+            session,
+            radarrs=[],
+            sonarrs=[
+                season_scan.SonarrSource(
+                    client=_FakeSonarr(_series_payloads()), instance_id=1, name="tv"
+                )
+            ],
+            tautulli=_FakeTautulli(  # type: ignore[arg-type]
+                movies=[], shows=_show_spine(), children=children
+            ),
+            movie_policy=DEFAULT_MOVIE_POLICY,
+            movie_gates=build_gates(DEFAULT_MOVIE_POLICY),
+            tv_policy=DEFAULT_TV_POLICY,
+            tv_gates=build_gates(DEFAULT_TV_POLICY),
+        )
+        await session.commit()
+
+        rows = {c.media_key: c for c in await candidates(session, snapshot.id)}
+        assert rows["sonarr:1:42:2"].verdict == "abstain"
+        assert rows["sonarr:1:42:3"].verdict == "abstain"
+        # And it says so in the operator's words rather than reporting a count it never
+        # established.
+        assert "cannot tell whether Season 2 is watched more than" in (
+            rows["sonarr:1:42:2"].explanation_json or ""
+        )
+        # Held means held: nothing reached the grace clock, so nothing is queued to remove.
+        flagged = {
+            f.media_key
+            for f in (await session.execute(text("SELECT media_key FROM first_flagged"))).all()
+        }
+        assert flagged == set()
 
 
 class TestAStaleMirrorDegradesTheSnapshot:

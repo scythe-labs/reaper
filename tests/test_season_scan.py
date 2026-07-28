@@ -409,6 +409,57 @@ class TestGuardResult:
         # The message names the season that could not be read, not the ones that could.
         assert "could not check who watched Season 5" in result.detail
 
+    def test_a_conflict_the_mirror_could_not_settle_holds_the_hand_reap(self) -> None:
+        """The third shape. Season 1 was watched before Tautulli was installed, so its count
+        is a lower bound rather than an answer and no comparison against it can be made.
+
+        That is ``Unknown``, not a decision (rule 93), so it belongs with the unreadable arm
+        and not with the deliberate "you decide" one: there is nothing for the operator to
+        settle, only a mirror too short to settle it -- the same reading the mid-binge hold
+        takes when the reach cannot establish who is part-way through. Reading only
+        ``kept_watchers is None`` here would have released the reap on it while
+        ``_detect_conflicts`` was holding it.
+        """
+        plan = plan_series_prune(
+            series_title="S",
+            seasons=[_season(n) for n in range(1, 5)],
+            keep_last=2,
+            keep_first_season=False,
+            watchers_by_season={1: 0, 2: 0, 3: 1, 4: 1},
+            shortfall_by_season={1: "your watch history only goes back 12 months"},
+        )
+        result = season_scan.guard_result(plan, 1)
+
+        assert result.blocked is True
+        assert result.defers_to_owner is False
+        assert block_holds_reap(result.gate.value, defers_to_owner=result.defers_to_owner) is True
+        assert "cannot tell whether Season 1 is watched more than" in result.detail
+
+    def test_a_settleable_conflict_is_not_masked_by_one_the_mirror_refused(self) -> None:
+        """Same precedence the unreadable arm gets, for the same reason: one pruned season
+        carries a conflict per kept season, so a comparison Reaper DID make can sort ahead of
+        one it could not. The refusal decides the flag and the message, or a first-match read
+        would report "compared" and release the reap on a season nothing established."""
+        plan = plan_series_prune(
+            series_title="S",
+            seasons=[_season(n) for n in range(1, 5)],
+            keep_last=2,  # keeps 3, 4
+            keep_first_season=False,
+            watchers_by_season={1: 9, 2: 0, 3: 1, 4: 2},
+            shortfall_by_season={4: "your watch history only goes back 12 months"},
+        )
+        # The premise, asserted rather than assumed: the made comparison really does come
+        # first for this season.
+        assert [c.shortfall for c in plan.conflicts if c.pruned_season == 1] == [
+            None,
+            "your watch history only goes back 12 months",
+        ]
+
+        result = season_scan.guard_result(plan, 1)
+
+        assert result.defers_to_owner is False
+        assert "Season 4" in result.detail
+
 
 # ---------------------------------------------------------------------------
 # Facts assembly, and the Unknown discipline

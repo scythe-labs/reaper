@@ -51,17 +51,19 @@ from reaper.services.snapshot import HAND_SPARE_DETAIL
 from ._auth import login
 
 
-def _conflict_detail(*, kept_watchers: int | None) -> str:
+def _conflict_detail(*, kept_watchers: int | None = 0, shortfall: str | None = None) -> str:
     """A real keep-rule conflict's stored detail, from the one producer that words it.
 
     Built rather than transcribed (rule 119): a hand-typed copy of this sentence had
     already drifted from ``PruneConflict.message``, which is how the chip below it went
     on asserting a comparison the message itself had stopped making.
 
-    ``kept_watchers=None`` is the shape that matters here. It is not "nobody watched the
-    kept season" -- it is "that season's history could not be read at all", which
-    ``detect_conflicts`` raises as a conflict rather than let an unread number clear a
-    protection, and which the message states in those words.
+    Two of the three shapes matter here, and neither made a comparison.
+    ``kept_watchers=None`` is not "nobody watched the kept season", it is "that season's
+    history could not be read at all"; ``shortfall`` is a count taken over a mirror that
+    begins after the season arrived, so it is a lower bound rather than an answer. Both are
+    raised as conflicts rather than let an unestablished number clear a protection, and the
+    message states each in its own words.
     """
     return PruneConflict(
         pruned_season=3,
@@ -69,6 +71,7 @@ def _conflict_detail(*, kept_watchers: int | None) -> str:
         pruned_watchers=2,
         kept_watchers=kept_watchers,
         kept_reason="within the last 2 seasons (rank 1)",
+        shortfall=shortfall,
     ).message
 
 
@@ -389,7 +392,35 @@ class TestChip:
         assert chip is not None
         assert chip.tone == "look"
         assert "watched more than" not in chip.text
-        assert chip.text == "Needs a look · couldn't check who watched a season it's keeping"
+        assert chip.text == "Needs a look · couldn't check who watched these seasons"
+
+    def test_a_conflict_the_mirror_could_not_settle_shares_that_chip(self) -> None:
+        """The third shape, and why that chip stopped naming the KEPT season.
+
+        A count taken over a mirror that begins after the season arrived is a lower bound,
+        so no comparison against it settles anything -- and the season it could not
+        establish is just as often the one being REMOVED as the one being kept. The two
+        non-comparisons share one flag, so they share one chip, and its copy has to be true
+        of both.
+        """
+        detail = _conflict_detail(shortfall="your watch history only goes back 12 months")
+        assert "cannot tell whether" in detail, "the producer stopped saying this"
+
+        chip = _chip(
+            _exp(
+                82,
+                unknown=[
+                    {"gate": "season_progression", "detail": detail, "defers_to_owner": False}
+                ],
+            ),
+            "abstain",
+            82,
+        )
+
+        assert chip is not None
+        assert chip.tone == "look"
+        assert "watched more than" not in chip.text
+        assert chip.text == "Needs a look · couldn't check who watched these seasons"
 
     def test_a_row_frozen_before_the_flag_names_neither_shape(self) -> None:
         """A stored row that predates ``defers_to_owner`` carries nothing that can tell a

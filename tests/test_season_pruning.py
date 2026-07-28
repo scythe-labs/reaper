@@ -515,6 +515,193 @@ class TestKeepRuleConflict:
         assert "one of the newest seasons your rule keeps" in conflict.message
 
 
+#: What ``engine.gates.lifetime_shortfall`` hands the planner for a season that arrived
+#: before the mirror did. Its exact wording is that function's business; what matters here is
+#: that a season carries one at all.
+SHORT = "your watch history only goes back 12 months"
+
+
+class TestATruncatedMirrorCannotClearTheConflict:
+    """Both counts the detector compares are all-time, and ``watch_event`` begins at the
+    mirror's horizon, so a season that arrived before it reports a LOWER BOUND.
+
+    The truncation is not evenly spread. It falls on exactly the old seasons keep-last wants
+    to prune, whose plays are the ones behind the horizon, so an unqualified comparison is
+    biased against the seasons the detector exists to protect.
+    """
+
+    def test_a_truncated_mirror_reaches_the_same_decision_as_a_full_one(self) -> None:
+        """The filed bug, driven both ways. A show added five years ago whose Season 1 had
+        five viewers four years back, seen through a Tautulli installed a year ago: every
+        one of those plays is behind the horizon, so the count reads 0 and cannot out-rank
+        anything. The show went from "Needs a look" to auto-approvable and its older seasons
+        became removable on score alone.
+
+        The two mirrors are the SAME library. Only the evidence differs, so the decision may
+        not: whatever the mirror can see, Reaper must not conclude more than it saw.
+        """
+        seasons = [_season(n) for n in (1, 2, 3)]
+        full = plan_series_prune(
+            series_title="Show",
+            seasons=seasons,
+            keep_last=1,  # keeps 3
+            # The non-default, needed to make Season 1 prunable at all and reproduce the
+            # filed transcript.
+            keep_first_season=False,
+            watchers_by_season={1: 5, 2: 3, 3: 1},
+        )
+        truncated = plan_series_prune(
+            series_title="Show",
+            seasons=seasons,
+            keep_last=1,
+            keep_first_season=False,
+            # The same library through a mirror that starts after all three arrived.
+            watchers_by_season={1: 0, 2: 0, 3: 1},
+            shortfall_by_season={1: SHORT, 2: SHORT, 3: SHORT},
+        )
+
+        pairs = [(1, 3), (2, 3)]
+        assert [(c.pruned_season, c.kept_season) for c in full.conflicts] == pairs
+        assert [(c.pruned_season, c.kept_season) for c in truncated.conflicts] == pairs
+        assert full.auto_approvable is False
+        assert truncated.auto_approvable is False
+
+    def test_marking_the_truncated_count_unreadable_would_not_have_done_it(self) -> None:
+        """The trap this fix had to get past, pinned so a later simplification cannot walk
+        back into it.
+
+        ``None`` on the pruned side means "nobody could measure this" and takes the same
+        skip a 0 takes, so routing a truncated count to ``None`` changes nothing: same
+        branch, same skip, same lost hold. The hold has to come from the reach arm, which is
+        why an unreadable count and an unsupported one are kept apart.
+        """
+        seasons = [_season(n) for n in (1, 2, 3)]
+        unreadable = plan_series_prune(
+            series_title="Show",
+            seasons=seasons,
+            keep_last=1,
+            keep_first_season=False,
+            watchers_by_season={1: None, 2: None, 3: 1},
+        )
+        assert unreadable.conflicts == []
+        assert unreadable.auto_approvable is True  # ...which is exactly why it is not the fix
+
+    def test_a_zero_the_mirror_cannot_support_is_not_an_unwatched_season(self) -> None:
+        """The load-bearing arm. A 0 read over a mirror that covers the season's whole life
+        is a measurement; the same 0 read over a shorter one is silence."""
+        seasons = [_season(n) for n in range(1, 5)]
+        common = {
+            "series_title": "Show",
+            "seasons": seasons,
+            "keep_last": 2,  # keeps 3, 4
+            "keep_first_season": False,
+            "watchers_by_season": {1: 0, 2: 0, 3: 1, 4: 1},
+        }
+        answered = plan_series_prune(**common)  # type: ignore[arg-type]
+        assert answered.conflicts == []  # measured, nobody watched: nothing to flag
+
+        unsupported = plan_series_prune(**common, shortfall_by_season={1: SHORT})  # type: ignore[arg-type]
+        assert [(c.pruned_season, c.kept_season) for c in unsupported.conflicts] == [(1, 3), (1, 4)]
+        # Season 2's own count IS supported, so its 0 still clears. The bound is applied per
+        # season, not per show: a season backfilled into an old show arrived recently.
+        assert all(c.pruned_season != 2 for c in unsupported.conflicts)
+
+    def test_an_answered_zero_still_clears_against_a_truncated_kept_season(self) -> None:
+        """The other direction, and it must NOT hold: more history can only ever raise the
+        kept count, and 0 cannot out-rank a number that only grows. An outcome the bound
+        already earns needs no reach at all (``fields._survives_more_history``), so the
+        detector does not degenerate into holding every season of every old show."""
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=[_season(n) for n in range(1, 5)],
+            keep_last=2,  # keeps 3, 4
+            keep_first_season=False,
+            watchers_by_season={1: 0, 2: 0, 3: 1, 4: 1},
+            shortfall_by_season={3: SHORT, 4: SHORT},  # the KEPT seasons are the truncated ones
+        )
+        assert plan.conflicts == []
+        assert plan.auto_approvable is True
+
+    def test_a_truncated_count_that_already_out_ranks_an_answered_one_still_compares(
+        self,
+    ) -> None:
+        """The same "already earned" reading on the losing side: the pruned count is a lower
+        bound, more history can only raise it, and it ALREADY beats a kept count the mirror
+        supports. That is a comparison Reaper really made, so it keeps the comparison wording
+        and stays the operator's call to overrule."""
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=[_season(n) for n in range(1, 5)],
+            keep_last=2,  # keeps 3, 4
+            keep_first_season=False,
+            watchers_by_season={1: 40, 2: 0, 3: 1, 4: 1},
+            shortfall_by_season={1: SHORT},  # the winning count is the truncated one
+        )
+        conflict = next(c for c in plan.conflicts if c.pruned_season == 1)
+        assert conflict.shortfall is None
+        assert "more than watched Season 3" in conflict.message
+
+    def test_a_truncated_kept_count_stops_asserting_arithmetic_it_cannot_take(self) -> None:
+        """The rule lost, but only against a lower bound: more history could lift the kept
+        season back above the pruned one. The season is held either way, so what changes is
+        the sentence. Reaper must not tell an operator deciding what to delete that one
+        season was watched "more than" another off a number that can still move."""
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=[_season(n) for n in range(1, 5)],
+            keep_last=2,  # keeps 3, 4
+            keep_first_season=False,
+            watchers_by_season={1: 9, 2: 0, 3: 2, 4: 20},
+            shortfall_by_season={3: SHORT},  # kept Season 3 predates the mirror
+        )
+        conflict = next(c for c in plan.conflicts if c.pruned_season == 1 and c.kept_season == 3)
+        assert conflict.shortfall == SHORT
+        assert "more than watched" not in conflict.message
+        assert "Reaper cannot tell whether Season 1 is watched more than Season 3" in (
+            conflict.message
+        )
+        # Season 4 out-watches Season 1 on counts the mirror supports, so it raises nothing:
+        # the reach is consulted per comparison, not switched on for the whole show.
+        assert not [c for c in plan.conflicts if c.pruned_season == 1 and c.kept_season == 4]
+
+    def test_the_message_says_why_and_never_invents_a_count(self) -> None:
+        """Operator copy, checked as copy (rule 21): it names both seasons, gives the real
+        reason in the words every other reader of a truncated count uses, and states no
+        number, because no number was established."""
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=[_season(n) for n in (1, 2, 3)],
+            keep_last=1,
+            keep_first_season=False,
+            watchers_by_season={1: 0, 2: 0, 3: 1},
+            shortfall_by_season={1: SHORT, 2: SHORT, 3: SHORT},
+        )
+        message = plan.conflicts[0].message
+        assert message == (
+            "Reaper cannot tell whether Season 1 is watched more than Season 3, which it is "
+            "keeping: your watch history only goes back 12 months. Left for you to decide "
+            "instead of removing it."
+        )
+        # Rule 21: no em dashes in operator copy. Escaped rather than written literally, so
+        # the assertion does not itself smuggle the character ruff bans (RUF001).
+        assert "\u2014" not in message and "\u2013" not in message
+
+    def test_the_off_switch_silences_the_reach_arm_too(self) -> None:
+        """``flag_keep_conflicts`` off means the operator asked Reaper to follow the keep
+        rule quietly. The new arm is part of that detector, not a second one behind it."""
+        plan = plan_series_prune(
+            series_title="Show",
+            seasons=[_season(n) for n in (1, 2, 3)],
+            keep_last=1,
+            keep_first_season=False,
+            flag_keep_conflicts=False,
+            watchers_by_season={1: 0, 2: 0, 3: 1},
+            shortfall_by_season={1: SHORT, 2: SHORT, 3: SHORT},
+        )
+        assert plan.conflicts == []
+        assert plan.auto_approvable is True
+
+
 class TestIncompleteSeasonProtection:
     def test_an_incomplete_season_is_protected_by_default(self) -> None:
         """Sonarr still wants an episode it does not have -> kept, so a removal never

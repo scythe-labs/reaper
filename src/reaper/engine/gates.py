@@ -488,9 +488,10 @@ def history_shortfall(reach: Observation[float], needed: float) -> str | None:
     short mirror cannot see are precisely the ones that would have kept the file.
 
     The single derivation behind every reader of a watcher count (rules 104, 140):
-    ``ServerPopularityGate`` below asks it about the policy's popularity window, and
+    ``ServerPopularityGate`` below asks it about the policy's popularity window,
     ``fields.reach_shortfall`` asks it for the operator-authored protect, condemn and keep
-    lanes. A bound honored in one lane and not the next is the bug it exists to prevent.
+    lanes, and :func:`lifetime_shortfall` asks it for every all-time count. A bound honored
+    in one lane and not the next is the bug it exists to prevent.
     """
     if not isinstance(reach, Known):
         return "this scan did not record how far back your watch history goes"
@@ -499,6 +500,31 @@ def history_shortfall(reach: Observation[float], needed: float) -> str | None:
     if reach.value <= needed - _REACH_NAMEABLE_MARGIN_DAYS:
         return f"your watch history only goes back {humanize_days(reach.value)}"
     return "your watch history does not go back that far"
+
+
+def lifetime_shortfall(reach: Observation[float], age: Observation[float]) -> str | None:
+    """Why the mirror cannot support an ALL-TIME watcher count, in the operator's words.
+
+    ``None`` when it can. An all-time count is only an answer where the mirror reaches back
+    to the day the item arrived, because every play it could ever have had happened after
+    that; short of it the count is a LOWER BOUND, and the plays behind the horizon are
+    exactly the ones that would have kept the file.
+
+    Without the arrival date there is no span to compare the reach against, so the count
+    cannot be established either way -- ``Unknown``, never a permissive ``Absent``
+    (rule 93).
+
+    The one derivation of "what span does an all-time count need" (rules 104, 140).
+    ``fields.reach_shortfall`` asks it for the operator-authored lanes off ``Facts``, and
+    ``services.season_scan`` asks it per season for the keep-rule conflict detector, which
+    compares two all-time counts and reads no ``Facts`` at all. That second reader is why
+    this is a named helper rather than an arm inside ``reach_shortfall``: a season-path
+    caller with no ``Facts`` in hand would otherwise have had to restate the span, which is
+    how the first sweep of these readers missed it.
+    """
+    if not isinstance(age, Known):
+        return "this scan did not record when it was added"
+    return history_shortfall(reach, float(age.value))
 
 
 @dataclass(frozen=True, slots=True)

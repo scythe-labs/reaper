@@ -79,7 +79,7 @@ from reaper.engine import identity
 from reaper.engine.dormancy import dormancy_days, reference_instant
 from reaper.engine.gates import ABSTAIN as GATE_ABSTAIN
 from reaper.engine.gates import PROTECT as GATE_PROTECT
-from reaper.engine.gates import Facts, GateId, GateResult
+from reaper.engine.gates import Facts, GateId, GateResult, lifetime_shortfall
 from reaper.engine.observation import Absent, Known, Observation, Unknown
 from reaper.ratings import Rating, RatingSource, merge_by_source
 from reaper.services import library_index, lists, requested_by
@@ -415,18 +415,22 @@ def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
     * **Cleanly prunable** -> ABSTAIN, recorded so the panel shows the guard ran and had
       nothing to protect here.
 
-    The conflict arm carries ``defers_to_owner``, and only when every comparison behind it
-    came back with a number. ``_detect_conflicts`` raises a conflict in two shapes: one
-    where the kept season's watcher count was read and the rule lost, which is the
-    deliberate "you decide" flag a hand reap is entitled to overrule; and one where that
-    count could NOT be read (``kept_watchers is None`` -- on disk, but never resolved in
-    Plex), which is a plumbing failure held fail-closed like any other. Both are blocked,
-    both send the item to a human, and only the first releases a hand reap
-    (``verdict.block_holds_reap``).
+    The conflict arm carries ``defers_to_owner``, and only where the comparison behind it
+    was one Reaper could actually make. ``_detect_conflicts`` raises a conflict in three
+    shapes:
 
-    "Came back with a number" is the honest span of the claim, and it is narrower than
-    "the comparison was sound": a count read off a truncated watch mirror is a number all
-    the same, which is open issue #94, not something this flag can settle.
+    * the kept season's count was read and the rule lost it -- the deliberate "you decide"
+      flag, and the only one a hand reap is entitled to overrule;
+    * that count could NOT be read (``kept_watchers is None`` -- on disk, but never resolved
+      in Plex), a plumbing failure held fail-closed like any other;
+    * the watch mirror does not reach back to when one of the two seasons arrived
+      (``shortfall``), so the count it reports for that season is a lower bound and more
+      history could overturn the outcome either way.
+
+    All three are blocked and all three send the item to a human. The last two are
+    ``Unknown``, not a decision (rule 93): there is no comparison for the operator to
+    settle, only evidence too thin to make one, so they hold the hand reap as well
+    (``verdict.block_holds_reap``). Read off typed fields, never the wording (rule 142).
     """
     for protected in plan.protected:
         if protected.season_number == season_number:
@@ -452,10 +456,11 @@ def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
             )
 
     # EVERY conflict naming this season, not just the first. ``_detect_conflicts`` raises
-    # one per (pruned, kept) pair, so a single pruned season routinely carries both shapes
-    # at once -- on shipped defaults, a kept newest season still resolving in Plex
+    # one per (pruned, kept) pair, so a single pruned season routinely carries more than one
+    # shape at once -- on shipped defaults, a kept newest season still resolving in Plex
     # conflicts with every watched prunable season below it, while an older kept season's
-    # count reads fine.
+    # count reads fine. A short mirror mixes them the same way: it truncates the seasons
+    # that predate the horizon and leaves a recently-added one exact.
     matching = [c for c in plan.conflicts if c.pruned_season == season_number]
     if matching:
         # A refused comparison wins, and it decides the message as well as the flag.
@@ -465,7 +470,15 @@ def guard_result(plan: SeriesPrunePlan, season_number: int) -> GateResult:
         # #84's own class reached a second way. Reporting the refused conflict keeps the
         # sentence and the decision the same fact (rule 92) and puts the season nobody
         # could read in front of the operator.
-        refused = next((c for c in matching if c.kept_watchers is None), None)
+        #
+        # Both non-comparisons count as refused, and for the same reason: a count nobody
+        # could take and a count taken over a mirror that cannot support it are equally
+        # unable to settle "is this watched more than the season you keep". Reading only
+        # `kept_watchers is None` here would have released the reap on the truncated one
+        # while `_detect_conflicts` was holding it (#94).
+        refused = next(
+            (c for c in matching if c.kept_watchers is None or c.shortfall is not None), None
+        )
         conflict = refused or matching[0]
         return GateResult(
             GateId.SEASON_PROGRESSION,
@@ -796,8 +809,14 @@ async def season_watch_stats(
         return stats
 
     # Unclamped by the horizon, like the movie twin (`snapshot._watch_stats`): the clamp
-    # would move no count, and the reach is carried on `Facts.history_reach_days` and read
-    # by the shared popularity gate (rule 72).
+    # would move no count, because `watch_event` itself begins at the horizon. That is also
+    # why neither count here is an answer on its own -- both are LOWER BOUNDS, and every
+    # consumer takes the reach alongside them (rule 140). `watchers_window` rides
+    # `Facts.history_reach_days` to the shared popularity gate and the operator's own rules;
+    # `watchers_all_time` rides it there too, and to the keep-rule conflict detector as
+    # `shortfall_by_season` (`_judge_series`), which reads no `Facts` at all and so had to
+    # be handed the bound directly. Naming only the first of those was how the second went
+    # a release comparing two truncated counts at full confidence (#94).
     since = int((utcnow() - timedelta(days=window_days)).timestamp())
     keys = sorted(season_keys)
 
@@ -1568,12 +1587,32 @@ def _judge_series(
     # simply absent, and `.get(n, 0)` then asserted nobody watched it, which invented
     # conflicts and told the operator a count that was never taken. 0 still means what it
     # always did: resolved, and nobody watched it.
+    #
+    # Each count is qualified in the same pass, by the same rule every other reader of an
+    # all-time count uses (rule 140): the mirror must reach back to the day THAT season
+    # arrived, since every play it could ever have had happened after that. Short of it the
+    # count is a lower bound, and the shortfall says so in the operator's words. A season
+    # Plex never resolved has no arrival date here either, so it is unbounded on both
+    # counts -- consistent, and the detector skips it for the count alone.
     watchers_by_season: dict[int, int | None] = {}
+    shortfall_by_season: dict[int, str | None] = {}
+    reach = Known(value=float(reach_days), source="tautulli")
     for season in item.seasons:
         in_plex = item.seasons_in_plex.get(season.season_number)
         watchers_by_season[season.season_number] = (
             stats.watchers_all_time.get(in_plex.rating_key, 0) if in_plex is not None else None
         )
+        added_at = in_plex.added_at if in_plex is not None else None
+        # Measured from this season's OWN arrival, never the show's: a season backfilled
+        # into an old show arrived recently, and the show's date would call its exact count
+        # a truncated one. The same derivation `build_season_facts` records as
+        # `Facts.days_since_added` below, off the same date.
+        age: Observation[float] = (
+            Known(value=float(dormancy_days(added_at, now=now or utcnow())), source="plex")
+            if added_at is not None
+            else Unknown(reason="no added-at date for this season", source="plex")
+        )
+        shortfall_by_season[season.season_number] = lifetime_shortfall(reach, age)
     plan = plan_series_prune(
         series_title=series_title,
         seasons=item.seasons,
@@ -1589,11 +1628,6 @@ def _judge_series(
         # read here by the mid-binge half of this roll-up (rule 140). A hold the mirror does
         # not span makes the viewer set un-establishable, and the planner holds the seasons
         # rather than reading "no rows" as "nobody is part-way through".
-        #
-        # NOT the last unswept reader: `watchers_by_season` above is built from the same
-        # mirror and passed to the same call unqualified, so the keep-conflict detector
-        # still compares two truncated counts. That is open issue #94, and `docs/STATUS.md`
-        # says so -- claiming the sweep finished here is how the next reader stops looking.
         progress_established=progress_is_establishable(
             reach_days=reach_days, hold_days=in_progress_hold_days
         ),
@@ -1602,6 +1636,10 @@ def _judge_series(
         flag_keep_conflicts=flag_keep_conflicts,
         airing_seasons=airing_seasons(series, item.seasons),
         watchers_by_season=watchers_by_season,
+        # The other half of the same sweep: these counts come off the same mirror, so the
+        # keep-conflict detector is handed the bound with them rather than comparing two
+        # lower bounds at full confidence.
+        shortfall_by_season=shortfall_by_season,
     )
 
     # Every id the show carries is passed together: a show without an imdbId in Sonarr is

@@ -34,7 +34,15 @@ from dataclasses import dataclass
 from typing import Literal
 
 from reaper.clock import humanize_days
-from reaper.engine.gates import ABSTAIN, PROTECT, Facts, GateId, GateResult, history_shortfall
+from reaper.engine.gates import (
+    ABSTAIN,
+    PROTECT,
+    Facts,
+    GateId,
+    GateResult,
+    history_shortfall,
+    lifetime_shortfall,
+)
 from reaper.engine.observation import Known, Observation, Unknown
 
 
@@ -652,13 +660,10 @@ def reach_shortfall(spec: FieldSpec | None, facts: Facts, *, window_days: int | 
         if window_days is None:
             return "this scan did not record the window the count covers"
         return history_shortfall(facts.history_reach_days, float(window_days))
-    # ITEM_LIFETIME. An all-time count needs the mirror to reach back to the day the item
-    # arrived; without the arrival date there is no span to compare the reach against, so
-    # the count cannot be established either way.
-    age = facts.days_since_added
-    if not isinstance(age, Known):
-        return "this scan did not record when it was added"
-    return history_shortfall(facts.history_reach_days, float(age.value))
+    # ITEM_LIFETIME. Through the shared helper, which the season path's keep-rule conflict
+    # detector also asks -- it compares two all-time counts and reads no ``Facts``, so the
+    # span it needs must not be restated there (rules 104, 140).
+    return lifetime_shortfall(facts.history_reach_days, facts.days_since_added)
 
 
 def _survives_more_history(op: Op, *, matched: bool) -> bool:

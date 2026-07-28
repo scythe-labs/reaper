@@ -45,8 +45,14 @@ bug a shipping competitor actually has, and each one resolves toward *keeping* a
 * **Keep-rule conflict detector.** If the rule would remove a season that has *strictly
   more* viewers than one it keeps, that is almost certainly not what the owner wants
   ("season 1 is the only good one"). Reaper does not silently obey -- it raises a plain
-  warning and refuses to auto-approve, leaving the call to a human. The policy can turn
-  the detector off (``flag_keep_conflicts``), and then the keep rule is simply followed.
+  warning and refuses to auto-approve, leaving the call to a human. Both counts are
+  all-time, so both are only answers where the watch mirror reaches back to the day that
+  season arrived; short of it a count is a LOWER BOUND, and the truncation is biased
+  against exactly the old seasons keep-last wants to prune. So the detector takes each
+  season's shortfall alongside its count (``shortfall_by_season``) and raises the conflict
+  wherever more history could overturn the outcome (:func:`_detect_conflicts`). The policy
+  can turn the detector off (``flag_keep_conflicts``), and then the keep rule is simply
+  followed.
 
 The whole module is pure: it takes already-gathered facts and returns a decision. No
 network, no database, no clock -- so every branch above is tested exhaustively, and the
@@ -139,9 +145,30 @@ class PruneConflict:
     #: can name the real protection ("episodes are missing") instead of a vague "keep rule."
     kept_reason: str
 
+    shortfall: str | None = None
+    """Why the watch mirror cannot settle this comparison, or ``None`` when it can.
+
+    A third conflict shape, and the one that is *not* a comparison Reaper made: both counts
+    are all-time, and a mirror that begins after a season arrived reports a lower bound for
+    it. Where more history could overturn the outcome, the conflict is raised on the
+    uncertainty rather than on the arithmetic, and this carries the reason in the operator's
+    own words (``engine.gates.lifetime_shortfall``, the same sentence every other reader of
+    a truncated count prints).
+
+    Typed, not inferred from the wording (rule 142): ``season_scan.guard_result`` reads it to
+    decide whether a hand reap may overrule the block, exactly as it reads
+    ``kept_watchers is None``. Both mean "we could not establish this", and neither is a
+    call the operator is entitled to settle."""
+
     @property
     def message(self) -> str:
         viewers = "person" if self.pruned_watchers == 1 else "people"
+        if self.shortfall is not None:
+            return (
+                f"Reaper cannot tell whether Season {self.pruned_season} is watched more "
+                f"than Season {self.kept_season}, which it is keeping: {self.shortfall}. "
+                "Left for you to decide instead of removing it."
+            )
         if self.kept_watchers is None:
             return (
                 f"{self.pruned_watchers} {viewers} watched Season {self.pruned_season}. "
@@ -370,6 +397,13 @@ def plan_series_prune(
     # measure (on disk, but never resolved in Plex). None is NOT zero: see
     # _detect_conflicts.
     watchers_by_season: Mapping[int, int | None] | None = None,
+    # Season number -> why the watch mirror cannot support that season's count above, or
+    # None where it can. The bound the counts are only answers under: they are all-time, so
+    # each needs a mirror reaching back to the day that season arrived
+    # (``engine.gates.lifetime_shortfall``, which the caller asks -- this module stays pure
+    # and takes the answer). A season absent here is taken at face value, which is what a
+    # caller passing no counts at all gets; see _detect_conflicts.
+    shortfall_by_season: Mapping[int, str | None] | None = None,
 ) -> SeriesPrunePlan:
     """Decide, for one series, which seasons may be pruned.
 
@@ -386,6 +420,7 @@ def plan_series_prune(
     progress_by_user = progress_by_user or {}
     season_final_episode = season_final_episode or {}
     watchers_by_season = watchers_by_season or {}
+    shortfall_by_season = shortfall_by_season or {}
     airing = set(airing_seasons)
 
     ranks = rank_seasons(list(seasons))
@@ -458,7 +493,9 @@ def plan_series_prune(
     # The policy can silence the conflict detector; an empty list is exactly "no conflict
     # found", so auto_approvable and every downstream consumer behave as if none fired.
     conflicts = (
-        _detect_conflicts(prunable, protected, watchers_by_season) if flag_keep_conflicts else []
+        _detect_conflicts(prunable, protected, watchers_by_season, shortfall_by_season)
+        if flag_keep_conflicts
+        else []
     )
 
     return SeriesPrunePlan(
@@ -540,6 +577,7 @@ def _detect_conflicts(
     prunable: Sequence[int],
     protected: Sequence[ProtectedSeason],
     watchers_by_season: Mapping[int, int | None],
+    shortfall_by_season: Mapping[int, str | None],
 ) -> list[PruneConflict]:
     """Flag any prunable season with strictly more viewers than a kept season.
 
@@ -580,6 +618,36 @@ def _detect_conflicts(
     every watched prunable season below it conflicts against it and the show sits in
     "Needs a look" until Plex catches up. That is fail-closed and it clears itself. It is
     the price of not letting an unread number clear a hold, and it is the right way round.
+
+    **A count the mirror cannot support is a third state, and neither of the two above.**
+    Both counts are all-time and the mirror begins at its horizon, so a season that arrived
+    before it reports a LOWER BOUND rather than an answer -- and the truncation is not
+    evenly spread, it falls on precisely the old seasons keep-last wants to prune, whose
+    plays are the ones behind the horizon. Left unqualified, both sides read low, the pruned
+    season's count reads 0, and the ``== 0`` skip below dropped the conflict entirely: a show
+    that needed a human went auto-approvable and its old seasons became removable on score
+    alone. Marking the truncated count *unreadable* instead fixes nothing, because ``None``
+    on the pruned side reaches the same skip.
+
+    So the reach is applied where it decides something, one pair at a time, by asking what
+    survives the plays the mirror cannot see. More history can only ever RAISE a count, so:
+
+    * the rule LOST the comparison (``pruned > kept``) -- definitive only where the kept
+      count is an answer, since more history could lift it back above the pruned one;
+    * the rule WON it -- definitive only where the pruned count is an answer, since more
+      history could lift it above the kept one.
+
+    Either outcome the bound already earns still stands on its own, exactly as
+    ``fields._survives_more_history`` reads the operator's own rules; only the ones more
+    history could overturn become conflicts, carrying ``shortfall``. That keeps this from
+    degenerating into "hold every season of every show older than the mirror": a prunable
+    season nobody watched still clears against a kept season, and a truncated count that
+    already out-ranks an answered one still conflicts for the reason it always did.
+
+    ``shortfall_by_season`` empty means the caller stated no bound, and every count is taken
+    at face value -- the pre-evidence pass in ``season_scan``, which passes no counts either
+    and compares nothing, and tests stating exact counts. The one production caller that
+    passes counts passes their shortfalls with them.
     """
     conflicts: list[PruneConflict] = []
     kept_seasons = [p for p in protected if p.season_number != SPECIALS_SEASON]
@@ -587,21 +655,52 @@ def _detect_conflicts(
         if pruned == SPECIALS_SEASON:
             continue
         pruned_watchers = watchers_by_season.get(pruned)
-        if pruned_watchers is None or pruned_watchers == 0:
-            # Unreadable, or read and nobody watched. Either way this season cannot be
-            # shown to out-rank anything, so there is no comparison to make. Kept as two
-            # named cases rather than one falsy test: collapsing them is the bug above.
+        if pruned_watchers is None:
+            # Unreadable: there is nothing to compare FROM, so no conflict can be stated at
+            # all. Kept as its own named case rather than folded in with 0 below, because
+            # collapsing "we could not measure it" into "nobody watched it" is the bug the
+            # docstring above records.
+            continue
+        pruned_shortfall = shortfall_by_season.get(pruned)
+        if pruned_watchers == 0 and pruned_shortfall is None:
+            # Read over a mirror that covers this season's whole life, and nobody watched
+            # it: it cannot out-rank anything however the kept counts land, so there is no
+            # comparison to make. A 0 the mirror CANNOT support says nothing of the kind and
+            # goes on to the loop below.
             continue
         for kept in kept_seasons:
             kept_watchers = watchers_by_season.get(kept.season_number)
-            if kept_watchers is None or pruned_watchers > kept_watchers:
+            if kept_watchers is None:
                 conflicts.append(
                     PruneConflict(
                         pruned_season=pruned,
                         kept_season=kept.season_number,
                         pruned_watchers=pruned_watchers,
-                        kept_watchers=kept_watchers,
+                        kept_watchers=None,
                         kept_reason=kept.reason,
                     )
                 )
+                continue
+            kept_shortfall = shortfall_by_season.get(kept.season_number)
+            if pruned_watchers > kept_watchers:
+                # The rule lost. Stated as the comparison it is where the kept count is an
+                # answer; where it is a lower bound the hold is the same but the sentence
+                # must not assert arithmetic against a number that can still move.
+                shortfall = kept_shortfall
+            elif pruned_shortfall is not None:
+                # The rule won against a lower bound, which is not winning. This is the arm
+                # the truncated mirror needs and the only one that was missing.
+                shortfall = pruned_shortfall
+            else:
+                continue
+            conflicts.append(
+                PruneConflict(
+                    pruned_season=pruned,
+                    kept_season=kept.season_number,
+                    pruned_watchers=pruned_watchers,
+                    kept_watchers=kept_watchers,
+                    kept_reason=kept.reason,
+                    shortfall=shortfall,
+                )
+            )
     return conflicts

@@ -902,15 +902,22 @@ def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | Non
             # A deliberate "decide this yourself" flag -- today, the season keep-rule
             # conflict -- not a plumbing failure. The one blocked case that wants eyes.
             if str(entry.get("gate") or "") == "season_progression":
-                # Two conflict shapes reach here and only ONE of them made a comparison
+                # Three conflict shapes reach here and only ONE of them made a comparison
                 # (``services.season_pruning.PruneConflict.message``). A conflict is also
                 # raised when the kept season's watcher count could not be read at all --
                 # ``detect_conflicts`` treats that as a hold rather than letting an unread
-                # number clear a protection. Asserting the comparison there states
-                # arithmetic against a number nobody took, which is the exact sentence
-                # ``detect_conflicts``'s docstring records having deliberately removed from
-                # the message; the chip was still printing it, one line above the panel's
-                # own denial.
+                # number clear a protection -- and when the watch mirror does not reach back
+                # to when one of the two seasons arrived, so the count it reports for that
+                # season is a lower bound and no comparison against it settles anything.
+                # Asserting the comparison there states arithmetic against a number nobody
+                # took, which is the exact sentence ``detect_conflicts``'s docstring records
+                # having deliberately removed from the message; the chip was still printing
+                # it, one line above the panel's own denial.
+                #
+                # The two non-comparisons share this chip because they share the flag, so its
+                # copy has to be true of both: the unestablished season may be the one being
+                # removed rather than the one being kept, and naming the kept one was wrong
+                # half the time once the reach arm landed.
                 #
                 # The producer now says which shape this is, so read the flag rather than
                 # the sentence (rule 92). It is the SAME flag ``verdict.block_holds_reap``
@@ -937,8 +944,8 @@ def _chip(exp: dict[str, Any] | None, verdict: str, score: int) -> ChipOut | Non
                 if defers is False:
                     return ChipOut(
                         tone="look",
-                        text="Needs a look · couldn't check who watched a season it's keeping",
-                        why="Reaper couldn't check who watched a season it's keeping",
+                        text="Needs a look · couldn't check who watched these seasons",
+                        why="Reaper couldn't check who watched these seasons",
                     )
             return ChipOut(
                 tone="look",
