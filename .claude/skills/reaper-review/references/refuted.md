@@ -772,3 +772,77 @@ narrower question than its only caller asks is a wrong answer with a correct doc
 candidate, confirmed the preselection claim the PR asserts, and produced the exact three-header
 payload that made the CSRF finding undeniable. All three lanes ran concurrently in one worktree
 and called `.venv/bin/python -m pytest` directly; no spurious red suite.
+
+## Refuted at `96b8114` (2026-07-28, reviewing the API-key fence follow-ups, PR #123)
+
+Two lanes fired by path (`seam` on `api/middleware.py`, `diff` on `main.py`, `Settings.tsx` and
+the tests). A third, narrow `fence` pass was run again for the reason the `9a3cb13` entry gives,
+and a new one: the diff hands the reference page a CSRF hook, taking it from **0 of the
+document's 47 writes to all 47**, so a documentation surface became a live sender for
+`PUT /api/settings/safety` and `POST /api/runs/{run_id}/execute`.
+
+**The fence lane's negative held, and cost more to get than last time.** 89 routes walked off
+the real router tree, expanded to **191 (method, path) pairs** and diffed against `origin/dev`'s
+predicate: **8 disagreements, all `/api/fairness*`, all tightened, 0 widened.** 40 encoding
+probes against real uvicorn over raw sockets (`%2F` splices, `..%2f`, `/./`, doubled slashes,
+`%00`, `;`, `#`, query smuggling, case) — zero bypasses. The fence does not soften when armed:
+all 89 routes swept with deletion ON and OFF, 0 outcome changes. And the execute route was driven
+in the reference-page request shape through every arm: unarmed 403, absent run 404, prefilled
+empty phrase 409, `"REAP"` 409, correct phrase stopped at the executor's own preflight.
+
+**Convergence fired on two findings and diverged on a third, which is the useful part.** Both
+lanes independently reached `Settings.tsx`'s reference-help sentence and `middleware.py`'s
+deny-by-default clause. They *disagreed* on `main.py:428` — `diff` called it CONFIRMED false,
+`fence` called it PLAUSIBLE imprecision — and the disagreement was about severity, not fact.
+Both are right about what the sentence says; rule 7/24 settles it, because the paragraph names
+two safeguards and cites neither.
+
+**The one thing no lane found by reading, and the lesson of the run.** The guard on the new hook
+asserted the header *name* appeared in the page and never its *value*. `_csrf_ok` accepts exactly
+`"1"`, so a one-character edit put the 403 back on all 47 writes with all 71 tests in the file
+green — the same silent outcome as deleting the hook, which the test *did* catch. **A guard
+written against the failure the author imagined caught that failure and nothing beside it.** Only
+mutation found it; three careful readings of the same assertion did not. Fixed by giving the
+value one declaration (`CSRF_HEADER`/`CSRF_VALUE` beside `_csrf_ok`) and generating both `main.py`
+copies from it.
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| diff | `onBeforeRequest` is not a real config key, or is silently stripped by the zod `$strip` schema, so the hook never registers | Declared at `@scalar/types/.../base-configuration.d.ts:122` and in `@scalar/schemas`; ran the real coercion, and `out.onBeforeRequest === hook` is True with `typeof` preserved. Present in the vendored bundle. |
+| diff / fence | `event.requestBuilder` is the wrong property — the `.d.ts` example uses `{request: builder}` and documents `requestBuilder` as present only "when your integration provides it" | **Refuted by reading the shipped adapter rather than the type stub, and the answer is the reverse.** `standalone.js` calls the hook with `request: $u(...n.data.requestPayload)` — a throwaway `Request` built from the payload — and `requestBuilder: t.requestBuilder`, the live builder. The documented example would have mutated the throwaway. The PR picked the only property that works here. |
+| diff | The header never reaches the wire, or the hook fires only on some sends | `OperationBlock.handleExecute` runs `executeHook(…, "beforeRequest")` before `buildRequest`, which copies `request.headers.forEach(...)` onto the outgoing `Headers`. One `sendRequest` call site, one hook invocation. Driven: `x-reaper-csrf: 1` on the wire beside the cookie. |
+| diff | The emitted JavaScript is invalid in the assembled page | Extracted the inline script from the served `/api/docs` and ran `node --check` — exit 0. |
+| diff / fence | The counts in `main.py` ("all 47 writes", "87 operations") are stale | Both exact. Measured off the served schema: 87 operations, 47 unsafe, and all 47 met a 403 without the header. (The neighboring **test** docstring's "40 operations" was NOT — confirmed, and this branch made it 42.) |
+| seam / diff | "it cannot … see who watched what" is a false refusal | Walked every key-reachable 200 response schema for identity-shaped fields, then drove them with a live key. The only hits are `requested_by` (who *requested* a title, not who watched it) and `owner_username` (the operator's own account). Every watch-bearing string is aggregate. No key-reachable read attributes a play to a person. **True by enumeration, which is why the middleware comment now says so rather than claiming a structural guarantee.** |
+| seam / diff | "it cannot … change any other setting" is a false refusal | The write allowlist is scan / runs / policy / profile plus the dry-run shape; every settings write is refused, and the two settings a key *can* change are named as permissions in the same sentence. |
+| seam | The subtree match over-denies a sibling route, or a route was newly denied as collateral | `/api/fairness-summary`, `/api/logsomething`, `/api/settings/general/api-keyX` all stay open. Exactly 2 divergences from `origin/dev`, both intended. |
+| seam | `client_ip` drifted when #118 moved it to `auth/proxy.py`, or a dangling reference survived | Identical branch for branch including the unset-`trusted_proxies` case; `git diff origin/dev...HEAD -- src/reaper/auth/proxy.py` is empty. Every live importer reads `reaper.auth.proxy`; the only `middleware.client_ip` mentions are in frozen `docs/history/`. **The throttle does key on `client_ip` — the reason that value is not the peer is upstream and became #125.** |
+| fence | `POST /api/override` force-condemning a title on a stray Send | Prefill is `decision:"spare"` (keep direction) and `media_key:""`; drove 404. Two things would have to change. Noted as enum-order luck. |
+| fence | `POST /api/policy` replacing the policy with `condemn_at: 1`, or `PUT /api/settings/general` wiping general settings | Both 422 on the prefill before anything is written; `parse_proxy_networks([""])` yields an empty tuple, so proxy trust cannot be armed this way either. Fails closed both ways. |
+| fence | `DELETE /api/whitelist/{media_key}` removing a protection on a stray Send | The path-param prefill is `""`, so it routes nowhere. |
+| fence | The 409 disclosing the expected confirmation phrase makes the whole reap flow Send → copy → Send inside the page | The phrase is a content-binding device, not a secret, and the app shows it too. Refuted as a defect. |
+| fence | Cookie exfiltration via a server URL retargeted in the reference UI, or the header weakening CSRF elsewhere | No `credentials: 'include'` in Scalar's send path, so fetch defaults to `same-origin`; no `servers` block, so requests resolve to the page origin. `_csrf_ok` is untouched and any same-origin page could always set that header. |
+| fence | The arming throttle can be tripped by stray Sends, locking the operator out | `password_throttle` keys on `account:safety-arm` and can be tripped, but it only delays arming, which is the keep direction. |
+| diff / fence / seam | `docs/STATUS.md` should have been updated | Two lanes refuted independently, one called it plausible. STATUS.md has never carried a line about the fence, the reference, or credentials on Scales, so there is no line to edit in place. Third pass running with this answer. |
+| seam | The per-operation "signed in only" marking drifted from the fence, or the 403 body is stale | `test_no_operation_is_left_unclassified` compares the served `security` to the predicates for every operation. Driven: both fairness ops carry `security: [{"Session": []}]`, and read refusals return all five phrases, write refusals all four, byte-identical to the generated clauses. |
+| seam | The write allowlist gained subtree semantics too | It did not — still exact-match plus the dry-run shape, so `/api/policy/` and `/api/runs/` are refused. Correct direction for an allowlist. |
+| diff | `("who watched what", …)`'s second path is redundant under the subtree test | Redundant and harmless: `/api/fairness` covers the templated spelling, and keeping it pins the per-person route as a real one. |
+
+**Recorded rather than raised: the reference page now sends config writes the app double-confirms.**
+Driven with prefilled bodies, 15 writes succeed on the first Send, six of them one-click config
+changes the SPA guards with a two-step confirm (`DELETE`/`POST /api/settings/general/api-key`,
+`DELETE /api/settings/plex`, `DELETE /api/settings/notifications`, `DELETE /api/settings/instances/{id}`,
+`PUT /api/settings/leaving-soon`). The sharpest is `PUT /api/profile`, which returns 200 and
+replaces stored run limits and grace with the schema floors — grace 14 → 7, a safety window moving
+in the delete direction. **This is what try-it-out IS**, not a defect in it, and no lane proposed
+narrowing the hook. The remedy is that the operator be told, which is why it landed as copy in
+`Settings.tsx` and `main.py` rather than as a behavior change.
+
+**The generalizable lesson, and it is the `9a3cb13` lesson turned on the guard instead of the copy.**
+That pass concluded: the copy that was not generated is where the defect is. This branch acted on
+it, generated three of the four claims, and wrote a test for the fourth — and the test pinned the
+half that could not go wrong. A generated claim is only as good as the declaration it is generated
+FROM, and a guard is only as good as the failure its author pictured. **So mutate the thing the
+guard protects, in the direction the author did not picture, before believing the guard.** Both
+gaps found this run were found that way and neither was visible to reading: the header value, and
+a denylist entry keeping its phrase while losing its paths.

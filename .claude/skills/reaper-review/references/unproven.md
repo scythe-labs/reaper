@@ -31,7 +31,36 @@ because only the candidate outlives the run.
 
 ## Open
 
-_(empty)_
+### A vendor bump inside the caret silently puts the 403 back on every try-it-out write
+
+Raised at `96b8114` (2026-07-28, reviewing PR #123) by all three lanes independently, each
+ranking it low.
+
+`/api/docs` can send writes only because `main.py`'s `api_docs` passes an `onBeforeRequest` hook
+that sets the CSRF header on Scalar's request builder. The vendor stamps that API **experimental
+in three places** — the config `typeComment` in the shipped bundle, the `.d.ts`, and the builder
+type ("still experimental and may change in minor releases") — and `frontend/package.json` carries
+`"@scalar/api-reference": "^1.63.0"`. `package-lock.json` pins 1.63.0 today, so rule 15's
+lockfile install keeps CI and the container on a known-good bundle.
+
+If a lock refresh inside the caret renames the hook or reshapes its argument, every try-it-out
+write 403s again while the `Session` scheme goes on promising "reads and writes as you" — the
+exact rule 144 drift the PR exists to close, arriving through a dependency rather than an edit.
+**No test can currently see it.** The guard now pins the exact call string the page must contain,
+built from `CSRF_HEADER`/`CSRF_VALUE`, which catches a Reaper-side edit and cannot catch a
+Scalar-side rename: the assertion is against Python's own output. `frontend/public/vendor/` is
+gitignored, so rule 68's drift test has nothing to hash either.
+
+**Why it is unproven rather than confirmed:** nobody demonstrated a version inside `^1.63.0` that
+breaks it. The direction of failure is friendly (writes refuse, nothing is lost), which is why all
+three lanes ranked it low rather than fixing it.
+
+**What would settle it:** install the newest release satisfying the caret into a scratch tree, run
+the vendored bundle's `map-config-plugins` resolution over the real config, and check whether the
+hook still receives a mutable builder. If it does not, the answer is a behavioral guard rather than
+a string assertion — the cheapest shape is a headless page load that drives one write and asserts
+the header on the wire, which is the one thing the current test's docstring already says it cannot
+do.
 
 ## Settled
 
