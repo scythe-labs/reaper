@@ -94,11 +94,22 @@ api_key_throttle = Throttle(threshold=5, base_delay=2.0, max_delay=300.0, decay=
 #:
 #: ``PUT /api/logs/level`` is a write, so the allowlist below already refuses it.
 #:
-#: Matched as SUBTREES (``_denies_read``), never as exact paths, so a route added under one
-#: of these is denied by being born there rather than by someone remembering to list it --
-#: the same deny-by-default the writes get from being an allowlist. Each entry pairs its
-#: paths with the phrase ``api_key_scope_description`` names them by, for the reason given
-#: on the write list below.
+#: Matched as SUBTREES (``_denies_read``), never as exact paths, so a route added *under one
+#: of these* is denied by being born there rather than by someone remembering to list it.
+#:
+#: **That is narrower than the allowlist the writes get, and the difference is the one thing
+#: to keep in mind here.** Inside these four subtrees, deny-by-default. Outside them, open by
+#: default -- a new top-level read is reachable by a key the moment it exists
+#: (``_api_key_allowed("GET", "/api/watch-history")`` is True today, and would be for any
+#: name). So the refusal the operator is told, "cannot see who watched what", is a CATEGORY,
+#: and this list can only ever enumerate PATHS. It is true because these are the only routes
+#: that pair a person with a play, and it stays true only while that holds: a viewing read
+#: born outside ``/api/fairness`` makes the sentence false with nothing failing, since the
+#: generated copy is built from the phrases and the phrase would not move. A viewing-adjacent
+#: route belongs on this list before it ships, not after someone notices.
+#:
+#: Each entry pairs its paths with the phrase ``api_key_scope_description`` names them by,
+#: for the reason given on the write list below.
 _API_KEY_READS_DENIED: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("the key itself", ("/api/settings/general/api-key",)),
     ("the backup download", ("/api/settings/backup/download",)),

@@ -643,9 +643,17 @@ export function GeneralPanel() {
           </div>
           <div className="set-row">
             <span className="set-label">API reference</span>
+            {/* Says "as you", not "with your key", because the page preselects your SESSION:
+                35 of the 47 writes do not offer the key at all, and the button reaches them
+                all, arming included. Naming the key here would size the blast radius by the
+                fence two rows up, which is far tighter than what this button spends (rule
+                144). The key clause above is generated and guarded; this one is hand-written
+                and its guard is test_the_reference_page_sends_the_csrf_header_it_names, which
+                names this file. */}
             <p className="help">
-              Every endpoint, documented from the running app, with a try-it-out client that can use
-              your key. Only visible while signed in.
+              Every endpoint, documented from the running app. The try-it-out button sends real
+              requests as you, so it can change settings and start work, not just read. Only visible
+              while signed in.
             </p>
             <div className="set-control">
               <a className="btn-link" href="/api/docs" target="_blank" rel="noreferrer">

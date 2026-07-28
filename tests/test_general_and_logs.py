@@ -512,15 +512,29 @@ class TestTheApiKeyLane:
         spelling against the other -- so a denylist holding only ``/api/fairness`` would
         pass the first assertion here and fail the second, which is precisely the shape of
         the original bug.
+
+        **This test is also the guard on a hand-written sentence, and it is the only one
+        that can be.** ``test_the_sentence_leads_with_what_the_key_can_do`` pins the
+        Settings paragraph against the declaration's PHRASES; the refusal in that
+        paragraph ("it cannot ... see who watched what") rests on the declaration's PATHS,
+        which no phrase test can see. Emptying this entry's paths while keeping its phrase
+        leaves that guard green and both descriptions asserting a refusal the fence no
+        longer makes, so the failures here name the file to edit (rule 144).
         """
         key = self._issue(client)
         bare = _bare(client)
         headers = {"X-Api-Key": key}
+        twin = (
+            "the fairness reads are open to a key again, so the hand-written refusal in "
+            "frontend/src/components/Settings.tsx ('it cannot ... see who watched what') "
+            "and the generated one in middleware.api_key_scope_description are both false. "
+            "Fix the fence or change BOTH sentences"
+        )
 
-        assert bare.get("/api/fairness", headers=headers).status_code == 403
+        assert bare.get("/api/fairness", headers=headers).status_code == 403, twin
         person = bare.get("/api/fairness/people/someone", headers=headers)
-        assert person.status_code == 403
-        assert "who watched what" in person.json()["detail"]
+        assert person.status_code == 403, twin
+        assert "who watched what" in person.json()["detail"], twin
 
         # The browser still reaches it: this fenced a credential, it did not retire a page.
         # 400 is the handler's own "Scales needs a Seerr and a Tautulli" on a fixture that

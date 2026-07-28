@@ -420,18 +420,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         method off the key lane needs ``X-Reaper-CSRF: 1``, which a cookie cannot carry on
         its own, so the panel's own three headers (``accept``, ``content-type``,
         ``cookie``) met a 403 on all 47 writes. ``api_docs`` sets it from the reference's
-        ``onBeforeRequest`` hook, on the mutable builder before the ``Request`` is frozen
-        (a ``customFetch`` would work too, but has to rebuild the body to change a header).
+        ``onBeforeRequest`` hook, which is handed the mutable builder the outgoing request
+        is built FROM -- the hook's ``request`` argument is a throwaway built from the
+        payload, so mutating that one changes nothing, and ``requestBuilder`` is the live
+        object (``@scalar/api-reference``'s ``map-config-plugins``). The sibling
+        ``onRequestBuilt`` hook would also have worked, on the real ``Request`` rather than
+        the builder; this one is chosen because the builder is the documented place to add
+        a header, not because the ``Request`` is closed to it.
         Measured against the shipped bundle: ``POST /api/policy/validate`` from try-it-out
         went 403 CSRF before and reaches the handler after, with ``x-reaper-csrf: 1`` on
         the wire beside the cookie. The ``Session`` description now says the button writes,
         and still names the header for the script author writing their own client.
 
-        Nothing about that widens what the page may do. The header is not a credential --
-        it proves same-origin, which this page is, being served by Reaper at
-        ``/api/docs`` behind the same session -- and the destructive route it now reaches
-        still needs the host armed and the content-bound phrase recomputed server-side, so
-        a stray Send cannot delete anything.
+        **This widens what the PAGE may do. It does not widen what the CREDENTIAL may
+        do.** Before the hook the reference could send none of the document's 47 writes;
+        now it sends all of them, as the operator, and 15 succeed on the first Send with
+        the body Scalar prefills from the schema example -- including rotating the API key
+        under every script pointed at it, and dropping the stored Plex server. None of
+        that is reach the session lacked, since the SPA holds the same cookie; what
+        changes is that the SPA spends it behind its own confirmations and this page
+        spends it on one click. Say it plainly wherever the link is handed out rather than
+        rounding it off here: the "API reference" row in ``Settings.tsx`` is the copy that
+        has to carry it, and this paragraph existing is not a substitute for that one.
+
+        The header itself is not a credential. It proves same-origin, which this page is,
+        being served by Reaper at ``/api/docs`` behind the same session, and any
+        same-origin page could always set it; nothing server-side changed.
+
+        **A stray Send still cannot delete anything, and here is what stops it.**
+        ``POST /api/runs/{run_id}/execute`` reaches ``api/runs.py``'s ``execute_run``,
+        which refuses unless ``app_settings.runtime_safety`` reports
+        ``destructive_allowed``, then recomputes the content-bound phrase with
+        ``planner.confirmation_phrase`` and compares it server-side before anything is
+        sent. Arming is itself password-gated in the request body
+        (``api/settings.py``'s ``set_safety``), so the prefilled empty password is
+        refused. Driven in the reference-page request shape: unarmed 403, armed with the
+        prefilled empty phrase 409, armed with the correct phrase stopped at the
+        executor's own preflight.
 
         ``tags`` names and orders the sections; ``x-tagGroups`` is the vendor extension
         Scalar reads to nest them under three headings. Both come from
