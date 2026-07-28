@@ -11,7 +11,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { CustomCondemn, Policy, PolicyBody, PolicyWarning, ProfileSettings } from "../api";
 import { DocsProvider } from "../docs/DocsContext";
 import { testQueryClient } from "../test/queryClient";
-import { PolicyEditor } from "./PolicyEditor";
+import type { WarningAnchor, WarningGuard } from "./PolicyEditor";
+import { PolicyEditor, WARNING_ANCHORS, anchorClaims } from "./PolicyEditor";
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
@@ -441,10 +442,12 @@ describe("the rule editors when their vocabulary can't be read", () => {
 async function renderTvEditor(
   patch: Partial<PolicyBody> = {},
   shape?: { total_shows: number; season_counts: Record<number, number> },
+  /** What /policy/validate answers with, for the cases that drive a TV-only warning. */
+  validationWarnings: PolicyWarning[] = [],
 ) {
   const { userEvent } = await import("@testing-library/user-event");
   const user = userEvent.setup();
-  const rendered = renderEditor({ body: tvBody(patch) });
+  const rendered = renderEditor({ body: tvBody(patch) }, pace, null, validationWarnings);
   if (shape) apiMock.seasonShape.mockResolvedValue(shape);
   await user.click(await screen.findByRole("button", { name: "TV" }));
   await screen.findByText("TV policy");
@@ -684,79 +687,135 @@ describe("the gate that counts recent watchers", () => {
 
 // --- warning anchors ---------------------------------------------------------
 //
-// A warning is anchored beside the control that fixes it, and anything no anchor claims
-// falls to the bottom stack (rule 42). Claiming is therefore a promise to render: an anchor
-// pointing into a subtree that did not mount takes its warning off the page altogether,
-// because claiming is exactly what excludes it from the catch-all. These reconcile the
-// anchor list against the renderers by driving one warning per anchor through the page and
-// looking for each on screen -- the audit a hand-maintained count in a comment was supposed
-// to support, and got wrong at seven against eight (#146).
+// The reconciliation between an anchor and its renderer, walked over the EXPORTED list the
+// editor renders from (`WARNING_ANCHORS`). Claiming a field is what keeps it out of the
+// bottom catch-all stack, so an anchor with no block behind it renders its warning nowhere
+// at all -- which is what took the unknown-size warning off the page (#145, rule 42).
+//
+// The walk used to be a hand-written copy of the anchor list living in this file, so the one
+// thing it existed to catch, a new anchor with no renderer, was invisible to it: appending
+// one and running this suite stayed green (rule 103). Reading the declaration itself is what
+// makes these cases a proof -- an anchor with no `warningsAt` call site has no block to paint
+// its probe, and claiming has already taken that probe out of the catch-all, so the field
+// appears nowhere and the case below fails.
 describe("PolicyEditor warning anchors", () => {
-  /** One warning per anchor a MOVIE policy can produce. `keep_last_seasons` and
-   *  `keep_last_scope` are absent on purpose: the producer guards both on
-   *  `media_type == "tv"` and so does their renderer, so the pair agree and neither can
-   *  swallow the other. They are covered by the TV case below. */
-  const MOVIE_ANCHORS: PolicyWarning[] = [
-    { field: "condemn_at", severity: "warn", message: "anchor probe: condemn_at" },
-    {
-      field: "gates.server_popularity.window_days",
-      severity: "warn",
-      message: "anchor probe: a gate field",
-    },
-    // Its renderer lives inside the rating card's own `gate.enabled` branch -- and so does
-    // its producer (`policy.inspect` emits nothing here unless the gate is on), so the pair
-    // agree and the fixture below turns the gate on to reach the only state it exists in.
-    { field: "keep_rating_rules", severity: "warn", message: "anchor probe: keep_rating_rules" },
-    { field: "signals", severity: "warn", message: "anchor probe: signals" },
-    { field: "custom_condemn", severity: "warn", message: "anchor probe: custom_condemn" },
-    { field: "graded_keeps", severity: "warn", message: "anchor probe: graded_keeps" },
-    { field: "protect_conditions", severity: "warn", message: "anchor probe: protect_conditions" },
-    {
-      field: "max_unmeasured_per_run",
-      severity: "warn",
-      message: "anchor probe: max_unmeasured_per_run",
-    },
-    // Claimed by no anchor, so it proves the catch-all is reached in the same render rather
-    // than the whole stack having gone quiet -- without it, a page rendering nothing at all
-    // would fail these for a reason the message would not name.
-    { field: "some_field_no_anchor_claims", severity: "warn", message: "anchor probe: catch-all" },
-  ];
+  /** Puts the page in one state and hands it `warnings` back from /policy/validate, which is
+   *  the only route a warning reaches the page by. */
+  type Drive = (warnings: PolicyWarning[]) => Promise<void>;
 
-  it("puts every anchored warning on the page exactly once", async () => {
-    const withRatingGate: PolicyBody = {
-      ...body(),
-      gates: [
-        { gate: "rating_floor", enabled: true, threshold: 70, secondary: 1000, window_days: 365 },
-      ],
-    };
-    renderEditor({ body: withRatingGate }, pace, null, MOVIE_ANCHORS);
+  const unguarded: Drive = async (warnings) => {
+    renderEditor({ body: body() }, pace, null, warnings);
+  };
 
-    for (const w of MOVIE_ANCHORS) {
-      expect(await screen.findByText(w.message)).toBeInTheDocument();
-    }
-    // Exactly once each: an anchor that both claims a field AND lets it reach the catch-all
-    // would render it twice, which is the other way this can be wrong.
-    for (const w of MOVIE_ANCHORS) {
-      expect(screen.getAllByText(w.message)).toHaveLength(1);
-    }
+  const ratingBody = (enabled: boolean): PolicyBody => ({
+    ...body(),
+    gates: [{ gate: "rating_floor", enabled, threshold: 70, secondary: 1000, window_days: 365 }],
   });
 
-  it("keeps the unknown-size warning when the profile read fails", async () => {
-    // #145. This is the one warning about a setting that lets deletions past the GB caps,
-    // and its only renderer sits inside the `pace === null` branch. While the anchor claimed
-    // it unconditionally, a failed profile read excluded it from the catch-all and rendered
-    // it nowhere, so it vanished silently rather than falling to the bottom.
-    const unknownSize = MOVIE_ANCHORS.find((w) => w.field === "max_unmeasured_per_run")!;
-    renderEditor({ body: body() }, new Error("boom"), null, [unknownSize]);
+  /** The two page states each guard is checked in, plus the accessible name of a control that
+   *  exists on the held branch ONLY. That control is what pins a guard's name to the mount
+   *  condition it claims to be: without it these cases would assert a guard against itself.
+   *  Exhaustive over `WarningGuard` by its type, so a guard added to the editor does not
+   *  compile until the states that hold and drop it are written here (rule 145). */
+  const GUARDS: Record<WarningGuard, { control: string; held: Drive; absent: Drive }> = {
+    pace: {
+      control: "Items with an unknown size",
+      held: unguarded,
+      // A profile read that FAILED, which is how #145 reached an operator: the whole pace
+      // section is one error paragraph, and the box this warning sits under is gone with it.
+      absent: async (warnings) => {
+        renderEditor({ body: body() }, new Error("boom"), null, warnings);
+      },
+    },
+    tv: {
+      control: "Newest seasons to always keep",
+      held: async (warnings) => {
+        await renderTvEditor({}, undefined, warnings);
+      },
+      // The movies policy the editor opens on: the season card is not rendered at all.
+      absent: unguarded,
+    },
+    ratingGate: {
+      control: "Add a rating source",
+      held: async (warnings) => {
+        renderEditor({ body: ratingBody(true) }, pace, null, warnings);
+      },
+      // The card is on the page either way. Its bars, and everything warned about them, live
+      // under its own switch.
+      absent: async (warnings) => {
+        renderEditor({ body: ratingBody(false) }, pace, null, warnings);
+      },
+    },
+  };
 
-    // The control really is off the page in this state...
-    expect(await screen.findByText(/Couldn't load these settings/)).toBeInTheDocument();
-    expect(screen.queryByLabelText("Items with an unknown size")).not.toBeInTheDocument();
-    // ...and the warning is on it anyway, in the catch-all stack. Awaited, not read
-    // synchronously: the pace error paragraph above lands on the profile rejection, while
-    // this arrives with the separate validate response (rule 137).
-    expect(await screen.findByText(unknownSize.message)).toBeInTheDocument();
+  /** One warning per field the anchor claims. The claimed fields ARE the probe fields, since
+   *  both read the same array in the declaration. */
+  const probes = (anchor: WarningAnchor): PolicyWarning[] =>
+    anchor.fields.map((field) => ({
+      field,
+      severity: "warn",
+      message: `anchor probe: ${field}`,
+    }));
+
+  /** Claimed by no anchor, so it proves the stack is rendering at all in the same render.
+   *  Without it, a page showing no warnings whatsoever would fail the cases below for a
+   *  reason none of their messages name. */
+  const catchAll: PolicyWarning = {
+    field: "some_field_no_anchor_claims",
+    severity: "warn",
+    message: "anchor probe: the catch-all stack",
+  };
+
+  it("declares the eight anchors these cases walk", () => {
+    // Pinned because the walk is flag-shaped: an anchor deleted from the list takes its own
+    // case away with it, and every assertion that remains still passes (rule 145). Move this
+    // number in the same commit that adds or removes an anchor.
+    expect(WARNING_ANCHORS).toHaveLength(8);
   });
+
+  for (const anchor of WARNING_ANCHORS) {
+    it(`renders every warning the ${anchor.id} anchor claims, exactly once`, async () => {
+      const mine = probes(anchor);
+      // The fields it claims are the fields it is probed with -- one list in the declaration,
+      // so a claim cannot quietly go unprobed.
+      for (const w of mine) expect(anchorClaims(anchor, w.field)).toBe(true);
+
+      await (anchor.guard ? GUARDS[anchor.guard].held : unguarded)([...mine, catchAll]);
+
+      expect(await screen.findByText(catchAll.message)).toBeInTheDocument();
+      if (anchor.guard) {
+        expect(screen.getByLabelText(GUARDS[anchor.guard].control)).toBeInTheDocument();
+      }
+      for (const w of mine) {
+        // Claiming took this out of the catch-all, so anything found here came from the
+        // anchor's own block -- and finding nothing means it rendered nowhere at all.
+        expect(await screen.findByText(w.message)).toBeInTheDocument();
+        // Exactly once: claiming AND still reaching the catch-all is the other way to be
+        // wrong, and it prints the same sentence twice on one page.
+        expect(screen.getAllByText(w.message)).toHaveLength(1);
+      }
+    });
+  }
+
+  for (const anchor of WARNING_ANCHORS) {
+    const guard = anchor.guard;
+    if (guard === undefined) continue;
+    it(`sends ${anchor.id}'s warnings to the catch-all when its control is not mounted`, async () => {
+      // #145 as a property of every guarded anchor rather than of the one that was found:
+      // on the branch where the block is not there, claiming has to stop, or the warning is
+      // dropped from the page instead of falling to the bottom.
+      const mine = probes(anchor);
+      await GUARDS[guard].absent(mine);
+
+      for (const w of mine) {
+        expect(await screen.findByText(w.message)).toBeInTheDocument();
+        expect(screen.getAllByText(w.message)).toHaveLength(1);
+      }
+      // Read after the warnings, not before: the control is trivially absent from a page that
+      // has not rendered yet, and this has to say something about the settled one (rule 137).
+      expect(screen.queryByLabelText(GUARDS[guard].control)).toBeNull();
+    });
+  }
 
   it("renders both of two warnings that are byte-identical", async () => {
     // #146. Two protect conditions on the same movie-only field produce the same sentence,

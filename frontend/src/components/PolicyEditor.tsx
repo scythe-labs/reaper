@@ -664,6 +664,73 @@ function DocLink({
   );
 }
 
+/** A mount condition one of the anchors below sits under. An anchor claims its fields only
+ *  while its guard holds, so on the other branch they fall to the catch-all stack instead of
+ *  off the page. Adding a value here does not compile in `PolicyEditor.test.tsx` until the
+ *  two page states that hold it and drop it are written there. */
+export type WarningGuard = "pace" | "tv" | "ratingGate";
+
+/** One place a policy warning renders, and the fields it claims. */
+export type WarningAnchor = {
+  /** Named by the `warningsAt(...)` call that renders it, so the claim and the render read
+   *  from this one declaration rather than from two copies of the same field list. */
+  readonly id: string;
+  /** The fields claimed exactly -- and the fields the test probes this anchor with, which is
+   *  why a claim cannot go unprobed: it is one list, not two. */
+  readonly fields: readonly string[];
+  /** Claimed as a family as well: any field starting with this. `fields` then holds one real
+   *  member of the family, since a probe has to be a field the server could actually send. */
+  readonly prefix?: string;
+  /** The mount condition this anchor's `WarnBlock` sits under, where it has one. */
+  readonly guard?: WarningGuard;
+};
+
+const ANCHORS = [
+  { id: "condemn_at", fields: ["condemn_at"] },
+  { id: "gates", fields: ["gates.server_popularity.window_days"], prefix: "gates." },
+  { id: "keep_rating_rules", fields: ["keep_rating_rules"], guard: "ratingGate" },
+  { id: "keep_last", fields: ["keep_last_seasons", "keep_last_scope"], guard: "tv" },
+  { id: "signals", fields: ["signals"] },
+  { id: "custom_condemn", fields: ["custom_condemn"] },
+  { id: "keep_rules", fields: ["graded_keeps", "protect_conditions"] },
+  { id: "max_unmeasured_per_run", fields: ["max_unmeasured_per_run"], guard: "pace" },
+] as const;
+
+/** Where each policy warning renders.
+ *
+ *  A warning renders beside the control that fixes it (rule 42): each anchor claims the
+ *  fields whose fix lives at one place on the page, and anything no anchor claims lands in
+ *  the bottom catch-all stack, so a warning field is never silently dropped.
+ *
+ *  Claiming is therefore a promise to RENDER, and it is exactly what excludes a field from
+ *  the catch-all. An anchor whose `WarnBlock` sits inside a conditional subtree takes its
+ *  warning off the page altogether on the branch that subtree does not mount -- not down to
+ *  the bottom, which is what the sentence above promises. `max_unmeasured_per_run` did that
+ *  through a failed profile read, losing the one warning about a setting that lets deletions
+ *  past the size caps (#145). So an anchor under a mount condition names it as its `guard`
+ *  and claims only while it holds.
+ *
+ *  This is data, and exported, because reconciling an anchor against its renderer is a test's
+ *  job: `PolicyEditor.test.tsx` walks THIS list, drives one warning per claimed field through
+ *  the page in the state each guard requires, and fails when one renders nowhere -- an anchor
+ *  added with no `warningsAt` call site, or a `WarnBlock` deleted from under one. That walk
+ *  was a hand-mirrored copy of this list, which could not see a new anchor at all, and before
+ *  that a count in a comment that went stale at seven against eight. What the walk does NOT
+ *  check is which control a warning landed beside, only that the claim reached the page. */
+export const WARNING_ANCHORS: readonly WarningAnchor[] = ANCHORS;
+
+/** The id of an anchor above. A render site naming one that does not exist is a type error. */
+export type WarningAnchorId = (typeof ANCHORS)[number]["id"];
+
+/** Whether an anchor claims a warning field. The one matcher, read by the render sites and by
+ *  the catch-all alike, so the two cannot read this declaration differently. */
+export function anchorClaims(anchor: WarningAnchor, field: string): boolean {
+  return (
+    anchor.fields.includes(field) ||
+    (anchor.prefix !== undefined && field.startsWith(anchor.prefix))
+  );
+}
+
 export function PolicyEditor({
   focus,
 }: {
@@ -769,39 +836,32 @@ export function PolicyEditor({
     retry: false,
   });
 
-  // Warnings render beside the control they describe (each anchor below claims its
-  // fields); anything no anchor claims still shows in the bottom stack, so a new
-  // warning field can never be silently dropped.
-  //
-  // An anchor may only claim a field while the control it anchors to is actually MOUNTED,
-  // which is the half this used to get wrong. Claiming excludes the field from the bottom
-  // stack, so an anchor pointing into a conditional subtree drops its warning off the page
-  // entirely on the branch where that subtree does not render -- not to the catch-all, which
-  // is what the sentence above promises (rules 42, 7/24). `max_unmeasured_per_run` was doing
-  // exactly that: its only renderer sits under the `pace === null` guard below, so a failed
-  // profile read swallowed the one warning about a setting that lets deletions past the size
-  // caps. Any anchor added under a guard carries that guard here too.
+  // Where these land is `WARNING_ANCHORS` above, which also says why claiming a field is a
+  // promise to render it (rules 42, 7/24).
   const allWarnings = useMemo(() => validation?.warnings ?? [], [validation]);
-  // Stable, so the WarnBlocks below are not handed a new filter on every render. Deliberately
-  // no count: a hand-maintained number here went stale at seven against eight renderers, and
-  // the reader it misled is the one auditing whether every anchor HAS a renderer. That
-  // reconciliation is pinned by a test that feeds one warning per anchor through the editor
-  // and looks for each on screen, which cannot rot the way a comment does.
-  const warningsFor = useCallback(
-    (pred: (field: string) => boolean) => allWarnings.filter((w) => pred(w.field)),
+  // Which guards hold this render. The mount condition each one names is a checked fact, not
+  // a claim about itself: the walk in `PolicyEditor.test.tsx` drives every guard both ways
+  // and pins a control that exists on the held branch only, so a guard naming the wrong
+  // condition fails there rather than reading green.
+  const guardsHeld: Record<WarningGuard, boolean> = {
+    pace: pace !== null,
+    tv: mediaType === "tv",
+    ratingGate: (draft?.gates ?? []).some((g) => g.gate === "rating_floor" && g.enabled),
+  };
+  const anchors = WARNING_ANCHORS.filter((a) => a.guard === undefined || guardsHeld[a.guard]);
+  // Stable, so the WarnBlocks below are not handed a new filter on every render. Each names
+  // its anchor rather than repeating that anchor's field list, so there is nothing here to
+  // drift out of step with the declaration.
+  const warningsAt = useCallback(
+    (id: WarningAnchorId) =>
+      allWarnings.filter((w) =>
+        WARNING_ANCHORS.some((a) => a.id === id && anchorClaims(a, w.field)),
+      ),
     [allWarnings],
   );
-  const anchors: ((field: string) => boolean)[] = [
-    (f) => f === "condemn_at",
-    (f) => f.startsWith("gates."),
-    (f) => f === "keep_rating_rules",
-    (f) => f === "keep_last_seasons" || f === "keep_last_scope",
-    (f) => f === "signals",
-    (f) => f === "custom_condemn",
-    (f) => f === "graded_keeps" || f === "protect_conditions",
-    ...(pace === null ? [] : [(f: string) => f === "max_unmeasured_per_run"]),
-  ];
-  const unanchoredWarnings = allWarnings.filter((w) => !anchors.some((p) => p(w.field)));
+  const unanchoredWarnings = allWarnings.filter(
+    (w) => !anchors.some((a) => anchorClaims(a, w.field)),
+  );
 
   // A background scan, so the "Scan now" button in the stale notice actually does something.
   const { data: scanState } = useQuery({
@@ -1330,7 +1390,7 @@ export function PolicyEditor({
             Protections below still win. This only decides among titles nothing is keeping.
           </span>
         </label>
-        <WarnBlock warnings={warningsFor((f) => f === "condemn_at")} />
+        <WarnBlock warnings={warningsAt("condemn_at")} />
 
         <label className="field">
           <span className="field-label">
@@ -1364,14 +1424,14 @@ export function PolicyEditor({
             />
           ))}
         </ul>
-        <WarnBlock warnings={warningsFor((f) => f === "signals")} />
+        <WarnBlock warnings={warningsAt("signals")} />
 
         <RemoveRulesEditor
           condemn={draft.custom_condemn}
           mediaType={mediaType}
           onCondemn={(custom_condemn) => update({ custom_condemn })}
         />
-        <WarnBlock warnings={warningsFor((f) => f === "custom_condemn")} />
+        <WarnBlock warnings={warningsAt("custom_condemn")} />
 
         <div className="policy-divider" />
 
@@ -1401,7 +1461,7 @@ export function PolicyEditor({
             return <GateRow key={gate.gate} gate={gate} onChange={setGate} />;
           })}
         </ul>
-        <WarnBlock warnings={warningsFor((f) => f.startsWith("gates."))} />
+        <WarnBlock warnings={warningsAt("gates")} />
 
         {(() => {
           const i = draft.gates.findIndex((g) => g.gate === "rating_floor");
@@ -1418,7 +1478,7 @@ export function PolicyEditor({
               rules={draft.keep_rating_rules}
               match={draft.keep_rating_match}
               mediaType={mediaType}
-              warnings={warningsFor((f) => f === "keep_rating_rules")}
+              warnings={warningsAt("keep_rating_rules")}
               onGate={setRating}
               onRules={(keep_rating_rules) => update({ keep_rating_rules })}
               onMatch={(keep_rating_match) => update({ keep_rating_match })}
@@ -1621,9 +1681,7 @@ export function PolicyEditor({
                 </p>
               </li>
             </ul>
-            <WarnBlock
-              warnings={warningsFor((f) => f === "keep_last_seasons" || f === "keep_last_scope")}
-            />
+            <WarnBlock warnings={warningsAt("keep_last")} />
           </div>
         )}
 
@@ -1641,9 +1699,7 @@ export function PolicyEditor({
             one surface either can be fixed from. `protect_conditions` carries the
             gate-off popularity window (`engine/policy.py:inspect`), which has nowhere
             else to go: with that protection off its window control is not rendered. */}
-        <WarnBlock
-          warnings={warningsFor((f) => f === "graded_keeps" || f === "protect_conditions")}
-        />
+        <WarnBlock warnings={warningsAt("keep_rules")} />
 
         {/* A validation failure is an ERROR (red): this policy cannot be saved as-is. */}
         {invalidMessage && (
@@ -1811,7 +1867,7 @@ export function PolicyEditor({
                 <span className="help">
                   Kept by default. Size caps can't measure them. Set 0 to always keep, 25 at most.
                 </span>
-                <WarnBlock warnings={warningsFor((f) => f === "max_unmeasured_per_run")} />
+                <WarnBlock warnings={warningsAt("max_unmeasured_per_run")} />
               </span>
             </div>
           </>
