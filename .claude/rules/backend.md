@@ -470,3 +470,22 @@ case: the reach was recorded and `ServerPopularityGate` taught to fail closed pa
 `CustomProtectGate`, `evaluate_keep` and `evaluate_signal` went on reading the same two
 truncated watcher counts at full confidence — an operator's own keep rule reporting green
 "0 people have ever watched it" from a mirror that cannot establish it.
+
+**142. Replacing an inferred discriminator with a typed one is not done until every consumer
+that made the same inference reads the type — and where a consumer sits across a serialization
+boundary, shipping the field there is part of the fix, not a follow-up.** A wording test, a
+substring, a prefix (rule 92's shape) is usually copied: the producer's sentence is the only
+thing every reader can see, so several of them independently parse it. Introducing the typed
+answer therefore *widens* the gap rather than closing it, because the fixed reader now disagrees
+with the copies by construction, and the copies cannot be fixed by editing them — the field has
+to reach them first. Grep the retired test's exact spelling across **both** trees before closing,
+then for each surviving site either carry the field to it (`api/schemas.py` → `api.ts` → the
+component, rule 64's supply chain) or defer it in writing *naming that supply chain*, so the
+deferral is actionable rather than a note that a twin exists. Carry the three-state where the old
+records lack the key: a stored row that predates the field distinguishes nothing, so `bool` with
+a `False` default silently asserts one shape about every legacy row, and `bool | None` is what
+lets it assert neither. `GateResult.defers_to_owner` is the case: it replaced
+`detail.startswith("could not check")` on the deletion path, `GateOutcomeOut` was never taught to
+serve it, and `WhyPanel.isKeepRuleConflict` was left running the retired test against the one
+message it never matched — still promising "Reap it to remove it" on a season the engine now
+holds. Rule 72 obliges the sweep; this says what the sweep owes a twin it cannot reach.

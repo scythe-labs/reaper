@@ -386,3 +386,59 @@ next pass reads *in order to skip things* is how a real defect gets one line of 
 further looks. **"Declined", "unreachable today", and "not worth acting on" are three different
 verdicts and none of them is a refutation.** A row here has to mean someone demonstrated the
 trigger cannot occur; anything softer goes to `unproven.md` or to an issue.
+
+## Refuted at `a191086` (2026-07-27, reviewing the deferrable-block fix, PR #96)
+
+Three lanes fired by path (`safety` on `engine/{gates,verdict}.py` + `services/snapshot.py`,
+`seam` on `api/routes.py`, `diff` on the rest). The commit moves what a hand reap may overrule
+off a `detail.startswith("could not check")` test and onto a typed `GateResult.defers_to_owner`.
+**The convergence signal fired again, on two findings**: the `safety` and `seam` lanes
+independently reported the same orphaned frontend twin, and the `safety` and `diff` lanes
+independently reported the same dropped codec field, each having driven it in-process rather
+than reasoned about it. Fixed in `ba06511`, `5d24993`, `9df5e41`, `e663519`, `c9ea966`,
+`a191086`.
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| safety | `defers_to_owner=True` on a #94-truncated comparison releases a hand reap on a count that was only a lower bound | The flagged question, and it inverts. A *resolved* kept season with no mirror rows reads `0`, not `None`, so a truncated mirror does produce spurious conflicts — but a spurious conflict is a spurious *hold*: with the deeper mirror there is no conflict at all, `guard_result` returns a plain ABSTAIN and the season is condemnable on score anyway. Releasing it by hand reaches the same end state, so the truncation only ever adds protection and the flag removes only what it added. The overstated *sentence* is #94, already filed. |
+| safety | A producer sets the flag on a genuine plumbing failure | Only two `blocked=True` `SEASON_PROGRESSION` producers exist in `src/`: `season_scan.guard_result` (sets it from the conflicts' `kept_watchers`) and `facts_codec` (defaults it `False`). No other gate touches the field; the `fields.py` and `gates.py` blocked branches never set it. |
+| safety | The added stored key changes a hash, breaking an interlock | Nothing hashes an explanation. `planner.manifest_hash` is over `(media_key, size_bytes)`; `policy_hash`/`scoring_hash`/`evidence_hash` are over `PolicyBody`. A full `hashlib` sweep of `src/reaper/` finds no other candidate-derived digest. |
+| safety | `gates.py:550`'s "holds the reap on any detail at all" is stale now the function takes no detail | Still true, and now trivially so: `server_popularity` is absent from `DEFERRABLE_BLOCK_GATES`, so it holds whatever the detail says. The prefix stays load-bearing for the two surfaces the same comment names, which both still read it. |
+| safety | The trailing defaulted field on a `frozen/slots` dataclass breaks a positional construction or a `dataclasses` helper | Appended last after `blocked`, and no site passes four or more positionally across `src/` or `tests/`. No `replace`/`astuple`/`asdict`/`fields()` over `GateResult` outside the codec, and it is never a set member or dict key, so the changed `__eq__`/`__hash__` is inert. |
+| seam | The extra stored key breaks a pydantic model, a `GateOutcomeOut(**entry)` splat, or response validation | No splat exists; `_explanation_out` does `Explanation(**decoded)` and pydantic validates each entry field-by-field. The only `extra="forbid"` in `src/` is on policy bodies, which never see an explanation. Driven: the model constructs and `model_dump()` silently drops the key — which is finding 2's mechanism, not a crash. |
+| seam | `routes.py:696`/`:716` classify by wording, or break on the new key | Both are `_primary_reason` printing `_detail_of(unknown[0])` verbatim. No classification, no key read. |
+| seam | `_has_blocked_protections` breaks on the extra key | Presence and length only, deliberately not via `_entries`. A key inside an entry is invisible to it. **It was the correct posture all along**, which is what made `condemned.py`'s opposite one a finding. |
+| seam | `_chip`'s outer `not detail.startswith("could not check")` guard wrongly skips one conflict shape | Measured `False` for both messages, so both reach the `season_progression` branch. Unchanged and still correct. |
+| seam | Query-key skew lets a cached pre-flag explanation outlive the scan, so chip and reap decision disagree per cache entry | Impossible by construction: `chip` and `override_effective` are computed from the *same* decoded dict in the *same* response, from one `_decode_explanation`. The legacy disagreement that was real is a producer disagreement inside one payload, not a caching one. |
+| rule 68 | `scripts/policy_lab_extract.py` must carry the new field, with a drift test | The extractor writes only `guard: {"state": …}`, and **no fixture vector reaches the arm at all**: counted across all 440, guard states are `movie/None` ×220, `season/"checked"` ×175, `season/"fired"` ×45, and zero `"unknown"`. `_policy_lab.guard_result`'s hardcoded `True` is reached only from two hand-built vectors in `test_policy_permutations.py`, which model the made-comparison arm. Latent for a future regeneration, not a present defect. |
+| rule 132 | `_policy_lab.guard_result` implies coverage of the arm it does not build | The branch already disclaims it in the docstring and names the two files that pin it; both tests exist. Compliant — and the disclaimer is true by a stronger route than it claims, since no vector reaches the helper's blocked arm at all. |
+| diff | A season is both `protected` and in `conflicts`, so the ordering picks the wrong arm | Impossible. `plan_series_prune` puts each on-disk season in exactly one of `prunable`/`protected`, and conflicts key on `pruned_season ∈ prunable`, so the protected-first loop can never be the tiebreaker. |
+| diff | `kept_watchers == 0` is mishandled by the `is not None` spelling, or a twin uses a truthiness test | `0` correctly reads as "comparison made", and every reader spells it `is None` — `PruneConflict.message`, `_detect_conflicts`, and two tests. Grep finds no truthiness test on the field anywhere. |
+| diff | The new `test_verdict_agreement` case and `CONFLICT_COMPARISON_REFUSED` duplicate the pre-existing plumbing tests | They discriminate where the old ones cannot: the pre-existing fixtures' details *start with* "could not check", so they pass under the retired wording inference, while the new ones carry the real message, which does not. `LEGACY_CONFLICT_NO_FLAG` additionally discriminates an "absent means defer" thaw. |
+| diff | `snapshot._explain` can miss a blocked result | `Evaluation.could_not_be_checked` is exactly `[r for r in results if r.blocked]`. |
+| diff | A stringified or numeric stored flag releases a file | `"true"`, `"false"`, `1`, `"1"`, `[]`, `{}` all fail `is True` and hold. Only relaxing the strictness would — which nothing pinned, so that became a finding rather than a refutation. |
+| docs | The new STATUS.md row is too long for the file | The two rows around it are longer and the table already carries paragraph-length rows. Rule 21 binds operator-facing strings, not this file. |
+
+**The generalizable lesson, and why it is the one worth keeping: the fix was correct and its
+*reach* was the defect.** Every finding above tier 4 is the same shape — the typed flag was
+right, and one of its boundaries never learned about it. The codec froze four fields out of
+five, the schema served two out of three, and the frontend was left running the retired test
+against the one message it never matched. None of the three is visible from the diff, because the
+diff is where the flag was *added*; they are visible only by asking "who else answered this
+question, and can they still?" That is now rule 142.
+
+**A second note, on a lane's counterargument being locally sound and globally wrong.** The
+`safety` and `diff` lanes both found the first-match conflict masking and split on severity:
+`safety` argued the release was defensible, since reading the unresolved kept season could only
+ever *remove* a conflict and never add a keep argument, so no evidence was being substituted for.
+That is true, and it is not the test. The branch's own rule is that a comparison Reaper refused
+to make holds a hand reap, and the operator was shown only the comparison that *had* been made —
+so they could not have decided about the one that had not. Driven on shipped defaults, both
+prunable seasons of a five-season show released. **When a lane argues an outcome is defensible on
+the merits while the change's own stated rule says it holds, the rule wins**; the prime directive
+does not have a "but it would have come out the same way" branch.
+
+**A third, procedural, and cheap to avoid.** Two mutation probes in this run were restored with
+`git checkout -- <path>` while the same file also held the fix under test, which silently reverted
+the fix and produced a red suite that looked like the finding being wrong. Copy the file aside and
+copy it back; `git checkout` cannot tell your edit from your mutation.
