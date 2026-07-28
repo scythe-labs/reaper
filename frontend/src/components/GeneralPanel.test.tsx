@@ -85,16 +85,33 @@ const saveChanges = () => screen.getByRole("button", { name: "Save changes" });
 const bar = () => document.querySelector(".savebar");
 
 describe("the save bar", () => {
+  it("never reports a draft for the frame before the boxes are seeded", async () => {
+    // #139. The bar flashing was the visible half; this is the half that mattered. `hasDrafts`
+    // is reported up to `Settings` through `onDirtyChange`, so for that one commit the panel
+    // told the shell it was holding four unsaved fields before anything had been typed --
+    // exactly the claim a section-switch confirm is built on (rule 146).
+    //
+    // Deterministic despite being one frame: the report goes through an effect, so the spy
+    // records the call whether or not the frame was ever painted. Asserting on the RENDERED
+    // bar could only ever catch it by luck.
+    const { onDirtyChange } = renderReporting();
+    await waitFor(() =>
+      expect(screen.getByLabelText("Application name")).toHaveValue(STORED.application_name),
+    );
+
+    expect(onDirtyChange).not.toHaveBeenCalledWith(true);
+  });
+
   it("is absent until something is unsaved, and names what is", async () => {
     const person = renderPanel();
     const name = await screen.findByLabelText("Application name");
     // Rule 137, one turn earlier than usual: the box is not disabled here, it is UNSEEDED. The
     // form renders on the first data-bearing pass and the stored row is copied into local state
-    // by an effect after it, so for that one flush every field still holds its initial value,
-    // differs from `data`, and the bar is correctly on screen naming four of them. Finding the
-    // box is not the same as the box holding what the server sent, so wait for the seed rather
-    // than for the markup -- this asserted straight after the find and failed about one run in
-    // three under load, reading as a bar that appears with nothing typed.
+    // by an effect after it, so finding the box is not the same as the box holding what the
+    // server sent. This asserted straight after the find and failed about one run in three
+    // under load, reading as a bar that appears with nothing typed -- which is exactly what it
+    // was, and #139 fixed the panel rather than the clock. The wait stays because it is the
+    // right way to reach a seeded box, not because the bar needs time to go away.
     await waitFor(() => expect(name).toHaveValue(STORED.application_name));
     expect(bar()).toBeNull();
 

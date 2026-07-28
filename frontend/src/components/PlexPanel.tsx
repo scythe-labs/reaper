@@ -88,7 +88,19 @@ export function PlexPanel({
   const [webUrl, setWebUrl] = useState("");
   const [webUrlError, setWebUrlError] = useState<string | null>(null);
   const savedWebUrl = data?.web_url ?? "";
-  useEffect(() => setWebUrl(savedWebUrl), [savedWebUrl]);
+  // Which stored value the box currently holds a copy of. The effect below runs after the
+  // commit, so the first pass where `data` exists paints an empty box against a stored
+  // address and the dirty check reads a draft nobody typed -- the same one-frame report
+  // `GeneralPanel` was making, and it reaches `Settings` through `onDirtyChange` the same way
+  // (#139, rules 72 and 146). This panel re-seeds on EVERY change of the stored value rather
+  // than once per load, so a bare "have we seeded" flag would not cover it: a save or another
+  // tab moving the address opens the same window again. Asking which value the box was seeded
+  // from closes both.
+  const [seededFrom, setSeededFrom] = useState(savedWebUrl);
+  useEffect(() => {
+    setWebUrl(savedWebUrl);
+    setSeededFrom(savedWebUrl);
+  }, [savedWebUrl]);
 
   // The certificate check. Before linking it rides along with the link polls (so a
   // self-signed server can be reached at all); once linked it edits the stored server
@@ -96,9 +108,11 @@ export function PlexPanel({
   const [verifyCert, setVerifyCert] = useState(true);
   const verifyRef = useRef(true);
   const savedVerify = data?.verify_tls ?? true;
+  const [verifySeededFrom, setVerifySeededFrom] = useState(savedVerify);
   useEffect(() => {
     setVerifyCert(savedVerify);
     verifyRef.current = savedVerify;
+    setVerifySeededFrom(savedVerify);
   }, [savedVerify]);
 
   const saveWebUrl = useMutation({
@@ -347,7 +361,7 @@ export function PlexPanel({
   // to it. A guard that keeps the first claim after the second has gone false is a trap: it
   // demands a discard for a box that is no longer on screen, and the only exit it leaves is the
   // destructive button.
-  const webUrlDirty = webUrl.trim() !== savedWebUrl;
+  const webUrlDirty = seededFrom === savedWebUrl && webUrl.trim() !== savedWebUrl;
   // The same test that renders this row's Save (below), so the bar and the button agree.
   //
   // The manual row is behind `linked && manualOpen`, so both belong in its claim: unlinking
@@ -365,7 +379,7 @@ export function PlexPanel({
   // sign-in probes a self-signed server with checking back on, failing with nothing on screen to
   // explain it. Its row renders unconditionally, so the reachability half of the claim holds
   // wherever this form does. Once linked the switch is not a draft at all: it is already saved.
-  const certDirty = !linked && verifyCert !== savedVerify;
+  const certDirty = !linked && verifySeededFrom === savedVerify && verifyCert !== savedVerify;
   const hasDrafts = webUrlDirty || manualDirty || certDirty;
   useEffect(() => {
     onDirtyChange?.(hasDrafts);

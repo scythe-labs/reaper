@@ -168,10 +168,19 @@ export function GeneralPanel({
 
   // Seed the editable fields from the server once per load (and re-seed after saves,
   // which return the canonical stored values -- rule 39).
-  const seeded = useRef(false);
+  //
+  // State rather than a ref, because the RENDER has to read it. An effect runs after the
+  // commit, so the first pass where `general.data` exists paints with every box still on its
+  // initial value ("", the accent default, spare 0) while `data` already holds the stored
+  // ones -- and the dirty checks below then name four fields nobody typed in. `useEffect`
+  // runs after paint, so that frame reaches the screen: the save bar appeared on its own on
+  // every load of this panel and cleared itself a commit later. A ref would fix nothing here,
+  // since mutating one does not re-render and the value read during that first pass would
+  // still be the stale one.
+  const [seeded, setSeeded] = useState(false);
   useEffect(() => {
-    if (!general.data || seeded.current) return;
-    seeded.current = true;
+    if (!general.data || seeded) return;
+    setSeeded(true);
     setName(general.data.application_name);
     setUrl(general.data.application_url ?? "");
     setTz(general.data.timezone);
@@ -179,7 +188,7 @@ export function GeneralPanel({
     setAccent(general.data.accent_color);
     setSpareForever(general.data.default_spare_days === 0);
     if (general.data.default_spare_days > 0) setSpareDays(general.data.default_spare_days);
-  }, [general.data]);
+  }, [general.data, seeded]);
 
   const save = useMutation({
     mutationFn: api.saveGeneral,
@@ -269,23 +278,33 @@ export function GeneralPanel({
   // narrows to non-null for the whole render beneath it.
   const data = general.data;
 
-  const nameDirty = !!data && name.trim() !== data.application_name;
-  const urlDirty = !!data && url.trim() !== (data.application_url ?? "");
-  const tzDirty = !!data && tz !== data.timezone;
+  // `seeded`, not just `data`: between the commit that first has `data` and the effect above
+  // that copies it into these boxes, every one of them still holds its initial value and so
+  // differs from the stored one. Comparing there reports a draft the operator never typed
+  // (#139). The same one-frame report reached `Settings` through `onDirtyChange`, which is
+  // what makes this two claims rather than a cosmetic flash (rule 146). `PlexPanel` carries
+  // the same defect on its two mirrored fields and is fixed beside this one (rule 72), by a
+  // different guard: it re-seeds on every change of the stored value where this seeds once,
+  // so it has to ask which value it was seeded FROM rather than merely whether it has been.
+  const ready = !!data && seeded;
+
+  const nameDirty = ready && name.trim() !== data.application_name;
+  const urlDirty = ready && url.trim() !== (data.application_url ?? "");
+  const tzDirty = ready && tz !== data.timezone;
   const accentValid = isHexColor(accent);
-  const accentDirty = !!data && accent.trim().toLowerCase() !== data.accent_color.toLowerCase();
+  const accentDirty = ready && accent.trim().toLowerCase() !== data.accent_color.toLowerCase();
   const proxyList = proxies
     .split(",")
     .map((p) => p.trim())
     .filter(Boolean);
-  const proxiesDirty = !!data && proxyList.join(", ") !== data.trusted_proxies.join(", ");
+  const proxiesDirty = ready && proxyList.join(", ") !== data.trusted_proxies.join(", ");
   // The two halves of the draft fold back into the one stored number before anything compares
   // them, because Forever IS 0 in that field. Pressing Forever therefore reads as a change to
   // the same field the box edits, and one Discard puts both back. It used to write 0 on the
   // press while the bar, gated on the stored value, unmounted and took its Discard with it --
   // so the number the bar had just called unsaved went in on the next press, without a Save.
   const spareValue = spareForever ? 0 : spareDays;
-  const spareDirty = !!data && spareValue !== data.default_spare_days;
+  const spareDirty = ready && spareValue !== data.default_spare_days;
 
   // One save for the panel (rule 43). Each of these rows used to carry its own Save, rendered
   // inside the right-aligned control box, so the first keystroke made the button appear and

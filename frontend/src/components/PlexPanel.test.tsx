@@ -380,6 +380,26 @@ describe("what leaving this panel would lose", () => {
     expect(screen.getByPlaceholderText("https://app.plex.tv")).toHaveValue("https://app.plex.tv");
   });
 
+  it("never reports a draft for the frame before its boxes are seeded", async () => {
+    // #139's twin on this panel (rule 72). Same defect, different guard: this panel re-seeds on
+    // every change of the stored value where `GeneralPanel` seeds once, so it asks which value
+    // its boxes were seeded FROM rather than merely whether they have been -- a save or another
+    // tab moving the address opens the same window again, and a "have we seeded" flag would
+    // miss that second one entirely.
+    //
+    // The web address is the reachable one: the fixture stores a non-empty address, so the box
+    // starts "" against it. Deterministic because the report is an effect, so the spy records
+    // the call whether or not the frame was painted.
+    const dirty = vi.fn();
+    renderPanel([], dirty);
+
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText("https://app.plex.tv")).toHaveValue("https://app.plex.tv"),
+    );
+
+    expect(dirty).not.toHaveBeenCalledWith(true);
+  });
+
   it("reports nothing when the manual address row is only opened", async () => {
     // The row is filled by parsing the stored address, so the two are not the same text and
     // comparing them directly called an untouched row an edit (rule 39). This address is one the
@@ -394,11 +414,11 @@ describe("what leaving this panel would lose", () => {
     renderPanel([], dirty);
 
     // Settle the mount before watching anything, so what follows is only what OPENING the row
-    // reported. The first data-bearing render reports one frame of `true` on its own -- the
-    // web-address box is still "" while the saved value has arrived -- and the seeding effect
-    // ends it in the same flush. Wait for the box to hold the saved value, which IS that frame
-    // ending; waiting only for a `false` call is satisfied by the loading state's own report,
-    // one turn too early, and then clears the mock right before the flash lands.
+    // reported. Waiting only for a `false` call is satisfied by the loading state's own report,
+    // one turn too early. The mount used to report one frame of `true` on its own here, the
+    // web-address box still "" while the saved value had arrived; that was #139 and the panel
+    // no longer does it, which the test above pins. The wait stays because a settled mount is
+    // still the right starting point for a test about opening the row.
     const select = await usableConnectionSelect();
     await waitFor(() =>
       expect(screen.getByPlaceholderText("https://app.plex.tv")).toHaveValue("https://app.plex.tv"),
