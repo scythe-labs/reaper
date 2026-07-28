@@ -846,3 +846,36 @@ FROM, and a guard is only as good as the failure its author pictured. **So mutat
 guard protects, in the direction the author did not picture, before believing the guard.** Both
 gaps found this run were found that way and neither was visible to reading: the header value, and
 a denylist entry keeping its phrase while losing its paths.
+
+## Refuted at `48f1eaf` (2026-07-28, reviewing the proxy-headers branch, PR #126 / #125)
+
+One lane fired (`diff`) — `src/reaper/auth/{cookie,proxy}.py` match neither the safety file
+list nor `api/*.py`. Four candidates survived and were fixed in `ed71042`; the rest died here.
+
+**The `is_secure_request` rewrite was checked by executing both bodies over the full truth
+table, not by reading them.** All eight `scheme=http` cells are identical old vs new; every
+change is confined to `scheme=https`, which **no shipped launch can produce** — there is no
+`--ssl-keyfile` anywhere in the tree, and `--no-proxy-headers` removes the only middleware that
+rewrites the scheme. That single fact refutes three candidates at once, and it is the thing to
+re-derive first if a TLS-terminating launch is ever added.
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| auth-cookie | Untrusted peer + genuine TLS + `X-Forwarded-Proto: https` returns False where it returned True, so an attacker-written header downgrades a `Secure`/`__Host-` cookie on an end-to-end-HTTPS install | Needs an operator-custom TLS launch behind a header-adding proxy with trust off, and reaches only the sender: no `CORSMiddleware` is registered (`main.py:587` adds `AuthGuard` alone), so a cross-origin page cannot attach the header past preflight, and the three call sites (`api/auth.py:330, 384, 451`) all require a password, a recovery token, or a completed Plex PIN. The refusal also earns its keep — it is what neutralizes the cookie half of the laundered scheme. Remedy is the one the docstring already gives: list the proxy. |
+| auth-cookie | A trusted proxy claiming `http` (or garbage) over an HTTPS transport now returns False, losing the `Secure` flag | Where the claim is truthful this IS the fix: the old True handed a `__Host-` cookie to a browser on plain HTTP, which drops it — a sign-in that silently does nothing. Where it is a lie, that same misconfiguration already returned False in the ordinary `scheme=http` shape, so nothing regressed. |
+| auth-cookie | The cookie NAME follows `is_secure_request`, so an answer that flips between requests strands or duplicates a session | `is_secure_request` is consulted only at the three sign-in sites, never on a per-request refresh, so the name can change only when a fresh token is issued — and that write always deletes the other name. `_delete` takes `Secure` from the name, `read_session_tokens` returns both, `clear_session_cookie` ignores the request. Holds under every new cell. |
+| auth-cookie | `Headers.get` returns the first `X-Forwarded-Proto`, so a client-sent value outranks a trusted proxy that APPENDS rather than replaces | No trigger: nginx, Traefik, HAProxy, Envoy, ALB and Cloudflare all set/overwrite. Byte-identical to the old body — the extraction changed nothing. |
+| copy | `.env.example` and `Settings.tsx:708` ("forwarded headers from anywhere else are always ignored") are now stale | Inverted. Both sentences were false BEFORE this branch, because uvicorn rewrote `scope["client"]` first; the branch makes them true. Same for `Settings.tsx:674` on HTTPS detection. |
+| copy | `main.py:509`'s OpenAPI note that an HTTPS install names the cookie `__Host-…` diverges under the new logic | Approximate both before and after: the newly-diverging shape (unlisted proxy that re-encrypts AND sends the header) was already divergent for the far commoner TLS-terminating unlisted proxy. No truth value this branch changed. |
+| copy | `cookie.py:52`'s "every caller asks it first" is false, since `_forwarded_proto` is called at :90 before `peer_is_trusted_proxy` at :91 | The sentence is about decision order, not source order, and it holds: on every path trust is evaluated before the claim can produce a True, and the one pre-trust use of the value returns False. Textually loose, no demonstrable cost. |
+| docs | `docs/STATUS.md`'s added row is appended beside a line the branch made wrong | Grepped the whole file for `cookie|lockout|rate limit|__Host|forwarded|secure|S-7`; line 113 is the only hit. Genuinely new fact, nothing stale left in place. |
+| infra | Launches beyond the five known ones exist and were missed | Complete inventory confirmed: `docker-compose.yml` sets no `command:`, `docker-entrypoint.sh` is `exec "$@"`, no Makefile/justfile/Procfile/fly.toml/systemd unit/helm chart exists, `.gitea/workflows/*` never boot the app, and there is no programmatic `uvicorn.run(`/`Server(`/`Config(` in `src/` or `scripts/`. |
+
+**The lesson is the previous entry's, one turn further on, and it caught a real launch this
+time.** That pass ended: mutate the thing the guard protects, in the direction the author did
+not picture. This branch's author DID mutate it — stripped the flag from the `Dockerfile`,
+watched the test go red, and shipped a guard that could not see one launch in five. Mutation
+can only ever break a member the matcher already collected, so it proves the assertion fires
+and is silent about the population. **Count what a scanner collects and reconcile the number
+against the members you believe exist**; that reconciliation, not the red run, is what found
+`.claude/launch.json`. Now rule 145.
