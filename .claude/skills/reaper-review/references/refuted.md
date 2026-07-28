@@ -624,3 +624,67 @@ lane did hit a real-looking failure (`GET /api/logs` tagged `['Logs','Review']`)
 lane's live probe rather than the branch, and correctly said so instead of reporting it — a shared
 tree makes a red suite ambiguous, so a lane that sees one should re-check against `git stash`-free
 pristine copies before believing it.
+
+## Refuted at `2dba0e4` (2026-07-28, reviewing the panel's three-state conflict note, PR #107)
+
+Three lanes fired by path (`safety` on `services/snapshot.py`, `seam` on `api/{routes,schemas}.py`
++ `api.ts`, `diff` on the rest). The commit closes #86 by shipping `GateResult.defers_to_owner`
+across the wire so `WhyPanel` can branch on the typed flag instead of the retired wording test.
+
+**The convergence signal fired at full strength: all THREE lanes independently drove the same top
+finding** — the new fixture builds the pre-flag generation by *omitting* the key, while the server
+always sends `"defers_to_owner": null`, so the only legacy shape the panel can ever receive was
+asserted nowhere in either tree. Each lane reached it by a different route (seam by dumping literal
+response bytes, diff through `_explanation_out(...).model_dump_json()`, safety by mutating
+`conflictNote` to the natural `=== undefined` refactor and watching all 35 tests pass with `tsc`
+clean). Fixed in `1fef523`; the mutation now fails on exactly the right test.
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| safety / seam / diff | The predicate widening from `.some(gate && !prefix)` to `.find(gate)` pulls new rows onto "Needs a look" | It widens nothing reachable. Every `season_progression` blocked detail a producer can emit — all three `PruneConflict.message` shapes and `PROGRESS_UNESTABLISHABLE_REASON` — fails `startsWith("could not check")`, so both predicates select the identical set. **Mutation: restoring the old prefix test inside `keepRuleConflict` passes all 35 WhyPanel tests.** Correctly untested rather than a gap — a discriminating fixture would be a payload no producer emits (rule 119). |
+| safety / seam / diff | The docstring's "only the conflict arm can get here" is wrong, and PR #97's double-listing of the blanket hold breaks it | PR #97 is what makes it *hold*. Driven end to end: `guard_result` on `ProtectedSeason(unestablishable=True)` returns PROTECT + `blocked=True`; `protectors` selects on `fired` and `could_not_be_checked` on `blocked`, so the row lands in BOTH lists; `_verdict` → `decide_verdict(protected=True)` → `"protect"`; `protections_fired` is therefore non-empty and `verdictLook`'s Sanctuary branch returns before the conflict branch. jsdom-verified: renders "Sanctuary", never "Needs a look". |
+| seam | The three-state collapses to two somewhere on the wire — the crux of the whole PR | It survives. Literal response bytes measured for all three generations: `true`, `false`, `null`. Repo-wide grep for `exclude_none` / `exclude_unset` / `exclude_defaults` / `response_model_exclude` across `src/` and `frontend/src/`: **zero hits**. No `model_config`/`ConfigDict` in `api/schemas.py`. The served OpenAPI publishes `anyOf: [boolean, null]`. |
+| seam | More than one `season_progression` row can sit in `protections_unknown`, so `.find` picks arbitrarily | Exactly one, always at index 0. `SEASON_PROGRESSION` is absent from `scan_runner.GATE_TYPES`, so `build_gates` can never produce it; the sole producer is `extra_results=(judgment.guard_result,)` (`snapshot.py:1012`), a 1-tuple merged **ahead** of `evaluate_all` (`snapshot.py:1174`), and `could_not_be_checked` preserves list order. |
+| seam | `undefined` is reachable in the browser, so the `?` in `api.ts` is load-bearing | It is not. The server always emits the key (pydantic default `None`, `exclude_unset=False`), and `_explanation_out`'s degraded fallback emits empty protection lists. Defensive only — which is why a fixture resting on it pinned nothing, the finding above. |
+| safety | The new pydantic field moves a hash, an interlock, or a stored shape | Nothing moves. The stored JSON is unchanged by this diff — `_explain` already wrote the key. `planner.manifest_hash` is over `(media_key, size_bytes)`; `policy_hash`/`scoring_hash`/`evidence_hash` are over `PolicyBody`. A `hashlib`/`sha256` sweep of `src/reaper/` finds no candidate- or explanation-derived digest. `test_openapi_tags.py` checks tags, not schema fields. |
+| safety | Rule 72: a frontend twin still runs the wording test on the same row | None left. `StatusChip` renders `chip.text`/`chip.why` verbatim from the server; `ReviewQueue.tsx` has no `protections_unknown` reader. Repo-wide grep for `startsWith("could not check")` in `frontend/src/` returns only the WhyPanel docstring and `LeftForYou`'s `/^could not check (.+?): (.+)$/`, a display parse rather than a discriminator. |
+| safety | `conflictNote`'s "Reap it to remove it" offer is broken in some arm | Honored in all three. The two things that still hold a stored-row reap are a bad Plex match and an unreadable protections entry, and a bad match is unreachable together with a conflict: an unmatched or ambiguous show binds no `show_rating_key`, `seasons_in_plex` is empty, every `watchers_by_season[n]` is `None`, and `_detect_conflicts` `continue`s on `pruned_watchers is None` before raising anything. |
+| safety | `_explain` could stop writing the key when `False` and nothing would notice | Pinned. **Mutation:** `**({"defers_to_owner": True} if r.defers_to_owner else {})` fails `test_the_writer_and_the_chip_are_connected_by_a_real_frozen_row`. |
+| safety | The two new `conflictNote` arms are decorative | Both mutation-proof. Making absent read as the comparison fails "claims neither shape for a row frozen before the flag shipped"; deleting the `false` arm fails "never asserts a comparison its own reason block denies (#86)". |
+| safety / seam | `_chip`'s first-match loop and the panel's `.find` can pick different entries | They cannot in production: the guard's result is merged ahead of `evaluate_all`, so `season_progression` is first, and every other blocked producer in `src/` (`gates._blocked`, `ServerPopularityGate`, `fields.evaluate`, `CustomProtectGate`) emits a detail starting with "could not check", which `_chip` skips. |
+| diff | Rule 21 / the glance bar on the three new strings | 138 / 122 / 117 chars; both **new** strings are shorter than the pre-existing 138-char one they join, which is byte-unchanged. No em dashes, no ids, no internal vocabulary. |
+| diff | "Reaper couldn't check who watched these seasons" is wrong for the short-mirror shape, which is a different failure from an unreadable count | Declined. It is byte-identical to `_chip`'s shipped `why` for the same rows since `a95a9a7`, reviewed in both consumer surfaces at `3b499f5`; reusing it verbatim is what makes card and panel agree (rule 72). It errs by understating what Reaper managed to read, and the producer's precise sentence still prints verbatim in `LeftForYou` below. Coarse in both surfaces and pre-dating this PR. |
+| diff | The third string ("Reaper couldn't settle this one on its own") is vacuous | Declined — it is the active-voice form of the chip's existing absent-arm `why` ("a check on it couldn't be settled"), and the only claim a keyless row supports. |
+| diff | The deleted `KNOWN WRONG (#86)` test lost coverage | No. Both its assertions survive the rewrite: the false headline is inverted into a `queryByText(...).not.toBeInTheDocument()`, and `/Reaper cannot tell whether Season 1/i` on the reason block is asserted verbatim. |
+| diff | Rule 64 leftovers of `isKeepRuleConflict` in code | None in `frontend/`, `src/` or `tests/`. The only survivors were prose, which became a finding. |
+| seam | Every other consumer of `GateOutcomeOut` / `Explanation` / `api.ts`'s `GateOutcome` breaks on an added optional field | `Explanation` is constructed at exactly one site (`routes._explanation_out`) and served by one route. Frontend: `GateOutcome` is read by `ProtectionBlock`/`LeftForYou` (`.gate`, `.detail`) and `keepRuleConflict` — no `Record<>` keyed on it, no exhaustive destructure, no snapshot test. `runs.py`, the simulate route and backup/restore never touch an `Explanation`. |
+| seam | `facts_codec._result_from_dict`'s `d.get(...) is True` collapses three states to two | Real, but it is the simulate/backtest thaw, documented, never persisted back to `explanation_json`, and resolves to the claim-less side. Not on this seam. |
+
+**A lane divergence worth recording, because both readings were defensible.** `diff` refuted
+"`_explain` writes the key on every entry is false" as **true** (it writes it unconditionally for
+every `could_not_be_checked` entry); `safety` reported it as an overstatement (the same
+`GateOutcomeOut` types `protections_fired` and `protections_checked`, where the key is never
+written). They had each read "every entry" against a different noun — every entry *`_explain`
+writes into that list*, versus every entry *of this model*. The sentence was ambiguous rather than
+false, which is its own defect on a wire schema, so it was narrowed in `be37998` rather than
+adjudicated.
+
+### A standing refutation whose reasoning no longer holds
+
+**The cache-skew candidate, refuted at `a191086` and again at `3b499f5`, was refuted on grounds
+that are false for the why panel.** Both entries say chip and note "are computed from the same
+decoded dict in the same response, from one `_decode_explanation`", so no second key exists to
+drift. That is true of the chip and the reap decision, which is what those passes were looking at.
+It is **not** true of the chip and the *panel*: the chip arrives on `["candidates", …]` from `GET
+/api/candidates`, the panel's note on `["candidate", id]` from `GET /api/candidates/{id}` — two
+keys, two requests. `candidate_detail` additionally does `session.get(Candidate, candidate_id)`
+with no snapshot filter, and nothing in `src/` ever deletes a `Candidate` row. Driven across two
+snapshots of one title: the queue list serves the new row's chip while `GET /api/candidates/1`
+returns 200 with the old row's flag, and the two sentences disagree.
+
+**The verdict does not change — the candidate stays refuted for this PR**, which strictly narrows
+the window (before it, the panel asserted the comparison for all three shapes). It is rule 79's
+named shape and pre-existing. But a future pass must not reuse the "one response, one decode"
+argument to kill it, because for the panel that argument is simply wrong. This is the third time
+this file has recorded a refutation resting on a true statement that did not support its
+conclusion.
