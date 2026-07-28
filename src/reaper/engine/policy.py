@@ -956,13 +956,21 @@ def recover_rating_rules(raw: object) -> dict[str, Any] | None:
     return None
 
 
-def _blocks_on_popularity_window(cond: ConditionSpec) -> bool:
-    """Would a shortfall on the popularity window block this rule on EVERY item?
+def _protect_blocks_on_reach(cond: ConditionSpec) -> ReachSpan | None:
+    """Which span's shortfall would block this rule on EVERY item, or ``None`` for neither.
 
     Two tests, and the second is the one that is easy to miss. The registry owns the span
     (``FieldSpec.reach_span``), so a field that gains or loses that bound moves this with it
-    rather than leaving a second list to drift (rule 103). An unknown key is False: a rule
+    rather than leaving a second list to drift (rule 103). An unknown key is ``None``: a rule
     that no longer validates cannot be blocking anything.
+
+    It answers with the SPAN rather than a yes for one of them, because the two spans need
+    different world-facts to decide whether the shortfall is live and the caller has to tell
+    them apart (rule 140). The operator test below is span-agnostic -- ``_survives_more_history``
+    reads only the op -- so scoping this to the popularity window was never the registry
+    speaking, just the one lane somebody had reached for. ``watchers_all_time`` carries the
+    other span and is PROTECT-only, so it was the one field this could not see and the only
+    lane with no warning at all.
 
     But the span alone does not decide it -- ``fields._survives_more_history`` reads the
     OPERATOR, because a truncated watcher count is a lower bound and only two of the four
@@ -975,7 +983,9 @@ def _blocks_on_popularity_window(cond: ConditionSpec) -> bool:
     the items that ARE blocked (rules 7/24, 144).
     """
     spec = BY_KEY.get(cond.field)
-    return spec is not None and spec.reach_span is ReachSpan.POPULARITY_WINDOW and cond.op is Op.GTE
+    if spec is None or spec.reach_span is None or cond.op is not Op.GTE:
+        return None
+    return spec.reach_span
 
 
 def inspect(
@@ -1104,15 +1114,21 @@ def inspect(
     # cannot empty the list: ``evaluate_custom`` withholds its pressure and keeps its weight
     # in the denominator, which lowers scores without blocking anything.
     #
-    # **The lean lane is a gap, not an exclusion, and this comment used to deny it.** A
-    # graded keep on the same field takes its FULL ``max_discount`` on a shortfall, for every
-    # item (``signals.evaluate_keep``), and ``score()`` floors at zero under a bounded base --
-    # so a keep worth more than ``MAX_SCORE - condemn_at`` empties the list just as provably
-    # as a blocked protect does, and nothing warns. The ``graded_keeps`` warning below is not
-    # that warning: it fires on ``total_keep >= condemn_at``, a much higher bar, and says
-    # nothing about the mirror. ``PolicyRuleEditors``' ``leanFields`` is not gate-filtered
-    # either, so the field is offered as a lean whichever way the switch is set. Tracked
-    # separately; do not read this branch as ruling that lane safe (rules 7/24, 140).
+    # **The lean lane is warned about too now, further down**, and this comment carried it as
+    # a known gap for a while: a graded keep takes its FULL ``max_discount`` on a shortfall,
+    # for every item (``signals.evaluate_keep``), and ``score()`` floors at zero under a
+    # bounded base, so a keep worth more than ``MAX_SCORE - condemn_at`` empties the list just
+    # as provably as a blocked protect does. The ``graded_keeps`` warning at the end of this
+    # function is still not that warning: it fires on ``total_keep >= condemn_at``, a much
+    # higher bar, and says nothing about the mirror. ``PolicyRuleEditors``' ``leanFields`` is
+    # not gate-filtered, so the field is offered as a lean whichever way the switch is set,
+    # which is why the lean check does not read the gate either (rules 7/24, 140).
+    #
+    # This branch remains about the PROTECT lane only. The three lanes and what each does under
+    # a shortfall, since the asymmetry is the whole reason there are three checks: a protect
+    # blocks and abstains, a lean takes its full discount, and the condemn lane genuinely
+    # cannot empty the list -- ``evaluate_custom`` withholds its pressure and keeps its weight
+    # in the denominator, which lowers scores without blocking anything.
     #
     # ``warn``, not ``danger``: the outcome is that Reaper deletes nothing, which is the
     # keep direction. Every ``danger`` here marks a config that removes MORE.
@@ -1135,7 +1151,10 @@ def inspect(
     reach_clears_dormancy = dormancy_floor is None or (
         history_reach_days is not None and history_reach_days >= dormancy_floor.threshold
     )
-    owner_protect_on_window = any(_blocks_on_popularity_window(c) for c in body.protect_conditions)
+    protect_spans = {
+        span for c in body.protect_conditions if (span := _protect_blocks_on_reach(c)) is not None
+    }
+    owner_protect_on_window = ReachSpan.POPULARITY_WINDOW in protect_spans
     short: str | None = None
     if (popularity is not None or owner_protect_on_window) and (
         history_reach_days is not None and reach_clears_dormancy
@@ -1186,6 +1205,89 @@ def inspect(
                 "remove that rule."
             )
         warnings.append(PolicyWarning(field=field, severity="warn", message=message))
+
+    # The OTHER span, and the reader that had no warning at all. ``watchers_all_time`` is
+    # PROTECT-only and carries ``ITEM_LIFETIME``, so ``fields.evaluate`` blocks it through
+    # ``gates.lifetime_shortfall`` for every item the mirror does not reach back to the arrival
+    # of -- and under ``gte`` a blocked protect abstains while a matched one keeps, so not one
+    # of those items can be condemned.
+    #
+    # What is NOT claimed here is the whole library. The span this one needs is the ITEM's age,
+    # not a policy setting, so the affected set is "everything added before the history starts"
+    # and ``inspect`` cannot size it: it is handed one reach, never a list of arrival dates. So
+    # the message names the set instead of asserting an empty list, which is the difference
+    # between this and the window branch above. Saying "nothing will be flagged" would be false
+    # in the reassuring direction for a young library the mirror covers outright (rules 7/24).
+    #
+    # The dormancy guard still applies for the same reason it does above -- under the floor
+    # every item is kept on age alone, so this rule is deciding nothing and its remedy would
+    # move no verdict.
+    if (
+        ReachSpan.ITEM_LIFETIME in protect_spans
+        and history_reach_days is not None
+        and reach_clears_dormancy
+    ):
+        warnings.append(
+            PolicyWarning(
+                field="protect_conditions",
+                severity="warn",
+                message=(
+                    "Titles added before your watch history starts won't be flagged for "
+                    "removal. Your keep rule counts everyone who has ever watched a title, and "
+                    "Reaper can't count plays from before your history begins, so it holds "
+                    "those titles instead of guessing. Wait for it to build up, or remove that "
+                    "rule."
+                ),
+            )
+        )
+
+    # The lean lane, which the comment above used to name as a known gap. A graded keep takes
+    # its FULL ``max_discount`` on a shortfall, on every item it reaches, with no
+    # ``_survives_more_history`` test to earn an outcome back (``signals.evaluate_keep``) -- and
+    # ``score()`` is ``max(0, base - keep_discount)`` over a base bounded by ``MAX_SCORE``. So a
+    # single keep worth more than the headroom holds every affected item under the threshold as
+    # provably as a blocked protect does, and it does it on a lane the operator was told was
+    # safe.
+    #
+    # The existing ``graded_keeps`` warning is not this one and does not cover it: it fires on
+    # the keeps TOTALLING at least ``condemn_at``, a much higher bar (70 against 31 on shipped
+    # values), and says nothing about the mirror. A keep at 40 sits in that dead zone.
+    #
+    # Anchored on ``graded_keeps`` beside the rule doing it, and it can name the rule, which
+    # the protect lanes above cannot: a ``GradedKeepSpec`` carries a name the operator typed.
+    headroom = MAX_SCORE - body.condemn_at
+    for keep in body.graded_keeps:
+        keep_spec = BY_KEY.get(keep.field)
+        if keep_spec is None or keep_spec.reach_span is None or keep.max_discount <= headroom:
+            continue
+        if history_reach_days is None or not reach_clears_dormancy:
+            continue
+        if keep_spec.reach_span is ReachSpan.POPULARITY_WINDOW:
+            lean_short = history_shortfall(
+                Known(value=history_reach_days, source="tautulli"), float(window_days)
+            )
+            if lean_short is None:
+                continue
+            reach_clause = (
+                f"Reaper can't say who watched a title in the last "
+                f"{humanize_window(window_days)}, and {lean_short}"
+            )
+            scope = "Nothing will be flagged for removal."
+        else:
+            reach_clause = "Reaper can't count plays from before your history begins"
+            scope = "Titles added before your watch history starts won't be flagged for removal."
+        warnings.append(
+            PolicyWarning(
+                field="graded_keeps",
+                severity="warn",
+                message=(
+                    f'{scope} {reach_clause}, so your keep rule "{keep.name}" takes all '
+                    f"{keep.max_discount} of its points off every one of them. That alone is "
+                    f"enough to hold them under your remove threshold of {body.condemn_at}. "
+                    f"Wait for it to build up, or set that rule to {headroom} points or less."
+                ),
+            )
+        )
 
     # Only where the shortfall is NOT already speaking for this control: it carries the pair
     # itself in that case, and stacking both told the operator to raise and to lower the same

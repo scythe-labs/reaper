@@ -37,6 +37,7 @@ from reaper.engine.policy import (
     SCORER_VERSION,
     ConditionSpec,
     GateSetting,
+    GradedKeepSpec,
     PolicyBody,
     PolicyWarning,
     ProfileSettings,
@@ -681,7 +682,7 @@ class TestAPopularityWindowLongerThanTheWatchHistory:
         365-day fallback, which no control on the page shows.
 
         ``op`` because the operator decides whether the block is total: the field alone
-        does not settle it (``_blocks_on_popularity_window``).
+        does not settle it (``_protect_blocks_on_reach``).
         """
         base = {"gate": GateId.SERVER_POPULARITY, "window_days": self.WINDOW, "threshold": 2}
         return _policy(
@@ -1287,3 +1288,193 @@ class TestRestoringALostRatingBar:
         """``services.profiles.active_policy`` must not raise on anything a hand-edited row
         can hold: it keeps the one page that fixes a broken policy reachable."""
         assert recover_rating_rules(raw) is None
+
+
+class TestTheOtherReachShortfallLanes:
+    """The two readers that could empty the list with nothing on the page saying why.
+
+    ``_protect_blocks_on_reach`` answers with a SPAN, because the registry carries two and
+    only one of them had a warning. The operator test is span-agnostic
+    (``fields._survives_more_history`` reads the op alone), so scoping the detector to the
+    popularity window was never the registry speaking. ``watchers_all_time`` carries the
+    other span, is PROTECT-only, and blocks through ``gates.lifetime_shortfall`` for every
+    item the mirror does not reach back to the arrival of.
+
+    The lean lane is the other one, and it does not block at all: ``signals.evaluate_keep``
+    grants the FULL ``max_discount`` on a shortfall with no earned-outcome test, and
+    ``score()`` is ``max(0, base - keep_discount)`` over a base bounded by ``MAX_SCORE``, so
+    a keep worth more than the headroom holds every affected item under the threshold as
+    provably as a block does. The pre-existing ``graded_keeps`` warning fires on the keeps
+    TOTALLING at least ``condemn_at`` -- 70 against a headroom of 31 on shipped values -- so
+    a keep at 40 sat in a dead zone that warned about nothing (rule 140).
+    """
+
+    def _all_time_rule(self, *, op: Op = Op.GTE) -> PolicyBody:
+        return _policy(
+            protect_conditions=(ConditionSpec(field="watchers_all_time", op=op, value=1),)
+        )
+
+    def _lean(self, field: str, discount: int) -> PolicyBody:
+        return _policy(
+            graded_keeps=(
+                GradedKeepSpec(
+                    name="my lean", field=field, max_discount=discount, floor=0, saturate_at=10
+                ),
+            )
+        )
+
+    def _warnings_on(
+        self, body: PolicyBody, anchor: str, reach: float | None
+    ) -> list[PolicyWarning]:
+        return [
+            w
+            for w in inspect(body, ProfileSettings(), history_reach_days=reach)
+            if w.field == anchor
+        ]
+
+    # --- the all-time protect rule ------------------------------------------------
+
+    def test_an_all_time_keep_rule_is_flagged(self) -> None:
+        flagged = self._warnings_on(self._all_time_rule(), "protect_conditions", reach=90.0)
+
+        assert len(flagged) == 1
+        # `warn`, not `danger`: the outcome is that Reaper deletes nothing, the keep direction.
+        assert flagged[0].severity == "warn"
+
+    def test_it_names_the_set_rather_than_claiming_an_empty_list(self) -> None:
+        """The span this lane needs is the ITEM's age, which ``inspect`` is never handed.
+
+        So the affected set is "everything added before the history starts" and its size is
+        not knowable here. Claiming "nothing will be flagged" would be false in the
+        reassuring direction for a young library the mirror covers outright, which is the
+        direction rule 144 says a rounded claim always fails in.
+        """
+        [flagged] = self._warnings_on(self._all_time_rule(), "protect_conditions", reach=90.0)
+
+        assert flagged.message.startswith("Titles added before your watch history starts")
+        assert "Nothing will be flagged" not in flagged.message
+
+    def test_the_op_decides_it_here_exactly_as_it_does_on_the_window(self) -> None:
+        """``lte`` leaves an item already over the bar settled, so it stays condemnable.
+
+        Same asymmetry ``_survives_more_history`` applies to the window, reached through the
+        same predicate -- which is the point of answering with the span rather than a bool.
+        """
+        assert (
+            self._warnings_on(self._all_time_rule(op=Op.LTE), "protect_conditions", reach=90.0)
+            == []
+        )
+        # The discriminator: the same rule one operator over IS claimed, so this is the op
+        # being read and not the branch having gone quiet.
+        assert self._warnings_on(self._all_time_rule(), "protect_conditions", reach=90.0) != []
+
+    def test_a_caller_that_cannot_read_the_mirror_stays_quiet(self) -> None:
+        assert self._warnings_on(self._all_time_rule(), "protect_conditions", reach=None) == []
+
+    def test_the_dormancy_floor_silences_it(self) -> None:
+        """Under the floor every item is kept on age alone, so this rule decides nothing.
+
+        Same guard the window lane uses, for the same reason: the remedy would move no
+        verdict, and firing anyway would tell every operator with a shallow mirror to delete
+        a protection that is not what is holding their list back.
+        """
+        body = _policy(
+            gates=(GateSetting(gate=GateId.MIN_DORMANCY, threshold=1095),),
+            protect_conditions=(ConditionSpec(field="watchers_all_time", op=Op.GTE, value=1),),
+        )
+        assert self._warnings_on(body, "protect_conditions", reach=90.0) == []
+
+    # --- the lean lane ------------------------------------------------------------
+
+    def test_a_lean_bigger_than_the_headroom_is_flagged(self) -> None:
+        """40 points against a headroom of 30, which the old total-based warning let past."""
+        flagged = self._warnings_on(self._lean("recent_watchers", 40), "graded_keeps", reach=90.0)
+
+        assert len(flagged) == 1
+        assert flagged[0].severity == "warn"
+        # It names the rule, which the protect lanes cannot: a graded keep carries a name the
+        # operator typed, a `ConditionSpec` does not.
+        assert '"my lean"' in flagged[0].message
+
+    def test_a_lean_inside_the_headroom_is_not(self) -> None:
+        """The bound is ``MAX_SCORE - condemn_at``: at 30 the item can still reach 70."""
+        assert (
+            self._warnings_on(self._lean("recent_watchers", 30), "graded_keeps", reach=90.0) == []
+        )
+        # One point either side of the bound, so this pins the boundary rather than the
+        # branch merely being reachable.
+        assert (
+            self._warnings_on(self._lean("recent_watchers", 31), "graded_keeps", reach=90.0) != []
+        )
+
+    def test_a_lean_on_a_field_the_mirror_does_not_bound_is_not_flagged(self) -> None:
+        """Size carries no ``reach_span``, so no amount of missing history changes it.
+
+        40 rather than something larger on purpose: it clears the headroom (30) so the check
+        under test is reached, while staying under ``condemn_at`` (70) so the pre-existing
+        total-based warning on this same anchor cannot answer for it.
+        """
+        assert self._warnings_on(self._lean("size_bytes", 40), "graded_keeps", reach=90.0) == []
+
+    def test_the_lean_lane_covers_both_spans(self) -> None:
+        """Both reach-bounded fields are offered as leans: ``leanFields`` is not lane-filtered
+        and ``GradedKeepSpec`` accepts any numeric field, protect-only ones included."""
+        windowed = self._warnings_on(self._lean("recent_watchers", 40), "graded_keeps", reach=90.0)
+        lifetime = self._warnings_on(
+            self._lean("watchers_all_time", 40), "graded_keeps", reach=90.0
+        )
+
+        assert len(windowed) == 1
+        assert len(lifetime) == 1
+        # Each says what is true of ITS span: the window empties the list outright, the
+        # lifetime one only for titles older than the mirror.
+        assert windowed[0].message.startswith("Nothing will be flagged for removal.")
+        assert lifetime[0].message.startswith("Titles added before your watch history starts")
+
+    def test_a_windowed_lean_the_history_covers_is_not_flagged(self) -> None:
+        """No shortfall, no full discount, so nothing to say."""
+        assert (
+            self._warnings_on(self._lean("recent_watchers", 40), "graded_keeps", reach=400.0) == []
+        )
+
+    def test_it_says_which_number_to_change_and_the_number_is_the_bound(self) -> None:
+        """The remedy names the headroom, derived from the same expression the check uses,
+        so a policy on a different threshold cannot be told to set a figure that still fires."""
+        body = _policy(
+            condemn_at=80,
+            graded_keeps=(
+                GradedKeepSpec(
+                    name="my lean",
+                    field="recent_watchers",
+                    max_discount=40,
+                    floor=0,
+                    saturate_at=10,
+                ),
+            ),
+        )
+        [flagged] = self._warnings_on(body, "graded_keeps", reach=90.0)
+
+        # MAX_SCORE - condemn_at == 20 here, not the 30 the shipped threshold gives, so a
+        # transcribed constant would fail this (rule 141).
+        assert "20 points or less" in flagged.message
+        assert "remove threshold of 80" in flagged.message
+
+    def test_it_is_not_the_total_based_warning_and_both_can_fire(self) -> None:
+        """They answer different questions on one anchor, and neither covers the other.
+
+        The pre-existing one is about the keeps TOTALLING at least ``condemn_at`` whatever the
+        mirror says; this one is about a SINGLE keep taking its full discount because the
+        mirror cannot support the field. A keep at 40 against the shipped 70 fires only the
+        second, which is the dead zone this closed.
+        """
+        only_mirror = self._warnings_on(
+            self._lean("recent_watchers", 40), "graded_keeps", reach=90.0
+        )
+        assert len(only_mirror) == 1
+        assert "subtract up to" not in only_mirror[0].message
+
+        # At 70 both hold, and the operator gets both sentences rather than one standing in
+        # for the other.
+        both = self._warnings_on(self._lean("recent_watchers", 70), "graded_keeps", reach=90.0)
+        assert len(both) == 2
+        assert sum("subtract up to" in w.message for w in both) == 1
