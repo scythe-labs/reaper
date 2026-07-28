@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: Docs
+
+# The cheap half of CI. `ci.yml` ignores these paths so a typo fix stops costing a full
+# ~3.5-minute matrix, but skipping them outright would retire a guard exactly where it
+# fires most: tests/test_repo_hygiene.py reads CLAUDE.md, docs/ and .claude/rules/, and
+# most of what it asserts can ONLY be broken by a docs commit -- the STATUS.md line budget,
+# the `TBD` ban in live docs, the frozen banner on docs/history/, rule numbers being
+# contiguous and unique, and the `paths:` frontmatter on every scoped rule file. So docs
+# get a gate of their own rather than no gate.
+#
+# These paths are the exact complement of ci.yml's `paths-ignore`. Every commit lands in
+# one lane or the other; change one list and you must change the other. A commit that
+# touches both code and docs runs both lanes, and the hygiene test runs twice -- ci.yml's
+# full pytest already covers it. That is deliberate: the alternative is diffing against a
+# base commit to decide, which is wrong whenever the base is a force-push or a new branch,
+# and it would trade a redundant 40-second job running in parallel (35% of commits, no
+# wall-clock cost) for a gate that can silently fail to run.
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - "docs/**"
+      - "**.md"
+      - ".claude/**"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "**.md"
+      - ".claude/**"
+
+# Same reasoning as ci.yml: supersede an in-flight run rather than finish it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to a commit SHA for the same reason as ci.yml: a mutable tag on a
+      # third-party action is a supply-chain door into a job in this repository.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      # The same locked install as ci.yml's `check`, not a lighter ad-hoc one. The hygiene
+      # test needs only pytest and the stdlib, but tests/conftest.py imports the app and is
+      # loaded on every collection, and an unlocked `--with pytest` install to dodge that
+      # would be the one place in the repo resolving dependencies fresh at run time.
+      - name: Install
+        run: uv sync --frozen --extra dev
+
+      # ~1 second of asserts. The rest of the suite is about code this commit did not touch.
+      - name: Docs hygiene
+        run: uv run pytest tests/test_repo_hygiene.py

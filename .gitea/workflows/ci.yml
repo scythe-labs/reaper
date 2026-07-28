@@ -1,10 +1,49 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 name: CI
 
+# Prose is gated by `docs.yml` instead of here. Nothing under these paths can change what
+# the app does and nothing under them reaches the image -- .dockerignore drops `docs/` and
+# `*.md`, the single exception being README.md, which is copied only because pyproject
+# declares it as the package readme and hatchling's metadata build fails without it. No
+# runtime code reads it. Proving that with a uv install, a mypy pass, a node build and an
+# image build costs ~3.5 minutes, and 22% of the last 117 commits touched nothing else.
+#
+# The path list here and the one in docs.yml are complementary ON PURPOSE: what this file
+# ignores is exactly what that file claims, so every commit is gated by one lane or the
+# other and none slips through ungated. That is load-bearing, because "it's only docs" is
+# false in this repo -- tests/test_repo_hygiene.py reads CLAUDE.md, docs/ and
+# .claude/rules/, and a docs-only commit is precisely when it has something to say. Edit
+# one list and you must edit the other.
+#
+# `paths-ignore` skips a run only when EVERY changed file matches, so the ordinary commit
+# that edits src/ and docs/STATUS.md together still runs this workflow in full.
+#
+# One visible consequence: a docs-only commit builds no image, so `:dev` keeps pointing at
+# the last commit that could actually change it. The tag is behind the branch by design --
+# the image really was built from that code -- rather than being silently rebuilt to carry
+# a newer sha with identical contents.
 on:
   push:
     branches: [main, dev]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+      - ".claude/**"
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+      - ".claude/**"
+
+# A second push to a branch makes the first one's verdict irrelevant: the only sha anyone
+# acts on is the tip. Grouping by ref and cancelling the older run means a burst of pushes
+# to dev costs one run instead of one per commit, and hands the runner to the push that
+# superseded it rather than finishing a verdict about history. main is exempt because it is
+# release-only, and cancelling a release build partway through `docker push` is how
+# `:latest` ends up half-published.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   check:
