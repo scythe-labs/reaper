@@ -30,37 +30,6 @@ because only the candidate outlives the run.
 
 ## Open
 
-### The greppable per-show record contradicts every season the reach then holds
-
-Raised at `8ff0a3e` (2026-07-27), reviewing PR #97.
-
-`season_scan.gather`'s first, offline `plan_series_prune` pass (`season_scan.py:1133`) omits
-`progress_established`, so it takes the permissive default while the evidence pass at `:1573`
-applies the real reach check. Where the mirror does not span the hold — every show on a fresh
-Tautulli under the shipped 180-day hold — the two disagree, and the one that logs is the one
-that is wrong.
-
-Driven with `--log-cli-level=DEBUG` against the PR's own new test: the 400-day and 190-day arms
-emit *byte-identical* `season_scan.series_decision` lines, both `outcome=candidate
-prunable=[2, 3]`, while the shallow arm's judgments are all held. `_log_series_decision`'s
-docstring calls itself the record that answers "why is this season kept" without re-running the
-scan (rule 7/24), and for this hold it answers the opposite.
-
-**Why it is here and not an issue.** The divergence is real and was demonstrated; what was not
-demonstrated is that it costs an operator anything, because the log is a DEBUG line and the
-authoritative judgment is surfaced correctly in the UI. It is also a *widening* of a gap that
-already existed — the first pass has never had watch evidence, so `seq_protected` was always
-empty there — rather than something the PR introduced.
-
-**What would settle it:** decide whether `season_scan.series_decision` is load-bearing for
-operator support (is it what anyone is actually told to grep?). If yes it is a tier-3 audit
-finding and the fix is one line — compute `progress_is_establishable` once in `gather` and pass
-it at both call sites, which is safe in both directions, since a first pass that marks
-everything `fully_protected` only skips the `episodes()` read that feeds precision no held
-season can use. If the line is developer-facing only, this is a comment fix on
-`_log_series_decision`'s docstring, and the claim should be narrowed rather than the code
-changed.
-
 ### The `in_progress_hold_days` help text carries the 0 case's new meaning in four trailing words
 
 Raised at `8ff0a3e` (2026-07-27), reviewing PR #97.
@@ -88,6 +57,26 @@ goes back"` asks for a comparison against a number that appears only on the Scal
 horizon issue filed from this run.
 
 ## Settled earlier
+
+**The greppable per-show record entry, raised at `8ff0a3e`, was settled at `89c197d`
+(2026-07-28) — confirmed as a defect, resolved as the comment fix it had itself named.** The
+entry made its own verdict conditional on one question: is `season_scan.series_decision`
+load-bearing for operator support? It is not. A repo-wide grep across `docs/`, `frontend/src/`
+and `.claude/` (excluding `docs/history/`) finds the string in exactly one place — `unproven.md`
+itself. Nothing in the operator docs, the UI, or any support text points anyone at it, so by the
+entry's own stated criterion this is "a comment fix on `_log_series_decision`'s docstring, and
+the claim should be narrowed rather than the code changed" — tier 4, not the tier-3 audit
+finding, and the one-line `progress_is_establishable` change it offered as the alternative was
+not warranted. The staleness check ran first: the call site moved from `:1133` to `:1171` but is
+byte-unchanged, so the reasoning stood as written.
+
+PR #101 gave the same docstring a **second** reason to be narrowed, which is why the fix widened
+past the original entry: a season held by a `shortfall` conflict is logged as `prunable` with no
+reason, and on any mirror shallower than the seasons' ages that is now *every* prunable season of
+the show, where before it took a rare out-ranking count. The divergence was never only about
+`progress_established`. The narrowed docstring now says what the line actually answers — what
+Sonarr reported and whether the show reached the evidence pass — and disclaims a season's fate
+outright.
 
 **The Scales per-person figures entry, raised at `d9bd6db`, was settled at `8ff0a3e`
 (2026-07-27) — confirmed, and filed.** It asked one question: does any Scales copy claim a

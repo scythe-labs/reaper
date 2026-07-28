@@ -497,3 +497,63 @@ held the fixes under test the whole time. Also: two lanes sharing one worktree r
 concurrently and re-synced the venv underneath each other, producing a `ModuleNotFoundError` at
 a clean HEAD and one spurious red suite. Call `.venv/bin/python -m pytest` directly when lanes
 share a tree.
+
+## Refuted at `3b499f5` (2026-07-28, reviewing the truncated-mirror conflict fix, PR #101)
+
+Three lanes fired by path (`safety` on `engine/gates.py` + `services/season_pruning.py`, `seam`
+on `api/routes.py` and the chip's frontend consumers, `diff` on `engine/fields.py`,
+`services/season_scan.py`, `WhyPanel.tsx`, `docs/STATUS.md` and the tests). The commit closes
+#94 by giving the keep-rule conflict detector each season's shortfall beside its count.
+
+**The convergence signal fired at full strength: all THREE lanes independently drove the same
+tier-3 finding** — the `kept_watchers is None` arm building its `PruneConflict` without
+`shortfall`, so a count the same call had just ruled unsupportable printed as "0 people watched
+Season N". Three separate derivations, one mechanism, one fix. Fixed in `a95a9a7`, `89c197d`.
+
+**The most valuable single artifact of this run was a mutation, not a reading.** The `diff` lane
+turned `elif pruned_shortfall is not None:` into `elif pruned_shortfall is not None or
+kept_shortfall is not None:` — precisely the degeneration `_detect_conflicts`'s docstring
+disclaimed — and the **full 2626-test suite passed, exit 0**. The disclaimer was false *and*
+nothing could tell. Both halves are now fixed.
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| safety | The change widens what gets deleted somewhere | 3000 randomized plans (2-6 seasons, random counts including `None`, random `keep_last`/`keep_first`/`keep_specials`/`protect_incomplete`, single monotone horizon) driven through `plan_series_prune` → `guard_result` on both trees: `prunable` identical in every trial, 383 season-decisions changed, **0 weaker** — no `blocked` lost, no `defers_to_owner` False→True. A separate 20,000-shape sweep says the pre-PR conflict set is a strict subset of the new one in every trial. A 64-cell exhaustive arm matrix agrees. |
+| safety | `lifetime_shortfall` routes a non-`Known` age to a permissive answer (rule 93), `Absent` especially | Drove all four inputs: `Absent(age)`/`Unknown(age)` both return "this scan did not record when it was added"; `Absent(reach)`/`Unknown(reach)` both return "this scan did not record how far back your watch history goes". The guard is `not isinstance(age, Known)`, which `Absent` fails, so it never takes the permissive branch. |
+| safety | `shortfall_by_season = shortfall_by_season or {}` is a rule-1 fail-open default a caller can forget | Two production callers. The offline first pass passes neither counts nor shortfalls, so every `pruned_watchers is None` and `_detect_conflicts` returns `[]`. `_judge_series` builds both in one loop over the same `item.seasons`, so the key sets cannot diverge. Deleting the kwarg from the production call fails a test, so the wiring is pinned rather than merely present. |
+| safety | `guard_result`'s widened `refused` test could mask a settleable conflict or release a reap the old test held | A strict superset of dev's predicate, so it can only pick a refused conflict where dev picked a deferrable one — more refusals, never fewer. Reverting it fails 2 tests. |
+| safety | The "already out-ranks" arm prints a truncated `pruned_watchers` as a fact | Lands on the safe side of the `c8b0ddc` distinction: a lower bound asserts an event that DID happen (at least N plays exist), unlike the retired "watched too recently" which asserted one that may not have. The comparison is definitive too — more history only raises the pruned count, so `pruned > kept` survives any deepening. |
+| diff | The `fields.reach_shortfall` refactor is not behavior-identical on some input class | Drove the pre-PR body and the new delegation side by side over **10,368 combinations** — every `FieldSpec` in `REGISTRY` plus `None`, nine observation classes in both the reach and age slots, eight `window_days` values — comparing return value *and* exception. **0 mismatches.** The age-before-reach guard order is preserved because `lifetime_shortfall` checks `age` first. |
+| diff | The age derivation is not "the same derivation `build_season_facts` records as `Facts.days_since_added`, off the same date" (rule 7/24) | Holds on both halves it states: same function (`dormancy_days`) and same date (`in_plex.added_at`, passed to `build_season_facts` as `season_added_at`). The clock differs (`now or utcnow()` vs a fresh `utcnow()`), a sub-second-to-one-day drift the comment does not claim to cover, and it makes the `Facts` lane block *more*, not less. |
+| diff | `in_plex is None` leaves `watchers_by_season` and `shortfall_by_season` inconsistent | Consistent, and the stored shortfall is provably inert: on the pruned side `pruned_watchers is None` `continue`s before `pruned_shortfall` is fetched; on the kept side the `kept_watchers is None` arm `continue`s before `kept_shortfall` is fetched. Fabricating `Known(0.0)` there passes all four test files. |
+| diff | `reach_days` reaching `_judge_series` can be 0, negative or stale and be read permissively | Every arm fails closed and is the keep direction: reach 0 or negative makes `reach.value >= needed` false for any positive age, so every prunable season conflicts. `humanize_days(0.0)` renders "less than a day", so the copy reads plainly and truthfully. |
+| diff | The first offline `plan_series_prune` pass now needs `shortfall_by_season` too | It passes no `watchers_by_season` at all, so every `pruned_watchers` is `None` and `_detect_conflicts` returns `[]` whatever any shortfall map says. `_SeriesWork.plan` still has no reader beyond `fully_protected`. |
+| diff | The `SEASONS_ADDED` fixture move made a pre-existing pipeline assertion vacuous | Dormancy is `reference_instant`-clamped to the horizon, so moving `added_at` off the 1970 placeholder leaves it unchanged; the only `Facts` field that moves is `days_since_added`, whose sole reader is the ITEM_LIFETIME arm, and no shipped policy rule carries that span. The pre-existing `condemn` assertions still discriminate. |
+| seam | `_chip`'s outer `not detail.startswith("could not check")` skips the third shape entirely | Measured `False` for the new message, so it reaches the `season_progression` branch and returns the reworded chip. (Recorded at `a191086` for the first two shapes; re-verified for the third.) |
+| seam | `LeftForYou`'s `/^could not check (.+?): (.+)$/` fails on the new message and blanks the block | Falls to the documented `kind: "raw"` row and renders the detail verbatim. Confirmed in jsdom. |
+| seam | `GateOutcomeOut` / `api.ts` narrow the gate id or detail so the new shape does not round-trip | Both sides are plain `str`/`string` and round-trip unchanged. Only `defers_to_owner` is dropped, which is #86's mechanism, not a break. |
+| seam | `_has_blocked_protections`, `_primary_reason` or `_kept_season_phrase` misclassify the new shape | The first is presence-and-shape only; the second prints `_detail_of(unknown[0])` verbatim. `_kept_season_phrase` is unreachable for a conflict, which is `GATE_ABSTAIN` and lands only in `could_not_be_checked`, while that helper reads `protections_fired[0]`. |
+| seam | Rule 64: the chip reword orphaned a copy of "a season it's keeping" | Repo-wide grep across `src/`, `frontend/`, `tests/`, `docs/`, `.claude/`: zero hits; the two test assertions were updated in the same commit. No code parses `PruneConflict.message` in either tree. |
+| seam | The chip's new plural "these seasons" has no antecedent on a single-season row (rule 21) | Considered and declined. The plural is the deliberate consequence of the shape it now shares: the unestablished season may be the pruned one rather than the kept one, so the old singular was wrong half the time. Both consumers read acceptably. |
+| seam | `why="Reaper couldn't check who watched these seasons"` breaks `OverrideChip`'s lowercase-clause contract | "Reaper" is a proper noun and the identical shape already ships for `MATCH_UNREADABLE`. Reads correctly in both consumer surfaces. |
+| seam / safety | Query-key skew lets a cached pre-fix chip outlive the scan, so chip and reap decision disagree | Same construction as `a191086`: both are computed from one `_decode_explanation` result inside one `_candidate_out`, in one response. No second key exists to drift. |
+| safety | The new blocked results distort a count, a cap, or auto-approval | `SeriesPrunePlan.auto_approvable` still has zero consumers in `src/`; `plan.conflicts` has exactly one reader. Blocked → abstain → not condemned → never planned, so nothing reaches the executor or the cap math. |
+| safety | Rule 72: another reader of an all-time count went unswept | Swept every site. `Facts.distinct_watchers_all_time` is display-only and no built-in gate reads it; `signals.py` records that it cannot reach the signal lane; the operator-authored field goes through `reach_shortfall` → `lifetime_shortfall`; `backtest` builds it from a complete play list. The season roll-up was the missing one and is what this PR wires. |
+| safety | `PruneConflict`'s new trailing defaulted field breaks a positional construction or a `dataclasses` helper | All construction sites in `src/` and `tests/` are keyword-only; no `replace`/`astuple`/`fields()` over it; never a set member or dict key. |
+| diff | `docs/STATUS.md`'s rewritten rows claim an unwired mechanism (rule 25) | Every symbol named resolves, and a repo-wide grep for `#94` finds no surviving "still open" claim anywhere. (The rows were nonetheless *incomplete* on the blanket hold, which became a finding rather than a refutation.) |
+
+**The lesson worth keeping, and it is about what a test is for.** Every finding above tier 4 was
+a statement — a message, a docstring, a field's contract — that had stopped matching the code
+beside it, and in each case the code was RIGHT. `refuted.md` already records "the fix was correct
+and its *reach* was the defect" from `a191086`. This run sharpens it: **the reach a fix fails to
+cover is most often a sentence, not a branch**, because a branch has a test and a sentence does
+not. The one place that was genuinely untested — the blanket hold — is exactly where a false
+claim survived review, and the mutation proving it took ten seconds once someone thought to try.
+When a docstring disclaims a behavior ("this does not degenerate into…"), that disclaimer is a
+testable assertion; write the test or delete the sentence.
+
+**Procedural, and it worked.** All three lanes ran concurrently in one worktree, called
+`.venv/bin/python -m pytest` directly rather than `uv run`, and restored every mutation probe by
+copying a pristine file back. No spurious red suite this run, against two in the previous two.
+The `safety` lane went further and worked from `git show HEAD:` copies in a scratch directory
+while other lanes mutated `src/`, which is the right move when lanes share a tree.
