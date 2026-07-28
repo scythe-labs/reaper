@@ -85,7 +85,14 @@ def block_holds_reap(gate_value: str, *, defers_to_owner: bool) -> bool:
     Reaper had explicitly refused to make. The wording could not simply be reordered
     either: ``api.routes._chip`` positively matches inside that same string to pick the
     operator's chip, so one string was carrying two consumers wanting opposite things from
-    it (rule 92). The flag is typed and the wording is now free to change.
+    it (rule 92). The flag is typed, so *this* decision no longer reads the sentence at all.
+
+    That is the whole span of the claim, and it is worth stating narrowly: the message is
+    still parsed elsewhere. ``api.routes._chip`` gates on the ``could not check`` prefix to
+    route the chip, and ``WhyPanel`` splits the same prefix into its check and cause halves
+    (``gates.py`` records that the prefix stays load-bearing for exactly those surfaces).
+    Rewording ``PruneConflict.message`` is safe for the reap decision and still needs those
+    two read first.
 
     Takes primitives (a gate's string value and that flag) so the one classifier serves
     both the GateResult path (scan, simulator replay) and the stored-explanation path

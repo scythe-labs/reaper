@@ -48,6 +48,7 @@ from reaper.engine.signals import (
 )
 from reaper.engine.verdict import (
     DEFERRABLE_BLOCK_GATES,
+    STRUCTURAL_GATES,
     block_holds_reap,
     decide_verdict,
     reap_held_by_blocks,
@@ -130,6 +131,33 @@ class TestAGateCannotDelete:
     def test_every_gate_outcome_is_protect_or_abstain(self, item: Facts) -> None:
         for result in evaluate_all(ALL_GATES, item).results:
             assert result.outcome in (PROTECT, ABSTAIN)
+
+
+class TestOnlyOneGateMayEverDeferToTheOwner:
+    """The membership half of ``block_holds_reap``'s two conditions.
+
+    A blocked gate releases a hand reap only when its gate is in
+    ``DEFERRABLE_BLOCK_GATES`` **and** its producer set ``defers_to_owner``. The flag half
+    is pinned by ``test_a_hand_reap_cannot_overrule_the_block`` below, which fails if the
+    gate-id check is dropped. Nothing pinned this half: growing the frozenset failed no
+    test, so a gate could join the list and a producer that sets the flag on a plumbing
+    failure would open a fail-open path in silence (rule 103).
+    """
+
+    def test_the_deferral_list_is_exactly_the_season_keep_rule_conflict(self) -> None:
+        """Adding a gate here must be a deliberate edit that fails this test first, because
+        the reviewer then has to answer the one question membership does not: does that
+        gate's producer set ``defers_to_owner`` ONLY where a real decision was put to the
+        owner, and never where a source could not be read? ``season_scan.guard_result`` is
+        the one producer that has answered it."""
+        assert frozenset({GateId.SEASON_PROGRESSION}) == DEFERRABLE_BLOCK_GATES
+
+    def test_no_structural_gate_can_ever_be_deferrable(self) -> None:
+        """The two sets must stay disjoint. A structural gate is the hard stop a hand reap
+        must never pass -- something playing right now, or a file no app manages -- so a
+        gate in both sets would let the owner reap past the one protection that exists
+        because they cannot."""
+        assert DEFERRABLE_BLOCK_GATES.isdisjoint(STRUCTURAL_GATES)
 
 
 class TestUnknownNeverCondemns:
