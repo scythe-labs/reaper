@@ -31,199 +31,8 @@ because only the candidate outlives the run.
 
 ## Open
 
-### A vendor bump inside the caret silently puts the 403 back on every try-it-out write
-
-Raised at `96b8114` (2026-07-28, reviewing PR #123) by all three lanes independently, each
-ranking it low.
-
-`/api/docs` can send writes only because `main.py`'s `api_docs` passes an `onBeforeRequest` hook
-that sets the CSRF header on Scalar's request builder. The vendor stamps that API **experimental
-in three places** — the config `typeComment` in the shipped bundle, the `.d.ts`, and the builder
-type ("still experimental and may change in minor releases") — and `frontend/package.json` carries
-`"@scalar/api-reference": "^1.63.0"`. `package-lock.json` pins 1.63.0 today, so rule 15's
-lockfile install keeps CI and the container on a known-good bundle.
-
-If a lock refresh inside the caret renames the hook or reshapes its argument, every try-it-out
-write 403s again while the `Session` scheme goes on promising "reads and writes as you" — the
-exact rule 144 drift the PR exists to close, arriving through a dependency rather than an edit.
-**No test can currently see it.** The guard now pins the exact call string the page must contain,
-built from `CSRF_HEADER`/`CSRF_VALUE`, which catches a Reaper-side edit and cannot catch a
-Scalar-side rename: the assertion is against Python's own output. `frontend/public/vendor/` is
-gitignored, so rule 68's drift test has nothing to hash either.
-
-**Why it is unproven rather than confirmed:** nobody demonstrated a version inside `^1.63.0` that
-breaks it. The direction of failure is friendly (writes refuse, nothing is lost), which is why all
-three lanes ranked it low rather than fixing it.
-
-**What would settle it:** install the newest release satisfying the caret into a scratch tree, run
-the vendored bundle's `map-config-plugins` resolution over the real config, and check whether the
-hook still receives a mutable builder. If it does not, the answer is a behavioral guard rather than
-a string assertion — the cheapest shape is a headless page load that drives one write and asserts
-the header on the wire, which is the one thing the current test's docstring already says it cannot
-do.
-
-### The spare-length Segmented stays live during a save that is writing its own field
-
-Raised at `57c11c5` (2026-07-28, reviewing PR #127) by the `seam` lane, ranked low.
-
-`Segmented` (`components/Segmented.tsx`) takes no `disabled` prop at all, so the spare-length mode
-control is the one thing in that row still pressable while a save is in flight. Every neighbor
-carries `disabled={save.isPending}`: the day box, the expand-seasons select, the reverse-proxy
-switch. The candidate: from a stored 365 with the box set to 7, press **Save changes** and then
-**Forever** before the response lands, and `onSuccess`'s `setSpareForever(data.default_spare_days
-=== 0)` silently reverts the press.
-
-**Why it is unproven rather than confirmed:** the race was reasoned, not driven. The window is one
-network round trip and the outcome is a mode press being dropped, not a value being written, so it
-fails toward doing nothing.
-
-**Why it is not simply the class refuted at `ef0278d`:** that entry covered *text inputs* losing
-keystrokes to an in-flight re-seed and was accepted as pre-existing. This shape is new to PR #127 —
-before it, the press fired its own mutation instead of racing one.
-
-**What would settle it:** a test resolving `saveGeneral` from a deferred promise with the Forever
-click in the gap, asserting the mode after the response lands. If confirmed, the fix is a
-`disabled` prop on `Segmented`, which both settings panels and the policy editor use, so rule 72
-binds it to every consumer at once.
-
-### Neither section-switch confirm announces itself to a screen reader
-
-Raised at `57c11c5` (2026-07-28, reviewing PR #127) by the `seam` lane, ranked low.
-
-`Settings`' new pending-switch notice renders as `.notice.notice-warn` with no `role="alert"` and
-no `aria-live`, and focus stays on the rail button that appears to have done nothing; pressing it
-again just re-sets the same `pendingSwitch`. The `PolicyEditor` twin has the identical gap and
-predates this PR, and the repo has only four `aria-live` uses, all loading spinners.
-
-**Why it is unproven rather than confirmed:** nobody drove it with a screen reader, and the notice
-does render in the document immediately after the control, which some readers will reach on the
-next navigation step anyway.
-
-**What would settle it:** drive both confirms with VoiceOver and record whether the notice is
-announced without a manual re-read. If confirmed, it is one fix across both (rule 72), not a
-regression in this PR.
-
-**Still open at `adbc92b`** (reviewing PR #138, which rewrote `Settings.tsx` around this notice and
-added two more panels that raise it). The notice markup is unchanged — still no `role="alert"`, no
-`aria-live` — so the reasoning above binds to the new commit rather than going stale. Two more
-panels reaching it raises the odds an operator meets it, not the confidence that it is a defect;
-the evidence that would settle it is still a screen reader.
-
-### `dirtyPanels` claims a population in prose, and nothing reconciles it
-
-Raised at `adbc92b` (2026-07-28, reviewing PR #138) by the `diff` lane, ranked low.
-
-"Five panels report, which is the whole population" is a claim over the nine entries in `PANELS`
-(`Settings.tsx:62`), and no test holds the two together: `dirtyPanels` is a hand-written literal,
-a panel absent from it reads `undefined ?? false`, and adding a tenth section or a draft to one of
-the four exempt panels leaves it silently outside the guard with a green suite. That is the exact
-shape the guard already had at three, which is what #135 existed to fix.
-
-**Why it is unproven rather than confirmed:** the population is genuinely correct today, verified
-independently by two lanes — services and jobs hold their drafts inside `ModalShell`'s fixed
-full-viewport scrim, so the section rail is unreachable while one exists; logs holds view filters;
-about is read-only. So there is no trigger to demonstrate. The candidate is that the NEXT section
-is unguarded, which is a claim about a change nobody has made.
-
-**What would settle it:** it is cheaper to close than to prove. One test over `PANELS` asserting
-each id is either a key of `dirtyPanels` or on an explicitly-named exempt list, so a new section
-fails until someone classifies it (rule 145's reconciliation, pinned rather than asserted in
-prose). If that test is written, this entry leaves as **Confirmed-by-construction**; if someone
-argues the exempt list is itself the drift risk, it leaves as refuted.
-
-### The stale-read notice tells the operator to do the one thing that loses their draft
-
-Raised at `adbc92b` (2026-07-28, reviewing PR #138) by the `diff` lane, ranked low.
-
-`StaleReadNotice`'s call to action is "Reload to try again", and after #138 it sits directly above
-the three admin-password boxes that same PR exists to stop a failed poll from clearing. A reload
-gets no confirm anywhere in the app, so an operator who follows the instruction loses exactly the
-draft the change protects. Security is the panel where this is reachable without the operator
-doing anything, since `useSafety` polls every 15 seconds.
-
-**Why it is unproven rather than confirmed:** the trigger is an operator obeying copy, not a code
-path, and the line is pre-existing on General and Plex where it was accurate enough — neither holds
-a secret you cannot retype. Whether "a person would actually reload here" is a defect or a
-misjudged risk is what nobody established.
-
-**What would settle it:** decide the copy question rather than measure it. Either drop "Reload to
-try again" from the shared line (Security retries on its own clock, so the sentence is not even
-true there), or say what a reload costs. A rule 72 sweep of all four consumers either way, since
-one component serves them.
-
-### The mid-binge hold is the same shape as the window shortfall, and nothing warns about it
-
-Raised at `f8592b3` (2026-07-28, reviewing PR #129) by the `diff` lane.
-
-`in_progress_hold_days` (default 180, control at `PolicyEditor.tsx:1512`) produces the same
-library-wide "nothing gets flagged" from the same short mirror, with the same two remedies, and
-no surface names it. `season_pruning.progress_is_establishable(reach_days=90, hold_days=180)`
-returns `False`, which makes `plan_series_prune` hold every season on disk as a blocked PROTECT
-until history accrues. So a TV operator who takes #129's new warning at its word and lowers the
-popularity window to match their reach finds the popularity gate has stopped blocking and every
-season is still held. "Nothing will be flagged for removal" stays true after they did what they
-were told, and nothing says why. Rule 72: the warning `inspect` now emits has a twin one field
-down the same editor.
-
-**Why it is unproven rather than confirmed:** every component was confirmed in-process, but the
-composed outcome — the operator following the remedy and still seeing an empty list — was never
-driven through a full scan. The single-warning claim is also arguably right as scoped, since
-#129 deliberately speaks for the one member with a control the operator can turn, and this is a
-second such member rather than a defect in the first.
-
-**What would settle it:** a scan over a TV library with a 90-day mirror and the shipped
-`in_progress_hold_days`, before and after lowering the popularity window to 90, asserting the
-prunable set is empty in both. If it is, the fix is a second branch in `inspect` anchored to
-`in_progress_hold_days`, reusing `gates.history_shortfall` the way the window branch does.
-
-### `horizon()` puts a `COUNT(*)` on the debounced policy-validate path
-
-Raised at `f8592b3` (2026-07-28, reviewing PR #129) by all three lanes, which measured the same
-numbers and **split on whether it is a defect**.
-
-`routes._history_reach_days` calls `history_sync.horizon`, a thin wrapper over `_state`, whose
-one query is `SELECT COUNT(*), MIN(watched_at), MAX(watched_at)`. SQLite cannot take the MIN/MAX
-index shortcut with a `COUNT(*)` riding along, so it scans where a bare `SELECT MIN(watched_at)`
-searches. Measured on a 500k-row `watch_event`: `horizon()` 20.6 ms/call against 0.2 ms for the
-MIN alone, with the COUNT accounting for the whole difference; on 1M rows, `SCAN USING COVERING
-INDEX` at 47 ms against `SEARCH` at 0.017 ms. `/api/policy/validate` fires on a 250 ms debounce
-as the operator drags a slider, on the same event loop the simulator replay yields to.
-
-**Why it is unproven rather than confirmed:** the disagreement is about the verdict, not the
-measurement. Two lanes called 20 ms per keystroke a defect; the third noted the same call already
-serves two `fairness.py` request paths and that 20 ms warm (860 ms cold) is within what this page
-already spends, and declined it. Nobody demonstrated an operator-visible stutter.
-
-**What would settle it:** drive the editor against a seeded mirror at 100k / 500k / 1M rows and
-measure input latency while dragging the window control, against the same run with
-`_history_reach_days` stubbed to a constant. If the two are indistinguishable, refute it; if not,
-the fix is a dedicated `SELECT MIN(watched_at)` beside `horizon`, which `snapshot.py:519-521`
-already works around for the scan path for the same reason.
-
-### The gate-off shortfall remedy says "remove that rule" without naming which one
-
-Raised at `94f11fc` (2026-07-28, reviewing PR #137) by the `diff` lane, ranked low.
-
-The message `policy.inspect` emits with the popularity gate off ends "Wait for it to build up, or
-remove that rule." An operator holding several keep-outright rules has to work out which one
-counts watchers, and the window it is measured over — the 365-day fallback — has no control on
-the page to cross-reference, which is the whole reason this branch anchors on
-`protect_conditions` rather than the picker.
-
-**Why it is unproven rather than confirmed:** the preceding clause ("Your keep rule counts who
-watched a title in the last year") already identifies the rule by what it does, and only one
-field in the registry carries that span, so at most one rule can be the referent. The ambiguity
-was reasoned from a hypothetical multi-rule policy, never driven or put in front of an operator.
-
-**Why it is not simply a rule 21 miss:** naming the field would cost one clause and carries no
-drift risk — unlike the *gate's* label, which lives in `policyMeta.ts` and is deliberately not
-restated backend-side (rule 144), the *field's* label is backend-owned at `fields.py:328` ("People
-who watched it recently") and is the same string the editor renders from the vocabulary API. So
-the cheap fix is available; what is missing is evidence anyone needs it.
-
-**What would settle it:** put a policy with three keep-outright rules, one of them on
-`recent_watchers`, in front of someone who did not write the message, and ask which rule it means.
-If they hesitate, name the field. If not, the extra clause is length rule 21 also charges for.
+Empty, as of `03b707d`. The eight entries that stood here were settled in one pass: six
+confirmed and filed, two refuted.
 
 ## Settled
 
@@ -231,6 +40,14 @@ Newest first. "Settled" is the commit that closed it; read that commit for the r
 
 | Candidate | Raised | Settled | Outcome |
 | --- | --- | --- | --- |
+| The gate-off shortfall remedy says "remove that rule" without naming which one | `94f11fc` | `03b707d` | **Confirmed** — the "only one field can be the referent" defense holds at field level and fails at rule level; filed as issue #157 |
+| `dirtyPanels` claims a population in prose, and nothing reconciles it | `adbc92b` | `03b707d` | **Confirmed** by construction, with a better fix than the one proposed; filed as issue #156 |
+| The stale-read notice tells the operator to do the one thing that loses their draft | `adbc92b` | `03b707d` | **Confirmed** — the panel's own comment names the harm its replacement line reintroduces; filed as issue #153 |
+| The mid-binge hold is the same shape as the window shortfall, and nothing warns about it | `f8592b3` | `03b707d` | **Confirmed** — the composed journey was driven end to end; filed as issue #154 |
+| `horizon()` puts a `COUNT(*)` on the debounced policy-validate path | `f8592b3` | `03b707d` | **Refuted** — see `refuted.md` under `03b707d` |
+| The spare-length Segmented stays live during a save that is writing its own field | `57c11c5` | `03b707d` | **Confirmed** — driven with the deferred promise the entry named; filed as issue #151 |
+| Neither section-switch confirm announces itself to a screen reader | `57c11c5` | `03b707d` | **Confirmed** by construction against WCAG 2.2 SC 4.1.3; filed as issue #155 |
+| A vendor bump inside the caret silently puts the 403 back on every try-it-out write | `96b8114` | `03b707d` | **Refuted** — see `refuted.md` under `03b707d` |
 | A refetch failure leaves the panel reporting a draft it no longer renders | `57c11c5` | `ab7a9fc` | **Confirmed** — driven with a scratch test, fixed on the branch |
 | A proxy list parked behind its switch is a draft the confirm cannot see | `57c11c5` | `ab7a9fc` | **Confirmed** — fixed on the branch |
 | Discard leaves the day number staged when the stored default is Forever | `57c11c5` | `4f17180` | **Confirmed** — the `ef0278d` refutation was stale; fixed on the branch |
@@ -245,6 +62,17 @@ Newest first. "Settled" is the commit that closed it; read that commit for the r
 | The save bar calls a length unsaved that the switch beside it commits | `ef0278d` | `b33bff1` | **Confirmed** — filed as issue #90 |
 | A fixed control track charges every row the width of the widest control | `ef0278d` | `b33bff1` | **Confirmed** — filed as issue #91 |
 
+**The eight rows settled at `03b707d` were closed by filing, not by fixing, so `03b707d` is the
+tree they were settled *against* rather than a commit carrying the repair.** The reasoning lives
+in the issue named in each Outcome cell, and in `refuted.md` for the two that died. That is the
+one case where the "read that commit" instruction above points at an issue instead.
+
 `8ff0a3e` and `394cc3a` no longer resolve: both were rewritten by a rebase before the hash was
 recorded. The rows are kept for the record, but those two bindings cannot be checked — when
-recording a row, take the hash after any rebase, not before.
+recording a row, take the hash after any rebase, not before. **`57c11c5` and `adbc92b` are a
+third variant worth naming**, because they look fine and are not: both still resolve as objects,
+so `git show` works, but neither is an ancestor of `dev` any more, so `git log` never reaches
+them and a diff against them silently compares across a fork. Every citation raised at those two
+was therefore re-derived against `03b707d` rather than trusted, and all of them held. A hash that
+resolves is not the same as a hash that is on your branch; check with `git merge-base
+--is-ancestor`, not with `git show`.

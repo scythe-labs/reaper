@@ -1128,3 +1128,25 @@ was refuted. The closure is not stale — the ref is reassigned every render, wh
 refreshes `["backup-info"]` from another client, so the correctly-read latest value is itself
 wrong. A refutation is scoped to the mechanism it actually tested, and a candidate phrased as
 "reads a stale X" needs the *route* by which X goes stale named before the refutation binds.
+
+## Refuted at `03b707d` (2026-07-28, settling the eight open entries in `unproven.md`)
+
+This pass raised nothing of its own. It took the eight candidates sitting in `unproven.md` and
+supplied the evidence each had named as the thing that would settle it. Six were confirmed and
+filed (#151, #153, #154, #155, #156, #157); two died.
+
+| Area | Candidate | Why it did not survive |
+| --- | --- | --- |
+| infra | A vendor bump inside the caret silently puts the 403 back on every try-it-out write (`@scalar/api-reference`, `^1.63.0`) | The caret is not the control and there is nothing inside it to bump to. `npm view @scalar/api-reference versions` returns 699 published releases whose newest **is 1.63.0**, so `^1.63.0` admits exactly one version today: the one the lock pins. And a bump could not arrive *silently* even once a 1.64 exists, because nothing resolves at build time — `npm ci` in `.gitea/workflows/ci.yml:121` and `Dockerfile:13` installs exactly what is locked and fails if `package.json` disagrees, and the repo carries no renovate or dependabot config. A version change is therefore a committed `package-lock.json` diff, reviewed like any other. **The residual is real and is already written down**: when that commit lands, nothing catches a Scalar-side rename, since `frontend/public/vendor/` is gitignored (`.gitignore:231`) and the guard at `tests/test_general_and_logs.py:829-865` asserts against Python's own output. That test's docstring states the limit itself ("Driving the button needs a browser, so what is pinned here is narrower"), which makes it a stated scope rather than an undiscovered gap. The word that fails is "silently". |
+| api-perf | `horizon()` puts a `COUNT(*)` on the debounced policy-validate path, costing 20 ms a keystroke | The measurement reproduces exactly and reaches nobody. On a synthetic `watch_event` with the real `SCHEMA` and all four indexes: at 500k rows `COUNT(*), MIN, MAX` plans `SCAN … USING COVERING INDEX` at 19.6 ms against `SEARCH` at 0.002 ms for the bare `MIN`; at 1M, 40.0 ms against 0.002 ms. But the cache engine is `sqlite+aiosqlite` (`config.py:241`, `db/session.py:56`), so aiosqlite runs it on a per-connection thread. Driving the real `history_sync.horizon(engine)` against both caches with a 1 ms ticker measuring loop lag: `horizon()` 21.4 ms/call with loop lag max **1.25 ms** against a 1.20 ms idle baseline, while a deliberately blocking `sqlite3` control on the same loop reads 210.6 ms (402.5 ms at 1M). The harness detects blocking; `horizon()` is indistinguishable from idle, so no concurrent request is delayed. Add that the debounce at `PolicyEditor.tsx:741-747` is *trailing* — `clearTimeout` on every `draft` change, so a slider drag fires **zero** requests until the operator pauses — and "20 ms per keystroke" is not the shape of the cost either. An XHR never blocks browser input. |
+
+**The correction worth carrying forward is in the second row's own settling criterion.** The
+candidate proposed "a dedicated `SELECT MIN(watched_at)` beside `horizon`, which `snapshot.py:519-521`
+already works around for the scan path for the same reason." There is no such workaround, and the
+cited lines say the opposite: `snapshot.py:520-523` calls the same combined query on purpose, with a
+comment explaining that `horizon`/`latest` "are two thin wrappers that would each call
+`ensure_schema` and open their own read of the same table." So a proposed fix cited a precedent that
+does not exist and in fact points the other way, and three lanes measured the query without anyone
+opening the line they credited with solving it. **A candidate's "someone already does this" clause is
+a claim like any other and is the cheapest one in the entry to check** — it is one file open, and
+being wrong about it inverts the recommendation.
